@@ -56,18 +56,23 @@ with a diagnostic that names the missing type and lists what *is* available:
 ```
 error FLOWX1020: Step 3 'payment.capture' requires 'CaptureRequest' but the flow
                  context can only supply: PlaceOrder, ValidatedOrder, Reservation.
-                 Add a mapping: .Step<CapturePayment>(ctx => new CaptureRequest(...))
+                 Add a mapping: .Step<CapturePayment, CaptureRequest>(ctx => ...)
                  See https://flowx.dev/diag/FLOWX1020
 ```
 
 Explicit mapping when the shapes differ:
 
 ```csharp
-.Step<CapturePayment>(ctx => new CaptureRequest(
+.Step<CapturePayment, CaptureRequest>(ctx => new CaptureRequest(
     ctx.Get<ValidatedOrder>().Id,
     ctx.Get<ValidatedOrder>().Total,
     ctx.Input.PaymentMethod))
 ```
+
+Both type arguments are written explicitly: C# cannot infer the mapping's result
+type from a lambda body, and FlowX will not trade that away for a prettier call
+site — an `object`-typed mapping would move a whole class of binding errors from
+build time to run time, which is the opposite of what this platform is for.
 
 ---
 
@@ -174,8 +179,8 @@ always.
 
 | Method | Purpose | Profiles |
 |---|---|---|
-| `.Step<TCapability>()` | invoke a capability | all |
-| `.Step<T>(map)` | invoke with explicit input mapping | all |
+| `.Step<TCapability>()` | invoke a capability, binding its input from the context | all |
+| `.Step<TCapability, TStepIn>(map)` | invoke with an explicit input mapping | all |
 | `.CompensateWith<T>()` | register the inverse of the previous step | all (weak in Ephemeral) |
 | `.WithPolicy(policy)` | attach a policy set to the previous step | all |
 | `.When(pred, then).Otherwise(else)` | conditional | all |

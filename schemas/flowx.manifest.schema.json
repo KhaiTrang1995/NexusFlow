@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowx.dev/schemas/flowx.manifest.schema.json",
+  "title": "FlowX Application Manifest",
+  "description": "Complete machine-readable description of a FlowX application's capability graph. Emitted by FlowX.Compiler as a first-class build artifact (ADR-0005). Structure only — never secrets, never business data; asserted by the ManifestContainsNoSecrets CI test.",
+  "type": "object",
+  "required": ["schemaVersion", "application", "flows", "capabilities"],
+  "additionalProperties": false,
+
+  "properties": {
+    "schemaVersion": {
+      "description": "SemVer of this schema. Consumers pin a major version.",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "application": { "$ref": "#/$defs/application" },
+    "flows": { "type": "array", "items": { "$ref": "#/$defs/flow" } },
+    "capabilities": { "type": "array", "items": { "$ref": "#/$defs/capability" } },
+    "events": { "type": "array", "items": { "$ref": "#/$defs/event" } },
+    "policies": { "type": "array", "items": { "$ref": "#/$defs/policySet" } },
+    "schemas": {
+      "description": "JSON Schema for every contract type, referenced by $ref from inputs and outputs. Drives OpenAPI, AsyncAPI, MCP tool descriptors and validation from one source.",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "extensions": {
+      "description": "Custom metadata. Exists so a one-off need never forces a breaking change to this schema.",
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+
+  "$defs": {
+    "semver": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(?:[-+].*)?$" },
+
+    "identity": {
+      "description": "Business identity in <domain>.<verb> form, e.g. inventory.reserve.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    },
+
+    "duration": {
+      "description": "ISO-8601 duration, e.g. PT2S, P30D.",
+      "type": "string",
+      "pattern": "^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(?=\\d)(\\d+H)?(\\d+M)?(\\d+(\\.\\d+)?S)?)?$"
+    },
+
+    "sourceRef": {
+      "description": "file:line of the declaration, so every node in the graph is navigable.",
+      "type": "string"
+    },
+
+    "application": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "$ref": "#/$defs/semver" },
+        "commit": { "type": "string" },
+        "builtAt": { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "flow": {
+      "type": "object",
+      "required": ["id", "version", "profile", "input", "output", "steps"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/identity" },
+        "version": { "$ref": "#/$defs/semver" },
+        "profile": {
+          "description": "The cost/reliability trade-off (ADR-0003). Ephemeral is the default.",
+          "enum": ["Ephemeral", "Durable", "Streaming"]
+        },
+        "deadline": { "$ref": "#/$defs/duration" },
+        "input": { "$ref": "#/$defs/typeRef" },
+        "output": { "$ref": "#/$defs/typeRef" },
+        "triggers": { "type": "array", "items": { "$ref": "#/$defs/trigger" } },
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/step" } },
+        "emits": { "type": "array", "items": { "type": "string" } },
+        "errors": {
+          "description": "Every error code this flow can produce, aggregated from its capabilities. Generated OpenAPI responses derive from it.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "owner": { "type": "string" },
+        "source": { "$ref": "#/$defs/sourceRef" }
+      }
+    },
+
+    "typeRef": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "description": "Fully-qualified CLR type name.", "type": "string" },
+        "schema": { "description": "JSON Schema or a $ref into /schemas.", "type": "object" }
+      }
+    },
+
+    "trigger": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["Manual", "Http", "Bus", "Schedule", "Stream", "Change", "Agent", "Cli"] },
+        "method": { "type": "string" },
+        "route": { "type": "string" },
+        "idempotent": { "type": "boolean" },
+        "transport": { "type": "string" },
+        "topic": { "type": "string" },
+        "group": { "type": "string" },
+        "cron": { "type": "string" },
+        "timeZone": { "type": "string" },
+        "description": { "description": "Agent triggers only: the tool description shown to the model.", "type": "string" },
+        "confirmation": { "enum": ["Never", "RequiredForSideEffects", "Always"] }
+      }
+    },
+
+    "step": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "kind": { "enum": ["Capability", "Emit", "Condition", "Switch", "Parallel", "ForEach", "SubFlow", "AwaitSignal", "Delay", "Fail"], "default": "Capability" },
+        "capability": { "description": "Resolved as <id>@<version>, e.g. payment.capture@2.1.0.", "type": "string" },
+        "compensation": { "description": "The business inverse, run in strict reverse order on failure.", "type": "string" },
+        "event": { "type": "string" },
+        "policies": { "type": "array", "items": { "$ref": "#/$defs/policy" } },
+        "branches": { "type": "array", "items": { "type": "array", "items": { "$ref": "#/$defs/step" } } },
+        "merge": { "enum": ["AllMustSucceed", "AllSettled", "FirstSuccess"] }
+      }
+    },
+
+    "capability": {
+      "type": "object",
+      "required": ["id", "version", "input", "output", "authorization", "idempotent"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/identity" },
+        "version": { "$ref": "#/$defs/semver" },
+        "input": { "type": "string" },
+        "output": { "type": "string" },
+        "authorization": {
+          "type": "object",
+          "required": ["mode"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "enum": ["Public", "Authenticated", "Permission", "Policy", "Internal"] },
+            "value": { "type": "string" },
+            "approvedBy": { "description": "Required when mode is Public.", "type": "string" }
+          }
+        },
+        "idempotent": {
+          "description": "Gates whether a retry policy is permitted at all (FLOWX1014).",
+          "type": "boolean"
+        },
+        "sideEffects": {
+          "description": "Named external effects. Drives blast-radius analysis and agent confirmation prompts.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code", "category"],
+            "additionalProperties": false,
+            "properties": {
+              "code": { "type": "string" },
+              "category": { "enum": ["Validation", "NotFound", "Conflict", "Forbidden", "Unavailable", "Internal"] }
+            }
+          }
+        },
+        "deprecated": { "type": "string" },
+        "owner": { "type": "string" },
+        "source": { "$ref": "#/$defs/sourceRef" }
+      }
+    },
+
+    "event": {
+      "type": "object",
+      "required": ["type", "schemaVersion"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "$ref": "#/$defs/identity" },
+        "schemaVersion": { "$ref": "#/$defs/semver" },
+        "partitionKey": { "description": "Ordering is guaranteed per key only — never globally.", "type": "string" },
+        "producedBy": { "type": "array", "items": { "type": "string" } },
+        "consumedBy": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+
+    "policy": {
+      "type": "object",
+      "required": ["kind", "stage"],
+      "properties": {
+        "kind": { "type": "string" },
+        "stage": {
+          "description": "Fixed by the platform, never configurable (ADR-0011).",
+          "enum": ["Admission", "Identity", "Integrity", "Resilience", "Efficiency", "Execution", "Consistency"]
+        }
+      }
+    },
+
+    "policySet": {
+      "type": "object",
+      "required": ["name", "policies"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "policies": { "type": "array", "items": { "$ref": "#/$defs/policy" } }
+      }
+    }
+  }
+}

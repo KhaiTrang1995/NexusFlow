@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>
+      FlowX contract surface: ICapability, Flow, Result&lt;T&gt;, triggers and policies.
+      This package intentionally has ZERO package references — see ADR-0009. User code
+      and every plugin reference this and nothing else from FlowX.
+    </Description>
+    <PackageTags>flowx;flow;capability;orchestration;contracts</PackageTags>
+    <!-- Contract surface: public API must be documented. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!--
+    Fitness function AbstractionsHasNoDependencies asserts this project has no
+    <PackageReference> and no <ProjectReference>. Adding one is a build failure,
+    not a discussion. If you need a dependency here, you are designing the wrong thing.
+  -->
+
+</Project>
