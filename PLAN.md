@@ -56,7 +56,7 @@ flowchart TD
     WP14["WP-14 · B12<br/>build overhead"]
 
     WP15["WP-15 · Branching DSL<br/>When · Switch · Parallel"]
-    WP16["WP-16 · Contracts<br/>FLOWX1022"]
+    WP16["WP-16 · Step binding<br/>FLOWX1020"]
     WP17["WP-17 · flowx diff<br/>breaking-change gate"]
     WP18["WP-18 · Scale<br/>200 flows"]
     WP19["WP-19 · Code fixes<br/>IDE quick actions"]
@@ -447,7 +447,7 @@ maintainability and scale, not features.
 | Roadmap item | Where it stands |
 |---|---|
 | Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **WP-15**, open — the largest remaining piece of P1 |
-| Contract-compatibility checking | **WP-16**, open |
+| Contract-compatibility checking | **WP-16**, done — as `FLOWX1020`, *step binding* |
 | Diagnostics FLOWX1001–1023 with help URIs | **Done** at WP-13. All raised, all tested, all with help links |
 | Generator snapshot tests | **Done** at WP-5 and extended since |
 | Readable emitted code | **Done** — on disk under `obj/generated`, with per-step `#line` directives (fixed at WP-10) |
@@ -477,16 +477,32 @@ The engine's step loop currently walks an array by index. Branching makes the gr
 graph, and **budget B2 is a hard zero** — so the shape of the change is constrained
 before it is designed: no allocation per step, no iterator, no closure per branch.
 
-### WP-16 — Contract-compatibility checking
+### WP-16 — Step binding
 
 | | |
 |---|---|
 | **Goal** | A flow whose steps cannot pass values to each other fails the build |
 | **Why** | The generated dispatcher binds by type: `ctx.Get<TInput>()`. If no earlier step produced that type the flow compiles and throws on the first request — exactly the class of failure this platform exists to move to build time. |
 | **Tests first** | Both directions per rule, plus the reference sample's real shape as a case that must stay silent |
-| **Deliverable** | `FLOWX1022` raised by a `DiagnosticAnalyzer`, with its documentation page |
+| **Deliverable** | `FLOWX1020` raised by a `DiagnosticAnalyzer`, with its documentation page |
 | **Exit** | Reordering the sample's steps fails its build; the unmodified sample still builds clean |
 | **Depends on** | WP-5 |
+| **Status** | **Done.** Verified by reordering the real sample's steps: `FLOWX1020` fires at the offending `.Step<>` type argument, naming the missing type and what the context can supply. |
+
+**The id is 1020, not the 1022 this package was originally opened against.** The
+reserved list assigns 1019–1022 to deadline coherence, **step binding**, sub-flow
+cycles and contract compatibility, in that order — and `08-Flow-Definition.md` already
+documented this exact check as `FLOWX1020`, with an example message nearly identical to
+the one now emitted, as did `FlowContext.Get<T>` and `FlowExecutionContext.Get<T>`.
+Shipping it as 1022 would have left three places pointing at a number nothing raised.
+`FLOWX1022` stays reserved for contract compatibility **across versions** — the
+analyzer counterpart of `flowx diff`, which is a different question.
+
+The analyzer states its own limits rather than implying coverage it lacks: it checks by
+**exact declared type**, because the context is a dictionary keyed on `typeof(T)` and a
+base-class match would miss at run time; it stops at the first chain method it does not
+understand, because a hidden branch may produce the next step's type; and it stays
+silent on the explicit-mapping overload, which is the fix it recommends.
 
 ### WP-17 — `flowx diff` v1
 

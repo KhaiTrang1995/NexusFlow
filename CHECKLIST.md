@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 473/473 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 490/490 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -193,7 +193,11 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
 - [ ] **WP-15** The branching DSL — `When` / `Otherwise` / `Switch` / `Parallel` /
       `ForEach` / `SubFlow`, through builder, model, analysis, emission, graph and
       engine. The largest remaining piece of P1
-- [ ] **WP-16** Contract-compatibility checking — `FLOWX1022`
+- [x] **WP-16** Step binding — **`FLOWX1020`** raised by `StepBindingAnalyzer`. A flow
+      whose steps cannot pass values to each other now fails the build. Numbered 1020,
+      not 1022: `08-Flow-Definition.md` and both `Get<T>` implementations already
+      documented this check under 1020, and 1022 stays reserved for contract
+      compatibility *across versions*
 - [ ] **WP-17** `flowx diff` v1 — breaking-change gate over two manifests
 - [ ] **WP-18** Scale — 200 synthetic flows within the 8 % budget, and evidence that
       the cost scales linearly
