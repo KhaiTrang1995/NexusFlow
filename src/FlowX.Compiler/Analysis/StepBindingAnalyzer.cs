@@ -77,11 +77,36 @@ namespace FlowX.Compiler.Analysis;
 /// it the other way would report a flow whose durable machinery does not exist yet.
 /// </item>
 /// </list>
+/// <para>
+/// <strong>Why the step's capability is resolved speculatively.</strong> The one thing
+/// this rule needs from the semantic model is the type each <c>.Step&lt;T&gt;()</c> names.
+/// Asking for it the obvious way — <c>GetSymbolInfo</c> on the type-argument node where it
+/// sits — makes the model bind the whole enclosing <c>Define</c> body first, because that
+/// node is inside a statement and a statement is the smallest thing Roslyn will bind. A
+/// <c>Define</c> body is a fluent chain with overload resolution and generic inference at
+/// every link and a lambda in most of them, and binding it is expensive: measured on the
+/// 200-flow synthetic solution it was <em>96 %</em> of this analyzer's entire cost. The
+/// bill falls on the first step of each flow and on no other — 4.13 ms for the first,
+/// 0.06 ms for each of the 600 that followed — which is the shape of one body being bound
+/// and then cached, not of a type lookup being slow. It is also duplicated work: the
+/// compiler binds those same bodies again when it emits, and does not share the model's
+/// copy.
+/// </para>
+/// <para>
+/// So the name is bound where it costs nothing to bind: speculatively, against the binder
+/// in scope just inside the flow class's opening brace. That binder sees exactly what a
+/// type name written inside the class sees — the file's usings and aliases, the enclosing
+/// namespaces, the class's own members and its type parameters — and a type name is the
+/// only thing being asked about. What it does not see are a method's own type parameters
+/// and its locals, and neither can name a type here: <c>Define</c> is an override with a
+/// fixed, non-generic signature, and C# has no local types. The measurement is in
+/// docs/benchmarks/B12-scale.md §5.1.
+/// </para>
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
 {
-    private const string FlowAttribute = "FlowX.FlowAttribute";
+    private const string FlowAttributeMetadataName = "FlowAttribute";
     private const string FlowBaseMetadataName = "Flow`2";
     private const string CapabilityMetadataName = "ICapability`2";
     private const string FlowXNamespace = "FlowX";
@@ -115,7 +140,7 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
     {
         if (context.Node is not ClassDeclarationSyntax declaration ||
             context.SemanticModel.GetDeclaredSymbol(declaration) is not INamedTypeSymbol flowType ||
-            !flowType.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == FlowAttribute))
+            !CarriesFlowAttribute(flowType))
         {
             return;
         }
@@ -144,7 +169,11 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
                 ? define.ParameterList.Parameters[0].Identifier.ValueText
                 : null);
 
-        Check(context, flowType, flowInput, links);
+        // Where every type argument in this flow gets bound: inside the class, outside any
+        // member body. See the class remarks — this is the whole optimisation.
+        var scope = declaration.OpenBraceToken.Span.End;
+
+        Check(context, flowType, flowInput, links, scope);
     }
 
     /// <summary>Walks the chain in declaration order, reporting steps nothing can feed.</summary>
@@ -152,7 +181,8 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
         SyntaxNodeAnalysisContext context,
         INamedTypeSymbol flowType,
         ITypeSymbol flowInput,
-        IReadOnlyList<ChainLink> links)
+        IReadOnlyList<ChainLink> links,
+        int scope)
     {
         // Two collections for one fact: the set answers "is it there", the list keeps
         // production order so the message can list what the flow *can* supply. Being told
@@ -165,7 +195,7 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
             switch (link.MethodName)
             {
                 case "Step":
-                    if (!CheckStep(context, flowType, link, available, produced))
+                    if (!CheckStep(context, flowType, link, available, produced, scope))
                     {
                         return;
                     }
@@ -173,7 +203,7 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
                     break;
 
                 case "AwaitSignal":
-                    if (!Produce(ResolvedTypeArgument(link, context.SemanticModel), available, produced))
+                    if (!Produce(ResolvedTypeArgument(link, context.SemanticModel, scope), available, produced))
                     {
                         return;
                     }
@@ -211,14 +241,15 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
         INamedTypeSymbol flowType,
         ChainLink link,
         HashSet<ISymbol> available,
-        List<ITypeSymbol> produced)
+        List<ITypeSymbol> produced,
+        int scope)
     {
         if (link.TypeArguments.Count == 0)
         {
             return false;
         }
 
-        var capability = ResolveType(link.TypeArguments[0], context.SemanticModel);
+        var capability = ResolveType(link.TypeArguments[0], context.SemanticModel, scope);
         var contract = CapabilityContract(capability);
 
         if (contract is null)
@@ -284,7 +315,7 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
         foreach (var candidate in type.AllInterfaces)
         {
             if (candidate.MetadataName != CapabilityMetadataName ||
-                candidate.ContainingNamespace?.ToDisplayString() != FlowXNamespace ||
+                !IsFlowXNamespace(candidate.ContainingNamespace) ||
                 candidate.TypeArguments.Length != 2)
             {
                 continue;
@@ -314,7 +345,7 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
         for (var current = flowType.BaseType; current is not null; current = current.BaseType)
         {
             if (current.MetadataName != FlowBaseMetadataName ||
-                current.ContainingNamespace?.ToDisplayString() != FlowXNamespace ||
+                !IsFlowXNamespace(current.ContainingNamespace) ||
                 current.TypeArguments.Length != 2)
             {
                 continue;
@@ -326,14 +357,14 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
         return null;
     }
 
-    private static ITypeSymbol? ResolvedTypeArgument(ChainLink link, SemanticModel semanticModel)
+    private static ITypeSymbol? ResolvedTypeArgument(ChainLink link, SemanticModel semanticModel, int scope)
     {
         if (link.TypeArguments.Count != 1)
         {
             return null;
         }
 
-        var type = ResolveType(link.TypeArguments[0], semanticModel);
+        var type = ResolveType(link.TypeArguments[0], semanticModel, scope);
 
         return type is not null && IsResolved(type) ? type : null;
     }
@@ -349,9 +380,72 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
     private static bool IsResolved(ITypeSymbol type) =>
         type.TypeKind != TypeKind.Error && type is not ITypeParameterSymbol;
 
-    private static ITypeSymbol? ResolveType(TypeSyntax syntax, SemanticModel semanticModel) =>
-        semanticModel.GetSymbolInfo(syntax).Symbol as ITypeSymbol
-        ?? semanticModel.GetTypeInfo(syntax).Type;
+    /// <summary>
+    /// The type a <c>.Step&lt;T&gt;()</c> type argument names, bound at <paramref name="scope"/>.
+    /// </summary>
+    /// <param name="syntax">The type argument as written.</param>
+    /// <param name="semanticModel">The model for the tree it was written in.</param>
+    /// <param name="scope">A position inside the flow class but outside any member body.</param>
+    /// <remarks>
+    /// <para>
+    /// The name is re-parsed rather than passed in as it stands, because a speculative bind
+    /// is defined over an expression that is <em>not</em> part of the tree being asked
+    /// about. Handing back a node that <em>is</em> part of it asks the model for the
+    /// meaning that node already has, which is the route through the enclosing method body
+    /// this exists to avoid. Re-parsing a type name a few identifiers long is what that
+    /// costs, and it is small: parse and bind together measured ~0.05 ms per step, against
+    /// the 4.13 ms the direct call cost on the first step of every flow.
+    /// </para>
+    /// <para>
+    /// The <c>GetSpeculativeTypeInfo</c> fallback mirrors the <c>GetTypeInfo</c> one it
+    /// replaces, and reaches the same answers. A name that binds to nothing yields
+    /// <c>null</c> from the first call and an error type from the second, and both are
+    /// refused downstream — by <see cref="CapabilityContract"/>, which finds no interfaces
+    /// on either, and by <see cref="IsResolved"/>, which rejects error types.
+    /// </para>
+    /// </remarks>
+    private static ITypeSymbol? ResolveType(TypeSyntax syntax, SemanticModel semanticModel, int scope)
+    {
+        var speculative = SyntaxFactory.ParseTypeName(syntax.ToString());
+
+        return semanticModel
+                   .GetSpeculativeSymbolInfo(scope, speculative, SpeculativeBindingOption.BindAsTypeOrNamespace)
+                   .Symbol as ITypeSymbol
+               ?? semanticModel
+                   .GetSpeculativeTypeInfo(scope, speculative, SpeculativeBindingOption.BindAsTypeOrNamespace)
+                   .Type;
+    }
+
+    /// <summary>Whether the type carries <c>[Flow]</c>.</summary>
+    /// <remarks>
+    /// Metadata name and namespace rather than <c>ToDisplayString()</c>, which this ran on
+    /// every attribute of every class in the compilation and which builds a string to throw
+    /// away. The <c>ContainingType</c> test is what keeps the two spellings equal: a nested
+    /// <c>FlowX.Something.FlowAttribute</c> displays as its full path and never matched.
+    /// </remarks>
+    private static bool CarriesFlowAttribute(INamedTypeSymbol flowType)
+    {
+        foreach (var attribute in flowType.GetAttributes())
+        {
+            if (attribute.AttributeClass is { ContainingType: null } attributeClass &&
+                attributeClass.MetadataName == FlowAttributeMetadataName &&
+                IsFlowXNamespace(attributeClass.ContainingNamespace))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Whether this is the top-level <c>FlowX</c> namespace.</summary>
+    /// <remarks>
+    /// Exactly what <c>ContainingNamespace?.ToDisplayString() == "FlowX"</c> asked, without
+    /// the string: that display is the dotted path from the global namespace, so equality
+    /// with a one-segment name says the segment is <c>FlowX</c> and its parent is global.
+    /// </remarks>
+    private static bool IsFlowXNamespace(INamespaceSymbol? candidate) =>
+        candidate is { Name: FlowXNamespace } && candidate.ContainingNamespace is { IsGlobalNamespace: true };
 
     /// <summary>
     /// How a type is named in the message.
