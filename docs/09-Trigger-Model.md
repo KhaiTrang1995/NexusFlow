@@ -1,0 +1,347 @@
+# 09 — Trigger Model
+
+> **Status:** Accepted · **Audience:** application engineers, plugin authors
+> **Answers:** how does one abstraction serve HTTP, brokers, cron, streams and agents?
+
+---
+
+## 1. The premise
+
+Every activation mechanism reduces to the same three facts:
+
+1. Something happened, at a point in time.
+2. It carries a payload and some headers.
+3. It expects a flow to run — with a delivery guarantee and possibly a reply.
+
+FlowX normalises all of it into one envelope, then never lets the flow see it.
+
+```mermaid
+flowchart LR
+    subgraph sources["Sources"]
+        H["HTTP / gRPC / GraphQL"]
+        B["Kafka / RabbitMQ / SB / MQTT / SQS"]
+        C["Cron / interval / one-shot"]
+        S["Streams / change feeds"]
+        F["File watcher / blob"]
+        A["AI agent (MCP)"]
+        X["CLI / operator replay"]
+    end
+    H & B & C & S & F & A & X --> N["Trigger Engine<br/>normalise · admit · dedupe · bind"]
+    N --> FL["Flow"]
+    FL --> R{"Reply expected?"}
+    R -- yes --> RESP["Transport-specific response<br/>HTTP 200 · gRPC status · agent result"]
+    R -- no --> ACK["Ack / commit offset / mark complete"]
+```
+
+---
+
+## 2. The envelope
+
+```csharp
+public readonly record struct TriggerEnvelope(
+    TriggerKind Kind,
+    string Source,                     // "POST /api/v1/orders" | "kafka:orders.requested[3]"
+    ReadOnlyMemory<byte> Body,
+    TriggerHeaders Headers,
+    DateTimeOffset OccurredAt);
+
+public readonly record struct TriggerHeaders(
+    CorrelationId Correlation,         // created if absent; always propagated
+    TenantId? Tenant,
+    ClaimsPrincipal? Principal,
+    string? IdempotencyKey,
+    DateTimeOffset? Deadline,
+    ActivityContext TraceContext,      // W3C traceparent, continued not restarted
+    IReadOnlyDictionary<string, string>? Extensions);
+```
+
+Header propagation is uniform: an HTTP `traceparent`, a Kafka header, and an MQTT
+user property all land in the same field, so a trace spans transports without
+any user code.
+
+---
+
+## 3. Declaring triggers
+
+```csharp
+[Flow("order.place", Profile = ExecutionProfile.Durable)]
+[HttpTrigger("POST", "/api/v1/orders", Idempotent = true, Version = "v1")]
+[KafkaTrigger("orders.requested", Group = "order-placement", StartFrom = Offset.Committed)]
+[CronTrigger("0 2 * * *", TimeZone = "Europe/Berlin", Overlap = OverlapPolicy.Skip)]
+[AgentTrigger(Description = "Place a customer order with payment and inventory reservation")]
+public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult> { … }
+```
+
+Four transports, zero changes to the flow body. **This is quality goal Q4, and it
+is the single most visible benefit of the model.**
+
+---
+
+## 4. Trigger kinds and their semantics
+
+| Kind | Delivery | Reply | Ordering | Failure handling |
+|---|---|---|---|---|
+| `Http` | at-most-once | yes, synchronous | none | RFC 7807 + `Retry-After`; caller retries |
+| `Grpc` | at-most-once | yes, sync or stream | per-stream | status code mapping |
+| `Bus` | at-least-once | optional (reply-to) | per partition/key | retry → DLQ after N |
+| `Stream` | at-least-once + checkpoint | no | per partition | pause → retry → poison topic |
+| `Schedule` | at-least-once | no | none | missed-fire policy |
+| `Change` | at-least-once | no | per key | retry → DLQ |
+| `Agent` | at-most-once | yes | none | structured refusal or error |
+| `Cli` / `Manual` | at-most-once | yes | none | surfaced to the operator |
+
+---
+
+## 5. Admission control
+
+Before a flow is created, the Trigger Engine runs a fixed admission sequence.
+This is the platform's outer defence, and it is the same for every transport.
+
+```mermaid
+flowchart TD
+    E["Envelope arrives"] --> A1{"Flow exists and<br/>trigger is bound?"}
+    A1 -- no --> R1["404 / DLQ · flowx_trigger_unbound_total"]
+    A1 -- yes --> A2{"Payload within<br/>size limit?"}
+    A2 -- no --> R2["413 / DLQ"]
+    A2 -- yes --> A3{"Tenant resolved<br/>and active?"}
+    A3 -- no --> R3["400 / DLQ · audit"]
+    A3 -- yes --> A4{"Tenant quota<br/>and rate limit OK?"}
+    A4 -- no --> R4["429 + Retry-After · backpressure upstream"]
+    A4 -- yes --> A5{"Idempotency key<br/>seen before?"}
+    A5 -- yes --> R5["Return recorded result · no re-execution"]
+    A5 -- no --> A6{"Input binds and<br/>validates?"}
+    A6 -- no --> R6["400 RFC7807 with field errors"]
+    A6 -- yes --> OK["Create flow instance · execute"]
+```
+
+Admission happens **before** the flow instance exists, so a rejected request
+costs no journal write, no context allocation and no capability resolution.
+
+---
+
+## 6. HTTP trigger
+
+```csharp
+[HttpTrigger("POST", "/api/v1/orders", Idempotent = true)]
+```
+
+Generated: the endpoint, the model binder, the OpenAPI operation, the RFC 7807
+error mapping and the idempotency filter.
+
+### API contract (generated, shown for review)
+
+| Method & Path | Purpose | Auth | Idempotency | Success | Errors |
+|---|---|---|---|---|---|
+| `POST /api/v1/orders` | run `order.place` | Bearer (from capability stance) | `Idempotency-Key` **required** | 200 + result | 400 validation, 401, 403, 409 conflict, 429 quota, 503 unavailable |
+| `GET /api/v1/orders/{id}` | run `order.get` | Bearer | n/a (safe) | 200 | 404 |
+| `GET /api/v1/flows/{instanceId}` | instance status | operator scope | n/a | 200 | 404 |
+| `POST /api/v1/flows/{instanceId}/signals/{name}` | deliver a signal | Bearer | natural (state machine) | 202 | 404, 409 not suspended |
+
+```jsonc
+// POST /api/v1/orders  → 200
+{ "orderId": "01HV8…", "paymentReference": "pay_9f2…" }
+
+// Any error — RFC 7807, always, on every transport that has a body
+{ "type":  "https://errors.acme.com/inventory.out_of_stock",
+  "title": "Out of stock",
+  "status": 409,
+  "detail": "SKU-1 has 0 available, 2 requested",
+  "instance": "/api/v1/orders",
+  "traceId": "00-4bf92f…-01",
+  "flowInstanceId": "fi_01HV8…" }
+```
+
+Long-running durable flows return `202 Accepted` with a `Location` header
+pointing at the instance resource, rather than holding the connection open.
+
+---
+
+## 7. Bus trigger
+
+```csharp
+[KafkaTrigger("orders.requested",
+    Group = "order-placement",
+    StartFrom = Offset.Committed,
+    MaxInFlight = 32,
+    DeadLetter = "orders.requested.dlq")]
+```
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant K as Kafka
+    participant P as FlowX.Kafka
+    participant TE as Trigger Engine
+    participant FE as Flow Engine
+    participant DLQ as orders.requested.dlq
+
+    K->>P: record (partition 3, offset 1042)
+    P->>TE: envelope (key → tenant, headers → trace)
+    TE->>FE: execute order.place
+    alt success
+        FE-->>P: completed
+        P->>K: commit offset 1042
+    else retryable failure
+        FE-->>P: Error{Unavailable}
+        P->>P: in-memory retry per policy (partition paused)
+        P->>K: still uncommitted — redelivery on rebalance is safe
+    else terminal failure (Validation / NotFound)
+        FE-->>P: Error{Validation}
+        P->>DLQ: publish with original headers + error + traceId
+        P->>K: commit offset (poison message does not block the partition)
+    end
+```
+
+Offsets are committed **after** flow completion. Combined with capability
+idempotency this yields effectively-once processing. A terminal error is
+dead-lettered rather than retried forever — head-of-line blocking is a bug, not
+a durability strategy.
+
+---
+
+## 8. Schedule trigger
+
+```csharp
+[CronTrigger("0 2 * * *", TimeZone = "Europe/Berlin",
+    Overlap = OverlapPolicy.Skip, MissedFire = MissedFirePolicy.RunOnce)]
+```
+
+| Option | Values | Meaning |
+|---|---|---|
+| `Overlap` | `Skip` \| `Queue` \| `Concurrent` | what happens when the previous run is still going |
+| `MissedFire` | `Skip` \| `RunOnce` \| `RunAll` | behaviour after downtime |
+| `TimeZone` | IANA id | DST-correct; a schedule without a zone is UTC |
+| `Jitter` | duration | spreads load across replicas and tenants |
+
+The Scheduler Engine is **leader-elected** using the same lease store as durable
+flows. Two replicas never fire the same schedule; a dead leader is replaced
+within the lease TTL. Schedules are per-tenant when the flow is tenant-scoped.
+
+---
+
+## 9. Stream trigger
+
+```csharp
+[Flow("telemetry.aggregate", Profile = ExecutionProfile.Streaming)]
+[StreamTrigger("device.telemetry", Window = "tumbling:1m", Lateness = "10s",
+    Checkpoint = "PT5S", Parallelism = 8)]
+public sealed partial class AggregateTelemetryFlow : Flow<TelemetryBatch, Aggregate>
+{
+    protected override void Define(IFlowBuilder<TelemetryBatch, Aggregate> flow) => flow
+        .Window(w => w.Tumbling(TimeSpan.FromMinutes(1)).AllowLateness(TimeSpan.FromSeconds(10)))
+        .Aggregate<DeviceStats>((acc, r) => acc.Add(r))
+        .Step<PersistAggregate>()
+        .Emit<AggregateComputed>();
+}
+```
+
+| Window | Semantics |
+|---|---|
+| `Tumbling(d)` | fixed, non-overlapping |
+| `Sliding(size, advance)` | overlapping |
+| `Session(gap)` | activity-bounded |
+| `Global` | unbounded with explicit triggers |
+
+Watermarks drive window closure; records later than `Lateness` are routed to a
+side output rather than dropped silently. Backpressure per
+[06 §10](06-Execution-Engine.md#10-backpressure-streaming-profile).
+
+---
+
+## 10. Agent trigger
+
+```csharp
+[AgentTrigger(Description = "Place a customer order with payment and inventory reservation",
+              Confirmation = ConfirmationMode.RequiredForSideEffects)]
+```
+
+The compiler emits an MCP tool descriptor from the flow's input contract — the
+same JSON Schema that drives OpenAPI. The agent surface is therefore **exactly**
+the flow surface, with the same authorisation.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant LLM as Agent
+    participant MCP as FlowX.Ai (MCP server)
+    participant TE as Trigger Engine
+    participant PE as Policy Engine
+    participant FE as Flow Engine
+    participant U as Human
+
+    LLM->>MCP: tools/call order.place {…}
+    MCP->>TE: envelope (Kind=Agent, principal = agent identity)
+    TE->>PE: admission + authorisation
+    alt agent identity lacks the permission
+        PE-->>MCP: Forbidden
+        MCP-->>LLM: structured refusal {code, required permission}
+    else side effects require confirmation
+        MCP->>U: confirmation prompt with declared side effects
+        U-->>MCP: approve
+        MCP->>FE: execute
+        FE-->>LLM: typed result
+    end
+```
+
+Two properties matter here and both fall out of the model for free:
+
+- **An agent cannot reach anything a human could not reach.** Authorisation is on
+  the capability, not the transport (P11).
+- **The agent sees declared side effects** (`SideEffects` in the capability
+  attribute), so confirmation prompts are accurate rather than blanket. See
+  [13-AI-Native](13-AI-Native.md) and [15-Security §7](15-Security.md).
+
+---
+
+## 11. Writing a trigger plugin
+
+```csharp
+public interface ITriggerSource
+{
+    TriggerKind Kind { get; }
+    ValueTask StartAsync(ITriggerSink sink, CancellationToken ct);
+    ValueTask StopAsync(CancellationToken ct);          // must drain, not drop
+}
+
+public interface ITriggerSink
+{
+    ValueTask<FlowResult> DispatchAsync(in TriggerEnvelope envelope, CancellationToken ct);
+}
+```
+
+Every trigger plugin must pass `FlowX.Conformance.Tests`:
+
+| Conformance test | Asserts |
+|---|---|
+| `PropagatesTraceContext` | W3C trace continues across the transport |
+| `PropagatesTenantAndPrincipal` | identity survives normalisation |
+| `HonoursBackpressure` | a slow sink slows the source, memory stays bounded |
+| `DrainsOnShutdown` | no message lost or double-processed on SIGTERM |
+| `DeadLettersTerminalErrors` | `Validation`/`NotFound` are not retried forever |
+| `RespectsDeadline` | envelope deadline is enforced |
+| `IsIdempotencyAware` | duplicate keys return the recorded result |
+
+Publishing a plugin without a passing conformance run is a release-blocking
+failure ([17-Plugin-System](17-Plugin-System.md)).
+
+---
+
+## 12. Known limits of the abstraction
+
+Honest non-goals — see risk R3 in [05 §11](05-Architecture.md#11-risks-and-technical-debt):
+
+| Transport feature | Status | Escape hatch |
+|---|---|---|
+| Kafka rebalance callbacks | not in the universal model | plugin options, outside the flow |
+| HTTP response streaming (SSE, chunked) | v1.1 via `Flow<TIn, IAsyncEnumerable<T>>` | raw ASP.NET Core endpoint alongside |
+| MQTT QoS 2 exactly-once | mapped to at-least-once + idempotency | plugin option |
+| gRPC bidirectional streaming | v1.2 | raw gRPC service alongside |
+| Broker-native transactions | not modelled | outbox pattern |
+
+FlowX aims to make 95 % of integrations uniform, not to make the last 5 %
+impossible. When you need the raw transport, use it — next to a FlowX flow, not
+inside one.
+
+---
+
+**Next:** [10 — Policy Framework](10-Policy-Framework.md)
