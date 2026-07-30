@@ -452,7 +452,7 @@ maintainability and scale, not features.
 | Generator snapshot tests | **Done** at WP-5 and extended since |
 | Readable emitted code | **Done** — on disk under `obj/generated`, with per-step `#line` directives (fixed at WP-10) |
 | Build-overhead budget B12 | **Done** at WP-14. **+0.4 %** against +8 % |
-| *Should:* `flowx diff` v1 | **WP-17**, open |
+| *Should:* `flowx diff` v1 | **WP-17**, done |
 | *Should:* IDE code fixes | **WP-19**, open |
 
 **Exit criteria, from the roadmap:**
@@ -514,6 +514,32 @@ silent on the explicit-mapping overload, which is the fix it recommends.
 | **Deliverable** | `flowx diff --old --new`, text and JSON output, non-zero exit on a breaking change |
 | **Exit** | Removing a capability, narrowing a contract, or loosening an authorisation stance each fail; a line-number change does not |
 | **Depends on** | WP-6, WP-9 |
+| **Status** | **Done.** 29 rules; wired into CI against a committed baseline. |
+
+**The compatibility unit is `id@major`, not `id@version`.** Exact-version keying reports
+a patch bump as a removal plus an addition; identity-only keying lets two side-by-side
+majors collide and hides a real removal. Keying on the major gets both right, and
+removes any "was the version bumped?" waiver — bumping the major *is* publishing a new
+contract, and deleting the old one is what breaks people.
+
+Three classifications worth recording, because each could reasonably have gone the other
+way:
+
+- **`[Sensitive]` is asymmetric.** Marking a member is *additive* — a gate that failed
+  the build when an engineer marks a password teaches engineers not to mark passwords.
+  Un-marking is *breaking*, and the more serious half: the value then reaches logs,
+  traces and a journal retained for the replay window, with no signature change to catch
+  it.
+- **Both directions of an authorisation change are breaking**, under separate codes.
+  Relaxing is a security regression. Tightening is the right change and still denies
+  callers that worked yesterday — the gate is not saying it is wrong, it is saying that
+  shipping it unannounced turns a security improvement into an outage.
+- **Adding a side effect is breaking.** Nothing about the call changes, but
+  `sideEffects` is what blast-radius review reads and what decides whether an agent
+  confirms before invoking a tool. Every assessment made against the baseline is stale.
+
+Deliberately never reported: `source` file:line, `application.version`, a flow's steps,
+and array order. A gate that fires on every build is a gate people delete.
 
 ### WP-18 — Scale: 200 flows
 
