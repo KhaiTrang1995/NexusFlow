@@ -38,6 +38,20 @@
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false"
                       Condition="'$(FlowXGeneratorDisabled)' != 'true'" />
+
+    <!--
+      The code fixes, referenced the same way for the same reason. They contribute
+      nothing to a command-line build — a CodeFixProvider only runs when a host asks it
+      for quick actions — so this is not about what the sample compiles to. It is the
+      only place in the repository where the fixes are handed to a real csc invocation
+      alongside the analyzer, which is what proves the assembly loads in a host that
+      does NOT supply Workspaces. That is the failure the split exists to avoid, and it
+      is silent when it happens.
+    -->
+    <ProjectReference Include="../../src/FlowX.Compiler.CodeFixes/FlowX.Compiler.CodeFixes.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      Condition="'$(FlowXGeneratorDisabled)' != 'true'" />
   </ItemGroup>
 
   <!--
