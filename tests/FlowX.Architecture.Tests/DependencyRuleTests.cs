@@ -152,22 +152,69 @@ public sealed class DependencyRuleTests
     }
 
     /// <summary>
-    /// Constraint C2: every shipped package must stay NativeAOT- and trim-compatible,
-    /// which is only enforceable if the analyzers are actually switched on.
+    /// Constraint C2: every shipped <em>runtime</em> package must stay NativeAOT- and
+    /// trim-compatible, which is only enforceable if the analyzers are switched on.
     /// </summary>
+    /// <remarks>
+    /// Roslyn components are exempt, and the exemption is narrow on purpose. An
+    /// analyzer or source generator loads into the compiler process, targets
+    /// netstandard2.0 and never ships inside the user's application — NativeAOT has no
+    /// meaning for it. The exemption is keyed on <c>&lt;IsRoslynComponent&gt;</c>
+    /// rather than on a project name, so it cannot be claimed by a runtime assembly
+    /// that simply wants the warning to go away.
+    /// <para>
+    /// This rule originally had no exemption and failed the moment FlowX.Compiler
+    /// arrived. The rule was wrong, not the project: it conflated "shipped" with
+    /// "shipped into the user's process".
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void EveryShippedProjectIsAotAnalyzed()
+    public void EveryShippedRuntimeProjectIsAotAnalyzed()
     {
-        // Directory.Build.props sets these for all of src/. This test guards against a
-        // project quietly opting out to silence a warning.
         foreach (var project in RepositoryLayout.SourceProjects)
         {
             var content = File.ReadAllText(project.FullName);
 
+            if (content.Contains("<IsRoslynComponent>true</IsRoslynComponent>", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             content.Contains("<IsAotCompatible>false</IsAotCompatible>", StringComparison.OrdinalIgnoreCase)
                 .ShouldBeFalse(
                     $"{project.Name} opts out of AOT compatibility, which constraint C2 forbids " +
-                    "for shipped packages. Fix the warning instead of disabling the analyzer.");
+                    "for packages that ship into a user's process. Fix the warning instead of " +
+                    "disabling the analyzer. If this is a Roslyn component, declare " +
+                    "<IsRoslynComponent>true</IsRoslynComponent>.");
+        }
+    }
+
+    /// <summary>
+    /// A Roslyn component must target netstandard2.0, or it silently does nothing in
+    /// Visual Studio.
+    /// </summary>
+    /// <remarks>
+    /// The failure mode is the reason this is a test. A generator built for net10.0
+    /// loads fine under <c>dotnet build</c> and never runs inside VS, so the code it
+    /// should have produced is simply absent — and the developer sees "type not found"
+    /// with no explanation anywhere.
+    /// </remarks>
+    [Fact]
+    public void RoslynComponentsTargetNetStandard20()
+    {
+        foreach (var project in RepositoryLayout.SourceProjects)
+        {
+            var content = File.ReadAllText(project.FullName);
+
+            if (!content.Contains("<IsRoslynComponent>true</IsRoslynComponent>", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            content.Contains("<TargetFramework>netstandard2.0</TargetFramework>", StringComparison.OrdinalIgnoreCase)
+                .ShouldBeTrue(
+                    $"{project.Name} is a Roslyn component but does not target netstandard2.0. " +
+                    "It will load under `dotnet build` and do nothing in Visual Studio.");
         }
     }
 }

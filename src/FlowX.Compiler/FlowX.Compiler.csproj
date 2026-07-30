@@ -1,0 +1,68 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      netstandard2.0, not net10.0. Roslyn analyzers and source generators load into
+      the compiler process, which runs on .NET Framework inside Visual Studio and on
+      .NET Core inside `dotnet build`. netstandard2.0 is the only target that loads in
+      both. This is a hard constraint, not a preference — a net10.0 generator silently
+      does nothing in VS.
+
+      The consequence worth understanding: this project CANNOT reference FlowX.Core.
+      It emits source text that references FlowX.Core; it never links against it. So
+      the model layer here is deliberately its own thing rather than a reuse of
+      StepGraph and friends.
+    -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>false</ImplicitUsings>
+
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+
+    <Description>
+      FlowX compile-time orchestration: analyzers and the source generator that turn a
+      Define method into an ExecutionPlan and a step dispatcher.
+    </Description>
+    <PackageTags>flowx;roslyn;source-generator;analyzer</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- Analyzers ship as an analyzer asset, not as a library reference. -->
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+
+    <!-- netstandard2.0 has no trim/AOT story and needs none: this runs in the compiler. -->
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Pinned to the oldest Roslyn the generator must support, not the newest available.
+      Referencing a newer API than the host compiler provides is the classic way to
+      ship a generator that throws MissingMethodException on someone else's machine.
+    -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Release tracking. RS2007/RS2008 refuse to build unless every diagnostic id is
+      listed, which turns adding or changing a rule into a reviewable diff instead of
+      something that shows up in someone's build one morning. A diagnostic id is part
+      of the public surface (constraint C7) because teams write suppressions against it.
+    -->
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+</Project>

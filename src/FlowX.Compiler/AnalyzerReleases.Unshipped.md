@@ -1,0 +1,23 @@
+; Analyzer release tracking. Roslyn's RS2007/RS2008 rules require every diagnostic
+; to be listed here before it can be raised, which makes adding, changing or removing
+; a rule a reviewable diff rather than something that appears in someone's build one
+; morning. Constraint C7 says the public surface is a forever commitment; a diagnostic
+; id is part of that surface, because teams write suppressions against it.
+;
+; On release, these move to AnalyzerReleases.Shipped.md under a version heading.
+
+### New Rules
+
+Rule ID | Category | Severity | Notes
+--------|----------|----------|-------
+FLOWX1001 | FlowX | Error | Flow must be partial. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1001.md)
+FLOWX1002 | FlowX | Error | Step type is not a capability. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1002.md)
+FLOWX1003 | FlowX | Error | Capability references a transport. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1003.md)
+FLOWX1004 | FlowX | Error | Capability invokes another capability. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1004.md)
+FLOWX1005 | FlowX | Error | Flow inherits from another flow. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1005.md)
+FLOWX1010 | FlowX | Error | Capability does not declare an authorisation stance. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1010.md)
+FLOWX1014 | FlowX | Error | Retry requires an idempotent capability. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1014.md)
+FLOWX1015 | FlowX | Error | Capability implements more than one contract. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1015.md)
+FLOWX1017 | FlowX | Error | AwaitSignal requires the Durable profile. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1017.md)
+FLOWX1018 | FlowX | Error | Cache requires a capability with no side effects. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1018.md)
+FLOWX1023 | FlowX | Error | Flow declares no steps. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1023.md)

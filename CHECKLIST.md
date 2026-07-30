@@ -6,8 +6,8 @@
 >
 > **Last updated:** 2026-07-30 · **Phase:** P0 · **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 165/165 passing ·
-> **Coverage:** 94.5 % line / 86.6 % branch (gates: 80 / 75) · **SDK:** 10.0.110
+> **Build:** 0 warnings, 0 errors · **Tests:** 189/189 passing ·
+> **Coverage:** 94.4 % line / 92.9 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **B1:** 4-step flow through the engine — **169 ns / 5 000 ns budget, 0 B** ·
 > **B3:** dispatch 20 ns / 150 ns, 0 B · **B2:** hard zero, met
 >
@@ -42,6 +42,7 @@ These gate everything below them. None is code work.
 
 - [x] 20 specification documents, `docs/01` – `docs/20`
 - [x] 13 ADRs with trade-offs stated (ADR-0013 added by the first compilation)
+- [ ] `docs/diagnostics/FLOWX####.md` — one page per diagnostic; the help URIs point at these and they do not exist yet
 - [x] `docs/benchmarks/` — baseline, gate policy, and the honest caveats
 - [x] 9 sample application specifications
 - [x] `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE` (Apache-2.0)
@@ -103,7 +104,8 @@ Verified by `dotnet build -c Release` with `TreatWarningsAsErrors`, and by the
 - [x] `AbstractionsHasNoDependencies` — reads the `.csproj`
 - [x] `LayersPointInward`
 - [x] `RuntimeDoesNotReferenceAnyPlugin`
-- [x] `EveryShippedProjectIsAotAnalyzed`
+- [x] `EveryShippedRuntimeProjectIsAotAnalyzed` — exempts Roslyn components
+- [x] `RoslynComponentsTargetNetStandard20`
 - [x] `ResultIsAnAllocationFreeValueType`
 - [x] `ErrorCategoryRemainsClosed`
 - [x] `TerminalCategoriesAreNeverRetried`
@@ -121,7 +123,8 @@ Verified by `dotnet build -c Release` with `TreatWarningsAsErrors`, and by the
 - [ ] `CrossTenantAccessIsDenied`
 - [ ] `RedactionCannotBeBypassed`
 - [ ] `NoPermissiveDefaults`
-- [ ] `EveryDiagnosticIsHelpful`
+- [x] `EveryDiagnosticIsHelpful` — in `FlowX.Compiler.Tests`, beside what it governs
+- [x] `ModelLayerHasNoRoslynDependency` / `EmitLayerHasNoRoslynDependency` — the R1 mitigation
 
 ---
 
@@ -170,7 +173,7 @@ immutable, and rejects every invariant violation under test.
 | Branch coverage | ≥ 75 % | **86.6 %** ✅ | verified locally |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
-| Fitness functions | all green | **30/30** ✅ | verified locally |
+| Fitness functions | all green | **31/31** ✅ | verified locally |
 | Concurrent cross-tenant leak | none | **none** ✅ | 64 concurrent flows, 0 overlaps |
 | SAST findings | 0 | **wired, unrun** — needs a CI run | WP-0 |
 | DAST findings | 0 | **wired, guarded** — needs WP-10 | WP-0 |
