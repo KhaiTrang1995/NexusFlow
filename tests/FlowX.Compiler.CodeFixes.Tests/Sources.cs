@@ -22,12 +22,15 @@ internal static class Sources
     /// <summary>
     /// The flow document. <paramref name="declaration"/> replaces the modifiers and the
     /// <c>class</c> keyword; <paramref name="flowAttribute"/> replaces the whole
-    /// <c>[Flow(...)]</c> attribute; <paramref name="steps"/> replaces the chain body.
+    /// <c>[Flow(...)]</c> attribute; <paramref name="steps"/> replaces the chain body;
+    /// <paramref name="returnProjection"/> replaces the <c>Return</c> lambda, which
+    /// FLOWX1011 reads as well as the chain above it.
     /// </summary>
     public static string Flow(
         string declaration = "public sealed partial class",
         string flowAttribute = """[Flow("order.place")]""",
-        string steps = ".Step<ReserveInventory>()") =>
+        string steps = ".Step<ReserveInventory>()",
+        string returnProjection = """ctx => new OrderResult("id")""") =>
         $$"""
         using System;
         using FlowX;
@@ -39,7 +42,7 @@ internal static class Sources
         {
             protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
                 {{steps}}
-                .Return(ctx => new OrderResult("id"));
+                .Return({{returnProjection}});
         }
 
         """;

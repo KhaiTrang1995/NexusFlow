@@ -27,6 +27,15 @@ namespace FlowX.Compiler.CodeFixes;
 /// rewriting the flow's graph on the developer's behalf.
 /// </para>
 /// <para>
+/// <strong>It follows the diagnostic wherever the diagnostic goes.</strong> FLOWX1011
+/// covers every <c>IFlowBuilder</c> delegate that takes the flow context — the
+/// <c>Switch</c> selector, the <c>Return</c> projection, the <c>Emit</c> maps, the step
+/// input mappings — and the rewrite is identical at all of them, because the parameter
+/// being rewritten onto is the same <c>FlowContext&lt;TIn&gt;</c> in each. Nothing here
+/// enumerates those methods; it asks only whether the enclosing call is on the builder,
+/// so a construct the analyzer learns next is fixable on the day it is reported.
+/// </para>
+/// <para>
 /// <strong>Every rewrite is type-exact, which is the bar for offering it at all.</strong>
 /// <c>DateTimeOffset.UtcNow</c> and <c>ctx.UtcNow</c> are the same type;
 /// <c>Guid.NewGuid()</c> and <c>ctx.NewId()</c> are the same type; <c>Random.Shared</c>
@@ -57,7 +66,6 @@ public sealed class PredicatePurityCodeFixProvider : CodeFixProvider
     private const string DiagnosticId = "FLOWX1011";
     private const string FlowBuilderMetadataName = "IFlowBuilder`2";
     private const string FlowXNamespace = "FlowX";
-    private const string WhenMethodName = "When";
     private const string Discard = "_";
 
     /// <summary>
@@ -155,13 +163,31 @@ public sealed class PredicatePurityCodeFixProvider : CodeFixProvider
     }
 
     /// <summary>
-    /// The name of the context parameter of the <c>When</c> predicate this node sits in.
+    /// The name of the context parameter of the builder delegate this node sits in.
     /// </summary>
     /// <remarks>
-    /// The <em>outermost</em> lambda in the predicate argument, not the nearest one: a
-    /// read inside <c>.Any(line =&gt; …)</c> must still be rewritten onto the context, and
-    /// naming <c>line</c> would produce something that does not compile. Returns
-    /// <c>null</c> for a discarded parameter, which cannot be referenced at all.
+    /// <para>
+    /// The <em>outermost</em> lambda inside the builder call, not the nearest one: a read
+    /// inside <c>.Any(line =&gt; …)</c> must still be rewritten onto the context, and
+    /// naming <c>line</c> would produce something that does not compile. The walk stops at
+    /// the first enclosing <c>IFlowBuilder&lt;,&gt;</c> call, so the outermost lambda
+    /// <em>of that call</em> is what is named — which is what makes a <c>.Return(…)</c>
+    /// nested inside a <c>.When(…)</c> branch name its own parameter rather than the
+    /// branch's.
+    /// </para>
+    /// <para>
+    /// It holds for a projection exactly as it did for a predicate, and for the same
+    /// reason: what matters is that the lambda's parameter <em>is</em> the
+    /// <c>FlowContext&lt;TIn&gt;</c>, which is true of every delegate FLOWX1011 covers —
+    /// they differ only in what they return. So this deliberately does not repeat the
+    /// analyzer's table of covered methods. It cannot: the two live in separate assemblies
+    /// with no reference between them, and a copied table is a table that drifts. Asking
+    /// only "is the enclosing call on the flow builder" is both sufficient and immune to
+    /// the analyzer growing a row.
+    /// </para>
+    /// <para>
+    /// Returns <c>null</c> for a discarded parameter, which cannot be referenced at all.
+    /// </para>
     /// </remarks>
     private static string? PredicateParameterOf(
         SyntaxNode node,
@@ -170,21 +196,41 @@ public sealed class PredicatePurityCodeFixProvider : CodeFixProvider
     {
         for (var current = node.Parent; current is not null; current = current.Parent)
         {
-            if (current is not InvocationExpressionSyntax invocation || !IsBuilderWhen(invocation, model, cancellationToken))
+            if (current is not InvocationExpressionSyntax invocation || !IsBuilderCall(invocation, model, cancellationToken))
             {
                 continue;
             }
 
-            if (invocation.ArgumentList.Arguments.Count == 0 ||
-                invocation.ArgumentList.Arguments[0].Expression is not LambdaExpressionSyntax predicate ||
-                !predicate.Span.Contains(node.Span))
+            var lambda = ContextLambdaAround(invocation, node);
+
+            if (lambda is null)
             {
                 return null;
             }
 
-            var name = ParameterName(predicate);
+            var name = ParameterName(lambda);
 
             return name == Discard ? null : name;
+        }
+
+        return null;
+    }
+
+    /// <summary>The builder call's own argument lambda containing <paramref name="node"/>.</summary>
+    /// <remarks>
+    /// By argument rather than by index, so a named argument and a delegate that is not
+    /// the first parameter both resolve — the analyzer reports against a parameter
+    /// position it looks up on the method symbol, and hard-coding <c>0</c> here would make
+    /// the fix disappear exactly where the diagnostic still appears.
+    /// </remarks>
+    private static LambdaExpressionSyntax? ContextLambdaAround(InvocationExpressionSyntax invocation, SyntaxNode node)
+    {
+        foreach (var argument in invocation.ArgumentList.Arguments)
+        {
+            if (argument.Expression is LambdaExpressionSyntax lambda && lambda.Span.Contains(node.Span))
+            {
+                return lambda;
+            }
         }
 
         return null;
@@ -203,19 +249,18 @@ public sealed class PredicatePurityCodeFixProvider : CodeFixProvider
         }
     }
 
-    private static bool IsBuilderWhen(
+    /// <summary>Whether the invocation is any method declared on <c>IFlowBuilder&lt;,&gt;</c>.</summary>
+    /// <remarks>
+    /// Resolved semantically, never by identifier: another library's <c>When</c> or
+    /// <c>Switch</c> must not attract a quick action that rewrites its lambda onto a
+    /// context it does not have.
+    /// </remarks>
+    private static bool IsBuilderCall(
         InvocationExpressionSyntax invocation,
         SemanticModel model,
-        CancellationToken cancellationToken)
-    {
-        if (invocation.Expression is not MemberAccessExpressionSyntax member ||
-            member.Name.Identifier.ValueText != WhenMethodName)
-        {
-            return false;
-        }
-
-        return model.GetSymbolInfo(invocation, cancellationToken).Symbol is IMethodSymbol method &&
-               method.ContainingType?.MetadataName == FlowBuilderMetadataName &&
-               method.ContainingType.ContainingNamespace?.ToDisplayString() == FlowXNamespace;
-    }
+        CancellationToken cancellationToken) =>
+        invocation.Expression is MemberAccessExpressionSyntax &&
+        model.GetSymbolInfo(invocation, cancellationToken).Symbol is IMethodSymbol method &&
+        method.ContainingType?.MetadataName == FlowBuilderMetadataName &&
+        method.ContainingType.ContainingNamespace?.ToDisplayString() == FlowXNamespace;
 }

@@ -201,7 +201,7 @@ flowchart LR
 | No `DateTime.Now/UtcNow`, `DateTimeOffset.Now/UtcNow` in flows or capabilities | `FLOWX1007` | Error |
 | No `Guid.NewGuid()`, `Random.Shared` | `FLOWX1008` | Error |
 | No mutable static state reachable from a flow | `FLOWX1009` | Error |
-| Flow branching may only read `ctx.State` and step results | `FLOWX1011` | Error |
+| Flow branching, step input mappings and the `Return` projection may only read `ctx.State` and step results | `FLOWX1011` | Error |
 | Anything in `ctx.State` must be serialisable by a generated STJ context | `FLOWX1006` | Error |
 
 In `Ephemeral` flows these drop to Info — there is no replay, so there is no
@@ -215,6 +215,13 @@ build anyone can currently run — which is the state it was already in. See
 [FLOWX1011](diagnostics/FLOWX1011.md#why-the-severity-depends-on-the-profile). The
 remaining rules keep the Info stance for whoever implements them, at which point this
 paragraph is worth revisiting as a set rather than one row at a time.
+
+Its row covers the whole deterministic zone drawn above, and not only the "routing /
+branching decisions" box: the `Return` projection named in the diagram, the `Switch` and
+`ForEach` selectors, the `Emit` and `EmitOnFailure` payload maps, and the
+`Step<TCapability, TStepIn>` and `SubFlow` input mappings the replay contract below
+requires to be byte-identical. The full list, and what the rule provably cannot see, is on
+[its page](diagnostics/FLOWX1011.md#which-delegates-it-covers).
 
 **Replay contract:** replaying a completed durable instance must produce
 byte-identical step inputs and identical control flow. Verified by

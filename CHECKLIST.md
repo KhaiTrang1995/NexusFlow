@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 791/791 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 830/830 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -44,7 +44,8 @@ These gate everything below them. None is code work.
 
 - [x] 20 specification documents, `docs/01` – `docs/20`
 - [x] 13 ADRs with trade-offs stated (ADR-0013 added by the first compilation)
-- [x] `docs/diagnostics/` — 11 pages plus an index; every help URI resolves, asserted by test
+- [x] `docs/diagnostics/` — 15 pages plus an index, one per raised diagnostic; every help
+      URI resolves, asserted by test
 - [x] `docs/benchmarks/` — baseline, gate policy, and the honest caveats
 - [x] 9 sample application specifications
 - [x] `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE` (Apache-2.0)
@@ -267,7 +268,8 @@ which is the exact failure mode P1 exists to remove:
       the Info that ADR-0003 and `06` §5 originally specified — Info is invisible in a
       build log and `Ephemeral` is the only profile that runs today, so it would have
       shipped a rule that does nothing anywhere. Scope is decided by proof; impure
-      statics are a list; nothing is interprocedural, and the page says so
+      statics are a list; nothing is interprocedural, and the page says so. Scope was
+      `When` only until WP-25 widened it to every context delegate — see below
 - [ ] **`.Step<TCapability, TStepIn>(map)` is parsed and then ignored** by `FlowAnalyzer`
       and `FlowEmitter`. It is on the builder surface and `FLOWX1020` recommends it as
       the fix for a binding failure, so a user following the diagnostic reaches an
@@ -294,21 +296,40 @@ reachable, and enforced or honoured by nothing:
       stated on the page and worth repeating here, because a green build reads as a proof
       and is not one: it compares **declared contracts**, so a capability calling
       `ctx.Set<T>()` from inside its own body writes a slot the rule never sees
-- [ ] **`FLOWX1011` does not cover `Switch` selectors.** WP-21 scoped the analyzer to
-      `When` predicates; WP-20 then added a second construct under the identical rule.
-      `FlowErrors.SelectorFailed` states it at run time and nothing checks it at build
-      time — the exact position `When` was in before WP-21. `Return`, `Emit`,
-      `EmitOnFailure` and `ForEach`'s selector are in the same position
-- [ ] **An unrecognised `TriggerAttribute` subclass is skipped in silence.** A trigger's
+- [x] **`FLOWX1011` did not cover `Switch` selectors.** Closed by WP-25. The analyzer is
+      now driven by a table of every `IFlowBuilder` method taking a
+      `Func<FlowContext<TIn>, …>` — `When`, `Switch`, `ForEach`, `Return`, `Emit`,
+      `EmitOnFailure`, `Step<TCapability, TStepIn>` and `SubFlow` — and the message names
+      the construct it found, because a `Return` projection reported as "the condition" is
+      a diagnostic a reader stops believing. The next DSL shape is a row in that table
+      rather than a second code path, which is the mistake WP-21 made once and this
+      package exists to undo. Three of the eight are not yet executed by the emitter and
+      are checked anyway; the page says which
+- [x] **An unrecognised `TriggerAttribute` subclass is skipped in silence.** A trigger's
       `Kind` is an overridden property — executable code, not attribute data — so a
       third-party transport plugin's trigger cannot be read from metadata. WP-22 declined
-      to guess, which is right, but the skip produces only an absent `triggers` array. It
-      needs a diagnostic
+      to guess, which is right, but the skip produced only an absent `triggers` array —
+      which `flowx diff` cannot tell apart from a flow that declares no trigger, so the
+      gate that calls a removed trigger breaking lost its input without saying so. Closed
+      by `FLOWX1025` (WP-26), a warning: the manifest still refuses to guess, and the
+      refusal is now audible. **What remains open is the cause** — the abstractions give a
+      plugin author no way to declare a kind the compiler can read, so the only fix
+      offered is "use a built-in attribute instead"
 - [x] **Nothing in the repository had ever compiled generator output.** The generator
       harness discarded the updated compilation, so every test asserted against *parsed*
       text — which catches a syntax error but not an unresolved name, a wrong delegate
       type argument, or an unimplemented interface member. Fixed by WP-20's
       `GeneratedCompileErrorsIn`, and a real compile is now asserted
+- [ ] **`ctx.Input` does not compile in any predicate or projection.** Found by WP-25 and
+      confirmed against a real build: the DSL signature is
+      `Func<FlowContext<TIn>, …>`, but `FlowEmitter` writes every emitted delegate as
+      `Func<FlowContext, …>` — the **non-generic base**, on which `Input` is not
+      declared. So the lambda source is copied into a field whose parameter type has lost
+      the member, and the build fails with **CS1061**. This is not a corner: `08 §3.1`
+      states conditions may read `ctx.Input`, `08 §69` and `§200` use it in worked
+      examples, and the `FLOWX1011` page repeats it. **Every one of those examples is
+      uncompilable.** The fix is in `FlowEmitter`, which is why it is not fixed here — it
+      needs its own package
 
 ### WP-10 · what it delivered
 
@@ -344,7 +365,7 @@ Three more surfaced while getting the suite green:
 
 | Found | Was |
 |---|---|
-| `.Emit<T>()` publishes nothing | Silent. Now **FLOWX1024**, the only warning in the set |
+| `.Emit<T>()` publishes nothing | Silent. Now **FLOWX1024**, the first warning in the set — since joined by `FLOWX1011` and `FLOWX1025` |
 | Allocation budgets measured 376 B in Debug | Compiler scaffolding, not the engine. CI runs Release and never saw it; every contributor did. Now skipped in Debug, with the reason |
 | The walker read `ArgumentNullException.ThrowIfNull(flow)` as a chain | A statement *after* the chain would have silently replaced it. The walk is now rooted at the builder parameter |
 

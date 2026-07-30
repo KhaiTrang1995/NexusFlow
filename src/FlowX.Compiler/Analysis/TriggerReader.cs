@@ -29,6 +29,15 @@ namespace FlowX.Compiler.Analysis;
 /// without running the plugin.
 /// </para>
 /// <para>
+/// <strong>The skip is no longer silent.</strong> Declining to invent a kind is right;
+/// doing it without saying so is not, because the result is an <em>absent</em>
+/// <c>triggers</c> entry and <c>flowx diff</c> classifies a removed trigger as breaking —
+/// so a contract gate loses its input and reports nothing. <c>TriggerDeclarationAnalyzer</c>
+/// reports <c>FLOWX1025</c> on exactly the attributes <see cref="IsRecognised"/> rejects,
+/// which is why that predicate lives here beside the switch it must agree with rather
+/// than as a second list in the analyzer.
+/// </para>
+/// <para>
 /// <strong>A declared trigger is not the same as a bound one.</strong> Nothing yet turns
 /// these attributes into endpoint registrations — the sample maps its route by hand in
 /// <c>Program.cs</c> — so a flow may be reachable at an address it does not declare, and
@@ -40,6 +49,29 @@ namespace FlowX.Compiler.Analysis;
 public static class TriggerReader
 {
     private const string TriggerAttributeBase = "FlowX.TriggerAttribute";
+
+    /// <summary>
+    /// The trigger attributes this build can read, by full type name.
+    /// </summary>
+    /// <remarks>
+    /// Must stay in step with the switch in <c>ReadOne</c>; a name here that the switch
+    /// does not handle would silence <c>FLOWX1025</c> for a trigger that still never
+    /// reaches the manifest, which is the worst of both positions.
+    /// <c>EveryTriggerAttributeTheAbstractionShipsIsRecognised</c> reflects over
+    /// <c>FlowX.Abstractions</c> and fails if a sixth attribute is added without being
+    /// added here.
+    /// </remarks>
+    private static readonly string[] Recognised =
+    [
+        "FlowX.AgentTriggerAttribute",
+        "FlowX.CronTriggerAttribute",
+        "FlowX.HttpTriggerAttribute",
+        "FlowX.KafkaTriggerAttribute",
+        "FlowX.StreamTriggerAttribute",
+    ];
+
+    /// <summary>The full type names of the trigger attributes this build can read.</summary>
+    public static IReadOnlyList<string> RecognisedAttributes => Recognised;
 
     /// <summary>Every trigger the type declares, in attribute order.</summary>
     /// <param name="flow">The flow's class symbol.</param>
@@ -70,7 +102,14 @@ public static class TriggerReader
         return triggers;
     }
 
-    private static bool IsTrigger(INamedTypeSymbol? attributeClass)
+    /// <summary>Whether an attribute derives from <c>FlowX.TriggerAttribute</c>.</summary>
+    /// <remarks>
+    /// Public because <c>TriggerDeclarationAnalyzer</c> asks the same question and must
+    /// get the same answer: it reports on what this reader skipped, so the two cannot be
+    /// allowed to disagree about what a trigger is.
+    /// </remarks>
+    /// <param name="attributeClass">The applied attribute's type, or <c>null</c>.</param>
+    public static bool IsTrigger(INamedTypeSymbol? attributeClass)
     {
         for (var type = attributeClass?.BaseType; type is not null; type = type.BaseType)
         {
@@ -82,6 +121,16 @@ public static class TriggerReader
 
         return false;
     }
+
+    /// <summary>Whether this build can read the trigger the attribute declares.</summary>
+    /// <remarks>
+    /// <c>false</c> for every <c>TriggerAttribute</c> subclass the abstractions do not
+    /// ship — see the type's remarks for why that cannot be decided from metadata.
+    /// </remarks>
+    /// <param name="attributeClass">The applied attribute's type, or <c>null</c>.</param>
+    public static bool IsRecognised(INamedTypeSymbol? attributeClass) =>
+        attributeClass is not null &&
+        System.Array.IndexOf(Recognised, attributeClass.ToDisplayString()) >= 0;
 
     private static TriggerModel? ReadOne(AttributeData attribute) =>
         attribute.AttributeClass?.ToDisplayString() switch
