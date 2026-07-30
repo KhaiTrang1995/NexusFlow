@@ -35,6 +35,10 @@ public sealed class ManifestDocument
     /// <summary>Every capability, deduplicated by identity and version.</summary>
     [JsonPropertyName("capabilities")]
     public List<ManifestCapability> Capabilities { get; set; } = [];
+
+    /// <summary>Every event type the application declares.</summary>
+    [JsonPropertyName("events")]
+    public List<ManifestEvent> Events { get; set; } = [];
 }
 
 /// <summary>Application identity.</summary>
@@ -68,6 +72,18 @@ public sealed class ManifestFlow
     [JsonPropertyName("deadline")]
     public string? Deadline { get; set; }
 
+    /// <summary>The contract the flow accepts.</summary>
+    [JsonPropertyName("input")]
+    public ManifestTypeRef? Input { get; set; }
+
+    /// <summary>The contract the flow returns.</summary>
+    [JsonPropertyName("output")]
+    public ManifestTypeRef? Output { get; set; }
+
+    /// <summary>How the flow can be started from outside the process.</summary>
+    [JsonPropertyName("triggers")]
+    public List<ManifestTrigger> Triggers { get; set; } = [];
+
     /// <summary>Steps, in execution order.</summary>
     [JsonPropertyName("steps")]
     public List<ManifestStep> Steps { get; set; } = [];
@@ -75,6 +91,48 @@ public sealed class ManifestFlow
     /// <summary>Events the flow publishes.</summary>
     [JsonPropertyName("emits")]
     public List<string> Emits { get; set; } = [];
+}
+
+/// <summary>A contract type, with the members of it that carry secrets.</summary>
+public sealed class ManifestTypeRef
+{
+    /// <summary>Fully-qualified CLR type name.</summary>
+    [JsonPropertyName("type")]
+    public string? Type { get; set; }
+
+    /// <summary>
+    /// Members carrying <c>[Sensitive]</c>, present only when the contract has at least one.
+    /// </summary>
+    [JsonPropertyName("sensitive")]
+    public List<string> Sensitive { get; set; } = [];
+}
+
+/// <summary>One way of starting a flow.</summary>
+public sealed class ManifestTrigger
+{
+    /// <summary>Manual, Http, Bus, Schedule, Stream, Change, Agent or Cli.</summary>
+    [JsonPropertyName("kind")]
+    public string? Kind { get; set; }
+
+    /// <summary>HTTP verb, for <c>Http</c> triggers.</summary>
+    [JsonPropertyName("method")]
+    public string? Method { get; set; }
+
+    /// <summary>HTTP route, for <c>Http</c> triggers.</summary>
+    [JsonPropertyName("route")]
+    public string? Route { get; set; }
+
+    /// <summary>Broker family, for <c>Bus</c> and <c>Stream</c> triggers.</summary>
+    [JsonPropertyName("transport")]
+    public string? Transport { get; set; }
+
+    /// <summary>Topic or queue, for <c>Bus</c> and <c>Stream</c> triggers.</summary>
+    [JsonPropertyName("topic")]
+    public string? Topic { get; set; }
+
+    /// <summary>Cron expression, for <c>Schedule</c> triggers.</summary>
+    [JsonPropertyName("cron")]
+    public string? Cron { get; set; }
 }
 
 /// <summary>One step of a flow.</summary>
@@ -112,6 +170,14 @@ public sealed class ManifestCapability
     [JsonPropertyName("version")]
     public string? Version { get; set; }
 
+    /// <summary>Fully-qualified CLR type name of the input contract.</summary>
+    [JsonPropertyName("input")]
+    public string? Input { get; set; }
+
+    /// <summary>Fully-qualified CLR type name of the output contract.</summary>
+    [JsonPropertyName("output")]
+    public string? Output { get; set; }
+
     /// <summary>Whether a retry is declared safe.</summary>
     [JsonPropertyName("idempotent")]
     public bool Idempotent { get; set; }
@@ -120,9 +186,41 @@ public sealed class ManifestCapability
     [JsonPropertyName("sideEffects")]
     public List<string> SideEffects { get; set; } = [];
 
+    /// <summary>Every failure this capability can return.</summary>
+    [JsonPropertyName("errors")]
+    public List<ManifestError> Errors { get; set; } = [];
+
+    /// <summary>Replacement identity and removal date, when the contract is on its way out.</summary>
+    [JsonPropertyName("deprecated")]
+    public string? Deprecated { get; set; }
+
     /// <summary>Authorisation stance.</summary>
     [JsonPropertyName("authorization")]
     public ManifestAuthorization? Authorization { get; set; }
+}
+
+/// <summary>One declared failure of a capability.</summary>
+public sealed class ManifestError
+{
+    /// <summary>Stable error code, e.g. <c>payment.declined</c>.</summary>
+    [JsonPropertyName("code")]
+    public string? Code { get; set; }
+
+    /// <summary>Validation, NotFound, Conflict, Forbidden, Unavailable or Internal.</summary>
+    [JsonPropertyName("category")]
+    public string? Category { get; set; }
+}
+
+/// <summary>One event type.</summary>
+public sealed class ManifestEvent
+{
+    /// <summary>Business identity of the event.</summary>
+    [JsonPropertyName("type")]
+    public string? Type { get; set; }
+
+    /// <summary>SemVer of the event's payload contract.</summary>
+    [JsonPropertyName("schemaVersion")]
+    public string? SchemaVersion { get; set; }
 }
 
 /// <summary>A capability's authorisation stance.</summary>
@@ -131,6 +229,10 @@ public sealed class ManifestAuthorization
     /// <summary>Public, Authenticated, Permission, Policy or Internal.</summary>
     [JsonPropertyName("mode")]
     public string? Mode { get; set; }
+
+    /// <summary>The named permission or policy, when the mode needs one.</summary>
+    [JsonPropertyName("value")]
+    public string? Value { get; set; }
 }
 
 /// <summary>Source-generated serialisation, so the tool starts fast and publishes AOT.</summary>

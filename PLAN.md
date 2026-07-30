@@ -56,7 +56,7 @@ flowchart TD
     WP14["WP-14 · B12<br/>build overhead"]
 
     WP15["WP-15 · Branching DSL<br/>When · Switch · Parallel"]
-    WP16["WP-16 · Contracts<br/>FLOWX1022"]
+    WP16["WP-16 · Step binding<br/>FLOWX1020"]
     WP17["WP-17 · flowx diff<br/>breaking-change gate"]
     WP18["WP-18 · Scale<br/>200 flows"]
     WP19["WP-19 · Code fixes<br/>IDE quick actions"]
@@ -447,12 +447,12 @@ maintainability and scale, not features.
 | Roadmap item | Where it stands |
 |---|---|
 | Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **WP-15**, open — the largest remaining piece of P1 |
-| Contract-compatibility checking | **WP-16**, open |
+| Contract-compatibility checking | **WP-16**, done — as `FLOWX1020`, *step binding* |
 | Diagnostics FLOWX1001–1023 with help URIs | **Done** at WP-13. All raised, all tested, all with help links |
 | Generator snapshot tests | **Done** at WP-5 and extended since |
 | Readable emitted code | **Done** — on disk under `obj/generated`, with per-step `#line` directives (fixed at WP-10) |
 | Build-overhead budget B12 | **Done** at WP-14. **+0.4 %** against +8 % |
-| *Should:* `flowx diff` v1 | **WP-17**, open |
+| *Should:* `flowx diff` v1 | **WP-17**, done |
 | *Should:* IDE code fixes | **WP-19**, open |
 
 **Exit criteria, from the roadmap:**
@@ -477,16 +477,32 @@ The engine's step loop currently walks an array by index. Branching makes the gr
 graph, and **budget B2 is a hard zero** — so the shape of the change is constrained
 before it is designed: no allocation per step, no iterator, no closure per branch.
 
-### WP-16 — Contract-compatibility checking
+### WP-16 — Step binding
 
 | | |
 |---|---|
 | **Goal** | A flow whose steps cannot pass values to each other fails the build |
 | **Why** | The generated dispatcher binds by type: `ctx.Get<TInput>()`. If no earlier step produced that type the flow compiles and throws on the first request — exactly the class of failure this platform exists to move to build time. |
 | **Tests first** | Both directions per rule, plus the reference sample's real shape as a case that must stay silent |
-| **Deliverable** | `FLOWX1022` raised by a `DiagnosticAnalyzer`, with its documentation page |
+| **Deliverable** | `FLOWX1020` raised by a `DiagnosticAnalyzer`, with its documentation page |
 | **Exit** | Reordering the sample's steps fails its build; the unmodified sample still builds clean |
 | **Depends on** | WP-5 |
+| **Status** | **Done.** Verified by reordering the real sample's steps: `FLOWX1020` fires at the offending `.Step<>` type argument, naming the missing type and what the context can supply. |
+
+**The id is 1020, not the 1022 this package was originally opened against.** The
+reserved list assigns 1019–1022 to deadline coherence, **step binding**, sub-flow
+cycles and contract compatibility, in that order — and `08-Flow-Definition.md` already
+documented this exact check as `FLOWX1020`, with an example message nearly identical to
+the one now emitted, as did `FlowContext.Get<T>` and `FlowExecutionContext.Get<T>`.
+Shipping it as 1022 would have left three places pointing at a number nothing raised.
+`FLOWX1022` stays reserved for contract compatibility **across versions** — the
+analyzer counterpart of `flowx diff`, which is a different question.
+
+The analyzer states its own limits rather than implying coverage it lacks: it checks by
+**exact declared type**, because the context is a dictionary keyed on `typeof(T)` and a
+base-class match would miss at run time; it stops at the first chain method it does not
+understand, because a hidden branch may produce the next step's type; and it stays
+silent on the explicit-mapping overload, which is the fix it recommends.
 
 ### WP-17 — `flowx diff` v1
 
@@ -498,6 +514,32 @@ before it is designed: no allocation per step, no iterator, no closure per branc
 | **Deliverable** | `flowx diff --old --new`, text and JSON output, non-zero exit on a breaking change |
 | **Exit** | Removing a capability, narrowing a contract, or loosening an authorisation stance each fail; a line-number change does not |
 | **Depends on** | WP-6, WP-9 |
+| **Status** | **Done.** 29 rules; wired into CI against a committed baseline. |
+
+**The compatibility unit is `id@major`, not `id@version`.** Exact-version keying reports
+a patch bump as a removal plus an addition; identity-only keying lets two side-by-side
+majors collide and hides a real removal. Keying on the major gets both right, and
+removes any "was the version bumped?" waiver — bumping the major *is* publishing a new
+contract, and deleting the old one is what breaks people.
+
+Three classifications worth recording, because each could reasonably have gone the other
+way:
+
+- **`[Sensitive]` is asymmetric.** Marking a member is *additive* — a gate that failed
+  the build when an engineer marks a password teaches engineers not to mark passwords.
+  Un-marking is *breaking*, and the more serious half: the value then reaches logs,
+  traces and a journal retained for the replay window, with no signature change to catch
+  it.
+- **Both directions of an authorisation change are breaking**, under separate codes.
+  Relaxing is a security regression. Tightening is the right change and still denies
+  callers that worked yesterday — the gate is not saying it is wrong, it is saying that
+  shipping it unannounced turns a security improvement into an outage.
+- **Adding a side effect is breaking.** Nothing about the call changes, but
+  `sideEffects` is what blast-radius review reads and what decides whether an agent
+  confirms before invoking a tool. Every assessment made against the baseline is stale.
+
+Deliberately never reported: `source` file:line, `application.version`, a flow's steps,
+and array order. A gate that fires on every build is a gate people delete.
 
 ### WP-18 — Scale: 200 flows
 
