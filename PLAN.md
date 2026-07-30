@@ -461,8 +461,9 @@ maintainability and scale, not features.
 **Exit criteria, from the roadmap:**
 
 - a 200-flow synthetic solution builds with ≤ 8 % overhead → **WP-18** built the harness,
-  **WP-23** made it trustworthy. **FAILING at +18.4 %**, CI [+16.3, +19.9]. Growth is
-  linear (3 ms + 9.54 ms/flow, R² 0.994), so the constant is too large rather than the
+  **WP-23** made it trustworthy, and it has since **regressed roughly 3×** — see the
+  regression note below. **FAILING at +18.4 %** as of `a75c1f0`, CI [+16.3, +19.9]. Growth
+  was linear (3 ms + 9.54 ms/flow, R² 0.994), so the constant is too large rather than the
   design being wrong. P1 cannot exit on this criterion until it is met
 - every diagnostic passes `EveryDiagnosticIsHelpful` → **already green**
 - emitted code is breakpoint-able → **already true**, and pinned by
@@ -660,6 +661,30 @@ different cost/benefit conversation from "the generator is slow". **WP-18's gues
 wrong**: it named `CapabilityAnalyzer` as the first place to look, on the reasoning that
 it visits ~2 500 named types; it costs 51 ms of 12 s. Reducing this is its own package and
 needs a profiler.
+
+> ### ⚠ Regression: the table above is `a75c1f0`, and the generator has since tripled
+>
+> **`FlowPlanGenerator` is now ≈ 29 ms per flow, against the 8.07 recorded above.**
+> Measured twice, independently: **28.7 ms/flow** at 200 flows by WP-27, and **+29.70
+> ms/flow** at 50 flows in review on a quiet machine (load 2.52), CI [+1410, +1590] ms,
+> verdict **FAIL at +47.8 – +55.2 %**. `StepBindingAnalyzer` and `CapabilityAnalyzer` both
+> reproduced their old numbers to within 7 %, which is the control that makes the third
+> reading trustworthy.
+>
+> **This slipped in because the scale job is advisory.** That was the right call while the
+> measurement could not separate signal from load — but the cost of it is now visible: a
+> 3× regression merged across four packages and nothing said a word. The job cannot simply
+> be made blocking while the criterion is failing, so the gap needs a different answer,
+> most likely a *relative* gate against the committed figure rather than an absolute one
+> against the budget.
+>
+> The suspects are the packages merged since: **WP-20** (`Switch`), **WP-22** (trigger and
+> error-catalogue emission — `ErrorCatalogueReader` follows every `Error`-typed expression
+> in ~262 capability types back to its literal code), **WP-24** (`Parallel`), and a
+> manifest sort-key fix. **WP-21** is an analyzer and should not appear in a generator
+> number at all; if it does, that is itself informative. **Not yet bisected** — that is
+> WP-28, in progress. Every previous guess about a hot spot in this project has been
+> wrong, so this list is suspects, not a finding.
 
 **The harness can now decline to answer.** Exit **2 = INCONCLUSIVE**, returned when the
 within-arm spread is too wide for a verdict to mean anything. It fired on WP-23's own

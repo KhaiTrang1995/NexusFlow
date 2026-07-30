@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 901/901 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 905/905 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -260,6 +260,25 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       about where to look. The harness can now return **exit 2 = INCONCLUSIVE** and did so
       on its own first run rather than publishing a number its error bars swallowed.
       Box stays open: the budget is not met
+- [ ] **⚠ REGRESSION — the generator has tripled since that measurement.**
+      `FlowPlanGenerator` was 8.07 ms per flow at `a75c1f0`; it is now **≈ 29**. Measured
+      twice independently — **28.7 ms/flow** at 200 flows by WP-27, **+29.70 ms/flow** at
+      50 flows in review on a quiet machine (load 2.52), verdict **FAIL at +47.8 – +55.2 %**
+      against the +8 % budget. The other two components reproduced to within 7 %, which is
+      what makes the third reading believable. **It slipped in because the scale job is
+      advisory** — correct while the measurement could not beat the noise, but the cost is
+      now concrete: a 3× regression merged across four packages in silence. The job cannot
+      just be made blocking while the criterion fails, so this wants a *relative* gate
+      against the committed figure instead of an absolute one against the budget.
+      **Being bisected (WP-28); suspects are WP-20, WP-22, WP-24 and a sort-key fix, and
+      every previous guess at a hot spot in this project has been wrong**
+- [ ] **WP-27** cut `StepBindingAnalyzer` 89 % — 4.70 → 0.53 ms per flow — by binding a
+      step's type argument outside the `Define` body. 96 % of its cost was one
+      `GetSymbolInfo` call: a node inside a statement cannot be bound without binding the
+      whole chain, so the *first* `.Step<T>()` of a flow cost 4.13 ms and every later one
+      0.06 ms. All 800 resolved symbols identical before and after. It does **not** close
+      the criterion and is not claimed to — end to end the difference sits inside the
+      noise. What it buys is the IDE, where the rule re-runs per keystroke
 - [x] **WP-19** IDE code fixes — `FLOWX1001`, `FLOWX1010`, `FLOWX1017`, in a separate
       `FlowX.Compiler.CodeFixes` assembly so the analyzer never drags Workspaces into a
       consumer's build. `FLOWX1010` deliberately withholds `Public`
