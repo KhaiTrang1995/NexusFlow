@@ -1,8 +1,11 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <Project Path="src/FlowX.Core/FlowX.Core.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/FlowX.Abstractions.Tests/FlowX.Abstractions.Tests.csproj" />
     <Project Path="tests/FlowX.Architecture.Tests/FlowX.Architecture.Tests.csproj" />
+    <Project Path="tests/FlowX.Core.Tests/FlowX.Core.Tests.csproj" />
   </Folder>
 </Solution>

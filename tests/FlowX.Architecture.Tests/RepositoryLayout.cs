@@ -26,7 +26,7 @@ internal static class RepositoryLayout
         ItemIncludes(project, "PackageReference");
 
     /// <summary>Reads a project's <c>ProjectReference</c> includes, normalised to file names.</summary>
-    public static IReadOnlyList<string> ProjectReferences(FileInfo project) =>
+    public static List<string> ProjectReferences(FileInfo project) =>
         ItemIncludes(project, "ProjectReference")
             .Select(static include => Path.GetFileNameWithoutExtension(include.Replace('\\', '/')))
             .ToList();

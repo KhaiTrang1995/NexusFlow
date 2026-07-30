@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat code coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+
+          <!--
+            Source-generated code is excluded: it is the generator's output, and
+            measuring it tells us about the generator's branches rather than about
+            our tests. The generator itself is tested by snapshot tests (WP-5).
+          -->
+          <ExcludeByAttribute>Obsolete,GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute</ExcludeByAttribute>
+          <Exclude>[*]System.Text.RegularExpressions.Generated.*</Exclude>
+
+          <!-- Test assemblies must never count toward their own coverage. -->
+          <ExcludeByFile>**/obj/**/*.g.cs,**/obj/generated/**/*.cs</ExcludeByFile>
+
+          <SingleHit>false</SingleHit>
+          <UseSourceLink>true</UseSourceLink>
+          <SkipAutoProps>true</SkipAutoProps>
+          <DeterministicReport>true</DeterministicReport>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>

@@ -48,6 +48,14 @@ dotnet_diagnostic.CS1591.severity = error
 # This is a decision, not debt — see ADR-0013.
 dotnet_diagnostic.CA1716.severity = none
 
+# CA1711 reserves the 'Stack' suffix for types deriving from Stack<T>, so that a
+# suffix never misleads about behaviour. CompensationStack does not derive from it
+# but is exactly a LIFO of completed compensable steps, and that LIFO ordering is
+# the saga's safety property — undo newest-first or two systems end up disagreeing.
+# The suffix communicates the invariant rather than obscuring it, so the suffix is
+# allowed here rather than the rule being switched off.
+dotnet_code_quality.CA1711.allowed_suffixes = Stack
+
 [tests/**/*.cs]
 # Tests legitimately capture context and assert on exceptions.
 dotnet_diagnostic.CA2007.severity = none

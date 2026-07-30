@@ -18,9 +18,18 @@
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
 
-    <!-- ADR-0002: generated code is debuggable, on disk, breakpoint-able (risk R1). -->
+    <!--
+      ADR-0002: generated code is debuggable, on disk, breakpoint-able (risk R1).
+
+      The path is spelled out rather than built from $(BaseIntermediateOutputPath):
+      that property is not yet assigned when Directory.Build.props is evaluated, so
+      it expands to empty and the generated sources land in the project directory —
+      where the next build globs them back in and they collide with the generator's
+      own output (CS0102/CS0433). Under obj/ they stay out of the default Compile
+      glob while remaining on disk for the debugger.
+    -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)generated</CompilerGeneratedFilesOutputPath>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/obj/generated</CompilerGeneratedFilesOutputPath>
 
     <!-- Supply chain: reproducible builds + source links (docs/15-Security.md §8). -->
     <Deterministic>true</Deterministic>

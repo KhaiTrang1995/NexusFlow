@@ -6,8 +6,8 @@
 >
 > **Last updated:** 2026-07-30 · **Phase:** P0 · **Commit:** see `git log`
 >
-> **Build:** `dotnet build FlowX.slnx -c Release` → 0 warnings, 0 errors ·
-> **Tests:** 29/29 passing · **SDK:** 10.0.110
+> **Build:** 0 warnings, 0 errors · **Tests:** 127/127 passing ·
+> **Coverage:** 98.5 % line / 95.6 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 >
 > Legend: `[x]` done and verified · `[~]` done, verification blocked · `[ ]` not started
 
@@ -40,7 +40,7 @@ These gate everything below them. None is code work.
 ## 1. Documentation
 
 - [x] 20 specification documents, `docs/01` – `docs/20`
-- [x] 13 ADRs with trade-offs stated
+- [x] 13 ADRs with trade-offs stated (ADR-0013 added by the first compilation)
 - [x] 9 sample application specifications
 - [x] `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE` (Apache-2.0)
 - [x] `docs/21-Quality-Gates.md` — SonarQube thresholds, OWASP mapping, debt policy
@@ -95,7 +95,7 @@ Verified by `dotnet build -c Release` with `TreatWarningsAsErrors`, and by the
 
 ---
 
-## 4. WP-1 · Architecture fitness functions — **29/29 green**
+## 4. WP-1 · Architecture fitness functions — **30/30 green**
 
 - [x] `AbstractionsHasNoDependencies` — reads the `.csproj`
 - [x] `LayersPointInward`
@@ -110,7 +110,7 @@ Verified by `dotnet build -c Release` with `TreatWarningsAsErrors`, and by the
 - [x] `TenantScopedIsTheDefaultForEveryScopeEnum`
 - [x] `FlowBuilderExposesNoTransportTypes`
 - [x] `FlowBuilderHasNoEscapeHatchForInlineCode`
-- [ ] `NoCyclicDependencies`
+- [x] `NoCyclicDependencies` — DFS over the project graph, not just direct edges
 - [ ] `SuppressionsAreAccountable`
 - [ ] `ManifestContainsNoSecrets`
 - [ ] `EveryCapabilityDeclaresAuthorization`
@@ -122,9 +122,29 @@ Verified by `dotnet build -c Release` with `TreatWarningsAsErrors`, and by the
 
 ---
 
-## 5. WP-2 → WP-11 · Not started
+## 5. WP-2 · `FlowX.Core` — **done, TDD, 92 tests**
 
-- [ ] **WP-2** `FlowX.Core` — `StepGraph`, `ExecutionPlan`, `CompensationStack`
+Built red → green: `tests/FlowX.Core.Tests` was written and observed failing to
+compile (24 errors, types absent) before `src/FlowX.Core` existed.
+
+- [x] `CapabilityDescriptor` — validated identity and SemVer, immutable side effects
+- [x] `Identifiers` — one regex pair for identity and version, source-generated
+- [x] `PolicyChain` — stage ordering (stable), retry-requires-idempotent, no-cache-with-side-effects
+- [x] `StepNode` — factories make an invalid shape unrepresentable
+- [x] `StepGraph` — non-empty, contiguous from zero, no duplicates, copies its input
+- [x] `FlowDescriptor` — positive deadline enforced
+- [x] `ExecutionPlan` — precomputed compensable indices, sorted side-effect set, profile validation
+- [x] `CompensationStack` — strict reverse unwind, drains, rejects double-record
+- [x] `InvalidFlowPlanException` — a defect, not an `Error` (ADR-0007)
+- [x] `tests/FlowX.Abstractions.Tests` — 47 behavioural tests added; `Result<T>`,
+      `Error`, `PolicySet` and the trigger defaults had zero execution coverage before
+
+**Exit criterion met:** a three-step plan with one compensation is constructible,
+immutable, and rejects every invariant violation under test.
+
+---
+
+## 5b. WP-3 → WP-11 · Not started
 - [ ] **WP-3** `FlowX.Benchmarks` — B1–B3 measurable, baseline committed
 - [ ] **WP-4** `FlowX.Runtime` — step loop, pooled contexts, deadline handling
 - [ ] **WP-5** `FlowX.Compiler` — `FlowPlanGenerator`, model layer separate from emission
@@ -143,11 +163,11 @@ Verified by `dotnet build -c Release` with `TreatWarningsAsErrors`, and by the
 |---|---|---|---|
 | Compiler warnings | 0 | **0** ✅ | verified locally |
 | Blocker/critical Sonar issues | 0 | **not running** | WP-0 |
-| Line coverage (new code) | ≥ 80 % | **not measured** | WP-0 |
-| Branch coverage (new code) | ≥ 75 % | **not measured** | WP-0 |
-| Mutation score (`FlowX.Core`) | ≥ 70 % | n/a — no `FlowX.Core` yet | WP-2 |
+| Line coverage | ≥ 80 % | **98.5 %** ✅ | verified locally |
+| Branch coverage | ≥ 75 % | **95.6 %** ✅ | verified locally |
+| Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
-| Fitness functions | all green | **29/29** ✅ | verified locally |
+| Fitness functions | all green | **30/30** ✅ | verified locally |
 | SAST findings | 0 | **wired, unrun** — needs a CI run | WP-0 |
 | DAST findings | 0 | **wired, guarded** — needs WP-10 | WP-0 |
 | Vulnerable dependencies | 0 | **0 by construction** — zero dependencies | WP-1 |
@@ -155,8 +175,9 @@ Verified by `dotnet build -c Release` with `TreatWarningsAsErrors`, and by the
 | B1 flow overhead p99 | ≤ 5 µs | **not measured** | WP-3 |
 | B2 allocations per step | 0 B | **not measured** | WP-3 |
 
-Nothing in the "Now" column is green by assertion. Every "not measured" is
-honest: the gate exists on paper and the mechanism to run it does not exist yet.
+Nothing in the "Now" column is green by assertion — every ✅ was produced by a
+command in this working tree. Every "not measured" is equally honest: the gate
+exists and the mechanism to run it has not been run here.
 
 ---
 

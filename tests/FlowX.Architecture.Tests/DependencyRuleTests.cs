@@ -87,6 +87,71 @@ public sealed class DependencyRuleTests
     }
 
     /// <summary>
+    /// No dependency cycle between any two projects. MSBuild rejects a direct cycle,
+    /// but it happily accepts A → B → C → A, which is the shape that actually occurs
+    /// once a codebase has enough projects to lose track.
+    /// </summary>
+    [Fact]
+    public void NoCyclicDependencies()
+    {
+        var edges = RepositoryLayout.SourceProjects.ToDictionary(
+            static p => Path.GetFileNameWithoutExtension(p.Name),
+            static p => RepositoryLayout.ProjectReferences(p),
+            StringComparer.Ordinal);
+
+        var visiting = new HashSet<string>(StringComparer.Ordinal);
+        var settled = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var project in edges.Keys)
+        {
+            var cycle = FindCycle(project, edges, visiting, settled, []);
+
+            cycle.ShouldBeNull(
+                $"Dependency cycle: {string.Join(" -> ", cycle ?? [])}. Dependencies point " +
+                "inward, toward the domain, and a cycle means two projects have become one " +
+                "with extra build steps.");
+        }
+    }
+
+    private static List<string>? FindCycle(
+        string node,
+        Dictionary<string, List<string>> edges,
+        HashSet<string> visiting,
+        HashSet<string> settled,
+        List<string> path)
+    {
+        if (settled.Contains(node))
+        {
+            return null;
+        }
+
+        path.Add(node);
+
+        if (!visiting.Add(node))
+        {
+            return path;
+        }
+
+        if (edges.TryGetValue(node, out var references))
+        {
+            foreach (var reference in references)
+            {
+                var cycle = FindCycle(reference, edges, visiting, settled, path);
+
+                if (cycle is not null)
+                {
+                    return cycle;
+                }
+            }
+        }
+
+        visiting.Remove(node);
+        settled.Add(node);
+        path.RemoveAt(path.Count - 1);
+        return null;
+    }
+
+    /// <summary>
     /// Constraint C2: every shipped package must stay NativeAOT- and trim-compatible,
     /// which is only enforceable if the analyzers are actually switched on.
     /// </summary>

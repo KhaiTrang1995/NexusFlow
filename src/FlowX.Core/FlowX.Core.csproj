@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>
+      FlowX execution model: the immutable shapes a compiled flow is made of.
+      No I/O, no engine, no source generator — only the data structures and the
+      invariants they enforce at construction.
+    </Description>
+    <PackageTags>flowx;execution-plan;step-graph</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The only reference this project may have. LayersPointInward enforces it. -->
+    <ProjectReference Include="../FlowX.Abstractions/FlowX.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>
