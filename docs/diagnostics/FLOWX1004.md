@@ -2,12 +2,6 @@
 
 > **Severity:** Error · **Category:** FlowX · **Since:** 0.1.0
 
-> **Not raised yet.** This rule inspects a capability's body — its assembly references
-> and its call graph — which the flow generator never looks at. It needs a separate
-> `DiagnosticAnalyzer`, which does not exist. The rule below is the intended behaviour
-> and a convention worth following; nothing enforces it today. Tracked as **WP-13** in
-> [PLAN.md](../../PLAN.md).
-
 ## What it means
 
 Capabilities form a **set**, not a graph. That is what lets the architecture be analysed statically, each capability be tested without a host, and the manifest describe the whole application. A capability calling another turns the set back into the call graph FlowX exists to replace.
@@ -27,6 +21,15 @@ public sealed class PlaceOrder : ICapability<Order, Receipt>
 flow.Step<ReserveInventory>()
     .Step<CapturePayment>()
 ```
+
+## What it detects
+
+`CapabilityAnalyzer` reports a capability whose constructor parameters, fields or
+properties name another type implementing `ICapability<,>`. Generic wrappers are
+unwrapped, so a `Lazy<ReserveInventory>` does not slip past.
+
+The generated step dispatcher legitimately holds every capability its flow invokes —
+that is its job — and is exempt because generated code is not analysed.
 
 ## When to suppress
 

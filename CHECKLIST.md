@@ -6,8 +6,8 @@
 >
 > **Last updated:** 2026-07-30 · **Phase:** P0 · **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 459/459 passing ·
-> **Coverage:** 93.9 % line / 86.8 % branch (gates: 80 / 75) · **SDK:** 10.0.110
+> **Build:** 0 warnings, 0 errors · **Tests:** 466/466 passing ·
+> **Coverage:** 93.9 % line / 86.5 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
 >
@@ -170,10 +170,9 @@ immutable, and rejects every invariant violation under test.
       **Redaction is still not implemented**, so the exit criterion is not met
 - [x] **WP-12** `FlowX.Testing` — `TestCapabilityContext` and `TestFlowContext`; the
       sample's capability tests lost 27 lines of hand-written stub
-- [~] **WP-13** Diagnostics that were documented and never raised. **`FLOWX1014` and
-      `FLOWX1018` now fire**, verified against the real sample. `FLOWX1003` and
-      `FLOWX1004` still do not — they need a separate `DiagnosticAnalyzer`, and are
-      marked as unenforced in the index and on their pages
+- [x] **WP-13** Diagnostics that were documented and never raised. **All four now fire**
+      — `FLOWX1014`, `FLOWX1018`, `FLOWX1003`, `FLOWX1004` — each verified against the
+      real sample, not only the harness
 
 ### WP-10 · what it delivered
 
@@ -222,7 +221,7 @@ Three more surfaced while getting the suite green:
 | Compiler warnings | 0 | **0** ✅ | verified locally |
 | Blocker/critical Sonar issues | 0 | **not running** | WP-0 |
 | Line coverage | ≥ 80 % | **93.9 %** ✅ | verified locally |
-| Branch coverage | ≥ 75 % | **86.8 %** ✅ | verified locally |
+| Branch coverage | ≥ 75 % | **86.5 %** ✅ | verified locally |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
 | Fitness functions | all green | **36/36** ✅ | plus 10 compiler fitness tests |
@@ -265,7 +264,7 @@ Controls from [21-Quality-Gates §3](docs/21-Quality-Gates.md#3-owasp-top-10-map
 | A07 Auth failures | [x] claims-only tenant resolution | [x] 5 tests, incl. headers ignored |
 | A08 Integrity failures | [x] deterministic builds configured | [ ] needs signing + SBOM (WP-0) |
 | A09 Logging failures | [x] `Audit` policy at `Consistency` stage | [ ] needs the policy engine (P4) |
-| A10 SSRF | [x] `FLOWX1003` forbids transport refs | [ ] **not raised.** Needs a `DiagnosticAnalyzer` (WP-13); marked unenforced in the diagnostics index |
+| A10 SSRF | [x] `FLOWX1003` forbids transport refs | [~] **raised** by `CapabilityAnalyzer`, against a list of transport namespaces rather than a proof — the limit is stated on the diagnostic's page |
 
 ---
 
