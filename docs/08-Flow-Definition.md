@@ -92,7 +92,10 @@ flow.Step<AssessRisk>()
 
 Conditions may read **only** `ctx.State`, `ctx.Input` and prior step results
 (`FLOWX1011`). A condition that reads a clock, a static, or an external service
-is a determinism violation and fails the build in `Durable` flows.
+is a determinism violation and fails the build in `Durable` flows. In `Ephemeral`
+flows it is a warning — see [FLOWX1011](diagnostics/FLOWX1011.md) for what the rule
+detects, what it provably cannot, and why `ctx.UtcNow` is permitted where
+`DateTime.UtcNow` is not.
 
 ### 3.2 Branch on a value
 

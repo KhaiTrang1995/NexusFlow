@@ -11,6 +11,14 @@ from at run time, or expensive enough that discovering it in production is the w
 place. A warning is a rule nobody has to obey; if a rule is worth having, it stops
 the build.
 
+Two entries below are not errors, and each says why on its own page.
+[FLOWX1024](FLOWX1024.md) reports a gap between the manifest and the runtime rather
+than a mistake in the source. [FLOWX1011](FLOWX1011.md) is an error in `Durable`
+flows and a warning in `Ephemeral` ones, which is the asymmetry
+[ADR-0003](../adr/ADR-0003-execution-profiles.md) ratified for the determinism rules:
+a durable flow is replayed and must take the branch it took the first time, an
+ephemeral one is not replayed at all.
+
 ## Catalogue
 
 | Id | Rule | Prevents |
@@ -21,6 +29,7 @@ the build.
 | [FLOWX1004](FLOWX1004.md) | Capability invokes another capability | Turning the capability set back into a call graph |
 | [FLOWX1005](FLOWX1005.md) | Flow inherits from another flow | Control flow invisible to the graph and the manifest |
 | [FLOWX1010](FLOWX1010.md) | Capability declares no authorisation stance | A permissive default nobody chose |
+| [FLOWX1011](FLOWX1011.md) | Condition reads something outside the flow's state | A branch that takes a different path on replay |
 | [FLOWX1014](FLOWX1014.md) | Retry requires an idempotent capability | **A duplicate charge** |
 | [FLOWX1015](FLOWX1015.md) | Capability implements more than one contract | Ambiguous dispatch, meaningless manifest entry |
 | [FLOWX1017](FLOWX1017.md) | AwaitSignal requires the Durable profile | A waiting flow vanishing with its node |
@@ -39,7 +48,9 @@ the build.
 > **list** of transport namespaces, not a proof. `FLOWX1020` has stated limits for the
 > opposite reason: it is silent wherever it cannot resolve the chain, because a rule
 > about step order that fires on a valid flow would be suppressed and then protect
-> nothing.
+> nothing. `FLOWX1011` has both kinds at once: its scope rules are a proof, its
+> catalogue of impure statics is a list, and it is not interprocedural — a helper
+> method called from a condition can read a clock and it will not notice.
 
 ## Ids reserved but not yet raised
 
@@ -47,7 +58,7 @@ The catalogue is deliberately smaller than the numbering suggests. Codes appear 
 only once the compiler actually reports them — a documented diagnostic that nothing
 raises is a promise the compiler is not keeping. Reserved for later phases:
 `FLOWX1006` (state must be serialisable), `FLOWX1007`–`FLOWX1009` (determinism in
-durable flows), `FLOWX1011`–`FLOWX1013` (predicate purity, parallel branch
+durable flows), `FLOWX1012`–`FLOWX1013` (compensable-and-ephemeral, parallel branch
 disjointness), `FLOWX1016` (expected failures are values), `FLOWX1019` (deadline coherence),
 `FLOWX1021` (sub-flow cycles) and `FLOWX1022` (contract compatibility **across
 versions** — the analyzer counterpart of `flowx diff`, distinct from `FLOWX1020`,

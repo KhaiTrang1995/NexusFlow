@@ -225,10 +225,14 @@ Already satisfied from P0, per the roadmap's P1 list: diagnostics with help URIs
 place where something is documented, reserved or parseable but not actually enforced,
 which is the exact failure mode P1 exists to remove:
 
-- [ ] **`FLOWX1011` — predicate purity is unenforced.** Reserved when nothing could
-      declare a predicate. Something can now. `FlowErrors.PredicateFailed` states the
-      rule at run time — a condition may read only the context, the flow input and prior
-      results — and no analyzer checks it at build time
+- [x] **`FLOWX1011` — predicate purity.** Closed by WP-21: `PredicatePurityAnalyzer`
+      raises it on a `When` predicate that reads a clock, ambient randomness, the
+      environment, mutable static state, a captured variable or flow instance state.
+      An **error** in `Durable` flows and a **warning** in `Ephemeral` ones, rather than
+      the Info that ADR-0003 and `06` §5 originally specified — Info is invisible in a
+      build log and `Ephemeral` is the only profile that runs today, so it would have
+      shipped a rule that does nothing anywhere. Scope is decided by proof; impure
+      statics are a list; nothing is interprocedural, and the page says so
 - [ ] **`.Step<TCapability, TStepIn>(map)` is parsed and then ignored** by `FlowAnalyzer`
       and `FlowEmitter`. It is on the builder surface and `FLOWX1020` recommends it as
       the fix for a binding failure, so a user following the diagnostic reaches an
