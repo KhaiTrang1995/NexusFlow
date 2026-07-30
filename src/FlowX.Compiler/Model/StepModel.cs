@@ -103,6 +103,19 @@ public sealed record StepModel
     /// <summary>Named policy set applied via <c>.WithPolicy(...)</c>.</summary>
     public string? PolicySetName { get; private init; }
 
+    /// <summary>
+    /// The policy kinds that set declares — <c>Retry</c>, <c>Cache</c>, and so on —
+    /// ordinally sorted.
+    /// </summary>
+    /// <remarks>
+    /// The name alone said nothing about the contents, which is why FLOWX1014 and
+    /// FLOWX1018 could not fire: both ask a question about what is in the set, not what
+    /// it is called. Empty when the set could not be resolved — one built at run time
+    /// cannot be inspected at compile time, and a guess would produce a diagnostic
+    /// nobody could act on.
+    /// </remarks>
+    public string[] PolicyKinds { get; private init; } = System.Array.Empty<string>();
+
     /// <summary><c>file:line</c> of the call, so a diagnostic points at the right chain link.</summary>
     public string? Location { get; private init; }
 
@@ -167,8 +180,11 @@ public sealed record StepModel
     };
 
     /// <summary>Returns a copy carrying a named policy set.</summary>
-    public StepModel WithPolicy(string policySetName) => this with
+    /// <param name="policySetName">The set as it was written at the call site.</param>
+    /// <param name="policyKinds">What the set declares, or empty when it could not be read.</param>
+    public StepModel WithPolicy(string policySetName, string[]? policyKinds = null) => this with
     {
         PolicySetName = policySetName,
+        PolicyKinds = policyKinds ?? System.Array.Empty<string>(),
     };
 }

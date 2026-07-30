@@ -368,6 +368,149 @@ public sealed class FlowPlanGeneratorTests
     }
 
     [Fact]
+    public void ReportsFLOWX1014WhenRetryIsAttachedToANonIdempotentCapability()
+    {
+        // The safety property this repository advertises most loudly, and the one it did
+        // not have: .WithPolicy stored the argument's source text, so nothing ever asked
+        // what was in the set. `payment.capture` declares Idempotent = false; retrying a
+        // capture is a duplicate charge.
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet PaymentGateway = PolicySet
+                    .Named("payment-gateway")
+                    .Timeout(TimeSpan.FromSeconds(2))
+                    .Retry(3);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<CapturePayment>().WithPolicy(Policies.PaymentGateway)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1014", run.Describe());
+    }
+
+    [Fact]
+    public void AllowsRetryOnAnIdempotentCapability()
+    {
+        // The other half of the rule. A gate that fires on everything is not a gate.
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Inventory = PolicySet.Named("inventory").Retry(3);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>().WithPolicy(Policies.Inventory)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldNotContain("FLOWX1014", run.Describe());
+    }
+
+    [Fact]
+    public void APolicySetWithoutRetryIsFineOnANonIdempotentCapability()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Slow = PolicySet
+                    .Named("slow")
+                    .Timeout(TimeSpan.FromSeconds(5));
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<CapturePayment>().WithPolicy(Policies.Slow)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldNotContain("FLOWX1014", run.Describe());
+    }
+
+    [Fact]
+    public void ReportsFLOWX1018WhenCacheIsAttachedToACapabilityWithSideEffects()
+    {
+        // A cache hit returns a success without performing the effect — it reports a
+        // reservation that never happened.
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Cached = PolicySet
+                    .Named("cached")
+                    .Cache(TimeSpan.FromMinutes(5));
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>().WithPolicy(Policies.Cached)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1018", run.Describe());
+    }
+
+    [Fact]
+    public void APolicySetBuiltAtRunTimeIsNotGuessedAt()
+    {
+        // A set that is not a field or property initialiser cannot be read at compile
+        // time. Reporting on a guess would produce a diagnostic nobody could act on, so
+        // the reader returns nothing and the rule stays silent.
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static PolicySet Build() => PolicySet.Named("x").Retry(3);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<CapturePayment>().WithPolicy(Policies.Build())
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldNotContain("FLOWX1014", run.Describe());
+    }
+
+    [Fact]
+    public void ReadsAPolicySetDeclaredAsAnExpressionBodiedProperty()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static PolicySet Payment => PolicySet.Named("payment").Retry(3);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<CapturePayment>().WithPolicy(Policies.Payment)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1014", run.Describe());
+    }
+
+    [Fact]
     public void ReadsTheDurableProfileAndTheDeclaredDeadline()
     {
         var run = GeneratorHarness.Run(WithFlow("""

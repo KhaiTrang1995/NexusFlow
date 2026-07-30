@@ -25,6 +25,13 @@
     -->
     <ProjectReference Include="../../src/FlowX.Compiler/FlowX.Compiler.csproj" />
     <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+
+    <!--
+      For PolicyStageFitnessTests only: the compiler cannot reference the abstractions
+      (netstandard2.0), so its copy of the stage ordering is pinned against the real one
+      from here.
+    -->
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
   </ItemGroup>
 
 </Project>

@@ -233,7 +233,68 @@ public static class ManifestWriter
             writer.Property("event", step.EventType);
         }
 
+        WritePolicies(writer, step);
+
         writer.CloseObject();
+    }
+
+    /// <summary>
+    /// The stage each policy kind runs in, fixed by ADR-0011.
+    /// </summary>
+    /// <remarks>
+    /// Duplicated from <c>PolicySet</c> rather than referenced, because this assembly
+    /// targets netstandard2.0 and cannot link against <c>FlowX.Abstractions</c> — the
+    /// same constraint that makes the model layer its own thing. The duplication is
+    /// pinned by <c>PolicyStagesMatchTheAbstraction</c>, which reads the real mapping by
+    /// reflection and fails if these two ever disagree. An unpinned copy of a safety
+    /// ordering is exactly the kind of duplication that drifts silently.
+    /// </remarks>
+    private static readonly System.Collections.Generic.Dictionary<string, string> PolicyStages =
+        new System.Collections.Generic.Dictionary<string, string>(System.StringComparer.Ordinal)
+        {
+            ["RateLimit"] = "Admission",
+            ["Idempotency"] = "Integrity",
+            ["Timeout"] = "Resilience",
+            ["Retry"] = "Resilience",
+            ["CircuitBreaker"] = "Resilience",
+            ["Bulkhead"] = "Resilience",
+            ["Cache"] = "Efficiency",
+            ["Audit"] = "Consistency",
+        };
+
+    /// <summary>Every policy kind this writer knows a stage for.</summary>
+    /// <remarks>Exposed so the fitness test can compare it with the real abstraction.</remarks>
+    public static IReadOnlyDictionary<string, string> KnownPolicyStages => PolicyStages;
+
+    /// <summary>
+    /// Writes the step's policies, or nothing when it declares none.
+    /// </summary>
+    /// <remarks>
+    /// A policy whose stage this writer does not recognise is skipped rather than
+    /// guessed at: the stage is the safety property, and a wrong one in the manifest
+    /// would misrepresent the order things run in.
+    /// </remarks>
+    private static void WritePolicies(JsonWriter writer, StepModel step)
+    {
+        var known = step.PolicyKinds.Where(PolicyStages.ContainsKey).ToList();
+
+        if (known.Count == 0)
+        {
+            return;
+        }
+
+        writer.PropertyName("policies");
+        writer.OpenArray();
+
+        foreach (var kind in known)
+        {
+            writer.OpenObject();
+            writer.Property("kind", kind);
+            writer.Property("stage", PolicyStages[kind]);
+            writer.CloseObject();
+        }
+
+        writer.CloseArray();
     }
 
     private static void WriteCapability(JsonWriter writer, StepModel step)

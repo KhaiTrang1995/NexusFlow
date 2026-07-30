@@ -2,6 +2,12 @@
 
 > **Severity:** Error · **Category:** FlowX · **Since:** 0.1.0
 
+> **Not raised yet.** This rule inspects a capability's body — its assembly references
+> and its call graph — which the flow generator never looks at. It needs a separate
+> `DiagnosticAnalyzer`, which does not exist. The rule below is the intended behaviour
+> and a convention worth following; nothing enforces it today. Tracked as **WP-13** in
+> [PLAN.md](../../PLAN.md).
+
 ## What it means
 
 A capability must not know how it was invoked. The moment it references `HttpContext`, a Kafka `ConsumeResult` or any other transport type, the same flow can no longer run behind HTTP, a bus and a cron schedule without changing — which is quality goal Q4.

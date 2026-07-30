@@ -17,8 +17,8 @@ the build.
 |---|---|---|
 | [FLOWX1001](FLOWX1001.md) | Flow must be partial | The generated plan has nowhere to live |
 | [FLOWX1002](FLOWX1002.md) | Step type is not a capability | A step the engine cannot invoke |
-| [FLOWX1003](FLOWX1003.md) | Capability references a transport | Losing quality goal Q4 — the same flow behind any transport |
-| [FLOWX1004](FLOWX1004.md) | Capability invokes another capability | Turning the capability set back into a call graph |
+| [FLOWX1003](FLOWX1003.md) ⚠️ | Capability references a transport | Losing quality goal Q4 — the same flow behind any transport |
+| [FLOWX1004](FLOWX1004.md) ⚠️ | Capability invokes another capability | Turning the capability set back into a call graph |
 | [FLOWX1005](FLOWX1005.md) | Flow inherits from another flow | Control flow invisible to the graph and the manifest |
 | [FLOWX1010](FLOWX1010.md) | Capability declares no authorisation stance | A permissive default nobody chose |
 | [FLOWX1014](FLOWX1014.md) | Retry requires an idempotent capability | **A duplicate charge** |
@@ -27,6 +27,16 @@ the build.
 | [FLOWX1018](FLOWX1018.md) | Cache requires no side effects | Reporting a write that never happened |
 | [FLOWX1023](FLOWX1023.md) | Flow declares no steps | A flow that silently does nothing |
 | [FLOWX1024](FLOWX1024.md) | Emit step is recorded but not published | A consumer waiting for an event the manifest promised |
+
+> ⚠️ **Documented but not raised.** `FLOWX1003` and `FLOWX1004` inspect a capability's
+> *body* — its assembly references and its call graph — which the flow generator never
+> looks at. They need a separate `DiagnosticAnalyzer`, which does not exist yet. Until
+> it does, **treat these two as conventions, not as controls**: the rule is real, and
+> nothing enforces it.
+>
+> Every other id in the table above is raised and covered by a test. `FLOWX1014` and
+> `FLOWX1018` were in this same state until WP-13 — documented as compile errors,
+> raised by nothing — which is why this note exists rather than being left implicit.
 
 ## Ids reserved but not yet raised
 
