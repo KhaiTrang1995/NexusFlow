@@ -113,10 +113,28 @@ jobs:
     # whole of P1 over a defect none of them introduced, which trains people to
     # ignore a red gate — the failure mode the allocation gate exists to avoid.
     #
-    # What is NOT advisory: the script's exit code. It exits non-zero above +8 %,
-    # pipefail is set below, and the step is shown as failed. Only the job's effect
-    # on the pull request is suppressed. Remove this line the moment B12-scale.md
-    # records a pass; a gate left advisory after it can pass is a gate nobody reads.
+    # What is NOT advisory: the script's exit code. It exits 1 above +8 %, 2 when the
+    # machine was too noisy to tell the two apart, pipefail is set below, and the step
+    # is shown as failed either way. Only the job's effect on the pull request is
+    # suppressed.
+    #
+    # Remove this line the moment B12-scale.md records a PASS — not an INCONCLUSIVE.
+    # A gate left advisory after it can pass is a gate nobody reads; a gate made
+    # blocking on a measurement that could not resolve itself is worse still.
+    #
+    # WHEN IT IS MADE BLOCKING, exit code 2 must stay non-blocking. INCONCLUSIVE is
+    # not evidence of a regression — it is the harness reporting that this runner
+    # could not separate the generator's cost from its own scheduling noise, and
+    # failing a pull request for that fails it for the weather. Blocking form:
+    #
+    #   ./scripts/measure-scale-overhead.sh --rounds 5 --sizes 50,200 \
+    #     | tee -a "$GITHUB_STEP_SUMMARY"
+    #   rc=$?
+    #   case $rc in
+    #     0) ;;
+    #     2) echo "::warning::scale overhead inconclusive on this runner" ;;
+    #     *) exit $rc ;;
+    #   esac
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -130,20 +148,24 @@ jobs:
         # same final compilation, differing only in whether the generator ran.
         #
         # Two sizes because the ratio is the less interesting half. A generator whose
-        # cost grows faster than the flow count fails at 400 flows whatever it does at
-        # 200, and only a second point can tell the two apart. The script prints the
-        # growth exponent it measures.
+        # cost grows faster than the flow count fails at 2 000 flows whatever it does
+        # at 200, and only a second point can tell the two apart. The script prints
+        # the growth exponent together with a confidence interval for it, because a
+        # fit through two noisy points reads far more convincing than it is.
         #
-        # Three rounds rather than the local five: a hosted runner is noisier and
-        # slower, each 200-flow round is two full compilations of ~2 500 types, and
-        # the gap being measured is an order of magnitude wider than the budget.
+        # Five rounds, not the three this job ran before. Each round is a sandwich of
+        # three builds per size — A B A, alternating which arm takes the outside slots
+        # — whose outer pair doubles as an A/A control. The statistics that decide the
+        # verdict need enough rounds to form an interval at all, and below five the
+        # script says so in its own output rather than quoting one anyway.
         run: |
           # pipefail explicitly: the default shell is `bash -e`, which takes the exit
           # status of the LAST command in a pipeline. Without this, tee always succeeds
           # and a FAIL verdict would be reported as a passing step — a gate that cannot
           # fail, which is worse than no gate.
           set -o pipefail
-          ./scripts/measure-scale-overhead.sh 3 50 200 | tee -a "$GITHUB_STEP_SUMMARY"
+          ./scripts/measure-scale-overhead.sh --rounds 5 --sizes 50,200 \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
   gate-self-test:
     name: The gate can fail
