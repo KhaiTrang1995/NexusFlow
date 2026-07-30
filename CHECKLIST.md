@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 791/791 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 806/806 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -44,7 +44,8 @@ These gate everything below them. None is code work.
 
 - [x] 20 specification documents, `docs/01` – `docs/20`
 - [x] 13 ADRs with trade-offs stated (ADR-0013 added by the first compilation)
-- [x] `docs/diagnostics/` — 11 pages plus an index; every help URI resolves, asserted by test
+- [x] `docs/diagnostics/` — 15 pages plus an index, one per raised diagnostic; every help
+      URI resolves, asserted by test
 - [x] `docs/benchmarks/` — baseline, gate policy, and the honest caveats
 - [x] 9 sample application specifications
 - [x] `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE` (Apache-2.0)
@@ -276,11 +277,16 @@ reachable, and enforced or honoured by nothing:
       rather than a second code path, which is the mistake WP-21 made once and this
       package exists to undo. Three of the eight are not yet executed by the emitter and
       are checked anyway; the page says which
-- [ ] **An unrecognised `TriggerAttribute` subclass is skipped in silence.** A trigger's
+- [x] **An unrecognised `TriggerAttribute` subclass is skipped in silence.** A trigger's
       `Kind` is an overridden property — executable code, not attribute data — so a
       third-party transport plugin's trigger cannot be read from metadata. WP-22 declined
-      to guess, which is right, but the skip produces only an absent `triggers` array. It
-      needs a diagnostic
+      to guess, which is right, but the skip produced only an absent `triggers` array —
+      which `flowx diff` cannot tell apart from a flow that declares no trigger, so the
+      gate that calls a removed trigger breaking lost its input without saying so. Closed
+      by `FLOWX1025` (WP-26), a warning: the manifest still refuses to guess, and the
+      refusal is now audible. **What remains open is the cause** — the abstractions give a
+      plugin author no way to declare a kind the compiler can read, so the only fix
+      offered is "use a built-in attribute instead"
 - [x] **Nothing in the repository had ever compiled generator output.** The generator
       harness discarded the updated compilation, so every test asserted against *parsed*
       text — which catches a syntax error but not an unresolved name, a wrong delegate
@@ -321,7 +327,7 @@ Three more surfaced while getting the suite green:
 
 | Found | Was |
 |---|---|
-| `.Emit<T>()` publishes nothing | Silent. Now **FLOWX1024**, the only warning in the set |
+| `.Emit<T>()` publishes nothing | Silent. Now **FLOWX1024**, the first warning in the set — since joined by `FLOWX1011` and `FLOWX1025` |
 | Allocation budgets measured 376 B in Debug | Compiler scaffolding, not the engine. CI runs Release and never saw it; every contributor did. Now skipped in Debug, with the reason |
 | The walker read `ArgumentNullException.ThrowIfNull(flow)` as a chain | A statement *after* the chain would have silently replaced it. The walk is now rooted at the builder parameter |
 

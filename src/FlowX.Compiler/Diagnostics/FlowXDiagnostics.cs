@@ -194,6 +194,43 @@ public static class FlowXDiagnostics
         "it being delivered.",
         DiagnosticSeverity.Warning);
 
+    /// <summary>FLOWX1025 — a trigger attribute the compiler cannot read.</summary>
+    /// <remarks>
+    /// <para>
+    /// A <strong>warning</strong>, and the reasoning is the same shape as FLOWX1024's:
+    /// the source is not wrong, the artifact is incomplete. The flow declares a trigger,
+    /// the build succeeds, and <c>flowx.manifest.json</c> simply has no entry for it —
+    /// which <c>flowx diff</c> cannot tell apart from "this flow has no trigger", so the
+    /// gate that classifies a removed trigger as breaking silently loses its input.
+    /// </para>
+    /// <para>
+    /// Not an error, deliberately. The attribute usually belongs to a third-party
+    /// transport plugin, so the developer seeing this often cannot fix it in their own
+    /// repository — and <c>17-Plugin-System.md §1</c> commits to the opposite of a
+    /// platform where using a plugin's trigger fails the build. This repository builds
+    /// with <c>TreatWarningsAsErrors</c>, so it is a break <em>here</em>; a consumer who
+    /// has accepted the gap can downgrade it in <c>.editorconfig</c>, which is a decision
+    /// recorded in their repository rather than a suppression scattered through source.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor TriggerCannotBeRead = Create(
+        "FLOWX1025",
+        "Trigger attribute cannot be read by the compiler",
+        "Trigger '{0}' on flow '{1}' is not one the compiler can read, so this flow " +
+        "publishes no trigger in the manifest",
+        "A trigger's Kind is an abstract property each attribute overrides — executable " +
+        "code, not attribute data — so the compiler can only read the trigger attributes " +
+        "FlowX.Abstractions ships, and it will not invent a kind for any other. The " +
+        "consequence is not cosmetic: the flow's triggers are absent from the manifest, " +
+        "and 'flowx diff' reads that absence as 'this flow has no trigger' rather than as " +
+        "'the compiler could not tell', so removing the trigger later is not reported as " +
+        "breaking. Declare the flow with one of the built-in trigger attributes — " +
+        "HttpTrigger, KafkaTrigger, CronTrigger, StreamTrigger or AgentTrigger, one of " +
+        "which normally matches the transport's kind even when the plugin ships its own — " +
+        "or accept the gap and downgrade this rule in .editorconfig, knowing the manifest " +
+        "no longer describes how this flow is reached.",
+        DiagnosticSeverity.Warning);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -209,7 +246,8 @@ public static class FlowXDiagnostics
         CacheRequiresNoSideEffects,
         StepInputIsNeverProduced,
         FlowHasNoSteps,
-        EmitIsNotYetPublished);
+        EmitIsNotYetPublished,
+        TriggerCannotBeRead);
 
     private static DiagnosticDescriptor Create(
         string id,

@@ -124,7 +124,15 @@ internal static class GeneratorHarness
     /// invokes it. Testing it through <see cref="Run"/> would have reported nothing and
     /// looked like a passing test.
     /// </remarks>
-    public static string[] Analyze(string source)
+    public static string[] Analyze(string source) => Analyze(source, new CapabilityAnalyzer());
+
+    /// <summary>Runs the given analyzers and returns the ids they reported.</summary>
+    /// <remarks>
+    /// One analyzer per call, by convention: a test that names the analyzer it is about
+    /// fails with the id it expected, whereas running the whole set would let an
+    /// unrelated rule's diagnostic satisfy the assertion.
+    /// </remarks>
+    public static string[] Analyze(string source, params DiagnosticAnalyzer[] analyzers)
     {
         var compilation = CSharpCompilation.Create(
             "FlowX.AnalyzerTests",
@@ -133,7 +141,7 @@ internal static class GeneratorHarness
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
 
         var diagnostics = compilation
-            .WithAnalyzers([new CapabilityAnalyzer()])
+            .WithAnalyzers([.. analyzers])
             .GetAnalyzerDiagnosticsAsync()
             .GetAwaiter()
             .GetResult();

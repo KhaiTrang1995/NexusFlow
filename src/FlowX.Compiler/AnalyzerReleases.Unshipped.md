@@ -24,3 +24,4 @@ FLOWX1018 | FlowX | Error | Cache requires a capability with no side effects. [D
 FLOWX1020 | FlowX | Error | Step consumes a contract no earlier step produces. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1020.md)
 FLOWX1023 | FlowX | Error | Flow declares no steps. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1023.md)
 FLOWX1024 | FlowX | Warning | Emit step is recorded but not published. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1024.md)
+FLOWX1025 | FlowX | Warning | Trigger attribute cannot be read by the compiler. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1025.md)
