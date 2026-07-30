@@ -196,6 +196,14 @@ In `Ephemeral` flows these drop to Info — there is no replay, so there is no
 determinism obligation. The analyzer reads the flow's declared profile, so the
 same rule set is strict exactly where it matters.
 
+**`FLOWX1011` is the exception, and ships as a Warning in `Ephemeral` rather than
+Info.** It is the only rule in this table that is implemented, and `Ephemeral` is the
+only profile the runtime executes today, so Info would have made it invisible in every
+build anyone can currently run — which is the state it was already in. See
+[FLOWX1011](diagnostics/FLOWX1011.md#why-the-severity-depends-on-the-profile). The
+remaining rules keep the Info stance for whoever implements them, at which point this
+paragraph is worth revisiting as a set rather than one row at a time.
+
 **Replay contract:** replaying a completed durable instance must produce
 byte-identical step inputs and identical control flow. Verified by
 `ReplayDeterminismTest`, which executes a corpus of flows, journals them,
