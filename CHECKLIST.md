@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 650/650 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 791/791 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -246,7 +246,37 @@ which is the exact failure mode P1 exists to remove:
       and `FlowEmitter`. It is on the builder surface and `FLOWX1020` recommends it as
       the fix for a binding failure, so a user following the diagnostic reaches an
       overload that silently does nothing. Worse than not existing
-- [ ] **Triggers and capability `errors` are in the manifest schema and never emitted**
+- [x] **Triggers and capability `errors` are in the manifest schema and never emitted.**
+      Closed by WP-22. Both are emitted, under a **three-state rule**: a resolved
+      catalogue, a resolved-and-empty one (`[]` — "declares no errors"), or **withheld
+      entirely** when it could not be resolved. A catalogue short by one entry reads
+      exactly like a complete one, so an unresolvable case has to be visibly absent
+      rather than quietly approximated
+
+**Gaps WP-20 and WP-22 surfaced in turn.** Same class again — declared, documented or
+reachable, and enforced or honoured by nothing:
+
+- [ ] **`.Fail(Error)` is parsed and then ignored.** It is on `IFlowBuilder`, it is in
+      the `08 §4` method table, and `FlowAnalyzer` does not model it — so a block whose
+      only call is `.Fail(...)` compiles to an **empty** block. The consequence is worse
+      than a no-op: `08 §3.2`'s own `Switch` example uses `.Default(b => b.Fail(...))` to
+      reject an unsupported channel, and that default currently falls through and accepts
+      it. Flagged in the doc; the fix is a work package
+- [ ] **`FLOWX1011` does not cover `Switch` selectors.** WP-21 scoped the analyzer to
+      `When` predicates; WP-20 then added a second construct under the identical rule.
+      `FlowErrors.SelectorFailed` states it at run time and nothing checks it at build
+      time — the exact position `When` was in before WP-21. `Return`, `Emit`,
+      `EmitOnFailure` and `ForEach`'s selector are in the same position
+- [ ] **An unrecognised `TriggerAttribute` subclass is skipped in silence.** A trigger's
+      `Kind` is an overridden property — executable code, not attribute data — so a
+      third-party transport plugin's trigger cannot be read from metadata. WP-22 declined
+      to guess, which is right, but the skip produces only an absent `triggers` array. It
+      needs a diagnostic
+- [x] **Nothing in the repository had ever compiled generator output.** The generator
+      harness discarded the updated compilation, so every test asserted against *parsed*
+      text — which catches a syntax error but not an unresolved name, a wrong delegate
+      type argument, or an unimplemented interface member. Fixed by WP-20's
+      `GeneratedCompileErrorsIn`, and a real compile is now asserted
 
 ### WP-10 · what it delivered
 
