@@ -6,8 +6,8 @@
 >
 > **Last updated:** 2026-07-30 · **Phase:** P0 · **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 231/231 passing ·
-> **Coverage:** 93.5 % line / 82.7 % branch (gates: 80 / 75) · **SDK:** 10.0.110
+> **Build:** 0 warnings, 0 errors · **Tests:** 252/252 passing ·
+> **Coverage:** 93.9 % line / 83.1 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **B1:** 4-step flow through the engine — **169 ns / 5 000 ns budget, 0 B** ·
 > **B3:** dispatch 20 ns / 150 ns, 0 B · **B2:** hard zero, met
 >
@@ -169,11 +169,11 @@ immutable, and rejects every invariant violation under test.
 |---|---|---|---|
 | Compiler warnings | 0 | **0** ✅ | verified locally |
 | Blocker/critical Sonar issues | 0 | **not running** | WP-0 |
-| Line coverage | ≥ 80 % | **93.5 %** ✅ | verified locally |
-| Branch coverage | ≥ 75 % | **82.7 %** ✅ | verified locally |
+| Line coverage | ≥ 80 % | **93.9 %** ✅ | verified locally |
+| Branch coverage | ≥ 75 % | **83.1 %** ✅ | verified locally |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
-| Fitness functions | all green | **31/31** ✅ | plus 8 compiler fitness tests |
+| Fitness functions | all green | **33/33** ✅ | plus 10 compiler fitness tests |
 | Concurrent cross-tenant leak | none | **none** ✅ | 64 concurrent flows, 0 overlaps |
 | SAST findings | 0 | **wired, unrun** — needs a CI run | WP-0 |
 | DAST findings | 0 | **wired, guarded** — needs WP-10 | WP-0 |
@@ -201,7 +201,7 @@ Controls from [21-Quality-Gates §3](docs/21-Quality-Gates.md#3-owasp-top-10-map
 | A02 Cryptographic failures | [x] `[Sensitive]` + generated redaction | [ ] needs the generator (WP-5) |
 | A03 Injection | [x] compile-time graph, no `Do(lambda)` | [~] structurally true; CodeQL + Semgrep wired, unrun |
 | A04 Insecure design | [x] STRIDE per boundary, 12 ADRs | [x] ADR review in CONTRIBUTING |
-| A05 Security misconfiguration | [x] no permissive defaults | [ ] needs startup validation (WP-7) |
+| A05 Security misconfiguration | [x] no permissive defaults | [x] startup validation, 8 tests |
 | A06 Vulnerable components | [x] zero-dependency abstractions | [x] Dependabot + SCA gate |
 | A07 Auth failures | [x] claims-only tenant resolution | [ ] needs the HTTP plugin (WP-8) |
 | A08 Integrity failures | [x] deterministic builds configured | [ ] needs signing + SBOM (WP-0) |

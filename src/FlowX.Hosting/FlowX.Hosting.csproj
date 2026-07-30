@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>
+      FlowX composition root: AddFlowX, options validated at startup, health checks and
+      graceful shutdown draining.
+    </Description>
+    <PackageTags>flowx;hosting;dependency-injection</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Abstractions packages only. Referencing Microsoft.Extensions.Hosting itself would
+      drag a host implementation into every consumer, including ones that compose their
+      own — a library takes the contract, not the container.
+    -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../FlowX.Runtime/FlowX.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>

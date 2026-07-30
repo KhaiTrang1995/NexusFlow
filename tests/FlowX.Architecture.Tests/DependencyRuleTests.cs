@@ -42,6 +42,7 @@ public sealed class DependencyRuleTests
     [InlineData("FlowX.Core", new[] { "FlowX.Abstractions" })]
     [InlineData("FlowX.Runtime", new[] { "FlowX.Abstractions", "FlowX.Core" })]
     [InlineData("FlowX.Runtime.Durable", new[] { "FlowX.Abstractions", "FlowX.Core", "FlowX.Runtime" })]
+    [InlineData("FlowX.Hosting", new[] { "FlowX.Abstractions", "FlowX.Core", "FlowX.Runtime" })]
     public void LayersPointInward(string projectName, string[] allowedReferences)
     {
         var project = RepositoryLayout.SourceProjects
@@ -64,6 +65,39 @@ public sealed class DependencyRuleTests
     }
 
     /// <summary>
+    /// A Roslyn component cannot reference the runtime assemblies at all.
+    /// </summary>
+    /// <remarks>
+    /// It targets netstandard2.0 and loads into the compiler process; the runtime
+    /// targets net10.0 and loads into the user's application. The generator emits source
+    /// that references FlowX.Core — it never links against it.
+    /// <para>
+    /// Stated as a test because the mistake is easy and its symptom is confusing: adding
+    /// the reference appears to work locally and then fails to load in Visual Studio,
+    /// where the generator silently produces nothing.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void RoslynComponentsReferenceNoRuntimeAssemblies()
+    {
+        foreach (var project in RepositoryLayout.SourceProjects)
+        {
+            var content = File.ReadAllText(project.FullName);
+
+            if (!content.Contains("<IsRoslynComponent>true</IsRoslynComponent>", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            RepositoryLayout.ProjectReferences(project).ShouldBeEmpty(
+                $"{project.Name} is a Roslyn component and must not reference the runtime " +
+                "assemblies. It emits source that references them; it does not link against " +
+                "them. A project reference here loads fine under `dotnet build` and makes the " +
+                "generator do nothing inside Visual Studio.");
+        }
+    }
+
+    /// <summary>
     /// Quality goal Q6: a new transport is added without touching the runtime. That only
     /// holds if the runtime never references a plugin.
     /// </summary>
@@ -76,7 +110,9 @@ public sealed class DependencyRuleTests
 
             var pluginReferences = references
                 .Where(static r => r.StartsWith("FlowX.", StringComparison.Ordinal))
-                .Where(static r => r is not ("FlowX.Abstractions" or "FlowX.Core" or "FlowX.Runtime" or "FlowX.Runtime.Durable"))
+                .Where(static r => r is not (
+                    "FlowX.Abstractions" or "FlowX.Core" or "FlowX.Runtime"
+                    or "FlowX.Runtime.Durable" or "FlowX.Hosting"))
                 .ToList();
 
             pluginReferences.ShouldBeEmpty(

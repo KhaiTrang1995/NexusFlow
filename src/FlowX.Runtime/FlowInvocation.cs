@@ -62,6 +62,22 @@ public readonly struct FlowExecutionResult
 
     /// <summary>True when every step completed.</summary>
     public bool IsSuccess => Error is null;
+
+    /// <summary>
+    /// A flow that was refused before any step ran — by a draining host, an admission
+    /// quota, or anything else that decides not to start work.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from a flow that failed: nothing executed, so there is nothing to
+    /// compensate and no completed steps to report. Collapsing the two would make a
+    /// rejected flow look like one that ran and failed, which changes what an operator
+    /// concludes from the metrics.
+    /// </remarks>
+    public static FlowExecutionResult Rejected(Error error)
+    {
+        ArgumentNullException.ThrowIfNull(error);
+        return new FlowExecutionResult(error, completedSteps: 0, CompensationOutcome.NotRequired);
+    }
 }
 
 /// <summary>Errors the engine itself produces, as opposed to those a capability returns.</summary>

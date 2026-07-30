@@ -157,6 +157,7 @@ an exit criterion that is mechanically checkable.
 | **Tests first** | `StartupValidationRejectsMisconfiguration` (A05) · `HealthCheckReportsReadiness` |
 | **Deliverable** | `FlowX.Hosting`: DI extensions, options with validation, health checks, graceful shutdown draining |
 | **Exit** | A misconfigured host refuses to start with a message naming the setting; in-flight flows drain on SIGTERM |
+| **Status** | **Done.** 19 tests. Validation runs at startup rather than first use, reports every problem at once, and names each setting. Drain refuses new work, is bounded, and reports whether it succeeded. |
 | **Depends on** | WP-5 |
 
 ### WP-8 — HTTP trigger plugin
