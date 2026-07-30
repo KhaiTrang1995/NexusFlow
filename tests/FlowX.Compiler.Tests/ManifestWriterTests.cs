@@ -214,4 +214,53 @@ public sealed class ManifestWriterTests
     [Fact]
     public void RejectsANullFlowList()
         => Should.Throw<ArgumentNullException>(() => ManifestWriter.Write("A", "1.0.0", null!));
+
+    [Fact]
+    public void WritesSensitiveContractMembers()
+    {
+
+        using var document = Parse(Write(new FlowModel(
+            flowId: "payment.take",
+            version: "1.0.0",
+            profile: "Ephemeral",
+            deadline: null,
+            containingNamespace: "Sample",
+            typeName: "PaymentFlow",
+            inputTypeName: "Sample.Payment",
+            outputTypeName: "Sample.Receipt",
+            steps: [StepModel.Capability(0, "Take", "payment.take", "1.0.0", isIdempotent: true)],
+            sensitiveInputMembers: ["CardToken", "Cvv"],
+            sensitiveOutputMembers: [])));
+
+        var input = document.RootElement.GetProperty("flows")[0].GetProperty("input");
+
+        input.GetProperty("sensitive").EnumerateArray()
+            .Select(e => e.GetString())
+            .ShouldBe(["CardToken", "Cvv"]);
+
+        // Omitted, not empty: a contract with no secrets must serialise exactly as it did
+        // before the field existed, or every flow gains a diff.
+        document.RootElement.GetProperty("flows")[0].GetProperty("output")
+            .TryGetProperty("sensitive", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void SensitiveMembersSurviveJsonEscaping()
+    {
+        using var document = Parse(Write(new FlowModel(
+            flowId: "payment.take",
+            version: "1.0.0",
+            profile: "Ephemeral",
+            deadline: null,
+            containingNamespace: "Sample",
+            typeName: "PaymentFlow",
+            inputTypeName: "Sample.Payment",
+            outputTypeName: "Sample.Receipt",
+            steps: [StepModel.Capability(0, "Take", "payment.take", "1.0.0", isIdempotent: true)],
+            sensitiveInputMembers: ["Odd\"Name"])));
+
+        document.RootElement.GetProperty("flows")[0]
+            .GetProperty("input").GetProperty("sensitive")[0].GetString()
+            .ShouldBe("Odd\"Name");
+    }
 }

@@ -20,7 +20,14 @@ internal static class Models
             "1.0.0",
             isIdempotent: true,
             sideEffects: ["inventory-ledger"])
-        .WithCompensation("Sample.Capabilities.ReleaseInventory", "inventory.release", "1.0.0");
+        .WithCompensation(StepModel.Capability(
+            index,
+            "Sample.Capabilities.ReleaseInventory",
+            "inventory.release",
+            "1.0.0",
+            isIdempotent: true,
+            sideEffects: ["inventory-ledger"],
+            authorizationMode: "Internal"));
 
     public static StepModel Capture(int index) => StepModel.Capability(
         index,

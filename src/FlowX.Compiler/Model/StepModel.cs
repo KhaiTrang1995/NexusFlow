@@ -71,14 +71,28 @@ public sealed record StepModel
     /// <summary>The capability's output contract, fully qualified.</summary>
     public string? CapabilityOutput { get; private init; }
 
-    /// <summary>Fully-qualified compensation type from <c>.CompensateWith&lt;T&gt;()</c>.</summary>
-    public string? CompensationTypeName { get; private init; }
+    /// <summary>
+    /// The compensation declared by <c>.CompensateWith&lt;T&gt;()</c>, or <c>null</c>.
+    /// </summary>
+    /// <remarks>
+    /// A whole <see cref="StepModel"/>, not three loose strings. It used to be the loose
+    /// strings — type, id, version — and the consequence was that the manifest listed the
+    /// compensation as a reference on the step and never as a capability in its own right.
+    /// Its authorisation stance, side effects and idempotency were invisible, so
+    /// <c>flowx diff</c> could not see a breaking change to one. Carrying the full model
+    /// makes the compensation the same kind of thing as any other capability, which is
+    /// what it always was.
+    /// </remarks>
+    public StepModel? Compensation { get; private init; }
+
+    /// <summary>Fully-qualified compensation type, or <c>null</c>.</summary>
+    public string? CompensationTypeName => Compensation?.CapabilityTypeName;
 
     /// <summary>Business identity of the compensation.</summary>
-    public string? CompensationId { get; private init; }
+    public string? CompensationId => Compensation?.CapabilityId;
 
     /// <summary>Contract version of the compensation.</summary>
-    public string? CompensationVersion { get; private init; }
+    public string? CompensationVersion => Compensation?.CapabilityVersion;
 
     /// <summary>Event identity for an <see cref="StepKindModel.Emit"/> step.</summary>
     public string? EventType { get; private init; }
@@ -143,11 +157,13 @@ public sealed record StepModel
     }
 
     /// <summary>Returns a copy carrying a compensation.</summary>
-    public StepModel WithCompensation(string typeName, string id, string version) => this with
+    /// <param name="compensation">
+    /// The compensating capability, modelled exactly as a step is — build it with
+    /// <see cref="Capability"/> so it reaches the manifest with its full metadata.
+    /// </param>
+    public StepModel WithCompensation(StepModel compensation) => this with
     {
-        CompensationTypeName = typeName,
-        CompensationId = id,
-        CompensationVersion = version,
+        Compensation = compensation,
     };
 
     /// <summary>Returns a copy carrying a named policy set.</summary>
