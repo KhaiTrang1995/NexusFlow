@@ -179,8 +179,10 @@ schedule. **It is not what is happening.**
 The interval on the exponent is bootstrapped by resampling rounds within each size and
 refitting, so it carries each size's own uncertainty into the exponent rather than fitting
 a line through five point estimates and reporting the slope as though the points were
-exact. It **contains 1.0 and excludes everything above 1.1**. The three segments agree with
-each other and with the fit, which is exactly what WP-18's did not do.
+exact. It **contains 1.0 and excludes everything above 1.1**. The three segments span 0.70
+to 1.15 and straddle the fit rather than contradicting it — WP-18's read 0.61 and 1.94 and
+its fit landed at 0.99 by cancellation, which is the failure mode printing the segments
+exists to expose.
 
 **The straight line is the better description**, and its intercept is the reason: 3 ms of
 fixed cost against a 12-second build is nothing, so cost is essentially *proportional* to
@@ -244,17 +246,18 @@ this size survives the distortion. **The costs in milliseconds are not distorted
 a constant present in both arms cancels in the difference between them.
 
 **And the marginal cost per flow replicates to within 1 %**: 9.54 ms and 9.44 ms of wall
-clock, 11.20 ms of CPU. That is the number §4 rests on, arrived at three ways.
+clock, 11.20 ms of CPU. That is the number the linear reading rests on, arrived at three
+independent ways.
 
 **The power-law exponents from the two runs do *not* agree, and the reason is instructive.**
-This run reads `flows^0.49` [0.38, 0.61] on wall clock against §4's `flows^0.91`. Nothing
+This run reads `flows^0.49` [0.38, 0.61] on wall clock against the `flows^0.91` above. Nothing
 changed about the generator; what changed is that turning the compiler server off adds a
 **585 ms fixed term** to the measured cost, and a cost of the form `fixed + k × flows`
 reads as sublinear under a power law — the more so the smaller the smallest size measured.
 The affine fits, which separate the constant from the slope, agree to within 1 %. **This is
 why both fits are reported**, and it is a caution about quoting a single exponent for a cost
-that has a fixed part. Neither run's interval reaches 1.2 in any metric, which is the claim
-§4 actually makes.
+that has a fixed part. What survives every configuration is that **no interval in any run,
+on either metric, reaches 1.2** — which is the claim this section actually makes.
 
 ---
 
