@@ -318,9 +318,24 @@ public sealed class ParallelTests
     /// A <c>Dictionary&lt;Type, object&gt;</c> written from two threads does not throw
     /// reliably — it corrupts, and the corruption surfaces later as a missing entry or an
     /// infinite loop in a bucket chain. So this hammers the write path from every branch,
-    /// repeatedly, and asserts the flow still completes and the bag still reads back. It is
-    /// a probabilistic test of a probabilistic bug, which is the best that can be done
-    /// short of a model checker; run unguarded it fails within a handful of iterations.
+    /// repeatedly, and asserts the flow still completes and the bag still reads back.
+    /// <para>
+    /// <strong>Read this as a smoke test, not as proof that the lock is load-bearing.</strong>
+    /// An earlier version of this comment claimed it fails within a handful of iterations
+    /// when <c>_guarded</c> is forced false. It does not: it was run eight times unguarded —
+    /// including a variant inserting twelve extra distinct keys per branch per iteration to
+    /// force dictionary resizes — and passed every time on a four-core machine. Two branches
+    /// being in flight at once (which <c>BranchesOverlapWhenTheirStepsActuallyYield</c> does
+    /// prove) is not the same as two threads colliding inside one dictionary operation, and
+    /// the window for that is narrow.
+    /// </para>
+    /// <para>
+    /// The lock stays regardless, and not because this test asks for it: concurrent mutation
+    /// of a <c>Dictionary</c> is unsafe by contract, and a race that is merely hard to
+    /// provoke is worse than one that is easy — it reaches production instead of CI. What is
+    /// missing is a test that can actually fail, which needs deterministic interleaving
+    /// rather than more iterations.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task ConcurrentBranchWritesDoNotCorruptTheSharedStateBag()
