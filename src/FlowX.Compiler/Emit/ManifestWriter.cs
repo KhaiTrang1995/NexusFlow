@@ -41,10 +41,15 @@ public static class ManifestWriter
     /// <param name="applicationName">Usually the root assembly name.</param>
     /// <param name="applicationVersion">SemVer of the application.</param>
     /// <param name="flows">Every flow in the compilation.</param>
+    /// <param name="projectDirectory">
+    /// Absolute path of the project being compiled. Source pointers are written relative
+    /// to it, so the document is identical on every machine that builds the same source.
+    /// </param>
     public static string Write(
         string applicationName,
         string applicationVersion,
-        IReadOnlyList<FlowModel> flows)
+        IReadOnlyList<FlowModel> flows,
+        string? projectDirectory = null)
     {
         if (flows is null)
         {
@@ -67,7 +72,7 @@ public static class ManifestWriter
         writer.OpenArray();
         foreach (var flow in ordered)
         {
-            WriteFlow(writer, flow);
+            WriteFlow(writer, flow, projectDirectory);
         }
 
         writer.CloseArray();
@@ -97,7 +102,39 @@ public static class ManifestWriter
         return writer.ToString();
     }
 
-    private static void WriteFlow(JsonWriter writer, FlowModel flow)
+    /// <summary>
+    /// Turns an absolute <c>file:line</c> into one relative to the project directory.
+    /// </summary>
+    /// <remarks>
+    /// The manifest is a published artifact that <c>flowx diff</c> compares across builds
+    /// and machines, and the header on the generated holder promises it is byte-identical
+    /// for identical source. An absolute path breaks that promise on the second machine,
+    /// and ships the build agent's directory layout to anyone who reads the manifest.
+    /// Falls back to the original when no project directory is known, because a slightly
+    /// wrong pointer beats no pointer at all.
+    /// </remarks>
+    private static string Relativise(string location, string? projectDirectory)
+    {
+        if (string.IsNullOrEmpty(projectDirectory))
+        {
+            return location;
+        }
+
+        var prefix = projectDirectory!.Replace('\\', '/');
+
+        if (!prefix.EndsWith("/", System.StringComparison.Ordinal))
+        {
+            prefix += "/";
+        }
+
+        var normalised = location.Replace('\\', '/');
+
+        return normalised.StartsWith(prefix, System.StringComparison.Ordinal)
+            ? normalised.Substring(prefix.Length)
+            : normalised;
+    }
+
+    private static void WriteFlow(JsonWriter writer, FlowModel flow, string? projectDirectory)
     {
         writer.OpenObject();
         writer.Property("id", flow.FlowId);
@@ -143,7 +180,7 @@ public static class ManifestWriter
 
         if (flow.DeclarationLocation != null)
         {
-            writer.Property("source", flow.DeclarationLocation);
+            writer.Property("source", Relativise(flow.DeclarationLocation, projectDirectory));
         }
 
         writer.CloseObject();

@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>Ecommerce</RootNamespace>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      The sample is the AOT smoke test. If a reference application cannot publish with
+      NativeAOT, constraint C2 is a claim rather than a property — so it is enabled here
+      rather than only in CI, where nobody would see it until a release.
+    -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The in-memory adapters are internal: they are infrastructure, not part of the
+      sample's story. Their idempotency behaviour is real logic, though, so the test
+      project sees them rather than the sample widening its surface to be testable.
+    -->
+    <InternalsVisibleTo Include="Ecommerce.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+    <ProjectReference Include="../../plugins/FlowX.Http/FlowX.Http.csproj" />
+
+    <!--
+      The compiler is referenced as an ANALYZER, not as a library. That is what makes
+      this sample the real test of the generator: it runs inside this project's build,
+      against this project's source, exactly as it would for any consumer.
+    -->
+    <ProjectReference Include="../../src/FlowX.Compiler/FlowX.Compiler.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

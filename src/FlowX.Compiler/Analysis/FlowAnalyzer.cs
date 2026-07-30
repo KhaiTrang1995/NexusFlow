@@ -104,8 +104,8 @@ public static class FlowAnalyzer
             return AnalysisResult.Failure(diagnostics);
         }
 
-        var defineBody = FindDefineBody(declaration);
-        var links = FlowChainWalker.Walk(defineBody);
+        var define = FindDefine(declaration);
+        var links = FlowChainWalker.Walk(FindDefineBody(define), FindBuilderParameterName(define));
         var steps = BuildSteps(links, semanticModel, diagnostics);
 
         // FLOWX1023 — an empty flow has no observable behaviour.
@@ -134,6 +134,7 @@ public static class FlowAnalyzer
         }
 
         var contracts = ReadFlowContracts(flowType);
+        var returnClause = FindReturnClause(links);
 
         var model = new FlowModel(
             flowId: flowAttribute.ConstructorArguments[0].Value as string ?? flowType.Name,
@@ -147,9 +148,97 @@ public static class FlowAnalyzer
             inputTypeName: contracts.Input,
             outputTypeName: contracts.Output,
             steps: steps,
-            declarationLocation: FormatLocation(declaration.Identifier.GetLocation()));
+            declarationLocation: FormatLocation(declaration.Identifier.GetLocation()),
+            returnProjection: returnClause?.Text,
+            returnLocation: returnClause?.Location,
+            usings: ReadUsings(declaration));
 
         return AnalysisResult.Success(model, diagnostics);
+    }
+
+    /// <summary>
+    /// Reads the <c>.Return(...)</c> lambda's source text, or <c>null</c> when the flow
+    /// declares none.
+    /// </summary>
+    /// <remarks>
+    /// The last <c>Return</c> wins, matching what the chain actually does: a builder that
+    /// saw two would have overwritten the first.
+    /// </remarks>
+    private static ReturnClause? FindReturnClause(IReadOnlyList<ChainLink> links)
+    {
+        for (var i = links.Count - 1; i >= 0; i--)
+        {
+            var link = links[i];
+
+            if (link.MethodName != "Return")
+            {
+                continue;
+            }
+
+            var arguments = link.Invocation.ArgumentList.Arguments;
+
+            if (arguments.Count == 0)
+            {
+                return null;
+            }
+
+            return new ReturnClause(
+                arguments[0].Expression.ToString(),
+                FormatLocation(arguments[0].Expression.GetLocation()));
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The <c>using</c> directives in scope where the flow was declared, as source text.
+    /// </summary>
+    /// <remarks>
+    /// Both file-level and namespace-level directives, because the emitted projection is
+    /// the author's verbatim text and has to resolve the same names it did in their file.
+    /// Global usings are not included: they are already in scope in the generated file,
+    /// which is part of the same compilation.
+    /// </remarks>
+    private static List<string> ReadUsings(ClassDeclarationSyntax declaration)
+    {
+        var usings = new List<string>();
+
+        for (SyntaxNode? node = declaration; node is not null; node = node.Parent)
+        {
+            var directives = node switch
+            {
+                CompilationUnitSyntax unit => unit.Usings,
+                NamespaceDeclarationSyntax ns => ns.Usings,
+                FileScopedNamespaceDeclarationSyntax file => file.Usings,
+                _ => default,
+            };
+
+            foreach (var directive in directives)
+            {
+                var text = directive.ToString();
+
+                if (!usings.Contains(text))
+                {
+                    usings.Add(text);
+                }
+            }
+        }
+
+        return usings;
+    }
+
+    /// <summary>The text and location of a <c>.Return(...)</c> lambda.</summary>
+    private sealed class ReturnClause
+    {
+        internal ReturnClause(string text, string? location)
+        {
+            Text = text;
+            Location = location;
+        }
+
+        internal string Text { get; }
+
+        internal string? Location { get; }
     }
 
     private static List<StepModel> BuildSteps(
@@ -169,7 +258,7 @@ public static class FlowAnalyzer
 
                 case "Emit":
                 case "EmitOnFailure":
-                    AddEventStep(link, semanticModel, steps);
+                    AddEventStep(link, semanticModel, diagnostics, steps);
                     break;
 
                 case "AwaitSignal":
@@ -261,13 +350,17 @@ public static class FlowAnalyzer
             info.Version,
             info.IsIdempotent,
             info.SideEffects,
-            FormatLocation(link.Invocation.GetLocation()),
+            FormatLocation(link.CallLocation),
             info.AuthorizationMode,
             info.InputTypeName,
             info.OutputTypeName));
     }
 
-    private static void AddEventStep(ChainLink link, SemanticModel semanticModel, List<StepModel> steps)
+    private static void AddEventStep(
+        ChainLink link,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        List<StepModel> steps)
     {
         if (link.TypeArguments.Count == 0)
         {
@@ -281,10 +374,18 @@ public static class FlowAnalyzer
             return;
         }
 
+        // FLOWX1024 — the step reaches the plan and the manifest, but nothing publishes
+        // it until the outbox exists. Warning rather than silence: a consumer reading the
+        // manifest would otherwise wait for an event that never arrives.
+        diagnostics.Add(Diagnostic.Create(
+            FlowXDiagnostics.EmitIsNotYetPublished,
+            link.CallLocation,
+            symbol.Name));
+
         steps.Add(StepModel.Emit(
             steps.Count,
             ToEventIdentity(symbol.Name),
-            FormatLocation(link.Invocation.GetLocation())));
+            FormatLocation(link.CallLocation)));
     }
 
     private static void AddSignalStep(ChainLink link, SemanticModel semanticModel, List<StepModel> steps)
@@ -304,7 +405,7 @@ public static class FlowAnalyzer
         steps.Add(StepModel.AwaitSignal(
             steps.Count,
             ToEventIdentity(symbol.Name),
-            FormatLocation(link.Invocation.GetLocation())));
+            FormatLocation(link.CallLocation)));
     }
 
     private static void AttachCompensation(ChainLink link, SemanticModel semanticModel, List<StepModel> steps)
@@ -340,19 +441,22 @@ public static class FlowAnalyzer
     private static ArrowExpressionClauseSyntax? FindArrow(MethodDeclarationSyntax method) =>
         method.ExpressionBody;
 
-    private static SyntaxNode? FindDefineBody(ClassDeclarationSyntax declaration)
-    {
-        var define = declaration.Members
+    private static MethodDeclarationSyntax? FindDefine(ClassDeclarationSyntax declaration) =>
+        declaration.Members
             .OfType<MethodDeclarationSyntax>()
             .FirstOrDefault(m => m.Identifier.ValueText == "Define");
 
-        if (define is null)
-        {
-            return null;
-        }
+    private static SyntaxNode? FindDefineBody(MethodDeclarationSyntax? define) =>
+        define is null ? null : (SyntaxNode?)FindArrow(define) ?? define.Body;
 
-        return (SyntaxNode?)FindArrow(define) ?? define.Body;
-    }
+    /// <summary>
+    /// The name of <c>Define</c>'s builder parameter, which is what tells the walker a
+    /// chain from any other call in the method. See <see cref="FlowChainWalker.Walk"/>.
+    /// </summary>
+    private static string? FindBuilderParameterName(MethodDeclarationSyntax? define) =>
+        define?.ParameterList.Parameters.Count > 0
+            ? define.ParameterList.Parameters[0].Identifier.ValueText
+            : null;
 
     private static ITypeSymbol? ResolveType(TypeSyntax syntax, SemanticModel semanticModel) =>
         semanticModel.GetSymbolInfo(syntax).Symbol as ITypeSymbol

@@ -74,6 +74,128 @@ public static class FlowEndpointExtensions
         return builder;
     }
 
+    /// <summary>Maps a flow that takes a JSON request body and returns its declared output.</summary>
+    /// <typeparam name="TRequest">The flow's input contract, read from the request body.</typeparam>
+    /// <typeparam name="TResponse">The flow's output contract, from its <c>.Return(...)</c> clause.</typeparam>
+    /// <param name="endpoints">The route builder.</param>
+    /// <param name="method">HTTP method.</param>
+    /// <param name="route">Route template.</param>
+    /// <param name="plan">The compiled plan for this flow.</param>
+    /// <param name="dispatcherFactory">Resolves the generated dispatcher from the container.</param>
+    /// <param name="projection">
+    /// The generated <c>Projection</c> field on the flow's partial class. Passing it rather
+    /// than a hand-written lambda is what makes the wire contract the same thing the flow
+    /// declared, instead of a second copy that can drift.
+    /// </param>
+    /// <param name="requestTypeInfo">Source-generated metadata for <typeparamref name="TRequest"/>.</param>
+    /// <param name="responseTypeInfo">Source-generated metadata for <typeparamref name="TResponse"/>.</param>
+    /// <param name="requireIdempotencyKey">Whether an <c>Idempotency-Key</c> header is mandatory.</param>
+    public static IEndpointConventionBuilder MapFlow<TRequest, TResponse>(
+        this IEndpointRouteBuilder endpoints,
+        string method,
+        string route,
+        ExecutionPlan plan,
+        Func<IServiceProvider, IStepDispatcher> dispatcherFactory,
+        Func<FlowContext, TResponse> projection,
+        JsonTypeInfo<TRequest> requestTypeInfo,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        bool requireIdempotencyKey = false)
+        where TRequest : notnull
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentException.ThrowIfNullOrWhiteSpace(method);
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(dispatcherFactory);
+        ArgumentNullException.ThrowIfNull(projection);
+        ArgumentNullException.ThrowIfNull(requestTypeInfo);
+        ArgumentNullException.ThrowIfNull(responseTypeInfo);
+
+        var builder = endpoints.Map(
+            route,
+            async (HttpContext context) => await HandleAsync(
+                context, plan, dispatcherFactory, projection,
+                requestTypeInfo, responseTypeInfo, requireIdempotencyKey)
+                .ConfigureAwait(false));
+
+        builder.WithMetadata(new HttpMethodMetadata([method]));
+        return builder;
+    }
+
+    private static async Task HandleAsync<TRequest, TResponse>(
+        HttpContext context,
+        ExecutionPlan plan,
+        Func<IServiceProvider, IStepDispatcher> dispatcherFactory,
+        Func<FlowContext, TResponse> projection,
+        JsonTypeInfo<TRequest> requestTypeInfo,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        bool requireIdempotencyKey)
+        where TRequest : notnull
+    {
+        var invocation = HttpTriggerReader.Read(context, requireIdempotencyKey);
+
+        if (invocation.IsFailure)
+        {
+            await WriteProblemAsync(
+                context, invocation.Error, HttpTriggerReader.ReadCorrelationId(context))
+                .ConfigureAwait(false);
+
+            return;
+        }
+
+        TRequest? input;
+
+        try
+        {
+            input = await JsonSerializer
+                .DeserializeAsync(context.Request.Body, requestTypeInfo, context.RequestAborted)
+                .ConfigureAwait(false);
+        }
+        catch (JsonException exception)
+        {
+            // The parser's message names the offending member and offset, which is exactly
+            // what a caller needs. It describes their payload, not our internals, so
+            // echoing it leaks nothing — see docs/16-Security.md on error hygiene.
+            await WriteProblemAsync(
+                context,
+                HttpErrors.MalformedBody(exception.Message),
+                invocation.Value.CorrelationId)
+                .ConfigureAwait(false);
+
+            return;
+        }
+
+        if (input is null)
+        {
+            await WriteProblemAsync(
+                context, HttpErrors.MissingBody(), invocation.Value.CorrelationId)
+                .ConfigureAwait(false);
+
+            return;
+        }
+
+        var host = context.RequestServices.GetRequiredService<FlowHost>();
+        var dispatcher = dispatcherFactory(context.RequestServices);
+
+        var result = await host
+            .RunAsync(plan, dispatcher, invocation.Value, input, projection, context.RequestAborted)
+            .ConfigureAwait(false);
+
+        if (result.IsFailure)
+        {
+            await WriteProblemAsync(context, result.Error!, invocation.Value.CorrelationId)
+                .ConfigureAwait(false);
+
+            return;
+        }
+
+        context.Response.StatusCode = StatusCodes.Status200OK;
+        context.Response.ContentType = "application/json";
+
+        await JsonSerializer
+            .SerializeAsync(context.Response.Body, result.Value, responseTypeInfo, context.RequestAborted)
+            .ConfigureAwait(false);
+    }
+
     private static async Task HandleAsync<TResponse>(
         HttpContext context,
         ExecutionPlan plan,

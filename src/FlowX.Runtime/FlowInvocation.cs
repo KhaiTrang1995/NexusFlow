@@ -86,6 +86,81 @@ public readonly struct FlowExecutionResult
         ArgumentNullException.ThrowIfNull(error);
         return new FlowExecutionResult(error, completedSteps: 0, CompensationOutcome.NotRequired);
     }
+
+    /// <summary>
+    /// A flow with a declared output that was refused before any step ran.
+    /// </summary>
+    /// <typeparam name="TOut">The flow's declared output contract.</typeparam>
+    /// <param name="error">Why the flow was refused.</param>
+    /// <remarks>
+    /// Lives here rather than on <see cref="FlowExecutionResult{TOut}"/> because a static
+    /// factory belongs on the non-generic type: one call site, not one per instantiation.
+    /// </remarks>
+    public static FlowExecutionResult<TOut> Rejected<TOut>(Error error)
+        => new(Rejected(error), default);
+}
+
+/// <summary>
+/// The outcome of one flow execution, together with the value its <c>.Return(...)</c>
+/// clause projected.
+/// </summary>
+/// <typeparam name="TOut">The flow's declared output contract.</typeparam>
+/// <remarks>
+/// <para>
+/// Separate from the non-generic <see cref="FlowExecutionResult"/> rather than replacing
+/// it: a flow triggered by a queue consumer has no caller to return a value to, and
+/// forcing every such call site to name an output type it discards would be ceremony.
+/// </para>
+/// <para>
+/// Also a struct, and the projection runs while the pooled context is still rented, so
+/// carrying an output costs one copy and no allocation.
+/// </para>
+/// </remarks>
+public readonly struct FlowExecutionResult<TOut>
+{
+    private readonly TOut? _value;
+
+    internal FlowExecutionResult(FlowExecutionResult outcome, TOut? value)
+    {
+        Outcome = outcome;
+        _value = value;
+    }
+
+    /// <summary>The execution itself: error, completed steps, compensation.</summary>
+    public FlowExecutionResult Outcome { get; }
+
+    /// <summary>The business error, or <c>null</c> when the flow completed.</summary>
+    public Error? Error => Outcome.Error;
+
+    /// <summary>How many steps completed before the flow ended.</summary>
+    public int CompletedSteps => Outcome.CompletedSteps;
+
+    /// <summary>What happened to the compensations.</summary>
+    public CompensationOutcome Compensation => Outcome.Compensation;
+
+    /// <summary>True when every step completed.</summary>
+    public bool IsSuccess => Outcome.IsSuccess;
+
+    /// <summary>True when the flow ended with an error.</summary>
+    public bool IsFailure => Outcome.IsFailure;
+
+    /// <summary>
+    /// The projected output. Reading it on a failed flow is a defect in the caller, so
+    /// it throws — the same stance <see cref="Result{T}.Value"/> takes, for the same
+    /// reason: a silent <c>default</c> would be serialised to a client as a real answer.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The flow did not complete.</exception>
+    public TOut Value => IsSuccess
+        ? _value!
+        : throw new InvalidOperationException(
+            $"Cannot read Value of a flow that ended with '{Error!.Code}'.");
+
+    /// <summary>Non-throwing accessor, for call sites that branch on the outcome.</summary>
+    public bool TryGetValue(out TOut? value)
+    {
+        value = _value;
+        return IsSuccess;
+    }
 }
 
 /// <summary>Errors the engine itself produces, as opposed to those a capability returns.</summary>

@@ -53,15 +53,26 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
         var application = context.CompilationProvider.Select(
             static (compilation, _) => compilation.AssemblyName ?? "Application");
 
+        // Source pointers in the manifest are written relative to this, so the document
+        // does not carry the build agent's directory layout. Supplied by the props file
+        // shipped in the analyzer package; null when a host does not provide it, which
+        // Relativise handles by leaving the path alone.
+        var projectDirectory = context.AnalyzerConfigOptionsProvider.Select(
+            static (options, _) => options.GlobalOptions.TryGetValue("build_property.projectdir", out var dir)
+                ? dir
+                : null);
+
         context.RegisterSourceOutput(
-            flows.Collect().Combine(application),
-            static (production, pair) => ProduceManifest(production, pair.Left, pair.Right));
+            flows.Collect().Combine(application).Combine(projectDirectory),
+            static (production, pair) => ProduceManifest(
+                production, pair.Left.Left, pair.Left.Right, pair.Right));
     }
 
     private static void ProduceManifest(
         SourceProductionContext production,
         ImmutableArray<AnalysisResult?> results,
-        string applicationName)
+        string applicationName,
+        string? projectDirectory)
     {
         var models = results
             .Where(static r => r is { IsSuccess: true, Model: not null })
@@ -76,7 +87,7 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
             return;
         }
 
-        var manifest = ManifestWriter.Write(applicationName, "1.0.0", models);
+        var manifest = ManifestWriter.Write(applicationName, "1.0.0", models, projectDirectory);
 
         production.AddSource("FlowXManifest.g.cs", SourceText.From(EmitManifestHolder(manifest), Encoding.UTF8));
     }

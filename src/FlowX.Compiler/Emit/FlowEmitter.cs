@@ -62,6 +62,14 @@ public static class FlowEmitter
         writer.Line("using System.Threading.Tasks;");
         writer.Line("using FlowX;");
         writer.Line("using FlowX.Runtime;");
+
+        // The author's usings, so a copied .Return(...) lambda resolves the same names
+        // here that it resolved where it was written. Skipped when already emitted above.
+        foreach (var directive in flow.Usings.Where(u => !EmittedUsings.Contains(u)))
+        {
+            writer.Line(directive);
+        }
+
         writer.Line();
 
         var hasNamespace = !string.IsNullOrEmpty(flow.ContainingNamespace);
@@ -92,10 +100,51 @@ public static class FlowEmitter
         writer.Line();
         EmitPlan(writer, flow);
         writer.Line();
+        EmitProjection(writer, flow);
         EmitDispatcher(writer, flow);
 
         writer.CloseBrace();
     }
+
+    /// <summary>
+    /// Emits the flow's output projection from its <c>.Return(...)</c> clause.
+    /// </summary>
+    /// <remarks>
+    /// A <c>static readonly</c> field, not a method or a lambda built per call: the engine
+    /// takes it as a <c>Func</c>, and a field is allocated once at type initialisation, so
+    /// passing it costs nothing and the zero-allocation budget survives contact with the
+    /// feature that gives a flow an answer to return.
+    /// </remarks>
+    private static void EmitProjection(SourceWriter writer, FlowModel flow)
+    {
+        if (flow.ReturnProjection is null)
+        {
+            return;
+        }
+
+        writer.Line("/// <summary>Projects the flow's output from the finished context.</summary>");
+        writer.Line("/// <remarks>");
+        writer.Line("/// Your <c>.Return(...)</c> expression, copied verbatim. The engine runs it while");
+        writer.Line("/// the pooled context is still rented, which is why it can read the context at all.");
+        writer.Line("/// </remarks>");
+        EmitLineDirective(writer, flow.ReturnLocation);
+        writer.Line(
+            "public static readonly Func<FlowContext, " + flow.OutputTypeName + "> Projection = " +
+            flow.ReturnProjection + ";");
+        EmitLineDirectiveEnd(writer, flow.ReturnLocation);
+        writer.Line();
+    }
+
+    /// <summary>Usings the generated file always carries, so copied ones are not repeated.</summary>
+    private static readonly System.Collections.Generic.HashSet<string> EmittedUsings =
+        new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal)
+        {
+            "using System;",
+            "using System.Threading;",
+            "using System.Threading.Tasks;",
+            "using FlowX;",
+            "using FlowX.Runtime;",
+        };
 
     private static void EmitDescriptors(SourceWriter writer, FlowModel flow)
     {
@@ -243,7 +292,12 @@ public static class FlowEmitter
 
             if (step.Kind == StepKindModel.Capability)
             {
-                EmitCapabilityInvocation(writer, FieldName(step.CapabilityTypeName!), step.Location);
+                EmitCapabilityInvocation(
+                    writer,
+                    FieldName(step.CapabilityTypeName!),
+                    step.CapabilityInput,
+                    step.CapabilityOutput,
+                    step.Location);
             }
             else
             {
@@ -268,12 +322,36 @@ public static class FlowEmitter
         writer.CloseBrace();
     }
 
-    private static void EmitCapabilityInvocation(SourceWriter writer, string field, string? location)
+    private static void EmitCapabilityInvocation(
+        SourceWriter writer,
+        string field,
+        string? inputType,
+        string? outputType,
+        string? location)
     {
+        // Step inputs are bound by type out of the flow's state bag. The flow's own
+        // input is seeded there by the engine; every later step reads what an earlier
+        // one returned. That is what lets a chain of differently-typed steps run
+        // through an engine that knows none of the types.
+        var input = inputType is null ? "ctx" : "ctx.Get<" + inputType + ">()";
+
         EmitLineDirective(writer, location);
-        writer.Line("var result = await " + field + ".ExecuteAsync(ctx.Input, ctx, ct).ConfigureAwait(false);");
+        writer.Line("var result = await " + field + ".ExecuteAsync(" + input + ", ctx, ct).ConfigureAwait(false);");
         EmitLineDirectiveEnd(writer, location);
-        writer.Line("return result.IsSuccess ? StepOutcome.Success : StepOutcome.Failed(result.Error);");
+
+        writer.Line("if (!result.IsSuccess)");
+        writer.OpenBrace();
+        writer.Line("return StepOutcome.Failed(result.Error);");
+        writer.CloseBrace();
+        writer.Line();
+
+        if (outputType is not null)
+        {
+            // Stored so the next step can bind to it.
+            writer.Line("ctx.Set(result.Value);");
+        }
+
+        writer.Line("return StepOutcome.Success;");
     }
 
     private static void EmitDispatcherCompensate(SourceWriter writer, FlowModel flow)
@@ -288,7 +366,15 @@ public static class FlowEmitter
         {
             writer.Line("case " + step.Index + ":");
             writer.OpenBrace();
-            EmitCapabilityInvocation(writer, FieldName(step.CompensationTypeName!), step.Location);
+
+            // The compensation binds to the step's own input — the thing it has to undo.
+            EmitCapabilityInvocation(
+                writer,
+                FieldName(step.CompensationTypeName!),
+                step.CapabilityInput,
+                outputType: null,
+                step.Location);
+
             writer.CloseBrace();
         }
 

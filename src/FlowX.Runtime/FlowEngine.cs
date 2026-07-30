@@ -70,6 +70,94 @@ public sealed class FlowEngine
         }
     }
 
+    /// <summary>
+    /// Executes a plan, seeding the flow's input so steps can bind to it by type.
+    /// </summary>
+    /// <remarks>
+    /// Generic at the entry point and nowhere else. The step loop still knows nothing
+    /// about types — it is this one call that puts the input into the context under its
+    /// own type, which is what lets the generated dispatcher write
+    /// <c>ctx.Get&lt;PlaceOrder&gt;()</c> for the first step and
+    /// <c>ctx.Get&lt;ValidatedOrder&gt;()</c> for the second.
+    /// </remarks>
+    public async ValueTask<FlowExecutionResult> ExecuteAsync<TIn>(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowInvocation invocation,
+        TIn input,
+        CancellationToken ct = default)
+        where TIn : notnull
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(dispatcher);
+        ArgumentNullException.ThrowIfNull(input);
+
+        var context = _contexts.Rent();
+
+        try
+        {
+            context.Initialise(plan, invocation, _clock);
+            context.Set(input);
+
+            return await RunAsync(plan, dispatcher, context, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _contexts.Return(context);
+        }
+    }
+
+    /// <summary>
+    /// Executes a plan and projects its declared output from the finished context.
+    /// </summary>
+    /// <param name="plan">The compiled flow.</param>
+    /// <param name="dispatcher">Invokes the capability behind each step index.</param>
+    /// <param name="invocation">Correlation, tenant and the caller's remaining budget.</param>
+    /// <param name="input">The flow's input, seeded into the context under its own type.</param>
+    /// <param name="projection">
+    /// The generated <c>.Return(...)</c> clause. A static delegate on the generated
+    /// partial class, so passing it allocates nothing.
+    /// </param>
+    /// <param name="ct">The caller's cancellation token.</param>
+    /// <remarks>
+    /// The projection runs <em>here</em>, inside the rental, and not in the caller. The
+    /// context is pooled and reset the moment this method returns, so a caller handed the
+    /// context would read another flow's data — this is the only place the output can be
+    /// taken safely.
+    /// </remarks>
+    public async ValueTask<FlowExecutionResult<TOut>> ExecuteAsync<TIn, TOut>(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowInvocation invocation,
+        TIn input,
+        Func<FlowContext, TOut> projection,
+        CancellationToken ct = default)
+        where TIn : notnull
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(dispatcher);
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(projection);
+
+        var context = _contexts.Rent();
+
+        try
+        {
+            context.Initialise(plan, invocation, _clock);
+            context.Set(input);
+
+            var outcome = await RunAsync(plan, dispatcher, context, ct).ConfigureAwait(false);
+
+            return outcome.IsSuccess
+                ? new FlowExecutionResult<TOut>(outcome, projection(context))
+                : new FlowExecutionResult<TOut>(outcome, default);
+        }
+        finally
+        {
+            _contexts.Return(context);
+        }
+    }
+
     private static async ValueTask<FlowExecutionResult> RunAsync(
         ExecutionPlan plan,
         IStepDispatcher dispatcher,

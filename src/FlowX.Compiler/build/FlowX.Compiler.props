@@ -1,0 +1,19 @@
+<Project>
+
+  <ItemGroup>
+    <!--
+      Makes $(ProjectDir) readable from the generator as `build_property.projectdir`.
+
+      The manifest records where each flow was declared. Without this the recorded path
+      is absolute, which makes the document differ between two machines that compiled
+      identical source — breaking the determinism ADR-0005 requires of it and shipping
+      the build agent's directory layout to whoever reads the manifest. With it, the
+      pointer is relative to the project and the document is the same everywhere.
+
+      Imported automatically for package consumers. Repository projects get the same
+      property from Directory.Build.props, which references this file.
+    -->
+    <CompilerVisibleProperty Include="ProjectDir" />
+  </ItemGroup>
+
+</Project>

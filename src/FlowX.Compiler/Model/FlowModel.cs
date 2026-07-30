@@ -40,7 +40,10 @@ public sealed class FlowModel
         string inputTypeName,
         string outputTypeName,
         IReadOnlyList<StepModel> steps,
-        string? declarationLocation = null)
+        string? declarationLocation = null,
+        string? returnProjection = null,
+        string? returnLocation = null,
+        IReadOnlyList<string>? usings = null)
     {
         FlowId = flowId;
         Version = version;
@@ -52,6 +55,9 @@ public sealed class FlowModel
         OutputTypeName = outputTypeName;
         Steps = steps;
         DeclarationLocation = declarationLocation;
+        ReturnProjection = returnProjection;
+        ReturnLocation = returnLocation;
+        Usings = usings ?? System.Array.Empty<string>();
     }
 
     /// <summary>Business identity from <c>[Flow]</c>, e.g. <c>order.place</c>.</summary>
@@ -83,6 +89,32 @@ public sealed class FlowModel
 
     /// <summary><c>file:line</c> of the declaration, for diagnostics and the manifest.</summary>
     public string? DeclarationLocation { get; }
+
+    /// <summary>
+    /// Source text of the <c>.Return(...)</c> lambda, or <c>null</c> when the flow
+    /// declares no output projection.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately the author's own text, copied verbatim rather than reconstructed.
+    /// A reconstruction would have to re-render every expression form C# has, and would
+    /// be wrong on the first one it had not met; copying is exact by construction, and
+    /// the <c>#line</c> directive around it points any error back at the real source.
+    /// </remarks>
+    public string? ReturnProjection { get; }
+
+    /// <summary><c>file:line</c> of the <c>.Return(...)</c> call.</summary>
+    public string? ReturnLocation { get; }
+
+    /// <summary>
+    /// The <c>using</c> directives of the file that declared the flow, in source order.
+    /// </summary>
+    /// <remarks>
+    /// Carried because <see cref="ReturnProjection"/> is copied verbatim: the author's
+    /// lambda names types the way their file's usings allow, so emitting it into a file
+    /// with different usings would not compile. Copying the directives makes the emitted
+    /// expression resolve exactly as it did where it was written.
+    /// </remarks>
+    public IReadOnlyList<string> Usings { get; }
 
     /// <summary>Fully-qualified name of the declaring type.</summary>
     public string FullTypeName => string.IsNullOrEmpty(ContainingNamespace)

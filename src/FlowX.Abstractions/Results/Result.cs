@@ -81,6 +81,29 @@ public readonly struct Result<T>
         return _error is not null ? onFailure(_error) : onSuccess(_value!);
     }
 
+    /// <summary>
+    /// Lifts a value into a successful result, so a capability can <c>return</c> the thing
+    /// it computed rather than restating the type in a factory call.
+    /// </summary>
+    /// <param name="value">The success value.</param>
+    public static implicit operator Result<T>(T value) => new(value);
+
+    /// <summary>
+    /// Lifts an error into a failed result, so a capability can <c>return</c> the error it
+    /// found rather than restating the value type in <see cref="Result.Fail{T}(Error)"/>.
+    /// </summary>
+    /// <remarks>
+    /// For the single instantiation <c>Result&lt;Error&gt;</c> — a capability whose success
+    /// value is itself an <see cref="FlowX.Error"/> — this conversion and the one from
+    /// <typeparamref name="T"/> collide, and any implicit conversion to that type is a
+    /// <c>CS0457</c> at the call site. That case is diagnosed loudly at compile time, never
+    /// silently mis-resolved, and <see cref="Result.Ok{T}(T)"/> / <see cref="Result.Fail{T}(Error)"/>
+    /// remain unambiguous escapes. The ergonomics of every other instantiation are worth
+    /// that one explicit call.
+    /// </remarks>
+    /// <param name="error">The failure.</param>
+    public static implicit operator Result<T>(Error error) => new(error);
+
     internal static Result<T> Ok(T value) => new(value);
 
     internal static Result<T> Fail(Error error) => new(error);
