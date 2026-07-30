@@ -19,6 +19,23 @@
 >
 > **Recorded:** 2026-07-30 · **P1** · `./scripts/measure-scale-overhead.sh --rounds 15`
 
+> [!IMPORTANT]
+> **§5.1 supersedes the split above, and the headline with it.** Re-running the same
+> diagnostic on the same machine reproduces `StepBindingAnalyzer` at 4.70 ms per flow and
+> `CapabilityAnalyzer` at 0.14 — both within 1.5 % of the figures recorded here — and finds
+> `FlowPlanGenerator` at **28.7 ms per flow against the 8.07 below**. The generator became
+> ~3.6× more expensive between this record and today's `dev`; nothing else moved. The
+> 200-flow criterion now measures **+77 %**, not +18.4 %, and the split is **85 %
+> `FlowPlanGenerator` / 14 % `StepBindingAnalyzer`**, not 62/37.
+>
+> §5.1 also records WP-27's optimisation of `StepBindingAnalyzer` — 4.70 → **0.53 ms per
+> flow**, a 89 % cut — and is candid that it does not move the end-to-end number, because
+> after the generator's growth it was no longer large enough to.
+>
+> §3 to §5 are left exactly as recorded. They were correct for the tree they were taken on,
+> and the fact that two of their three components still reproduce is what makes the third's
+> change readable at all.
+
 ---
 
 ## 1. What this measures, and why it is a separate document
@@ -319,6 +336,152 @@ Not diagnosed here: whether the generator's 8 ms per flow is dominated by semant
 queries, syntax walking, or string formatting of the emitted source. That needs a profiler
 rather than a stopwatch, and it is the first step of whatever package fixes this.
 
+### 5.1 WP-27 — the analyzer profiled and cut, and a generator that grew while nobody looked
+
+Recorded **2026-07-30**, later the same day, on the same container. Two findings, and the
+second is the one that matters more.
+
+#### The split re-measured, with two of three components as the control
+
+The §5 command, re-run at 25 and 200 flows, three builds each, medians. Load average 2.6 to
+3.5 throughout — quieter than the run §5 was taken on.
+
+| Component | §5, ms per flow | Re-measured, ms per flow | |
+|---|---:|---:|---|
+| `StepBindingAnalyzer` (FLOWX1020) | 4.77 | **4.70** | reproduces to 1.5 % |
+| `CapabilityAnalyzer` | 0.15 | **0.14** | reproduces to 7 % |
+| `PredicatePurityAnalyzer` (FLOWX1011) | not yet present | 0.03 | — |
+| **`FlowPlanGenerator`** | **8.07** | **28.7** | **3.6× the recorded figure** |
+
+**Two components reproducing to within 1.5 % is what makes the third readable.** A slower
+machine, a different SDK or a changed synthetic project would have moved all four. Only the
+generator moved, and `git log a75c1f0..dev -- src/FlowX.Compiler` names four non-merge
+commits that landed between the §5 record and the tree measured here: FLOWX1011, the
+trigger and error-catalogue manifest work, a manifest sort-key fix, and `Switch`/`Case`.
+**Which of them is responsible is not diagnosed here**, and attributing it needs the same
+bisect-and-measure this section did for the analyzer.
+
+The end-to-end criterion moved with it. Twelve rounds at 200 flows, wall clock, on the
+quiet machine:
+
+```
+ flows       with    without   overhead             95 % CI   A/A scatter
+   200    13064 ms     7408 ms     +77.1 %      [+72.0, +80.6]         5.0 %
+```
+
+Within-arm IQR 2.1 % and 4.9 % — the best-conditioned run in this document's history. The
+control arm is *faster* than §3's (7 408 ms against 10 249) because the machine was quieter;
+the treatment arm is slower (13 064 against 12 085) because the generator is dearer. Both
+push the ratio the same way.
+
+#### Where `StepBindingAnalyzer`'s 4.7 ms per flow actually went
+
+`/reportanalyzer` stops at the analyzer boundary, so the analyzer was instrumented with
+timestamp counters around each phase. Three builds at 200 flows; milliseconds summed across
+threads:
+
+| Phase | build 1 | build 2 | build 3 |
+|---|---:|---:|---:|
+| class declarations visited | 1 251 | 1 251 | 1 251 |
+| flows analysed / steps checked | 200 / 800 | 200 / 800 | 200 / 800 |
+| `GetDeclaredSymbol` | 3.3 | 3.0 | 2.9 |
+| the `[Flow]` filter (`ToDisplayString` per attribute) | 11.4 | 27.3 | 37.4 |
+| `FlowInputContract` | 10.4 | 14.8 | 1.7 |
+| `Define` lookup | 1.1 | 1.3 | 1.1 |
+| `FlowChainWalker` | 2.7 | 2.8 | 2.9 |
+| the chain walk | 816.6 | 1 849.2 | 1 297.7 |
+| — of which **resolving each step's capability type** | **787.4** | **1 752.1** | **1 234.5** |
+| — of which reading its `ICapability<,>` contract | 14.6 | 15.3 | 48.2 |
+
+**One call, 96 % of the bill**, in all three builds: `GetSymbolInfo` on the `T` of a
+`.Step<T>()`. Resolving a type name is not expensive. What is expensive is that the name
+sits inside a statement, and a statement is the smallest thing Roslyn will bind — so asking
+what one node of it means binds the entire `Define` chain, overload resolution and generic
+inference at every link, lambdas and all.
+
+Splitting the same call by position proves that is the mechanism rather than a guess about
+it:
+
+| | calls | total |
+|---|---:|---:|
+| first `.Step<T>()` of a flow | 200 | 826.9 ms — **4.13 ms each** |
+| every later `.Step<T>()` | 600 | 37.6 ms — **0.06 ms each** |
+
+One body bound per flow and then cached, not a slow lookup repeated 800 times. **So §5's
+reading of this number — "roughly 1.2 ms per step … proving that each step's input type is
+something a prior step produced" — is wrong on both counts.** It is 4.1 ms per *flow*, and
+it is not spent on the proof; it is spent binding a method body the compiler binds again
+anyway when it emits, and does not share.
+
+#### The fix, and the evidence it returns the same answers
+
+Bind the name where binding costs nothing: speculatively, at a position inside the flow
+class but outside any member body — just past its opening brace. That binder sees what a
+type name written in the class sees (the file's usings and aliases, the enclosing
+namespaces, the class's own members and type parameters). What it does not see are a
+method's type parameters and its locals, and neither can name a type at a `.Step<T>()`:
+`Define` is an override with a fixed non-generic signature, and C# has no local types.
+
+Both candidates were run **inside the same build as the original and before it**, so that
+anything they warmed was available to it, and all 800 answers were compared for symbol
+identity:
+
+| How a step's type argument is resolved | build 1 | build 2 | disagreements |
+|---|---:|---:|---:|
+| speculative, at the class's opening brace | **36.9 ms** | **64.7 ms** | **0 of 800** |
+| speculative, at the call site | 100.1 ms | 151.4 ms | 0 of 800 |
+| `GetSymbolInfo` on the node in place — the original, run last | 926.0 ms | 930.2 ms | — |
+
+The call-site position is 6–9× cheaper because speculative binding does not bind the body;
+the class position is cheaper again because it does not build a member model at all. **The
+original stayed at ~930 ms even running last**, which is what rules out "the first caller
+pays and the rest read its cache". The same pass dropped `ToDisplayString()` from the
+`[Flow]` filter, which ran on every attribute of every class in the compilation.
+
+Result, from the §5 command with the two analyzer builds alternated:
+
+| `StepBindingAnalyzer` | 25 flows | 200 flows | marginal, 25 → 200 |
+|---|---:|---:|---:|
+| before | 120 ms | 942 ms | **4.70 ms per flow** |
+| after | 52 ms | 144 ms | **0.53 ms per flow** |
+
+**An 89 % cut**, and the analyzer no longer binds a `Define` body at all.
+
+#### What it does not buy
+
+**The end-to-end criterion did not move detectably.** Three 12-round runs at 200 flows,
+back to back on the quiet machine, the baseline analyzer bracketed by the optimised one so
+that drift across the hour would show:
+
+| Run | Order | with | without | overhead | 95 % CI | A/A scatter | FlowX's cost |
+|---|---|---:|---:|---:|---|---:|---:|
+| after | 1st | 13 478 ms | 7 744 ms | +74.3 % | [+72.2, +76.2] | 3.9 % | +5 734 ms |
+| **before** | 2nd | 13 064 ms | 7 408 ms | **+77.1 %** | [+72.0, +80.6] | 5.0 % | +5 656 ms |
+| after | 3rd | 13 113 ms | 7 627 ms | +71.8 % | [+67.0, +73.4] | 5.4 % | +5 486 ms |
+
+The two *identical* runs differ by 248 ms; before and after differ by 46 ms. **The effect is
+smaller than the harness's own scatter, and this table is not evidence that the change
+helped end to end.** Two reasons, both foreseeable in hindsight:
+
+1. **It was never big enough.** After the generator's growth, 4.7 of 33.6 ms per flow is
+   14 % of FlowX's compile-time cost, not the 37 % §5 recorded. Removing 89 % of 14 % is
+   ~4 ms per flow against a total of ~28 ms of wall clock per flow.
+2. **Analyzer time is not wall-clock time.** These are per-analyzer execution times summed
+   across threads. Analyzers run concurrently with each other and with the compile; the
+   generator, which is the critical path, does not. Thread-time removed from a path that is
+   not critical need not shorten the build at all.
+
+**What it does buy** is the IDE, where FLOWX1020 re-runs on the keystroke that reorders two
+steps and where 4.1 ms per flow of redundant binding is paid per edit rather than per build
+— and a rule that no longer duplicates the compiler's work. That is worth having on its own
+terms. It is not worth reporting as progress against the +8 % budget.
+
+**Where the budget actually stands.** With the analyzer at 0.53 ms per flow, the split is
+`FlowPlanGenerator` **97.6 %**, `StepBindingAnalyzer` 1.8 %, `CapabilityAnalyzer` 0.5 %,
+`PredicatePurityAnalyzer` 0.1 %. Every remaining route to the criterion runs through the
+generator, and the first question for it is not "how do we make it faster" but **"what made
+it 3.6× slower, and was that intended?"**
+
 ---
 
 ## 6. What this does not claim
@@ -401,6 +564,20 @@ fix:
    phrased per flow — the measurement here says ~9.5 ms, and a plausible target is a small
    fraction of it — would be falsifiable at any size.
 
+**§5.1 discharges half of (1) and rewrites the other half.** `StepBindingAnalyzer` is
+profiled and cut from 4.70 to 0.53 ms per flow, and the profiling method — instrument the
+component, then cross-check every answer the faster route gives against the slower one —
+transfers directly. What it rewrites is the arithmetic: "roughly a 2.3× improvement across
+the two" was computed against a generator costing 8 ms per flow, and it now costs 28.7.
+A 2.3× improvement no longer reaches the budget from anywhere, and the analyzer half of
+that sum is spent. Consequence (1) is now **one** item — the generator — and its first
+question is why it grew, not how to shrink it.
+
+**A third consequence, which §5.1 adds.** *Re-measure the split whenever the criterion is
+quoted.* This document's headline survived four working packages and stopped being true
+during them, and nothing noticed, because the split was recorded once and cited thereafter.
+The re-measurement that caught it costs six builds.
+
 The CI job (`.github/workflows/performance.yml`, `scale-overhead`) **stays advisory**
 (`continue-on-error: true`). This is P1's *exit* criterion; making it blocking today would
 red every pull request for the length of the phase over a defect none of them introduced —
@@ -468,10 +645,19 @@ The superseded run's own numbers remain in this document's history in git, and i
 # correct, because a constant in both arms cancels in the difference.
 ./scripts/measure-scale-overhead.sh --no-compiler-server --rounds 8 --sizes 25,50,100,200
 
-# Where the cost goes (§5).
+# Where the cost goes (§5). Run this before quoting the split — §5.1 is the record of
+# what happens when it is not: two of its three components moved by under 1.5 % over four
+# working packages and the third tripled.
 ./scripts/generate-scale-project.py --flows 200 --out /tmp/scale-200
 dotnet build /tmp/scale-200/ScaleSynthetic.csproj -c Release --no-incremental \
   /p:ReportAnalyzer=true /p:UseSharedCompilation=false -v d | grep -A20 'Total generator'
+
+# The criterion alone against a specific change (§5.1): run the harness once per side of
+# it, back to back, with the unchanged side bracketed so drift across the hour shows.
+# Comparing a run made today against a figure recorded in this document is not a
+# before-and-after, as §5.1's control arm — 2 841 ms faster than §3's for no reason but a
+# quieter machine — demonstrates.
+./scripts/measure-scale-overhead.sh --rounds 12 --sizes 200 --json /tmp/after.json
 ```
 
 Exit codes: **0** PASS, **1** FAIL, **2** INCONCLUSIVE, **3** the measurement itself broke.

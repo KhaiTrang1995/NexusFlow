@@ -85,9 +85,12 @@ namespace FlowX.Compiler.Analysis;
 /// node is inside a statement and a statement is the smallest thing Roslyn will bind. A
 /// <c>Define</c> body is a fluent chain with overload resolution and generic inference at
 /// every link and a lambda in most of them, and binding it is expensive: measured on the
-/// 200-flow synthetic solution it was <em>96 %</em> of this analyzer's entire cost, ~1.2 ms
-/// per step, and it is duplicated work — the compiler binds those bodies again when it
-/// emits, and the model's own bind buys nothing but the name of a type argument.
+/// 200-flow synthetic solution it was <em>96 %</em> of this analyzer's entire cost. The
+/// bill falls on the first step of each flow and on no other — 4.13 ms for the first,
+/// 0.06 ms for each of the 600 that followed — which is the shape of one body being bound
+/// and then cached, not of a type lookup being slow. It is also duplicated work: the
+/// compiler binds those same bodies again when it emits, and does not share the model's
+/// copy.
 /// </para>
 /// <para>
 /// So the name is bound where it costs nothing to bind: speculatively, against the binder
@@ -97,7 +100,7 @@ namespace FlowX.Compiler.Analysis;
 /// only thing being asked about. What it does not see are a method's own type parameters
 /// and its locals, and neither can name a type here: <c>Define</c> is an override with a
 /// fixed, non-generic signature, and C# has no local types. The measurement is in
-/// docs/benchmarks/B12-scale.md §6.
+/// docs/benchmarks/B12-scale.md §5.1.
 /// </para>
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
@@ -385,12 +388,13 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
     /// <param name="scope">A position inside the flow class but outside any member body.</param>
     /// <remarks>
     /// <para>
-    /// The node is re-parsed rather than handed over as it stands, because a speculative
-    /// bind is defined on an expression that is <em>not</em> part of the tree being asked —
-    /// passing the original node back is what the API takes pains to avoid, and it is the
-    /// route that drags the enclosing method body into the bind. Re-parsing a type name a
-    /// few identifiers long is the price of not doing that, and it is small: the two
-    /// together measured ~0.05 ms per step against the ~1.2 ms the direct call cost.
+    /// The name is re-parsed rather than passed in as it stands, because a speculative bind
+    /// is defined over an expression that is <em>not</em> part of the tree being asked
+    /// about. Handing back a node that <em>is</em> part of it asks the model for the
+    /// meaning that node already has, which is the route through the enclosing method body
+    /// this exists to avoid. Re-parsing a type name a few identifiers long is what that
+    /// costs, and it is small: parse and bind together measured ~0.05 ms per step, against
+    /// the 4.13 ms the direct call cost on the first step of every flow.
     /// </para>
     /// <para>
     /// The <c>GetSpeculativeTypeInfo</c> fallback mirrors the <c>GetTypeInfo</c> one it
