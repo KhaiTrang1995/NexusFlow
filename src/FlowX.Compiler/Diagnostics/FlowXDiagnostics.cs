@@ -74,8 +74,19 @@ public static class FlowXDiagnostics
         "There is no permissive default. Declare Authorization explicitly — including " +
         "Authorization.Public, which is a reviewable statement rather than an omission.");
 
-    /// <summary>FLOWX1011 — a <c>When</c> condition reads something outside the flow's state.</summary>
+    /// <summary>
+    /// FLOWX1011 — a flow condition, selector or projection reads something outside the
+    /// flow's state.
+    /// </summary>
     /// <remarks>
+    /// <para>
+    /// <c>{0}</c> is what the construct is called — "condition", "Switch selector",
+    /// "Return projection" — and it appears twice, once singular and once pluralised with
+    /// a trailing <c>s</c>. The rule covers every <c>IFlowBuilder</c> delegate that takes
+    /// the flow context, so a message hard-coding "condition" would name the wrong
+    /// construct in five of eight cases, and a reader who is pointed at the wrong noun
+    /// stops trusting the diagnostic.
+    /// </para>
     /// <para>
     /// A <strong>warning</strong> by default and reported as an <strong>error</strong>
     /// when the flow declares <c>Profile = ExecutionProfile.Durable</c>, which is the
@@ -95,14 +106,15 @@ public static class FlowXDiagnostics
     /// </remarks>
     public static readonly DiagnosticDescriptor PredicateMustBePure = Create(
         "FLOWX1011",
-        "Condition reads something outside the flow's state",
-        "The condition in flow '{0}' reads '{1}', which is {2}; a condition may read only " +
-        "the flow context, the flow input and prior step results",
-        "A branch decision must be a function of what the flow knows, or the same instance " +
-        "takes different paths on two runs and a durable replay diverges from the run it " +
-        "is replaying. Read time, identity and randomness through the context — ctx.UtcNow, " +
-        "ctx.NewId(), ctx.Random — which the journal reproduces, and move anything needing " +
-        "the outside world into a capability whose result the condition can then read.",
+        "Condition, selector or projection reads something outside the flow's state",
+        "The {0} in flow '{1}' reads '{2}', which is {3}; {0}s may read only the flow " +
+        "context, the flow input and prior step results",
+        "A branch decision, a step input and the flow's own result must each be a function " +
+        "of what the flow knows, or the same instance behaves differently on two runs and a " +
+        "durable replay diverges from the run it is replaying. Read time, identity and " +
+        "randomness through the context — ctx.UtcNow, ctx.NewId(), ctx.Random — which the " +
+        "journal reproduces, and move anything needing the outside world into a capability " +
+        "whose result the flow can then read.",
         DiagnosticSeverity.Warning);
 
     /// <summary>FLOWX1014 — a retry policy is attached to a non-idempotent capability.</summary>

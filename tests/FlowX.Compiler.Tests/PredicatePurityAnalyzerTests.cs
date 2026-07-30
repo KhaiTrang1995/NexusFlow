@@ -12,7 +12,8 @@ using Xunit;
 namespace FlowX.Compiler.Tests;
 
 /// <summary>
-/// FLOWX1011 — whether a <c>When</c> condition decides from the flow's own state.
+/// FLOWX1011 — whether a flow's conditions, selectors and projections decide from the
+/// flow's own state.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -26,6 +27,13 @@ namespace FlowX.Compiler.Tests;
 /// The severity cases are here as well as the detection cases, because "error under
 /// Durable, warning under Ephemeral" is a deliberate decision and not an implementation
 /// detail; a later change that flattened it would otherwise pass every test.
+/// </para>
+/// <para>
+/// The per-construct section exists because the rule's first version checked one method
+/// name and a second construct under the identical rule then shipped unchecked beside it.
+/// Every covered delegate therefore gets both directions of its own, and the noun in the
+/// message is asserted rather than assumed: a <c>Return</c> projection reported as "the
+/// condition" is a diagnostic a reader stops believing.
 /// </para>
 /// </remarks>
 public sealed class PredicatePurityAnalyzerTests
@@ -47,11 +55,20 @@ public sealed class PredicatePurityAnalyzerTests
         public sealed record ValidatedOrder(
             string Sku, int Quantity, decimal Total, Channel Channel, IReadOnlyList<OrderLine> Lines);
         public sealed record OrderPlacedResult(string ReservationId);
+        public sealed record OrderPlaced(string ReservationId);
 
         public interface IPricingService { bool IsPromotional(string sku); }
 
-        /// <summary>A look-alike fluent API, to prove the rule is not matching on a method name.</summary>
-        public interface IMatcher { IMatcher When(Func<PlaceOrder, bool> predicate, string name); }
+        /// <summary>
+        /// A look-alike fluent API, to prove the rule is not matching on method names.
+        /// Every name here is also a name on IFlowBuilder, which is the point.
+        /// </summary>
+        public interface IMatcher
+        {
+            IMatcher When(Func<PlaceOrder, bool> predicate, string name);
+            IMatcher Switch<TValue>(Func<PlaceOrder, TValue> selector);
+            void Return(Func<PlaceOrder, string> projection);
+        }
 
         public static class Rules
         {
@@ -61,6 +78,7 @@ public sealed class PredicatePurityAnalyzerTests
             public static decimal Configured { get; set; } = 2m;
             public static decimal Fixed { get; } = 3m;
             public static decimal Twice(decimal value) => value * 2m;
+            public static IReadOnlyList<OrderLine> Batch = Array.Empty<OrderLine>();
         }
 
         [Capability("order.validate", Version = "1.0.0", Authorization = Authorization.Internal)]
@@ -92,6 +110,17 @@ public sealed class PredicatePurityAnalyzerTests
                     .Step<ValidateOrder>()
                     .When({{expression}}, then => then.Step<RequireApproval>())
                     .Return(ctx => new OrderPlacedResult("r"));
+        }
+        """);
+
+    /// <summary>A flow whose builder chain is supplied whole, for the non-<c>When</c> shapes.</summary>
+    private static string Chain(string chain) => With(
+        $$"""
+        [Flow("order.place")]
+        public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult>
+        {
+            protected override void Define(IFlowBuilder<PlaceOrder, OrderPlacedResult> flow) =>
+                flow{{chain}};
         }
         """);
 
@@ -445,6 +474,219 @@ public sealed class PredicatePurityAnalyzerTests
             """)).ShouldContain("FLOWX1011");
     }
 
+    // ------------------------------------------- every other delegate, both directions
+
+    // One pair per row of the analyzer's table. The silent half of each pair is the one
+    // that matters: these constructs carry the flow's ordinary work — building a step's
+    // input, projecting the result — so a false positive here lands on code every flow
+    // has, not on an unusual branch.
+
+    [Fact]
+    public void ASwitchSelectorOverAStepResultIsSilent() =>
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .Switch(ctx => ctx.Get<ValidatedOrder>().Channel)
+                .Case(Channel.Wholesale, b => b.Step<RequireApproval>())
+            """)).ShouldBeEmpty();
+
+    [Fact]
+    public void ReportsAnImpureSwitchSelector() =>
+        // 08 §3.2: "the selector obeys the same determinism rule as a When predicate".
+        // It said so from the day Switch shipped, and nothing checked it.
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .Switch(ctx => DateTime.UtcNow.Hour)
+                .Case(9, b => b.Step<RequireApproval>())
+            """)).ShouldContain("FLOWX1011");
+
+    [Fact]
+    public void AReturnProjectionOverStepResultsIsSilent() =>
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .Return(ctx => new OrderPlacedResult(ctx.Get<ValidatedOrder>().Sku))
+            """)).ShouldBeEmpty();
+
+    [Fact]
+    public void ReportsAnImpureReturnProjection() =>
+        // 06 §5 puts "Projection / Return expression" inside the deterministic zone by
+        // name, next to the routing decisions.
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .Return(ctx => new OrderPlacedResult(Guid.NewGuid().ToString()))
+            """)).ShouldContain("FLOWX1011");
+
+    [Fact]
+    public void AnEmitProjectionOverStepResultsIsSilent() =>
+        // The shape the reference sample actually ships.
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .Emit<OrderPlaced>(ctx => new OrderPlaced(ctx.Get<ValidatedOrder>().Sku))
+            .Return(ctx => new OrderPlacedResult("r"))
+            """)).ShouldBeEmpty();
+
+    [Fact]
+    public void ReportsAnImpureEmitProjection() =>
+        // An event carrying a freshly minted identifier is an event whose payload differs
+        // between the run and its replay.
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .Emit<OrderPlaced>(ctx => new OrderPlaced(Guid.NewGuid().ToString()))
+            .Return(ctx => new OrderPlacedResult("r"))
+            """)).ShouldContain("FLOWX1011");
+
+    [Fact]
+    public void AnEmitOnFailureProjectionOverTheInputIsSilent() =>
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .EmitOnFailure<OrderPlaced>(ctx => new OrderPlaced(ctx.Input.Sku))
+            .Return(ctx => new OrderPlacedResult("r"))
+            """)).ShouldBeEmpty();
+
+    [Fact]
+    public void ReportsAnImpureEmitOnFailureProjection() =>
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .EmitOnFailure<OrderPlaced>(ctx => new OrderPlaced(Environment.MachineName))
+            .Return(ctx => new OrderPlacedResult("r"))
+            """)).ShouldContain("FLOWX1011");
+
+    [Fact]
+    public void AStepInputMappingOverAStepResultIsSilent() =>
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .Step<RequireApproval, ValidatedOrder>(ctx => ctx.Get<ValidatedOrder>())
+            .Return(ctx => new OrderPlacedResult("r"))
+            """)).ShouldBeEmpty();
+
+    [Fact]
+    public void ReportsAnImpureStepInputMapping() =>
+        // Checked even though FlowAnalyzer does not yet model this overload. The replay
+        // contract in 06 §5 requires byte-identical step inputs, which is precisely what
+        // an ambient read in the mapping breaks — and a rule that waits for the emitter
+        // arrives after the code it was meant to stop.
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .Step<RequireApproval, ValidatedOrder>(ctx => new ValidatedOrder(
+                ctx.Input.Sku, DateTime.UtcNow.Hour, 1m, Channel.Retail, Array.Empty<OrderLine>()))
+            .Return(ctx => new OrderPlacedResult("r"))
+            """)).ShouldContain("FLOWX1011");
+
+    [Fact]
+    public void TheNoArgumentStepOverloadIsSilent() =>
+        // Step<TCapability>() takes no delegate at all. The table asks for parameter 0 of
+        // every Step, so this is the overload that proves an absent parameter is a
+        // non-event rather than an index out of range.
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .Step<RequireApproval>()
+            .Return(ctx => new OrderPlacedResult("r"))
+            """)).ShouldBeEmpty();
+
+    [Fact]
+    public void AForEachSelectorOverAStepResultIsSilent() =>
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .ForEach(
+                ctx => ctx.Get<ValidatedOrder>().Lines,
+                body => body.Step<RequireApproval>(),
+                new ForEachOptions { MaxDegreeOfParallelism = 2 })
+            .Return(ctx => new OrderPlacedResult("r"))
+            """)).ShouldBeEmpty();
+
+    [Fact]
+    public void ReportsAnImpureForEachSelector() =>
+        // Which collection is iterated decides how many times the body runs, so a
+        // selector reading state the flow does not own is a routing decision made
+        // outside the flow.
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .ForEach(
+                ctx => Rules.Batch,
+                body => body.Step<RequireApproval>(),
+                new ForEachOptions { MaxDegreeOfParallelism = 2 })
+            .Return(ctx => new OrderPlacedResult("r"))
+            """)).ShouldContain("FLOWX1011");
+
+    [Fact]
+    public void ASubFlowMappingOverTheInputIsSilent() =>
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .SubFlow<PlaceOrderFlow, PlaceOrder>(ctx => ctx.Input)
+            .Return(ctx => new OrderPlacedResult("r"))
+            """)).ShouldBeEmpty();
+
+    [Fact]
+    public void ReportsAnImpureSubFlowMapping() =>
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .SubFlow<PlaceOrderFlow, PlaceOrder>(ctx => new PlaceOrder(ctx.Input.Sku, Random.Shared.Next(10)))
+            .Return(ctx => new OrderPlacedResult("r"))
+            """)).ShouldContain("FLOWX1011");
+
+    [Fact]
+    public void ABranchBodyIsNotADelegateThisRuleReads() =>
+        // The second argument of When is a block of the flow, not an expression evaluated
+        // during it. Nothing is lost by skipping it — every builder call written inside
+        // it is its own invocation and is analysed on its own, which the nested-condition
+        // test above already proves.
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .When(ctx => ctx.Input.Quantity > 0, then => then.Step<RequireApproval>())
+            .Otherwise(low => low.Step<RequireApproval>())
+            .Return(ctx => new OrderPlacedResult("r"))
+            """)).ShouldBeEmpty();
+
+    [Fact]
+    public void ReportsADelegatePassedAsANamedArgument() =>
+        // The delegate is resolved against the method's parameters, not by counting
+        // arguments. Written out of order deliberately: position 0 here is the branch
+        // body, so an index-only lookup would analyse the wrong lambda and find nothing.
+        Analyze(Chain("""
+
+            .Step<ValidateOrder>()
+            .When(then: t => t.Step<RequireApproval>(), predicate: ctx => DateTime.UtcNow.Hour < 17)
+            .Return(ctx => new OrderPlacedResult("r"))
+            """)).ShouldContain("FLOWX1011");
+
+    [Fact]
+    public void AnotherLibrarysSwitchAndReturnAreNotTouched()
+    {
+        // Same reasoning as the When case, and it matters more now: Switch, Step and
+        // Return are all words other fluent APIs use. The rule resolves the method to
+        // IFlowBuilder<,> rather than matching the identifier.
+        Analyze(With("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult>
+            {
+                private static readonly IMatcher Matcher = null!;
+
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderPlacedResult> flow)
+                {
+                    Matcher.Switch(order => DateTime.UtcNow.Hour);
+                    Matcher.Return(order => Guid.NewGuid().ToString());
+
+                    flow.Step<ValidateOrder>().Return(ctx => new OrderPlacedResult("r"));
+                }
+            }
+            """)).ShouldBeEmpty();
+    }
+
     // ---------------------------------------------------------------- message and severity
 
     [Fact]
@@ -457,6 +699,60 @@ public sealed class PredicatePurityAnalyzerTests
         message.ShouldContain("PlaceOrderFlow");
         message.ShouldContain("DateTime.UtcNow");
         message.ShouldContain("the system clock");
+    }
+
+    [Fact]
+    public void TheMessageNamesTheConstructAndNotAlwaysTheCondition()
+    {
+        // The reason the table carries a noun. A Switch selector reported as "the
+        // condition" sends the reader looking for a When that is not there, and a reader
+        // who is pointed at the wrong construct stops trusting the diagnostic.
+        var message = Messages(Chain("""
+
+            .Step<ValidateOrder>()
+            .Switch(ctx => DateTime.UtcNow.Hour)
+                .Case(9, b => b.Step<RequireApproval>())
+            """)).Single();
+
+        message.ShouldContain("Switch selector");
+        message.ShouldNotContain("condition");
+    }
+
+    [Fact]
+    public void TheMessageNamesAProjectionAsAProjection()
+    {
+        var message = Messages(Chain("""
+
+            .Step<ValidateOrder>()
+            .Return(ctx => new OrderPlacedResult(Guid.NewGuid().ToString()))
+            """)).Single();
+
+        message.ShouldContain("Return projection");
+        message.ShouldContain("Return projections may read only");
+    }
+
+    [Fact]
+    public void TheCaptureReasonNamesTheConstructTheValueEscaped()
+    {
+        // "captured from outside the condition" is simply false when the lambda is a
+        // projection, so the reason is built from the same noun as the rest of the
+        // sentence rather than from a fixed string.
+        var message = Messages(With("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderPlacedResult> flow)
+                {
+                    var reservation = Rules.Ceiling.ToString();
+
+                    flow
+                        .Step<ValidateOrder>()
+                        .Return(ctx => new OrderPlacedResult(reservation));
+                }
+            }
+            """)).Single();
+
+        message.ShouldContain("captured from outside the Return projection");
     }
 
     [Fact]

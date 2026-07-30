@@ -29,7 +29,7 @@ ephemeral one is not replayed at all.
 | [FLOWX1004](FLOWX1004.md) | Capability invokes another capability | Turning the capability set back into a call graph |
 | [FLOWX1005](FLOWX1005.md) | Flow inherits from another flow | Control flow invisible to the graph and the manifest |
 | [FLOWX1010](FLOWX1010.md) | Capability declares no authorisation stance | A permissive default nobody chose |
-| [FLOWX1011](FLOWX1011.md) | Condition reads something outside the flow's state | A branch that takes a different path on replay |
+| [FLOWX1011](FLOWX1011.md) | Condition, selector or projection reads something outside the flow's state | A branch that takes a different path on replay, or a step input that is not the journaled one |
 | [FLOWX1014](FLOWX1014.md) | Retry requires an idempotent capability | **A duplicate charge** |
 | [FLOWX1015](FLOWX1015.md) | Capability implements more than one contract | Ambiguous dispatch, meaningless manifest entry |
 | [FLOWX1017](FLOWX1017.md) | AwaitSignal requires the Durable profile | A waiting flow vanishing with its node |
@@ -50,7 +50,9 @@ ephemeral one is not replayed at all.
 > about step order that fires on a valid flow would be suppressed and then protect
 > nothing. `FLOWX1011` has both kinds at once: its scope rules are a proof, its
 > catalogue of impure statics is a list, and it is not interprocedural — a helper
-> method called from a condition can read a clock and it will not notice.
+> method called from a condition can read a clock and it will not notice. It covers
+> every `IFlowBuilder` delegate that takes the flow context, not only `When`; the
+> constructs are a table on its page.
 
 ## Ids reserved but not yet raised
 

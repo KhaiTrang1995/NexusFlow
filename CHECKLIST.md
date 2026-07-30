@@ -245,7 +245,8 @@ which is the exact failure mode P1 exists to remove:
       the Info that ADR-0003 and `06` §5 originally specified — Info is invisible in a
       build log and `Ephemeral` is the only profile that runs today, so it would have
       shipped a rule that does nothing anywhere. Scope is decided by proof; impure
-      statics are a list; nothing is interprocedural, and the page says so
+      statics are a list; nothing is interprocedural, and the page says so. Scope was
+      `When` only until WP-25 widened it to every context delegate — see below
 - [ ] **`.Step<TCapability, TStepIn>(map)` is parsed and then ignored** by `FlowAnalyzer`
       and `FlowEmitter`. It is on the builder surface and `FLOWX1020` recommends it as
       the fix for a binding failure, so a user following the diagnostic reaches an
@@ -266,11 +267,15 @@ reachable, and enforced or honoured by nothing:
       than a no-op: `08 §3.2`'s own `Switch` example uses `.Default(b => b.Fail(...))` to
       reject an unsupported channel, and that default currently falls through and accepts
       it. Flagged in the doc; the fix is a work package
-- [ ] **`FLOWX1011` does not cover `Switch` selectors.** WP-21 scoped the analyzer to
-      `When` predicates; WP-20 then added a second construct under the identical rule.
-      `FlowErrors.SelectorFailed` states it at run time and nothing checks it at build
-      time — the exact position `When` was in before WP-21. `Return`, `Emit`,
-      `EmitOnFailure` and `ForEach`'s selector are in the same position
+- [x] **`FLOWX1011` did not cover `Switch` selectors.** Closed by WP-25. The analyzer is
+      now driven by a table of every `IFlowBuilder` method taking a
+      `Func<FlowContext<TIn>, …>` — `When`, `Switch`, `ForEach`, `Return`, `Emit`,
+      `EmitOnFailure`, `Step<TCapability, TStepIn>` and `SubFlow` — and the message names
+      the construct it found, because a `Return` projection reported as "the condition" is
+      a diagnostic a reader stops believing. The next DSL shape is a row in that table
+      rather than a second code path, which is the mistake WP-21 made once and this
+      package exists to undo. Three of the eight are not yet executed by the emitter and
+      are checked anyway; the page says which
 - [ ] **An unrecognised `TriggerAttribute` subclass is skipped in silence.** A trigger's
       `Kind` is an overridden property — executable code, not attribute data — so a
       third-party transport plugin's trigger cannot be read from metadata. WP-22 declined
