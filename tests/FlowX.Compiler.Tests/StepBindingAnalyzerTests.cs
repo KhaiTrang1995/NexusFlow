@@ -67,6 +67,10 @@ public sealed class StepBindingAnalyzerTests
 
     private static string With(string body) => Preamble + "\n\n" + body;
 
+    /// <summary>The preamble with an extra file-level using directive in front of it.</summary>
+    private static string WithAlias(string directive, string body) =>
+        directive + "\n" + Preamble + "\n\n" + body;
+
     [Fact]
     public void TheReferenceSampleShapeIsClean()
     {
@@ -436,6 +440,90 @@ public sealed class StepBindingAnalyzerTests
                         .Step<CapturePayment>();
             }
             """)).ShouldBeEmpty();
+    }
+
+    // ---------------------------------------------------------------------------------
+    // How a step's type argument is spelled.
+    //
+    // The rule resolves it against the binder just inside the flow class's opening brace
+    // rather than at the call site, which is what keeps it from binding the whole Define
+    // body — see the analyzer's remarks. These four pin the spellings where the two scopes
+    // could conceivably disagree. Every one is a flow that MUST report: a type argument
+    // that fails to resolve makes this rule abandon the flow and say nothing, so a case
+    // written the silent way would pass whether or not the name was ever found.
+    // ---------------------------------------------------------------------------------
+
+    [Fact]
+    public void ANamespaceQualifiedCapabilityNameResolves()
+    {
+        Analyze(With("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderPlacedResult> flow) =>
+                    flow
+                        .Step<Sample.ReserveInventory>()
+                        .Step<Sample.ValidateOrder>();
+            }
+            """)).ShouldContain("FLOWX1020");
+    }
+
+    [Fact]
+    public void AnAliasedCapabilityNameResolves()
+    {
+        // An alias belongs to the file rather than to a position in it, so both scopes
+        // see it — but only through a binder that carries the file's usings at all.
+        Analyze(WithAlias("using Reserve = Sample.ReserveInventory;", """
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderPlacedResult> flow) =>
+                    flow.Step<Reserve>();
+            }
+            """)).ShouldContain("FLOWX1020");
+    }
+
+    [Fact]
+    public void ACapabilityNestedInTheFlowResolves()
+    {
+        // The flow's own members are in scope at its opening brace, which is the one
+        // thing a namespace-level binder would not have given.
+        Analyze(With("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult>
+            {
+                [Capability("order.finish", Version = "1.0.0", Authorization = Authorization.Internal)]
+                public sealed class Finish : ICapability<Reservation, Payment>
+                {
+                    public ValueTask<Result<Payment>> ExecuteAsync(Reservation input, CapabilityContext ctx, CancellationToken ct)
+                        => ValueTask.FromResult(Result.Ok(new Payment("p")));
+                }
+
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderPlacedResult> flow) =>
+                    flow.Step<Finish>();
+            }
+            """)).ShouldContain("FLOWX1020");
+    }
+
+    [Fact]
+    public void AConstructedGenericCapabilityNameResolves()
+    {
+        Analyze(With("""
+            [Capability("order.settle", Version = "1.0.0", Authorization = Authorization.Internal)]
+            public sealed class Settle<T> : ICapability<T, OrderPlacedResult>
+                where T : class
+            {
+                public ValueTask<Result<OrderPlacedResult>> ExecuteAsync(T input, CapabilityContext ctx, CancellationToken ct)
+                    => ValueTask.FromResult(Result.Ok(new OrderPlacedResult("r")));
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderPlacedResult> flow) =>
+                    flow.Step<Settle<Payment>>();
+            }
+            """)).ShouldContain("FLOWX1020");
     }
 
     [Fact]
