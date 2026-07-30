@@ -48,6 +48,7 @@ flowchart TD
     WP11["WP-11 · Gate<br/>run kill criterion"]
     WP12["WP-12 · Testing<br/>supported test context"]
     WP12a["WP-12a · Sensitive<br/>read + manifest"]
+    WP13["WP-13 · Diagnostics<br/>FLOWX1014 · FLOWX1018"]
 
     WP0 --> WP1 --> WP2 --> WP3
     WP2 --> WP4
@@ -58,6 +59,7 @@ flowchart TD
     WP10 --> WP11
     WP10 --> WP12
     WP5 --> WP12a
+    WP5 --> WP13
 
     style WP3 fill:#fff3cd,stroke:#856404
     style WP11 fill:#f8d7da,stroke:#721c24
@@ -280,6 +282,36 @@ authorisation stance (`Internal`), its side effects and its idempotency reached
 nothing, and `flowx diff` could not have seen a breaking change to one. A compensation
 is a capability that happens to run backwards; `StepModel.Compensation` is now a whole
 `StepModel` rather than three loose strings, and the manifest lists it.
+
+### WP-13 — The diagnostics that were documented and never raised
+
+| | |
+|---|---|
+| **Goal** | Every diagnostic the docs call a compile error is one |
+| **Why** | `FLOWX1014` — "a retry policy on a non-idempotent capability is a compile error" — is the safety property this repository advertises most loudly. `07-Capability-Model.md` said *"FlowX will not let you retry something that is unsafe to retry"*; the diagnostics index listed it as preventing **a duplicate charge**; the sample README told the reader to try it. Nothing raised it. `.WithPolicy(...)` stored the argument's source text, so no rule could ask what was in the set. `FLOWX1018` was in the same state. |
+| **Tests first** | A generator test per rule, both directions · the sample itself, built with a Retry attached to `payment.capture` |
+| **Deliverable** | `PolicySetReader` resolves a named set to the policies it declares; `FLOWX1014` and `FLOWX1018` raised; policies reach the manifest |
+| **Exit** | Adding `.WithPolicy(retry)` to the sample's `CapturePayment` fails the build with `FLOWX1014` |
+| **Depends on** | WP-5 |
+| **Status** | **Partly done.** `FLOWX1014` and `FLOWX1018` are raised, tested both ways, and verified against the real sample — the build fails at the `.WithPolicy` call with the right message. `FLOWX1003` and `FLOWX1004` are **still not raised**; they inspect a capability's body rather than a flow's chain and need a separate `DiagnosticAnalyzer`. |
+
+A policy set is declared as a fluent chain, so reading one is the same problem as
+reading a `Define` body and reuses the same `FlowChainWalker`. A set that is not a field
+or property initialiser — one built by a method call — cannot be inspected at compile
+time, and the reader returns nothing rather than guessing: a diagnostic derived from a
+guess is one nobody can act on.
+
+The manifest now carries each step's policies, which the schema had declared and the
+writer had never emitted. That required duplicating the kind-to-stage mapping into the
+compiler, because it targets netstandard2.0 and cannot reference `FlowX.Abstractions`.
+An unpinned copy of a safety ordering is exactly what drifts silently, so
+`PolicyStagesMatchTheAbstraction` reads the real mapping by reflection and fails on any
+disagreement, in both directions. It was verified by changing one entry and watching it
+fail.
+
+`FLOWX1003` and `FLOWX1004` are now marked in the diagnostics index and on their own
+pages as documented-but-unenforced, so nobody mistakes a convention for a control while
+the analyzer is outstanding.
 
 ### WP-12 — A supported test context
 

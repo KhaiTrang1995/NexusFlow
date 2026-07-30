@@ -273,7 +273,7 @@ public static class FlowAnalyzer
                     break;
 
                 case "WithPolicy":
-                    AttachPolicy(link, steps);
+                    AttachPolicy(link, semanticModel, diagnostics, steps);
                     break;
 
                 default:
@@ -443,15 +443,61 @@ public static class FlowAnalyzer
             info.OutputTypeName));
     }
 
-    private static void AttachPolicy(ChainLink link, List<StepModel> steps)
+    private static void AttachPolicy(
+        ChainLink link,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        List<StepModel> steps)
     {
         if (steps.Count == 0 || link.Invocation.ArgumentList.Arguments.Count == 0)
         {
             return;
         }
 
+        var argument = link.Invocation.ArgumentList.Arguments[0];
+        var kinds = PolicySetReader.Read(argument.Expression, semanticModel);
+
         var last = steps.Count - 1;
-        steps[last] = steps[last].WithPolicy(link.Invocation.ArgumentList.Arguments[0].ToString());
+        var step = steps[last].WithPolicy(argument.ToString(), kinds.ToArray());
+
+        ReportPolicyConflicts(step, link, diagnostics);
+
+        steps[last] = step;
+    }
+
+    /// <summary>
+    /// Reports policies whose safety precondition the capability does not meet.
+    /// </summary>
+    /// <remarks>
+    /// Both of these were documented as compile errors long before anything raised them,
+    /// which is the failure mode they exist to prevent: a control that reads as enforced
+    /// and is not. FLOWX1014 in particular was described as what stops a duplicate
+    /// charge.
+    /// </remarks>
+    private static void ReportPolicyConflicts(StepModel step, ChainLink link, List<Diagnostic> diagnostics)
+    {
+        if (step.CapabilityId is null)
+        {
+            return;
+        }
+
+        // FLOWX1014 — retrying a non-idempotent operation duplicates its effect.
+        if (!step.IsIdempotent && step.PolicyKinds.Contains("Retry"))
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.RetryRequiresIdempotency,
+                link.CallLocation,
+                step.CapabilityId));
+        }
+
+        // FLOWX1018 — a cache hit returns a success without performing the effect.
+        if (step.SideEffects.Length > 0 && step.PolicyKinds.Contains("Cache"))
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.CacheRequiresNoSideEffects,
+                link.CallLocation,
+                step.CapabilityId));
+        }
     }
 
     private static ArrowExpressionClauseSyntax? FindArrow(MethodDeclarationSyntax method) =>
