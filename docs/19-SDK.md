@@ -40,7 +40,7 @@ by modifying something that runs.
 | `FlowX.Compiler` | analyzers + generators (analyzer asset, not a runtime dependency) | via Sdk |
 | `FlowX.Runtime` | engines | via Sdk |
 | `FlowX.Runtime.Durable` | journal, leases, replay | apps with durable flows |
-| `FlowX.Testing` | `FlowTestHost`, fakes, virtual time, assertions | test projects |
+| `FlowX.Testing` | context doubles today; `FlowTestHost`, virtual time and assertions in P1–P4 | test projects |
 | `FlowX.Http` / `.Kafka` / `.Cron` / … | trigger + publisher plugins | as needed |
 | `FlowX.Cli` | dotnet tool | developer machines, CI |
 
@@ -136,10 +136,55 @@ test — a diagnostic that fails to explain itself fails the build (P12).
 
 ## 6. Testing kit
 
+> **What exists today is item 1.** `FlowX.Testing` ships two context doubles —
+> `TestCapabilityContext` and `TestFlowContext` — and nothing else. Items 2–4 need the
+> flow test host, virtual time and the durable journal, which arrive with P1–P4. The
+> rest of this section describes the intended kit; it is not a description of the
+> current package.
+
+### What ships now
+
+```csharp
+// A capability is a class with a method. Test it as one.
+var ctx = new TestCapabilityContext(idempotencyKey: "key-1");
+
+var result = await new ReserveInventory(fakeStore)
+    .ExecuteAsync(new ValidatedOrder("SKU-1", 2, 40m), ctx, ct);
+
+result.Value.ReservationId.ShouldBe("key-1");
+```
+
+Every value is fixed: the clock is `DateTimeOffset.UnixEpoch`, `Random` is seeded, and
+`NewId()` returns a distinct-but-reproducible sequence. That is not tidiness — the
+clock, the identifiers and the randomness are the three things a capability is allowed
+to reach for, so pinning them is exactly what makes the test deterministic. It is the
+same property durable replay depends on.
+
+For code that takes a `FlowContext` — a generated step dispatcher, or a `.Return(...)`
+projection — `TestFlowContext` adds the typed bag:
+
+```csharp
+var ctx = new TestFlowContext()
+    .With(new ValidatedOrder("SKU-1", 2, 40m))
+    .With(new Reservation("SKU-1", 2, "key-1"));
+
+PlaceOrderFlow.Projection(ctx).ReceiptId.ShouldBe(…);
+```
+
+`Fail(error)` puts it into the state a compensation actually meets, since a
+compensation runs after a failure and may read `ctx.Error`.
+
+**Why this is in the platform and not in your test project.** `CapabilityContext` is
+abstract with nine members, so the first thing every consumer wrote was the same
+thirty-line stub — the reference sample's own tests carried one. Ceremony that every
+user pays is a platform defect, not a user problem.
+
+### Intended kit
+
 ```csharp
 // 1 — capability: a pure function. No host, no DI, no infrastructure.
 var result = await new ReserveInventory(fakeStore)
-    .ExecuteAsync(new ReserveRequest("SKU-1", 2), CapabilityContext.ForTest(), default);
+    .ExecuteAsync(new ReserveRequest("SKU-1", 2), new TestCapabilityContext(), default);
 
 // 2 — flow: real orchestration, substituted capabilities.
 var host = FlowTestHost.For<PlaceOrderFlow>()

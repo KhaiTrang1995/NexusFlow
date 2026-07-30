@@ -21,6 +21,12 @@
       reference application stays a reference rather than becoming stale documentation.
     -->
     <ProjectReference Include="../../samples/ecommerce/Ecommerce.csproj" />
+
+    <!--
+      The test context the platform ships. If the sample's own tests do not use it, it
+      is not worth shipping — that is WP-12's exit criterion, checked here.
+    -->
+    <ProjectReference Include="../../src/FlowX.Testing/FlowX.Testing.csproj" />
   </ItemGroup>
 
 </Project>

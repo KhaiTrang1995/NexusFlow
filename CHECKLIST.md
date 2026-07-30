@@ -6,8 +6,8 @@
 >
 > **Last updated:** 2026-07-30 · **Phase:** P0 · **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 419/419 passing ·
-> **Coverage:** 93.3 % line / 86.2 % branch (gates: 80 / 75) · **SDK:** 10.0.110
+> **Build:** 0 warnings, 0 errors · **Tests:** 451/451 passing ·
+> **Coverage:** 93.4 % line / 86.4 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
 >
@@ -168,7 +168,8 @@ immutable, and rejects every invariant violation under test.
       [docs/benchmarks/P0.md](docs/benchmarks/P0.md)
 - [~] **WP-12a** `[Sensitive]` — the compiler reads it and the manifest records it.
       **Redaction is still not implemented**, so the exit criterion is not met
-- [ ] **WP-12** `FlowX.Testing` — a supported `CapabilityContext` for tests
+- [x] **WP-12** `FlowX.Testing` — `TestCapabilityContext` and `TestFlowContext`; the
+      sample's capability tests lost 27 lines of hand-written stub
 
 ### WP-10 · what it delivered
 
@@ -216,11 +217,11 @@ Three more surfaced while getting the suite green:
 |---|---|---|---|
 | Compiler warnings | 0 | **0** ✅ | verified locally |
 | Blocker/critical Sonar issues | 0 | **not running** | WP-0 |
-| Line coverage | ≥ 80 % | **93.3 %** ✅ | verified locally |
-| Branch coverage | ≥ 75 % | **86.2 %** ✅ | verified locally |
+| Line coverage | ≥ 80 % | **93.4 %** ✅ | verified locally |
+| Branch coverage | ≥ 75 % | **86.4 %** ✅ | verified locally |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
-| Fitness functions | all green | **34/34** ✅ | plus 10 compiler fitness tests |
+| Fitness functions | all green | **36/36** ✅ | plus 10 compiler fitness tests |
 | NativeAOT publish | links **and runs** | **✅** | 11 MB binary served a real order |
 | Concurrent cross-tenant leak | none | **none** ✅ | 64 concurrent flows, 0 overlaps |
 | SAST findings | 0 | **wired, unrun** — needs a CI run | WP-0 |

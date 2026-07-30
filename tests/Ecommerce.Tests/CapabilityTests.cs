@@ -1,5 +1,6 @@
 using Ecommerce;
 using FlowX;
+using FlowX.Testing;
 using Shouldly;
 using Xunit;
 
@@ -20,10 +21,16 @@ namespace Ecommerce.Tests;
 /// be exercised at the speed of a method call, so there is no incentive to skip testing
 /// them — which is the actual reason untested business logic ships.
 /// </para>
+/// <para>
+/// The context is one expression. It used to be a thirty-line hand-written stub in this
+/// file, because <c>CapabilityContext</c> is abstract with nine members — ceremony every
+/// consumer would have paid. <see cref="TestCapabilityContext"/> is the platform paying
+/// it once, and this file is the check that it was worth shipping (WP-12).
+/// </para>
 /// </remarks>
 public sealed class CapabilityTests
 {
-    private static readonly CapabilityContext Context = new FixedContext("test-key");
+    private static readonly CapabilityContext Context = new TestCapabilityContext("test-key");
 
     [Fact]
     public async Task ValidateOrderPricesAWellFormedOrder()
@@ -135,40 +142,6 @@ public sealed class CapabilityTests
         Should.Throw<ArgumentNullException>(() => new ReserveInventory(null!));
         Should.Throw<ArgumentNullException>(() => new ReleaseInventory(null!));
         Should.Throw<ArgumentNullException>(() => new CapturePayment(null!));
-    }
-
-    /// <summary>
-    /// A context, written out by hand. Not a mock, and not a framework.
-    /// </summary>
-    /// <remarks>
-    /// Fixed values throughout, deliberately: the clock, the identifiers and the
-    /// randomness a capability is allowed to use all come from here, so pinning them is
-    /// what makes these tests deterministic. That is the same property durable replay
-    /// depends on, which is why the abstraction exists at all.
-    /// <para>
-    /// Nine members is more ceremony than Q2 should cost. A supported test context
-    /// belongs in the platform — see PLAN.md, WP-12.
-    /// </para>
-    /// </remarks>
-    private sealed class FixedContext(string idempotencyKey) : CapabilityContext
-    {
-        public override string IdempotencyKey { get; } = idempotencyKey;
-
-        public override string CorrelationId => "test-correlation";
-
-        public override string? FlowInstanceId => null;
-
-        public override string CapabilityId => "test.capability";
-
-        public override string? TenantId => null;
-
-        public override DateTimeOffset Deadline => DateTimeOffset.UnixEpoch.AddMinutes(1);
-
-        public override DateTimeOffset UtcNow => DateTimeOffset.UnixEpoch;
-
-        public override Guid NewId() => Guid.Empty;
-
-        public override Random Random { get; } = new Random(Seed: 0);
     }
 
     private sealed class FakeInventory(int available) : IInventoryStore

@@ -1,3 +1,4 @@
+using System.Reflection;
 using Shouldly;
 using Xunit;
 
@@ -43,6 +44,7 @@ public sealed class DependencyRuleTests
     [InlineData("FlowX.Runtime", new[] { "FlowX.Abstractions", "FlowX.Core" })]
     [InlineData("FlowX.Runtime.Durable", new[] { "FlowX.Abstractions", "FlowX.Core", "FlowX.Runtime" })]
     [InlineData("FlowX.Hosting", new[] { "FlowX.Abstractions", "FlowX.Core", "FlowX.Runtime" })]
+    [InlineData("FlowX.Testing", new[] { "FlowX.Abstractions" })]
     public void LayersPointInward(string projectName, string[] allowedReferences)
     {
         var project = RepositoryLayout.SourceProjects
@@ -62,6 +64,46 @@ public sealed class DependencyRuleTests
             allowedReferences,
             $"{projectName} may only reference [{string.Join(", ", allowedReferences)}]. " +
             "Dependencies point inward, toward the domain (docs/05-Architecture.md §5.1).");
+    }
+
+    /// <summary>
+    /// Every project under <c>src/</c> is named by <see cref="LayersPointInward"/>.
+    /// </summary>
+    /// <remarks>
+    /// The layering rule enumerates its projects by hand, which means a project added
+    /// later is not checked — it simply is not in the list, and the theory passes without
+    /// ever looking at it. Adding <c>FlowX.Testing</c> is what made that visible: the new
+    /// project could have referenced anything at all and no fitness function would have
+    /// noticed. A rule with a hand-maintained subject list needs a rule about the list.
+    /// </remarks>
+    [Fact]
+    public void EverySourceProjectIsCoveredByTheLayeringRule()
+    {
+        // Read the attribute's constructor arguments rather than calling GetData: the
+        // latter needs a MethodInfo and a DisposalTracker, and this only needs the names.
+        var covered = typeof(DependencyRuleTests)
+            .GetMethod(nameof(LayersPointInward))!
+            .GetCustomAttributesData()
+            .Where(a => a.AttributeType == typeof(InlineDataAttribute))
+            .Select(a => (IReadOnlyList<CustomAttributeTypedArgument>)a.ConstructorArguments[0].Value!)
+            .Select(args => (string)args[0].Value!)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var uncovered = RepositoryLayout.SourceProjects
+            .Select(p => Path.GetFileNameWithoutExtension(p.Name))
+            .Where(name => !covered.Contains(name))
+            // A Roslyn component cannot reference the runtime at all — it targets
+            // netstandard2.0 — so the layering rule has nothing to say about it, and
+            // RoslynComponentsTargetNetStandard20 covers it instead.
+            .Where(name => name != "FlowX.Compiler")
+            // The CLI has its own stricter rule: it references no FlowX assembly.
+            .Where(name => name != "FlowX.Cli")
+            .ToList();
+
+        uncovered.ShouldBeEmpty(
+            $"[{string.Join(", ", uncovered)}] is under src/ but not named by " +
+            "LayersPointInward, so nothing checks what it may reference. Add an " +
+            "[InlineData] row for it.");
     }
 
     /// <summary>
