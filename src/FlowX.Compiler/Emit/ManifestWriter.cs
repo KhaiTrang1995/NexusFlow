@@ -445,6 +445,12 @@ public static class ManifestWriter
             return;
         }
 
+        if (step.Kind == StepKindModel.Parallel)
+        {
+            WriteParallelBranches(writer, step);
+            return;
+        }
+
         if (step.Kind != StepKindModel.Condition)
         {
             return;
@@ -492,6 +498,47 @@ public static class ManifestWriter
         }
 
         WriteBranch(writer, step.Default);
+
+        writer.CloseArray();
+    }
+
+    /// <summary>
+    /// Writes a fork's blocks as <c>branches</c>, and the merge rule as <c>merge</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same <c>branches</c> array a conditional and a switch use, because it means the
+    /// same thing: these blocks belong to this step. What differs is only how many of them
+    /// run, and <c>kind</c> already says that.
+    /// </para>
+    /// <para>
+    /// <strong><c>merge</c> is structure, so it belongs here — and a quorum's size does
+    /// not.</strong> "This fork waits for all its branches" describes the flow's shape, the
+    /// same way <c>compensation</c> and <c>policies</c> do; it tells a consumer what
+    /// failure of one branch means without telling them anything about the data. The
+    /// <em>number</em> in <c>Quorum(n)</c> comes from an arbitrary expression on the
+    /// author's side, and publishing an evaluated constant would start the manifest down
+    /// the road of carrying values. So the label is published and the argument is not.
+    /// </para>
+    /// <para>
+    /// Omitted entirely when the strategy could not be read statically. An absent field is
+    /// a consumer asking; a guessed one is a consumer misled.
+    /// </para>
+    /// </remarks>
+    private static void WriteParallelBranches(JsonWriter writer, StepModel step)
+    {
+        if (step.MergeKindName != null)
+        {
+            writer.Property("merge", step.MergeKindName);
+        }
+
+        writer.PropertyName("branches");
+        writer.OpenArray();
+
+        foreach (var branch in step.Branches)
+        {
+            WriteBranch(writer, branch.Steps);
+        }
 
         writer.CloseArray();
     }
@@ -704,6 +751,7 @@ public static class ManifestWriter
         StepKindModel.AwaitSignal => "AwaitSignal",
         StepKindModel.Condition => "Condition",
         StepKindModel.Switch => "Switch",
+        StepKindModel.Parallel => "Parallel",
         _ => "Capability",
     };
 

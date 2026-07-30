@@ -175,7 +175,7 @@ an exit criterion that is mechanically checkable.
 | **Exit** | The sample flow's plan is generated, readable, breakpoint-able; B1 ≤ 5 µs; build overhead ≤ 8 % on a 20-flow solution |
 | **Risk** | **R1.** If the generator's model layer and emission layer blur together here, P1 becomes unmaintainable. Keep them separate from the first commit. |
 | **Depends on** | WP-4 |
-| **Status** | **Partial.** Generating end to end against a real compilation, exercised by the sample at WP-10. The diagnostics landed at WP-13 and budget B12 at WP-14. **Remaining: the branching DSL** — `When` / `Switch` / `Parallel` / `ForEach` / `SubFlow`. |
+| **Status** | **Partial.** Generating end to end against a real compilation, exercised by the sample at WP-10. The diagnostics landed at WP-13 and budget B12 at WP-14. **Remaining: the branching DSL** — `ForEach` and `SubFlow`; `When`, `Switch` and `Parallel` ship. |
 
 ### WP-6 — Manifest emission
 
@@ -448,9 +448,9 @@ maintainability and scale, not features.
 
 | Roadmap item | Where it stands |
 |---|---|
-| Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **WP-15** and **WP-20**, part done — `When`/`Otherwise` and `Switch`/`Case`/`Default` ship end to end; `Parallel`, `ForEach`, `SubFlow` remain |
+| Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **WP-15**, **WP-20** and **WP-24**, part done — `When`/`Otherwise`, `Switch`/`Case`/`Default` and `Parallel`/`Branch` ship end to end; `ForEach` and `SubFlow` remain |
 | Contract-compatibility checking | **WP-16**, done — as `FLOWX1020`, *step binding* |
-| Diagnostics FLOWX1001–1023 with help URIs | **Partly done, and this row previously overstated it.** Raised today: `1001`–`1005`, `1010`, `1011`, `1014`, `1015`, `1017`, `1018`, `1020`, `1023`, `1024`. **Still reserved and raised by nothing:** `1006`–`1009`, `1012`, `1013`, `1016`, `1019`, `1021`, `1022`. Most await machinery that does not exist — `1013` needs `Parallel`, `1021` needs `SubFlow`, `1007`–`1009` and `1012` need durability — so the honest status is *blocked*, not *done*. **WP-21** closed `1011`, which was blocked on nothing |
+| Diagnostics FLOWX1001–1023 with help URIs | **Partly done, and this row previously overstated it.** Raised today: `1001`–`1005`, `1010`, `1011`, `1014`, `1015`, `1017`, `1018`, `1020`, `1023`, `1024`. **Still reserved and raised by nothing:** `1006`–`1009`, `1012`, `1016`, `1019`, `1021`, `1022`. Most await machinery that does not exist — `1021` needs `SubFlow`, `1007`–`1009` and `1012` need durability — so the honest status is *blocked*, not *done*. **WP-21** closed `1011` and **WP-24** closed `1013`, the latter by shipping the `Parallel` it was blocked on |
 | Manifest completeness | **WP-22**, done — `triggers` and per-capability `errors` were declared in the schema and emitted by nothing |
 | Generator snapshot tests | **Done** at WP-5 and extended since |
 | Readable emitted code | **Done** — on disk under `obj/generated`, with per-step `#line` directives (fixed at WP-10) |
@@ -478,7 +478,7 @@ maintainability and scale, not features.
 | **Deliverable** | `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` through the whole stack: builder surface, model, analysis, emission, `StepGraph`, engine |
 | **Exit** | A flow using every shape compiles, runs, appears correctly in the manifest, and renders in `flowx graph` |
 | **Depends on** | WP-5 |
-| **Status** | **`When` / `Otherwise` done**, through the whole stack. `Switch` followed at **WP-20**. `Parallel`, `ForEach` and `SubFlow` are still open; the exit criterion above is not met until they land. |
+| **Status** | **`When` / `Otherwise` done**, through the whole stack. `Switch` followed at **WP-20**, `Parallel` at **WP-24**. `ForEach` and `SubFlow` are still open; the exit criterion above is not met until they land. |
 
 The engine's step loop walked an array by index, and **budget B2 is a hard zero** — so
 the shape of the change was constrained before it was designed: no allocation per step,

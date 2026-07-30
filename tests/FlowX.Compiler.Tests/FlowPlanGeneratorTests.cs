@@ -973,6 +973,244 @@ public sealed class FlowPlanGeneratorTests
     /// file's namespace, or an <c>IStepDispatcher</c> member left unimplemented all parse
     /// perfectly and all break the consumer's build.
     /// </remarks>
+    // ------------------------------------------------------------------ parallel
+
+    /// <summary>
+    /// A <c>Parallel</c> end to end: the branches are walked out of a lambda argument on
+    /// <c>IParallelBuilder</c> rather than off later chain links, and the whole thing lands
+    /// in the flat step array as one node with a target per branch and a join.
+    /// </summary>
+    [Fact]
+    public void CompilesAParallelIntoOneNodeWithATargetPerBranch()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Parallel(p => p
+                            .Branch<CapturePayment>()
+                            .Branch(check => check
+                                .Step<ReserveInventory>().CompensateWith<ReleaseInventory>()),
+                        merge: MergeStrategy.AllMustSucceed)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+
+        var source = run.Plan;
+
+        source.ShouldContainText("StepNode.ForCapability(0, Descriptors.Step0)", run.Describe());
+        source.ShouldContainText(
+            "StepNode.ForParallel(1, new[] { 2, 3 }, joinTarget: 4, merge: MergeStrategy.AllMustSucceed)",
+            "One node, one target per branch, and the join where control resumes.");
+        source.ShouldContainText("StepNode.ForCapability(2, Descriptors.Step2)", "The first branch.");
+        source.ShouldContainText(
+            "StepNode.ForCapability(3, Descriptors.Step3, Descriptors.Step3Compensation)",
+            "The second branch, with the compensation it declared inside the lambda.");
+
+        source.ShouldNotContainText("ForJump",
+            "A branch's range ends where the next branch begins, so a closing jump would " +
+            "only restate the bound — and would cost an index the graph has to account for.");
+    }
+
+    [Fact]
+    public void AParallelStepGetsNoDispatcherCaseOfItsOwn()
+    {
+        // The engine handles a fork itself: it starts the branches and applies the merge.
+        // The branches' own steps need cases; the fork node does not, and one would be
+        // dead code in a file whose header promises it is readable.
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Parallel(p => p.Branch<ReserveInventory>().Branch<CapturePayment>(),
+                        merge: MergeStrategy.AllSettled)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+        run.Plan.ShouldContainText("case 1:", "Branch 0's step.");
+        run.Plan.ShouldContainText("case 2:", "Branch 1's step.");
+        run.Plan.ShouldNotContainText("case 0:", "The fork itself is index 0 and needs no case.");
+    }
+
+    /// <summary>
+    /// A <c>Quorum</c> is the reason <c>MergeStrategy</c> is a struct rather than an enum,
+    /// and the reason the plan copies the author's expression instead of rebuilding it.
+    /// </summary>
+    [Fact]
+    public void AQuorumsArgumentSurvivesIntoThePlanExactlyAsItWasWritten()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                private const int RequiredChecks = 2;
+
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Parallel(p => p
+                            .Branch<ReserveInventory>()
+                            .Branch<CapturePayment>()
+                            .Branch<ReserveInventory>(),
+                        merge: MergeStrategy.Quorum(RequiredChecks))
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+        run.Plan.ShouldContainText("merge: MergeStrategy.Quorum(RequiredChecks)",
+            "Rebuilding the expression from a parsed name would break the moment the " +
+            "argument was anything but a literal.");
+    }
+
+    [Fact]
+    public void AParallelWithOneBranchIsLaidOutInlineRatherThanForked()
+    {
+        // Running one thing concurrently is running it. Emitting a fork would buy a linked
+        // token and a task for work that happens in exactly one order anyway, and would put
+        // a decision in the manifest the flow does not make.
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Parallel(p => p.Branch<ReserveInventory>(), merge: MergeStrategy.AllMustSucceed)
+                    .Step<CapturePayment>()
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+        run.Plan.ShouldNotContainText("ForParallel", "One branch is not a fork.");
+        run.Plan.ShouldContainText("StepNode.ForCapability(0, Descriptors.Step0)",
+            "The branch's step is kept — the author asked for it — and simply runs in order.");
+        run.Plan.ShouldContainText("StepNode.ForCapability(1, Descriptors.Step1)",
+            "and the step written after the Parallel simply follows it.");
+    }
+
+    [Fact]
+    public void TheManifestPublishesAForkAsBranchesAndAMergeRule()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Parallel(p => p.Branch<CapturePayment>().Branch<ReserveInventory>(),
+                        merge: MergeStrategy.Quorum(2))
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        var json = run.ManifestJson.ShouldNotBeNull();
+
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+
+        var node = document.RootElement.GetProperty("flows")[0].GetProperty("steps")[1];
+
+        node.GetProperty("kind").GetString().ShouldBe("Parallel");
+        node.GetProperty("merge").GetString().ShouldBe("Quorum",
+            "How the branches are joined is structure: it says what one branch failing " +
+            "means for the flow, without saying anything about the data.");
+        node.GetProperty("branches").GetArrayLength().ShouldBe(2);
+        node.GetProperty("branches")[0][0].GetProperty("capability").GetString()
+            .ShouldBe("payment.capture@2.1.0");
+        node.GetProperty("branches")[1][0].GetProperty("capability").GetString()
+            .ShouldBe("inventory.reserve@1.2.0");
+
+        // The quorum's *size* is deliberately absent. It comes from an arbitrary
+        // expression in the author's source, and publishing an evaluated constant would
+        // start the manifest down the road of carrying values.
+        json.Contains("\"merge\": \"Quorum(2)\"", StringComparison.Ordinal).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The generated code for a fork must actually build, not merely parse.
+    /// </summary>
+    /// <remarks>
+    /// The merge argument in particular is the author's own expression pasted into the
+    /// generated file, so it has to resolve there — which is a claim only a real
+    /// compilation can settle.
+    /// </remarks>
+    [Fact]
+    public void TheGeneratedCodeForAParallelCompiles()
+    {
+        GeneratorHarness.GeneratedCompileErrorsIn(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Parallel(p => p
+                            .Branch<CapturePayment>()
+                            .Branch(check => check
+                                .Step<ReserveInventory>().CompensateWith<ReleaseInventory>())
+                            .Branch(more => more.Step<CapturePayment>()),
+                        merge: MergeStrategy.Quorum(2))
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """)).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void TheGeneratedCodeForAParallelInsideAConditionalCompiles()
+    {
+        // Nesting is where a layout bug hides. The fork's indices are handed out by the
+        // same shared counter the enclosing `then` block uses, so an off-by-one shows up
+        // as a gap or a duplicate and StepGraph rejects it at type initialisation — which
+        // is a run-time failure, not a build one, unless something compiles it first.
+        GeneratorHarness.GeneratedCompileErrorsIn(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .When(ctx => ctx.Get<Reservation>().Sku == "rare", rare => rare
+                        .Parallel(p => p.Branch<CapturePayment>().Branch<ReserveInventory>(),
+                            merge: MergeStrategy.AllSettled))
+                    .Otherwise(rest => rest.Step<CapturePayment>())
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """)).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AParallelInsideAConditionalIsNumberedInTheSameFlatSpace()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .When(ctx => ctx.Get<Reservation>().Sku == "rare", rare => rare
+                        .Parallel(p => p.Branch<CapturePayment>().Branch<ReserveInventory>(),
+                            merge: MergeStrategy.AllSettled))
+                    .Otherwise(rest => rest.Step<CapturePayment>())
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+
+        // 0 reserve · 1 branch(else 6) · 2 fork(3,4 join 5) · 3 capture · 4 reserve ·
+        // 5 jump 7 · 6 capture.
+        run.Plan.ShouldContainText("StepNode.ForBranch(1, 6)", run.Describe());
+        run.Plan.ShouldContainText(
+            "StepNode.ForParallel(2, new[] { 3, 4 }, joinTarget: 5, merge: MergeStrategy.AllSettled)",
+            "The fork's indices come from the same shared counter the `then` block uses.");
+        run.Plan.ShouldContainText("StepNode.ForJump(5, 7)",
+            "The fork's join is 5, which is where the `then` block's closing jump lives.");
+        run.Plan.ShouldContainText("StepNode.ForCapability(6, Descriptors.Step6)",
+            "and the `Otherwise` block starts one past that jump.");
+    }
+
     [Fact]
     public void TheGeneratedCodeForASwitchCompiles()
     {

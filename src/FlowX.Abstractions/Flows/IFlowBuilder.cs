@@ -1,7 +1,12 @@
 namespace FlowX;
 
-/// <summary>How concurrent branches are joined.</summary>
-public enum MergeStrategy
+/// <summary>Which join rule a <see cref="MergeStrategy"/> names.</summary>
+/// <remarks>
+/// The discriminant, separated from the strategy itself because one of the four carries
+/// a number and the other three do not. This is what reaches the compiled plan and the
+/// manifest; <see cref="MergeStrategy"/> is what an author writes.
+/// </remarks>
+public enum MergeKind
 {
     /// <summary>Wait for all; the first failure cancels its siblings via a linked token.</summary>
     AllMustSucceed = 0,
@@ -11,6 +16,98 @@ public enum MergeStrategy
 
     /// <summary>First success wins; the remaining branches are cancelled.</summary>
     FirstSuccess = 2,
+
+    /// <summary>The first <em>n</em> successes win; the remaining branches are cancelled.</summary>
+    Quorum = 3,
+}
+
+/// <summary>
+/// How concurrent branches are joined.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>A struct rather than an enum, because <c>Quorum(n)</c> carries a number.</strong>
+/// <c>06-Execution-Engine.md</c> §9 has always listed four strategies and the fourth is
+/// parameterised; an <c>enum</c> can name it but cannot hold its argument, so the
+/// documented surface and the shipped type disagreed. The three parameterless strategies
+/// are static properties, so <c>merge: MergeStrategy.AllMustSucceed</c> reads and compiles
+/// exactly as it did — and as both documentation pages spell it.
+/// </para>
+/// <para>
+/// <c>default(MergeStrategy)</c> is <see cref="AllMustSucceed"/>, which is the strictest
+/// of the four. A default that silently tolerated a failed branch would be the wrong way
+/// round.
+/// </para>
+/// </remarks>
+public readonly struct MergeStrategy : IEquatable<MergeStrategy>
+{
+    private readonly int _successes;
+
+    private MergeStrategy(MergeKind kind, int successes)
+    {
+        Kind = kind;
+        _successes = successes;
+    }
+
+    /// <summary>Which join rule this is.</summary>
+    public MergeKind Kind { get; }
+
+    /// <summary>
+    /// How many branches must succeed before the remainder are cancelled, or <c>0</c> when
+    /// the strategy waits for all of them.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="FirstSuccess"/> reports <c>1</c> rather than <c>0</c>: it is the
+    /// degenerate quorum, and reporting them alike lets the engine run one code path for
+    /// both instead of two that must be kept in agreement.
+    /// </remarks>
+    public int RequiredSuccesses => Kind switch
+    {
+        MergeKind.Quorum => _successes,
+        MergeKind.FirstSuccess => 1,
+        _ => 0,
+    };
+
+    /// <summary>Wait for all; the first failure cancels its siblings via a linked token.</summary>
+    public static MergeStrategy AllMustSucceed => new(MergeKind.AllMustSucceed, 0);
+
+    /// <summary>Wait for all and collect every outcome; branch errors are readable from the context.</summary>
+    public static MergeStrategy AllSettled => new(MergeKind.AllSettled, 0);
+
+    /// <summary>First success wins; the remaining branches are cancelled.</summary>
+    public static MergeStrategy FirstSuccess => new(MergeKind.FirstSuccess, 1);
+
+    /// <summary>The first <paramref name="successes"/> successes win; the remainder are cancelled.</summary>
+    /// <param name="successes">How many branches must succeed. Must be positive.</param>
+    /// <remarks>
+    /// Not validated against the branch count here — this type does not know it. A quorum
+    /// larger than the number of branches can never be met, and the engine reports that as
+    /// a failed merge rather than hanging.
+    /// </remarks>
+    public static MergeStrategy Quorum(int successes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(successes);
+        return new MergeStrategy(MergeKind.Quorum, successes);
+    }
+
+    /// <inheritdoc />
+    public bool Equals(MergeStrategy other) => Kind == other.Kind && _successes == other._successes;
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => obj is MergeStrategy other && Equals(other);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => HashCode.Combine(Kind, _successes);
+
+    /// <summary>Compares two strategies.</summary>
+    public static bool operator ==(MergeStrategy left, MergeStrategy right) => left.Equals(right);
+
+    /// <summary>Compares two strategies.</summary>
+    public static bool operator !=(MergeStrategy left, MergeStrategy right) => !left.Equals(right);
+
+    /// <inheritdoc />
+    public override string ToString() =>
+        Kind == MergeKind.Quorum ? $"Quorum({_successes})" : Kind.ToString();
 }
 
 /// <summary>How a sub-flow relates to its parent.</summary>

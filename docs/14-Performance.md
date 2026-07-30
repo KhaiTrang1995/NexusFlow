@@ -16,6 +16,7 @@ pull request, and fails the build on regression. Nothing here is aspirational.
 |---|---|---|---|---|
 | B1 | 4-step ephemeral flow, in-proc | p50 / p99 overhead | **1.5 µs / 5 µs** | CI, ±5 % |
 | B2 | 4-step ephemeral flow | allocations per step | **0 B** (payload excluded) | CI, hard 0 |
+| B2p | ephemeral flow containing a `Parallel` | allocations per **fork** | **≈ 240 B/branch + 70 B**, ceiling 2 048 B | CI, recorded |
 | B3 | Capability dispatch | p99 | **150 ns** | CI |
 | B4 | Policy chain (timeout+retry+breaker, no failure) | p99 overhead | **400 ns** | CI |
 | B5 | Telemetry with exporter attached | per step | **200 ns** | CI |
@@ -27,6 +28,17 @@ pull request, and fails the build on regression. Nothing here is aspirational.
 | B11 | Idle RSS, 100 flows registered | — | **60 MB** | CI |
 | B12 | Build overhead vs identical non-FlowX code | **+0.4 %** — [B12.md](benchmarks/B12.md) | **+8 %** | CI |
 | B13 | Streaming throughput, 1 KB records, 8 partitions | sustained | **250 000 rec/s/node** | nightly |
+
+**B2p is a recorded figure, not a budget that was aimed at.** B2 stays a hard zero and
+still means what it always meant — the linear, conditional and switch paths allocate
+nothing per step, and `EngineAllocationTests` fails the build if any of them ever does.
+A `Parallel` is the first shape that cannot honour it: running several branches at once
+needs a linked `CancellationTokenSource`, a `Task` per branch and the awaiters behind them,
+and there is no arrangement of those that costs nothing. Measured in Release on .NET 10
+x64: **792 B** for a three-branch fork and **552 B** for a two-branch one, so about 240 B
+per branch on roughly 70 B of fixed cost. Nothing scales with the number of *steps* a
+branch runs, and that is the property the test defends — an absolute ceiling alone would
+still pass if a branch started allocating per step.
 
 ### 1.2 Measurement discipline
 

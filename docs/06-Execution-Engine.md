@@ -343,10 +343,111 @@ flow.Parallel(p => p
 | `FirstSuccess` | race | remaining branches cancelled |
 | `Quorum(n)` | first *n* successes | remainder cancelled |
 
-Parallel branches share the flow's deadline and its context, but write to
-**disjoint** context slots — enforced at compile time (`FLOWX1013`) so parallel
-steps cannot race on shared state. In `Durable` flows, each branch commits its
-own journal entry; the merge point is a single checkpoint.
+`MergeStrategy` is a **struct**, not an enum, because `Quorum(n)` carries a number. The
+three parameterless strategies are static properties, so `merge: MergeStrategy.AllMustSucceed`
+reads exactly as it does above; `MergeStrategy.Quorum(2)` is a factory call.
+`default(MergeStrategy)` is `AllMustSucceed` — the strictest of the four, because silence
+should not buy leniency.
+
+`AllSettled` is the only strategy that writes something for the next step to read: the
+engine puts a `ParallelOutcome` into the context at the join, carrying each branch's error
+or `null` **in declaration order**. Read it with `ctx.Get<ParallelOutcome>()`. A flow with
+two `AllSettled` forks keeps the later one, because the state bag is keyed by type — the
+`StepIndex` on the outcome is there so a reader can tell which fork it is holding.
+
+`Quorum(n)` with *n* greater than the branch count fails the fork rather than waiting for a
+branch that does not exist. `MergeStrategy` cannot check that itself; it does not know how
+many branches there are.
+
+### 9.1 How a fork fits the flat step array
+
+A fork uses the **same flat layout** as a switch: one node carrying a target per block, and
+the blocks laid out after it. The only structural difference is that a fork's blocks need
+no closing jumps — a branch runs as a bounded range `[BranchTargets[k], BranchTargets[k+1])`,
+so the next branch's target *is* the bound, and a jump would only restate it.
+
+```
+0 validate
+1 parallel(→2,3,4  join 5)   ← one node, three branch targets, one join
+2 check credit               ← branch 0 = [2,3)
+3 check fraud                ← branch 1 = [3,4)
+4 check sanctions            ← branch 2 = [4,5)
+5 decide                     ← the join
+```
+
+Everything the flat model bought survives: no branch stack, no nested plan objects, and the
+termination proof is unchanged — every target still points strictly forward, `StepGraph`
+still rejects one that is out of range, and each branch is a forward-only walk over a
+disjoint sub-range.
+
+**What does not survive is the claim that "the loop index" describes execution.** Between a
+fork and its join there are several indices, on several threads. The engine recurses exactly
+once per fork, into the same range-walking method with different bounds. A flow that does
+not fork never reaches that code.
+
+**Branches are as concurrent as their steps are.** Each branch is started eagerly on the
+calling thread and runs until its first incomplete `await`; the rest interleave on the
+thread pool. So a branch whose every step completes synchronously finishes before its
+sibling starts — which is correct, and is why a fork is for I/O rather than for CPU work.
+Forcing branches onto `Task.Run` would buy a thread-pool dispatch per branch to make
+CPU-bound work contend.
+
+**Every branch is drained before the fork returns**, cancelled or not. The context is
+pooled, so a branch still writing after the engine had moved on would eventually write into
+the *next* flow's context — possibly another tenant's. It is also what makes compensation
+sound: nothing is still running when the unwind starts.
+
+**A fork allocates.** A linked token source, a `Task` per branch and their awaiters — about
+240 B per branch on ~70 B fixed, measured. Budget B2 stays a hard zero for the linear,
+conditional and switch paths, which never reach this code; see
+[14 §1.1](14-Performance.md#11-platform-budgets-overhead-attributable-to-flowx-excluding-user-code-and-io).
+
+### 9.2 Cancellation, and what a cancelled sibling leaves behind
+
+`AllMustSucceed` cancels its siblings on the first failure, and a cancelled sibling may
+already have completed compensable work. That work is **still compensated**: branch steps
+record onto the flow's single compensation stack as they complete, and `CompensateAsync`
+runs under `CancellationToken.None` precisely so that the token which stopped the work
+cannot also stop the undoing of it.
+
+The unwind order needs one caveat stated plainly. "Strict reverse order" is exact *within* a
+branch, and between a branch and everything sequential around it — the fork and the join
+establish that ordering. Two steps in **two different branches** have no such ordering
+between them, so their compensations may unwind in either order. That is not a defect being
+hidden: branches that write disjoint slots have nothing to order against each other, and a
+saga that needed one undone before the other was not expressing concurrency in the first
+place.
+
+### 9.3 The shared context
+
+Parallel branches share the flow's deadline and its context, and write to **disjoint**
+context slots — enforced at compile time ([`FLOWX1013`](diagnostics/FLOWX1013.md)) so
+parallel steps cannot race on shared state.
+
+The runtime's half of that bargain is narrower than the compiler's, and the difference
+matters. `FlowExecutionContext` holds a plain `Dictionary<Type, object>`; it is pooled, and
+a `ConcurrentDictionary` would have cost every linear flow an allocation per write to solve
+a problem only forks have. So the state bag and the compensation stack are **guarded by a
+lock, and only when the compiled plan contains a fork** — `ExecutionPlan.HasParallel`, a
+fact precomputed at type initialisation. A flow that never forks takes one always-false
+branch and costs exactly what it did before.
+
+That makes concurrent writes *safe*: the dictionary cannot be corrupted and a torn read is
+impossible. It does not make them *meaningful*. Two branches writing the same contract type
+still race, and the winner is whichever finished last — which is a modelling mistake, and
+`FLOWX1013`'s job. **Read that page's stated limits before treating a green build as a
+proof:** it compares *declared output contracts*, so a capability calling `ctx.Set<T>()`
+from inside its own body writes a slot the rule never sees.
+
+One fidelity limit, stated rather than papered over: `ctx.CapabilityId` is a single field on
+the shared context, so inside a parallel branch a capability may read whichever step most
+recently started, including a sibling's. Error attribution does not depend on it — the
+engine takes the identity from the step node it is executing — but a log line written by a
+capability does. Per-branch identity needs a per-branch context, which is a larger change
+than this shape.
+
+In `Durable` flows, each branch commits its own journal entry; the merge point is a single
+checkpoint.
 
 ---
 

@@ -32,6 +32,7 @@ ephemeral one is not replayed at all.
 | [FLOWX1005](FLOWX1005.md) | Flow inherits from another flow | Control flow invisible to the graph and the manifest |
 | [FLOWX1010](FLOWX1010.md) | Capability declares no authorisation stance | A permissive default nobody chose |
 | [FLOWX1011](FLOWX1011.md) | Condition, selector or projection reads something outside the flow's state | A branch that takes a different path on replay, or a step input that is not the journaled one |
+| [FLOWX1013](FLOWX1013.md) | Parallel branches must write disjoint context slots | **Two concurrent branches racing on one context slot** |
 | [FLOWX1014](FLOWX1014.md) | Retry requires an idempotent capability | **A duplicate charge** |
 | [FLOWX1015](FLOWX1015.md) | Capability implements more than one contract | Ambiguous dispatch, meaningless manifest entry |
 | [FLOWX1017](FLOWX1017.md) | AwaitSignal requires the Durable profile | A waiting flow vanishing with its node |
@@ -63,8 +64,8 @@ The catalogue is deliberately smaller than the numbering suggests. Codes appear 
 only once the compiler actually reports them — a documented diagnostic that nothing
 raises is a promise the compiler is not keeping. Reserved for later phases:
 `FLOWX1006` (state must be serialisable), `FLOWX1007`–`FLOWX1009` (determinism in
-durable flows), `FLOWX1012`–`FLOWX1013` (compensable-and-ephemeral, parallel branch
-disjointness), `FLOWX1016` (expected failures are values), `FLOWX1019` (deadline coherence),
+durable flows), `FLOWX1012` (compensable-and-ephemeral),
+`FLOWX1016` (expected failures are values), `FLOWX1019` (deadline coherence),
 `FLOWX1021` (sub-flow cycles) and `FLOWX1022` (contract compatibility **across
 versions** — the analyzer counterpart of `flowx diff`, distinct from `FLOWX1020`,
 which checks one flow's steps against each other).

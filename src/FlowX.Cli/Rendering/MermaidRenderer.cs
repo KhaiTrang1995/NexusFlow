@@ -147,6 +147,13 @@ public static class MermaidRenderer
     /// </remarks>
     private static string BranchLabel(ManifestStep step, int branch)
     {
+        // A fork's blocks all run, so numbering them is the only true thing to say. "yes"
+        // and "no" would read as a choice the flow does not make.
+        if (step.Kind == "Parallel")
+        {
+            return "branch " + branch.ToString(CultureInfo.InvariantCulture);
+        }
+
         if (step.Kind != "Switch")
         {
             return branch == 0 ? "yes" : "no";
@@ -207,6 +214,14 @@ public static class MermaidRenderer
             return "emit " + step.Event;
         }
 
+        if (step.Kind == "Parallel")
+        {
+            // The merge rule is the one thing about a fork worth reading off a diagram:
+            // it says what one branch failing means for the rest. It is structure, so
+            // unlike a predicate or a case value the manifest does carry it.
+            return string.IsNullOrEmpty(step.Merge) ? "parallel" : "parallel · " + step.Merge;
+        }
+
         if (step.Kind is "Condition" or "Switch")
         {
             // Not the predicate, and not the selector or the case values: the manifest's
@@ -247,6 +262,9 @@ public static class MermaidRenderer
         "AwaitSignal" => $">{Quote(label)}]",
         "Condition" => $"{{{Quote(label)}}}",
         "Switch" => $"{{{{{Quote(label)}}}}}",
+        // A stadium with a doubled border: a fork is not a decision, so it must not wear a
+        // decision's diamond.
+        "Parallel" => $"[/{Quote(label)}/]",
         _ => $"[{Quote(label)}]",
     };
 

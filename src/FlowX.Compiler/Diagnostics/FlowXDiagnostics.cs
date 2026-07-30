@@ -117,6 +117,33 @@ public static class FlowXDiagnostics
         "whose result the flow can then read.",
         DiagnosticSeverity.Warning);
 
+    /// <summary>FLOWX1013 — two branches of a <c>Parallel</c> write the same context slot.</summary>
+    /// <remarks>
+    /// <para>
+    /// The one rule in this catalogue whose subject is a race. Branches of a fork share the
+    /// flow's context, and the state bag is keyed by contract type — so two branches
+    /// producing the same type are two threads writing one key, and which value the step
+    /// after the join reads depends on which branch finished last. The runtime cannot
+    /// detect it: both writes are legal, both succeed, and the result is simply one of the
+    /// two.
+    /// </para>
+    /// <para>
+    /// An error rather than a warning, on the same grounds as FLOWX1014: what it prevents
+    /// is not a mistake that shows up in a test, it is a value that is right in
+    /// development and wrong under load.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor ParallelBranchesMustWriteDisjointSlots = Create(
+        "FLOWX1013",
+        "Parallel branches must write disjoint context slots",
+        "Branches {0} and {1} of the parallel step in flow '{2}' both produce '{3}', so " +
+        "they race to write the same context slot",
+        "Parallel branches share the flow's context, which is keyed by contract type, so " +
+        "two branches producing the same type race and the winner is whichever finished " +
+        "last. Give each branch its own output contract — a distinct record per check is " +
+        "usually the honest modelling anyway — or run the steps in sequence, where the " +
+        "second overwriting the first is a decision rather than an accident.");
+
     /// <summary>FLOWX1014 — a retry policy is attached to a non-idempotent capability.</summary>
     public static readonly DiagnosticDescriptor RetryRequiresIdempotency = Create(
         "FLOWX1014",
@@ -240,6 +267,7 @@ public static class FlowXDiagnostics
         FlowInheritsFlow,
         CapabilityMissingAuthorization,
         PredicateMustBePure,
+        ParallelBranchesMustWriteDisjointSlots,
         RetryRequiresIdempotency,
         CapabilityHasMultipleContracts,
         AwaitSignalRequiresDurable,

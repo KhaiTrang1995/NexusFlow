@@ -17,6 +17,7 @@ FLOWX1004 | FlowX | Error | Capability invokes another capability. [Documentatio
 FLOWX1005 | FlowX | Error | Flow inherits from another flow. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1005.md)
 FLOWX1010 | FlowX | Error | Capability does not declare an authorisation stance. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1010.md)
 FLOWX1011 | FlowX | Warning | Condition, selector or projection reads something outside the flow's state; raised as an error in Durable flows. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1011.md)
+FLOWX1013 | FlowX | Error | Parallel branches must write disjoint context slots. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1013.md)
 FLOWX1014 | FlowX | Error | Retry requires an idempotent capability. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1014.md)
 FLOWX1015 | FlowX | Error | Capability implements more than one contract. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1015.md)
 FLOWX1017 | FlowX | Error | AwaitSignal requires the Durable profile. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1017.md)

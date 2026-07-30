@@ -185,10 +185,25 @@ public sealed class ManifestStep
     public string? Event { get; set; }
 
     /// <summary>
+    /// How a <c>Parallel</c> step joins its branches: <c>AllMustSucceed</c>,
+    /// <c>AllSettled</c>, <c>FirstSuccess</c> or <c>Quorum</c>. Absent on every other kind,
+    /// and on a fork whose strategy the compiler could not read statically.
+    /// </summary>
+    /// <remarks>
+    /// A quorum's <em>size</em> is deliberately not published — it comes from an arbitrary
+    /// expression in the flow's source, and the manifest carries structure and never
+    /// values. So a reader learns that the fork waits for a quorum and has to read the
+    /// flow to learn how large it is.
+    /// </remarks>
+    [JsonPropertyName("merge")]
+    public string? Merge { get; set; }
+
+    /// <summary>
     /// Nested blocks of a branching step: for a <c>Condition</c>, the <c>then</c> block
     /// first and the <c>Otherwise</c> block second when there is one; for a
     /// <c>Switch</c>, one block per case in declaration order and then the <c>Default</c>,
-    /// which is always present and may be empty.
+    /// which is always present and may be empty; for a <c>Parallel</c>, one block per
+    /// branch in declaration order, every one of which runs.
     /// </summary>
     /// <remarks>
     /// Positional, because that is what the schema gives — <c>branches</c> is an array of

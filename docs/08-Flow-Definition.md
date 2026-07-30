@@ -162,9 +162,36 @@ flow.Parallel(p => p
     .Step<Decide>();
 ```
 
-Branches write to disjoint context slots (`FLOWX1013`); they share the flow's
-deadline; failure semantics per `MergeStrategy` — see
+Branches write to disjoint context slots ([`FLOWX1013`](diagnostics/FLOWX1013.md)); they
+share the flow's deadline; failure semantics per `MergeStrategy` — see
 [06 §9](06-Execution-Engine.md#9-concurrency-and-parallel-steps).
+
+A branch is either a single capability, `Branch<T>()`, or a whole chain,
+`Branch(b => b.Step<A>().Step<B>())`; the two are the same concept with two spellings and
+compile to the same shape. A `Parallel` with fewer than two branches is laid out **inline**,
+with no fork node at all — running one thing concurrently is running it, and publishing a
+decision the flow does not make would put a lie in the manifest.
+
+```csharp
+flow.Parallel(p => p
+        .Branch<CheckCredit>()
+        .Branch<CheckFraud>()
+        .Branch(sanctions => sanctions
+            .Step<LoadWatchlist>()
+            .Step<CheckSanctions>()),
+     merge: MergeStrategy.Quorum(2))
+    .Step<Decide>();
+```
+
+`MergeStrategy` is a struct rather than an enum, so `Quorum(n)` can carry its number;
+`default(MergeStrategy)` is `AllMustSucceed`. Under `AllSettled` the step after the join
+reads each branch's outcome with `ctx.Get<ParallelOutcome>()`.
+
+Two things are worth knowing before reaching for it. Branches are as concurrent as their
+steps are — a branch whose steps all complete synchronously finishes before its sibling
+starts, so a fork buys nothing for CPU-bound work. And a fork allocates, roughly 240 B per
+branch; the zero-allocation budget covers the linear, conditional and switch paths and
+deliberately does not cover this one.
 
 ### 3.4 Iteration
 

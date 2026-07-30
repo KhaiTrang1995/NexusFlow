@@ -291,6 +291,15 @@
             "$ref": "#/$defs/policy"
           }
         },
+        "merge": {
+          "description": "Parallel steps only: how the branches are joined. Structure, not a value — it says what one branch failing means for the flow. A Quorum's size is deliberately absent: it comes from an arbitrary expression in the flow's source, and the manifest carries structure and never values.",
+          "enum": [
+            "AllMustSucceed",
+            "AllSettled",
+            "FirstSuccess",
+            "Quorum"
+          ]
+        },
         "branches": {
           "type": "array",
           "items": {
