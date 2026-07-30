@@ -33,7 +33,15 @@ public static class ProblemDetailsMapper
     /// <param name="error">The failure to report.</param>
     /// <param name="instance">The request path, so the document identifies the occurrence.</param>
     /// <param name="correlationId">Ties the response to the server-side log record.</param>
-    public static ProblemDetails ToProblemDetails(Error error, string instance, string correlationId)
+    /// <param name="sensitiveMembers">
+    /// Contract members declared <c>[Sensitive]</c>. Any structured detail whose key
+    /// matches one is replaced with <see cref="Redacted"/> rather than sent.
+    /// </param>
+    public static ProblemDetails ToProblemDetails(
+        Error error,
+        string instance,
+        string correlationId,
+        IReadOnlyCollection<string>? sensitiveMembers = null)
     {
         ArgumentNullException.ThrowIfNull(error);
 
@@ -58,11 +66,48 @@ public static class ProblemDetailsMapper
         {
             foreach (var pair in error.Data)
             {
-                problem.Extensions[pair.Key] = pair.Value;
+                problem.Extensions[pair.Key] = IsSensitive(pair.Key, sensitiveMembers)
+                    ? Redacted
+                    : pair.Value;
             }
         }
 
         return problem;
+    }
+
+    /// <summary>What a sensitive value is replaced with.</summary>
+    /// <remarks>
+    /// A placeholder rather than an omitted key, deliberately. A caller debugging a
+    /// rejected request needs to know the field was considered and withheld; a key that
+    /// silently vanishes reads as a field the server never received.
+    /// </remarks>
+    public const string Redacted = "[redacted]";
+
+    /// <summary>
+    /// Whether this structured-detail key names a sensitive contract member.
+    /// </summary>
+    /// <remarks>
+    /// Case-insensitive, because the wire contract is camelCase and the member is
+    /// PascalCase: a capability writing <c>.With("paymentToken", …)</c> is naming the
+    /// same field as <c>PlaceOrder.PaymentToken</c>, and a case-sensitive match would
+    /// let exactly the realistic spelling through.
+    /// </remarks>
+    private static bool IsSensitive(string key, IReadOnlyCollection<string>? sensitiveMembers)
+    {
+        if (sensitiveMembers is null || sensitiveMembers.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var member in sensitiveMembers)
+        {
+            if (string.Equals(member, key, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

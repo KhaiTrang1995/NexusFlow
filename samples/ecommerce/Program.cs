@@ -37,6 +37,7 @@ app.MapFlow(
     PlaceOrderFlow.Projection,
     EcommerceJsonContext.Default.PlaceOrder,
     EcommerceJsonContext.Default.OrderPlacedResult,
-    requireIdempotencyKey: true);
+    requireIdempotencyKey: true,
+    sensitiveMembers: PlaceOrderFlow.SensitiveMembers);
 
 app.Run();

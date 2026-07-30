@@ -149,10 +149,13 @@ reach that path — no happy-path run does.
 No capability names a status code. The category is the contract, and the mapping
 lives in one place.
 
-**`PaymentToken` is marked `[Sensitive]`, and that reaches the manifest** — the
-contract's `input` carries `"sensitive": ["PaymentToken"]`, so a reviewer or an agent
-can see which field holds the secret. It is a **declaration, not a control**: nothing
-redacts it yet. See [PLAN.md WP-12a](../../PLAN.md).
+**`PaymentToken` is marked `[Sensitive]`, and that does two things.** It reaches the
+manifest — the contract's `input` carries `"sensitive": ["PaymentToken"]`, so a reviewer
+or an agent can see which field holds the secret — and it reaches the endpoint as
+`PlaceOrderFlow.SensitiveMembers`, which strips matching structured detail out of an
+error response. A capability that attached the token to an `Error` would not send it to
+the caller. That is the only sink this release serialises such a value on; see
+[PLAN.md WP-12a](../../PLAN.md).
 
 **The wire contract is the flow's own types.** There is no request DTO and no
 response DTO — `PlaceOrder` and `OrderPlacedResult` go on the wire directly, and the
@@ -220,9 +223,10 @@ marker rather than hiding it. See
 call in a later phase. It is written out in `Program.cs` so the sample runs against
 what exists today.
 
-**Redaction is not implemented.** `[Sensitive]` records a fact in the manifest and
-strips nothing. The attribute used to document itself as enforced by the generated
-serialiser; it no longer does.
+**Redaction covers one sink.** `[Sensitive]` strips values from Problem Details bodies
+and nothing else — there is no logging scope, journal or replay view yet for it to strip
+from. The attribute used to document itself as enforced everywhere by the generated
+serialiser, while nothing read it at all; it no longer does.
 
 **Authorisation is declared, not enforced.** The capabilities carry
 `Authorization.Authenticated` and `Authorization.Permission`, and those reach the

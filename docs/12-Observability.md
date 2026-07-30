@@ -140,16 +140,16 @@ Redaction is applied by the generated serialiser, so there is no code path that
 can forget it. `SecretsNeverLeaveTheProcess` is a CI test that scans emitted
 telemetry fixtures for known secret patterns.
 
-> **Status: not implemented.** This section describes the intended behaviour. What
-> exists today is the **declaration**: the compiler reads `[Sensitive]` and lists the
-> member under the contract's `sensitive` array in `flowx.manifest.json`, so a
-> reviewer, `flowx diff` or an agent can see which fields carry secrets. Nothing
-> redacts anything — there is no logging scope, no journal and no replay view yet
-> for it to redact from.
+> **Status: one path, not every path.** The compiler reads `[Sensitive]`, records the
+> member in `flowx.manifest.json`, and emits the names as `Flow.SensitiveMembers`. The
+> HTTP endpoint uses that list to replace matching structured error detail with
+> `[redacted]` before the body is written — so a capability that attaches a secret to an
+> `Error` does not send it to the caller.
 >
-> Until then, **do not rely on the attribute as a control.** It is a fact recorded in
-> the manifest, and the value still travels wherever your own code puts it. The gap
-> is tracked as **WP-12a** in [PLAN.md](../PLAN.md).
+> That is the **only** path this release serialises a capability-supplied value on.
+> Logs, traces, the journal and the replay view do not exist yet, so the "no code path
+> can forget it" claim above is still ahead of us. The value also still travels wherever
+> your own code puts it. Tracked as **WP-12a** in [PLAN.md](../PLAN.md).
 
 ---
 
