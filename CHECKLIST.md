@@ -174,6 +174,9 @@ immutable, and rejects every invariant violation under test.
 - [x] **WP-13** Diagnostics that were documented and never raised. **All four now fire**
       — `FLOWX1014`, `FLOWX1018`, `FLOWX1003`, `FLOWX1004` — each verified against the
       real sample, not only the harness
+- [~] **WP-14** Budget **B12** build overhead — **measured, not settled.** The generator
+      costs ~2.9 ms for a one-flow compilation. The ratio that exists does not answer the
+      8 % question; [B12.md](docs/benchmarks/B12.md) says why, and what would
 
 ### WP-10 · what it delivered
 
@@ -235,6 +238,7 @@ Three more surfaced while getting the suite green:
 | B1 flow overhead | ≤ 5 µs | **172.3 ns** ✅ | WP-11, real engine, 30 iterations |
 | B2 allocations per step | 0 B | **0 B** ✅ | gated as a unit test — **Release only**, see below |
 | B3 capability dispatch | ≤ 150 ns | **21.9 ns** ✅ | shared hardware, advisory |
+| B12 build overhead | ≤ 8 % | **not settled** — measured at WP-14; the comparison is not like-for-like, see [B12.md](docs/benchmarks/B12.md) | WP-14 |
 
 Nothing in the "Now" column is green by assertion — every ✅ was produced by a
 command in this working tree. Every "not measured" is equally honest: the gate

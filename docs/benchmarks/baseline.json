@@ -21,42 +21,42 @@
     "arch": "X64 RyuJIT AVX-512F+CD+BW+DQ+VL+VBMI",
     "iterationCount": 30,
     "warmupCount": 10,
-    "recordedAt": "WP-11",
-    "note": "Shared container hardware. Timing figures are indicative only; allocations are the contract."
+    "recordedAt": "WP-14",
+    "note": "Shared container hardware. Timing figures are indicative only; allocations are the contract -- except CompilerBenchmarks, which measures Roslyn's allocations and is banded. B1 measured 172.3 ns when P0.md was written and 129.5 ns here, on the same commit: a 25% swing that is exactly the noise P0.md documents, and that leaves its verdict untouched at a ~30x margin either way."
   },
   "benchmarks": {
     "DispatchBenchmarks.Direct": {
-      "absoluteNs": 19.92,
+      "absoluteNs": 17.54,
       "ratioToBaseline": 1.0,
       "allocatedBytes": 0,
       "budget": "B3",
       "budgetNs": 150
     },
     "DispatchBenchmarks.ViaInterface": {
-      "absoluteNs": 21.88,
-      "ratioToBaseline": 1.098,
+      "absoluteNs": 29.3,
+      "ratioToBaseline": 1.67,
       "allocatedBytes": 0,
       "budget": "B3",
       "budgetNs": 150,
       "note": "Not slower than a direct call: the JIT devirtualises a sealed monomorphic call site."
     },
     "DispatchBenchmarks.ViaDelegate": {
-      "absoluteNs": 21.03,
-      "ratioToBaseline": 1.056,
+      "absoluteNs": 18.71,
+      "ratioToBaseline": 1.067,
       "allocatedBytes": 0,
       "budget": "B3",
       "budgetNs": 150
     },
     "DispatchBenchmarks.ViaReflection": {
-      "absoluteNs": 106.36,
-      "ratioToBaseline": 5.339,
+      "absoluteNs": 80.77,
+      "ratioToBaseline": 4.605,
       "allocatedBytes": 48,
       "budget": "reference",
       "budgetNs": 150,
       "note": "Not a target. The 48 B is the argument ADR-0002 actually rests on."
     },
     "EngineBenchmarks.Query": {
-      "absoluteNs": 172.31,
+      "absoluteNs": 129.52,
       "ratioToBaseline": 1.0,
       "allocatedBytes": 0,
       "budget": "B1",
@@ -64,50 +64,77 @@
       "note": "B1 proper: a 4-step flow through the real engine."
     },
     "EngineBenchmarks.SagaSuccess": {
-      "absoluteNs": 223.39,
-      "ratioToBaseline": 1.296,
+      "absoluteNs": 160.69,
+      "ratioToBaseline": 1.241,
       "allocatedBytes": 0,
       "budget": "B1",
       "budgetNs": 5000,
       "note": "What declaring compensations costs when nothing fails."
     },
     "EngineBenchmarks.SagaFailure": {
-      "absoluteNs": 266.33,
-      "ratioToBaseline": 1.546,
+      "absoluteNs": 201.68,
+      "ratioToBaseline": 1.557,
       "allocatedBytes": 40,
       "budget": "B1",
       "budgetNs": 5000,
       "note": "Failure path with a full unwind. The 40 B is the Unwind iterator."
     },
     "StepLoopBenchmarks.WalkPlan": {
-      "absoluteNs": 4.54,
+      "absoluteNs": 3.03,
       "ratioToBaseline": 1.0,
       "allocatedBytes": 0,
       "budget": "B1-precursor",
       "budgetNs": 5000
     },
     "StepLoopBenchmarks.WalkAndDispatch": {
-      "absoluteNs": 29.86,
-      "ratioToBaseline": 6.577,
+      "absoluteNs": 28.45,
+      "ratioToBaseline": 9.389,
       "allocatedBytes": 0,
       "budget": "B1-precursor",
       "budgetNs": 5000
     },
     "StepLoopBenchmarks.CompensateAll": {
-      "absoluteNs": 139.89,
-      "ratioToBaseline": 30.813,
+      "absoluteNs": 89.76,
+      "ratioToBaseline": 29.624,
       "allocatedBytes": 328,
       "budget": "none",
       "budgetNs": 5000,
       "note": "Constructs a stack per call; the engine reuses a pooled one instead."
     },
     "StepLoopBenchmarks.BuildPlan": {
-      "absoluteNs": 213.48,
-      "ratioToBaseline": 47.022,
+      "absoluteNs": 164.07,
+      "ratioToBaseline": 54.149,
       "allocatedBytes": 520,
       "budget": "build-time",
       "budgetNs": 100000,
       "note": "Runs once per flow at startup, not per execution."
+    },
+    "CompilerBenchmarks.WithoutGenerator": {
+      "absoluteNs": 4044320.78,
+      "ratioToBaseline": 1.414,
+      "allocatedBytes": 678312,
+      "budget": "B12",
+      "budgetNs": 60000000,
+      "note": "Build overhead. The ratio here does NOT answer the 8% budget -- the arms are not like-for-like. See docs/benchmarks/B12.md. Allocations are banded rather than exact because this benchmark measures Roslyn's allocations, not ours, and those move between runs of the same commit. Committed so a generator that became much slower or much greedier shows as a regression while the ratio question is open.",
+      "allocationTolerancePercent": 15
+    },
+    "CompilerBenchmarks.GeneratorOnly": {
+      "absoluteNs": 2860116.13,
+      "ratioToBaseline": 1.0,
+      "allocatedBytes": 588937,
+      "budget": "B12",
+      "budgetNs": 60000000,
+      "note": "Build overhead. The ratio here does NOT answer the 8% budget -- the arms are not like-for-like. See docs/benchmarks/B12.md. Allocations are banded rather than exact because this benchmark measures Roslyn's allocations, not ours, and those move between runs of the same commit. Committed so a generator that became much slower or much greedier shows as a regression while the ratio question is open.",
+      "allocationTolerancePercent": 15
+    },
+    "CompilerBenchmarks.WithGenerator": {
+      "absoluteNs": 11173681.82,
+      "ratioToBaseline": 3.907,
+      "allocatedBytes": 1508524,
+      "budget": "B12",
+      "budgetNs": 60000000,
+      "note": "Build overhead. The ratio here does NOT answer the 8% budget -- the arms are not like-for-like. See docs/benchmarks/B12.md. Allocations are banded rather than exact because this benchmark measures Roslyn's allocations, not ours, and those move between runs of the same commit. Committed so a generator that became much slower or much greedier shows as a regression while the ratio question is open.",
+      "allocationTolerancePercent": 15
     }
   },
   "tolerances": {

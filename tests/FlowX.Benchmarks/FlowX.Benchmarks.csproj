@@ -32,11 +32,26 @@
 
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" Version="0.15.2" />
+    <!--
+      CompilerBenchmarks (B12) drives the generator over a real compilation. Pinned to
+      the version BenchmarkDotNet already brings rather than to the compiler's own 4.8.0
+      floor: the generator is pinned low so it loads in the oldest supported host, and
+      running it here against a newer Roslyn is the honest measurement anyway, because a
+      newer Roslyn is what a user's build will have.
+    -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
     <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+
+    <!--
+      A plain reference, not an analyzer reference: B12 measures what the generator costs
+      by invoking it directly, which needs the type rather than the build-time hook.
+    -->
+    <ProjectReference Include="../../src/FlowX.Compiler/FlowX.Compiler.csproj"
+                      ReferenceOutputAssembly="true" />
   </ItemGroup>
 
 </Project>
