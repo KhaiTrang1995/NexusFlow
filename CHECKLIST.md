@@ -4,9 +4,10 @@
 > "where is this project actually at?" — the [plan](PLAN.md) says what to build,
 > this says what is built.
 >
-> **Last updated:** 2026-07-30 · **Phase:** P0 · **Commit:** see `git log`
+> **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
+> **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 473/473 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 593/593 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -151,7 +152,7 @@ immutable, and rejects every invariant violation under test.
 
 ---
 
-## 5b. WP-3 → WP-12
+## 5b. P0 · WP-3 → WP-14
 
 - [x] **WP-3** `FlowX.Benchmarks` — B1–B3 measurable, baseline committed
 - [x] **WP-4** `FlowX.Runtime` — step loop, pooled contexts, deadline handling, 0 B
@@ -177,6 +178,38 @@ immutable, and rejects every invariant violation under test.
       real sample, not only the harness
 - [x] **WP-14** Budget **B12** build overhead — **PASS at +0.4 %** against +8 %, on a
       like-for-like build of the sample. Report at [B12.md](docs/benchmarks/B12.md)
+
+**P0's exit criteria are met.** `samples/ecommerce` runs a 3-step ephemeral flow over
+HTTP, B1 and B2 are green, and `flowx graph` renders it. The ZAP baseline is the one
+item outstanding and needs a CI run.
+
+---
+
+## 5c. P1 · Compiler hardening — in progress
+
+Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages in
+[PLAN.md §4](PLAN.md).
+
+- [ ] **WP-15** The branching DSL — `When` / `Otherwise` / `Switch` / `Parallel` /
+      `ForEach` / `SubFlow`, through builder, model, analysis, emission, graph and
+      engine. The largest remaining piece of P1
+- [x] **WP-16** Step binding — **`FLOWX1020`** raised by `StepBindingAnalyzer`. A flow
+      whose steps cannot pass values to each other now fails the build. Numbered 1020,
+      not 1022: `08-Flow-Definition.md` and both `Get<T>` implementations already
+      documented this check under 1020, and 1022 stays reserved for contract
+      compatibility *across versions*
+- [x] **WP-17** `flowx diff` v1 — 29 classification rules, text and JSON, exit 1 on a
+      breaking change. **Wired into CI** against a committed baseline, and verified by
+      flipping `Idempotent` on the sample's real source
+- [ ] **WP-18** Scale — 200 synthetic flows within the 8 % budget, and evidence that
+      the cost scales linearly
+- [x] **WP-19** IDE code fixes — `FLOWX1001`, `FLOWX1010`, `FLOWX1017`, in a separate
+      `FlowX.Compiler.CodeFixes` assembly so the analyzer never drags Workspaces into a
+      consumer's build. `FLOWX1010` deliberately withholds `Public`
+
+Already satisfied from P0, per the roadmap's P1 list: diagnostics with help URIs
+(WP-13), generator snapshot tests (WP-5), readable and breakpoint-able emitted code
+(WP-10), and budget B12 (WP-14).
 
 ### WP-10 · what it delivered
 
@@ -228,7 +261,7 @@ Three more surfaced while getting the suite green:
 | Branch coverage | ≥ 75 % | **87.0 %** ✅ | verified locally |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
-| Fitness functions | all green | **36/36** ✅ | plus 10 compiler fitness tests |
+| Fitness functions | all green | **36/36** ✅ | plus compiler and code-fix fitness tests |
 | NativeAOT publish | links **and runs** | **✅** | 11 MB binary served a real order |
 | Concurrent cross-tenant leak | none | **none** ✅ | 64 concurrent flows, 0 overlaps |
 | SAST findings | 0 | **wired, unrun** — needs a CI run | WP-0 |

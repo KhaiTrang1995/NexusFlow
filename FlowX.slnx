@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
     <Project Path="src/FlowX.Compiler/FlowX.Compiler.csproj" />
+    <Project Path="src/FlowX.Compiler.CodeFixes/FlowX.Compiler.CodeFixes.csproj" />
     <Project Path="src/FlowX.Cli/FlowX.Cli.csproj" />
     <Project Path="src/FlowX.Core/FlowX.Core.csproj" />
     <Project Path="src/FlowX.Hosting/FlowX.Hosting.csproj" />
@@ -20,6 +21,7 @@
     <Project Path="tests/FlowX.Architecture.Tests/FlowX.Architecture.Tests.csproj" />
     <Project Path="tests/FlowX.Benchmarks/FlowX.Benchmarks.csproj" />
     <Project Path="tests/FlowX.Cli.Tests/FlowX.Cli.Tests.csproj" />
+    <Project Path="tests/FlowX.Compiler.CodeFixes.Tests/FlowX.Compiler.CodeFixes.Tests.csproj" />
     <Project Path="tests/FlowX.Compiler.Tests/FlowX.Compiler.Tests.csproj" />
     <Project Path="tests/FlowX.Core.Tests/FlowX.Core.Tests.csproj" />
     <Project Path="tests/FlowX.Hosting.Tests/FlowX.Hosting.Tests.csproj" />

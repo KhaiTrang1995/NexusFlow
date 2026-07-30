@@ -1,0 +1,110 @@
+{
+  "schemaVersion": "0.1.0",
+  "application": {
+    "name": "Ecommerce",
+    "version": "1.0.0"
+  },
+  "flows": [
+    {
+      "id": "order.place",
+      "version": "1.0.0",
+      "profile": "Ephemeral",
+      "deadline": "PT30S",
+      "input": {
+        "type": "Ecommerce.PlaceOrder",
+        "sensitive": [
+          "PaymentToken"
+        ]
+      },
+      "output": {
+        "type": "Ecommerce.OrderPlacedResult"
+      },
+      "steps": [
+        {
+          "id": 0,
+          "kind": "Capability",
+          "capability": "order.validate@1.0.0"
+        },
+        {
+          "id": 1,
+          "kind": "Capability",
+          "capability": "inventory.reserve@1.0.0",
+          "compensation": "inventory.release@1.0.0"
+        },
+        {
+          "id": 2,
+          "kind": "Capability",
+          "capability": "payment.capture@2.1.0"
+        },
+        {
+          "id": 3,
+          "kind": "Emit",
+          "event": "order.placed"
+        }
+      ],
+      "emits": [
+        "order.placed"
+      ],
+      "source": "PlaceOrderFlow.cs:23"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "inventory.release",
+      "version": "1.0.0",
+      "input": "Ecommerce.ValidatedOrder",
+      "output": "Ecommerce.Reservation",
+      "authorization": {
+        "mode": "Internal"
+      },
+      "idempotent": true,
+      "sideEffects": [
+        "inventory-ledger"
+      ]
+    },
+    {
+      "id": "inventory.reserve",
+      "version": "1.0.0",
+      "input": "Ecommerce.ValidatedOrder",
+      "output": "Ecommerce.Reservation",
+      "authorization": {
+        "mode": "Authenticated"
+      },
+      "idempotent": true,
+      "sideEffects": [
+        "inventory-ledger"
+      ]
+    },
+    {
+      "id": "order.validate",
+      "version": "1.0.0",
+      "input": "Ecommerce.PlaceOrder",
+      "output": "Ecommerce.ValidatedOrder",
+      "authorization": {
+        "mode": "Authenticated"
+      },
+      "idempotent": true,
+      "sideEffects": []
+    },
+    {
+      "id": "payment.capture",
+      "version": "2.1.0",
+      "input": "Ecommerce.Reservation",
+      "output": "Ecommerce.Payment",
+      "authorization": {
+        "mode": "Permission"
+      },
+      "idempotent": false,
+      "sideEffects": [
+        "ledger",
+        "payment-gateway"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "type": "order.placed",
+      "schemaVersion": "1.0.0"
+    }
+  ]
+}

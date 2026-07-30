@@ -21,6 +21,20 @@ internal static class RepositoryLayout
             .OrderBy(static f => f.Name, StringComparer.Ordinal)
             .ToList();
 
+    /// <summary>
+    /// Whether a project declares itself a Roslyn component.
+    /// </summary>
+    /// <remarks>
+    /// Several rules exempt analyzers and code fixes, and every one of them has to agree
+    /// on what an analyzer is. Keying on the MSBuild property rather than on a project
+    /// name is what stops a runtime assembly claiming the exemption to silence a warning
+    /// — and what stops the second Roslyn component in the repository from quietly
+    /// falling outside a rule written when there was one.
+    /// </remarks>
+    public static bool IsRoslynComponent(FileInfo project) =>
+        File.ReadAllText(project.FullName)
+            .Contains("<IsRoslynComponent>true</IsRoslynComponent>", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>Reads a project's <c>PackageReference</c> includes.</summary>
     public static IReadOnlyList<string> PackageReferences(FileInfo project) =>
         ItemIncludes(project, "PackageReference");

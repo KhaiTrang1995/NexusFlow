@@ -1,12 +1,16 @@
 # Implementation Plan
 
-> **Scope:** work-package detail for **P0 — Walking skeleton**, plus the entry
-> criteria for P1. Phase-level planning lives in
-> [docs/20-Roadmap.md](docs/20-Roadmap.md); this document is what a contributor
-> picks work from.
+> **Scope:** work-package detail for the phases in
+> [docs/20-Roadmap.md](docs/20-Roadmap.md). The roadmap says what each phase must
+> prove and when it is done; this document is what a contributor picks work from.
 >
 > **Companion:** [CHECKLIST.md](CHECKLIST.md) carries live status and is updated
 > with every change. This document changes only when the *plan* changes.
+>
+> **Where we are:** **P0 is complete and passed its kill criterion** (B1 172 ns
+> against 5 µs, B2 zero — [P0.md](docs/benchmarks/P0.md)). **P1 — Compiler
+> hardening** is in progress; §4 below carries its work packages, derived from the
+> roadmap's P1 scope.
 
 ---
 
@@ -51,6 +55,12 @@ flowchart TD
     WP13["WP-13 · Diagnostics<br/>FLOWX1014 · FLOWX1018"]
     WP14["WP-14 · B12<br/>build overhead"]
 
+    WP15["WP-15 · Branching DSL<br/>When · Switch · Parallel"]
+    WP16["WP-16 · Step binding<br/>FLOWX1020"]
+    WP17["WP-17 · flowx diff<br/>breaking-change gate"]
+    WP18["WP-18 · Scale<br/>200 flows"]
+    WP19["WP-19 · Code fixes<br/>IDE quick actions"]
+
     WP0 --> WP1 --> WP2 --> WP3
     WP2 --> WP4
     WP3 --> WP4
@@ -63,10 +73,26 @@ flowchart TD
     WP5 --> WP13
     WP5 --> WP14
 
+    WP5 --> WP15
+    WP5 --> WP16
+    WP9 --> WP17
+    WP6 --> WP17
+    WP14 --> WP18
+    WP13 --> WP19
+
     style WP3 fill:#fff3cd,stroke:#856404
     style WP11 fill:#f8d7da,stroke:#721c24
     style WP1 fill:#d4edda,stroke:#155724
+    style WP15 fill:#cfe2ff,stroke:#084298
+    style WP16 fill:#cfe2ff,stroke:#084298
+    style WP17 fill:#cfe2ff,stroke:#084298
+    style WP18 fill:#cfe2ff,stroke:#084298
+    style WP19 fill:#cfe2ff,stroke:#084298
 ```
+
+WP-0 through WP-14 are P0 (complete); WP-15 onward are **P1**, shown in blue.
+WP-16, WP-17 and WP-18 have disjoint dependencies and no shared files, so they
+run concurrently; WP-15 touches the whole stack and does not.
 
 **WP-3 is scheduled before the engine on purpose.** A performance budget that
 becomes measurable only after the thing it constrains is built is a budget that
@@ -76,7 +102,12 @@ exists.
 
 ---
 
-## 3. Work packages
+## 3. P0 — Walking skeleton · work packages
+
+**Complete.** The kill criterion passed at WP-11 and the phase's exit criteria are
+met; see [CHECKLIST.md](CHECKLIST.md) for live status. WP-12 through WP-14 are
+overruns — work P0 turned out to need once the reference sample was written, kept
+here with the phase that produced them rather than renumbered into P1.
 
 Each package states its goal, the tests written **first**, the deliverable, and
 an exit criterion that is mechanically checkable.
@@ -256,6 +287,38 @@ Two things the report explicitly does **not** claim:
   **passes at +0.4 %** — see [B12.md](docs/benchmarks/B12.md). The defect-count half of
   the clause is still not tracked.
 
+### WP-12 — A supported test context
+
+| | |
+|---|---|
+| **Goal** | Constructing a `CapabilityContext` in a test costs one line, not nine |
+| **Why** | Quality goal Q2 says a capability is testable by constructing it and calling it. It is — but `CapabilityContext` is abstract with nine members, so every consumer hand-writes the same stub. `tests/Ecommerce.Tests/CapabilityTests.cs` carries one; so will everybody else's first test file. Ceremony that every user pays is a platform defect, not a user problem. |
+| **Tests first** | The sample's own capability tests, rewritten against it — if they do not get shorter, it is not worth shipping |
+| **Deliverable** | `FlowX.Testing` with a context builder: fixed clock, fixed ids, seeded `Random`, overridable per test |
+| **Exit** | `CapabilityTests` constructs its context in one expression and still pins every value it pins today |
+| **Depends on** | WP-10 |
+| **Status** | **Done.** `TestCapabilityContext` and `TestFlowContext` ship from `src/FlowX.Testing`; 30 tests. The sample's `CapabilityTests` builds its context in one expression and lost 27 lines of stub, pinning everything it pinned before. |
+
+`TestFlowContext` was not in the original deliverable and is the more useful half. A
+generated step dispatcher and a `.Return(...)` projection are ordinary methods that take
+a `FlowContext`, so with a working typed bag they can be called directly — no engine, no
+plan, no host. `Fail(error)` puts the context into the state a compensation actually
+meets, which is otherwise unreachable.
+
+**Also found and fixed while here:** `LayersPointInward` enumerates its projects in
+hand-written `[InlineData]` rows, so adding `FlowX.Testing` created a `src/` project that
+no fitness function checked — it could have referenced anything at all and the theory
+would have passed without looking at it. `EverySourceProjectIsCoveredByTheLayeringRule`
+now fails on any unlisted project; it was verified by deleting the row and watching it
+fail. A rule with a hand-maintained subject list needs a rule about the list.
+
+**Not shipped, and now said so in the docs:** [19-SDK §6](docs/19-SDK.md) described a
+`FlowTestHost` with capability substitution, virtual time, crash simulation and a Kafka
+integration harness. None of it exists. The section now separates what ships from what
+is intended, rather than reading as a description of the current package.
+
+---
+
 ### WP-12a — `[Sensitive]` is declared and unread
 
 | | |
@@ -293,46 +356,6 @@ authorisation stance (`Internal`), its side effects and its idempotency reached
 nothing, and `flowx diff` could not have seen a breaking change to one. A compensation
 is a capability that happens to run backwards; `StepModel.Compensation` is now a whole
 `StepModel` rather than three loose strings, and the manifest lists it.
-
-### WP-14 — Budget B12: build overhead
-
-| | |
-|---|---|
-| **Goal** | Measure the number ADR-0002's revisit clause depends on |
-| **Why** | ADR-0002 says to revisit the whole compile-time decision when *"build overhead > 8 % sustained"*. Nothing measured build overhead, so the clause could never have fired. The budget was declared in [14-Performance §1](docs/14-Performance.md) and left unmeasured through P0. |
-| **Tests first** | The benchmark itself is the test; committed to the baseline like every other budget |
-| **Deliverable** | `CompilerBenchmarks` (the file [14-Performance §7](docs/14-Performance.md) already named for B12) and a report |
-| **Exit** | A number for build overhead, with an explicit pass or fail against 8 % |
-| **Depends on** | WP-5 |
-| **Status** | **Done. PASS at +0.4 % against a +8 % budget.** Report at [docs/benchmarks/B12.md](docs/benchmarks/B12.md). |
-
-**It took two measurements, and the first one was the wrong shape.**
-
-`CompilerBenchmarks` prices the generator in isolation at **~2.9 ms** per compilation
-containing one flow. That number is real and committed to the baseline, but it is not a
-build-overhead ratio: its control compiled a file with no plan and no dispatcher in it,
-so most of the difference was binding code the control did not contain — work an
-application written without FlowX would have hand-written and paid for anyway. Reporting
-that ratio as build overhead would have overstated the cost by more than an order of
-magnitude, which is the same class of claim WP-10 through WP-13 spent their time
-removing. It was written up as *not settling the budget*, with what would settle it
-spelled out.
-
-`scripts/measure-build-overhead.sh` then did that: two builds of the reference sample
-producing the **same final compilation**, differing only in whether the generator ran.
-`Ecommerce.csproj` carries an MSBuild condition (`FlowXGeneratorDisabled`) that drops the
-analyzer and compiles the previously generated sources as ordinary files, so the sample
-genuinely builds both ways.
-
-Over 15 alternating rounds: **2 613 ms with, 2 603 ms without — +0.4 % against a +8 %
-budget.** The result is legible from the isolated number: ~3 ms of generator against a
-~2.6 s project build is about a tenth of a percent.
-
-**The report states what the figure cannot support.** The two arms' ranges overlap and
-the within-arm spread is 14 %, so this cannot distinguish +0.4 % from −0.4 %. It is
-evidence that the overhead is nowhere near 8 %, not evidence that it is exactly 0.4 %.
-Sharpening it needs dedicated hardware, and no decision waits on the difference between
-0.4 % and 2 %.
 
 ### WP-13 — The diagnostics that were documented and never raised
 
@@ -374,39 +397,198 @@ attribute applied by transport authors, which is worth nothing until they adopt 
 clean build means "no *known* transport", not proof, and the documentation says that
 rather than implying coverage it does not have.
 
-### WP-12 — A supported test context
+### WP-14 — Budget B12: build overhead
 
 | | |
 |---|---|
-| **Goal** | Constructing a `CapabilityContext` in a test costs one line, not nine |
-| **Why** | Quality goal Q2 says a capability is testable by constructing it and calling it. It is — but `CapabilityContext` is abstract with nine members, so every consumer hand-writes the same stub. `tests/Ecommerce.Tests/CapabilityTests.cs` carries one; so will everybody else's first test file. Ceremony that every user pays is a platform defect, not a user problem. |
-| **Tests first** | The sample's own capability tests, rewritten against it — if they do not get shorter, it is not worth shipping |
-| **Deliverable** | `FlowX.Testing` with a context builder: fixed clock, fixed ids, seeded `Random`, overridable per test |
-| **Exit** | `CapabilityTests` constructs its context in one expression and still pins every value it pins today |
-| **Depends on** | WP-10 |
-| **Status** | **Done.** `TestCapabilityContext` and `TestFlowContext` ship from `src/FlowX.Testing`; 30 tests. The sample's `CapabilityTests` builds its context in one expression and lost 27 lines of stub, pinning everything it pinned before. |
+| **Goal** | Measure the number ADR-0002's revisit clause depends on |
+| **Why** | ADR-0002 says to revisit the whole compile-time decision when *"build overhead > 8 % sustained"*. Nothing measured build overhead, so the clause could never have fired. The budget was declared in [14-Performance §1](docs/14-Performance.md) and left unmeasured through P0. |
+| **Tests first** | The benchmark itself is the test; committed to the baseline like every other budget |
+| **Deliverable** | `CompilerBenchmarks` (the file [14-Performance §7](docs/14-Performance.md) already named for B12) and a report |
+| **Exit** | A number for build overhead, with an explicit pass or fail against 8 % |
+| **Depends on** | WP-5 |
+| **Status** | **Done. PASS at +0.4 % against a +8 % budget.** Report at [docs/benchmarks/B12.md](docs/benchmarks/B12.md). |
 
-`TestFlowContext` was not in the original deliverable and is the more useful half. A
-generated step dispatcher and a `.Return(...)` projection are ordinary methods that take
-a `FlowContext`, so with a working typed bag they can be called directly — no engine, no
-plan, no host. `Fail(error)` puts the context into the state a compensation actually
-meets, which is otherwise unreachable.
+**It took two measurements, and the first one was the wrong shape.**
 
-**Also found and fixed while here:** `LayersPointInward` enumerates its projects in
-hand-written `[InlineData]` rows, so adding `FlowX.Testing` created a `src/` project that
-no fitness function checked — it could have referenced anything at all and the theory
-would have passed without looking at it. `EverySourceProjectIsCoveredByTheLayeringRule`
-now fails on any unlisted project; it was verified by deleting the row and watching it
-fail. A rule with a hand-maintained subject list needs a rule about the list.
+`CompilerBenchmarks` prices the generator in isolation at **~2.9 ms** per compilation
+containing one flow. That number is real and committed to the baseline, but it is not a
+build-overhead ratio: its control compiled a file with no plan and no dispatcher in it,
+so most of the difference was binding code the control did not contain — work an
+application written without FlowX would have hand-written and paid for anyway. Reporting
+that ratio as build overhead would have overstated the cost by more than an order of
+magnitude, which is the same class of claim WP-10 through WP-13 spent their time
+removing. It was written up as *not settling the budget*, with what would settle it
+spelled out.
 
-**Not shipped, and now said so in the docs:** [19-SDK §6](docs/19-SDK.md) described a
-`FlowTestHost` with capability substitution, virtual time, crash simulation and a Kafka
-integration harness. None of it exists. The section now separates what ships from what
-is intended, rather than reading as a description of the current package.
+`scripts/measure-build-overhead.sh` then did that: two builds of the reference sample
+producing the **same final compilation**, differing only in whether the generator ran.
+`Ecommerce.csproj` carries an MSBuild condition (`FlowXGeneratorDisabled`) that drops the
+analyzer and compiles the previously generated sources as ordinary files, so the sample
+genuinely builds both ways.
+
+Over 15 alternating rounds: **2 613 ms with, 2 603 ms without — +0.4 % against a +8 %
+budget.** The result is legible from the isolated number: ~3 ms of generator against a
+~2.6 s project build is about a tenth of a percent.
+
+**The report states what the figure cannot support.** The two arms' ranges overlap and
+the within-arm spread is 14 %, so this cannot distinguish +0.4 % from −0.4 %. It is
+evidence that the overhead is nowhere near 8 %, not evidence that it is exactly 0.4 %.
+Sharpening it needs dedicated hardware, and no decision waits on the difference between
+0.4 % and 2 %.
+
+## 4. P1 — Compiler hardening
+
+The roadmap's [P1 scope](docs/20-Roadmap.md#3-increment-detail), item by item, with
+what is already done from P0's overruns marked. P1 exists to mitigate **risk R1** —
+generator complexity becoming our own legacy — so its exit criteria are about
+maintainability and scale, not features.
+
+| Roadmap item | Where it stands |
+|---|---|
+| Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **WP-15**, open — the largest remaining piece of P1 |
+| Contract-compatibility checking | **WP-16**, done — as `FLOWX1020`, *step binding* |
+| Diagnostics FLOWX1001–1023 with help URIs | **Done** at WP-13. All raised, all tested, all with help links |
+| Generator snapshot tests | **Done** at WP-5 and extended since |
+| Readable emitted code | **Done** — on disk under `obj/generated`, with per-step `#line` directives (fixed at WP-10) |
+| Build-overhead budget B12 | **Done** at WP-14. **+0.4 %** against +8 % |
+| *Should:* `flowx diff` v1 | **WP-17**, done |
+| *Should:* IDE code fixes | **WP-19**, done |
+
+**Exit criteria, from the roadmap:**
+
+- a 200-flow synthetic solution builds with ≤ 8 % overhead → **WP-18**
+- every diagnostic passes `EveryDiagnosticIsHelpful` → **already green**
+- emitted code is breakpoint-able → **already true**, and pinned by
+  `EachStepGetsItsOwnLineDirective`
+
+### WP-15 — The branching DSL
+
+| | |
+|---|---|
+| **Goal** | A flow can express a condition, a fan-out and a loop, not only a straight line |
+| **Why** | P0 shipped linear flows only, and said so. Every real saga branches; a platform that cannot express `When` sends its users back to writing the control flow by hand, which is the thing it exists to replace. [ADR-0010](docs/adr/ADR-0010-csharp-dsl-over-yaml.md) chose a C# DSL precisely so branching stays type-checked. |
+| **Tests first** | A walker test per shape · a golden emitted file per shape · a runtime test proving each shape executes · `StepGraph` invariant tests for a non-linear graph |
+| **Deliverable** | `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` through the whole stack: builder surface, model, analysis, emission, `StepGraph`, engine |
+| **Exit** | A flow using every shape compiles, runs, appears correctly in the manifest, and renders in `flowx graph` |
+| **Depends on** | WP-5 |
+
+The engine's step loop currently walks an array by index. Branching makes the graph a
+graph, and **budget B2 is a hard zero** — so the shape of the change is constrained
+before it is designed: no allocation per step, no iterator, no closure per branch.
+
+### WP-16 — Step binding
+
+| | |
+|---|---|
+| **Goal** | A flow whose steps cannot pass values to each other fails the build |
+| **Why** | The generated dispatcher binds by type: `ctx.Get<TInput>()`. If no earlier step produced that type the flow compiles and throws on the first request — exactly the class of failure this platform exists to move to build time. |
+| **Tests first** | Both directions per rule, plus the reference sample's real shape as a case that must stay silent |
+| **Deliverable** | `FLOWX1020` raised by a `DiagnosticAnalyzer`, with its documentation page |
+| **Exit** | Reordering the sample's steps fails its build; the unmodified sample still builds clean |
+| **Depends on** | WP-5 |
+| **Status** | **Done.** Verified by reordering the real sample's steps: `FLOWX1020` fires at the offending `.Step<>` type argument, naming the missing type and what the context can supply. |
+
+**The id is 1020, not the 1022 this package was originally opened against.** The
+reserved list assigns 1019–1022 to deadline coherence, **step binding**, sub-flow
+cycles and contract compatibility, in that order — and `08-Flow-Definition.md` already
+documented this exact check as `FLOWX1020`, with an example message nearly identical to
+the one now emitted, as did `FlowContext.Get<T>` and `FlowExecutionContext.Get<T>`.
+Shipping it as 1022 would have left three places pointing at a number nothing raised.
+`FLOWX1022` stays reserved for contract compatibility **across versions** — the
+analyzer counterpart of `flowx diff`, which is a different question.
+
+The analyzer states its own limits rather than implying coverage it lacks: it checks by
+**exact declared type**, because the context is a dictionary keyed on `typeof(T)` and a
+base-class match would miss at run time; it stops at the first chain method it does not
+understand, because a hidden branch may produce the next step's type; and it stays
+silent on the explicit-mapping overload, which is the fix it recommends.
+
+### WP-17 — `flowx diff` v1
+
+| | |
+|---|---|
+| **Goal** | The manifest earns its keep: a breaking change is caught in CI, not by a consumer |
+| **Why** | [ADR-0005](docs/adr/ADR-0005-manifest-as-build-artifact.md) makes the manifest a build artifact so it can be *compared*. Until something compares two of them, the artifact is a description nobody acts on. |
+| **Tests first** | One test per classification rule, in both directions |
+| **Deliverable** | `flowx diff --old --new`, text and JSON output, non-zero exit on a breaking change |
+| **Exit** | Removing a capability, narrowing a contract, or loosening an authorisation stance each fail; a line-number change does not |
+| **Depends on** | WP-6, WP-9 |
+| **Status** | **Done.** 29 rules; wired into CI against a committed baseline. |
+
+**The compatibility unit is `id@major`, not `id@version`.** Exact-version keying reports
+a patch bump as a removal plus an addition; identity-only keying lets two side-by-side
+majors collide and hides a real removal. Keying on the major gets both right, and
+removes any "was the version bumped?" waiver — bumping the major *is* publishing a new
+contract, and deleting the old one is what breaks people.
+
+Three classifications worth recording, because each could reasonably have gone the other
+way:
+
+- **`[Sensitive]` is asymmetric.** Marking a member is *additive* — a gate that failed
+  the build when an engineer marks a password teaches engineers not to mark passwords.
+  Un-marking is *breaking*, and the more serious half: the value then reaches logs,
+  traces and a journal retained for the replay window, with no signature change to catch
+  it.
+- **Both directions of an authorisation change are breaking**, under separate codes.
+  Relaxing is a security regression. Tightening is the right change and still denies
+  callers that worked yesterday — the gate is not saying it is wrong, it is saying that
+  shipping it unannounced turns a security improvement into an outage.
+- **Adding a side effect is breaking.** Nothing about the call changes, but
+  `sideEffects` is what blast-radius review reads and what decides whether an agent
+  confirms before invoking a tool. Every assessment made against the baseline is stale.
+
+Deliberately never reported: `source` file:line, `application.version`, a flow's steps,
+and array order. A gate that fires on every build is a gate people delete.
+
+### WP-18 — Scale: 200 flows
+
+| | |
+|---|---|
+| **Goal** | The roadmap's P1 exit criterion, measured rather than assumed |
+| **Why** | B12 passed at **+0.4 %** on a sample with *one* flow. The generator's cost scales with flows; the budget was written for a realistic solution, and one flow does not test it. Superlinear behaviour would be a far more important finding than the ratio. |
+| **Deliverable** | A synthetic-project generator, a measurement script, and a report |
+| **Exit** | 200 flows build within the 8 % budget, and the cost is shown to scale linearly |
+| **Depends on** | WP-14 |
+
+### WP-19 — IDE code fixes
+
+| | |
+|---|---|
+| **Goal** | Every diagnostic that has one obvious fix offers it |
+| **Why** | A diagnostic tells you that you are wrong; a code fix tells you what right looks like. `FLOWX1001` (add `partial`) and `FLOWX1010` (declare an authorisation stance) are mechanical, and leaving them manual is friction on every new flow. |
+| **Deliverable** | A `CodeFixProvider` for the mechanically fixable diagnostics |
+| **Exit** | The fix applies cleanly in a test harness and produces compiling code |
+| **Depends on** | WP-13 |
+| **Status** | **Done.** `FLOWX1001`, `FLOWX1010` and `FLOWX1017`. Tests apply each fix to the reference sample's own files and assert byte equality with what is on disk. |
+
+**The fixes ship in their own assembly, and it must not reference the compiler.** The
+original instruction for this package said to add a `ProjectReference` from
+`FlowX.Compiler.CodeFixes` to `FlowX.Compiler`. That was wrong: both are
+`DevelopmentDependency` analyzer assets, a development dependency does not flow
+transitively, and the host would be handed an assembly whose reference it cannot
+resolve. A compiler extension that fails to load is dropped **in silence** — it would
+have surfaced as "the quick actions do not appear on my machine". The diagnostic ids are
+string literals instead, pinned against `FlowXDiagnostics.All` by a fitness test in the
+test project, which may reference both; a second fitness test asserts the seam itself.
+
+**What the `FLOWX1010` fix refuses is the substance of it.** It offers `Authenticated`
+and `Internal` only. `Public` would clear a security error with one keystroke and make
+the capability world-readable — the outcome the rule exists to prevent. `Permission` and
+`Policy` each need a name nothing in the source implies, and nothing rejects the stance
+without it, so a fix emitting one would produce a declaration that compiles, reads as
+enforced, and reaches the manifest as a claim about access control that nothing backs.
+There is no Fix All for it either.
+
+Not fixed, deliberately: `FLOWX1014` (the only mechanical repairs are asserting an
+idempotency the tool cannot verify, or deleting the retry — and the diagnostic is what
+prevents a duplicate charge), `FLOWX1018` (the repair is splitting a capability in two),
+and `FLOWX1024` (suppression needs a `FLOWX-DEBT` owner and expiry a tool cannot
+invent).
 
 ---
 
-## 4. Definition of Ready
+## 5. Definition of Ready
 
 A work package may start only when all are true. This prevents the most common
 failure mode in a spec-heavy project: building something the spec describes but
@@ -419,7 +601,7 @@ nobody can verify.
 
 ---
 
-## 5. Estimation and staffing
+## 6. Estimation and staffing
 
 Deliberately absent. This is a specification-driven project with one
 contributor's throughput unknown; a date column here would be fiction, and
@@ -431,7 +613,7 @@ phase-level planning only.
 
 ---
 
-## 6. Open items blocking the plan
+## 7. Open items blocking the plan
 
 | # | Item | Blocks | Owner |
 |---|---|---|---|

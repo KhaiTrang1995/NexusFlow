@@ -107,6 +107,23 @@ public static class FlowXDiagnostics
         "A cache hit returns a success without performing the effect. Remove the Cache " +
         "policy, or split the read out into its own capability.");
 
+    /// <summary>FLOWX1020 — a step consumes a type no earlier step produces.</summary>
+    /// <remarks>
+    /// The message lists what the flow <em>can</em> supply as well as what is missing.
+    /// Naming only the absent type leaves the developer to reconstruct the state bag in
+    /// their head from the chain above the cursor; naming the alternatives usually makes
+    /// the fix — a reorder, or an explicit mapping — obvious from the message alone.
+    /// </remarks>
+    public static readonly DiagnosticDescriptor StepInputIsNeverProduced = Create(
+        "FLOWX1020",
+        "Step consumes a contract no earlier step produces",
+        "Step '{0}' consumes '{1}', which nothing before it in flow '{2}' produces; the " +
+        "context can supply: {3}",
+        "Step inputs are bound out of the flow's state bag by exact type: the engine seeds " +
+        "the flow's own input, and everything else is there because an earlier step " +
+        "returned it. Move the step after one that produces the type, add a step that " +
+        "does, or supply it explicitly with .Step<TCapability, TStepIn>(ctx => ...).");
+
     /// <summary>FLOWX1023 — a flow declares no steps.</summary>
     public static readonly DiagnosticDescriptor FlowHasNoSteps = Create(
         "FLOWX1023",
@@ -146,6 +163,7 @@ public static class FlowXDiagnostics
         CapabilityHasMultipleContracts,
         AwaitSignalRequiresDurable,
         CacheRequiresNoSideEffects,
+        StepInputIsNeverProduced,
         FlowHasNoSteps,
         EmitIsNotYetPublished);
 

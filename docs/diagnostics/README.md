@@ -25,6 +25,7 @@ the build.
 | [FLOWX1015](FLOWX1015.md) | Capability implements more than one contract | Ambiguous dispatch, meaningless manifest entry |
 | [FLOWX1017](FLOWX1017.md) | AwaitSignal requires the Durable profile | A waiting flow vanishing with its node |
 | [FLOWX1018](FLOWX1018.md) | Cache requires no side effects | Reporting a write that never happened |
+| [FLOWX1020](FLOWX1020.md) | Step consumes a contract no earlier step produces | A flow that throws on its first request |
 | [FLOWX1023](FLOWX1023.md) | Flow declares no steps | A flow that silently does nothing |
 | [FLOWX1024](FLOWX1024.md) | Emit step is recorded but not published | A consumer waiting for an event the manifest promised |
 
@@ -35,7 +36,10 @@ the build.
 > were documented as compile errors the whole time.
 >
 > `FLOWX1003` has a stated limit worth reading before relying on it: it matches a
-> **list** of transport namespaces, not a proof.
+> **list** of transport namespaces, not a proof. `FLOWX1020` has stated limits for the
+> opposite reason: it is silent wherever it cannot resolve the chain, because a rule
+> about step order that fires on a valid flow would be suppressed and then protect
+> nothing.
 
 ## Ids reserved but not yet raised
 
@@ -44,8 +48,10 @@ only once the compiler actually reports them — a documented diagnostic that no
 raises is a promise the compiler is not keeping. Reserved for later phases:
 `FLOWX1006` (state must be serialisable), `FLOWX1007`–`FLOWX1009` (determinism in
 durable flows), `FLOWX1011`–`FLOWX1013` (predicate purity, parallel branch
-disjointness), `FLOWX1016` (expected failures are values), `FLOWX1019`–`FLOWX1022`
-(deadline coherence, step binding, sub-flow cycles, contract compatibility).
+disjointness), `FLOWX1016` (expected failures are values), `FLOWX1019` (deadline coherence),
+`FLOWX1021` (sub-flow cycles) and `FLOWX1022` (contract compatibility **across
+versions** — the analyzer counterpart of `flowx diff`, distinct from `FLOWX1020`,
+which checks one flow's steps against each other).
 
 ## Adding a diagnostic
 
