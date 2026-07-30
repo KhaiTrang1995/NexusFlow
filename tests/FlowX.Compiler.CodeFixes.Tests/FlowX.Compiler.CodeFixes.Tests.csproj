@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit.v3" Version="2.0.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.3" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+
+    <!--
+      Same 4.8.0 floor the fixes are compiled against. A test suite running against a
+      newer Roslyn than the shipped code targets proves the fix works on a machine no
+      consumer has.
+    -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.8.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Both halves, as plain references. The fixes are exercised through a real workspace
+      rather than through a mock context: a CodeFixProvider that registers an action is
+      not the thing under test — the source text after the action is applied is.
+    -->
+    <ProjectReference Include="../../src/FlowX.Compiler.CodeFixes/FlowX.Compiler.CodeFixes.csproj" />
+
+    <!--
+      The compiler is what raises the diagnostics the fixes repair, and it also holds the
+      descriptor catalogue. FlowX.Compiler.CodeFixes deliberately does not reference it
+      (see that project's csproj), so this is the only place the two id lists meet —
+      CodeFixFitnessTests is what makes that meeting an assertion rather than a coincidence.
+    -->
+    <ProjectReference Include="../../src/FlowX.Compiler/FlowX.Compiler.csproj" />
+
+    <!-- Referenced into the test compilations so flows and capabilities actually bind. -->
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,72 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Same netstandard2.0 constraint as FlowX.Compiler, and for the same reason: a
+      compiler extension loads into the compiler process, which is .NET Framework inside
+      Visual Studio and .NET Core under `dotnet build`. See FlowX.Compiler.csproj.
+    -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>false</ImplicitUsings>
+
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+
+    <Description>
+      FlowX IDE quick actions: code fixes for the mechanically repairable FLOWX diagnostics.
+    </Description>
+    <PackageTags>flowx;roslyn;code-fix;analyzer</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Workspaces lives HERE and only here.
+
+      A code fix cannot be written without it, and an analyzer that drags it along breaks
+      in every host that does not provide it — which is most of them outside Visual Studio
+      and `dotnet format`. FlowX.Compiler ships as an analyzer asset into other people's
+      builds, so the split is not tidiness: it is what keeps the analyzer loadable in a
+      host that has no Workspaces layer while the fixes remain available in one that does.
+
+      Pinned to 4.8.0 to match the compiler's Roslyn floor. Referencing a newer API than
+      the host provides is how a fix throws MissingMethodException on someone else's
+      machine, and a code fix fails at the moment a developer is already blocked.
+    -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.8.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+
+  <!--
+    Deliberately NO ProjectReference to FlowX.Compiler.
+
+    The obvious design is to reference it and read the ids off FlowXDiagnostics. It does
+    not survive contact with packaging: both projects are DevelopmentDependency analyzer
+    assets, and a development dependency does not flow transitively to a consumer. A
+    consumer installing the fixes package would get an assembly whose reference to
+    FlowX.Compiler.dll the host cannot resolve, and a compiler extension that fails to
+    load is dropped silently — no fixes, no error, nothing to search for.
+
+    So the ids are string literals here, which is exactly the drift risk it looks like.
+    That risk is closed from the test project, which references both assemblies and
+    fails if any FixableDiagnosticIds entry is not a real descriptor. Same shape as
+    PolicyStageFitnessTests, which pins the compiler's copy of the stage ordering
+    against the real one for the same reason.
+  -->
+
+</Project>

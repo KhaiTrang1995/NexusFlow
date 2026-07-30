@@ -90,12 +90,16 @@ public sealed class DependencyRuleTests
             .ToHashSet(StringComparer.Ordinal);
 
         var uncovered = RepositoryLayout.SourceProjects
-            .Select(p => Path.GetFileNameWithoutExtension(p.Name))
-            .Where(name => !covered.Contains(name))
             // A Roslyn component cannot reference the runtime at all — it targets
             // netstandard2.0 — so the layering rule has nothing to say about it, and
-            // RoslynComponentsTargetNetStandard20 covers it instead.
-            .Where(name => name != "FlowX.Compiler")
+            // RoslynComponentsTargetNetStandard20 covers it instead. Read off the
+            // project rather than matched against the name "FlowX.Compiler": the
+            // exemption was written when there was one Roslyn component, and the second
+            // one would otherwise have slipped past this rule in exactly the way the
+            // rule exists to prevent.
+            .Where(static p => !RepositoryLayout.IsRoslynComponent(p))
+            .Select(static p => Path.GetFileNameWithoutExtension(p.Name))
+            .Where(name => !covered.Contains(name))
             // The CLI has its own stricter rule: it references no FlowX assembly.
             .Where(name => name != "FlowX.Cli")
             .ToList();
@@ -150,9 +154,7 @@ public sealed class DependencyRuleTests
     {
         foreach (var project in RepositoryLayout.SourceProjects)
         {
-            var content = File.ReadAllText(project.FullName);
-
-            if (!content.Contains("<IsRoslynComponent>true</IsRoslynComponent>", StringComparison.OrdinalIgnoreCase))
+            if (!RepositoryLayout.IsRoslynComponent(project))
             {
                 continue;
             }
@@ -277,14 +279,13 @@ public sealed class DependencyRuleTests
     {
         foreach (var project in RepositoryLayout.SourceProjects)
         {
-            var content = File.ReadAllText(project.FullName);
-
-            if (content.Contains("<IsRoslynComponent>true</IsRoslynComponent>", StringComparison.OrdinalIgnoreCase))
+            if (RepositoryLayout.IsRoslynComponent(project))
             {
                 continue;
             }
 
-            content.Contains("<IsAotCompatible>false</IsAotCompatible>", StringComparison.OrdinalIgnoreCase)
+            File.ReadAllText(project.FullName)
+                .Contains("<IsAotCompatible>false</IsAotCompatible>", StringComparison.OrdinalIgnoreCase)
                 .ShouldBeFalse(
                     $"{project.Name} opts out of AOT compatibility, which constraint C2 forbids " +
                     "for packages that ship into a user's process. Fix the warning instead of " +
@@ -308,14 +309,13 @@ public sealed class DependencyRuleTests
     {
         foreach (var project in RepositoryLayout.SourceProjects)
         {
-            var content = File.ReadAllText(project.FullName);
-
-            if (!content.Contains("<IsRoslynComponent>true</IsRoslynComponent>", StringComparison.OrdinalIgnoreCase))
+            if (!RepositoryLayout.IsRoslynComponent(project))
             {
                 continue;
             }
 
-            content.Contains("<TargetFramework>netstandard2.0</TargetFramework>", StringComparison.OrdinalIgnoreCase)
+            File.ReadAllText(project.FullName)
+                .Contains("<TargetFramework>netstandard2.0</TargetFramework>", StringComparison.OrdinalIgnoreCase)
                 .ShouldBeTrue(
                     $"{project.Name} is a Roslyn component but does not target netstandard2.0. " +
                     "It will load under `dotnet build` and do nothing in Visual Studio.");
