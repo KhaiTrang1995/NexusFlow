@@ -45,7 +45,11 @@ yet (constraint C8).
 | 18 | [Cloud-Native](18-Cloud-Native.md) | Operations |
 | 19 | [SDK](19-SDK.md) | Developer experience |
 | 20 | [Roadmap](20-Roadmap.md) | Delivery |
+| 21 | [Quality Gates](21-Quality-Gates.md) | How a change is proven |
+| 22 | [CLI](22-CLI.md) | `flowx manifest`, `graph`, `diff` |
 | — | [ADRs](adr/README.md) | Decisions |
+| — | [Diagnostics](diagnostics/README.md) | Every `FLOWX####` the compiler raises |
+| — | [Benchmarks](benchmarks/README.md) | Budgets, baselines and their reports |
 
 ## Conventions
 
