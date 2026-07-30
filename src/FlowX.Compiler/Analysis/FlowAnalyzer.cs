@@ -323,6 +323,14 @@ public static class FlowAnalyzer
                     i += AddSwitchStep(links, i, semanticModel, diagnostics, steps, ref nextIndex);
                     break;
 
+                case "Parallel":
+                    // Unlike When and Switch, the whole shape is one call: the branches
+                    // arrive as a lambda argument rather than as later links, because
+                    // `.Branch(...)` belongs to IParallelBuilder and not to IFlowBuilder.
+                    // So nothing after this link is consumed.
+                    AddParallelStep(link, semanticModel, diagnostics, steps, ref nextIndex);
+                    break;
+
                 default:
                     // Return, and anything the DSL grows in a later phase. Skipped rather
                     // than reported — see the class remarks on why a generator must not
@@ -523,6 +531,225 @@ public static class FlowAnalyzer
             FormatLocation(switchLink.CallLocation)));
 
         return consumed;
+    }
+
+    /// <summary>
+    /// Models a <c>.Parallel(p =&gt; p.Branch…(), merge)</c> and lays its branches out in the
+    /// flat index space.
+    /// </summary>
+    /// <param name="link">The <c>.Parallel</c> call.</param>
+    /// <param name="semanticModel">Resolves the branches' capability types.</param>
+    /// <param name="diagnostics">Collects everything worth reporting.</param>
+    /// <param name="steps">The block being built.</param>
+    /// <param name="nextIndex">The shared flat index counter.</param>
+    /// <remarks>
+    /// <para>
+    /// Simpler than <see cref="AddSwitchStep"/> in one respect and fussier in another. It
+    /// is simpler because branches need no closing jumps — a branch's range ends where the
+    /// next one begins — so the blocks are laid out back to back with no reserved slots.
+    /// It is fussier because a fork with fewer than two runnable branches is not a fork,
+    /// and whether a branch is runnable is only known after it has been built.
+    /// </para>
+    /// <para>
+    /// <strong>Why that is worth a trial pass.</strong> The fork occupies an index of its
+    /// own, so the branches have to be numbered from one past it — and if the fork then
+    /// turns out not to exist, every one of those numbers is wrong by one, which
+    /// <c>StepGraph</c> rejects as a gap at type initialisation. Building once into a
+    /// scratch diagnostics list and keeping whichever layout is correct costs a rebuild in
+    /// a case nobody writes on purpose, and avoids either renumbering an immutable model or
+    /// reporting every diagnostic twice.
+    /// </para>
+    /// <para>
+    /// A <c>Parallel</c> with fewer than two <c>.Branch(...)</c> calls is laid out inline,
+    /// exactly as a <c>Switch</c> with no <c>Case</c> is: running one thing concurrently is
+    /// running it, and publishing a fork the flow does not make would put a lie in the
+    /// manifest.
+    /// </para>
+    /// </remarks>
+    private static void AddParallelStep(
+        ChainLink link,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        List<StepModel> steps,
+        ref int nextIndex)
+    {
+        var arguments = link.Invocation.ArgumentList.Arguments;
+
+        // `.Parallel(branches, merge)` takes both, so a call missing one does not compile.
+        // Reachable only from a half-typed buffer, where the C# compiler is already saying
+        // something more useful than a FlowX diagnostic would.
+        if (arguments.Count < 2)
+        {
+            return;
+        }
+
+        var branchLinks = new List<ChainLink>();
+
+        foreach (var candidate in FlowChainWalker.WalkBlock(link, 0))
+        {
+            if (candidate.MethodName == "Branch")
+            {
+                branchLinks.Add(candidate);
+            }
+        }
+
+        if (branchLinks.Count < 2)
+        {
+            LayOutInline(branchLinks, semanticModel, diagnostics, steps, ref nextIndex);
+            return;
+        }
+
+        // Trial: number the branches from one past the fork's own slot.
+        var trialDiagnostics = new List<Diagnostic>();
+        var trialCursor = nextIndex + 1;
+        var branches = BuildBranches(branchLinks, semanticModel, trialDiagnostics, ref trialCursor);
+        var runnable = 0;
+
+        foreach (var branch in branches)
+        {
+            if (branch.Steps.Count > 0)
+            {
+                runnable++;
+            }
+        }
+
+        if (runnable < 2)
+        {
+            // Not a fork after all — an empty `.Branch(b => { })`, or a branch whose body
+            // is a method group the walker cannot see into. Discard the trial, including
+            // its diagnostics, and lay the survivors out as an ordinary sequence.
+            LayOutInline(branchLinks, semanticModel, diagnostics, steps, ref nextIndex);
+            return;
+        }
+
+        var forkIndex = nextIndex;
+
+        nextIndex = trialCursor;
+        diagnostics.AddRange(trialDiagnostics);
+
+        var merge = arguments[1].Expression;
+
+        steps.Add(StepModel.Parallel(
+            forkIndex,
+            branches,
+            merge.ToString(),
+            ReadMergeKind(merge),
+            FormatLocation(link.CallLocation)));
+    }
+
+    /// <summary>Builds every branch block, numbering them back to back from the cursor.</summary>
+    private static List<ParallelBranchModel> BuildBranches(
+        List<ChainLink> branchLinks,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        ref int cursor)
+    {
+        var branches = new List<ParallelBranchModel>(branchLinks.Count);
+
+        foreach (var branchLink in branchLinks)
+        {
+            branches.Add(new ParallelBranchModel(
+                BuildBranchBlock(branchLink, semanticModel, diagnostics, ref cursor),
+                FormatLocation(branchLink.CallLocation)));
+        }
+
+        return branches;
+    }
+
+    /// <summary>
+    /// Builds one branch: a single capability for <c>.Branch&lt;T&gt;()</c>, or a whole
+    /// chain for <c>.Branch(b =&gt; …)</c>.
+    /// </summary>
+    /// <remarks>
+    /// The two overloads are one concept with two spellings, and both have to produce the
+    /// same shape of block — otherwise a branch's steps would be invisible to
+    /// <c>SelfAndNested</c> in one form and not the other, and a capability invoked inside
+    /// a fork would go missing from the dispatcher.
+    /// </remarks>
+    private static List<StepModel> BuildBranchBlock(
+        ChainLink branchLink,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        ref int cursor)
+    {
+        if (branchLink.TypeArguments.Count > 0)
+        {
+            var single = new List<StepModel>(1);
+
+            AddCapabilityStep(branchLink, semanticModel, diagnostics, single, ref cursor);
+            return single;
+        }
+
+        return BuildBlock(
+            FlowChainWalker.WalkBlock(branchLink, 0), semanticModel, diagnostics, ref cursor);
+    }
+
+    /// <summary>
+    /// Lays branches out as an ordinary sequence, for a <c>Parallel</c> that is not one.
+    /// </summary>
+    /// <remarks>
+    /// The steps are kept — the author asked for them and they are real work — but no fork
+    /// node is emitted, so the plan, the manifest and a rendered diagram all say the flow
+    /// runs them in order, which is exactly what it does.
+    /// </remarks>
+    private static void LayOutInline(
+        List<ChainLink> branchLinks,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        List<StepModel> steps,
+        ref int nextIndex)
+    {
+        foreach (var branchLink in branchLinks)
+        {
+            steps.AddRange(BuildBranchBlock(branchLink, semanticModel, diagnostics, ref nextIndex));
+        }
+    }
+
+    /// <summary>
+    /// Names the <c>MergeKind</c> a <c>merge:</c> argument selects, or <c>null</c> when it
+    /// cannot be read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Read syntactically, from the shape of <c>MergeStrategy.AllSettled</c> or
+    /// <c>MergeStrategy.Quorum(n)</c>, because that is what the type offers: three static
+    /// properties and a factory method. There is no constant to fold — <c>MergeStrategy</c>
+    /// is a struct precisely so that <c>Quorum</c> can carry a number, which an <c>enum</c>
+    /// could not.
+    /// </para>
+    /// <para>
+    /// <strong>Nothing depends on this being right.</strong> The compiled plan copies the
+    /// author's expression verbatim, so a strategy chosen through a variable or a helper
+    /// still executes exactly as written; only the manifest's label is lost, and it is
+    /// omitted rather than guessed. That asymmetry is deliberate: the plan must be correct,
+    /// and the manifest must not lie.
+    /// </para>
+    /// </remarks>
+    private static string? ReadMergeKind(ExpressionSyntax merge)
+    {
+        var expression = merge;
+
+        // `MergeStrategy.Quorum(2)` — the kind is the method being called.
+        if (expression is InvocationExpressionSyntax invocation)
+        {
+            expression = invocation.Expression;
+        }
+
+        var name = expression switch
+        {
+            MemberAccessExpressionSyntax member => member.Name.Identifier.ValueText,
+            IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+            _ => null,
+        };
+
+        return name switch
+        {
+            "AllMustSucceed" => "AllMustSucceed",
+            "AllSettled" => "AllSettled",
+            "FirstSuccess" => "FirstSuccess",
+            "Quorum" => "Quorum",
+            _ => null,
+        };
     }
 
     /// <summary>

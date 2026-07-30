@@ -103,6 +103,22 @@ public sealed class ManifestSchemaTests
     public void AFlowWithAConditionalValidates()
         => ShouldValidate(ManifestWriter.Write("Sample.App", "1.0.0", [Models.Conditional()]));
 
+    /// <summary>
+    /// A fork reaches the manifest as the schema describes it: a step of kind
+    /// <c>Parallel</c>, one <c>branches</c> entry per branch, and a <c>merge</c> naming the
+    /// join rule.
+    /// </summary>
+    /// <remarks>
+    /// <c>merge</c> is a field this work package added to the committed contract, so this
+    /// is the test that says the addition is real rather than something the writer emits
+    /// into a document nobody validates. The step object is
+    /// <c>additionalProperties: false</c>, so before the schema change this document was
+    /// invalid — which is the right way round.
+    /// </remarks>
+    [Fact]
+    public void AFlowWithAParallelValidates()
+        => ShouldValidate(ManifestWriter.Write("Sample.App", "1.0.0", [Models.Parallel()]));
+
     [Fact]
     public void ADurableFlowWithASuspensionPointValidates()
     {

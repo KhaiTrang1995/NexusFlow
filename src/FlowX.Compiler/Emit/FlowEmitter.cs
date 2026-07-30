@@ -377,6 +377,16 @@ public static class FlowEmitter
                     EmitStepNodes(writer, step.Default);
                     break;
 
+                case StepKindModel.Parallel:
+                    writer.Line("        " + ParallelNodeExpression(step) + ",");
+
+                    foreach (var branch in step.Branches)
+                    {
+                        EmitStepNodes(writer, branch.Steps);
+                    }
+
+                    break;
+
                 default:
                     writer.Line("        " + StepNodeExpression(step) + ",");
                     break;
@@ -392,6 +402,28 @@ public static class FlowEmitter
 
         return "StepNode.ForSwitch(" + step.Index + ", new[] { " + targets + " }, defaultTarget: " +
                step.DefaultTarget + ")";
+    }
+
+    /// <summary>
+    /// Emits the fork node, with the author's <c>merge:</c> expression copied verbatim.
+    /// </summary>
+    /// <remarks>
+    /// Verbatim rather than reconstructed from <c>MergeKindName</c>, so that
+    /// <c>MergeStrategy.Quorum(RequiredChecks)</c> compiles into the plan as written and a
+    /// strategy chosen through a constant on the flow keeps working. Reconstructing it
+    /// would mean the generated plan disagreed with the source for every expression the
+    /// name-reader could not recognise.
+    /// </remarks>
+    private static string ParallelNodeExpression(StepModel step)
+    {
+        var targets = string.Join(
+            ", ",
+            step.Branches
+                .Where(b => b.Steps.Count > 0)
+                .Select(b => b.Target.ToString(CultureInfo.InvariantCulture)));
+
+        return "StepNode.ForParallel(" + step.Index + ", new[] { " + targets + " }, joinTarget: " +
+               step.JoinIndex + ", merge: " + step.MergeExpression + ")";
     }
 
     private static string StepNodeExpression(StepModel step)
@@ -484,11 +516,12 @@ public static class FlowEmitter
         writer.Line("switch (stepIndex)");
         writer.OpenBrace();
 
-        // Conditions and switches have no case: the engine reaches them through Evaluate
-        // and Select, never through ExecuteAsync, so a case here would be dead code in the
-        // file the header promises is readable.
+        // Conditions, switches and forks have no case: the engine reaches a condition
+        // through Evaluate and a switch through Select, and it handles a fork entirely
+        // itself — the branches' own steps get cases, the fork node does not. A case here
+        // would be dead code in the file the header promises is readable.
         foreach (var step in flow.AllSteps
-            .Where(s => s.Kind is not (StepKindModel.Condition or StepKindModel.Switch))
+            .Where(s => s.Kind is not (StepKindModel.Condition or StepKindModel.Switch or StepKindModel.Parallel))
             .OrderBy(s => s.Index))
         {
             writer.Line("case " + step.Index + ":");

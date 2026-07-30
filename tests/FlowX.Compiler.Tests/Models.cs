@@ -118,6 +118,39 @@ internal static class Models
             StepModel.Emit(7, "order.priced"),
         ]);
 
+    /// <summary>
+    /// A fork: <c>validate · parallel(reserve | capture+validate) · emit</c>.
+    /// </summary>
+    /// <remarks>
+    /// The indices are the flat ones the analyzer assigns — 0 validate, 1 parallel,
+    /// 2 reserve, 3 capture, 4 validate, 5 emit. There are no jumps at all, which is the
+    /// one place a fork's layout differs from a switch's: a branch's range ends where the
+    /// next branch begins, so a closing jump would only restate the bound.
+    /// </remarks>
+    public static FlowModel Parallel() => new(
+        flowId: "order.screen",
+        version: "1.0.0",
+        profile: "Ephemeral",
+        deadline: null,
+        containingNamespace: "Sample.Flows",
+        typeName: "ScreenOrderFlow",
+        inputTypeName: "Sample.Contracts.PlaceOrder",
+        outputTypeName: "Sample.Contracts.OrderPlacedResult",
+        steps:
+        [
+            Validate(0),
+            StepModel.Parallel(
+                1,
+                [
+                    new ParallelBranchModel([Reserve(2)]),
+                    new ParallelBranchModel([Capture(3), Validate(4)]),
+                ],
+                "MergeStrategy.AllMustSucceed",
+                "AllMustSucceed",
+                location: "/src/Flows/Screen.cs:13"),
+            StepModel.Emit(5, "order.screened"),
+        ]);
+
     /// <summary>Every trigger kind the abstraction ships, declared on <c>order.place</c>.</summary>
     public static FlowTriggersModel Triggers() => new(
         "order.place",

@@ -23,10 +23,23 @@ namespace FlowX.Runtime.Tests;
 /// </remarks>
 internal sealed class RecordingDispatcher : IStepDispatcher
 {
+    /// <summary>
+    /// Guards the recording collections, because a parallel flow calls this from several
+    /// threads at once.
+    /// </summary>
+    /// <remarks>
+    /// A test double, not the engine, and the lock is here for the same reason a test
+    /// double is written by hand at all: an unguarded <c>List&lt;int&gt;.Add</c> under a
+    /// fork drops entries at random, and the test that then fails one run in twenty
+    /// teaches the team that the suite is flaky rather than that the engine is wrong.
+    /// </remarks>
+    private readonly Lock _recording = new();
+
     private readonly Dictionary<int, Error> _failures = [];
     private readonly Dictionary<int, Error> _compensationFailures = [];
     private readonly Dictionary<int, bool> _predicates = [];
     private readonly Dictionary<int, int> _cases = [];
+    private readonly HashSet<int> _yieldingSteps = [];
 
     /// <summary>Step indices executed, in the order the engine invoked them.</summary>
     public List<int> Executed { get; } = [];
@@ -107,8 +120,29 @@ internal sealed class RecordingDispatcher : IStepDispatcher
         return this;
     }
 
+    /// <summary>
+    /// Makes step <paramref name="index"/> complete asynchronously rather than
+    /// synchronously.
+    /// </summary>
+    /// <remarks>
+    /// The only way to make a fork's branches genuinely overlap. The engine starts each
+    /// branch eagerly on the calling thread, so a branch whose every step completes
+    /// synchronously runs to the end before its sibling starts — correct, and useless for
+    /// proving concurrency. A step that yields lets the sibling in.
+    /// </remarks>
+    public RecordingDispatcher YieldAt(int index)
+    {
+        _yieldingSteps.Add(index);
+        return this;
+    }
+
+    /// <summary>Highest number of steps observed running at once. 1 means nothing overlapped.</summary>
+    public int PeakConcurrency { get; private set; }
+
+    private int _running;
+
     /// <inheritdoc />
-    public ValueTask<StepOutcome> ExecuteAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+    public async ValueTask<StepOutcome> ExecuteAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
     {
         BeforeStep?.Invoke(stepIndex);
 
@@ -117,19 +151,43 @@ internal sealed class RecordingDispatcher : IStepDispatcher
             ct.ThrowIfCancellationRequested();
         }
 
-        Executed.Add(stepIndex);
-        ContextsSeen.Add(ctx);
-        Snapshots.Add(ContextSnapshot.Of(ctx));
+        lock (_recording)
+        {
+            _running++;
+            PeakConcurrency = Math.Max(PeakConcurrency, _running);
+            Executed.Add(stepIndex);
+            ContextsSeen.Add(ctx);
+            Snapshots.Add(ContextSnapshot.Of(ctx));
+        }
 
-        return _failures.TryGetValue(stepIndex, out var error)
-            ? ValueTask.FromResult(StepOutcome.Failed(error))
-            : ValueTask.FromResult(StepOutcome.Success);
+        try
+        {
+            if (_yieldingSteps.Contains(stepIndex))
+            {
+                await Task.Yield();
+                ct.ThrowIfCancellationRequested();
+            }
+
+            return _failures.TryGetValue(stepIndex, out var error)
+                ? StepOutcome.Failed(error)
+                : StepOutcome.Success;
+        }
+        finally
+        {
+            lock (_recording)
+            {
+                _running--;
+            }
+        }
     }
 
     /// <inheritdoc />
     public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
     {
-        Compensated.Add(stepIndex);
+        lock (_recording)
+        {
+            Compensated.Add(stepIndex);
+        }
 
         return _compensationFailures.TryGetValue(stepIndex, out var error)
             ? ValueTask.FromResult(StepOutcome.Failed(error))
@@ -139,7 +197,10 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     /// <inheritdoc />
     public bool Evaluate(int stepIndex, FlowContext ctx)
     {
-        Evaluated.Add(stepIndex);
+        lock (_recording)
+        {
+            Evaluated.Add(stepIndex);
+        }
 
         if (ThrowAtBranch == stepIndex)
         {
@@ -154,7 +215,10 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     /// <inheritdoc />
     public int Select(int stepIndex, FlowContext ctx)
     {
-        Selected.Add(stepIndex);
+        lock (_recording)
+        {
+            Selected.Add(stepIndex);
+        }
 
         if (ThrowAtSwitch == stepIndex)
         {
@@ -322,6 +386,59 @@ internal static class Plans
             StepNode.ForCapability(2, Reserve),
             StepNode.ForJump(3, target: 5),
             StepNode.ForCapability(4, Capture),
+        ]));
+
+    /// <summary>
+    /// A three-branch fork, written out as the flat layout the compiler produces:
+    /// <c>0 validate · 1 parallel(→2,3,4 join 5) · 2 reserve · 3 capture · 4 validate · 5 emit</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Spelled out rather than built by a helper, for the same reason
+    /// <see cref="Conditional"/> and <see cref="Switching"/> are.
+    /// </para>
+    /// <para>
+    /// <strong>No closing jumps, unlike a switch.</strong> A branch's range already ends
+    /// where the next branch begins, so a jump to the join would be a step that exists only
+    /// to say what the range bound already says. A switch needs them because its arms fall
+    /// through into one another; a fork's do not, because nothing runs an arm it did not
+    /// start.
+    /// </para>
+    /// <para>
+    /// Step 2 is compensable, so an unwind can be checked to cover work a cancelled sibling
+    /// had already completed.
+    /// </para>
+    /// </remarks>
+    public static ExecutionPlan Parallel(MergeStrategy merge = default) => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.screen", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForCapability(0, Validate),
+            StepNode.ForParallel(1, [2, 3, 4], joinTarget: 5, merge),
+            StepNode.ForCapability(2, Reserve, Release),
+            StepNode.ForCapability(3, Capture),
+            StepNode.ForCapability(4, Validate),
+            StepNode.ForEmit(5, "order.screened"),
+        ]));
+
+    /// <summary>
+    /// A fork whose branches are two steps each, so a branch is a range rather than a
+    /// single index: <c>0 parallel(→1,3 join 5) · 1,2 · 3,4 · 5 emit</c>.
+    /// </summary>
+    /// <remarks>
+    /// The <em>first</em> step of each branch is the compensable one, deliberately. That is
+    /// what makes the cancellation test possible: branch 0 completes step 1 before it
+    /// reaches anything that can yield, so when a sibling's failure cancels its step 2 there
+    /// is provably already work on the unwind stack.
+    /// </remarks>
+    public static ExecutionPlan ParallelWithMultiStepBranches(MergeStrategy merge = default) => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.enrich", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForParallel(0, [1, 3], joinTarget: 5, merge),
+            StepNode.ForCapability(1, Reserve, Release),
+            StepNode.ForCapability(2, Validate),
+            StepNode.ForCapability(3, Capture, Refund),
+            StepNode.ForCapability(4, Validate),
+            StepNode.ForEmit(5, "order.enriched"),
         ]));
 
     /// <summary>Two steps, neither compensable.</summary>
