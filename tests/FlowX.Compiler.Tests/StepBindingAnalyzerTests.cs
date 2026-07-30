@@ -11,7 +11,7 @@ using Xunit;
 namespace FlowX.Compiler.Tests;
 
 /// <summary>
-/// FLOWX1022 — whether a flow's steps can hand values to each other.
+/// FLOWX1020 — whether a flow's steps can hand values to each other.
 /// </summary>
 /// <remarks>
 /// Both directions for every case, and the negative direction carries the weight: this
@@ -19,7 +19,7 @@ namespace FlowX.Compiler.Tests;
 /// positive here would be suppressed at the top of every flow file within a week. The
 /// reference sample's real shape is pinned as a case that must stay silent.
 /// </remarks>
-public sealed class ContractCompatibilityAnalyzerTests
+public sealed class StepBindingAnalyzerTests
 {
     private const string Preamble = """
         using System;
@@ -93,7 +93,7 @@ public sealed class ContractCompatibilityAnalyzerTests
     }
 
     [Fact]
-    public void ReportsFLOWX1022WhenAStepRunsBeforeItsProducer()
+    public void ReportsFLOWX1020WhenAStepRunsBeforeItsProducer()
     {
         // The failure this rule exists for: the flow compiles, deploys, and throws
         // InvalidOperationException on the first request, for every request.
@@ -106,7 +106,7 @@ public sealed class ContractCompatibilityAnalyzerTests
                         .Step<ReserveInventory>()
                         .Step<ValidateOrder>();
             }
-            """)).ShouldContain("FLOWX1022");
+            """)).ShouldContain("FLOWX1020");
     }
 
     [Fact]
@@ -231,7 +231,7 @@ public sealed class ContractCompatibilityAnalyzerTests
                         .Step<DeriveOrder>()
                         .Step<ConsumeBase>();
             }
-            """)).ShouldContain("FLOWX1022");
+            """)).ShouldContain("FLOWX1020");
     }
 
     [Fact]
@@ -265,7 +265,7 @@ public sealed class ContractCompatibilityAnalyzerTests
                         .Step<PriceOrder>()
                         .Step<ShipOrder>();
             }
-            """)).ShouldContain("FLOWX1022");
+            """)).ShouldContain("FLOWX1020");
     }
 
     [Fact]
@@ -316,7 +316,7 @@ public sealed class ContractCompatibilityAnalyzerTests
                         .Step<ValidateOrder>().CompensateWith<UndoValidation>()
                         .Step<CapturePayment>();
             }
-            """)).ShouldContain("FLOWX1022");
+            """)).ShouldContain("FLOWX1020");
     }
 
     [Fact]
@@ -391,7 +391,7 @@ public sealed class ContractCompatibilityAnalyzerTests
                         .When(ctx => ctx.Input.Quantity > 0, then => then.Step<ValidateOrder>())
                         .Step<ReserveInventory>();
             }
-            """)).ShouldContain("FLOWX1022");
+            """)).ShouldContain("FLOWX1020");
     }
 
     [Fact]
@@ -416,7 +416,7 @@ public sealed class ContractCompatibilityAnalyzerTests
                         .Emit<OrderPlaced>(ctx => new OrderPlaced("r"))
                         .Step<AnnounceOrder>();
             }
-            """)).ShouldContain("FLOWX1022");
+            """)).ShouldContain("FLOWX1020");
     }
 
     [Fact]
@@ -472,7 +472,7 @@ public sealed class ContractCompatibilityAnalyzerTests
     private static ImmutableArray<Diagnostic> Run(string source)
     {
         var compilation = CSharpCompilation.Create(
-            "FlowX.ContractCompatibilityTests",
+            "FlowX.StepBindingTests",
             [CSharpSyntaxTree.ParseText(source, path: "/src/Flows/Sample.cs")],
             References,
             new CSharpCompilationOptions(
@@ -480,7 +480,7 @@ public sealed class ContractCompatibilityAnalyzerTests
                 nullableContextOptions: NullableContextOptions.Enable));
 
         return compilation
-            .WithAnalyzers([new ContractCompatibilityAnalyzer()])
+            .WithAnalyzers([new StepBindingAnalyzer()])
             .GetAnalyzerDiagnosticsAsync()
             .GetAwaiter()
             .GetResult();

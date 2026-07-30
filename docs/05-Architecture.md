@@ -440,9 +440,9 @@ path — rather than silently retrying forever.
 flowchart TD
     A["User writes Flow + [HttpTrigger] + [KafkaTrigger]"] --> B["FlowX.Compiler:<br/>resolve symbols"]
     B --> C{"All steps resolve to<br/>a capability?"}
-    C -- no --> D["FLOWX1020 error:<br/>unknown capability, with suggestion"]
-    C -- yes --> E{"Graph acyclic?<br/>Contracts compatible?"}
-    E -- no --> F["FLOWX1021 / FLOWX1022 error"]
+    C -- no --> D["FLOWX1002 error:<br/>step type is not a capability"]
+    C -- yes --> E{"Graph acyclic?<br/>Does every step's input<br/>come from somewhere?"}
+    E -- no --> F["FLOWX1021 / FLOWX1020 error"]
     E -- yes --> G["Emit ExecutionPlan (static data)"]
     G --> H["Emit dispatch switch (no reflection)"]
     H --> I["Emit trigger bindings:<br/>endpoints, consumers, cron entries"]
@@ -556,7 +556,7 @@ Rollout strategy, KEDA scalers and drain semantics in
 |---|---|---|---|---|---|
 | QR1 | Client | 10 000 req/s to a 4-step ephemeral flow | 4-core pod, warm | Flow executes | platform overhead p99 ≤ 5 µs; 0 alloc/step |
 | QR2 | Chaos | `SIGKILL` a worker mid-flow | 3 nodes, durable profile | Flow resumes elsewhere | resume p99 ≤ 45 s (lease TTL 30 s); 0 duplicate non-idempotent effects |
-| QR3 | Engineer | Adds a step with an incompatible contract | build | Build fails | `FLOWX1022` with symbol + fix, < 1 s added build time |
+| QR3 | Engineer | Adds a step with an incompatible contract | build | Build fails | `FLOWX1020` with symbol + fix, < 1 s added build time |
 | QR4 | Engineer | Changes a capability's output shape | CI | `flowx diff` fails | breaking change detected 100 % for removed/retyped members |
 | QR5 | Operator | Needs to know why instance 42 failed | production | Full causal replay available | every step's input/output/error retrievable for the retention window |
 | QR6 | Tenant B | Tenant A floods its quota | shared cluster | Tenant A throttled at admission | tenant B p99 degradation ≤ 10 % |

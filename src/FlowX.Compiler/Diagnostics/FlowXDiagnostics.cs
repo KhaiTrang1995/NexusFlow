@@ -107,7 +107,7 @@ public static class FlowXDiagnostics
         "A cache hit returns a success without performing the effect. Remove the Cache " +
         "policy, or split the read out into its own capability.");
 
-    /// <summary>FLOWX1022 — a step consumes a type no earlier step produces.</summary>
+    /// <summary>FLOWX1020 — a step consumes a type no earlier step produces.</summary>
     /// <remarks>
     /// The message lists what the flow <em>can</em> supply as well as what is missing.
     /// Naming only the absent type leaves the developer to reconstruct the state bag in
@@ -115,7 +115,7 @@ public static class FlowXDiagnostics
     /// the fix — a reorder, or an explicit mapping — obvious from the message alone.
     /// </remarks>
     public static readonly DiagnosticDescriptor StepInputIsNeverProduced = Create(
-        "FLOWX1022",
+        "FLOWX1020",
         "Step consumes a contract no earlier step produces",
         "Step '{0}' consumes '{1}', which nothing before it in flow '{2}' produces; the " +
         "context can supply: {3}",

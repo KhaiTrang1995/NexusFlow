@@ -1,4 +1,4 @@
-# FLOWX1022 — Step consumes a contract no earlier step produces
+# FLOWX1020 — Step consumes a contract no earlier step produces
 
 > **Severity:** Error · **Category:** FlowX · **Since:** 0.1.0
 
@@ -21,7 +21,7 @@ public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult>
 ```
 
 ```
-error FLOWX1022: Step 'ReserveInventory' consumes 'ValidatedOrder', which nothing before
+error FLOWX1020: Step 'ReserveInventory' consumes 'ValidatedOrder', which nothing before
                  it in flow 'PlaceOrderFlow' produces; the context can supply: PlaceOrder
 ```
 
@@ -43,7 +43,7 @@ flow.Step<ValidateOrder>()
 
 ## What it detects
 
-`ContractCompatibilityAnalyzer` walks the `Define` chain in declaration order, seeding
+`StepBindingAnalyzer` walks the `Define` chain in declaration order, seeding
 the flow's own input contract — which the engine puts into the bag before step 1 — and
 adding each capability's declared output as it goes. A step is reported when its declared
 input is in neither set.

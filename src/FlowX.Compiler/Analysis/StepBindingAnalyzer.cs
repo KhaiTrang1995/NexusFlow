@@ -10,7 +10,7 @@ using Microsoft.CodeAnalysis.Diagnostics;
 namespace FlowX.Compiler.Analysis;
 
 /// <summary>
-/// Checks that a flow's steps can actually hand values to each other: FLOWX1022.
+/// Checks that a flow's steps can actually hand values to each other: FLOWX1020.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -79,7 +79,7 @@ namespace FlowX.Compiler.Analysis;
 /// </list>
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
-public sealed class ContractCompatibilityAnalyzer : DiagnosticAnalyzer
+public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
 {
     private const string FlowAttribute = "FlowX.FlowAttribute";
     private const string FlowBaseMetadataName = "Flow`2";
