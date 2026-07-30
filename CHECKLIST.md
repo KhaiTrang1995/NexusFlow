@@ -321,7 +321,7 @@ Three more surfaced while getting the suite green:
 
 | Found | Was |
 |---|---|
-| `.Emit<T>()` publishes nothing | Silent. Now **FLOWX1024**, the only warning in the set |
+| `.Emit<T>()` publishes nothing | Silent. Now **FLOWX1024**, the first warning in the set — since joined by `FLOWX1011` and `FLOWX1025` |
 | Allocation budgets measured 376 B in Debug | Compiler scaffolding, not the engine. CI runs Release and never saw it; every contributor did. Now skipped in Debug, with the reason |
 | The walker read `ArgumentNullException.ThrowIfNull(flow)` as a chain | A statement *after* the chain would have silently replaced it. The walk is now rooted at the builder parameter |
 
