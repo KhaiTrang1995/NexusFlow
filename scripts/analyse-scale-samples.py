@@ -68,13 +68,17 @@ what it is entitled to decide:
 The CPU column counts MSBuild alone, not the compile, so it is reported greyed out and
 excluded from the verdict and from the growth fit.
 
-**Compiler server off.** Every build pays a cold Roslyn start of several seconds, in both
-arms. That inflates the *denominator* and therefore makes the overhead ratio smaller than
-a developer would see -- so a ratio measured this way is a LOWER BOUND. A FAIL under a
-lower bound is a real fail. A PASS under one is not a pass, and is reported as
-INCONCLUSIVE with that reason. What this configuration is good for is the growth curve:
-the fixed cold-start cost is identical in both arms and cancels in the difference, so the
-per-size generator cost in milliseconds is both correct and load-robust.
+**Compiler server off.** Every build pays a cold Roslyn start of several seconds. That
+lands in both arms and inflates the denominator, and the generator additionally pays its
+own JIT on every build rather than once per server lifetime, which inflates the numerator.
+The two distortions run in opposite directions and neither is known in advance, so the
+ratio is not the quantity the budget is phrased against. A FAIL under it is still a fail --
+the effect is far larger than the distortion either way -- but a PASS is not a pass, and is
+reported as INCONCLUSIVE with that reason.
+
+What this configuration is unambiguously good for is the growth curve. The cold-start cost
+is a constant, so it cancels in the *difference* between the arms, and the per-size cost in
+milliseconds is both correct and nearly load-invariant.
 
 When two metrics are in play and they disagree, the disagreement is the finding and the
 verdict is INCONCLUSIVE.
@@ -465,18 +469,19 @@ def analyse(document: dict, budget: float, max_spread: float, seed: int) -> dict
     }
 
     if not server_on:
-        # A ratio whose denominator carries seconds of cold-start work that a real build
-        # would not pay is a lower bound on the true overhead. Below the budget it proves
-        # nothing; above it, it proves the budget is missed.
+        # With the server off both arms carry a cold Roslyn start and the generator pays
+        # its own JIT every build, distorting denominator and numerator in opposite
+        # directions by amounts nobody measured. A fail survives that; a pass does not.
         for metric in decisive:
             verdict, reason = verdicts[metric]
 
             if verdict == PASS:
                 verdicts[metric] = (
                     INCONCLUSIVE,
-                    reason + " — but the compiler server was off, so both arms carry a "
-                    "cold Roslyn start and this ratio is a lower bound; a pass under a "
-                    "lower bound is not a pass",
+                    reason + " — but the compiler server was off, so this ratio is "
+                    "distorted in both directions by a cold Roslyn start and is not the "
+                    "configuration the budget is phrased against; re-run without "
+                    "--no-compiler-server before recording a pass",
                 )
 
     taken = [verdicts[metric][0] for metric in decisive]
@@ -590,7 +595,7 @@ def render(report: dict, out=sys.stdout) -> None:
     if report["server_on"]:
         line("  compiler server on — B12's configuration; CPU time is NOT attributable")
     else:
-        line("  compiler server off — CPU time attributable; ratios are a LOWER BOUND")
+        line("  compiler server off — CPU time attributable; ratios distorted, costs are not")
 
     if int(meta.get("rounds", 0)) < 5:
         line()

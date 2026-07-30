@@ -49,11 +49,15 @@
 # compile runs inside a VBCSCompiler process that outlives the build — and on a shared
 # machine that one server is shared with every other build on the box, so its CPU cannot
 # be charged to this build either. Turning the server off costs both arms a cold Roslyn
-# start of several seconds, which lands in the denominator and makes the ratio SMALLER
-# than a developer would see. So the two configurations decide different things, and the
-# analyser enforces it: server on (the default, and B12's configuration) gives the verdict
-# on wall clock; server off gives a load-robust per-size cost in milliseconds for the
-# growth curve, and a ratio that is only ever a lower bound.
+# start of several seconds (inflating the denominator) and makes the generator pay its own
+# JIT on every build (inflating the numerator), so the ratio is distorted in both
+# directions by amounts nobody measured. The per-size cost in milliseconds is not: a
+# constant present in both arms cancels in the difference between them.
+#
+# So the two configurations decide different things, and the analyser enforces it: server
+# on — the default, and B12's configuration — gives the verdict on wall clock; server off
+# gives a load-robust per-size cost for the growth curve, and a ratio that may fail but may
+# not pass.
 #
 # **Sizes are interleaved, not run in blocks.** All the projects are generated and warmed
 # up front, then every round visits every size. Blocked sizes make the growth curve a
