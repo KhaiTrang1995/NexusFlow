@@ -94,19 +94,38 @@ public sealed class StepGraph
     /// would leave the termination proof holding for the arm nobody takes and not for the
     /// arms they do — which is the wrong way round.
     /// </para>
+    /// <para>
+    /// A <see cref="StepKind.Parallel"/> is checked the same way, and the check matters more
+    /// there than anywhere else. Its branches are executed as sub-ranges of this same array,
+    /// so a branch target past the end is not a wrong answer but an
+    /// <c>IndexOutOfRangeException</c> thrown from a thread-pool thread partway through a
+    /// concurrent fork. <see cref="StepNode.ForParallel"/> has already established that the
+    /// targets ascend and that the join lies past the last of them; this adds the one fact
+    /// only the graph knows, which is that they all fit.
+    /// </para>
     /// </remarks>
     private static void ValidateTargets(ImmutableArray<StepNode> ordered)
     {
         foreach (var step in ordered)
         {
-            if (step.Target is { } target)
-            {
-                ValidateTarget(step, target, ordered.Length);
-            }
-
+            // The per-block targets before the node's own, so a malformed layout is
+            // reported against the block that is wrong rather than against the join that
+            // was merely dragged out of range behind it. For a fork the join is by
+            // construction the largest target, so checking it first would mean every
+            // message named the join and none ever named the branch.
             foreach (var caseTarget in step.CaseTargets)
             {
                 ValidateTarget(step, caseTarget, ordered.Length);
+            }
+
+            foreach (var branchTarget in step.BranchTargets)
+            {
+                ValidateTarget(step, branchTarget, ordered.Length);
+            }
+
+            if (step.Target is { } target)
+            {
+                ValidateTarget(step, target, ordered.Length);
             }
         }
     }

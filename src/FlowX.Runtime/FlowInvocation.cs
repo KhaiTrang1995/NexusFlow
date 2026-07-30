@@ -234,6 +234,48 @@ public static class FlowErrors
     }
 
     /// <summary>
+    /// A <c>Parallel</c> fork's merge strategy was not met.
+    /// </summary>
+    /// <param name="flowId">The flow whose fork failed.</param>
+    /// <param name="stepIndex">Index of the fork, so the failure names one merge point.</param>
+    /// <param name="required">How many successes the strategy demanded.</param>
+    /// <param name="succeeded">How many it got.</param>
+    /// <param name="branches">How many branches the fork declared.</param>
+    /// <remarks>
+    /// <para>
+    /// Raised for <c>FirstSuccess</c> and <c>Quorum(n)</c> only. <c>AllMustSucceed</c>
+    /// reports the branch's own error instead, because there is exactly one failure to
+    /// point at and replacing it with a count would throw away the reason; and
+    /// <c>AllSettled</c> never fails the flow at all.
+    /// </para>
+    /// <para>
+    /// <see cref="ErrorCategory.Conflict"/> rather than <see cref="ErrorCategory.Internal"/>:
+    /// three of four fraud checks failing is a business outcome the flow declared a rule
+    /// for, not a defect in the platform.
+    /// </para>
+    /// </remarks>
+    public static Error MergeNotSatisfied(
+        string flowId,
+        int stepIndex,
+        int required,
+        int succeeded,
+        int branches)
+    {
+        return new Error(
+            "flow.merge_not_satisfied",
+            $"Step {stepIndex} of flow '{flowId}' needed {required} of its {branches} " +
+            $"parallel branches to succeed and got {succeeded}. Branches still running " +
+            "were cancelled; work they had already completed is compensated with the rest " +
+            "of the flow.",
+            ErrorCategory.Conflict)
+            .With("flowId", flowId)
+            .With("stepIndex", stepIndex)
+            .With("required", required)
+            .With("succeeded", succeeded)
+            .With("branches", branches);
+    }
+
+    /// <summary>
     /// A <c>Switch</c> selector threw instead of producing a value.
     /// </summary>
     /// <param name="flowId">The flow whose switch failed.</param>

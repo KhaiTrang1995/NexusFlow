@@ -25,6 +25,27 @@ namespace FlowX.Runtime;
 /// more naturally and would have cost an enumerator per level on the hot path.
 /// </para>
 /// <para>
+/// <strong>Parallel is where that stops being the whole story, and it is worth being exact
+/// about how much stops.</strong> A fork uses the identical flat layout — one node
+/// carrying a target per branch, each branch a contiguous span closed by a jump to the
+/// join — so the plan, the graph validation, the termination proof and the manifest's
+/// <c>branches</c> array are all unchanged. What changes is that the engine runs
+/// <em>every</em> span instead of choosing one, concurrently, which means that between a
+/// fork and its join there is no single loop index describing the flow. The engine
+/// therefore recurses exactly once per fork, into <c>RunRangeAsync</c> over a sub-range;
+/// it still holds no branch stack, still builds no plan objects, and a flow that does not
+/// fork never reaches that code at all. A fork allocates — a linked token source, a task
+/// per branch, their awaiters — and that is the one documented exception to budget B2,
+/// measured rather than waved at.
+/// </para>
+/// <para>
+/// <strong>Branches share one pooled context.</strong> That is what the disjoint-slot rule
+/// (FLOWX1013) is for. The runtime's half of the bargain is that the state bag and the
+/// compensation stack are serialised while a fork is in flight, so a race is a wrong value
+/// and never a corrupted dictionary; the compiler's half is that two branches must not
+/// write the same slot in the first place.
+/// </para>
+/// <para>
 /// <strong>Deadlines are enforced at step boundaries.</strong> The engine will not
 /// start a step whose flow has run out of budget, but it does not interrupt a step
 /// already running. Interrupting in-flight work is the Timeout policy's job (P4),
@@ -179,18 +200,79 @@ public sealed class FlowEngine
         // so the unwind never has to filter. The stack belongs to the pooled context,
         // so a saga costs no more per execution than a query does.
         var compensations = plan.HasCompensation ? context.Compensations : null;
+
+        var outcome = await RunRangeAsync(
+            plan, dispatcher, context, compensations, 0, plan.Graph.Count, ct).ConfigureAwait(false);
+
+        if (outcome.Failure is null)
+        {
+            return new FlowExecutionResult(null, outcome.Completed, CompensationOutcome.NotRequired);
+        }
+
+        context.SetError(outcome.Failure);
+
+        var compensation = compensations is null
+            ? CompensationOutcome.NotRequired
+            : await CompensateAsync(compensations, dispatcher, context).ConfigureAwait(false);
+
+        return new FlowExecutionResult(outcome.Failure, outcome.Completed, compensation);
+    }
+
+    /// <summary>How a range of steps ended: the first failure in it, and how many ran.</summary>
+    /// <remarks>
+    /// A struct so a branch's result costs nothing to return. The whole flow is one range,
+    /// <c>[0, Count)</c>, so the sequential path and a parallel branch are literally the
+    /// same code — which is the point of the shape, and the reason a branch inherits the
+    /// deadline check, the compensation recording and the exception handling for free
+    /// rather than by being kept in step with them.
+    /// </remarks>
+    private readonly struct RangeOutcome(Error? failure, int completed)
+    {
+        public Error? Failure { get; } = failure;
+
+        public int Completed { get; } = completed;
+    }
+
+    /// <summary>
+    /// Runs the steps in <c>[from, end)</c> — the whole flow, or one branch of a fork.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The range is what makes <c>Parallel</c> fit the flat array.</strong> A
+    /// branch is a contiguous half-open span of the same one array, and
+    /// <see cref="StepNode.BranchTargets"/> is validated to be strictly ascending inside
+    /// the fork, so the spans are disjoint and cover the fork exactly. Termination still
+    /// follows from the same fact it always did: every target points strictly forward, and
+    /// a target past <paramref name="end"/> simply ends the range.
+    /// </para>
+    /// <para>
+    /// <strong>What the flat model gives up.</strong> Between a fork and its join, "the
+    /// loop index" stops describing the flow — there are several, one per branch, on
+    /// several threads. Everything else survives: no branch stack, no nested plan objects,
+    /// no per-step recursion, and a linear or conditional flow never leaves this method.
+    /// </para>
+    /// </remarks>
+    private static async ValueTask<RangeOutcome> RunRangeAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        CompensationStack? compensations,
+        int from,
+        int end,
+        CancellationToken ct)
+    {
         var steps = plan.Graph.Steps;
         var completed = 0;
         Error? failure = null;
 
-        // Not `for (i = 0; i < n; i++)`. A conditional is compiled into this same flat
+        // Not `for (i = from; i < end; i++)`. A conditional is compiled into this same flat
         // array as a Branch and a Jump, so the index advances either by one or to a
         // target. The loop is still guaranteed to terminate: StepGraph rejects any target
         // that is out of range or points backwards, which is the whole reason that check
         // exists.
-        var i = 0;
+        var i = from;
 
-        while (i < steps.Length)
+        while (i < end)
         {
             var step = steps[i];
 
@@ -257,7 +339,30 @@ public sealed class FlowEngine
                 continue;
             }
 
-            context.EnterStep(step);
+            if (step.Kind == StepKind.Parallel)
+            {
+                var forked = await RunParallelAsync(
+                    plan, dispatcher, context, compensations, step, ct).ConfigureAwait(false);
+
+                // Counted whether or not the merge held: those steps really ran, and a
+                // caller reading CompletedSteps to decide what was touched needs the
+                // work a cancelled branch had already done to be in the number.
+                completed += forked.Completed;
+
+                if (forked.Failure is not null)
+                {
+                    failure = forked.Failure;
+                    break;
+                }
+
+                i = step.Target!.Value;
+                continue;
+            }
+
+            // The identity is taken from the return value rather than read back off the
+            // context. Inside a fork a sibling overwrites the field between the throw and
+            // the catch, and an error naming the wrong capability is worse than none.
+            var capabilityId = context.EnterStep(step);
 
             if (context.UtcNow >= context.Deadline)
             {
@@ -273,9 +378,9 @@ public sealed class FlowEngine
             }
             catch (OperationCanceledException)
             {
-                // Caller-initiated, and not the flow's fault — but the work already
-                // done still has to be undone, so this joins the failure path rather
-                // than propagating.
+                // Caller-initiated, or a sibling branch's failure cancelling this one, and
+                // not this step's fault — but the work already done still has to be
+                // undone, so this joins the failure path rather than propagating.
                 failure = FlowErrors.Cancelled(plan.Flow.Id);
                 break;
             }
@@ -283,7 +388,7 @@ public sealed class FlowEngine
             catch (Exception exception)  //   it into an error rather than letting it kill the
             {                            //   trigger's consumer loop. This is the one place a
                 failure = FlowErrors     //   general catch is correct, and it re-reports rather
-                    .Unhandled(context.CapabilityId, exception); // than swallowing.
+                    .Unhandled(capabilityId, exception); // than swallowing.
                 break;
             }
 #pragma warning restore CA1031
@@ -295,22 +400,211 @@ public sealed class FlowEngine
             }
 
             completed++;
-            compensations?.RecordCompleted(step);
+
+            if (compensations is not null)
+            {
+                // Through the context, not the stack directly: two branches can complete a
+                // compensable step at the same instant, and the context is what serialises
+                // the push. A lost push is an undo that never runs.
+                context.RecordCompleted(step);
+            }
+
             i++;
         }
 
-        if (failure is null)
+        return new RangeOutcome(failure, completed);
+    }
+
+    /// <summary>
+    /// Runs every branch of a fork and applies its merge strategy.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This method allocates, and that is the deliberate exception to budget B2.</strong>
+    /// A linked <see cref="CancellationTokenSource"/>, a <see cref="Task"/> per branch, and
+    /// the awaiters behind them are what concurrency costs; there is no version of running
+    /// three things at once that costs nothing. The budget stays a hard zero for the
+    /// linear, conditional and switch paths, which never reach this method, and
+    /// <c>EngineAllocationTests</c> records the parallel figure as a ceiling rather than
+    /// pretending it is zero.
+    /// </para>
+    /// <para>
+    /// <strong>How concurrent the branches actually are.</strong> Each branch is started
+    /// eagerly on the calling thread and runs until its first incomplete await, then yields;
+    /// the rest interleave on the thread pool. So branches whose steps all complete
+    /// synchronously run one after another — they were never going to overlap, and forcing
+    /// them onto <see cref="Task.Run(Func{Task})"/> would buy a thread-pool dispatch per
+    /// branch to make CPU-bound work contend. Branches that do I/O, which is what a fork is
+    /// for, genuinely overlap.
+    /// </para>
+    /// <para>
+    /// <strong>Every branch is drained before this returns, cancelled or not.</strong> That
+    /// is not tidiness: the context is pooled, so a branch still writing to it after the
+    /// engine has moved on would eventually write into the <em>next</em> flow's context,
+    /// which may belong to another tenant. It is also what makes compensation sound —
+    /// nothing is still running when the unwind starts.
+    /// </para>
+    /// </remarks>
+    private static async ValueTask<RangeOutcome> RunParallelAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        CompensationStack? compensations,
+        StepNode step,
+        CancellationToken ct)
+    {
+        var targets = step.BranchTargets;
+        var join = step.Target!.Value;
+        var merge = step.Merge;
+
+        // AllSettled cancels nothing, so it needs no source at all. The other three do,
+        // and the source is linked so the caller's own cancellation still reaches the
+        // branches.
+        using var cancellation = merge.Kind == MergeKind.AllSettled
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        var branchToken = cancellation?.Token ?? ct;
+
+        // Two collections on purpose. `started` keeps declaration order, which is what
+        // AllSettled publishes and what a reader matches against the manifest's `branches`
+        // array; `pending` is drained as branches finish, and completion order is not
+        // declaration order. Collapsing them would mean either losing the branch's identity
+        // or reordering the array a reader is meant to index into.
+        var started = new Task<RangeOutcome>[targets.Length];
+        var pending = new List<Task<RangeOutcome>>(targets.Length);
+
+        for (var b = 0; b < targets.Length; b++)
         {
-            return new FlowExecutionResult(null, completed, CompensationOutcome.NotRequired);
+            // Branch b owns [targets[b], targets[b + 1]) — or up to the join, for the
+            // last. StepNode.ForParallel has already proved the spans are ascending and
+            // non-empty, so this arithmetic cannot produce an overlap.
+            var branchEnd = b + 1 < targets.Length ? targets[b + 1] : join;
+
+            started[b] = RunRangeAsync(
+                plan, dispatcher, context, compensations, targets[b], branchEnd, branchToken).AsTask();
+
+            pending.Add(started[b]);
         }
 
-        context.SetError(failure);
+        var errors = new Error?[targets.Length];
+        var completed = 0;
+        var succeeded = 0;
+        Error? firstFailure = null;
 
-        var compensation = compensations is null
-            ? CompensationOutcome.NotRequired
-            : await CompensateAsync(compensations, dispatcher, context).ConfigureAwait(false);
+        while (pending.Count > 0)
+        {
+            var finished = await Task.WhenAny(pending).ConfigureAwait(false);
+            pending.Remove(finished);
 
-        return new FlowExecutionResult(failure, completed, compensation);
+            var outcome = Observe(finished, plan.Flow.Id);
+
+            completed += outcome.Completed;
+            errors[Array.IndexOf(started, finished)] = outcome.Failure;
+
+            if (outcome.Failure is null)
+            {
+                succeeded++;
+            }
+            else
+            {
+                firstFailure ??= outcome.Failure;
+            }
+
+            // Cancelling does not end the loop: the remaining branches still have to be
+            // drained, for the reason given in the remarks. It only stops them doing more
+            // work than the merge needs.
+            if (ShouldCancelSiblings(merge, outcome.Failure is null, succeeded))
+            {
+                cancellation?.Cancel();
+            }
+        }
+
+        return new RangeOutcome(Verdict(plan, step, merge, errors, succeeded, firstFailure, context), completed);
+    }
+
+    /// <summary>Reads a finished branch, converting a fault into an error rather than rethrowing.</summary>
+    /// <remarks>
+    /// <see cref="RunRangeAsync"/> is written not to throw — it converts every failure into
+    /// an <see cref="Error"/>. This exists for the case where that is one day untrue: a
+    /// branch that faulted must not take the whole fork down through an unobserved
+    /// exception, because the siblings still need draining and the flow still needs
+    /// compensating.
+    /// </remarks>
+    private static RangeOutcome Observe(Task<RangeOutcome> finished, string flowId)
+    {
+        if (finished.IsCompletedSuccessfully)
+        {
+            return finished.Result;
+        }
+
+        if (finished.IsCanceled)
+        {
+            return new RangeOutcome(FlowErrors.Cancelled(flowId), 0);
+        }
+
+        // Unwrapped when there is exactly one, which is every case a branch can produce:
+        // an AggregateException wrapper in the message would name the plumbing rather than
+        // the defect.
+        Exception fault = finished.Exception switch
+        {
+            { InnerExceptions.Count: 1 } aggregate => aggregate.InnerExceptions[0],
+            { } aggregate => aggregate,
+            _ => new InvalidOperationException(
+                "A parallel branch reported neither success, cancellation nor an exception."),
+        };
+
+        return new RangeOutcome(FlowErrors.Unhandled(flowId, fault), 0);
+    }
+
+    /// <summary>Whether the branch that just finished means the rest can stop.</summary>
+    private static bool ShouldCancelSiblings(MergeStrategy merge, bool branchSucceeded, int succeeded) =>
+        merge.Kind switch
+        {
+            // The documented rule: "first failure cancels siblings via linked token".
+            MergeKind.AllMustSucceed => !branchSucceeded,
+
+            // "the flow continues; branch errors available in context" — nothing is cancelled.
+            MergeKind.AllSettled => false,
+
+            // FirstSuccess is Quorum(1); both stop as soon as they have enough.
+            _ => branchSucceeded && succeeded >= merge.RequiredSuccesses,
+        };
+
+    /// <summary>Turns the branch outcomes into the fork's own outcome.</summary>
+    /// <remarks>
+    /// <c>AllMustSucceed</c> reports the branch's own error, because there is one failure
+    /// and it is the reason. <c>FirstSuccess</c> and <c>Quorum</c> report a count, because
+    /// the reason is that not enough branches worked and picking one of several errors to
+    /// stand for that would be arbitrary — the errors are still on the branch outcomes, and
+    /// the first is attached to the flow's own error data.
+    /// </remarks>
+    private static Error? Verdict(
+        ExecutionPlan plan,
+        StepNode step,
+        MergeStrategy merge,
+        Error?[] errors,
+        int succeeded,
+        Error? firstFailure,
+        FlowExecutionContext context)
+    {
+        switch (merge.Kind)
+        {
+            case MergeKind.AllSettled:
+                // The one strategy that writes something for the next step to read. It is
+                // also the only one that can reach the next step having failed at all.
+                context.Set(new ParallelOutcome(step.Index, errors));
+                return null;
+
+            case MergeKind.AllMustSucceed:
+                return firstFailure;
+
+            default:
+                return succeeded >= merge.RequiredSuccesses
+                    ? null
+                    : FlowErrors.MergeNotSatisfied(
+                        plan.Flow.Id, step.Index, merge.RequiredSuccesses, succeeded, errors.Length);
+        }
     }
 
     /// <summary>
@@ -342,7 +636,7 @@ public sealed class FlowEngine
 
         foreach (var step in compensations.Unwind())
         {
-            context.EnterStep(step);
+            _ = context.EnterStep(step);
 
             try
             {

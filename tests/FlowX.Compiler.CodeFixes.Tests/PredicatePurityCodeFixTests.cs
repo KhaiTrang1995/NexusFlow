@@ -90,6 +90,59 @@ public sealed class PredicatePurityCodeFixTests
                 "ctx => Array.TrueForAll(new[] { ctx.Input.Sku }, sku => ctx.UtcNow.Hour > sku.Length)")));
     }
 
+    // --------------------------------------------------- the other delegates it covers
+
+    [Fact]
+    public void RewritesAnAmbientReadInAReturnProjection()
+    {
+        // The fix follows the diagnostic. FLOWX1011 reads the Return projection too, and
+        // the rewrite is identical there because the lambda's parameter is the same
+        // FlowContext — the delegates differ only in what they return.
+        var project = CodeFixHarness.CreateProject(Sources.Project(
+            flow: Sources.Flow(returnProjection: "ctx => new OrderResult(Guid.NewGuid().ToString())")));
+
+        var fixedProject = CodeFixHarness.ApplyOnlyFix(project, new PredicatePurityCodeFixProvider(), "FLOWX1011");
+
+        CodeFixHarness.TextOf(fixedProject, "Flow.cs").ShouldBe(
+            Sources.Flow(returnProjection: "ctx => new OrderResult(ctx.NewId().ToString())"));
+
+        CodeFixHarness.CompileErrors(fixedProject).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void RewritesAnAmbientReadInASwitchSelector()
+    {
+        var project = CodeFixHarness.CreateProject(Sources.Project(flow: Sources.Flow(
+            steps: ".Switch(ctx => DateTimeOffset.UtcNow.Hour)\n            .Case(9, b => b.Step<ReserveInventory>())")));
+
+        var fixedProject = CodeFixHarness.ApplyOnlyFix(project, new PredicatePurityCodeFixProvider(), "FLOWX1011");
+
+        CodeFixHarness.TextOf(fixedProject, "Flow.cs").ShouldBe(Sources.Flow(
+            steps: ".Switch(ctx => ctx.UtcNow.Hour)\n            .Case(9, b => b.Step<ReserveInventory>())"));
+
+        CodeFixHarness.CompileErrors(fixedProject).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void NamesTheParameterOfTheDelegateItIsInRatherThanTheBranchAroundIt()
+    {
+        // "Outermost lambda" means outermost within the builder call being fixed, not
+        // outermost in the file. A Return nested inside a When branch has its own context
+        // parameter, and naming the branch's 'late' would produce something that does not
+        // bind — which the compile assertion below is here to catch.
+        var project = CodeFixHarness.CreateProject(Sources.Project(flow: Sources.Flow(
+            steps: ".When(ctx => ctx.Get<Reservation>().Sku.Length > 1, late => late"
+                 + ".Return(inner => new OrderResult(Guid.NewGuid().ToString())))")));
+
+        var fixedProject = CodeFixHarness.ApplyOnlyFix(project, new PredicatePurityCodeFixProvider(), "FLOWX1011");
+
+        CodeFixHarness.TextOf(fixedProject, "Flow.cs").ShouldBe(Sources.Flow(
+            steps: ".When(ctx => ctx.Get<Reservation>().Sku.Length > 1, late => late"
+                 + ".Return(inner => new OrderResult(inner.NewId().ToString())))"));
+
+        CodeFixHarness.CompileErrors(fixedProject).ShouldBeEmpty();
+    }
+
     [Fact]
     public void TheDiagnosticIsGoneAndTheProjectStillCompiles()
     {

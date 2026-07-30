@@ -27,6 +27,32 @@ public sealed class FlowExecutionContext : FlowContext
     // cost 288 B, which was the last allocation between the engine and budget B2.
     private readonly CompensationStack _compensations = new();
 
+    /// <summary>
+    /// Whether more than one thread can reach this context, and therefore whether the
+    /// state bag and the compensation stack have to be serialised.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Set from <c>ExecutionPlan.HasParallel</c>, so it is a fact about the flow's compiled
+    /// shape rather than a guess. A flow that never forks takes the unguarded path and
+    /// costs exactly what it did before this field existed — one predictable, always-false
+    /// branch. That is deliberate: budget B2 is a hard zero for the linear, conditional and
+    /// switch paths, and a <c>ConcurrentDictionary</c> would have lost it, because
+    /// <c>ConcurrentDictionary</c> allocates a node per entry written where a pooled
+    /// <c>Dictionary</c> reuses the buckets it already has.
+    /// </para>
+    /// <para>
+    /// <strong>What the lock does and does not buy.</strong> It makes concurrent writes
+    /// <em>safe</em> — the dictionary cannot be corrupted, and a torn read is impossible.
+    /// It does not make them <em>meaningful</em>: two branches writing the same contract
+    /// type still race, and the winner is whichever finished last. That is a modelling
+    /// mistake rather than a memory-safety one, and it is what FLOWX1013 refuses at build
+    /// time. The runtime's job here is only to make sure the failure mode is a wrong value
+    /// rather than a corrupted heap.
+    /// </para>
+    /// </remarks>
+    private bool _guarded;
+
     private string _flowId = string.Empty;
     private string _flowVersion = string.Empty;
     private string _capabilityId = string.Empty;
@@ -93,8 +119,8 @@ public sealed class FlowExecutionContext : FlowContext
     public override Guid NewId() => Guid.NewGuid();
 
     /// <inheritdoc />
-    public override T Get<T>() => _state.TryGetValue(typeof(T), out var value)
-        ? (T)value
+    public override T Get<T>() => TryGet<T>(out var value)
+        ? value
         : throw new InvalidOperationException(
             $"No step in flow '{_flowId}' produced a {typeof(T).Name}. Step bindings are " +
             "resolved at build time (FLOWX1020), so reaching this at run time means the " +
@@ -102,6 +128,22 @@ public sealed class FlowExecutionContext : FlowContext
 
     /// <inheritdoc />
     public override bool TryGet<T>([MaybeNullWhen(false)] out T value)
+    {
+        // Reads are guarded too, not only writes. A Dictionary being written on another
+        // thread can be mid-resize, and a read that races a resize does not merely miss
+        // the new entry — it can walk a bucket array that is being replaced.
+        if (_guarded)
+        {
+            lock (_state)
+            {
+                return TryRead(out value);
+            }
+        }
+
+        return TryRead(out value);
+    }
+
+    private bool TryRead<T>([MaybeNullWhen(false)] out T value)
     {
         if (_state.TryGetValue(typeof(T), out var stored))
         {
@@ -117,12 +159,24 @@ public sealed class FlowExecutionContext : FlowContext
     public override void Set<T>(T value)
     {
         ArgumentNullException.ThrowIfNull(value);
+
+        if (_guarded)
+        {
+            lock (_state)
+            {
+                _state[typeof(T)] = value;
+            }
+
+            return;
+        }
+
         _state[typeof(T)] = value;
     }
 
     /// <summary>Prepares a pooled instance for one execution.</summary>
     internal void Initialise(ExecutionPlan plan, in FlowInvocation invocation, IClock clock)
     {
+        _guarded = plan.HasParallel;
         _flowId = plan.Flow.Id;
         _flowVersion = plan.Flow.Version;
         _correlationId = invocation.CorrelationId;
@@ -140,9 +194,64 @@ public sealed class FlowExecutionContext : FlowContext
     /// <summary>The compensations registered by this execution. Reused, never reallocated.</summary>
     internal CompensationStack Compensations => _compensations;
 
-    /// <summary>Records the identity of the step currently running, for diagnostics.</summary>
-    internal void EnterStep(StepNode step) =>
-        _capabilityId = step.Capability?.Id ?? step.EventType ?? step.SignalType ?? string.Empty;
+    /// <summary>
+    /// Pushes a completed compensable step onto the unwind stack, serialising the push
+    /// when the flow forks.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>CompensationStack</c> says of itself that it is "not thread-safe: one instance,
+    /// one flow, one thread at a time". That was true until a fork could complete two
+    /// compensable steps at once; a <c>Stack&lt;T&gt;.Push</c> racing another loses an
+    /// entry or corrupts the backing array, and the entry it loses is an undo that will
+    /// then never run. So the stack keeps its single-threaded contract and this is the
+    /// one place that honours it.
+    /// </para>
+    /// <para>
+    /// <strong>The order is completion order, and across concurrent branches that is not
+    /// deterministic.</strong> "Strict reverse order" remains exact <em>within</em> a
+    /// branch and between a branch and everything sequential around it — those are ordered
+    /// by the happens-before the fork and the join establish. Two steps in two different
+    /// branches have no such ordering, so their compensations may unwind in either order.
+    /// That is not a defect being hidden: branches that write disjoint slots
+    /// (FLOWX1013) have nothing to order against each other, and a saga that needed one
+    /// undone before the other was never expressing concurrency in the first place.
+    /// </para>
+    /// </remarks>
+    internal void RecordCompleted(StepNode step)
+    {
+        if (_guarded)
+        {
+            lock (_state)
+            {
+                _compensations.RecordCompleted(step);
+            }
+
+            return;
+        }
+
+        _compensations.RecordCompleted(step);
+    }
+
+    /// <summary>
+    /// Records the identity of the step currently running, for diagnostics, and returns it.
+    /// </summary>
+    /// <remarks>
+    /// The return value is what the engine reports a failure against. Reading the field
+    /// back would be wrong inside a fork: a sibling branch entering its own step overwrites
+    /// it between the throw and the catch, and the error would then name a capability that
+    /// did not fail. The field is still written, because a capability may read
+    /// <c>ctx.CapabilityId</c> — but inside a parallel branch what it reads is whichever
+    /// step most recently started, which may be a sibling's. That is a fidelity limit of
+    /// one shared field, stated rather than papered over; per-branch identity needs a
+    /// per-branch context, which is a larger change than this work package.
+    /// </remarks>
+    internal string EnterStep(StepNode step)
+    {
+        var id = step.Capability?.Id ?? step.EventType ?? step.SignalType ?? string.Empty;
+        _capabilityId = id;
+        return id;
+    }
 
     /// <summary>Records the error that ended the flow, so compensations can read it.</summary>
     internal void SetError(Error? error) => _error = error;
@@ -159,6 +268,7 @@ public sealed class FlowExecutionContext : FlowContext
     {
         _state.Clear();
         _compensations.Reset();
+        _guarded = false;
         _flowId = string.Empty;
         _flowVersion = string.Empty;
         _capabilityId = string.Empty;

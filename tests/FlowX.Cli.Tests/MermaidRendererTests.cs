@@ -381,6 +381,99 @@ public sealed class MermaidRendererTests
             "the switch and it is not an exit of its own.");
     }
 
+    /// <summary>A flow with a <c>Parallel</c>, as the compiler publishes it.</summary>
+    /// <remarks>
+    /// Three branches, every one of which runs. Unlike a switch there are no jump steps to
+    /// be absent: a branch's range ends where the next branch begins, so the ids are
+    /// contiguous.
+    /// </remarks>
+    private const string ParallelManifest = """
+        {
+          "schemaVersion": "0.1.0",
+          "application": { "name": "Sample.App", "version": "1.0.0" },
+          "flows": [
+            {
+              "id": "order.screen", "version": "1.0.0", "profile": "Ephemeral",
+              "steps": [
+                { "id": 0, "kind": "Capability", "capability": "order.validate@1.0.0" },
+                { "id": 1, "kind": "Parallel", "merge": "AllMustSucceed", "branches": [
+                    [ { "id": 2, "kind": "Capability", "capability": "risk.credit@1.0.0" } ],
+                    [ { "id": 3, "kind": "Capability", "capability": "risk.fraud@1.0.0" } ],
+                    [ { "id": 4, "kind": "Capability", "capability": "risk.sanctions@1.0.0" } ]
+                  ] },
+                { "id": 5, "kind": "Capability", "capability": "order.decide@1.0.0" }
+              ],
+              "emits": []
+            }
+          ],
+          "capabilities": []
+        }
+        """;
+
+    [Fact]
+    public void DrawsAForkWithItsMergeRuleAndOneEdgePerBranch()
+    {
+        var diagram = MermaidRenderer.Render(Parse(ParallelManifest));
+
+        // Not a diamond and not a hexagon: a fork makes no decision, so it must not wear
+        // the shape of one. The merge rule is on the label because it is the one thing
+        // about a fork worth reading off a diagram — it says what one branch failing means.
+        diagram.ShouldContain("f0s1[/\"parallel · AllMustSucceed\"/]");
+
+        // Numbered, because every branch runs. "yes" and "no" would read as a choice.
+        diagram.ShouldContain("f0s1 -->|branch 0| f0s2");
+        diagram.ShouldContain("f0s1 -->|branch 1| f0s3");
+        diagram.ShouldContain("f0s1 -->|branch 2| f0s4");
+    }
+
+    [Fact]
+    public void EveryBranchOfAForkRejoinsTheStepThatFollowsIt()
+    {
+        var diagram = MermaidRenderer.Render(Parse(ParallelManifest));
+
+        diagram.ShouldContain("f0s2 --> f0s5");
+        diagram.ShouldContain("f0s3 --> f0s5");
+        diagram.ShouldContain("f0s4 --> f0s5");
+
+        diagram.Contains("f0s1 --> f0s5", StringComparison.Ordinal).ShouldBeFalse(
+            "Every branch is populated, so nothing bypasses the fork and it is not an " +
+            "exit of its own.");
+    }
+
+    [Fact]
+    public void AForkWhoseMergeCouldNotBeReadIsStillDrawnAsAFork()
+    {
+        // The compiler omits `merge` when the strategy came from an expression it could
+        // not name. An absent field is a consumer asking; a guessed one is a consumer
+        // misled — so the diagram says less rather than something untrue.
+        const string Unlabelled = """
+            {
+              "schemaVersion": "0.1.0",
+              "application": { "name": "Sample.App", "version": "1.0.0" },
+              "flows": [
+                {
+                  "id": "order.screen", "version": "1.0.0", "profile": "Ephemeral",
+                  "steps": [
+                    { "id": 0, "kind": "Parallel", "branches": [
+                        [ { "id": 1, "kind": "Capability", "capability": "risk.credit@1.0.0" } ],
+                        [ { "id": 2, "kind": "Capability", "capability": "risk.fraud@1.0.0" } ]
+                      ] },
+                    { "id": 3, "kind": "Capability", "capability": "order.decide@1.0.0" }
+                  ],
+                  "emits": []
+                }
+              ],
+              "capabilities": []
+            }
+            """;
+
+        var diagram = MermaidRenderer.Render(Parse(Unlabelled));
+
+        diagram.ShouldContain("f0s0[/\"parallel\"/]");
+        diagram.ShouldContain("f0s0 -->|branch 0| f0s1");
+        diagram.ShouldContain("f0s0 -->|branch 1| f0s2");
+    }
+
     [Fact]
     public void ASwitchWhoseDefaultIsEmptyIsAlsoItsOwnExit()
     {

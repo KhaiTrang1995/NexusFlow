@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 791/791 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 901/901 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -44,7 +44,8 @@ These gate everything below them. None is code work.
 
 - [x] 20 specification documents, `docs/01` – `docs/20`
 - [x] 13 ADRs with trade-offs stated (ADR-0013 added by the first compilation)
-- [x] `docs/diagnostics/` — 11 pages plus an index; every help URI resolves, asserted by test
+- [x] `docs/diagnostics/` — 16 pages plus an index, one per raised diagnostic; every help
+      URI resolves, asserted by test
 - [x] `docs/benchmarks/` — baseline, gate policy, and the honest caveats
 - [x] 9 sample application specifications
 - [x] `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE` (Apache-2.0)
@@ -159,8 +160,8 @@ immutable, and rejects every invariant violation under test.
 - [x] **WP-4** `FlowX.Runtime` — step loop, pooled contexts, deadline handling, 0 B
 - [~] **WP-5** `FlowX.Compiler` — `FlowPlanGenerator`, model layer separate from emission.
       Diagnostics all raised (WP-13), B12 measured and passing (WP-14).
-      *Remaining:* the branching DSL — `When` / `Switch` / `Parallel` / `ForEach` /
-      `SubFlow`
+      *Remaining:* the branching DSL — `ForEach` / `SubFlow`. `When`, `Switch` and
+      `Parallel` ship (WP-15, WP-20, WP-24)
 - [x] **WP-6** Manifest emission, deterministic and schema-valid
 - [x] **WP-7** `FlowX.Hosting` — DI, startup validation, graceful drain, health probe
 - [~] **WP-8** `plugins/FlowX.Http` — endpoint, request binding, RFC 7807.
@@ -196,8 +197,9 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       step array* as a linear flow, as a `Branch` plus a `Jump`, so the engine gained no
       branch stack and **both directions allocate 0 B** in Release. The manifest
       deliberately does **not** carry the predicate's source text: it would put business
-      thresholds into a file whose rule is structure-only. `Parallel`, `ForEach` and
-      `SubFlow` remain open — this box does not tick until they land
+      thresholds into a file whose rule is structure-only. `Parallel` followed at
+      **WP-24**; `ForEach` and `SubFlow` remain open — this box does not tick until they
+      land
 - [x] **WP-20** `Switch` / `Case` / `Default` — a value branch through builder, model,
       analysis, emission, graph and engine. One `StepKind.Switch` carrying a target per
       case plus a default, and a `Jump` closing each case block, in the *same flat step
@@ -207,6 +209,38 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       with no `Default` falls through, exactly as `When` without `Otherwise` does —
       recorded in `08 §3.2` and on `ISwitchBuilder`. The manifest carries neither the
       selector nor the case values, for the same reason WP-15 refused the predicate
+- [x] **WP-24** `Parallel` / `Branch` / `MergeStrategy` — concurrent branches through
+      builder, model, analysis, emission, graph and engine, plus **`FLOWX1013`**. The flat
+      array survives: one `StepKind.Parallel` carrying a target per branch and a join, each
+      branch a contiguous sub-range of the *same* step array, and **no closing jumps** —
+      a branch's range ends where the next branch begins, so a jump would only restate the
+      bound. Every target still points strictly forward and `StepGraph` still rejects one
+      out of range, so termination is unchanged. What is no longer true is that "the loop
+      index" describes execution: between a fork and its join there are several, on several
+      threads, and the engine recurses once per fork into the same range-walking method.
+      **`MergeStrategy` became a struct** so `Quorum(n)` can carry its number — the
+      documented surface listed four strategies and an enum could name only three of them.
+      All four are implemented. `AllSettled` publishes a `ParallelOutcome` at the join.
+      **B2 is unchanged and still a hard zero** for the linear, conditional and switch
+      paths; a fork allocates **792 B for three branches, 552 B for two** — about 240 B per
+      branch — recorded as a ceiling, with a second test pinning that the cost tracks
+      branches and not steps. Concurrent context writes are made safe by a lock taken
+      **only when the plan contains a fork** (`ExecutionPlan.HasParallel`), not by a
+      concurrent collection, which would have cost every linear flow an allocation per
+      write. Cancelled siblings' completed work is still compensated, and every branch is
+      drained before the fork returns — the context is pooled, so a branch outliving its
+      flow would write into the next tenant's.
+      **One caveat found in review, not by the package:** the race test that covers those
+      concurrent writes does **not** fail when the lock is disabled. It was run eight times
+      unguarded — including a variant forcing dictionary resizes — and passed every time.
+      Branches genuinely do overlap (`BranchesOverlapWhenTheirStepsActuallyYield` proves
+      `PeakConcurrency > 1`), but overlapping is not the same as colliding inside one
+      dictionary operation. The lock stays — concurrent `Dictionary` mutation is unsafe by
+      contract, and a race this hard to provoke reaches production instead of CI — but it
+      is currently guarded by reasoning, not by a test that can fail
+- [ ] **A test that can actually fail on the parallel context race.** Needs deterministic
+      interleaving, not more iterations. Until then the lock above rests on the language
+      contract alone
 - [x] **WP-16** Step binding — **`FLOWX1020`** raised by `StepBindingAnalyzer`. A flow
       whose steps cannot pass values to each other now fails the build. Numbered 1020,
       not 1022: `08-Flow-Definition.md` and both `Get<T>` implementations already
@@ -245,7 +279,8 @@ which is the exact failure mode P1 exists to remove:
       the Info that ADR-0003 and `06` §5 originally specified — Info is invisible in a
       build log and `Ephemeral` is the only profile that runs today, so it would have
       shipped a rule that does nothing anywhere. Scope is decided by proof; impure
-      statics are a list; nothing is interprocedural, and the page says so
+      statics are a list; nothing is interprocedural, and the page says so. Scope was
+      `When` only until WP-25 widened it to every context delegate — see below
 - [ ] **`.Step<TCapability, TStepIn>(map)` is parsed and then ignored** by `FlowAnalyzer`
       and `FlowEmitter`. It is on the builder surface and `FLOWX1020` recommends it as
       the fix for a binding failure, so a user following the diagnostic reaches an
@@ -266,21 +301,46 @@ reachable, and enforced or honoured by nothing:
       than a no-op: `08 §3.2`'s own `Switch` example uses `.Default(b => b.Fail(...))` to
       reject an unsupported channel, and that default currently falls through and accepts
       it. Flagged in the doc; the fix is a work package
-- [ ] **`FLOWX1011` does not cover `Switch` selectors.** WP-21 scoped the analyzer to
-      `When` predicates; WP-20 then added a second construct under the identical rule.
-      `FlowErrors.SelectorFailed` states it at run time and nothing checks it at build
-      time — the exact position `When` was in before WP-21. `Return`, `Emit`,
-      `EmitOnFailure` and `ForEach`'s selector are in the same position
-- [ ] **An unrecognised `TriggerAttribute` subclass is skipped in silence.** A trigger's
+- [x] **`FLOWX1013` — parallel branch disjointness.** Closed by WP-24:
+      `ParallelSlotAnalyzer` reports two branches of a fork whose capabilities declare the
+      same output contract, which is the slot the generated dispatcher writes. Its limit is
+      stated on the page and worth repeating here, because a green build reads as a proof
+      and is not one: it compares **declared contracts**, so a capability calling
+      `ctx.Set<T>()` from inside its own body writes a slot the rule never sees
+- [x] **`FLOWX1011` did not cover `Switch` selectors.** Closed by WP-25. The analyzer is
+      now driven by a table of every `IFlowBuilder` method taking a
+      `Func<FlowContext<TIn>, …>` — `When`, `Switch`, `ForEach`, `Return`, `Emit`,
+      `EmitOnFailure`, `Step<TCapability, TStepIn>` and `SubFlow` — and the message names
+      the construct it found, because a `Return` projection reported as "the condition" is
+      a diagnostic a reader stops believing. The next DSL shape is a row in that table
+      rather than a second code path, which is the mistake WP-21 made once and this
+      package exists to undo. Three of the eight are not yet executed by the emitter and
+      are checked anyway; the page says which
+- [x] **An unrecognised `TriggerAttribute` subclass is skipped in silence.** A trigger's
       `Kind` is an overridden property — executable code, not attribute data — so a
       third-party transport plugin's trigger cannot be read from metadata. WP-22 declined
-      to guess, which is right, but the skip produces only an absent `triggers` array. It
-      needs a diagnostic
+      to guess, which is right, but the skip produced only an absent `triggers` array —
+      which `flowx diff` cannot tell apart from a flow that declares no trigger, so the
+      gate that calls a removed trigger breaking lost its input without saying so. Closed
+      by `FLOWX1025` (WP-26), a warning: the manifest still refuses to guess, and the
+      refusal is now audible. **What remains open is the cause** — the abstractions give a
+      plugin author no way to declare a kind the compiler can read, so the only fix
+      offered is "use a built-in attribute instead"
 - [x] **Nothing in the repository had ever compiled generator output.** The generator
       harness discarded the updated compilation, so every test asserted against *parsed*
       text — which catches a syntax error but not an unresolved name, a wrong delegate
       type argument, or an unimplemented interface member. Fixed by WP-20's
       `GeneratedCompileErrorsIn`, and a real compile is now asserted
+- [ ] **`ctx.Input` does not compile in any predicate or projection.** Found by WP-25 and
+      confirmed against a real build: the DSL signature is
+      `Func<FlowContext<TIn>, …>`, but `FlowEmitter` writes every emitted delegate as
+      `Func<FlowContext, …>` — the **non-generic base**, on which `Input` is not
+      declared. So the lambda source is copied into a field whose parameter type has lost
+      the member, and the build fails with **CS1061**. This is not a corner: `08 §3.1`
+      states conditions may read `ctx.Input`, `08 §69` and `§200` use it in worked
+      examples, and the `FLOWX1011` page repeats it. **Every one of those examples is
+      uncompilable.** The fix is in `FlowEmitter`, which is why it is not fixed here — it
+      needs its own package
 
 ### WP-10 · what it delivered
 
@@ -316,7 +376,7 @@ Three more surfaced while getting the suite green:
 
 | Found | Was |
 |---|---|
-| `.Emit<T>()` publishes nothing | Silent. Now **FLOWX1024**, the only warning in the set |
+| `.Emit<T>()` publishes nothing | Silent. Now **FLOWX1024**, the first warning in the set — since joined by `FLOWX1011` and `FLOWX1025` |
 | Allocation budgets measured 376 B in Debug | Compiler scaffolding, not the engine. CI runs Release and never saw it; every contributor did. Now skipped in Debug, with the reason |
 | The walker read `ArgumentNullException.ThrowIfNull(flow)` as a chain | A statement *after* the chain would have silently replaced it. The walk is now rooted at the builder parameter |
 

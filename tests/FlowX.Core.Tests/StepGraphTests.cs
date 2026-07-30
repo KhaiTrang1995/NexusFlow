@@ -286,6 +286,182 @@ public sealed class StepGraphTests
         graph[1].Target.ShouldBe(3);
     }
 
+    // ------------------------------------------------------------------ parallel
+
+    [Fact]
+    public void AParallelCarriesATargetPerBranchAndOneForTheJoin()
+    {
+        var node = StepNode.ForParallel(0, [1, 3], joinTarget: 5, MergeStrategy.AllSettled);
+
+        node.Kind.ShouldBe(StepKind.Parallel);
+        node.BranchTargets.ShouldBe([1, 3]);
+        node.Target.ShouldBe(5, "The join is where control resumes once the merge is satisfied.");
+        node.Merge.ShouldBe(MergeStrategy.AllSettled);
+        node.CaseTargets.ShouldBeEmpty("Branch targets are not case targets; they mean the opposite thing.");
+        node.IsCompensable.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AParallelDefaultsToTheStrictestMerge()
+    {
+        // default(MergeStrategy) is AllMustSucceed. A default that tolerated a failed
+        // branch would be the wrong way round: silence should not buy leniency.
+        StepNode.ForParallel(0, [1, 2], joinTarget: 3).Merge.ShouldBe(MergeStrategy.AllMustSucceed);
+    }
+
+    [Fact]
+    public void AcceptsTheFullParallelLayout()
+    {
+        // The shape the emitter produces for
+        // `.Step<A>().Parallel(p => p.Branch<B>().Branch(x => x.Step<C>().Step<D>()), merge).Step<E>()`.
+        // No closing jumps: a branch's range ends where the next branch begins, so a jump
+        // to the join would be a step that only restates the range bound.
+        var graph = StepGraph.Create([
+            Step(0, Fixtures.ValidateOrder),
+            StepNode.ForParallel(1, [2, 3], joinTarget: 5),
+            Step(2, Fixtures.ReserveInventory),
+            Step(3, Fixtures.CapturePayment),
+            Step(4, Fixtures.ValidateOrder),
+            Step(5, Fixtures.CapturePayment),
+        ]);
+
+        graph.Count.ShouldBe(6);
+        graph[1].BranchTargets.ShouldBe([2, 3]);
+        graph[1].Target.ShouldBe(5);
+    }
+
+    [Fact]
+    public void AParallelMayJoinOnePastTheLastStepBecauseThatEndsTheFlow()
+    {
+        var graph = StepGraph.Create([
+            StepNode.ForParallel(0, [1, 2], joinTarget: 3),
+            Step(1, Fixtures.ReserveInventory),
+            Step(2, Fixtures.CapturePayment),
+        ]);
+
+        graph[0].Target.ShouldBe(3);
+    }
+
+    [Theory]
+    [InlineData(new int[0])]
+    [InlineData(new[] { 3 })]
+    public void RejectsAParallelWithFewerThanTwoBranches(int[] targets)
+    {
+        // One branch is a sequence wearing a costume: it would buy a linked token, a task
+        // array and an await for work that happens in exactly one order anyway. The
+        // generator lays such a declaration out inline, so reaching here is a layout bug.
+        Should.Throw<InvalidFlowPlanException>(
+                () => StepNode.ForParallel(2, targets, joinTarget: 9))
+            .Message.ShouldContain("two");
+    }
+
+    [Theory]
+    [InlineData(new[] { 3, 3 })]
+    [InlineData(new[] { 5, 4 })]
+    public void RejectsBranchTargetsThatDoNotStrictlyAscend(int[] targets)
+    {
+        // Equal targets give a branch an empty range, and a branch that runs no steps
+        // still counts towards a quorum — which is a silent way to turn Quorum(2) into
+        // Quorum(1). Descending targets give two branches an overlapping range, so the
+        // same step would run twice and be compensated twice.
+        Should.Throw<InvalidFlowPlanException>(
+                () => StepNode.ForParallel(2, targets, joinTarget: 9))
+            .Message.ShouldContain("ascending");
+    }
+
+    [Fact]
+    public void RejectsABranchTargetThatDoesNotPointForward()
+        => Should.Throw<InvalidFlowPlanException>(
+                () => StepNode.ForParallel(4, [2, 6], joinTarget: 9))
+            .Message.ShouldContain("ascending");
+
+    [Fact]
+    public void RejectsAJoinThatIsNotPastTheLastBranch()
+    {
+        // The last branch owns [lastTarget, join). A join at or before the last target
+        // gives it an empty range, so its steps would never run at all while the merge
+        // still waited for it.
+        Should.Throw<InvalidFlowPlanException>(
+                () => StepNode.ForParallel(0, [1, 3], joinTarget: 3))
+            .Message.ShouldContain("past its last branch");
+    }
+
+    [Fact]
+    public void RejectsABranchTargetPastTheEndOfTheGraph()
+    {
+        // Only the graph knows the length. Left unchecked, this is not a wrong answer but
+        // an IndexOutOfRangeException thrown from a thread-pool thread halfway through a
+        // fork — the worst place in the runtime to discover a layout bug.
+        var error = Should.Throw<InvalidFlowPlanException>(() => StepGraph.Create([
+            StepNode.ForParallel(0, [1, 9], joinTarget: 10),
+            Step(1, Fixtures.ReserveInventory),
+            Step(2, Fixtures.CapturePayment),
+        ]));
+
+        // The branch target is named, not the join. A fork's join is by construction its
+        // largest target, so a message that always named the join would never name the
+        // block that is actually wrong.
+        error.Message.ShouldContain("9");
+    }
+
+    [Fact]
+    public void RejectsAParallelJoinPastTheEndOfTheGraph()
+        => Should.Throw<InvalidFlowPlanException>(() => StepGraph.Create([
+            StepNode.ForParallel(0, [1, 2], joinTarget: 7),
+            Step(1, Fixtures.ReserveInventory),
+            Step(2, Fixtures.CapturePayment),
+        ]));
+
+    [Fact]
+    public void EveryTargetOfAParallelStillPointsForwardSoTheLoopTerminates()
+    {
+        // The termination proof does not weaken for a fork: each branch is a forward-only
+        // walk over a bounded sub-range of the same array, and the ranges are disjoint.
+        var graph = StepGraph.Create([
+            StepNode.ForParallel(0, [1, 3], joinTarget: 5),
+            Step(1, Fixtures.ReserveInventory),
+            StepNode.ForJump(2, target: 3),
+            Step(3, Fixtures.CapturePayment),
+            Step(4, Fixtures.ValidateOrder),
+            Step(5, Fixtures.ValidateOrder),
+        ]);
+
+        foreach (var step in graph.Steps)
+        {
+            foreach (var target in step.BranchTargets)
+            {
+                target.ShouldBeGreaterThan(step.Index);
+                target.ShouldBeLessThanOrEqualTo(graph.Count);
+            }
+        }
+    }
+
+    [Fact]
+    public void AParallelDescribesItselfWithItsBranchesAndItsMerge()
+        => StepNode.ForParallel(1, [2, 3], joinTarget: 4, MergeStrategy.Quorum(2))
+            .ToString()
+            .ShouldBe("[1] parallel 2, 3 (Quorum(2)), join 4");
+
+    [Fact]
+    public void APlanKnowsWhetherItForksSoTheRuntimeNeverHasToScan()
+    {
+        var linear = ExecutionPlan.Create(
+            FlowDescriptor.Create("order.linear", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(1)),
+            StepGraph.Create([Step(0, Fixtures.ValidateOrder)]));
+
+        var forking = ExecutionPlan.Create(
+            FlowDescriptor.Create("order.forking", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(1)),
+            StepGraph.Create([
+                StepNode.ForParallel(0, [1, 2], joinTarget: 3),
+                Step(1, Fixtures.ReserveInventory),
+                Step(2, Fixtures.CapturePayment),
+            ]));
+
+        linear.HasParallel.ShouldBeFalse(
+            "A flow that never forks must not pay for the guarding a forking one needs.");
+        forking.HasParallel.ShouldBeTrue();
+    }
+
     [Fact]
     public void TheGraphIsImmutableOnceBuilt()
     {

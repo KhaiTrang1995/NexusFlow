@@ -97,6 +97,13 @@ flows it is a warning — see [FLOWX1011](diagnostics/FLOWX1011.md) for what the
 detects, what it provably cannot, and why `ctx.UtcNow` is permitted where
 `DateTime.UtcNow` is not.
 
+**The rule is not only about `When`.** It applies to every builder method that takes
+the flow context — the `Switch` and `ForEach` selectors, the `Return` projection, the
+`Emit` and `EmitOnFailure` payload maps, and the `Step<TCapability, TStepIn>` and
+`SubFlow` input mappings — and the analyzer checks all of them, naming the construct
+it found, so a message reads "the `Return` projection in flow 'X'…" rather than "the
+condition". [The list is on the rule's page](diagnostics/FLOWX1011.md#which-delegates-it-covers).
+
 ### 3.2 Branch on a value
 
 ```csharp
@@ -107,7 +114,8 @@ flow.Switch(ctx => ctx.Get<ValidatedOrder>().Channel)
 ```
 
 The selector obeys the same determinism rule as a `When` predicate: context,
-input and prior step results only. It is evaluated **exactly once**, and the
+input and prior step results only — enforced by `FLOWX1011`, which reports it as
+"the `Switch` selector". It is evaluated **exactly once**, and the
 cases are then tested against the value it produced, in declaration order, with
 `EqualityComparer<TValue>.Default` — so an `enum`, an `int` and a `string` all
 mean what you expect and none of them is boxed. The first match wins; a second
@@ -154,9 +162,36 @@ flow.Parallel(p => p
     .Step<Decide>();
 ```
 
-Branches write to disjoint context slots (`FLOWX1013`); they share the flow's
-deadline; failure semantics per `MergeStrategy` — see
+Branches write to disjoint context slots ([`FLOWX1013`](diagnostics/FLOWX1013.md)); they
+share the flow's deadline; failure semantics per `MergeStrategy` — see
 [06 §9](06-Execution-Engine.md#9-concurrency-and-parallel-steps).
+
+A branch is either a single capability, `Branch<T>()`, or a whole chain,
+`Branch(b => b.Step<A>().Step<B>())`; the two are the same concept with two spellings and
+compile to the same shape. A `Parallel` with fewer than two branches is laid out **inline**,
+with no fork node at all — running one thing concurrently is running it, and publishing a
+decision the flow does not make would put a lie in the manifest.
+
+```csharp
+flow.Parallel(p => p
+        .Branch<CheckCredit>()
+        .Branch<CheckFraud>()
+        .Branch(sanctions => sanctions
+            .Step<LoadWatchlist>()
+            .Step<CheckSanctions>()),
+     merge: MergeStrategy.Quorum(2))
+    .Step<Decide>();
+```
+
+`MergeStrategy` is a struct rather than an enum, so `Quorum(n)` can carry its number;
+`default(MergeStrategy)` is `AllMustSucceed`. Under `AllSettled` the step after the join
+reads each branch's outcome with `ctx.Get<ParallelOutcome>()`.
+
+Two things are worth knowing before reaching for it. Branches are as concurrent as their
+steps are — a branch whose steps all complete synchronously finishes before its sibling
+starts, so a fork buys nothing for CPU-bound work. And a fork allocates, roughly 240 B per
+branch; the zero-allocation budget covers the linear, conditional and switch paths and
+deliberately does not cover this one.
 
 ### 3.4 Iteration
 

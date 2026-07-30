@@ -4,9 +4,9 @@ namespace FlowX.Compiler.Model;
 
 /// <summary>What one call in a <c>Define</c> chain declared.</summary>
 /// <remarks>
-/// The remaining branching kinds — parallel, for-each, sub-flow — arrive with the DSL
-/// surface that can express them. Modelling them now would be shapes nothing can produce
-/// and no test can exercise.
+/// The remaining branching kinds — for-each, sub-flow — arrive with the DSL surface that
+/// can express them. Modelling them now would be shapes nothing can produce and no test
+/// can exercise.
 /// </remarks>
 public enum StepKindModel
 {
@@ -24,6 +24,45 @@ public enum StepKindModel
 
     /// <summary><c>.Switch(selector)</c>, with the <c>.Case(...)</c> and <c>.Default(...)</c> that follow it.</summary>
     Switch = 4,
+
+    /// <summary><c>.Parallel(p =&gt; p.Branch...(), merge)</c>.</summary>
+    Parallel = 5,
+}
+
+/// <summary>One branch of a <c>Parallel</c>: a block of steps that runs concurrently with its siblings.</summary>
+/// <remarks>
+/// Thinner than <see cref="SwitchCaseModel"/> because there is nothing to match on. A case
+/// answers "was it this value?" and so carries one; a branch answers nothing, it simply
+/// runs — which is also why a branch has no closing jump where a case does.
+/// </remarks>
+public sealed class ParallelBranchModel
+{
+    /// <summary>Models one <c>.Branch(...)</c> call.</summary>
+    /// <param name="steps">The branch's steps, already carrying their flat indices.</param>
+    /// <param name="location"><c>file:line</c> of the <c>.Branch</c> call.</param>
+    public ParallelBranchModel(IReadOnlyList<StepModel>? steps = null, string? location = null)
+    {
+        Steps = steps ?? System.Array.Empty<StepModel>();
+        Location = location;
+    }
+
+    /// <summary>Steps declared in this branch, in declaration order.</summary>
+    public IReadOnlyList<StepModel> Steps { get; }
+
+    /// <summary><c>file:line</c> of the <c>.Branch</c> call, so a diagnostic names one branch.</summary>
+    public string? Location { get; }
+
+    /// <summary>
+    /// Where this branch's range begins: the index of its first step.
+    /// </summary>
+    /// <remarks>
+    /// Derived by <see cref="StepModel.Parallel"/> from the block itself, never supplied,
+    /// for the reason given on <see cref="SwitchCaseModel.Target"/>. A branch also has no
+    /// stored <em>end</em>: it runs up to the next branch's target, or to the join for the
+    /// last one, so storing an end would be a second copy of a fact the ordering already
+    /// carries and a chance for the two to disagree.
+    /// </remarks>
+    public int Target { get; internal set; }
 }
 
 /// <summary>One arm of a <c>Switch</c>: a value to match, and the block to run when it does.</summary>
@@ -228,6 +267,42 @@ public sealed record StepModel
     /// </remarks>
     public int DefaultTarget { get; private init; }
 
+    /// <summary>The <c>.Branch(...)</c> blocks of a <c>Parallel</c>, in declaration order. Empty for every other kind.</summary>
+    public IReadOnlyList<ParallelBranchModel> Branches { get; private init; } = System.Array.Empty<ParallelBranchModel>();
+
+    /// <summary>
+    /// The <c>merge:</c> argument's source text, copied verbatim, or <c>null</c> for every
+    /// other kind.
+    /// </summary>
+    /// <remarks>
+    /// Verbatim for the same reason the predicate and the case values are: an author may
+    /// write <c>MergeStrategy.Quorum(RequiredChecks)</c>, and reconstructing an arbitrary
+    /// C# expression means re-rendering every form the language has and being wrong on the
+    /// first one nobody thought of. It reaches the generated plan and nothing else.
+    /// </remarks>
+    public string? MergeExpression { get; private init; }
+
+    /// <summary>
+    /// Which <c>MergeKind</c> the expression names — <c>AllMustSucceed</c>, <c>Quorum</c>
+    /// and so on — or <c>null</c> when it could not be read statically.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the half that reaches the manifest, and it is a <em>name</em> rather than
+    /// the expression precisely because the manifest publishes structure and never values.
+    /// "This fork waits for a quorum" is structure; how large the quorum is comes from an
+    /// expression that may be a constant on the flow, and the difference is not worth
+    /// arguing about at a schema boundary.
+    /// </para>
+    /// <para>
+    /// <c>null</c> when the argument is something this reader cannot name — a variable, a
+    /// method call, a strategy chosen by a helper. The compiled plan is still exactly right
+    /// in that case, because the plan copies the expression; only the manifest loses the
+    /// label, and omitting a field is more honest than guessing one.
+    /// </para>
+    /// </remarks>
+    public string? MergeKindName { get; private init; }
+
     /// <summary>Steps declared in the <c>then</c> block, in declaration order.</summary>
     public IReadOnlyList<StepModel> Then { get; private init; } = System.Array.Empty<StepModel>();
 
@@ -271,7 +346,9 @@ public sealed record StepModel
     /// to know how deep it goes.
     /// </remarks>
     public int NextIndex =>
-        Kind is StepKindModel.Condition or StepKindModel.Switch ? JoinIndex : Index + 1;
+        Kind is StepKindModel.Condition or StepKindModel.Switch or StepKindModel.Parallel
+            ? JoinIndex
+            : Index + 1;
 
     /// <summary>True when the step declared a compensation.</summary>
     public bool IsCompensable => CompensationTypeName != null;
@@ -324,6 +401,17 @@ public sealed record StepModel
                 foreach (var step in nested.SelfAndNested)
                 {
                     yield return step;
+                }
+            }
+
+            foreach (var branch in Branches)
+            {
+                foreach (var nested in branch.Steps)
+                {
+                    foreach (var step in nested.SelfAndNested)
+                    {
+                        yield return step;
+                    }
                 }
             }
         }
@@ -525,6 +613,72 @@ public sealed record StepModel
             Cases = resolved,
             Default = defaultSteps,
             DefaultTarget = defaultSteps.Count == 0 ? join : defaultSteps[0].Index,
+            JoinIndex = join,
+            Location = location,
+        };
+    }
+
+    /// <summary>Models a <c>.Parallel(p =&gt; p.Branch…(), merge)</c> and lays its branches out in the flat index space.</summary>
+    /// <param name="index">Flat index of the fork itself.</param>
+    /// <param name="branches">The branches, already carrying their blocks' flat indices. Each must be non-empty.</param>
+    /// <param name="mergeExpression">The <c>merge:</c> argument's source text, copied verbatim.</param>
+    /// <param name="mergeKindName">Which <c>MergeKind</c> the expression names, or <c>null</c> when unreadable.</param>
+    /// <param name="location"><c>file:line</c> of the <c>.Parallel</c> call.</param>
+    /// <remarks>
+    /// <para>
+    /// The layout is <c>parallel · branch₀… · branch₁… · …</c>, and — unlike
+    /// <see cref="Switch"/> — <strong>there are no closing jumps</strong>. A case block
+    /// needs one because the arms are laid out adjacently and a taken arm would otherwise
+    /// fall into the next; a branch does not, because the engine runs each branch as a
+    /// bounded range and the next branch's target <em>is</em> the bound. Emitting jumps
+    /// anyway would put steps in the graph whose only job is to restate a number the
+    /// layout already carries.
+    /// </para>
+    /// <para>
+    /// Every number here is derived from the blocks rather than passed in, for the reason
+    /// given on <see cref="Condition"/>: a caller able to state a target that disagreed
+    /// with the block it also supplied could produce a plan that runs the wrong steps
+    /// concurrently, which is a race rather than merely a wrong answer.
+    /// </para>
+    /// <para>
+    /// An empty branch is not laid out and not modelled — <c>FlowAnalyzer</c> drops it
+    /// before it gets here, and <c>StepNode.ForParallel</c> rejects the layout it would
+    /// produce. A branch that runs no steps would still count towards a quorum, which is a
+    /// silent way to make <c>Quorum(2)</c> mean <c>Quorum(1)</c>.
+    /// </para>
+    /// </remarks>
+    public static StepModel Parallel(
+        int index,
+        IReadOnlyList<ParallelBranchModel> branches,
+        string mergeExpression,
+        string? mergeKindName = null,
+        string? location = null)
+    {
+        var blocks = branches ?? (IReadOnlyList<ParallelBranchModel>)System.Array.Empty<ParallelBranchModel>();
+        var join = index + 1;
+
+        foreach (var branch in blocks)
+        {
+            if (branch.Steps.Count == 0)
+            {
+                continue;
+            }
+
+            branch.Target = branch.Steps[0].Index;
+
+            var end = branch.Steps[branch.Steps.Count - 1].NextIndex;
+
+            if (end > join)
+            {
+                join = end;
+            }
+        }
+
+        return new StepModel(index, StepKindModel.Parallel)
+        {
+            Branches = blocks,
+            MergeExpression = mergeExpression,
+            MergeKindName = mergeKindName,
             JoinIndex = join,
             Location = location,
         };

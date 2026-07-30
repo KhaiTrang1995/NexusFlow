@@ -12,9 +12,15 @@ namespace FlowX;
 /// buys.
 /// </para>
 /// <para>
-/// The remaining branching kinds — parallel, for-each, sub-flow — arrive with the DSL
-/// surface that can express them. Adding them here first would be speculative: shapes
-/// nothing can construct and no test can exercise.
+/// <see cref="Parallel"/> is the first kind that is <em>not</em> a jump. It uses the same
+/// flat layout — one node carrying a target per block — but the engine runs every block
+/// instead of choosing one, so the loop index stops describing execution for the duration
+/// of the step. See <see cref="StepNode.BranchTargets"/> for what the layout still buys.
+/// </para>
+/// <para>
+/// The remaining branching kinds — for-each, sub-flow — arrive with the DSL surface that
+/// can express them. Adding them here first would be speculative: shapes nothing can
+/// construct and no test can exercise.
 /// </para>
 /// </remarks>
 public enum StepKind
@@ -49,6 +55,19 @@ public enum StepKind
     /// saving, since the flat layout is identical either way.
     /// </remarks>
     Switch = 5,
+
+    /// <summary>
+    /// Runs every one of <see cref="StepNode.BranchTargets"/> concurrently and continues at
+    /// <see cref="StepNode.Target"/> once <see cref="StepNode.Merge"/> is satisfied.
+    /// </summary>
+    /// <remarks>
+    /// The one kind whose blocks all run. A <see cref="Switch"/> and a <see cref="Parallel"/>
+    /// have the identical flat layout — a node, then one block per arm, each closed by a
+    /// jump to the join — and differ only in what the engine does when it reaches the node.
+    /// Keeping the layout identical is what let the branch shape reuse the arithmetic,
+    /// the graph validation and the manifest's <c>branches</c> array unchanged.
+    /// </remarks>
+    Parallel = 6,
 }
 
 /// <summary>
@@ -135,6 +154,40 @@ public sealed record StepNode
     /// which is what keeps business data out of the plan and out of the manifest.
     /// </remarks>
     public ImmutableArray<int> CaseTargets { get; private init; } = ImmutableArray<int>.Empty;
+
+    /// <summary>
+    /// Where each branch of a <see cref="StepKind.Parallel"/> begins, in declaration order.
+    /// Empty for every other kind.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Strictly ascending, and every entry lies between this node and <see cref="Target"/>.
+    /// That is not tidiness: it is what makes each branch's <em>range</em> derivable without
+    /// storing it. Branch <c>k</c> occupies <c>[BranchTargets[k], BranchTargets[k + 1])</c>,
+    /// and the last occupies <c>[BranchTargets[^1], Target)</c> — so the engine runs a
+    /// branch by running the ordinary step loop over a sub-range, and the same forward-only
+    /// target rule that proves a linear flow terminates proves a branch does.
+    /// </para>
+    /// <para>
+    /// Distinct from <see cref="CaseTargets"/> even though the arithmetic is identical,
+    /// because the two mean opposite things: a case target is a destination control
+    /// <em>may</em> take, a branch target is a range that <em>will</em> run. Sharing one
+    /// property would have made <c>IsControlTransfer</c>, the engine's dispatch and every
+    /// reader of a plan ambiguous about which it was looking at.
+    /// </para>
+    /// </remarks>
+    public ImmutableArray<int> BranchTargets { get; private init; } = ImmutableArray<int>.Empty;
+
+    /// <summary>
+    /// How a <see cref="StepKind.Parallel"/> joins its branches.
+    /// <see cref="MergeStrategy.AllMustSucceed"/> for every other kind, and unread there.
+    /// </summary>
+    /// <remarks>
+    /// Structure, not a value: it says how the flow is shaped, never anything about the
+    /// data flowing through it, which is why it may safely reach the manifest where a
+    /// predicate and a case value may not.
+    /// </remarks>
+    public MergeStrategy Merge { get; private init; }
 
     /// <summary>True when this step declared a compensation.</summary>
     public bool IsCompensable => Compensation is not null;
@@ -288,6 +341,91 @@ public sealed record StepNode
         };
     }
 
+    /// <summary>Creates a concurrent fork.</summary>
+    /// <param name="index">Position in the graph.</param>
+    /// <param name="branchTargets">
+    /// Where each branch begins, in declaration order. Copied, never aliased. Must be
+    /// strictly ascending, must point forward, and there must be at least two — one branch
+    /// is not parallel.
+    /// </param>
+    /// <param name="joinTarget">
+    /// Where control continues once the merge is satisfied: the first step after every
+    /// branch. Must be greater than the last branch target, so every branch has a
+    /// non-empty range.
+    /// </param>
+    /// <param name="merge">How the branches are joined.</param>
+    /// <exception cref="InvalidFlowPlanException">
+    /// There are fewer than two branches, a target does not point forward, the targets are
+    /// not strictly ascending, or the join does not lie past the last branch.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>Two branches minimum, enforced here.</strong> A one-branch <c>Parallel</c>
+    /// is a sequence wearing a costume: it would buy a linked token, a task array and an
+    /// await for work that runs in exactly one order anyway. The generator lays such a
+    /// declaration out inline instead, exactly as it does a <c>Switch</c> with no
+    /// <c>Case</c>, so this rejects a layout bug rather than a thing an author can write.
+    /// </para>
+    /// <para>
+    /// <strong>Empty branches are unrepresentable</strong>, because two equal targets are
+    /// not strictly ascending. An empty branch would contribute nothing to the merge while
+    /// still counting towards a quorum, which is a silent way to make
+    /// <c>Quorum(2)</c> mean <c>Quorum(1)</c>.
+    /// </para>
+    /// </remarks>
+    public static StepNode ForParallel(
+        int index,
+        IReadOnlyList<int> branchTargets,
+        int joinTarget,
+        MergeStrategy merge = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        ArgumentNullException.ThrowIfNull(branchTargets);
+
+        if (branchTargets.Count < 2)
+        {
+            throw new InvalidFlowPlanException(
+                $"Step {index} is a parallel fork with {branchTargets.Count} branch(es). " +
+                "Concurrency needs at least two things to be concurrent; one branch is a " +
+                "sequence, and running it through a fork buys a linked token and a task " +
+                "array for work that happens in exactly one order anyway.");
+        }
+
+        var targets = ImmutableArray.CreateBuilder<int>(branchTargets.Count);
+        var previous = index;
+
+        foreach (var target in branchTargets)
+        {
+            if (target <= previous)
+            {
+                throw new InvalidFlowPlanException(
+                    $"Step {index} is a parallel fork whose branch targets are not strictly " +
+                    $"ascending: {target} does not follow {previous}. Each branch owns the " +
+                    "range from its own target up to the next one, so equal or descending " +
+                    "targets would give a branch an empty or overlapping range — and a " +
+                    "branch that runs no steps still counts towards a quorum.");
+            }
+
+            targets.Add(RequireForwardTarget(index, target, "parallel branch"));
+            previous = target;
+        }
+
+        if (joinTarget <= previous)
+        {
+            throw new InvalidFlowPlanException(
+                $"Step {index} is a parallel fork joining at step {joinTarget}, which is " +
+                $"not past its last branch at step {previous}. The join is where control " +
+                "resumes after every branch has run, so it must lie beyond all of them.");
+        }
+
+        return new StepNode(index, StepKind.Parallel)
+        {
+            BranchTargets = targets.MoveToImmutable(),
+            Target = RequireForwardTarget(index, joinTarget, "parallel join"),
+            Merge = merge,
+        };
+    }
+
     /// <summary>
     /// Rejects a target that does not point forward.
     /// </summary>
@@ -322,6 +460,7 @@ public sealed record StepNode
         StepKind.Branch => $"[{Index}] branch, else {Target}",
         StepKind.Jump => $"[{Index}] jump {Target}",
         StepKind.Switch => $"[{Index}] switch {string.Join(", ", CaseTargets)}, else {Target}",
+        StepKind.Parallel => $"[{Index}] parallel {string.Join(", ", BranchTargets)} ({Merge}), join {Target}",
         _ => $"[{Index}] {Kind}",
     };
 }

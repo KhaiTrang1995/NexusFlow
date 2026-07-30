@@ -25,12 +25,14 @@ public sealed class ExecutionPlan
         FlowDescriptor flow,
         StepGraph graph,
         ImmutableArray<int> compensableStepIndices,
-        ImmutableArray<string> sideEffects)
+        ImmutableArray<string> sideEffects,
+        bool hasParallel)
     {
         Flow = flow;
         Graph = graph;
         CompensableStepIndices = compensableStepIndices;
         SideEffects = sideEffects;
+        HasParallel = hasParallel;
     }
 
     /// <summary>The flow this plan executes.</summary>
@@ -58,6 +60,19 @@ public sealed class ExecutionPlan
     /// <summary>True when any step declares a compensation.</summary>
     public bool HasCompensation => !CompensableStepIndices.IsEmpty;
 
+    /// <summary>
+    /// True when any step is a <see cref="StepKind.Parallel"/> fork, and therefore when
+    /// more than one thread can touch this flow's context at once.
+    /// </summary>
+    /// <remarks>
+    /// Precomputed here for the same reason <see cref="CompensableStepIndices"/> is, but
+    /// with a sharper consequence: it is what the runtime reads to decide whether the
+    /// flow's state bag needs guarding. A flow that does not fork pays nothing for the
+    /// possibility that another one does, which is what keeps budget B2 at a hard zero for
+    /// the linear, conditional and switch paths.
+    /// </remarks>
+    public bool HasParallel { get; }
+
     /// <summary>Builds a validated plan.</summary>
     /// <param name="flow">The flow's identity and profile.</param>
     /// <param name="graph">Its compiled step sequence.</param>
@@ -73,6 +88,7 @@ public sealed class ExecutionPlan
 
         var compensable = ImmutableArray.CreateBuilder<int>();
         var effects = new SortedSet<string>(StringComparer.Ordinal);
+        var parallel = false;
 
         foreach (var step in graph.Steps)
         {
@@ -81,11 +97,13 @@ public sealed class ExecutionPlan
                 compensable.Add(step.Index);
             }
 
+            parallel |= step.Kind == StepKind.Parallel;
+
             AddEffects(effects, step.Capability);
             AddEffects(effects, step.Compensation);
         }
 
-        return new ExecutionPlan(flow, graph, compensable.ToImmutable(), [.. effects]);
+        return new ExecutionPlan(flow, graph, compensable.ToImmutable(), [.. effects], parallel);
     }
 
     private static void AddEffects(SortedSet<string> effects, CapabilityDescriptor? capability)

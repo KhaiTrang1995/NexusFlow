@@ -11,9 +11,11 @@ from at run time, or expensive enough that discovering it in production is the w
 place. A warning is a rule nobody has to obey; if a rule is worth having, it stops
 the build.
 
-Two entries below are not errors, and each says why on its own page.
-[FLOWX1024](FLOWX1024.md) reports a gap between the manifest and the runtime rather
-than a mistake in the source. [FLOWX1011](FLOWX1011.md) is an error in `Durable`
+Three entries below are not errors, and each says why on its own page.
+[FLOWX1024](FLOWX1024.md) and [FLOWX1025](FLOWX1025.md) report gaps between the
+manifest and what the build can actually deliver, rather than mistakes in the source
+— and `FLOWX1025` is additionally about an attribute the developer usually does not
+own, which an error would make unusable. [FLOWX1011](FLOWX1011.md) is an error in `Durable`
 flows and a warning in `Ephemeral` ones, which is the asymmetry
 [ADR-0003](../adr/ADR-0003-execution-profiles.md) ratified for the determinism rules:
 a durable flow is replayed and must take the branch it took the first time, an
@@ -29,7 +31,8 @@ ephemeral one is not replayed at all.
 | [FLOWX1004](FLOWX1004.md) | Capability invokes another capability | Turning the capability set back into a call graph |
 | [FLOWX1005](FLOWX1005.md) | Flow inherits from another flow | Control flow invisible to the graph and the manifest |
 | [FLOWX1010](FLOWX1010.md) | Capability declares no authorisation stance | A permissive default nobody chose |
-| [FLOWX1011](FLOWX1011.md) | Condition reads something outside the flow's state | A branch that takes a different path on replay |
+| [FLOWX1011](FLOWX1011.md) | Condition, selector or projection reads something outside the flow's state | A branch that takes a different path on replay, or a step input that is not the journaled one |
+| [FLOWX1013](FLOWX1013.md) | Parallel branches must write disjoint context slots | **Two concurrent branches racing on one context slot** |
 | [FLOWX1014](FLOWX1014.md) | Retry requires an idempotent capability | **A duplicate charge** |
 | [FLOWX1015](FLOWX1015.md) | Capability implements more than one contract | Ambiguous dispatch, meaningless manifest entry |
 | [FLOWX1017](FLOWX1017.md) | AwaitSignal requires the Durable profile | A waiting flow vanishing with its node |
@@ -37,6 +40,7 @@ ephemeral one is not replayed at all.
 | [FLOWX1020](FLOWX1020.md) | Step consumes a contract no earlier step produces | A flow that throws on its first request |
 | [FLOWX1023](FLOWX1023.md) | Flow declares no steps | A flow that silently does nothing |
 | [FLOWX1024](FLOWX1024.md) | Emit step is recorded but not published | A consumer waiting for an event the manifest promised |
+| [FLOWX1025](FLOWX1025.md) | Trigger attribute cannot be read by the compiler | A trigger missing from the manifest, and `flowx diff` unable to tell |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -50,7 +54,9 @@ ephemeral one is not replayed at all.
 > about step order that fires on a valid flow would be suppressed and then protect
 > nothing. `FLOWX1011` has both kinds at once: its scope rules are a proof, its
 > catalogue of impure statics is a list, and it is not interprocedural — a helper
-> method called from a condition can read a clock and it will not notice.
+> method called from a condition can read a clock and it will not notice. It covers
+> every `IFlowBuilder` delegate that takes the flow context, not only `When`; the
+> constructs are a table on its page.
 
 ## Ids reserved but not yet raised
 
@@ -58,11 +64,18 @@ The catalogue is deliberately smaller than the numbering suggests. Codes appear 
 only once the compiler actually reports them — a documented diagnostic that nothing
 raises is a promise the compiler is not keeping. Reserved for later phases:
 `FLOWX1006` (state must be serialisable), `FLOWX1007`–`FLOWX1009` (determinism in
-durable flows), `FLOWX1012`–`FLOWX1013` (compensable-and-ephemeral, parallel branch
-disjointness), `FLOWX1016` (expected failures are values), `FLOWX1019` (deadline coherence),
+durable flows), `FLOWX1012` (compensable-and-ephemeral),
+`FLOWX1016` (expected failures are values), `FLOWX1019` (deadline coherence),
 `FLOWX1021` (sub-flow cycles) and `FLOWX1022` (contract compatibility **across
 versions** — the analyzer counterpart of `flowx diff`, distinct from `FLOWX1020`,
 which checks one flow's steps against each other).
+
+**A new rule takes the next id above the catalogue, never a reserved one.** Each
+reservation above already has a meaning written down in at least one other document,
+and reusing one would leave two rules describing themselves with the same number —
+a mistake this project has already made once, when a check was built as `FLOWX1022`
+while three documents described it as `FLOWX1020`. `FLOWX1025` was the first id
+neither raised nor reserved; the next is `FLOWX1026`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 
