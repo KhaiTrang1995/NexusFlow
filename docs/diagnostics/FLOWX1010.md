@@ -19,6 +19,24 @@ There is no permissive default anywhere in FlowX. Authorisation attaches to the 
     Authorization = Authorization.Permission, Permission = "payment.write")]
 ```
 
+## The quick action, and what it withholds
+
+An IDE fix offers exactly two stances: **`Authenticated`** and **`Internal`**.
+
+`Public` is deliberately absent. Offering it would clear a security error with one
+keystroke and make the capability world-readable — the outcome this rule exists to
+prevent — and it additionally requires an `[ApprovedBy]` that no tool can author on
+your behalf.
+
+`Permission` and `Policy` are absent for a different reason: each needs a name that
+nothing in the source implies. Nothing rejects `Authorization.Permission` with no
+`Permission = "…"` alongside it, so emitting the stance alone would produce a
+declaration that compiles, reads as enforced, and reaches the manifest as a claim about
+access control that nothing backs. Write those two by hand.
+
+There is no **Fix All** for this diagnostic. Answering a security question once and
+applying the answer solution-wide is the permissive default wearing a different hat.
+
 ## When to suppress
 
 `Authorization.Public` is allowed and requires an `[ApprovedBy]` naming the reviewer. That is friction on purpose: an explicit, greppable, reviewable statement is not the same thing as an omission.
