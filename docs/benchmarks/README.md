@@ -10,6 +10,12 @@ The P0 kill-criterion verdict this harness exists to produce is in
 [**P0.md**](P0.md). Build overhead (**B12**) is in [**B12.md**](B12.md) — **+0.4 %** against a
 +8 % budget, measured with `scripts/measure-build-overhead.sh`.
 
+That figure is for the one-flow reference sample and does not survive scale.
+[**B12-scale.md**](B12-scale.md) measures P1's exit criterion — a 200-flow synthetic
+solution — and records **+23 %**, a **FAIL**, with `scripts/measure-scale-overhead.sh`.
+Quote the two together or neither: the same generator produces both numbers, and which one
+applies depends entirely on how many flows the project has.
+
 ---
 
 ## 1. Budget B1 — the engine, measured
