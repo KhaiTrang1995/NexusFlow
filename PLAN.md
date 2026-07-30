@@ -136,7 +136,7 @@ an exit criterion that is mechanically checkable.
 | **Exit** | The sample flow's plan is generated, readable, breakpoint-able; B1 ≤ 5 µs; build overhead ≤ 8 % on a 20-flow solution |
 | **Risk** | **R1.** If the generator's model layer and emission layer blur together here, P1 becomes unmaintainable. Keep them separate from the first commit. |
 | **Depends on** | WP-4 |
-| **Status** | **Partial.** Model, emitter and diagnostics done and tested (23 tests); the layer separation is enforced by fitness function. The Roslyn analysis layer and the incremental generator are not written. |
+| **Status** | **Partial.** Generating end to end against a real compilation; 40 tests. Remaining: five diagnostics that need a separate `DiagnosticAnalyzer`, the branching DSL, budget B12, and the exit criterion itself (needs WP-10's sample). |
 
 ### WP-6 — Manifest emission
 

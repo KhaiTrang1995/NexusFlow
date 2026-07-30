@@ -134,6 +134,44 @@ public sealed class CompilerFitnessTests
             "so adding one must be a reviewable diff in AnalyzerReleases.Unshipped.md.");
     }
 
+    /// <summary>
+    /// Every diagnostic's help URI must point at a page that exists.
+    /// </summary>
+    /// <remarks>
+    /// The URIs were written before the pages were, and for one commit every one of
+    /// them was a 404 — a broken promise made at the exact moment a developer is stuck.
+    /// This test is why that cannot happen twice.
+    /// </remarks>
+    [Fact]
+    public void EveryDiagnosticHasADocumentationPage()
+    {
+        var missing = FlowXDiagnostics.All
+            .Select(static d => d.Id)
+            .Where(id => !File.Exists(FindRepositoryDirectory("docs/diagnostics") + Path.DirectorySeparatorChar + id + ".md"))
+            .ToArray();
+
+        missing.ShouldBeEmpty(
+            "A help link that 404s is worse than no help link: it promises an " +
+            "explanation at the moment someone is blocked, and then does not deliver one.");
+    }
+
+    /// <summary>A documentation page must actually explain the fix, not just restate the rule.</summary>
+    [Fact]
+    public void EveryDiagnosticPageShowsBothTheProblemAndTheFix()
+    {
+        var directory = FindRepositoryDirectory("docs/diagnostics");
+
+        foreach (var id in FlowXDiagnostics.All.Select(static d => d.Id))
+        {
+            var page = File.ReadAllText(Path.Combine(directory, id + ".md"));
+
+            page.ShouldContain("## What it means", Case.Sensitive, $"{id}.md does not say what the rule means.");
+            page.ShouldContain("## Example that triggers it", Case.Sensitive, $"{id}.md shows no failing example.");
+            page.ShouldContain("## How to fix it", Case.Sensitive, $"{id}.md does not show the fix.");
+            page.ShouldContain("## When to suppress", Case.Sensitive, $"{id}.md does not say when suppression is legitimate.");
+        }
+    }
+
     /// <summary>Diagnostics are errors, not warnings, when they encode a safety rule.</summary>
     [Fact]
     public void SafetyDiagnosticsAreErrorsRatherThanWarnings()
@@ -158,6 +196,25 @@ public sealed class CompilerFitnessTests
         ConstructorInfo ctor => [.. ctor.GetParameters().Select(static p => p.ParameterType)],
         _ => [],
     };
+
+    private static string FindRepositoryDirectory(string relativePath)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(directory.FullName, relativePath);
+
+            if (Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException($"Could not locate '{relativePath}' from {AppContext.BaseDirectory}.");
+    }
 
     private static string FindRepositoryFile(string relativePath)
     {
