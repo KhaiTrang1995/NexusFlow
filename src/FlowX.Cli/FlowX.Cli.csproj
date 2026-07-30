@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>flowx</AssemblyName>
+    <RootNamespace>FlowX.Cli</RootNamespace>
+
+    <Description>
+      The FlowX command-line tool: renders the manifest as a diagram and extracts it
+      from a built assembly.
+    </Description>
+    <PackageTags>flowx;cli;dotnet-tool</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>flowx</ToolCommandName>
+
+    <!-- A tool people run dozens of times a day should start instantly. -->
+    <PublishAot>false</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Reads assembly metadata WITHOUT executing it. Assembly.LoadFrom would run module
+      initialisers and static constructors from a file the user pointed us at, which is
+      more trust than a diagram-rendering tool needs.
+    -->
+    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="10.0.0" />
+  </ItemGroup>
+
+  <!--
+    Deliberately no project reference to FlowX. The CLI consumes the manifest as data,
+    exactly as any third-party tool would — which is the strongest available evidence
+    that the manifest is genuinely self-describing rather than only usable from inside
+    this repository (ADR-0005). CliDependsOnNothingButTheManifest asserts it.
+  -->
+
+</Project>

@@ -90,6 +90,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'   # the flow-graph step below runs the CLI
+
       - name: Mermaid diagrams parse
         # 70+ diagrams across docs/ and samples/. A diagram that does not render is a
         # broken document, and GitHub gives no error when one fails silently.
@@ -111,6 +115,21 @@ jobs:
             done < /tmp/blocks.txt
           done < <(find docs samples -name '*.md')
           exit $fail
+
+      - name: Rendered flow graph parses
+        # WP-9's exit criterion. The renderer's unit tests check structure — every edge
+        # references a declared node, every subgraph is closed — but only a real Mermaid
+        # parser proves the file renders. A diagram that silently fails to render is the
+        # failure mode a human eye skims past.
+        run: |
+          dotnet build src/FlowX.Cli --configuration Release
+          dotnet run --configuration Release --project src/FlowX.Cli -- \
+            graph --manifest tests/FlowX.Cli.Tests/fixtures/sample.manifest.json \
+            --output /tmp/graph.mmd
+          npm install -g @mermaid-js/mermaid-cli
+          echo '{"args":["--no-sandbox"]}' > /tmp/pptr.json
+          mmdc -i /tmp/graph.mmd -o /tmp/graph.svg -p /tmp/pptr.json
+          test -s /tmp/graph.svg || { echo "::error::mmdc produced no output."; exit 1; }
 
       - name: Internal links resolve
         run: |

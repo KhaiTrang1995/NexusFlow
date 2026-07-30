@@ -180,6 +180,7 @@ an exit criterion that is mechanically checkable.
 | **Deliverable** | `FlowX.Cli` with the `graph` verb |
 | **Exit** | Rendered graph of the sample parses with `mmdc` in CI |
 | **Depends on** | WP-6 |
+| **Status** | **Done.** Verified: `mmdc` renders the diagram to a 58 KB SVG, and the check is now a CI step. Also delivered `flowx manifest`, the on-disk artifact WP-6 deferred. |
 
 ### WP-10 — Reference sample
 

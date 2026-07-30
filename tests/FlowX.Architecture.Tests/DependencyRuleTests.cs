@@ -65,6 +65,32 @@ public sealed class DependencyRuleTests
     }
 
     /// <summary>
+    /// The CLI reads the manifest as data and references no FlowX assembly.
+    /// </summary>
+    /// <remarks>
+    /// The strongest available evidence that the manifest is genuinely self-describing
+    /// (ADR-0005). The CLI is its first consumer that is not the compiler; if it needed
+    /// to import a FlowX type to make sense of the file, the manifest would be an
+    /// internal serialisation format wearing a contract's clothes, and no third-party
+    /// tool could consume it either.
+    /// </remarks>
+    [Fact]
+    public void CliDependsOnNothingButTheManifest()
+    {
+        var cli = RepositoryLayout.SourceProjects
+            .SingleOrDefault(static p => p.Name == "FlowX.Cli.csproj");
+
+        if (cli is null)
+        {
+            return;
+        }
+
+        RepositoryLayout.ProjectReferences(cli).ShouldBeEmpty(
+            "FlowX.Cli must consume the manifest exactly as a third-party tool would. " +
+            "A reference here would prove the document is not self-describing.");
+    }
+
+    /// <summary>
     /// A Roslyn component cannot reference the runtime assemblies at all.
     /// </summary>
     /// <remarks>
