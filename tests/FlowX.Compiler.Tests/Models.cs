@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using FlowX.Compiler.Model;
 
 namespace FlowX.Compiler.Tests;
@@ -116,6 +117,32 @@ internal static class Models
                 selectorLocation: "/src/Flows/Price.cs:13"),
             StepModel.Emit(7, "order.priced"),
         ]);
+
+    /// <summary>Every trigger kind the abstraction ships, declared on <c>order.place</c>.</summary>
+    public static FlowTriggersModel Triggers() => new(
+        "order.place",
+        [
+            new TriggerModel("Http", method: "POST", route: "/api/v1/orders", idempotent: true),
+            new TriggerModel("Bus", transport: "kafka", topic: "orders.requested", group: "order-placement"),
+            new TriggerModel("Schedule", cron: "0 2 * * *", timeZone: "Europe/Berlin"),
+            new TriggerModel("Stream", topic: "orders.stream"),
+            new TriggerModel(
+                "Agent",
+                description: "Place a customer order",
+                confirmation: "RequiredForSideEffects"),
+        ]);
+
+    /// <summary>A complete catalogue for each capability <see cref="PlaceOrder"/> invokes.</summary>
+    public static IReadOnlyList<CapabilityErrorCatalogue> ErrorCatalogues() =>
+    [
+        new CapabilityErrorCatalogue(
+            "order.validate", "1.0.0", [new CapabilityErrorModel("order.invalid_quantity", "Validation")], true),
+        new CapabilityErrorCatalogue(
+            "inventory.reserve", "1.0.0", [new CapabilityErrorModel("inventory.out_of_stock", "Conflict")], true),
+        new CapabilityErrorCatalogue("inventory.release", "1.0.0", [], true),
+        new CapabilityErrorCatalogue(
+            "payment.capture", "2.1.0", [new CapabilityErrorModel("payment.declined", "Conflict")], true),
+    ];
 
     /// <summary>A single-step flow with no namespace, to exercise the degenerate shapes.</summary>
     public static FlowModel Minimal() => new(

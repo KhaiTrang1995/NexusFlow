@@ -1,0 +1,178 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace FlowX.Compiler.Model;
+
+/// <summary>
+/// One declared way of starting a flow, expressed without a single Roslyn type
+/// (<a href="../../../docs/adr/ADR-0004-universal-trigger-model.md">ADR-0004</a>).
+/// </summary>
+/// <remarks>
+/// <para>
+/// A trigger's identity is its <em>address</em> — the thing outside the process that a
+/// caller, a broker or a scheduler uses to reach the flow. Everything on this model is
+/// address or admission: the route a request arrives on, the topic a record is read
+/// from, the expression a schedule fires on, whether an idempotency key is demanded
+/// before the flow is created.
+/// </para>
+/// <para>
+/// <strong>Operational tuning is deliberately absent.</strong> A Kafka trigger's
+/// <c>MaxInFlight</c>, a cron trigger's <c>Jitter</c> and a stream trigger's
+/// <c>Checkpoint</c> are all declared on the same attributes, and none of them are here.
+/// They tune how the platform runs the trigger, not what the trigger promises anyone
+/// outside it; publishing them would put deployment configuration into a contract
+/// document and give <c>flowx diff</c> a whole class of changes to report that no
+/// consumer can act on. The manifest schema's <c>trigger</c> object draws the same line,
+/// and this model is exactly what fits it.
+/// </para>
+/// </remarks>
+public sealed class TriggerModel : IEquatable<TriggerModel>
+{
+    /// <summary>Creates a model of one declared trigger.</summary>
+    /// <param name="kind">The transport family: <c>Http</c>, <c>Bus</c>, <c>Schedule</c>, <c>Stream</c> or <c>Agent</c>.</param>
+    /// <param name="method">HTTP method, for an <c>Http</c> trigger.</param>
+    /// <param name="route">Route template, for an <c>Http</c> trigger.</param>
+    /// <param name="idempotent">Whether an idempotency key is demanded at admission.</param>
+    /// <param name="transport">Broker family, when the attribute names one.</param>
+    /// <param name="topic">Topic, queue or stream source.</param>
+    /// <param name="group">Consumer group.</param>
+    /// <param name="cron">Cron expression, for a <c>Schedule</c> trigger.</param>
+    /// <param name="timeZone">IANA time zone the cron expression is evaluated in.</param>
+    /// <param name="description">Tool description shown to a model, for an <c>Agent</c> trigger.</param>
+    /// <param name="confirmation">Human confirmation requirement, for an <c>Agent</c> trigger.</param>
+    public TriggerModel(
+        string kind,
+        string? method = null,
+        string? route = null,
+        bool? idempotent = null,
+        string? transport = null,
+        string? topic = null,
+        string? group = null,
+        string? cron = null,
+        string? timeZone = null,
+        string? description = null,
+        string? confirmation = null)
+    {
+        Kind = kind;
+        Method = method;
+        Route = route;
+        Idempotent = idempotent;
+        Transport = transport;
+        Topic = topic;
+        Group = group;
+        Cron = cron;
+        TimeZone = timeZone;
+        Description = description;
+        Confirmation = confirmation;
+    }
+
+    /// <summary>The transport family, as the schema's <c>kind</c> enum spells it.</summary>
+    public string Kind { get; }
+
+    /// <summary>HTTP method, or <c>null</c>.</summary>
+    public string? Method { get; }
+
+    /// <summary>Route template, or <c>null</c>.</summary>
+    public string? Route { get; }
+
+    /// <summary>
+    /// Whether the transport demands an idempotency key before the flow is created, or
+    /// <c>null</c> when the trigger kind has no such notion.
+    /// </summary>
+    public bool? Idempotent { get; }
+
+    /// <summary>Broker family, e.g. <c>kafka</c>, or <c>null</c> when the attribute does not name one.</summary>
+    public string? Transport { get; }
+
+    /// <summary>Topic, queue or stream source, or <c>null</c>.</summary>
+    public string? Topic { get; }
+
+    /// <summary>Consumer group, or <c>null</c>.</summary>
+    public string? Group { get; }
+
+    /// <summary>Cron expression, or <c>null</c>.</summary>
+    public string? Cron { get; }
+
+    /// <summary>IANA time zone id, or <c>null</c>.</summary>
+    public string? TimeZone { get; }
+
+    /// <summary>Agent tool description, or <c>null</c>.</summary>
+    public string? Description { get; }
+
+    /// <summary>Confirmation mode name, or <c>null</c>.</summary>
+    public string? Confirmation { get; }
+
+    /// <summary>
+    /// Ordinal key the manifest sorts triggers by, so the document is byte-stable.
+    /// </summary>
+    /// <remarks>
+    /// Roslyn returns a type's attributes in no promised order, and a flow may carry
+    /// several triggers. Sorting on the address rather than on discovery order is what
+    /// keeps two builds of identical source byte-identical.
+    /// </remarks>
+    public string SortKey => string.Join(
+        "\0",
+        new[]
+        {
+            Kind, Method, Route, Transport, Topic, Group, Cron, TimeZone, Description, Confirmation,
+            Idempotent?.ToString(),
+        }.Select(part => part ?? string.Empty));
+
+    /// <inheritdoc />
+    public bool Equals(TriggerModel? other) =>
+        other is not null && string.Equals(SortKey, other.SortKey, StringComparison.Ordinal);
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => Equals(obj as TriggerModel);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => SortKey.GetHashCode();
+}
+
+/// <summary>Every trigger one flow declares, keyed by the flow's business identity.</summary>
+/// <remarks>
+/// <para>
+/// Carried alongside <see cref="FlowModel"/> rather than on it, because a trigger is
+/// read from an attribute on the flow's class while everything on <see cref="FlowModel"/>
+/// is read from the <c>Define</c> chain. Keeping the two apart means the manifest can
+/// gain declared triggers without the plan emitter — which has no use for them — being
+/// touched at all.
+/// </para>
+/// <para>
+/// Structural equality is implemented by hand so the incremental generator can cache
+/// this value: a model compared by reference invalidates the manifest on every keystroke.
+/// </para>
+/// </remarks>
+public sealed class FlowTriggersModel : IEquatable<FlowTriggersModel>
+{
+    /// <summary>Creates the trigger set for one flow.</summary>
+    /// <param name="flowId">Business identity from <c>[Flow]</c>.</param>
+    /// <param name="triggers">The triggers it declares, in any order.</param>
+    public FlowTriggersModel(string flowId, IReadOnlyList<TriggerModel> triggers)
+    {
+        FlowId = flowId;
+        Triggers = triggers
+            .OrderBy(t => t.SortKey, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>Business identity of the flow these triggers start.</summary>
+    public string FlowId { get; }
+
+    /// <summary>The declared triggers, ordinally sorted.</summary>
+    public IReadOnlyList<TriggerModel> Triggers { get; }
+
+    /// <inheritdoc />
+    public bool Equals(FlowTriggersModel? other) =>
+        other is not null
+        && string.Equals(FlowId, other.FlowId, StringComparison.Ordinal)
+        && Triggers.Count == other.Triggers.Count
+        && Triggers.SequenceEqual(other.Triggers);
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => Equals(obj as FlowTriggersModel);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => FlowId.GetHashCode();
+}

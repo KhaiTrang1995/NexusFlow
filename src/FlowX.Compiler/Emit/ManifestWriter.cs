@@ -45,11 +45,22 @@ public static class ManifestWriter
     /// Absolute path of the project being compiled. Source pointers are written relative
     /// to it, so the document is identical on every machine that builds the same source.
     /// </param>
+    /// <param name="triggers">
+    /// The triggers each flow declares, read from its attributes. Flows with no entry
+    /// publish no <c>triggers</c> array — see <see cref="WriteTriggers"/>.
+    /// </param>
+    /// <param name="errorCatalogues">
+    /// The failures each capability can return, keyed by <c>id@version</c>. A catalogue
+    /// that could not be established completely is not published — see
+    /// <see cref="WriteErrors"/>.
+    /// </param>
     public static string Write(
         string applicationName,
         string applicationVersion,
         IReadOnlyList<FlowModel> flows,
-        string? projectDirectory = null)
+        string? projectDirectory = null,
+        IReadOnlyList<FlowTriggersModel>? triggers = null,
+        IReadOnlyList<CapabilityErrorCatalogue>? errorCatalogues = null)
     {
         if (flows is null)
         {
@@ -57,6 +68,8 @@ public static class ManifestWriter
         }
 
         var ordered = flows.OrderBy(f => f.FlowId, System.StringComparer.Ordinal).ToList();
+        var triggersByFlow = Index(triggers, t => t.FlowId);
+        var errorsByCapability = Index(errorCatalogues, c => c.Key);
         var writer = new JsonWriter();
 
         writer.OpenObject();
@@ -72,7 +85,7 @@ public static class ManifestWriter
         writer.OpenArray();
         foreach (var flow in ordered)
         {
-            WriteFlow(writer, flow, projectDirectory);
+            WriteFlow(writer, flow, projectDirectory, triggersByFlow, errorsByCapability);
         }
 
         writer.CloseArray();
@@ -81,7 +94,7 @@ public static class ManifestWriter
         writer.OpenArray();
         foreach (var capability in CollectCapabilities(ordered))
         {
-            WriteCapability(writer, capability);
+            WriteCapability(writer, capability, errorsByCapability);
         }
 
         writer.CloseArray();
@@ -134,7 +147,12 @@ public static class ManifestWriter
             : normalised;
     }
 
-    private static void WriteFlow(JsonWriter writer, FlowModel flow, string? projectDirectory)
+    private static void WriteFlow(
+        JsonWriter writer,
+        FlowModel flow,
+        string? projectDirectory,
+        Dictionary<string, FlowTriggersModel> triggers,
+        Dictionary<string, CapabilityErrorCatalogue> errors)
     {
         writer.OpenObject();
         writer.Property("id", flow.FlowId);
@@ -158,6 +176,8 @@ public static class ManifestWriter
         WriteSensitive(writer, flow.SensitiveOutputMembers);
         writer.CloseObject();
 
+        WriteTriggers(writer, triggers.TryGetValue(flow.FlowId, out var declared) ? declared : null);
+
         writer.PropertyName("steps");
         writer.OpenArray();
         foreach (var step in flow.Steps)
@@ -180,12 +200,158 @@ public static class ManifestWriter
 
         writer.CloseArray();
 
+        WriteFlowErrors(writer, flow, errors);
+
         if (flow.DeclarationLocation != null)
         {
             writer.Property("source", Relativise(flow.DeclarationLocation, projectDirectory));
         }
 
         writer.CloseObject();
+    }
+
+    /// <summary>
+    /// Writes the flow's aggregate error codes — the union of its capabilities' — or
+    /// nothing when any one of them is unknown.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The schema describes this field as "aggregated from its capabilities. Generated
+    /// OpenAPI responses derive from it", and that is the whole of its meaning: it states
+    /// nothing the capability entries do not already state, and it exists so a consumer
+    /// building a response table for one endpoint does not have to walk the step graph to
+    /// assemble it. <c>flowx diff</c> deliberately ignores it for the same reason —
+    /// diffing derived data as well as its source reports every change twice.
+    /// </para>
+    /// <para>
+    /// Codes only, without categories, because that is the shape the schema declares here.
+    /// A consumer that needs the category joins on the capability entry, where the pair is
+    /// kept together.
+    /// </para>
+    /// <para>
+    /// One unresolved capability withholds the whole array. A union that is short by one
+    /// capability's worth of codes reads exactly like a complete one, and an OpenAPI
+    /// document generated from it would omit responses the endpoint really returns.
+    /// </para>
+    /// </remarks>
+    private static void WriteFlowErrors(
+        JsonWriter writer, FlowModel flow, Dictionary<string, CapabilityErrorCatalogue> errors)
+    {
+        var invoked = flow.AllSteps
+            .SelectMany(Invoked)
+            .Where(step => step.CapabilityId != null)
+            .Select(step => step.CapabilityId + "@" + step.CapabilityVersion)
+            .Distinct(System.StringComparer.Ordinal)
+            .ToList();
+
+        var catalogues = new List<CapabilityErrorCatalogue>();
+
+        foreach (var key in invoked)
+        {
+            if (!errors.TryGetValue(key, out var catalogue) || !catalogue.IsComplete)
+            {
+                return;
+            }
+
+            catalogues.Add(catalogue);
+        }
+
+        if (catalogues.Count == 0)
+        {
+            return;
+        }
+
+        writer.PropertyName("errors");
+        writer.OpenArray();
+
+        foreach (var code in catalogues
+            .SelectMany(c => c.Errors)
+            .Select(e => e.Code)
+            .Distinct(System.StringComparer.Ordinal)
+            .OrderBy(code => code, System.StringComparer.Ordinal))
+        {
+            writer.Value(code);
+        }
+
+        writer.CloseArray();
+    }
+
+    /// <summary>
+    /// Writes the flow's declared triggers, or nothing when it declares none.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Omitted rather than emitted empty, and for the opposite reason to
+    /// <c>errors</c>.</strong> An empty <c>triggers</c> array would read as "this flow
+    /// cannot be started from outside the process", and the generator is not entitled to
+    /// say that. Nothing yet turns a trigger attribute into a registration — the sample's
+    /// route is mapped by hand in <c>Program.cs</c> — so a flow with no attribute may
+    /// still be serving traffic. What the compiler knows is what was <em>declared</em>,
+    /// and a positive statement about declared triggers is sound where the negative one
+    /// is not.
+    /// </para>
+    /// <para>
+    /// A trigger attribute this build does not recognise is skipped upstream in
+    /// <c>TriggerReader</c> rather than guessed at, so a flow whose only trigger comes
+    /// from a third-party transport plugin lands here with nothing to write. That is the
+    /// same absence, with the same meaning: not "no triggers", but "none this compiler can
+    /// read".
+    /// </para>
+    /// </remarks>
+    private static void WriteTriggers(JsonWriter writer, FlowTriggersModel? triggers)
+    {
+        if (triggers is null || triggers.Triggers.Count == 0)
+        {
+            return;
+        }
+
+        writer.PropertyName("triggers");
+        writer.OpenArray();
+
+        foreach (var trigger in triggers.Triggers)
+        {
+            writer.OpenObject();
+            writer.Property("kind", trigger.Kind);
+            WriteOptional(writer, "method", trigger.Method);
+            WriteOptional(writer, "route", trigger.Route);
+            WriteOptional(writer, "transport", trigger.Transport);
+            WriteOptional(writer, "topic", trigger.Topic);
+            WriteOptional(writer, "group", trigger.Group);
+            WriteOptional(writer, "cron", trigger.Cron);
+            WriteOptional(writer, "timeZone", trigger.TimeZone);
+            WriteOptional(writer, "description", trigger.Description);
+            WriteOptional(writer, "confirmation", trigger.Confirmation);
+
+            if (trigger.Idempotent.HasValue)
+            {
+                writer.Property("idempotent", trigger.Idempotent.Value);
+            }
+
+            writer.CloseObject();
+        }
+
+        writer.CloseArray();
+    }
+
+    private static void WriteOptional(JsonWriter writer, string name, string? value)
+    {
+        if (!string.IsNullOrEmpty(value))
+        {
+            writer.Property(name, value!);
+        }
+    }
+
+    /// <summary>Indexes a nullable collection by a key, tolerating duplicates.</summary>
+    private static Dictionary<string, T> Index<T>(IReadOnlyList<T>? items, System.Func<T, string> key)
+    {
+        var indexed = new Dictionary<string, T>(System.StringComparer.Ordinal);
+
+        foreach (var item in items ?? (IReadOnlyList<T>)System.Array.Empty<T>())
+        {
+            indexed[key(item)] = item;
+        }
+
+        return indexed;
     }
 
     /// <summary>Writes the contract's sensitive members, or nothing when it has none.</summary>
@@ -401,7 +567,8 @@ public static class ManifestWriter
         writer.CloseArray();
     }
 
-    private static void WriteCapability(JsonWriter writer, StepModel step)
+    private static void WriteCapability(
+        JsonWriter writer, StepModel step, Dictionary<string, CapabilityErrorCatalogue> errors)
     {
         writer.OpenObject();
         writer.Property("id", step.CapabilityId!);
@@ -424,7 +591,55 @@ public static class ManifestWriter
         }
 
         writer.CloseArray();
+
+        errors.TryGetValue(step.CapabilityId + "@" + step.CapabilityVersion, out var catalogue);
+        WriteErrors(writer, catalogue);
+
         writer.CloseObject();
+    }
+
+    /// <summary>
+    /// Writes the capability's error catalogue, or nothing when it is not known to be
+    /// complete.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>An empty array is emitted, and it means something.</strong> This is the
+    /// opposite of <see cref="WriteSensitive"/>, and the difference is the point of the
+    /// field. A contract either carries <c>[Sensitive]</c> members or it does not, and the
+    /// compiler always knows which — so omitting an empty <c>sensitive</c> array loses
+    /// nothing. An error catalogue has a third state: the reader followed the failure
+    /// paths and could not resolve one of them. Three states need three renderings, and
+    /// collapsing "returns nothing" into "could not tell" is exactly the ambiguity this
+    /// field exists to remove — a consumer reading <c>errors: []</c> is entitled to
+    /// conclude that this capability never fails with a declared code, and would be wrong
+    /// if the array were also what an unreadable capability produced.
+    /// </para>
+    /// <para>
+    /// Codes and categories only. The message is left behind deliberately: it is the field
+    /// that interpolates business values, and the manifest is publishable to consumers not
+    /// entitled to them.
+    /// </para>
+    /// </remarks>
+    private static void WriteErrors(JsonWriter writer, CapabilityErrorCatalogue? catalogue)
+    {
+        if (catalogue is null || !catalogue.IsComplete)
+        {
+            return;
+        }
+
+        writer.PropertyName("errors");
+        writer.OpenArray();
+
+        foreach (var error in catalogue.Errors)
+        {
+            writer.OpenObject();
+            writer.Property("code", error.Code);
+            writer.Property("category", error.Category);
+            writer.CloseObject();
+        }
+
+        writer.CloseArray();
     }
 
     /// <summary>

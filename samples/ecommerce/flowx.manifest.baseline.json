@@ -19,6 +19,14 @@
       "output": {
         "type": "Ecommerce.OrderPlacedResult"
       },
+      "triggers": [
+        {
+          "kind": "Http",
+          "method": "POST",
+          "route": "/api/v1/orders",
+          "idempotent": true
+        }
+      ],
       "steps": [
         {
           "id": 0,
@@ -45,7 +53,12 @@
       "emits": [
         "order.placed"
       ],
-      "source": "PlaceOrderFlow.cs:23"
+      "errors": [
+        "inventory.out_of_stock",
+        "order.invalid_quantity",
+        "payment.declined"
+      ],
+      "source": "PlaceOrderFlow.cs:32"
     }
   ],
   "capabilities": [
@@ -60,7 +73,8 @@
       "idempotent": true,
       "sideEffects": [
         "inventory-ledger"
-      ]
+      ],
+      "errors": []
     },
     {
       "id": "inventory.reserve",
@@ -73,6 +87,12 @@
       "idempotent": true,
       "sideEffects": [
         "inventory-ledger"
+      ],
+      "errors": [
+        {
+          "code": "inventory.out_of_stock",
+          "category": "Conflict"
+        }
       ]
     },
     {
@@ -84,7 +104,13 @@
         "mode": "Authenticated"
       },
       "idempotent": true,
-      "sideEffects": []
+      "sideEffects": [],
+      "errors": [
+        {
+          "code": "order.invalid_quantity",
+          "category": "Validation"
+        }
+      ]
     },
     {
       "id": "payment.capture",
@@ -98,6 +124,12 @@
       "sideEffects": [
         "ledger",
         "payment-gateway"
+      ],
+      "errors": [
+        {
+          "code": "payment.declined",
+          "category": "Conflict"
+        }
       ]
     }
   ],

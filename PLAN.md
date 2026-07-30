@@ -503,7 +503,7 @@ Newly surfaced by this package, and open:
 
 - **`FLOWX1011` (predicate purity) is unimplemented.** It was reserved when nothing could
   declare a predicate. Something can now, and `FlowErrors.PredicateFailed` documents the
-  rule at run time that no analyzer enforces at build time.
+  rule at run time that no analyzer enforces at build time. **Closed by WP-21.**
 - **The `.Step<TCapability, TStepIn>(map)` overload is not honoured** by `FlowAnalyzer`
   or `FlowEmitter` — it parses and is then ignored, which is worse than not existing.
 - **Triggers and capability `errors` are in the manifest schema but never emitted.**
