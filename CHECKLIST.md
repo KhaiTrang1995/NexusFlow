@@ -156,8 +156,9 @@ immutable, and rejects every invariant violation under test.
 - [x] **WP-3** `FlowX.Benchmarks` — B1–B3 measurable, baseline committed
 - [x] **WP-4** `FlowX.Runtime` — step loop, pooled contexts, deadline handling, 0 B
 - [~] **WP-5** `FlowX.Compiler` — `FlowPlanGenerator`, model layer separate from emission.
-      *Remaining:* five diagnostics needing a separate `DiagnosticAnalyzer`, the
-      branching DSL, budget B12
+      Diagnostics all raised (WP-13), B12 measured and passing (WP-14).
+      *Remaining:* the branching DSL — `When` / `Switch` / `Parallel` / `ForEach` /
+      `SubFlow`
 - [x] **WP-6** Manifest emission, deterministic and schema-valid
 - [x] **WP-7** `FlowX.Hosting` — DI, startup validation, graceful drain, health probe
 - [~] **WP-8** `plugins/FlowX.Http` — endpoint, request binding, RFC 7807.
@@ -174,9 +175,8 @@ immutable, and rejects every invariant violation under test.
 - [x] **WP-13** Diagnostics that were documented and never raised. **All four now fire**
       — `FLOWX1014`, `FLOWX1018`, `FLOWX1003`, `FLOWX1004` — each verified against the
       real sample, not only the harness
-- [~] **WP-14** Budget **B12** build overhead — **measured, not settled.** The generator
-      costs ~2.9 ms for a one-flow compilation. The ratio that exists does not answer the
-      8 % question; [B12.md](docs/benchmarks/B12.md) says why, and what would
+- [x] **WP-14** Budget **B12** build overhead — **PASS at +0.4 %** against +8 %, on a
+      like-for-like build of the sample. Report at [B12.md](docs/benchmarks/B12.md)
 
 ### WP-10 · what it delivered
 
@@ -238,7 +238,7 @@ Three more surfaced while getting the suite green:
 | B1 flow overhead | ≤ 5 µs | **172.3 ns** ✅ | WP-11, real engine, 30 iterations |
 | B2 allocations per step | 0 B | **0 B** ✅ | gated as a unit test — **Release only**, see below |
 | B3 capability dispatch | ≤ 150 ns | **21.9 ns** ✅ | shared hardware, advisory |
-| B12 build overhead | ≤ 8 % | **not settled** — measured at WP-14; the comparison is not like-for-like, see [B12.md](docs/benchmarks/B12.md) | WP-14 |
+| B12 build overhead | ≤ 8 % | **+0.4 %** ✅ | WP-14, like-for-like sample build |
 
 Nothing in the "Now" column is green by assertion — every ✅ was produced by a
 command in this working tree. Every "not measured" is equally honest: the gate

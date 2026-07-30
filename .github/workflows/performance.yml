@@ -38,7 +38,7 @@ jobs:
             --logger "console;verbosity=detailed"
 
   benchmarks:
-    name: Benchmark budgets (B1, B3)
+    name: Benchmark budgets (B1, B3, B12 isolated)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,6 +75,32 @@ jobs:
         with:
           name: benchmark-results
           path: BenchmarkDotNet.Artifacts/
+
+  build-overhead:
+    name: Budget B12 — build overhead
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Measure build overhead against identical non-FlowX code
+        # Builds the reference sample twice per round, producing the same final
+        # compilation both times and differing only in whether the generator ran.
+        # The script exits non-zero above the +8 % budget, which is the number
+        # ADR-0002's revisit clause depends on — see docs/benchmarks/B12.md.
+        #
+        # Fewer rounds than the local run: a hosted runner is noisier, and the
+        # verdict rests on a margin of roughly twenty times the budget rather than
+        # on precision.
+        run: |
+          # pipefail explicitly: the default shell is `bash -e`, which takes the exit
+          # status of the LAST command in a pipeline. Without this, tee always succeeds
+          # and a FAIL verdict would be reported as a passing job — a gate that cannot
+          # fail, which is worse than no gate.
+          set -o pipefail
+          ./scripts/measure-build-overhead.sh 7 | tee -a "$GITHUB_STEP_SUMMARY"
 
   gate-self-test:
     name: The gate can fail

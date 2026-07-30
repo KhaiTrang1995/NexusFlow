@@ -144,7 +144,7 @@ an exit criterion that is mechanically checkable.
 | **Exit** | The sample flow's plan is generated, readable, breakpoint-able; B1 ≤ 5 µs; build overhead ≤ 8 % on a 20-flow solution |
 | **Risk** | **R1.** If the generator's model layer and emission layer blur together here, P1 becomes unmaintainable. Keep them separate from the first commit. |
 | **Depends on** | WP-4 |
-| **Status** | **Partial.** Generating end to end against a real compilation; 40 tests. Remaining: five diagnostics that need a separate `DiagnosticAnalyzer`, the branching DSL, budget B12, and the exit criterion itself (needs WP-10's sample). |
+| **Status** | **Partial.** Generating end to end against a real compilation, exercised by the sample at WP-10. The diagnostics landed at WP-13 and budget B12 at WP-14. **Remaining: the branching DSL** — `When` / `Switch` / `Parallel` / `ForEach` / `SubFlow`. |
 
 ### WP-6 — Manifest emission
 
@@ -252,9 +252,9 @@ Two things the report explicitly does **not** claim:
   the usual cause of a tail that shape is a GC pause, which a zero-allocation path
   does not create.
 - **Not a retirement of risk R1.** This measures runtime performance; R1 is generator
-  maintenance cost. Build overhead (**budget B12**) is measured at WP-14 and remains
-  unsettled — see [B12.md](docs/benchmarks/B12.md) for why the number that exists does
-  not answer the 8 % question.
+  maintenance cost. Build overhead (**budget B12**) was measured at WP-14 and
+  **passes at +0.4 %** — see [B12.md](docs/benchmarks/B12.md). The defect-count half of
+  the clause is still not tracked.
 
 ### WP-12a — `[Sensitive]` is declared and unread
 
@@ -304,31 +304,35 @@ is a capability that happens to run backwards; `StepModel.Compensation` is now a
 | **Deliverable** | `CompilerBenchmarks` (the file [14-Performance §7](docs/14-Performance.md) already named for B12) and a report |
 | **Exit** | A number for build overhead, with an explicit pass or fail against 8 % |
 | **Depends on** | WP-5 |
-| **Status** | **Measured; the budget is not settled, and B12 stays open.** Report at [docs/benchmarks/B12.md](docs/benchmarks/B12.md). |
+| **Status** | **Done. PASS at +0.4 % against a +8 % budget.** Report at [docs/benchmarks/B12.md](docs/benchmarks/B12.md). |
 
-The generator takes **~2.9 ms** for a compilation containing one flow, against a ~4 ms
-baseline compile of the same file. That is a real, committed baseline — a change making
-the generator take 30 ms would show as a 10× regression — but it is **not** the 8 %
-answer, and the report says so rather than rounding it into one.
+**It took two measurements, and the first one was the wrong shape.**
 
-Three reasons, none fixable by re-running:
+`CompilerBenchmarks` prices the generator in isolation at **~2.9 ms** per compilation
+containing one flow. That number is real and committed to the baseline, but it is not a
+build-overhead ratio: its control compiled a file with no plan and no dispatcher in it,
+so most of the difference was binding code the control did not contain — work an
+application written without FlowX would have hand-written and paid for anyway. Reporting
+that ratio as build overhead would have overstated the cost by more than an order of
+magnitude, which is the same class of claim WP-10 through WP-13 spent their time
+removing. It was written up as *not settling the budget*, with what would settle it
+spelled out.
 
-- **The arms are not comparable.** The control compiles a file with no plan and no
-  dispatcher; the measured arm compiles that file plus the generated ones. Most of the
-  2.8× total is binding source the control does not contain, and an application written
-  without FlowX would have hand-written that dispatcher and paid to bind it. That is work
-  moved, not work added.
-- **The generator's cost cannot be isolated this way.** Running the driver alone measures
-  *less* than the control, because it binds only what the generator asks for. The two
-  overlap by an unknown amount and subtracting them means nothing.
-- **One file is the worst case for a ratio.** The generator scales with flows, the
-  compilation with files. A real application would show a far smaller share — so the
-  measurement is biased in a known direction, not merely imprecise.
+`scripts/measure-build-overhead.sh` then did that: two builds of the reference sample
+producing the **same final compilation**, differing only in whether the generator ran.
+`Ecommerce.csproj` carries an MSBuild condition (`FlowXGeneratorDisabled`) that drops the
+analyzer and compiles the previously generated sources as ordinary files, so the sample
+genuinely builds both ways.
 
-What would settle it is written down: build the sample twice from clean with an identical
-final compilation — once with the analyzer, once with the generated `.g.cs` files
-included as ordinary source — and compare. That needs a build harness and a second
-configuration of the sample, and was not attempted here rather than attempted badly.
+Over 15 alternating rounds: **2 613 ms with, 2 603 ms without — +0.4 % against a +8 %
+budget.** The result is legible from the isolated number: ~3 ms of generator against a
+~2.6 s project build is about a tenth of a percent.
+
+**The report states what the figure cannot support.** The two arms' ranges overlap and
+the within-arm spread is 14 %, so this cannot distinguish +0.4 % from −0.4 %. It is
+evidence that the overhead is nowhere near 8 %, not evidence that it is exactly 0.4 %.
+Sharpening it needs dedicated hardware, and no decision waits on the difference between
+0.4 % and 2 %.
 
 ### WP-13 — The diagnostics that were documented and never raised
 

@@ -7,8 +7,8 @@ Reproduce with `./scripts/run-benchmarks.sh`. The committed baseline is
 [`baseline.json`](baseline.json).
 
 The P0 kill-criterion verdict this harness exists to produce is in
-[**P0.md**](P0.md). Build overhead (**B12**) is in [**B12.md**](B12.md) — measured,
-and explicitly not settled.
+[**P0.md**](P0.md). Build overhead (**B12**) is in [**B12.md**](B12.md) — **+0.4 %** against a
++8 % budget, measured with `scripts/measure-build-overhead.sh`.
 
 ---
 
