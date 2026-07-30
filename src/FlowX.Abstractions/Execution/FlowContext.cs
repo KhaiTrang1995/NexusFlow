@@ -50,7 +50,13 @@ public abstract class FlowContext : CapabilityContext
     public abstract T Get<T>();
 
     /// <summary>Non-throwing counterpart of <see cref="Get{T}"/>.</summary>
-    public abstract bool TryGet<T>([NotNullWhen(true)] out T? value);
+    /// <remarks>
+    /// Uses <c>[MaybeNullWhen(false)] out T</c> rather than <c>out T?</c>: on a type
+    /// parameter whose constraints are inherited, an overriding method cannot
+    /// disambiguate <c>T?</c> from <c>Nullable&lt;T&gt;</c>, so the latter form is not
+    /// overridable. This is the same shape <c>Dictionary.TryGetValue</c> uses.
+    /// </remarks>
+    public abstract bool TryGet<T>([MaybeNullWhen(false)] out T value);
 
     /// <summary>
     /// Writes a value into the state bag. Step outputs are stored automatically; call

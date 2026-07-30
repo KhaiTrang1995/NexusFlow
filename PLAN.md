@@ -124,6 +124,7 @@ an exit criterion that is mechanically checkable.
 | **Deliverable** | `FlowX.Runtime`: `FlowEngine`, `CapabilityEngine`, pooled `FlowContext`/`CapabilityContext`, `IClock` |
 | **Exit** | B2 = 0 allocations on a 4-step flow; compensation ordering proven by test, not by inspection |
 | **Depends on** | WP-2, WP-3 |
+| **Status** | **Done.** 0 B on a 4-step flow (592 B → 0 B after three fixes found by measurement); 28 tests including concurrency; B1 = 169 ns against a 5 000 ns budget |
 
 ### WP-5 — Source generator *(the risk)*
 

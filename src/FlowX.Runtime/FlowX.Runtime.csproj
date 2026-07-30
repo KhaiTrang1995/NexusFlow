@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>
+      FlowX execution runtime: the step loop, pooled contexts and the dispatcher
+      contract the source generator implements.
+    </Description>
+    <PackageTags>flowx;runtime;flow-engine</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Abstractions and Core only. RuntimeDoesNotReferenceAnyPlugin enforces that
+      nothing transport-shaped ever appears here: adding Kafka support must never
+      mean editing the engine (quality goal Q6).
+    -->
+    <ProjectReference Include="../FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../FlowX.Core/FlowX.Core.csproj" />
+  </ItemGroup>
+
+</Project>

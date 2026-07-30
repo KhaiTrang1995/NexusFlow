@@ -1,21 +1,38 @@
 #!/usr/bin/env python3
 """Gate benchmark results against the committed baseline and the budget table.
 
-Reads BenchmarkDotNet's JSON export and compares each benchmark on three axes:
+Two classes of check, because only one of them is trustworthy on shared hardware:
 
-  allocations   exact match, no tolerance      — machine-independent, and B2/B6 are hard zeros
-  ratio         +/- tolerances.ratioPercent    — machine-independent, catches a real regression
-  absolute ns   +/- tolerances.absolutePercent — machine-dependent, a catastrophe detector only
+  BLOCKING
+    allocations     exact match, no tolerance
+    budget ceiling  p95 must stay under the documented figure in docs/14-Performance.md
 
-The split matters. A shared CI runner cannot reproduce an absolute nanosecond
-figure from a developer's laptop, so gating tightly on absolute time produces a
-job that fails for reasons nobody can act on — and a job people learn to ignore.
-Ratios between benchmarks in the same run, and allocation counts, reproduce
-exactly. Those carry the contract; the absolute number only has to stay in the
-same order of magnitude and under its documented budget.
+  ADVISORY (reported, does not fail the build)
+    absolute drift  mean vs the committed baseline
+    ratio drift     mean/fastest vs the committed baseline
+
+The split is not a convenience. WP-3 asserted that ratios between benchmarks in the
+same run are machine-independent and could therefore be gated tightly. Two runs of
+the identical commit on the identical container then disagreed by up to 63 % on
+ratio and 159 % on absolute time — because the fastest benchmark, which is the
+ratio's denominator, sits at ~10 ns, right on the measurement noise floor. A
+denominator that moves ±100 % moves every ratio with it.
+
+So the claim was wrong and is withdrawn. Allocation counts are exact and
+reproducible; timing on this hardware is not, in either form. Until the benchmarks
+run on dedicated hardware (WP-11), drift is information for a human, not a gate.
+
+What still catches a real regression: the budget ceilings. A four-step flow is
+measured at ~170 ns against a 5 000 ns budget, so anything that costs an order of
+magnitude fails loudly. A 2x regression would not — that is the honest limitation
+of measuring here, and the reason WP-11 re-records elsewhere.
 
 Usage:
     check-benchmark-budgets.py <artifacts-dir> [--baseline docs/benchmarks/baseline.json]
+                                               [--strict]
+
+    --strict promotes drift from advisory to blocking. Use it once the baseline has
+    been recorded on dedicated hardware.
 """
 
 from __future__ import annotations
@@ -33,8 +50,7 @@ EXIT_USAGE = 2
 
 def load_results(artifacts_dir: str) -> dict[str, dict]:
     """Flatten every *-report-full.json into {Type.Method: measurements}."""
-    pattern = os.path.join(artifacts_dir, "**", "*-report-full.json")
-    reports = sorted(glob.glob(pattern, recursive=True))
+    reports = sorted(glob.glob(os.path.join(artifacts_dir, "**", "*-report-full.json"), recursive=True))
 
     if not reports:
         print(f"::error::No benchmark reports found under {artifacts_dir}")
@@ -46,12 +62,9 @@ def load_results(artifacts_dir: str) -> dict[str, dict]:
         with open(path, encoding="utf-8") as handle:
             document = json.load(handle)
 
-        # Ratios are computed here rather than read from the report: BenchmarkDotNet
-        # only emits a Ratio column when a [Benchmark(Baseline = true)] exists, and
-        # recomputing keeps this script working if that attribute ever moves.
         benchmarks = document.get("Benchmarks", [])
         means = {b["Method"]: b["Statistics"]["Mean"] for b in benchmarks}
-        smallest = min(means.values()) if means else 1.0
+        fastest = min(means.values()) if means else 1.0
 
         for benchmark in benchmarks:
             key = f"{benchmark['Type']}.{benchmark['Method']}"
@@ -60,74 +73,78 @@ def load_results(artifacts_dir: str) -> dict[str, dict]:
                 "mean_ns": benchmark["Statistics"]["Mean"],
                 "p95_ns": benchmark["Statistics"].get("Percentiles", {}).get("P95", 0.0),
                 "allocated": memory.get("BytesAllocatedPerOperation", 0),
-                "ratio": benchmark["Statistics"]["Mean"] / smallest if smallest else 0.0,
+                "ratio": benchmark["Statistics"]["Mean"] / fastest if fastest else 0.0,
             }
 
     return results
 
 
-def check(results: dict[str, dict], baseline: dict) -> list[str]:
-    """Return a list of failure messages; empty means the gate passes."""
+def check(results: dict[str, dict], baseline: dict, strict: bool) -> tuple[list[str], list[str]]:
+    """Return (blocking failures, advisory notes)."""
     tolerances = baseline["tolerances"]
     ratio_tolerance = tolerances["ratioPercent"] / 100.0
     absolute_tolerance = tolerances["absolutePercent"] / 100.0
 
-    failures: list[str] = []
+    blocking: list[str] = []
+    advisory: list[str] = []
+    drift_bucket = blocking if strict else advisory
 
     for name, expected in baseline["benchmarks"].items():
         actual = results.get(name)
 
         if actual is None:
-            failures.append(f"{name}: present in the baseline but absent from this run")
+            blocking.append(f"{name}: in the baseline but absent from this run")
             continue
 
-        # 1. Allocations — exact. A hard zero cannot be eroded a field at a time.
+        # BLOCKING 1 — allocations. Exact, machine-independent, and B2/B6 are hard zeros.
         if actual["allocated"] != expected["allocatedBytes"]:
-            failures.append(
+            blocking.append(
                 f"{name}: allocated {actual['allocated']} B, baseline "
                 f"{expected['allocatedBytes']} B (allocation counts are exact)"
             )
 
-        # 2. Absolute budget — the documented ceiling from docs/14-Performance.md.
+        # BLOCKING 2 — the documented ceiling from docs/14-Performance.md.
         budget_ns = expected.get("budgetNs")
         if budget_ns and actual["p95_ns"] > budget_ns:
-            failures.append(
+            blocking.append(
                 f"{name}: p95 {actual['p95_ns']:.1f} ns exceeds budget "
                 f"{expected['budget']} of {budget_ns} ns"
             )
 
-        # 3. Ratio drift — machine-independent, so this is the sensitive check.
+        # ADVISORY — timing drift. See the module docstring for why this is not blocking.
         expected_ratio = expected.get("ratioToBaseline")
         if expected_ratio and expected_ratio > 0:
             drift = abs(actual["ratio"] - expected_ratio) / expected_ratio
             if drift > ratio_tolerance:
-                failures.append(
-                    f"{name}: ratio {actual['ratio']:.2f} drifted {drift * 100:.0f}% from "
-                    f"baseline {expected_ratio:.2f} (tolerance {tolerances['ratioPercent']}%)"
+                drift_bucket.append(
+                    f"{name}: ratio {actual['ratio']:.2f} vs baseline {expected_ratio:.2f} "
+                    f"({drift * 100:.0f}% drift)"
                 )
 
-        # 4. Absolute drift — loose. Only catches an order-of-magnitude change.
         expected_ns = expected.get("absoluteNs")
         if expected_ns and expected_ns > 0:
             drift = abs(actual["mean_ns"] - expected_ns) / expected_ns
             if drift > absolute_tolerance:
-                failures.append(
-                    f"{name}: mean {actual['mean_ns']:.1f} ns drifted {drift * 100:.0f}% from "
-                    f"baseline {expected_ns:.1f} ns (tolerance {tolerances['absolutePercent']}%) "
-                    f"— may be runner noise; confirm before updating the baseline"
+                drift_bucket.append(
+                    f"{name}: mean {actual['mean_ns']:.1f} ns vs baseline {expected_ns:.1f} ns "
+                    f"({drift * 100:.0f}% drift)"
                 )
 
-    unexpected = sorted(set(results) - set(baseline["benchmarks"]))
-    for name in unexpected:
-        print(f"::notice::{name} is new and has no baseline entry. Add one.")
+    for name in sorted(set(results) - set(baseline["benchmarks"])):
+        advisory.append(f"{name} is new and has no baseline entry. Add one.")
 
-    return failures
+    return blocking, advisory
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("artifacts", help="BenchmarkDotNet artifacts directory")
     parser.add_argument("--baseline", default="docs/benchmarks/baseline.json")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Promote timing drift from advisory to blocking. For dedicated hardware only.",
+    )
     args = parser.parse_args()
 
     with open(args.baseline, encoding="utf-8") as handle:
@@ -144,16 +161,20 @@ def main() -> int:
             f"{r['ratio']:7.2f} {r['allocated']:6d}B"
         )
 
-    failures = check(results, baseline)
+    blocking, advisory = check(results, baseline, args.strict)
 
     print()
-    if failures:
-        for failure in failures:
+    for note in advisory:
+        print(f"::notice::advisory — {note}")
+
+    if blocking:
+        print()
+        for failure in blocking:
             print(f"::error::{failure}")
-        print(f"\n{len(failures)} benchmark gate failure(s).")
+        print(f"\n{len(blocking)} blocking gate failure(s).")
         return EXIT_REGRESSION
 
-    print("All benchmark gates pass.")
+    print(f"\nAll blocking gates pass ({len(advisory)} advisory note(s)).")
     return EXIT_OK
 
 

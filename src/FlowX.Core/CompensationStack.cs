@@ -57,6 +57,23 @@ public sealed class CompensationStack
     }
 
     /// <summary>
+    /// Clears the stack without releasing its buffers, so a pooled owner can reuse it
+    /// across executions.
+    /// </summary>
+    /// <remarks>
+    /// <c>Clear</c> on the underlying collections keeps their backing arrays, which is
+    /// the entire point: constructing a fresh stack per execution cost 288 B and was
+    /// the last thing standing between the engine and budget B2. The owner is
+    /// responsible for calling this — an un-reset stack would compensate a previous
+    /// flow's steps, which is far worse than allocating.
+    /// </remarks>
+    public void Reset()
+    {
+        _completed.Clear();
+        _recordedIndices.Clear();
+    }
+
+    /// <summary>
     /// Yields the completed compensable steps newest-first, draining the stack as it
     /// goes.
     /// </summary>

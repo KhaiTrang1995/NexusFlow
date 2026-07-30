@@ -6,9 +6,10 @@
 >
 > **Last updated:** 2026-07-30 · **Phase:** P0 · **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 135/135 passing ·
-> **Coverage:** 98.5 % line / 95.6 % branch (gates: 80 / 75) · **SDK:** 10.0.110
-> **Benchmarks:** B1 precursor 20 ns / 5 000 ns budget · B3 9.5 ns / 150 ns · 0 alloc on both
+> **Build:** 0 warnings, 0 errors · **Tests:** 165/165 passing ·
+> **Coverage:** 94.5 % line / 86.6 % branch (gates: 80 / 75) · **SDK:** 10.0.110
+> **B1:** 4-step flow through the engine — **169 ns / 5 000 ns budget, 0 B** ·
+> **B3:** dispatch 20 ns / 150 ns, 0 B · **B2:** hard zero, met
 >
 > Legend: `[x]` done and verified · `[~]` done, verification blocked · `[ ]` not started
 
@@ -165,18 +166,19 @@ immutable, and rejects every invariant violation under test.
 |---|---|---|---|
 | Compiler warnings | 0 | **0** ✅ | verified locally |
 | Blocker/critical Sonar issues | 0 | **not running** | WP-0 |
-| Line coverage | ≥ 80 % | **98.5 %** ✅ | verified locally |
-| Branch coverage | ≥ 75 % | **95.6 %** ✅ | verified locally |
+| Line coverage | ≥ 80 % | **94.5 %** ✅ | verified locally |
+| Branch coverage | ≥ 75 % | **86.6 %** ✅ | verified locally |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
 | Fitness functions | all green | **30/30** ✅ | verified locally |
+| Concurrent cross-tenant leak | none | **none** ✅ | 64 concurrent flows, 0 overlaps |
 | SAST findings | 0 | **wired, unrun** — needs a CI run | WP-0 |
 | DAST findings | 0 | **wired, guarded** — needs WP-10 | WP-0 |
 | Vulnerable dependencies | 0 | **0 by construction** — zero dependencies | WP-1 |
 | Open debt entries | ≤ 20 | **0** | enforced by `quality.yml` |
-| B1 flow overhead p99 (precursor) | ≤ 5 µs | **20 ns** ✅ | WP-3, shared hardware |
-| B2 allocations per step | 0 B | **0 B** ✅ | gated as a unit test |
-| B3 capability dispatch p99 | ≤ 150 ns | **9.7 ns** ✅ | WP-3, shared hardware |
+| B1 flow overhead p99 | ≤ 5 µs | **174 ns** ✅ | WP-4, real engine |
+| B2 allocations per step | 0 B | **0 B** ✅ | engine included; gated as a unit test |
+| B3 capability dispatch p99 | ≤ 150 ns | **20.6 ns** ✅ | shared hardware |
 
 Nothing in the "Now" column is green by assertion — every ✅ was produced by a
 command in this working tree. Every "not measured" is equally honest: the gate

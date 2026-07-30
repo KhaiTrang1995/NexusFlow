@@ -25,13 +25,17 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Hard-zero allocation assertions
-        # These are unit tests, not benchmarks, and they run on every pull request.
-        # Allocation counts are deterministic; timings are not. Gating the hard
-        # zeros here means a regression is caught in seconds instead of overnight.
-        run: >
-          dotnet test tests/FlowX.Core.Tests --configuration Release
-          --filter "FullyQualifiedName~AllocationBudget"
-          --logger "console;verbosity=detailed"
+        # Unit tests, not benchmarks, running on every pull request. Allocation
+        # counts are deterministic; timings are not — see docs/benchmarks §5, where
+        # WP-3's assumption that ratios were reliable is withdrawn with evidence.
+        # This is the gate that actually protects budget B2.
+        run: |
+          dotnet test tests/FlowX.Core.Tests --configuration Release \
+            --filter "FullyQualifiedName~AllocationBudget" \
+            --logger "console;verbosity=detailed"
+          dotnet test tests/FlowX.Runtime.Tests --configuration Release \
+            --filter "FullyQualifiedName~EngineAllocation|FullyQualifiedName~Concurrency" \
+            --logger "console;verbosity=detailed"
 
   benchmarks:
     name: Benchmark budgets (B1, B3)
@@ -48,10 +52,11 @@ jobs:
           -- --filter '*'
 
       - name: Gate against the committed baseline
-        # Fails on: any allocation change, any p95 over its documented budget, any
-        # ratio drift beyond 15 %. Absolute drift is tolerated to 40 % because a
-        # shared runner cannot reproduce a nanosecond figure — see
-        # docs/benchmarks/README.md section 4.
+        # Blocking: allocation changes and p95 over a documented budget.
+        # Advisory: absolute and ratio drift — neither is reproducible on a shared
+        # runner, as docs/benchmarks/README.md section 5 demonstrates with two runs
+        # of the same commit. Add --strict once the baseline is recorded on
+        # dedicated hardware (WP-11).
         run: python3 scripts/check-benchmark-budgets.py BenchmarkDotNet.Artifacts
 
       - name: Publish the report
@@ -97,8 +102,10 @@ jobs:
                       'Percentiles': {'P95': entry['absoluteNs'] * 1.02},
                   },
                   # The injected defect: a benchmark the baseline says is allocation-free.
+                  # The injected defect targets a benchmark the baseline says is
+                  # allocation-free, so it exercises the blocking check specifically.
                   'Memory': {'BytesAllocatedPerOperation':
-                             64 if method == 'WalkAndDispatch' else entry['allocatedBytes']},
+                             64 if method == 'Query' else entry['allocatedBytes']},
               })
           by_type = {}
           for b in benchmarks:

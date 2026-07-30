@@ -157,13 +157,17 @@ public sealed class AllocationBudgetTests
     /// Documents a real cost rather than asserting a zero that is not true today.
     /// </summary>
     /// <remarks>
-    /// <see cref="CompensationStack"/> allocates: <c>Stack&lt;T&gt;</c> grows its
-    /// backing array, and <c>Unwind</c> is an iterator. Both are acceptable now —
-    /// compensation runs on the failure path, once per failed instance, not per step.
+    /// Constructing a <see cref="CompensationStack"/> allocates: <c>Stack&lt;T&gt;</c>
+    /// grows its backing array, <c>HashSet&lt;T&gt;</c> builds buckets, and
+    /// <c>Unwind</c> is an iterator.
     /// <para>
-    /// It stops being acceptable at WP-4, where the stack becomes part of the pooled
-    /// per-instance state. This test is the tripwire: when pooling lands, it will
-    /// start failing, and the fix is to change the assertion to zero.
+    /// WP-4 resolved this, and not the way this tripwire predicted. The prediction was
+    /// that the type would change; what actually happened is that the type gained a
+    /// <c>Reset</c> and the engine's pooled context now owns one instance for its whole
+    /// life. Constructing one still allocates — that is what this test measures — but
+    /// the engine never does. See
+    /// <c>CompensationStackAllocatesNothingWhenReused</c> below for the path the
+    /// runtime actually takes.
     /// </para>
     /// </remarks>
     [Fact]
@@ -183,7 +187,63 @@ public sealed class AllocationBudgetTests
         });
 
         allocated.ShouldBeGreaterThan(0,
-            "Recorded, not hidden. When WP-4 pools the compensation stack this " +
-            "assertion flips to ShouldBe(0), and that flip is the proof pooling worked.");
+            "Recorded, not hidden. Constructing a stack costs; the engine avoids the " +
+            "cost by never constructing one per execution.");
+    }
+
+    /// <summary>
+    /// The path the runtime actually takes on a <em>successful</em> flow: record
+    /// completed steps, reset, reuse. No unwind, because nothing failed.
+    /// </summary>
+    /// <remarks>
+    /// This is the assertion that made WP-4's exit criterion reachable. Measurement
+    /// found the 288 B; review had signed off on the code that contained it.
+    /// </remarks>
+    [Fact]
+    public void RecordingAndResettingAReusedStackAllocatesNothing()
+    {
+        var step = StepNode.ForCapability(0, Fixtures.ReserveInventory, Fixtures.ReleaseInventory);
+        var stack = new CompensationStack();
+
+        var allocated = Allocation.Measure(() =>
+        {
+            stack.RecordCompleted(step);
+            stack.Reset();
+        });
+
+        allocated.ShouldBe(0,
+            "Clear keeps the backing arrays, so a pooled owner pays the construction " +
+            "cost once per pooled context rather than once per flow. This is the " +
+            "success path, which is the one budget B2 governs.");
+    }
+
+    /// <summary>
+    /// <c>Unwind</c> is an iterator, so enumerating it allocates a state machine.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not fixed. It costs one small object per <em>failed</em> flow, on a
+    /// path where a compensation is about to make a network call anyway; converting the
+    /// iterator into a hand-rolled struct enumerator would trade real readability for
+    /// an allocation nobody will ever profile. Recorded so the trade is a decision
+    /// rather than an oversight.
+    /// </remarks>
+    [Fact]
+    public void UnwindingAllocatesOneIteratorPerFailedFlow()
+    {
+        var step = StepNode.ForCapability(0, Fixtures.ReserveInventory, Fixtures.ReleaseInventory);
+        var stack = new CompensationStack();
+
+        var allocated = Allocation.Measure(() =>
+        {
+            stack.RecordCompleted(step);
+
+            foreach (var pending in stack.Unwind())
+            {
+                _ = pending.Index;
+            }
+        });
+
+        allocated.ShouldBeGreaterThan(0);
+        allocated.ShouldBeLessThan(256, "One iterator, not a data structure.");
     }
 }

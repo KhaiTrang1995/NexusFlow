@@ -36,6 +36,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
   </ItemGroup>
 
 </Project>

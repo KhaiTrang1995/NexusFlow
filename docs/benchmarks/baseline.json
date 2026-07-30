@@ -1,80 +1,102 @@
 {
   "$comment": [
-    "Committed performance baseline. Regenerate with scripts/run-benchmarks.sh and commit",
-    "the change in a reviewed commit that states why the number moved \u2014 docs/21-Quality-Gates.md section 7.",
+    "Committed performance baseline. Regenerate with scripts/run-benchmarks.sh.",
     "",
-    "Ratios here are computed the same way scripts/check-benchmark-budgets.py computes",
-    "them (relative to the fastest benchmark in the same report), NOT the way",
-    "BenchmarkDotNet's Ratio column does (relative to [Benchmark(Baseline = true)]).",
-    "Mixing the two bases spends the tolerance on a definitional difference instead of",
-    "on real drift.",
-    "",
-    "allocatedBytes and ratioToBaseline are machine-independent and gated tightly.",
-    "absoluteNs is machine-dependent and gated loosely, as a catastrophe detector only."
+    "allocatedBytes is EXACT and BLOCKING. budgetNs is a hard ceiling and BLOCKING.",
+    "absoluteNs and ratioToBaseline are ADVISORY: two runs of the same commit on the",
+    "same container disagreed by up to 159% on absolute time and 63% on ratio, because",
+    "the fastest benchmark sits at ~10-20 ns, on the measurement noise floor. WP-3",
+    "claimed ratios were machine-independent; the data refuted it and the claim is",
+    "withdrawn. Re-record on dedicated hardware at WP-11 and pass --strict."
   ],
   "recordedOn": {
     "runtime": ".NET 10.0.10",
     "arch": "X64 RyuJIT AVX-512F+CD+BW+DQ+VL+VBMI",
     "iterationCount": 10,
     "warmupCount": 3,
-    "note": "Recorded in a container on shared hardware. Absolute figures are indicative; ratios and allocations are the contract."
+    "note": "Shared container hardware. Timing figures are indicative only; allocations are the contract."
   },
   "benchmarks": {
     "DispatchBenchmarks.Direct": {
-      "absoluteNs": 9.52,
-      "ratioToBaseline": 1.117,
-      "allocatedBytes": 0,
-      "budget": "B3",
-      "budgetNs": 150
-    },
-    "DispatchBenchmarks.ViaInterface": {
-      "absoluteNs": 8.52,
+      "absoluteNs": 19.96,
       "ratioToBaseline": 1.0,
       "allocatedBytes": 0,
       "budget": "B3",
       "budgetNs": 150
     },
+    "DispatchBenchmarks.ViaInterface": {
+      "absoluteNs": 22.03,
+      "ratioToBaseline": 1.104,
+      "allocatedBytes": 0,
+      "budget": "B3",
+      "budgetNs": 150,
+      "note": "Not slower than a direct call: the JIT devirtualises a sealed monomorphic call site."
+    },
     "DispatchBenchmarks.ViaDelegate": {
-      "absoluteNs": 8.82,
-      "ratioToBaseline": 1.035,
+      "absoluteNs": 20.62,
+      "ratioToBaseline": 1.033,
       "allocatedBytes": 0,
       "budget": "B3",
       "budgetNs": 150
     },
     "DispatchBenchmarks.ViaReflection": {
-      "absoluteNs": 74.96,
-      "ratioToBaseline": 8.793,
+      "absoluteNs": 97.88,
+      "ratioToBaseline": 4.903,
       "allocatedBytes": 48,
       "budget": "reference",
       "budgetNs": 150,
-      "note": "Not a target. The comparison ADR-0002 rests on."
+      "note": "Not a target. The 48 B is the argument ADR-0002 actually rests on."
+    },
+    "EngineBenchmarks.Query": {
+      "absoluteNs": 169.09,
+      "ratioToBaseline": 1.0,
+      "allocatedBytes": 0,
+      "budget": "B1",
+      "budgetNs": 5000,
+      "note": "B1 proper: a 4-step flow through the real engine."
+    },
+    "EngineBenchmarks.SagaSuccess": {
+      "absoluteNs": 215.93,
+      "ratioToBaseline": 1.277,
+      "allocatedBytes": 0,
+      "budget": "B1",
+      "budgetNs": 5000,
+      "note": "What declaring compensations costs when nothing fails."
+    },
+    "EngineBenchmarks.SagaFailure": {
+      "absoluteNs": 266.86,
+      "ratioToBaseline": 1.578,
+      "allocatedBytes": 40,
+      "budget": "B1",
+      "budgetNs": 5000,
+      "note": "Failure path with a full unwind. The 40 B is the Unwind iterator."
     },
     "StepLoopBenchmarks.WalkPlan": {
-      "absoluteNs": 4.87,
+      "absoluteNs": 4.45,
       "ratioToBaseline": 1.0,
       "allocatedBytes": 0,
       "budget": "B1-precursor",
       "budgetNs": 5000
     },
     "StepLoopBenchmarks.WalkAndDispatch": {
-      "absoluteNs": 19.99,
-      "ratioToBaseline": 4.103,
+      "absoluteNs": 29.7,
+      "ratioToBaseline": 6.67,
       "allocatedBytes": 0,
       "budget": "B1-precursor",
       "budgetNs": 5000
     },
     "StepLoopBenchmarks.CompensateAll": {
-      "absoluteNs": 96.58,
-      "ratioToBaseline": 19.822,
+      "absoluteNs": 122.95,
+      "ratioToBaseline": 27.605,
       "allocatedBytes": 328,
       "budget": "none",
       "budgetNs": 5000,
-      "note": "Allocates today. WP-4 must pool it; AllocationBudgetTests carries the tripwire."
+      "note": "Constructs a stack per call; the engine reuses a pooled one instead."
     },
     "StepLoopBenchmarks.BuildPlan": {
-      "absoluteNs": 133.96,
-      "ratioToBaseline": 27.493,
-      "allocatedBytes": 456,
+      "absoluteNs": 193.54,
+      "ratioToBaseline": 43.456,
+      "allocatedBytes": 520,
       "budget": "build-time",
       "budgetNs": 100000,
       "note": "Runs once per flow at startup, not per execution."
