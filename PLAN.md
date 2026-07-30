@@ -225,6 +225,29 @@ Two more surfaced while getting the suite green:
 | **Deliverable** | A benchmark report committed to `docs/benchmarks/P0.md` with the measured numbers, the hardware, and an explicit **pass/fail against ADR-0002** |
 | **Exit** | B1 ≤ 5 µs **and** B2 = 0 → proceed to P1. Otherwise → stop, write the ADR that supersedes ADR-0002, and re-plan. |
 | **Depends on** | WP-10 |
+| **Status** | **Done. PASS.** B1 = **172.3 ns** against 5 000 ns (29× margin); B2 = **0 B** exactly. Report at [docs/benchmarks/P0.md](docs/benchmarks/P0.md); baseline re-recorded at 10 warmups / 30 iterations. |
+
+**P0 proceeds to P1.** ADR-0002 stands: the compiled path delivers the budget it was
+chosen for.
+
+The hardware is still shared, which was open item 5 against this work package. The
+report answers that head-on rather than deferring: the measured margin is 29×, the
+worst run-to-run variance ever observed on this container is a factor of 2.6, and 2.6
+does not close 29. Where the hardware genuinely is not good enough — the 10–30 %
+ratio comparisons in `DispatchBenchmarks` — the report says so and does not lean on
+them. Open item 5 is closed on that reasoning, not on new hardware.
+
+Two things the report explicitly does **not** claim:
+
+- **Not a p99 in the strict sense.** BenchmarkDotNet's percentiles are over iteration
+  means, not individual operations, and at ~170 ns a single operation cannot be timed
+  without the timer costing more than the work. The worst iteration mean was 184.8 ns;
+  a true operation-level p99 would have to be 27× the mean to breach the budget, and
+  the usual cause of a tail that shape is a GC pause, which a zero-allocation path
+  does not create.
+- **Not a retirement of risk R1.** This measures runtime performance; R1 is generator
+  maintenance cost. Build overhead (**budget B12**) remains unmeasured and open
+  against WP-5.
 
 ### WP-12a — `[Sensitive]` is declared and unread
 
@@ -283,7 +306,7 @@ phase-level planning only.
 | 2 | ~~Never compiled~~ **Resolved.** SDK 10.0.110 installs from the Ubuntu archive; the official installer hosts are proxy-blocked but `packages.microsoft.com` is not | — | — |
 | 3 | ~~Stray `claude/` branch on the remote~~ **Resolved.** Deleted | — | — |
 | 4 | `SONAR_TOKEN` repository secret not configured; the `sonar` job no-ops without it | Sonar gate | repository owner |
-| 5 | Benchmarks recorded on shared container hardware with 10 iterations. WP-11 must re-record on dedicated hardware before publishing the kill-criterion report | WP-11 | — |
+| 5 | ~~Benchmarks recorded on shared container hardware with 10 iterations~~ **Resolved at WP-11**, without dedicated hardware. Re-recorded at 30 iterations; the 29× margin is ~11× clear of the worst observed noise factor (2.6×), and [P0.md §5](docs/benchmarks/P0.md) argues the case rather than assuming it. Timing figures remain advisory in the baseline | — | — |
 
 Item 1 is the only one blocking a green CI run.
 

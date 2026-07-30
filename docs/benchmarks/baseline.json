@@ -7,48 +7,56 @@
     "same container disagreed by up to 159% on absolute time and 63% on ratio, because",
     "the fastest benchmark sits at ~10-20 ns, on the measurement noise floor. WP-3",
     "claimed ratios were machine-independent; the data refuted it and the claim is",
-    "withdrawn. Re-record on dedicated hardware at WP-11 and pass --strict."
+    "withdrawn.",
+    "",
+    "Re-recorded at WP-11 with 10 warmups and 30 iterations (was 3 and 10) for the P0",
+    "kill-criterion report. Still shared container hardware, and still advisory for",
+    "timing -- see docs/benchmarks/P0.md for why that does not weaken the verdict."
   ],
   "recordedOn": {
-    "runtime": ".NET 10.0.10",
+    "runtime": ".NET 10.0.10 (10.0.1026.32716)",
+    "sdk": "10.0.110",
+    "os": "Linux Ubuntu 24.04.4 LTS (Noble Numbat)",
+    "cpu": "Intel Xeon Processor 2.10GHz, 1 CPU, 4 logical and 4 physical cores",
     "arch": "X64 RyuJIT AVX-512F+CD+BW+DQ+VL+VBMI",
-    "iterationCount": 10,
-    "warmupCount": 3,
+    "iterationCount": 30,
+    "warmupCount": 10,
+    "recordedAt": "WP-11",
     "note": "Shared container hardware. Timing figures are indicative only; allocations are the contract."
   },
   "benchmarks": {
     "DispatchBenchmarks.Direct": {
-      "absoluteNs": 19.96,
+      "absoluteNs": 19.92,
       "ratioToBaseline": 1.0,
       "allocatedBytes": 0,
       "budget": "B3",
       "budgetNs": 150
     },
     "DispatchBenchmarks.ViaInterface": {
-      "absoluteNs": 22.03,
-      "ratioToBaseline": 1.104,
+      "absoluteNs": 21.88,
+      "ratioToBaseline": 1.098,
       "allocatedBytes": 0,
       "budget": "B3",
       "budgetNs": 150,
       "note": "Not slower than a direct call: the JIT devirtualises a sealed monomorphic call site."
     },
     "DispatchBenchmarks.ViaDelegate": {
-      "absoluteNs": 20.62,
-      "ratioToBaseline": 1.033,
+      "absoluteNs": 21.03,
+      "ratioToBaseline": 1.056,
       "allocatedBytes": 0,
       "budget": "B3",
       "budgetNs": 150
     },
     "DispatchBenchmarks.ViaReflection": {
-      "absoluteNs": 97.88,
-      "ratioToBaseline": 4.903,
+      "absoluteNs": 106.36,
+      "ratioToBaseline": 5.339,
       "allocatedBytes": 48,
       "budget": "reference",
       "budgetNs": 150,
       "note": "Not a target. The 48 B is the argument ADR-0002 actually rests on."
     },
     "EngineBenchmarks.Query": {
-      "absoluteNs": 169.09,
+      "absoluteNs": 172.31,
       "ratioToBaseline": 1.0,
       "allocatedBytes": 0,
       "budget": "B1",
@@ -56,46 +64,46 @@
       "note": "B1 proper: a 4-step flow through the real engine."
     },
     "EngineBenchmarks.SagaSuccess": {
-      "absoluteNs": 215.93,
-      "ratioToBaseline": 1.277,
+      "absoluteNs": 223.39,
+      "ratioToBaseline": 1.296,
       "allocatedBytes": 0,
       "budget": "B1",
       "budgetNs": 5000,
       "note": "What declaring compensations costs when nothing fails."
     },
     "EngineBenchmarks.SagaFailure": {
-      "absoluteNs": 266.86,
-      "ratioToBaseline": 1.578,
+      "absoluteNs": 266.33,
+      "ratioToBaseline": 1.546,
       "allocatedBytes": 40,
       "budget": "B1",
       "budgetNs": 5000,
       "note": "Failure path with a full unwind. The 40 B is the Unwind iterator."
     },
     "StepLoopBenchmarks.WalkPlan": {
-      "absoluteNs": 4.45,
+      "absoluteNs": 4.54,
       "ratioToBaseline": 1.0,
       "allocatedBytes": 0,
       "budget": "B1-precursor",
       "budgetNs": 5000
     },
     "StepLoopBenchmarks.WalkAndDispatch": {
-      "absoluteNs": 29.7,
-      "ratioToBaseline": 6.67,
+      "absoluteNs": 29.86,
+      "ratioToBaseline": 6.577,
       "allocatedBytes": 0,
       "budget": "B1-precursor",
       "budgetNs": 5000
     },
     "StepLoopBenchmarks.CompensateAll": {
-      "absoluteNs": 122.95,
-      "ratioToBaseline": 27.605,
+      "absoluteNs": 139.89,
+      "ratioToBaseline": 30.813,
       "allocatedBytes": 328,
       "budget": "none",
       "budgetNs": 5000,
       "note": "Constructs a stack per call; the engine reuses a pooled one instead."
     },
     "StepLoopBenchmarks.BuildPlan": {
-      "absoluteNs": 193.54,
-      "ratioToBaseline": 43.456,
+      "absoluteNs": 213.48,
+      "ratioToBaseline": 47.022,
       "allocatedBytes": 520,
       "budget": "build-time",
       "budgetNs": 100000,
