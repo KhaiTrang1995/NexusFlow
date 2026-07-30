@@ -4,7 +4,9 @@ using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using Microsoft.CodeAnalysis;
+using FlowX.Compiler.Analysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Diagnostics;
 
 namespace FlowX.Compiler.Tests;
 
@@ -113,6 +115,30 @@ internal static class GeneratorHarness
         return new GeneratorRun(
             result.Diagnostics,
             [.. result.GeneratedSources.Select(s => (s.HintName, s.SourceText.ToString()))]);
+    }
+
+    /// <summary>Runs <see cref="CapabilityAnalyzer"/> and returns the ids it reported.</summary>
+    /// <remarks>
+    /// A separate entry point because the analyzer is not a generator: it runs over the
+    /// compilation's symbols rather than producing source, so the generator driver never
+    /// invokes it. Testing it through <see cref="Run"/> would have reported nothing and
+    /// looked like a passing test.
+    /// </remarks>
+    public static string[] Analyze(string source)
+    {
+        var compilation = CSharpCompilation.Create(
+            "FlowX.AnalyzerTests",
+            [CSharpSyntaxTree.ParseText(source, path: "/src/Flows/Sample.cs")],
+            References,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+
+        var diagnostics = compilation
+            .WithAnalyzers([new CapabilityAnalyzer()])
+            .GetAnalyzerDiagnosticsAsync()
+            .GetAwaiter()
+            .GetResult();
+
+        return [.. diagnostics.Select(static d => d.Id).Distinct().OrderBy(static id => id, StringComparer.Ordinal)];
     }
 
     /// <summary>Asserts the input compiles cleanly before the generator sees it.</summary>

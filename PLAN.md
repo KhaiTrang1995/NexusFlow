@@ -293,7 +293,7 @@ is a capability that happens to run backwards; `StepModel.Compensation` is now a
 | **Deliverable** | `PolicySetReader` resolves a named set to the policies it declares; `FLOWX1014` and `FLOWX1018` raised; policies reach the manifest |
 | **Exit** | Adding `.WithPolicy(retry)` to the sample's `CapturePayment` fails the build with `FLOWX1014` |
 | **Depends on** | WP-5 |
-| **Status** | **Partly done.** `FLOWX1014` and `FLOWX1018` are raised, tested both ways, and verified against the real sample — the build fails at the `.WithPolicy` call with the right message. `FLOWX1003` and `FLOWX1004` are **still not raised**; they inspect a capability's body rather than a flow's chain and need a separate `DiagnosticAnalyzer`. |
+| **Status** | **Done.** All four are raised, tested in both directions, and verified against the real sample rather than only the harness. Every diagnostic the docs call a compile error now is one. |
 
 A policy set is declared as a fluent chain, so reading one is the same problem as
 reading a `Define` body and reuses the same `FlowChainWalker`. A set that is not a field
@@ -309,9 +309,19 @@ An unpinned copy of a safety ordering is exactly what drifts silently, so
 disagreement, in both directions. It was verified by changing one entry and watching it
 fail.
 
-`FLOWX1003` and `FLOWX1004` are now marked in the diagnostics index and on their own
-pages as documented-but-unenforced, so nobody mistakes a convention for a control while
-the analyzer is outstanding.
+`FLOWX1003` and `FLOWX1004` needed a `DiagnosticAnalyzer` rather than more generator
+work, because they read a capability's dependencies and no flow mentions those. Being an
+analyzer also means they apply to every capability in the compilation, including one no
+flow has a step for yet — a capability that violates Q4 is wrong whether or not anything
+calls it. Generic wrappers are unwrapped, so a single `Lazy<>` cannot defeat either rule,
+and the generated dispatcher is exempt because it legitimately holds every capability its
+flow invokes.
+
+**`FLOWX1003` has a limit, and the page says so.** It matches a list of transport
+namespaces; there is no general way to recognise a transport. The sound alternative is an
+attribute applied by transport authors, which is worth nothing until they adopt it. A
+clean build means "no *known* transport", not proof, and the documentation says that
+rather than implying coverage it does not have.
 
 ### WP-12 — A supported test context
 

@@ -17,8 +17,8 @@ the build.
 |---|---|---|
 | [FLOWX1001](FLOWX1001.md) | Flow must be partial | The generated plan has nowhere to live |
 | [FLOWX1002](FLOWX1002.md) | Step type is not a capability | A step the engine cannot invoke |
-| [FLOWX1003](FLOWX1003.md) ⚠️ | Capability references a transport | Losing quality goal Q4 — the same flow behind any transport |
-| [FLOWX1004](FLOWX1004.md) ⚠️ | Capability invokes another capability | Turning the capability set back into a call graph |
+| [FLOWX1003](FLOWX1003.md) | Capability references a transport | Losing quality goal Q4 — the same flow behind any transport |
+| [FLOWX1004](FLOWX1004.md) | Capability invokes another capability | Turning the capability set back into a call graph |
 | [FLOWX1005](FLOWX1005.md) | Flow inherits from another flow | Control flow invisible to the graph and the manifest |
 | [FLOWX1010](FLOWX1010.md) | Capability declares no authorisation stance | A permissive default nobody chose |
 | [FLOWX1014](FLOWX1014.md) | Retry requires an idempotent capability | **A duplicate charge** |
@@ -28,15 +28,14 @@ the build.
 | [FLOWX1023](FLOWX1023.md) | Flow declares no steps | A flow that silently does nothing |
 | [FLOWX1024](FLOWX1024.md) | Emit step is recorded but not published | A consumer waiting for an event the manifest promised |
 
-> ⚠️ **Documented but not raised.** `FLOWX1003` and `FLOWX1004` inspect a capability's
-> *body* — its assembly references and its call graph — which the flow generator never
-> looks at. They need a separate `DiagnosticAnalyzer`, which does not exist yet. Until
-> it does, **treat these two as conventions, not as controls**: the rule is real, and
-> nothing enforces it.
+> **Every id above is raised and covered by a test.** Four of them were not, until
+> WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
+> one; `FLOWX1003` and `FLOWX1004` read a capability's dependencies, which the flow
+> generator never looks at and which needed a separate `DiagnosticAnalyzer`. All four
+> were documented as compile errors the whole time.
 >
-> Every other id in the table above is raised and covered by a test. `FLOWX1014` and
-> `FLOWX1018` were in this same state until WP-13 — documented as compile errors,
-> raised by nothing — which is why this note exists rather than being left implicit.
+> `FLOWX1003` has a stated limit worth reading before relying on it: it matches a
+> **list** of transport namespaces, not a proof.
 
 ## Ids reserved but not yet raised
 
