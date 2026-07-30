@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 569/569 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 593/593 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -203,7 +203,9 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       flipping `Idempotent` on the sample's real source
 - [ ] **WP-18** Scale — 200 synthetic flows within the 8 % budget, and evidence that
       the cost scales linearly
-- [ ] **WP-19** IDE code fixes for the mechanically fixable diagnostics
+- [x] **WP-19** IDE code fixes — `FLOWX1001`, `FLOWX1010`, `FLOWX1017`, in a separate
+      `FlowX.Compiler.CodeFixes` assembly so the analyzer never drags Workspaces into a
+      consumer's build. `FLOWX1010` deliberately withholds `Public`
 
 Already satisfied from P0, per the roadmap's P1 list: diagnostics with help URIs
 (WP-13), generator snapshot tests (WP-5), readable and breakpoint-able emitted code
@@ -259,7 +261,7 @@ Three more surfaced while getting the suite green:
 | Branch coverage | ≥ 75 % | **87.0 %** ✅ | verified locally |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
-| Fitness functions | all green | **36/36** ✅ | plus 10 compiler fitness tests |
+| Fitness functions | all green | **36/36** ✅ | plus compiler and code-fix fitness tests |
 | NativeAOT publish | links **and runs** | **✅** | 11 MB binary served a real order |
 | Concurrent cross-tenant leak | none | **none** ✅ | 64 concurrent flows, 0 overlaps |
 | SAST findings | 0 | **wired, unrun** — needs a CI run | WP-0 |

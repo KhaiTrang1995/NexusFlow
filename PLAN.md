@@ -453,7 +453,7 @@ maintainability and scale, not features.
 | Readable emitted code | **Done** — on disk under `obj/generated`, with per-step `#line` directives (fixed at WP-10) |
 | Build-overhead budget B12 | **Done** at WP-14. **+0.4 %** against +8 % |
 | *Should:* `flowx diff` v1 | **WP-17**, done |
-| *Should:* IDE code fixes | **WP-19**, open |
+| *Should:* IDE code fixes | **WP-19**, done |
 
 **Exit criteria, from the roadmap:**
 
@@ -560,6 +560,31 @@ and array order. A gate that fires on every build is a gate people delete.
 | **Deliverable** | A `CodeFixProvider` for the mechanically fixable diagnostics |
 | **Exit** | The fix applies cleanly in a test harness and produces compiling code |
 | **Depends on** | WP-13 |
+| **Status** | **Done.** `FLOWX1001`, `FLOWX1010` and `FLOWX1017`. Tests apply each fix to the reference sample's own files and assert byte equality with what is on disk. |
+
+**The fixes ship in their own assembly, and it must not reference the compiler.** The
+original instruction for this package said to add a `ProjectReference` from
+`FlowX.Compiler.CodeFixes` to `FlowX.Compiler`. That was wrong: both are
+`DevelopmentDependency` analyzer assets, a development dependency does not flow
+transitively, and the host would be handed an assembly whose reference it cannot
+resolve. A compiler extension that fails to load is dropped **in silence** — it would
+have surfaced as "the quick actions do not appear on my machine". The diagnostic ids are
+string literals instead, pinned against `FlowXDiagnostics.All` by a fitness test in the
+test project, which may reference both; a second fitness test asserts the seam itself.
+
+**What the `FLOWX1010` fix refuses is the substance of it.** It offers `Authenticated`
+and `Internal` only. `Public` would clear a security error with one keystroke and make
+the capability world-readable — the outcome the rule exists to prevent. `Permission` and
+`Policy` each need a name nothing in the source implies, and nothing rejects the stance
+without it, so a fix emitting one would produce a declaration that compiles, reads as
+enforced, and reaches the manifest as a claim about access control that nothing backs.
+There is no Fix All for it either.
+
+Not fixed, deliberately: `FLOWX1014` (the only mechanical repairs are asserting an
+idempotency the tool cannot verify, or deleting the retry — and the diagnostic is what
+prevents a duplicate charge), `FLOWX1018` (the repair is splitting a capability in two),
+and `FLOWX1024` (suppression needs a `FLOWX-DEBT` owner and expiry a tool cannot
+invent).
 
 ---
 
