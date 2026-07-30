@@ -20,5 +20,6 @@ FLOWX1014 | FlowX | Error | Retry requires an idempotent capability. [Documentat
 FLOWX1015 | FlowX | Error | Capability implements more than one contract. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1015.md)
 FLOWX1017 | FlowX | Error | AwaitSignal requires the Durable profile. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1017.md)
 FLOWX1018 | FlowX | Error | Cache requires a capability with no side effects. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1018.md)
+FLOWX1020 | FlowX | Error | Step consumes a contract no earlier step produces. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1020.md)
 FLOWX1023 | FlowX | Error | Flow declares no steps. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1023.md)
 FLOWX1024 | FlowX | Warning | Emit step is recorded but not published. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1024.md)
