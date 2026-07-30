@@ -88,8 +88,24 @@ public sealed class FlowModel
     /// <summary>Fully-qualified output contract.</summary>
     public string OutputTypeName { get; }
 
-    /// <summary>The steps, in declaration order.</summary>
+    /// <summary>
+    /// The top-level steps, in declaration order. Steps inside a conditional's blocks
+    /// hang off the conditional and are <em>not</em> here.
+    /// </summary>
+    /// <remarks>
+    /// This is the declared shape, which is what the manifest publishes and what a reader
+    /// recognises as their own <c>Define</c> method. Anything that needs the whole flow —
+    /// descriptors, the dispatcher's switch, the capability list — wants
+    /// <see cref="AllSteps"/> instead.
+    /// </remarks>
     public IReadOnlyList<StepModel> Steps { get; }
+
+    /// <summary>Every step of the flow, nested ones included, in flat-layout order.</summary>
+    /// <remarks>
+    /// The order matters: it is the order the compiled step array runs in, so emitting a
+    /// dispatcher case per entry produces a switch whose cases ascend.
+    /// </remarks>
+    public IEnumerable<StepModel> AllSteps => Steps.SelectMany(step => step.SelfAndNested);
 
     /// <summary><c>file:line</c> of the declaration, for diagnostics and the manifest.</summary>
     public string? DeclarationLocation { get; }
@@ -138,11 +154,11 @@ public sealed class FlowModel
         ? TypeName
         : ContainingNamespace + "." + TypeName;
 
-    /// <summary>True when any step declared a compensation.</summary>
-    public bool HasCompensation => Steps.Any(step => step.CompensationTypeName != null);
+    /// <summary>True when any step declared a compensation, inside a branch or not.</summary>
+    public bool HasCompensation => AllSteps.Any(step => step.CompensationTypeName != null);
 
     /// <summary>Every distinct capability type the flow invokes, compensations included.</summary>
-    public IReadOnlyList<string> ReferencedCapabilities => Steps
+    public IReadOnlyList<string> ReferencedCapabilities => AllSteps
         .SelectMany(step => new[] { step.CapabilityTypeName, step.CompensationTypeName })
         .Where(name => name != null)
         .Select(name => name!)

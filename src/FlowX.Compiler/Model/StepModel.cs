@@ -1,10 +1,12 @@
+using System.Collections.Generic;
+
 namespace FlowX.Compiler.Model;
 
 /// <summary>What one call in a <c>Define</c> chain declared.</summary>
 /// <remarks>
-/// Only the kinds a linear P0 flow can contain. Branching kinds arrive with the DSL
-/// surface that can express them, in P1 — modelling them now would be shapes
-/// nothing can produce and no test can exercise.
+/// The remaining branching kinds — switch, parallel, for-each, sub-flow — arrive with
+/// the DSL surface that can express them. Modelling them now would be shapes nothing can
+/// produce and no test can exercise.
 /// </remarks>
 public enum StepKindModel
 {
@@ -16,6 +18,9 @@ public enum StepKindModel
 
     /// <summary><c>.AwaitSignal&lt;TSignal&gt;(...)</c></summary>
     AwaitSignal = 2,
+
+    /// <summary><c>.When(predicate, then)</c>, with the <c>.Otherwise(...)</c> that may follow it.</summary>
+    Condition = 3,
 }
 
 /// <summary>One step of a declared flow, expressed without Roslyn types.</summary>
@@ -119,8 +124,100 @@ public sealed record StepModel
     /// <summary><c>file:line</c> of the call, so a diagnostic points at the right chain link.</summary>
     public string? Location { get; private init; }
 
+    /// <summary>
+    /// Source text of the <c>.When(...)</c> predicate, copied verbatim, or <c>null</c> for
+    /// every other kind.
+    /// </summary>
+    /// <remarks>
+    /// Verbatim for the same reason the <c>.Return(...)</c> projection is — see
+    /// <c>FlowModel.ReturnProjection</c>. Reconstructing an arbitrary C# expression means
+    /// re-rendering every form the language has, and being wrong on the first one nobody
+    /// thought of.
+    /// </remarks>
+    public string? Predicate { get; private init; }
+
+    /// <summary><c>file:line</c> of the predicate expression, for its <c>#line</c> directive.</summary>
+    public string? PredicateLocation { get; private init; }
+
+    /// <summary>Steps declared in the <c>then</c> block, in declaration order.</summary>
+    public IReadOnlyList<StepModel> Then { get; private init; } = System.Array.Empty<StepModel>();
+
+    /// <summary>Steps declared in the <c>.Otherwise(...)</c> block. Empty when there is none.</summary>
+    public IReadOnlyList<StepModel> Otherwise { get; private init; } = System.Array.Empty<StepModel>();
+
+    /// <summary>
+    /// Where control continues when the predicate does not hold.
+    /// </summary>
+    /// <remarks>
+    /// The flat layout a conditional compiles to is
+    /// <c>branch · then… · [jump] · otherwise…</c>, so the true path is the branch's own
+    /// index plus one and only the false path needs to be recorded. See
+    /// <c>StepNode.Target</c>, which is what this becomes.
+    /// </remarks>
+    public int FalseTarget { get; private init; }
+
+    /// <summary>
+    /// Index of the jump that closes the <c>then</c> block, or <c>null</c> when there is
+    /// no <c>Otherwise</c> to skip over.
+    /// </summary>
+    public int? JumpIndex { get; private init; }
+
+    /// <summary>
+    /// Index the whole conditional joins at: the first step after both blocks, which is
+    /// also the jump's target.
+    /// </summary>
+    /// <remarks>
+    /// May be one past the last step of the flow, when the conditional is the last thing
+    /// the chain declares. That is the layout <c>StepGraph</c> deliberately permits.
+    /// </remarks>
+    public int JoinIndex { get; private init; }
+
+    /// <summary>
+    /// The flat index immediately after everything this step occupies.
+    /// </summary>
+    /// <remarks>
+    /// One past its own index for a plain step; the join index for a conditional, which
+    /// occupies its branch, both blocks and possibly a jump. This is what lets a nested
+    /// conditional be laid out without the enclosing block having to know how deep it goes.
+    /// </remarks>
+    public int NextIndex => Kind == StepKindModel.Condition ? JoinIndex : Index + 1;
+
     /// <summary>True when the step declared a compensation.</summary>
     public bool IsCompensable => CompensationTypeName != null;
+
+    /// <summary>
+    /// This step and every step nested inside it, in flat-layout order.
+    /// </summary>
+    /// <remarks>
+    /// Pre-order, which for this shape <em>is</em> the order the flat step array runs in:
+    /// a conditional comes before its <c>then</c> block, which comes before its
+    /// <c>Otherwise</c> block. Everything that used to read <c>flow.Steps</c> as the whole
+    /// flow — the descriptors, the dispatcher's switch, the manifest's capability list —
+    /// has to read this instead, or a capability invoked inside a branch is invisible to it.
+    /// </remarks>
+    public IEnumerable<StepModel> SelfAndNested
+    {
+        get
+        {
+            yield return this;
+
+            foreach (var nested in Then)
+            {
+                foreach (var step in nested.SelfAndNested)
+                {
+                    yield return step;
+                }
+            }
+
+            foreach (var nested in Otherwise)
+            {
+                foreach (var step in nested.SelfAndNested)
+                {
+                    yield return step;
+                }
+            }
+        }
+    }
 
     /// <summary>Models a <c>.Step&lt;TCapability&gt;()</c> call.</summary>
     public static StepModel Capability(
@@ -165,6 +262,55 @@ public sealed record StepModel
         return new StepModel(index, StepKindModel.AwaitSignal)
         {
             SignalType = signalType,
+            Location = location,
+        };
+    }
+
+    /// <summary>Models a <c>.When(predicate, then)</c> and the <c>.Otherwise(...)</c> that may follow.</summary>
+    /// <param name="index">Flat index of the branch itself.</param>
+    /// <param name="predicate">The predicate's source text, copied verbatim.</param>
+    /// <param name="then">Steps of the <c>then</c> block, already carrying their flat indices.</param>
+    /// <param name="otherwise">Steps of the <c>Otherwise</c> block, or empty when there is none.</param>
+    /// <param name="predicateLocation"><c>file:line</c> of the predicate expression.</param>
+    /// <param name="location"><c>file:line</c> of the <c>.When</c> call.</param>
+    /// <remarks>
+    /// The three layout numbers — <see cref="FalseTarget"/>, <see cref="JumpIndex"/>,
+    /// <see cref="JoinIndex"/> — are derived here from the blocks rather than passed in.
+    /// They are a consequence of the layout, not an independent decision, and a caller
+    /// able to supply a target that disagreed with the blocks it also supplied could
+    /// produce a plan that skips or repeats real steps.
+    /// </remarks>
+    public static StepModel Condition(
+        int index,
+        string predicate,
+        IReadOnlyList<StepModel> then,
+        IReadOnlyList<StepModel>? otherwise = null,
+        string? predicateLocation = null,
+        string? location = null)
+    {
+        var thenSteps = then ?? (IReadOnlyList<StepModel>)System.Array.Empty<StepModel>();
+        var otherwiseSteps = otherwise ?? (IReadOnlyList<StepModel>)System.Array.Empty<StepModel>();
+
+        var thenEnd = thenSteps.Count == 0 ? index + 1 : thenSteps[thenSteps.Count - 1].NextIndex;
+
+        // With no alternative there is nothing to skip, so no jump is emitted and the
+        // false path lands exactly where the `then` block ended. Emitting a jump anyway
+        // would leave a step in the graph that does nothing but cost an index.
+        var hasOtherwise = otherwiseSteps.Count > 0;
+
+        var join = hasOtherwise
+            ? otherwiseSteps[otherwiseSteps.Count - 1].NextIndex
+            : thenEnd;
+
+        return new StepModel(index, StepKindModel.Condition)
+        {
+            Predicate = predicate,
+            PredicateLocation = predicateLocation,
+            Then = thenSteps,
+            Otherwise = otherwiseSteps,
+            JumpIndex = hasOtherwise ? thenEnd : (int?)null,
+            FalseTarget = hasOtherwise ? thenEnd + 1 : thenEnd,
+            JoinIndex = join,
             Location = location,
         };
     }

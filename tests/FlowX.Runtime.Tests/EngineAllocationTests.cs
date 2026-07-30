@@ -163,12 +163,44 @@ public sealed class EngineAllocationTests
             "does not belong there.");
     }
 
+    /// <summary>
+    /// Budget B2 has to survive branching, or the DSL's most-used shape quietly buys
+    /// back the allocation the engine was built to avoid.
+    /// </summary>
+    /// <remarks>
+    /// Both directions, because they cost differently in principle: the true path falls
+    /// through to the next index, and the false path takes the target. Neither may
+    /// allocate — the predicate is a cached static delegate, <see cref="StepNode.Target"/>
+    /// is an <c>int?</c> read off a node that already exists, and the loop holds no
+    /// branch stack.
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TakingEitherBranchOfAConditionalAllocatesNothing(bool predicate)
+    {
+        RequireOptimisedBuild();
+
+        var engine = new FlowEngine(new FakeClock(T0));
+        var dispatcher = new NullDispatcher { PredicateAnswer = predicate };
+
+        var allocated = MeasureSteadyState(engine, Plans.Conditional(), dispatcher);
+
+        allocated.ShouldBe(0,
+            $"Measured {allocated} B on the {(predicate ? "true" : "false")} path. A branch is an " +
+            "index assignment inside the existing step loop; if it costs anything, " +
+            "something started boxing, closing over, or enumerating.");
+    }
+
     /// <summary>A dispatcher that allocates nothing itself, so the measurement is the engine's.</summary>
     private sealed class NullDispatcher : IStepDispatcher
     {
         public int? FailAtStep { get; init; }
 
         public Error? Failure { get; init; }
+
+        /// <summary>What every branch answers. Fixed, so the predicate itself allocates nothing.</summary>
+        public bool PredicateAnswer { get; init; } = true;
 
         public ValueTask<StepOutcome> ExecuteAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
             => stepIndex == FailAtStep && Failure is not null
@@ -177,5 +209,7 @@ public sealed class EngineAllocationTests
 
         public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
             => ValueTask.FromResult(StepOutcome.Success);
+
+        public bool Evaluate(int stepIndex, FlowContext ctx) => PredicateAnswer;
     }
 }

@@ -14,6 +14,15 @@ namespace FlowX.Runtime;
 /// enough to reason about.
 /// </para>
 /// <para>
+/// <strong>Branching is flat.</strong> A <c>When</c>/<c>Otherwise</c> is compiled into
+/// the same step array as everything else, as a <see cref="StepKind.Branch"/> carrying a
+/// false target and a <see cref="StepKind.Jump"/> closing the <c>then</c> block. So the
+/// engine does not recurse, holds no branch stack, and allocates nothing to take a
+/// branch — the only difference from a linear flow is that the loop index sometimes
+/// moves by more than one. A tree of nested plan objects would have read more naturally
+/// and would have cost an enumerator per level on the hot path.
+/// </para>
+/// <para>
 /// <strong>Deadlines are enforced at step boundaries.</strong> The engine will not
 /// start a step whose flow has run out of budget, but it does not interrupt a step
 /// already running. Interrupting in-flight work is the Timeout policy's job (P4),
@@ -172,9 +181,54 @@ public sealed class FlowEngine
         var completed = 0;
         Error? failure = null;
 
-        for (var i = 0; i < steps.Length && failure is null; i++)
+        // Not `for (i = 0; i < n; i++)`. A conditional is compiled into this same flat
+        // array as a Branch and a Jump, so the index advances either by one or to a
+        // target. The loop is still guaranteed to terminate: StepGraph rejects any target
+        // that is out of range or points backwards, which is the whole reason that check
+        // exists.
+        var i = 0;
+
+        while (i < steps.Length)
         {
             var step = steps[i];
+
+            // A control transfer does no work. It invokes nothing, so it cannot fail and
+            // cannot be compensated; it consumes no measurable time, so charging it a
+            // deadline check would buy nothing but a clock read. The step it lands on
+            // does both.
+            if (step.Kind == StepKind.Jump)
+            {
+                // `.Value`, not `.GetValueOrDefault()`. The factories make a control
+                // transfer without a target unrepresentable, so this cannot be null — but
+                // if it ever were, defaulting to zero would silently restart the flow and
+                // loop forever, and a throw is the diagnosable failure.
+                i = step.Target!.Value;
+                continue;
+            }
+
+            if (step.Kind == StepKind.Branch)
+            {
+                bool taken;
+
+                try
+                {
+                    taken = dispatcher.Evaluate(i, context);
+                }
+#pragma warning disable CA1031 // Same reasoning as the capability call below, plus one
+                catch (Exception exception) //   more: a predicate escaping here would skip
+                {                           //   the compensation the already-completed
+                    failure = FlowErrors    //   steps need, leaving exactly the dangling
+                        .PredicateFailed(plan.Flow.Id, i, exception); // state a saga prevents.
+                    break;
+                }
+#pragma warning restore CA1031
+
+                // The `then` block is laid out immediately after the branch, so the true
+                // path is the ordinary next index and only the false path needs a target.
+                i = taken ? i + 1 : step.Target!.Value;
+                continue;
+            }
+
             context.EnterStep(step);
 
             if (context.UtcNow >= context.Deadline)
@@ -206,14 +260,15 @@ public sealed class FlowEngine
             }
 #pragma warning restore CA1031
 
-            if (outcome.IsSuccess)
+            if (!outcome.IsSuccess)
             {
-                completed++;
-                compensations?.RecordCompleted(step);
-                continue;
+                failure = outcome.Error;
+                break;
             }
 
-            failure = outcome.Error;
+            completed++;
+            compensations?.RecordCompleted(step);
+            i++;
         }
 
         if (failure is null)

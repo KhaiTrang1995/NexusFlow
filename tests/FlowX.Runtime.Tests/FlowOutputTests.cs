@@ -125,6 +125,9 @@ public sealed class FlowOutputTests
 
         public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
             => ValueTask.FromResult(StepOutcome.Success);
+
+        public bool Evaluate(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no branch step.");
     }
 
     private sealed class ProducingDispatcher : IStepDispatcher
@@ -139,6 +142,9 @@ public sealed class FlowOutputTests
 
         public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
             => ValueTask.FromResult(StepOutcome.Success);
+
+        public bool Evaluate(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no branch step.");
     }
 
     private sealed class FailingDispatcher : IStepDispatcher
@@ -149,5 +155,8 @@ public sealed class FlowOutputTests
 
         public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
             => ValueTask.FromResult(StepOutcome.Success);
+
+        public bool Evaluate(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no branch step.");
     }
 }

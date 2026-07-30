@@ -70,11 +70,16 @@ public sealed class MermaidRendererTests
     {
         var diagram = Render();
 
-        var declared = Regex.Matches(diagram, @"^\s{8}(\w+)[\[\(>/]", RegexOptions.Multiline)
+        var declared = Regex.Matches(diagram, @"^\s{8}(\w+)[\[\(>/{]", RegexOptions.Multiline)
             .Select(m => m.Groups[1].Value)
             .ToHashSet(StringComparer.Ordinal);
 
-        var edges = Regex.Matches(diagram, @"^\s{8}(\w+)\s+-\.?->\s+(\w+)$", RegexOptions.Multiline);
+        // The optional label matters: a labelled branch edge this pattern skipped would be
+        // exempt from the one structural check the renderer has.
+        var edges = Regex.Matches(
+            diagram,
+            @"^\s{8}(\w+)\s+-\.?->(?:\|[^|]*\|)?\s+(\w+)$",
+            RegexOptions.Multiline);
 
         edges.Count.ShouldBeGreaterThan(0, "A four-step flow must produce edges.");
 
@@ -211,4 +216,109 @@ public sealed class MermaidRendererTests
     [Fact]
     public void RejectsANullManifest()
         => Should.Throw<ArgumentNullException>(() => MermaidRenderer.Render(null!));
+
+    /// <summary>A flow with a <c>When</c>/<c>Otherwise</c>, as the compiler publishes it.</summary>
+    /// <remarks>
+    /// Step 3 is absent on purpose: it is the jump that closes the <c>then</c> block, and
+    /// the manifest does not publish it. A renderer that assumed contiguous ids would draw
+    /// an edge to a node that does not exist.
+    /// </remarks>
+    private const string ConditionalManifest = """
+        {
+          "schemaVersion": "0.1.0",
+          "application": { "name": "Sample.App", "version": "1.0.0" },
+          "flows": [
+            {
+              "id": "loan.review", "version": "1.0.0", "profile": "Ephemeral",
+              "steps": [
+                { "id": 0, "kind": "Capability", "capability": "risk.assess@1.0.0" },
+                { "id": 1, "kind": "Condition", "branches": [
+                    [ { "id": 2, "kind": "Capability", "capability": "review.request@1.0.0" } ],
+                    [ { "id": 4, "kind": "Capability", "capability": "review.auto@1.0.0" } ]
+                  ] },
+                { "id": 5, "kind": "Capability", "capability": "applicant.notify@1.0.0" }
+              ],
+              "emits": []
+            }
+          ],
+          "capabilities": []
+        }
+        """;
+
+    [Fact]
+    public void DrawsAConditionalAsADiamondWithLabelledBranches()
+    {
+        var diagram = MermaidRenderer.Render(Parse(ConditionalManifest));
+
+        // A diamond, so a reader sees the shape before reading a single label.
+        diagram.ShouldContain("f0s1{\"condition\"}");
+
+        diagram.ShouldContain("f0s0 --> f0s1");
+        diagram.ShouldContain("f0s1 -->|yes| f0s2");
+        diagram.ShouldContain("f0s1 -->|no| f0s4");
+    }
+
+    [Fact]
+    public void BothBranchesRejoinTheStepThatFollowsTheConditional()
+    {
+        // The failure this catches is drawing only one exit, which produces a diagram
+        // where one branch runs off the end of the flow — precisely the thing a reviewer
+        // is looking at the picture to check.
+        var diagram = MermaidRenderer.Render(Parse(ConditionalManifest));
+
+        diagram.ShouldContain("f0s2 --> f0s5");
+        diagram.ShouldContain("f0s4 --> f0s5");
+    }
+
+    [Fact]
+    public void EveryEdgeOfAConditionalReferencesADeclaredNode()
+    {
+        var diagram = MermaidRenderer.Render(Parse(ConditionalManifest));
+
+        var declared = Regex.Matches(diagram, @"^\s{8}(\w+)[\[\(>/{]", RegexOptions.Multiline)
+            .Select(m => m.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        declared.ShouldContain("f0s2", "A step inside a branch still needs a node of its own.");
+        declared.ShouldNotContain("f0s3", "The jump is not published, so nothing may draw it.");
+
+        foreach (Match edge in Regex.Matches(
+            diagram, @"^\s{8}(\w+)\s+-\.?->(?:\|[^|]*\|)?\s+(\w+)$", RegexOptions.Multiline))
+        {
+            declared.ShouldContain(edge.Groups[1].Value);
+            declared.ShouldContain(edge.Groups[2].Value);
+        }
+    }
+
+    [Fact]
+    public void AConditionalWithNoAlternativeIsAlsoItsOwnFalseExit()
+    {
+        // One populated block means the false path skips the conditional entirely, so the
+        // conditional connects straight to what follows as well as through its branch.
+        const string NoOtherwise = """
+            {
+              "schemaVersion": "0.1.0",
+              "application": { "name": "Sample.App", "version": "1.0.0" },
+              "flows": [
+                {
+                  "id": "loan.review", "version": "1.0.0", "profile": "Ephemeral",
+                  "steps": [
+                    { "id": 0, "kind": "Condition", "branches": [
+                        [ { "id": 1, "kind": "Capability", "capability": "review.request@1.0.0" } ]
+                      ] },
+                    { "id": 2, "kind": "Capability", "capability": "applicant.notify@1.0.0" }
+                  ],
+                  "emits": []
+                }
+              ],
+              "capabilities": []
+            }
+            """;
+
+        var diagram = MermaidRenderer.Render(Parse(NoOtherwise));
+
+        diagram.ShouldContain("f0s0 -->|yes| f0s1");
+        diagram.ShouldContain("f0s1 --> f0s2");
+        diagram.ShouldContain("f0s0 --> f0s2");
+    }
 }

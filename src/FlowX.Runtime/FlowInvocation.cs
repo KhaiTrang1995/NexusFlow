@@ -203,4 +203,33 @@ public static class FlowErrors
             .With("capabilityId", capabilityId)
             .With("exceptionType", exception.GetType().FullName);
     }
+
+    /// <summary>
+    /// A <c>When</c> predicate threw instead of answering.
+    /// </summary>
+    /// <param name="flowId">The flow whose branch failed.</param>
+    /// <param name="stepIndex">Index of the branch, so the failure names one condition.</param>
+    /// <param name="exception">What the predicate threw.</param>
+    /// <remarks>
+    /// Its own code rather than <see cref="Unhandled"/>, because the two say different
+    /// things to whoever reads them. An unhandled capability error means a dependency
+    /// misbehaved; this one means the flow could not decide which way to go, and the
+    /// usual cause is a predicate reading a value no step on the path so far produced.
+    /// Reported as <see cref="ErrorCategory.Internal"/>: a predicate is pure by
+    /// construction, so it throwing is a defect and never a transient fault.
+    /// </remarks>
+    public static Error PredicateFailed(string flowId, int stepIndex, Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        return new Error(
+            "flow.predicate_failed",
+            $"The condition at step {stepIndex} of flow '{flowId}' threw " +
+            $"{exception.GetType().Name}. A condition may read only the context, the flow " +
+            "input and prior step results, and must not throw.",
+            ErrorCategory.Internal)
+            .With("flowId", flowId)
+            .With("stepIndex", stepIndex)
+            .With("exceptionType", exception.GetType().FullName);
+    }
 }

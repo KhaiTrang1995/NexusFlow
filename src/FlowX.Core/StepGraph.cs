@@ -31,8 +31,8 @@ public sealed class StepGraph
     /// </summary>
     /// <param name="steps">The steps. Copied, never aliased.</param>
     /// <exception cref="InvalidFlowPlanException">
-    /// The graph is empty, has duplicate indices, or has indices that are not
-    /// contiguous from zero.
+    /// The graph is empty, has duplicate indices, has indices that are not contiguous
+    /// from zero, or contains a jump target that is out of range or points backwards.
     /// </exception>
     public static StepGraph Create(IEnumerable<StepNode> steps)
     {
@@ -66,6 +66,53 @@ public sealed class StepGraph
                     "silently skip business logic at run time.");
         }
 
+        ValidateJumpTargets(ordered);
+
         return new StepGraph(ordered);
+    }
+
+    /// <summary>
+    /// Checks every control transfer's target: in range, and forward.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The range check can only happen here. <see cref="StepNode.ForBranch"/> rejects a
+    /// backward target — it can, because it knows the node's own index — but it cannot
+    /// know how many steps the graph ends up with, so an out-of-range target survives
+    /// node construction and would first be noticed as an <c>IndexOutOfRangeException</c>
+    /// thrown from the middle of a flow, after some of its steps had already run.
+    /// </para>
+    /// <para>
+    /// A target equal to <see cref="Count"/> is deliberately allowed: it is one past the
+    /// last step, which ends the flow. That is the layout of a conditional written at the
+    /// tail of a <c>Define</c> chain, so rejecting it would forbid a shape the DSL can
+    /// express.
+    /// </para>
+    /// </remarks>
+    private static void ValidateJumpTargets(ImmutableArray<StepNode> ordered)
+    {
+        foreach (var step in ordered)
+        {
+            if (step.Target is not { } target)
+            {
+                continue;
+            }
+
+            if (target > ordered.Length)
+            {
+                throw new InvalidFlowPlanException(
+                    $"Step {step.Index} targets step {target}, but the graph has only " +
+                    $"{ordered.Length} step(s). A target may be at most {ordered.Length} — " +
+                    "one past the last step, which ends the flow.");
+            }
+
+            if (target <= step.Index)
+            {
+                throw new InvalidFlowPlanException(
+                    $"Step {step.Index} targets step {target}, which does not point forward. " +
+                    "A backward target is a loop, and the conditional DSL cannot express " +
+                    "one — so this is a layout bug that would make the step loop run forever.");
+            }
+        }
     }
 }

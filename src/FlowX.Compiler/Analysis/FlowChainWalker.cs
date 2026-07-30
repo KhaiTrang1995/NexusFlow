@@ -78,6 +78,58 @@ public static class FlowChainWalker
         return Unwind(FindOutermostInvocation(defineBody, builderParameterName));
     }
 
+    /// <summary>
+    /// Returns the builder chain declared inside one of a link's block arguments — the
+    /// <c>then</c> of a <c>When</c>, the body of an <c>Otherwise</c> — in source order.
+    /// </summary>
+    /// <param name="link">The chain link to descend into.</param>
+    /// <param name="argumentIndex">
+    /// Position of the <c>Action&lt;IFlowBuilder&lt;,&gt;&gt;</c> argument: 1 for
+    /// <c>When(predicate, then)</c>, 0 for <c>Otherwise(alternative)</c>.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// A block is written as a lambda taking a builder of its own, so its chain is rooted
+    /// at the lambda's parameter and not at <c>Define</c>'s. Passing that parameter to
+    /// <see cref="Walk"/> is what keeps this from reading an ordinary projection lambda —
+    /// <c>ctx =&gt; ctx.Get&lt;Order&gt;()</c> — as a one-link chain named <c>Get</c>.
+    /// </para>
+    /// <para>
+    /// Returns an empty list for anything that is not a lambda. A method group or a
+    /// variable holding an <c>Action</c> is legal C# and its body is not visible here;
+    /// the flow would compile to a conditional with an empty branch rather than to a
+    /// generator crash, and FLOWX1023 already reports a flow that declared nothing.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<ChainLink> WalkBlock(ChainLink link, int argumentIndex)
+    {
+        if (link is null)
+        {
+            return new List<ChainLink>();
+        }
+
+        var arguments = link.Invocation.ArgumentList.Arguments;
+
+        if (argumentIndex < 0 || argumentIndex >= arguments.Count ||
+            arguments[argumentIndex].Expression is not LambdaExpressionSyntax lambda)
+        {
+            return new List<ChainLink>();
+        }
+
+        var body = (SyntaxNode?)lambda.Block ?? lambda.ExpressionBody;
+
+        return Walk(body, BlockParameterName(lambda));
+    }
+
+    /// <summary>The name of a block lambda's single parameter, or <c>null</c> if it has none.</summary>
+    private static string? BlockParameterName(LambdaExpressionSyntax lambda) => lambda switch
+    {
+        SimpleLambdaExpressionSyntax simple => simple.Parameter.Identifier.ValueText,
+        ParenthesizedLambdaExpressionSyntax parenthesized when parenthesized.ParameterList.Parameters.Count == 1 =>
+            parenthesized.ParameterList.Parameters[0].Identifier.ValueText,
+        _ => null,
+    };
+
     /// <summary>Unwinds one nested invocation into its links, in source order.</summary>
     private static List<ChainLink> Unwind(InvocationExpressionSyntax? outermost)
     {
@@ -132,10 +184,10 @@ public static class FlowChainWalker
         switch (body)
         {
             case ArrowExpressionClauseSyntax arrow:
-                return arrow.Expression as InvocationExpressionSyntax;
+                return Accept(arrow.Expression as InvocationExpressionSyntax, builderParameterName);
 
             case InvocationExpressionSyntax invocation:
-                return invocation;
+                return Accept(invocation, builderParameterName);
 
             case BlockSyntax block:
                 // Last first: a later chain supersedes an earlier one, the same way the
@@ -160,4 +212,19 @@ public static class FlowChainWalker
                 return null;
         }
     }
+
+    /// <summary>Keeps an expression-bodied chain only when it is rooted at the builder.</summary>
+    /// <remarks>
+    /// The block-bodied case has always applied this test; the expression-bodied one did
+    /// not, which did not matter while the only caller passed a <c>Define</c> body. It
+    /// matters now that block lambdas are walked too: <c>ctx =&gt; ctx.Get&lt;Order&gt;()</c>
+    /// is an invocation rooted at an identifier, and without the test it reads as a chain
+    /// of one step named <c>Get</c>.
+    /// </remarks>
+    private static InvocationExpressionSyntax? Accept(
+        InvocationExpressionSyntax? invocation,
+        string? builderParameterName) =>
+        invocation is null || builderParameterName is null || IsRootedAt(invocation, builderParameterName)
+            ? invocation
+            : null;
 }

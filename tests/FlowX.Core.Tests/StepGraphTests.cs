@@ -95,6 +95,101 @@ public sealed class StepGraphTests
     }
 
     [Fact]
+    public void ABranchCarriesOnlyItsFalseTarget()
+    {
+        // The true path needs no target: the `then` block is laid out immediately after
+        // the branch, so taking it is the ordinary next index.
+        var branch = StepNode.ForBranch(0, falseTarget: 3);
+
+        branch.Kind.ShouldBe(StepKind.Branch);
+        branch.Target.ShouldBe(3);
+        branch.IsControlTransfer.ShouldBeTrue();
+        branch.Capability.ShouldBeNull();
+        branch.IsCompensable.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AnOrdinaryStepHasNoTarget()
+    {
+        Step(0, Fixtures.ValidateOrder).Target.ShouldBeNull();
+        Step(0, Fixtures.ValidateOrder).IsControlTransfer.ShouldBeFalse();
+        StepNode.ForEmit(0, "order.placed").Target.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(1)]
+    [InlineData(0)]
+    public void ATargetMustPointForward(int target)
+    {
+        // 2 is backwards, 1 is a self-loop, 0 is further backwards. None of the three is
+        // something `When` can express, so all three are layout bugs — and each would
+        // make the engine's step loop run forever rather than fail.
+        Should.Throw<InvalidFlowPlanException>(() => StepNode.ForBranch(2, target))
+            .Message.ShouldContain("forward");
+
+        Should.Throw<InvalidFlowPlanException>(() => StepNode.ForJump(2, target));
+    }
+
+    [Fact]
+    public void ATargetMayBeOnePastTheLastStepBecauseThatEndsTheFlow()
+    {
+        // The layout of a `When` written at the tail of a chain: the false path has
+        // nowhere to go but out.
+        var graph = StepGraph.Create([
+            Step(0, Fixtures.ValidateOrder),
+            StepNode.ForBranch(1, falseTarget: 3),
+            Step(2, Fixtures.CapturePayment),
+        ]);
+
+        graph[1].Target.ShouldBe(3);
+    }
+
+    [Fact]
+    public void RejectsATargetPastTheEndOfTheGraph()
+    {
+        // The factory cannot catch this — it does not know how many steps there will be.
+        // Left unchecked it surfaces as an IndexOutOfRangeException from the middle of a
+        // flow, after some of its steps have already run.
+        var error = Should.Throw<InvalidFlowPlanException>(() => StepGraph.Create([
+            Step(0, Fixtures.ValidateOrder),
+            StepNode.ForBranch(1, falseTarget: 4),
+            Step(2, Fixtures.CapturePayment),
+        ]));
+
+        error.Message.ShouldContain("4");
+        error.Message.ShouldContain("3");
+    }
+
+    [Fact]
+    public void RejectsAJumpTargetPastTheEndOfTheGraph()
+    {
+        Should.Throw<InvalidFlowPlanException>(() => StepGraph.Create([
+            Step(0, Fixtures.ValidateOrder),
+            StepNode.ForJump(1, target: 9),
+        ]));
+    }
+
+    [Fact]
+    public void AcceptsTheFullConditionalLayout()
+    {
+        // The shape the emitter produces for
+        // `.Step<A>().When(p, t => t.Step<B>()).Otherwise(o => o.Step<C>()).Step<D>()`.
+        var graph = StepGraph.Create([
+            Step(0, Fixtures.ValidateOrder),
+            StepNode.ForBranch(1, falseTarget: 4),
+            Step(2, Fixtures.ReserveInventory),
+            StepNode.ForJump(3, target: 5),
+            Step(4, Fixtures.CapturePayment),
+            Step(5, Fixtures.ValidateOrder),
+        ]);
+
+        graph.Count.ShouldBe(6);
+        graph[1].Target.ShouldBe(4);
+        graph[3].Target.ShouldBe(5);
+    }
+
+    [Fact]
     public void TheGraphIsImmutableOnceBuilt()
     {
         var steps = new List<StepNode> { Step(0, Fixtures.ValidateOrder) };

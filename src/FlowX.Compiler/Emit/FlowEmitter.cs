@@ -98,6 +98,7 @@ public static class FlowEmitter
 
         EmitDescriptors(writer, flow);
         writer.Line();
+        EmitConditions(writer, flow);
         EmitPlan(writer, flow);
         writer.Line();
         EmitProjection(writer, flow);
@@ -181,13 +182,58 @@ public static class FlowEmitter
             "using FlowX.Runtime;",
         };
 
+    /// <summary>
+    /// Emits one <c>static readonly</c> delegate per <c>.When(...)</c> predicate.
+    /// </summary>
+    /// <remarks>
+    /// A field, initialised once at type initialisation, for exactly the reason
+    /// <c>Projection</c> is one: the engine's step loop must not allocate, and a lambda
+    /// built at the call site would cost a delegate per branch per execution. Budget B2 is
+    /// a hard zero, so a conditional flow would have failed it on the first commit.
+    /// <para>
+    /// The predicate is the author's own expression, copied verbatim inside a
+    /// <c>#line</c> pair, so a breakpoint on the condition lands on the condition they
+    /// wrote and a wrong-branch bug is debuggable rather than archaeological.
+    /// </para>
+    /// </remarks>
+    private static void EmitConditions(SourceWriter writer, FlowModel flow)
+    {
+        var conditions = flow.AllSteps.Where(s => s.Kind == StepKindModel.Condition).ToList();
+
+        if (conditions.Count == 0)
+        {
+            return;
+        }
+
+        writer.Line("/// <summary>Branch predicates, built once at type initialisation.</summary>");
+        writer.Line("/// <remarks>");
+        writer.Line("/// Each is your <c>.When(...)</c> expression, copied verbatim. They are pure and");
+        writer.Line("/// synchronous by design: a condition may read only the context, the flow input");
+        writer.Line("/// and prior step results, so that a replay takes the branch it took before.");
+        writer.Line("/// </remarks>");
+        writer.Line("private static class Conditions");
+        writer.OpenBrace();
+
+        foreach (var condition in conditions.OrderBy(c => c.Index))
+        {
+            EmitLineDirective(writer, condition.PredicateLocation);
+            writer.Line(
+                "public static readonly Func<FlowContext, bool> Step" + condition.Index + " = " +
+                condition.Predicate + ";");
+            EmitLineDirectiveEnd(writer, condition.PredicateLocation);
+        }
+
+        writer.CloseBrace();
+        writer.Line();
+    }
+
     private static void EmitDescriptors(SourceWriter writer, FlowModel flow)
     {
         writer.Line("/// <summary>Capability descriptors, built once at type initialisation.</summary>");
         writer.Line("private static class Descriptors");
         writer.OpenBrace();
 
-        foreach (var step in flow.Steps.Where(s => s.Kind == StepKindModel.Capability))
+        foreach (var step in flow.AllSteps.Where(s => s.Kind == StepKindModel.Capability))
         {
             writer.Line(
                 "public static readonly CapabilityDescriptor Step" + step.Index + " = " +
@@ -226,12 +272,41 @@ public static class FlowEmitter
         writer.Line("    StepGraph.Create(new StepNode[]");
         writer.Line("    {");
 
-        foreach (var step in flow.Steps)
-        {
-            writer.Line("        " + StepNodeExpression(step) + ",");
-        }
+        EmitStepNodes(writer, flow.Steps);
 
         writer.Line("    }));");
+    }
+
+    /// <summary>
+    /// Writes the step array, flattening conditionals into branch-and-jump form.
+    /// </summary>
+    /// <remarks>
+    /// The layout is <c>branch · then… · jump · otherwise…</c>. The branch carries only
+    /// its false target, because the <c>then</c> block starts at the very next index; the
+    /// jump exists solely so a taken <c>then</c> block skips the alternative, and is
+    /// omitted when there is no alternative to skip. Nested conditionals recurse, and
+    /// their indices were already assigned in this same order during analysis — which is
+    /// why the array comes out contiguous and <c>StepGraph.Create</c> accepts it.
+    /// </remarks>
+    private static void EmitStepNodes(SourceWriter writer, System.Collections.Generic.IReadOnlyList<StepModel> steps)
+    {
+        foreach (var step in steps)
+        {
+            if (step.Kind != StepKindModel.Condition)
+            {
+                writer.Line("        " + StepNodeExpression(step) + ",");
+                continue;
+            }
+
+            writer.Line("        StepNode.ForBranch(" + step.Index + ", " + step.FalseTarget + "),");
+            EmitStepNodes(writer, step.Then);
+
+            if (step.JumpIndex is int jump)
+            {
+                writer.Line("        StepNode.ForJump(" + jump + ", " + step.JoinIndex + "),");
+                EmitStepNodes(writer, step.Otherwise);
+            }
+        }
     }
 
     private static string StepNodeExpression(StepModel step)
@@ -282,6 +357,8 @@ public static class FlowEmitter
         EmitDispatcherExecute(writer, flow);
         writer.Line();
         EmitDispatcherCompensate(writer, flow);
+        writer.Line();
+        EmitDispatcherEvaluate(writer, flow);
 
         writer.CloseBrace();
     }
@@ -320,7 +397,12 @@ public static class FlowEmitter
         writer.Line("switch (stepIndex)");
         writer.OpenBrace();
 
-        foreach (var step in flow.Steps)
+        // Conditions have no case: the engine reaches a branch through Evaluate, never
+        // through ExecuteAsync, so a case here would be dead code in the file the header
+        // promises is readable.
+        foreach (var step in flow.AllSteps
+            .Where(s => s.Kind != StepKindModel.Condition)
+            .OrderBy(s => s.Index))
         {
             writer.Line("case " + step.Index + ":");
             writer.OpenBrace();
@@ -397,7 +479,7 @@ public static class FlowEmitter
         writer.Line("switch (stepIndex)");
         writer.OpenBrace();
 
-        foreach (var step in flow.Steps.Where(s => s.IsCompensable))
+        foreach (var step in flow.AllSteps.Where(s => s.IsCompensable).OrderBy(s => s.Index))
         {
             writer.Line("case " + step.Index + ":");
             writer.OpenBrace();
@@ -418,6 +500,57 @@ public static class FlowEmitter
         writer.Line("// The engine only compensates steps that declared one, so reaching");
         writer.Line("// here means the plan and this dispatcher disagree.");
         writer.Line("return StepOutcome.Success;");
+        writer.CloseBrace();
+
+        writer.CloseBrace();
+        writer.CloseBrace();
+    }
+
+    private static void EmitDispatcherEvaluate(SourceWriter writer, FlowModel flow)
+    {
+        var conditions = flow.AllSteps
+            .Where(s => s.Kind == StepKindModel.Condition)
+            .OrderBy(s => s.Index)
+            .ToList();
+
+        writer.Line("/// <inheritdoc />");
+        writer.Line("public bool Evaluate(int stepIndex, FlowContext ctx)");
+        writer.OpenBrace();
+
+        if (conditions.Count == 0)
+        {
+            // No switch at all rather than one with only a default. A flow with no
+            // conditional has no branch for the engine to ask about, and an empty switch
+            // reads like an oversight.
+            writer.Line("throw new ArgumentOutOfRangeException(");
+            writer.Line("    nameof(stepIndex),");
+            writer.Line("    stepIndex,");
+            writer.Line("    \"This flow declares no conditional, so the engine never asks it to \" +");
+            writer.Line("    \"evaluate one. Reaching this means the plan and this dispatcher came \" +");
+            writer.Line("    \"from different builds.\");");
+            writer.CloseBrace();
+            return;
+        }
+
+        writer.Line("switch (stepIndex)");
+        writer.OpenBrace();
+
+        foreach (var condition in conditions)
+        {
+            writer.Line("case " + condition.Index + ":");
+            writer.OpenBrace();
+            writer.Line("return Conditions.Step" + condition.Index + "(ctx);");
+            writer.CloseBrace();
+        }
+
+        writer.Line("default:");
+        writer.OpenBrace();
+        writer.Line("throw new ArgumentOutOfRangeException(");
+        writer.Line("    nameof(stepIndex),");
+        writer.Line("    stepIndex,");
+        writer.Line("    \"Step index does not name a branch in the compiled plan. The plan and \" +");
+        writer.Line("    \"this dispatcher are generated together, so this means they came from \" +");
+        writer.Line("    \"different builds.\");");
         writer.CloseBrace();
 
         writer.CloseBrace();

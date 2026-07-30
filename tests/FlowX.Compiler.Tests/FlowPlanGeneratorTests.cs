@@ -759,4 +759,95 @@ public sealed class FlowPlanGeneratorTests
         run.Sources.ShouldBeEmpty();
         run.Diagnostics.ShouldBeEmpty();
     }
+
+    /// <summary>
+    /// <c>When</c> / <c>Otherwise</c> against a real compilation: the two blocks are
+    /// lambda arguments, so nothing about them is reachable by unwinding the outer chain.
+    /// </summary>
+    /// <remarks>
+    /// The pure-layer tests cover the layout arithmetic and the emitted text. This covers
+    /// what they structurally cannot: that the analyzer resolves capabilities declared
+    /// inside a lambda body, and that the predicate reaches the generated file as the
+    /// author's own expression.
+    /// </remarks>
+    [Fact]
+    public void CompilesAConditionalIntoBranchThenJumpOtherwise()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .When(ctx => ctx.Get<Reservation>().Sku == "rare", rare => rare
+                        .Step<CapturePayment>())
+                    .Otherwise(common => common
+                        .Step<ReserveInventory>().CompensateWith<ReleaseInventory>())
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+
+        var source = run.Plan;
+
+        source.ShouldContainText("StepNode.ForCapability(0, Descriptors.Step0)", run.Describe());
+        source.ShouldContainText("StepNode.ForBranch(1, 4)", "The false path skips the `then` block and its jump.");
+        source.ShouldContainText("StepNode.ForCapability(2, Descriptors.Step2)", "The `then` block.");
+        source.ShouldContainText("StepNode.ForJump(3, 5)", "and the jump that closes it.");
+        source.ShouldContainText(
+            "StepNode.ForCapability(4, Descriptors.Step4, Descriptors.Step4Compensation)",
+            "The alternative, with the compensation it declared inside the lambda.");
+
+        source.ShouldContainText(
+            "public static readonly Func<FlowContext, bool> Step1 = ctx => ctx.Get<Reservation>().Sku == \"rare\";",
+            "The predicate is the author's expression, verbatim.");
+
+        source.ShouldContainText("return Conditions.Step1(ctx);", "reached by step index, like everything else.");
+    }
+
+    [Fact]
+    public void AConditionalWithNoOtherwiseEmitsNoJump()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .When(ctx => true, rare => rare.Step<CapturePayment>())
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+
+        // The false path targets 3, one past the last step, so the flow ends. There is
+        // nothing to skip, so no jump is emitted and no index is spent on one.
+        run.Plan.ShouldContainText("StepNode.ForBranch(1, 3)", run.Describe());
+        run.Plan.Contains("ForJump", StringComparison.Ordinal).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TheManifestPublishesTheDeclaredNestingRatherThanTheCompiledLayout()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .When(ctx => true, rare => rare.Step<CapturePayment>())
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        using var document = System.Text.Json.JsonDocument.Parse(run.ManifestJson.ShouldNotBeNull());
+
+        var condition = document.RootElement.GetProperty("flows")[0].GetProperty("steps")[1];
+
+        condition.GetProperty("kind").GetString().ShouldBe("Condition");
+        condition.GetProperty("branches")[0][0].GetProperty("capability").GetString()
+            .ShouldBe("payment.capture@2.1.0");
+    }
 }

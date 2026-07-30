@@ -25,12 +25,24 @@ internal sealed class RecordingDispatcher : IStepDispatcher
 {
     private readonly Dictionary<int, Error> _failures = [];
     private readonly Dictionary<int, Error> _compensationFailures = [];
+    private readonly Dictionary<int, bool> _predicates = [];
 
     /// <summary>Step indices executed, in the order the engine invoked them.</summary>
     public List<int> Executed { get; } = [];
 
     /// <summary>Step indices compensated, in the order the engine unwound them.</summary>
     public List<int> Compensated { get; } = [];
+
+    /// <summary>Branch indices the engine asked about, in the order it asked.</summary>
+    /// <remarks>
+    /// Recorded so a test can assert the engine consulted the branch <em>once</em>. A
+    /// predicate evaluated twice would be free here and expensive in a real flow, where
+    /// it reads the context and, in a durable flow, has to answer the same way on replay.
+    /// </remarks>
+    public List<int> Evaluated { get; } = [];
+
+    /// <summary>Set to make a branch throw rather than answer.</summary>
+    public int? ThrowAtBranch { get; set; }
 
     /// <summary>The context instances seen, for reference-identity assertions only.</summary>
     /// <remarks>
@@ -64,6 +76,14 @@ internal sealed class RecordingDispatcher : IStepDispatcher
         return this;
     }
 
+    /// <summary>Makes the branch at <paramref name="index"/> answer <paramref name="answer"/>.</summary>
+    /// <remarks>An unlisted branch answers <c>true</c>, so a test states only what it cares about.</remarks>
+    public RecordingDispatcher AnswerAt(int index, bool answer)
+    {
+        _predicates[index] = answer;
+        return this;
+    }
+
     /// <inheritdoc />
     public ValueTask<StepOutcome> ExecuteAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
     {
@@ -91,6 +111,21 @@ internal sealed class RecordingDispatcher : IStepDispatcher
         return _compensationFailures.TryGetValue(stepIndex, out var error)
             ? ValueTask.FromResult(StepOutcome.Failed(error))
             : ValueTask.FromResult(StepOutcome.Success);
+    }
+
+    /// <inheritdoc />
+    public bool Evaluate(int stepIndex, FlowContext ctx)
+    {
+        Evaluated.Add(stepIndex);
+
+        if (ThrowAtBranch == stepIndex)
+        {
+            // The realistic failure: a predicate reading a value no step on the path so
+            // far produced. FlowContext.Get<T> throws exactly this.
+            throw new InvalidOperationException("The predicate read a value no step produced.");
+        }
+
+        return !_predicates.TryGetValue(stepIndex, out var answer) || answer;
     }
 }
 
@@ -166,6 +201,41 @@ internal static class Plans
             StepNode.ForCapability(1, Reserve, Release),
             StepNode.ForCapability(2, Capture, Refund),
             StepNode.ForEmit(3, "order.placed"),
+        ]));
+
+    /// <summary>
+    /// A conditional, written out as the flat layout the compiler produces:
+    /// <c>0 validate · 1 branch(else→5) · 2 reserve · 3 capture · 4 jump→6 · 5 validate · 6 emit</c>.
+    /// </summary>
+    /// <remarks>
+    /// Spelled out rather than built by a helper, because the layout <em>is</em> what
+    /// these tests are about. A helper that computed the targets would compute them the
+    /// same way the emitter does, and a shared bug would then pass on both sides.
+    /// Step 2 is compensable so the unwind can be checked to cover only the branch that
+    /// actually ran.
+    /// </remarks>
+    public static ExecutionPlan Conditional() => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.review", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForCapability(0, Validate),
+            StepNode.ForBranch(1, falseTarget: 5),
+            StepNode.ForCapability(2, Reserve, Release),
+            StepNode.ForCapability(3, Capture),
+            StepNode.ForJump(4, target: 6),
+            StepNode.ForCapability(5, Validate),
+            StepNode.ForEmit(6, "order.reviewed"),
+        ]));
+
+    /// <summary>
+    /// A <c>When</c> with no <c>Otherwise</c> and nothing after it, so the false path
+    /// targets one past the last step and ends the flow.
+    /// </summary>
+    public static ExecutionPlan ConditionalWithoutOtherwise() => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.maybe", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForCapability(0, Validate),
+            StepNode.ForBranch(1, falseTarget: 3),
+            StepNode.ForCapability(2, Capture),
         ]));
 
     /// <summary>Two steps, neither compensable.</summary>

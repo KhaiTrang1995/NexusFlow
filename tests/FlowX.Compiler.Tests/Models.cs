@@ -49,6 +49,36 @@ internal static class Models
         outputTypeName: "Sample.Contracts.OrderPlacedResult",
         steps: [Validate(0), Reserve(1), Capture(2), StepModel.Emit(3, "order.placed")]);
 
+    /// <summary>
+    /// A conditional: <c>validate · when(reserve) · otherwise(capture) · emit</c>.
+    /// </summary>
+    /// <remarks>
+    /// The indices are the flat ones the analyzer assigns — 0 validate, 1 branch,
+    /// 2 reserve, (3 jump), 4 capture, 5 emit — because the model layer carries the
+    /// layout and the emitter only renders it. The jump has no model of its own; it is
+    /// derived from the fact that the alternative block is not empty.
+    /// </remarks>
+    public static FlowModel Conditional() => new(
+        flowId: "order.review",
+        version: "1.0.0",
+        profile: "Ephemeral",
+        deadline: null,
+        containingNamespace: "Sample.Flows",
+        typeName: "ReviewOrderFlow",
+        inputTypeName: "Sample.Contracts.PlaceOrder",
+        outputTypeName: "Sample.Contracts.OrderPlacedResult",
+        steps:
+        [
+            Validate(0),
+            StepModel.Condition(
+                1,
+                "ctx => ctx.Get<RiskScore>().Value > 80",
+                then: [Reserve(2)],
+                otherwise: [Capture(4)],
+                predicateLocation: "/src/Flows/Review.cs:12"),
+            StepModel.Emit(5, "order.reviewed"),
+        ]);
+
     /// <summary>A single-step flow with no namespace, to exercise the degenerate shapes.</summary>
     public static FlowModel Minimal() => new(
         flowId: "ping.send",

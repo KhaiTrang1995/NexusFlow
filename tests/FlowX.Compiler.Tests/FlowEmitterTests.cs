@@ -22,6 +22,29 @@ namespace FlowX.Compiler.Tests;
 /// </remarks>
 public sealed class FlowEmitterTests
 {
+    /// <summary>The flat layout <see cref="Models.Conditional"/> compiles to, in order.</summary>
+    private static readonly string[] ConditionalNodeOrder =
+    [
+        "StepNode.ForCapability(0",
+        "StepNode.ForBranch(1",
+        "StepNode.ForCapability(2",
+        "StepNode.ForJump(3",
+        "StepNode.ForCapability(4",
+        "StepNode.ForEmit(5",
+    ];
+
+    /// <summary>The emitted text between two markers, so one switch's cases cannot answer for another's.</summary>
+    private static string Section(string source, string from, string to)
+    {
+        var start = source.IndexOf(from, StringComparison.Ordinal);
+        var end = source.IndexOf(to, start + from.Length, StringComparison.Ordinal);
+
+        start.ShouldBeGreaterThan(-1, $"'{from}' is not in the emitted source.");
+        end.ShouldBeGreaterThan(-1, $"'{to}' is not in the emitted source.");
+
+        return source[start..end];
+    }
+
     [Fact]
     public void EmitsAPartialClassInTheFlowsOwnNamespace()
     {
@@ -89,6 +112,106 @@ public sealed class FlowEmitterTests
         compensate.Contains("case 0:", StringComparison.Ordinal).ShouldBeFalse(
             "Step 0 declared none, so it has no case.");
         compensate.Contains("case 2:", StringComparison.Ordinal).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void FlattensAConditionalIntoBranchThenJumpOtherwise()
+    {
+        var source = FlowEmitter.Emit(Models.Conditional());
+
+        source.ShouldContain("StepNode.ForCapability(0, Descriptors.Step0)");
+        source.ShouldContain("StepNode.ForBranch(1, 4)");
+        source.ShouldContain("StepNode.ForCapability(2, Descriptors.Step2, Descriptors.Step2Compensation)");
+        source.ShouldContain("StepNode.ForJump(3, 5)");
+        source.ShouldContain("StepNode.ForCapability(4, Descriptors.Step4)");
+        source.ShouldContain("StepNode.ForEmit(5, \"order.reviewed\")");
+    }
+
+    [Fact]
+    public void TheStepArrayIsEmittedInFlatIndexOrder()
+    {
+        // StepGraph.Create sorts by index, so an array in the wrong order would still
+        // produce a correct plan — and a reader of the generated file would be looking at
+        // a listing that does not match what runs. The file the header promises is
+        // debuggable has to read in execution order.
+        var source = FlowEmitter.Emit(Models.Conditional());
+
+        var positions = ConditionalNodeOrder
+            .Select(expression => source.IndexOf(expression, StringComparison.Ordinal))
+            .ToList();
+
+        positions.ShouldAllBe(p => p > 0);
+        positions.ShouldBe(positions.OrderBy(p => p).ToList());
+    }
+
+    [Fact]
+    public void EmitsThePredicateAsAStaticFieldRatherThanALambdaPerCall()
+    {
+        // Budget B2 is a hard zero. A lambda built at the branch would allocate a delegate
+        // per execution, so the predicate is a field initialised once — the same shape,
+        // and the same reason, as Projection.
+        var source = FlowEmitter.Emit(Models.Conditional());
+
+        source.ShouldContain("private static class Conditions");
+        source.ShouldContain(
+            "public static readonly Func<FlowContext, bool> Step1 = ctx => ctx.Get<RiskScore>().Value > 80;");
+        source.ShouldContain("#line 12 \"/src/Flows/Review.cs\"");
+    }
+
+    [Fact]
+    public void TheDispatcherEvaluatesEachBranchByStepIndex()
+    {
+        var source = FlowEmitter.Emit(Models.Conditional());
+        var evaluate = source[source.IndexOf("bool Evaluate(", StringComparison.Ordinal)..];
+
+        evaluate.ShouldContain("case 1:");
+        evaluate.ShouldContain("return Conditions.Step1(ctx);");
+    }
+
+    [Fact]
+    public void AFlowWithNoConditionalEmitsNoPredicatesAndNoSwitchToEvaluate()
+    {
+        var source = FlowEmitter.Emit(Models.PlaceOrder());
+
+        source.Contains("class Conditions", StringComparison.Ordinal).ShouldBeFalse(
+            "An empty holder class is noise in a file whose header promises readability.");
+
+        var evaluate = source[source.IndexOf("bool Evaluate(", StringComparison.Ordinal)..];
+
+        evaluate.Contains("switch", StringComparison.Ordinal).ShouldBeFalse(
+            "A switch with only a default reads like an oversight. The flow declares no " +
+            "conditional, so the method says exactly that and throws.");
+    }
+
+    [Fact]
+    public void StepsInsideABranchGetTheirOwnDispatcherCaseAndDescriptor()
+    {
+        var source = FlowEmitter.Emit(Models.Conditional());
+
+        source.ShouldContain("Step4 = CapabilityDescriptor.Create(\"payment.capture\"");
+        source.ShouldContain("Sample.Capabilities.CapturePayment capturePayment");
+
+        // Bounded at CompensateAsync, because the cases of the *other* two switches would
+        // otherwise answer for this one — and the branch does have a case in Evaluate.
+        var execute = Section(source, "ExecuteAsync(int stepIndex", "CompensateAsync");
+
+        execute.ShouldContain("case 4:");
+        execute.Contains("case 1:", StringComparison.Ordinal).ShouldBeFalse(
+            "Step 1 is the branch. The engine reaches it through Evaluate, never through " +
+            "ExecuteAsync, so a case for it would be dead code.");
+        execute.Contains("case 3:", StringComparison.Ordinal).ShouldBeFalse("Step 3 is the jump.");
+    }
+
+    [Fact]
+    public void ACompensationDeclaredInsideABranchIsStillDispatched()
+    {
+        var source = FlowEmitter.Emit(Models.Conditional());
+        var compensate = Section(source, "CompensateAsync", "bool Evaluate(");
+
+        // The reserve step is inside the `then` block. Reading only the top-level steps
+        // would have lost its compensation, and a failure after a taken branch would then
+        // leave the reservation dangling.
+        compensate.ShouldContain("case 2:");
     }
 
     [Fact]
@@ -196,5 +319,6 @@ public sealed class FlowEmitterTests
     {
         { "place-order", Models.PlaceOrder() },
         { "minimal", Models.Minimal() },
+        { "conditional", Models.Conditional() },
     };
 }

@@ -89,6 +89,20 @@ public sealed class ManifestSchemaTests
     public void AnEmptyApplicationManifestValidates()
         => ShouldValidate(ManifestWriter.Write("Empty.App", "1.0.0", []));
 
+    /// <summary>
+    /// A conditional reaches the manifest as the schema already describes it: a step of
+    /// kind <c>Condition</c> whose <c>branches</c> are arrays of steps.
+    /// </summary>
+    /// <remarks>
+    /// Worth asserting through the real schema rather than by field, because the step
+    /// object is <c>additionalProperties: false</c> — anything the writer invented for
+    /// this shape, a predicate string or a target index, would fail here rather than
+    /// quietly shipping a document the published contract does not describe.
+    /// </remarks>
+    [Fact]
+    public void AFlowWithAConditionalValidates()
+        => ShouldValidate(ManifestWriter.Write("Sample.App", "1.0.0", [Models.Conditional()]));
+
     [Fact]
     public void ADurableFlowWithASuspensionPointValidates()
     {
