@@ -49,6 +49,7 @@ flowchart TD
     WP12["WP-12 · Testing<br/>supported test context"]
     WP12a["WP-12a · Sensitive<br/>read + manifest"]
     WP13["WP-13 · Diagnostics<br/>FLOWX1014 · FLOWX1018"]
+    WP14["WP-14 · B12<br/>build overhead"]
 
     WP0 --> WP1 --> WP2 --> WP3
     WP2 --> WP4
@@ -60,6 +61,7 @@ flowchart TD
     WP10 --> WP12
     WP5 --> WP12a
     WP5 --> WP13
+    WP5 --> WP14
 
     style WP3 fill:#fff3cd,stroke:#856404
     style WP11 fill:#f8d7da,stroke:#721c24
@@ -250,8 +252,9 @@ Two things the report explicitly does **not** claim:
   the usual cause of a tail that shape is a GC pause, which a zero-allocation path
   does not create.
 - **Not a retirement of risk R1.** This measures runtime performance; R1 is generator
-  maintenance cost. Build overhead (**budget B12**) remains unmeasured and open
-  against WP-5.
+  maintenance cost. Build overhead (**budget B12**) is measured at WP-14 and remains
+  unsettled — see [B12.md](docs/benchmarks/B12.md) for why the number that exists does
+  not answer the 8 % question.
 
 ### WP-12a — `[Sensitive]` is declared and unread
 
@@ -290,6 +293,42 @@ authorisation stance (`Internal`), its side effects and its idempotency reached
 nothing, and `flowx diff` could not have seen a breaking change to one. A compensation
 is a capability that happens to run backwards; `StepModel.Compensation` is now a whole
 `StepModel` rather than three loose strings, and the manifest lists it.
+
+### WP-14 — Budget B12: build overhead
+
+| | |
+|---|---|
+| **Goal** | Measure the number ADR-0002's revisit clause depends on |
+| **Why** | ADR-0002 says to revisit the whole compile-time decision when *"build overhead > 8 % sustained"*. Nothing measured build overhead, so the clause could never have fired. The budget was declared in [14-Performance §1](docs/14-Performance.md) and left unmeasured through P0. |
+| **Tests first** | The benchmark itself is the test; committed to the baseline like every other budget |
+| **Deliverable** | `CompilerBenchmarks` (the file [14-Performance §7](docs/14-Performance.md) already named for B12) and a report |
+| **Exit** | A number for build overhead, with an explicit pass or fail against 8 % |
+| **Depends on** | WP-5 |
+| **Status** | **Measured; the budget is not settled, and B12 stays open.** Report at [docs/benchmarks/B12.md](docs/benchmarks/B12.md). |
+
+The generator takes **~2.9 ms** for a compilation containing one flow, against a ~4 ms
+baseline compile of the same file. That is a real, committed baseline — a change making
+the generator take 30 ms would show as a 10× regression — but it is **not** the 8 %
+answer, and the report says so rather than rounding it into one.
+
+Three reasons, none fixable by re-running:
+
+- **The arms are not comparable.** The control compiles a file with no plan and no
+  dispatcher; the measured arm compiles that file plus the generated ones. Most of the
+  2.8× total is binding source the control does not contain, and an application written
+  without FlowX would have hand-written that dispatcher and paid to bind it. That is work
+  moved, not work added.
+- **The generator's cost cannot be isolated this way.** Running the driver alone measures
+  *less* than the control, because it binds only what the generator asks for. The two
+  overlap by an unknown amount and subtracting them means nothing.
+- **One file is the worst case for a ratio.** The generator scales with flows, the
+  compilation with files. A real application would show a far smaller share — so the
+  measurement is biased in a known direction, not merely imprecise.
+
+What would settle it is written down: build the sample twice from clean with an identical
+final compilation — once with the analyzer, once with the generated `.g.cs` files
+included as ordinary source — and compare. That needs a build harness and a second
+configuration of the sample, and was not attempted here rather than attempted badly.
 
 ### WP-13 — The diagnostics that were documented and never raised
 

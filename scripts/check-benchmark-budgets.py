@@ -97,11 +97,27 @@ def check(results: dict[str, dict], baseline: dict, strict: bool) -> tuple[list[
             continue
 
         # BLOCKING 1 — allocations. Exact, machine-independent, and B2/B6 are hard zeros.
-        if actual["allocated"] != expected["allocatedBytes"]:
-            blocking.append(
-                f"{name}: allocated {actual['allocated']} B, baseline "
-                f"{expected['allocatedBytes']} B (allocation counts are exact)"
-            )
+        #
+        # Exact only for code WE wrote. A benchmark that drives Roslyn measures Roslyn's
+        # allocations too, and those move by a few hundred bytes between runs of the same
+        # commit — so an exact gate there fails on noise and teaches people to ignore it.
+        # Such entries declare allocationTolerancePercent and are checked as a band.
+        tolerance = expected.get("allocationTolerancePercent")
+
+        if tolerance is None:
+            if actual["allocated"] != expected["allocatedBytes"]:
+                blocking.append(
+                    f"{name}: allocated {actual['allocated']} B, baseline "
+                    f"{expected['allocatedBytes']} B (allocation counts are exact)"
+                )
+        else:
+            ceiling = expected["allocatedBytes"] * (1 + tolerance / 100)
+
+            if actual["allocated"] > ceiling:
+                blocking.append(
+                    f"{name}: allocated {actual['allocated']} B, more than "
+                    f"{tolerance}% above the baseline {expected['allocatedBytes']} B"
+                )
 
         # BLOCKING 2 — the documented ceiling from docs/14-Performance.md.
         budget_ns = expected.get("budgetNs")

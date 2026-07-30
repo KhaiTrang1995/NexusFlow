@@ -25,7 +25,7 @@ pull request, and fails the build on regression. Nothing here is aspirational.
 | B9 | HTTP trigger end-to-end (trivial flow, localhost) | p99 | **1.2 ms** | nightly |
 | B10 | Cold start, NativeAOT, ready-to-serve | — | **200 ms** | CI |
 | B11 | Idle RSS, 100 flows registered | — | **60 MB** | CI |
-| B12 | Build overhead vs identical non-FlowX code | — | **+8 %** | CI |
+| B12 | Build overhead vs identical non-FlowX code | *not settled* — [B12.md](benchmarks/B12.md) | **+8 %** | CI |
 | B13 | Streaming throughput, 1 KB records, 8 partitions | sustained | **250 000 rec/s/node** | nightly |
 
 ### 1.2 Measurement discipline
