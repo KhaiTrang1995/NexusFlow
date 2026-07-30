@@ -97,6 +97,13 @@ flows it is a warning — see [FLOWX1011](diagnostics/FLOWX1011.md) for what the
 detects, what it provably cannot, and why `ctx.UtcNow` is permitted where
 `DateTime.UtcNow` is not.
 
+**The rule is not only about `When`.** It applies to every builder method that takes
+the flow context — the `Switch` and `ForEach` selectors, the `Return` projection, the
+`Emit` and `EmitOnFailure` payload maps, and the `Step<TCapability, TStepIn>` and
+`SubFlow` input mappings — and the analyzer checks all of them, naming the construct
+it found, so a message reads "the `Return` projection in flow 'X'…" rather than "the
+condition". [The list is on the rule's page](diagnostics/FLOWX1011.md#which-delegates-it-covers).
+
 ### 3.2 Branch on a value
 
 ```csharp
@@ -107,7 +114,8 @@ flow.Switch(ctx => ctx.Get<ValidatedOrder>().Channel)
 ```
 
 The selector obeys the same determinism rule as a `When` predicate: context,
-input and prior step results only. It is evaluated **exactly once**, and the
+input and prior step results only — enforced by `FLOWX1011`, which reports it as
+"the `Switch` selector". It is evaluated **exactly once**, and the
 cases are then tested against the value it produced, in declaration order, with
 `EqualityComparer<TValue>.Default` — so an `enum`, an `int` and a `string` all
 mean what you expect and none of them is boxed. The first match wins; a second
