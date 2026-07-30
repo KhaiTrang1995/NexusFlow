@@ -102,6 +102,49 @@ jobs:
           set -o pipefail
           ./scripts/measure-build-overhead.sh 7 | tee -a "$GITHUB_STEP_SUMMARY"
 
+  scale-overhead:
+    name: P1 scale — 200-flow build overhead
+    runs-on: ubuntu-latest
+    # ADVISORY, and deliberately so — see docs/benchmarks/B12-scale.md.
+    #
+    # This is P1's exit criterion, not its entry criterion: the roadmap asks that a
+    # 200-flow solution build within +8 % by the end of the phase, and it currently
+    # does not. Making the job blocking today would red every pull request for the
+    # whole of P1 over a defect none of them introduced, which trains people to
+    # ignore a red gate — the failure mode the allocation gate exists to avoid.
+    #
+    # What is NOT advisory: the script's exit code. It exits non-zero above +8 %,
+    # pipefail is set below, and the step is shown as failed. Only the job's effect
+    # on the pull request is suppressed. Remove this line the moment B12-scale.md
+    # records a pass; a gate left advisory after it can pass is a gate nobody reads.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Measure build overhead on a synthetic 200-flow solution
+        # Generates a synthetic solution of 50 and then 200 flows and builds each one
+        # both ways, exactly as the B12 job does for the one-flow reference sample:
+        # same final compilation, differing only in whether the generator ran.
+        #
+        # Two sizes because the ratio is the less interesting half. A generator whose
+        # cost grows faster than the flow count fails at 400 flows whatever it does at
+        # 200, and only a second point can tell the two apart. The script prints the
+        # growth exponent it measures.
+        #
+        # Three rounds rather than the local five: a hosted runner is noisier and
+        # slower, each 200-flow round is two full compilations of ~2 500 types, and
+        # the gap being measured is an order of magnitude wider than the budget.
+        run: |
+          # pipefail explicitly: the default shell is `bash -e`, which takes the exit
+          # status of the LAST command in a pipeline. Without this, tee always succeeds
+          # and a FAIL verdict would be reported as a passing step — a gate that cannot
+          # fail, which is worse than no gate.
+          set -o pipefail
+          ./scripts/measure-scale-overhead.sh 3 50 200 | tee -a "$GITHUB_STEP_SUMMARY"
+
   gate-self-test:
     name: The gate can fail
     runs-on: ubuntu-latest
