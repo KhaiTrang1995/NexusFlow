@@ -59,7 +59,7 @@ sequenceDiagram
     FE->>J: state = Compensating
     FE->>D: reverse debit (compensation, own retry policy ×5)
     FE->>J: state = Compensated
-    Note over FE,J: money is never left in one account only;<br/>every step and every reversal is in the journal
+    Note over FE,J: money is never left in one account only —<br/>every step and every reversal is in the journal
 ```
 
 ## Compliance evidence

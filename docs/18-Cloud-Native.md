@@ -63,7 +63,7 @@ sequenceDiagram
 
     K->>P: SIGTERM
     P->>P: readiness → false (stop new triggers)
-    Note over K: endpoints updated; ingress and consumer group rebalance away
+    Note over K: endpoints updated — ingress and consumer group rebalance away
     P->>P: finish in-flight steps (≤ grace period)
     P->>L: release all leases explicitly
     P->>J: final checkpoints flushed

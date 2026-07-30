@@ -319,7 +319,7 @@ sequenceDiagram
     FE-->>TE: FlowResult.Success(value)
     TE-->>H: 200 + payload
     H-->>C: 200 OK
-    Note over FE,CE: zero allocations beyond user payloads; context returned to pool
+    Note over FE,CE: zero allocations beyond user payloads — context returned to pool
 ```
 
 ### 6.2 Ephemeral flow over HTTP — failure twin
@@ -351,7 +351,7 @@ sequenceDiagram
     FE->>FE: compensate in reverse: inventory.release
     FE-->>H: FlowResult.Failure
     H-->>C: 503 RFC7807 {type:.../payment.gateway_timeout, traceId} + Retry-After
-    Note over FE: flow ends Compensated; no partial reservation leaked
+    Note over FE: flow ends Compensated — no partial reservation leaked
 ```
 
 ### 6.3 Durable flow, node failure mid-execution
