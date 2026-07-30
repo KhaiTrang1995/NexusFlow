@@ -43,7 +43,9 @@ public sealed class FlowModel
         string? declarationLocation = null,
         string? returnProjection = null,
         string? returnLocation = null,
-        IReadOnlyList<string>? usings = null)
+        IReadOnlyList<string>? usings = null,
+        IReadOnlyList<string>? sensitiveInputMembers = null,
+        IReadOnlyList<string>? sensitiveOutputMembers = null)
     {
         FlowId = flowId;
         Version = version;
@@ -58,6 +60,8 @@ public sealed class FlowModel
         ReturnProjection = returnProjection;
         ReturnLocation = returnLocation;
         Usings = usings ?? System.Array.Empty<string>();
+        SensitiveInputMembers = sensitiveInputMembers ?? System.Array.Empty<string>();
+        SensitiveOutputMembers = sensitiveOutputMembers ?? System.Array.Empty<string>();
     }
 
     /// <summary>Business identity from <c>[Flow]</c>, e.g. <c>order.place</c>.</summary>
@@ -104,6 +108,19 @@ public sealed class FlowModel
 
     /// <summary><c>file:line</c> of the <c>.Return(...)</c> call.</summary>
     public string? ReturnLocation { get; }
+
+    /// <summary>Input-contract members carrying <c>[Sensitive]</c>, ordinally sorted.</summary>
+    /// <remarks>
+    /// Recorded in the manifest so a reviewer, <c>flowx diff</c> or an agent can see which
+    /// fields carry secrets. It is not redaction — nothing in this release strips these
+    /// values from anything. Saying which members are sensitive is the prerequisite for
+    /// that, and is worth having on its own; claiming more would repeat the mistake the
+    /// attribute's own documentation made.
+    /// </remarks>
+    public IReadOnlyList<string> SensitiveInputMembers { get; }
+
+    /// <summary>Output-contract members carrying <c>[Sensitive]</c>, ordinally sorted.</summary>
+    public IReadOnlyList<string> SensitiveOutputMembers { get; }
 
     /// <summary>
     /// The <c>using</c> directives of the file that declared the flow, in source order.

@@ -149,11 +149,13 @@ public static class ManifestWriter
         writer.PropertyName("input");
         writer.OpenObject();
         writer.Property("type", flow.InputTypeName);
+        WriteSensitive(writer, flow.SensitiveInputMembers);
         writer.CloseObject();
 
         writer.PropertyName("output");
         writer.OpenObject();
         writer.Property("type", flow.OutputTypeName);
+        WriteSensitive(writer, flow.SensitiveOutputMembers);
         writer.CloseObject();
 
         writer.PropertyName("steps");
@@ -184,6 +186,30 @@ public static class ManifestWriter
         }
 
         writer.CloseObject();
+    }
+
+    /// <summary>Writes the contract's sensitive members, or nothing when it has none.</summary>
+    /// <remarks>
+    /// Omitted rather than emitted empty so the manifest of a contract with no secrets is
+    /// unchanged by this field existing — an empty array in every flow would be noise in
+    /// every <c>flowx diff</c>.
+    /// </remarks>
+    private static void WriteSensitive(JsonWriter writer, IReadOnlyList<string> members)
+    {
+        if (members.Count == 0)
+        {
+            return;
+        }
+
+        writer.PropertyName("sensitive");
+        writer.OpenArray();
+
+        foreach (var member in members)
+        {
+            writer.Value(member);
+        }
+
+        writer.CloseArray();
     }
 
     private static void WriteStep(JsonWriter writer, StepModel step)
@@ -240,19 +266,27 @@ public static class ManifestWriter
     /// Every distinct capability across every flow, deduplicated by <c>id@version</c>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Deduplication is by identity and version, not by CLR type: two flows invoking
     /// the same capability must produce one manifest entry, and the same capability at
     /// two contract versions must produce two.
+    /// </para>
+    /// <para>
+    /// <strong>Compensations count.</strong> They were previously listed only as a name on
+    /// the step they undo, so their authorisation stance, side effects and idempotency
+    /// never reached the manifest and <c>flowx diff</c> could not see a breaking change to
+    /// one. A compensation is a capability that happens to run backwards; the manifest
+    /// says so.
+    /// </para>
     /// </remarks>
     private static IEnumerable<StepModel> CollectCapabilities(IEnumerable<FlowModel> flows)
     {
         var seen = new HashSet<string>(System.StringComparer.Ordinal);
         var capabilities = new List<StepModel>();
 
-        foreach (var step in flows.SelectMany(f => f.Steps)
-            .Where(s => s.Kind == StepKindModel.Capability && s.CapabilityId != null))
+        foreach (var step in flows.SelectMany(f => f.Steps).SelectMany(Invoked))
         {
-            if (seen.Add(step.CapabilityId + "@" + step.CapabilityVersion))
+            if (step.CapabilityId != null && seen.Add(step.CapabilityId + "@" + step.CapabilityVersion))
             {
                 capabilities.Add(step);
             }
@@ -261,6 +295,20 @@ public static class ManifestWriter
         return capabilities.OrderBy(
             c => c.CapabilityId + "@" + c.CapabilityVersion,
             System.StringComparer.Ordinal);
+    }
+
+    /// <summary>The capabilities one step invokes: itself, and its compensation if any.</summary>
+    private static IEnumerable<StepModel> Invoked(StepModel step)
+    {
+        if (step.Kind == StepKindModel.Capability)
+        {
+            yield return step;
+        }
+
+        if (step.Compensation is not null)
+        {
+            yield return step.Compensation;
+        }
     }
 
     private static IEnumerable<string> CollectEvents(IEnumerable<FlowModel> flows) => flows

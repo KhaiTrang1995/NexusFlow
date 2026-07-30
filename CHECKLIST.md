@@ -6,8 +6,8 @@
 >
 > **Last updated:** 2026-07-30 · **Phase:** P0 · **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 407/407 passing ·
-> **Coverage:** 93.2 % line / 85.8 % branch (gates: 80 / 75) · **SDK:** 10.0.110
+> **Build:** 0 warnings, 0 errors · **Tests:** 419/419 passing ·
+> **Coverage:** 93.3 % line / 86.2 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
 >
@@ -166,6 +166,8 @@ immutable, and rejects every invariant violation under test.
 - [~] **WP-10** `samples/ecommerce` — 3-step flow end to end. *Remaining:* ZAP baseline
 - [x] **WP-11** P0 gate — **PASS.** B1 = 172.3 ns / 5 000 ns, B2 = 0 B. Report at
       [docs/benchmarks/P0.md](docs/benchmarks/P0.md)
+- [~] **WP-12a** `[Sensitive]` — the compiler reads it and the manifest records it.
+      **Redaction is still not implemented**, so the exit criterion is not met
 - [ ] **WP-12** `FlowX.Testing` — a supported `CapabilityContext` for tests
 
 ### WP-10 · what it delivered
@@ -214,8 +216,8 @@ Three more surfaced while getting the suite green:
 |---|---|---|---|
 | Compiler warnings | 0 | **0** ✅ | verified locally |
 | Blocker/critical Sonar issues | 0 | **not running** | WP-0 |
-| Line coverage | ≥ 80 % | **93.2 %** ✅ | verified locally |
-| Branch coverage | ≥ 75 % | **85.8 %** ✅ | verified locally |
+| Line coverage | ≥ 80 % | **93.3 %** ✅ | verified locally |
+| Branch coverage | ≥ 75 % | **86.2 %** ✅ | verified locally |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
 | Fitness functions | all green | **34/34** ✅ | plus 10 compiler fitness tests |
@@ -250,7 +252,7 @@ Controls from [21-Quality-Gates §3](docs/21-Quality-Gates.md#3-owasp-top-10-map
 | Risk | Control designed | Control enforced |
 |---|---|---|
 | A01 Broken access control | [x] required `Authorization` member | [x] `FLOWX1010` raised and tested; the sample's four capabilities all declare a stance |
-| A02 Cryptographic failures | [x] `[Sensitive]` + generated redaction | [ ] **nothing consumes the attribute.** The sample marks `PlaceOrder.PaymentToken` sensitive; the compiler does not read it, it is absent from the manifest, and no redaction is generated |
+| A02 Cryptographic failures | [x] `[Sensitive]` + generated redaction | [~] **declared, not enforced.** The compiler reads the attribute and the manifest records it (the sample's `PaymentToken`); **no redaction is generated**. The attribute's own docs used to claim otherwise and no longer do |
 | A03 Injection | [x] compile-time graph, no `Do(lambda)` | [~] structurally true; CodeQL + Semgrep wired, unrun |
 | A04 Insecure design | [x] STRIDE per boundary, 12 ADRs | [x] ADR review in CONTRIBUTING |
 | A05 Security misconfiguration | [x] no permissive defaults | [x] startup validation, 8 tests |

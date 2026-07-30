@@ -53,6 +53,7 @@ public static class FlowAnalyzer
 {
     private const string FlowAttribute = "FlowX.FlowAttribute";
     private const string FlowDeadlineAttribute = "FlowX.FlowDeadlineAttribute";
+    private const string SensitiveAttribute = "FlowX.SensitiveAttribute";
 
     /// <summary>Analyses one flow type.</summary>
     /// <param name="flowType">The class carrying <c>[Flow]</c>.</param>
@@ -147,6 +148,8 @@ public static class FlowAnalyzer
             typeName: flowType.Name,
             inputTypeName: contracts.Input,
             outputTypeName: contracts.Output,
+            sensitiveInputMembers: contracts.SensitiveInput,
+            sensitiveOutputMembers: contracts.SensitiveOutput,
             steps: steps,
             declarationLocation: FormatLocation(declaration.Identifier.GetLocation()),
             returnProjection: returnClause?.Text,
@@ -423,8 +426,21 @@ public static class FlowAnalyzer
         }
 
         // Attaches to the step already built — .CompensateWith follows the .Step it undoes.
+        // Modelled as a full capability step so it reaches the manifest with its own
+        // authorisation stance and side effects, not merely as a name on the step it undoes.
         var last = steps.Count - 1;
-        steps[last] = steps[last].WithCompensation(info.TypeName, info.Id, info.Version);
+
+        steps[last] = steps[last].WithCompensation(StepModel.Capability(
+            steps[last].Index,
+            info.TypeName,
+            info.Id,
+            info.Version,
+            info.IsIdempotent,
+            info.SideEffects,
+            FormatLocation(link.CallLocation),
+            info.AuthorizationMode,
+            info.InputTypeName,
+            info.OutputTypeName));
     }
 
     private static void AttachPolicy(ChainLink link, List<StepModel> steps)
@@ -462,19 +478,90 @@ public static class FlowAnalyzer
         semanticModel.GetSymbolInfo(syntax).Symbol as ITypeSymbol
         ?? semanticModel.GetTypeInfo(syntax).Type;
 
-    private static (string Input, string Output) ReadFlowContracts(INamedTypeSymbol flowType)
+    private static FlowContracts ReadFlowContracts(INamedTypeSymbol flowType)
     {
         for (var current = flowType.BaseType; current is not null; current = current.BaseType)
         {
             if (current.MetadataName == "Flow`2" && current.TypeArguments.Length == 2)
             {
-                return (
+                return new FlowContracts(
                     Display(current.TypeArguments[0]),
-                    Display(current.TypeArguments[1]));
+                    Display(current.TypeArguments[1]),
+                    ReadSensitiveMembers(current.TypeArguments[0]),
+                    ReadSensitiveMembers(current.TypeArguments[1]));
             }
         }
 
-        return ("object", "object");
+        return new FlowContracts("object", "object", [], []);
+    }
+
+    /// <summary>
+    /// Names of the contract's members carrying <c>[Sensitive]</c>, in declaration order.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Positional records put the attribute on the primary constructor parameter, written
+    /// <c>[property: Sensitive]</c>, and Roslyn surfaces it on the generated property. Both
+    /// spellings are read, because a user who wrote one and got nothing would reasonably
+    /// conclude the attribute does not work.
+    /// </para>
+    /// <para>
+    /// Reading is the whole of it: this records <em>which</em> members are sensitive so the
+    /// manifest can say so and a reviewer can check. Redaction is not implemented — see the
+    /// attribute's own remarks, which used to claim otherwise.
+    /// </para>
+    /// </remarks>
+    private static string[] ReadSensitiveMembers(ITypeSymbol contract)
+    {
+        var names = new List<string>();
+
+        foreach (var member in contract.GetMembers())
+        {
+            if (member is not IPropertySymbol and not IFieldSymbol)
+            {
+                continue;
+            }
+
+            var onMember = member.GetAttributes()
+                .Any(a => a.AttributeClass?.ToDisplayString() == SensitiveAttribute);
+
+            var onParameter = contract
+                .GetMembers(".ctor")
+                .OfType<IMethodSymbol>()
+                .SelectMany(c => c.Parameters)
+                .Any(parameter =>
+                    string.Equals(parameter.Name, member.Name, System.StringComparison.OrdinalIgnoreCase) &&
+                    parameter.GetAttributes()
+                        .Any(a => a.AttributeClass?.ToDisplayString() == SensitiveAttribute));
+
+            if ((onMember || onParameter) && !names.Contains(member.Name))
+            {
+                names.Add(member.Name);
+            }
+        }
+
+        names.Sort(System.StringComparer.Ordinal);
+        return names.ToArray();
+    }
+
+    /// <summary>A flow's input and output contracts, and which of their members are sensitive.</summary>
+    private sealed class FlowContracts
+    {
+        internal FlowContracts(string input, string output, string[] sensitiveInput, string[] sensitiveOutput)
+        {
+            Input = input;
+            Output = output;
+            SensitiveInput = sensitiveInput;
+            SensitiveOutput = sensitiveOutput;
+        }
+
+        internal string Input { get; }
+
+        internal string Output { get; }
+
+        internal string[] SensitiveInput { get; }
+
+        internal string[] SensitiveOutput { get; }
     }
 
     private static string Display(ITypeSymbol symbol) =>

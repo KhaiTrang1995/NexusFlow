@@ -275,6 +275,99 @@ public sealed class FlowPlanGeneratorTests
     }
 
     [Fact]
+    public void RecordsSensitiveContractMembersInTheManifest()
+    {
+        var run = GeneratorHarness.Run("""
+            using FlowX;
+
+            namespace Sample;
+
+            public sealed record Payment(string Amount, [property: Sensitive] string CardToken);
+            public sealed record Receipt(string Id);
+
+            [Capability("payment.take", Version = "1.0.0", Authorization = Authorization.Internal)]
+            public sealed class TakePayment : ICapability<Payment, Receipt>
+            {
+                public ValueTask<Result<Receipt>> ExecuteAsync(Payment input, CapabilityContext ctx, CancellationToken ct)
+                    => ValueTask.FromResult(Result.Ok(new Receipt("r")));
+            }
+
+            [Flow("payment.flow")]
+            public sealed partial class PaymentFlow : Flow<Payment, Receipt>
+            {
+                protected override void Define(IFlowBuilder<Payment, Receipt> flow) => flow
+                    .Step<TakePayment>()
+                    .Return(ctx => new Receipt("r"));
+            }
+            """);
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+
+        // `[property: Sensitive]` on a positional record parameter is the spelling users
+        // actually write; Roslyn surfaces it on the generated property.
+        run.ManifestJson.ShouldNotBeNull()
+            .ShouldContainText("\"sensitive\"", run.Describe());
+
+        run.ManifestJson!.ShouldContain("CardToken");
+    }
+
+    [Fact]
+    public void ReadsSensitiveWrittenDirectlyOnAProperty()
+    {
+        var run = GeneratorHarness.Run("""
+            using FlowX;
+
+            namespace Sample;
+
+            public sealed class Payment
+            {
+                public string Amount { get; init; } = "";
+
+                [Sensitive]
+                public string CardToken { get; init; } = "";
+            }
+
+            public sealed record Receipt(string Id);
+
+            [Capability("payment.take", Version = "1.0.0", Authorization = Authorization.Internal)]
+            public sealed class TakePayment : ICapability<Payment, Receipt>
+            {
+                public ValueTask<Result<Receipt>> ExecuteAsync(Payment input, CapabilityContext ctx, CancellationToken ct)
+                    => ValueTask.FromResult(Result.Ok(new Receipt("r")));
+            }
+
+            [Flow("payment.flow")]
+            public sealed partial class PaymentFlow : Flow<Payment, Receipt>
+            {
+                protected override void Define(IFlowBuilder<Payment, Receipt> flow) => flow
+                    .Step<TakePayment>()
+                    .Return(ctx => new Receipt("r"));
+            }
+            """);
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+        run.ManifestJson!.ShouldContain("CardToken");
+    }
+
+    [Fact]
+    public void AContractWithNoSecretsGetsNoSensitiveArray()
+    {
+        // Omitted rather than emitted empty: an empty array in every flow would be noise
+        // in every `flowx diff`.
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.ManifestJson!.Contains("sensitive", StringComparison.Ordinal).ShouldBeFalse();
+    }
+
+    [Fact]
     public void ReadsTheDurableProfileAndTheDeclaredDeadline()
     {
         var run = GeneratorHarness.Run(WithFlow("""

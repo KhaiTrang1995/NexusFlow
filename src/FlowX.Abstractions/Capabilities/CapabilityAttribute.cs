@@ -53,10 +53,23 @@ public sealed class CapabilityAttribute(string id) : Attribute
 }
 
 /// <summary>
-/// Marks a contract member as sensitive. Redaction is applied by the generated
-/// serialiser, so it reaches logs, traces, the journal and replay output with no code
-/// path able to bypass it (docs/12-Observability.md §4).
+/// Marks a contract member as sensitive.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <strong>Today this records a fact; it does not enforce one.</strong> The compiler
+/// reads the attribute and lists the member under the contract's <c>sensitive</c> array
+/// in <c>flowx.manifest.json</c>, so a reviewer, <c>flowx diff</c> or an agent can see
+/// which fields carry secrets. Nothing redacts anything yet.
+/// </para>
+/// <para>
+/// This comment previously claimed redaction was applied by the generated serialiser,
+/// "with no code path able to bypass it". That was never true, and an attribute that
+/// reads as a control while doing nothing is worse than no attribute: a reviewer sees
+/// the field marked and concludes it is handled. The intended behaviour is
+/// <c>docs/12-Observability.md §4</c> and it is still ahead of us.
+/// </para>
+/// </remarks>
 [AttributeUsage(
     AttributeTargets.Property | AttributeTargets.Field | AttributeTargets.Parameter,
     AllowMultiple = false,
