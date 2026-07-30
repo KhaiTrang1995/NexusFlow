@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 830/830 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 901/901 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -44,7 +44,7 @@ These gate everything below them. None is code work.
 
 - [x] 20 specification documents, `docs/01` – `docs/20`
 - [x] 13 ADRs with trade-offs stated (ADR-0013 added by the first compilation)
-- [x] `docs/diagnostics/` — 15 pages plus an index, one per raised diagnostic; every help
+- [x] `docs/diagnostics/` — 16 pages plus an index, one per raised diagnostic; every help
       URI resolves, asserted by test
 - [x] `docs/benchmarks/` — baseline, gate policy, and the honest caveats
 - [x] 9 sample application specifications
@@ -229,7 +229,18 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       concurrent collection, which would have cost every linear flow an allocation per
       write. Cancelled siblings' completed work is still compensated, and every branch is
       drained before the fork returns — the context is pooled, so a branch outliving its
-      flow would write into the next tenant's
+      flow would write into the next tenant's.
+      **One caveat found in review, not by the package:** the race test that covers those
+      concurrent writes does **not** fail when the lock is disabled. It was run eight times
+      unguarded — including a variant forcing dictionary resizes — and passed every time.
+      Branches genuinely do overlap (`BranchesOverlapWhenTheirStepsActuallyYield` proves
+      `PeakConcurrency > 1`), but overlapping is not the same as colliding inside one
+      dictionary operation. The lock stays — concurrent `Dictionary` mutation is unsafe by
+      contract, and a race this hard to provoke reaches production instead of CI — but it
+      is currently guarded by reasoning, not by a test that can fail
+- [ ] **A test that can actually fail on the parallel context race.** Needs deterministic
+      interleaving, not more iterations. Until then the lock above rests on the language
+      contract alone
 - [x] **WP-16** Step binding — **`FLOWX1020`** raised by `StepBindingAnalyzer`. A flow
       whose steps cannot pass values to each other now fails the build. Numbered 1020,
       not 1022: `08-Flow-Definition.md` and both `Get<T>` implementations already
