@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -44,6 +45,70 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
             .Where(static result => result is not null);
 
         context.RegisterSourceOutput(flows, static (production, result) => Produce(production, result!));
+
+        // The manifest describes the whole application, so it needs every flow at once.
+        // Collect() introduces a barrier — any flow changing regenerates the manifest —
+        // which is correct: a manifest built from a stale subset would be worse than no
+        // manifest, because `flowx diff` would trust it.
+        var application = context.CompilationProvider.Select(
+            static (compilation, _) => compilation.AssemblyName ?? "Application");
+
+        context.RegisterSourceOutput(
+            flows.Collect().Combine(application),
+            static (production, pair) => ProduceManifest(production, pair.Left, pair.Right));
+    }
+
+    private static void ProduceManifest(
+        SourceProductionContext production,
+        ImmutableArray<AnalysisResult?> results,
+        string applicationName)
+    {
+        var models = results
+            .Where(static r => r is { IsSuccess: true, Model: not null })
+            .Select(static r => r!.Model!)
+            .ToList();
+
+        if (models.Count == 0)
+        {
+            // No flows, or none that analysed cleanly. Emitting an empty manifest here
+            // would let a build with errors publish a document claiming the application
+            // has no flows, which is a more dangerous lie than emitting nothing.
+            return;
+        }
+
+        var manifest = ManifestWriter.Write(applicationName, "1.0.0", models);
+
+        production.AddSource("FlowXManifest.g.cs", SourceText.From(EmitManifestHolder(manifest), Encoding.UTF8));
+    }
+
+    /// <summary>
+    /// Wraps the manifest JSON in a C# constant.
+    /// </summary>
+    /// <remarks>
+    /// A source generator must not write files. It runs inside the IDE on every
+    /// keystroke, its output is cached by the compiler, and file IO from that position
+    /// breaks incrementality and races with the build. So the manifest travels as a
+    /// compiled-in constant, and <c>flowx manifest</c> (WP-9) writes it to disk from
+    /// there. The build artifact ADR-0005 asks for is produced by the CLI; the content
+    /// is produced here, deterministically.
+    /// </remarks>
+    private static string EmitManifestHolder(string manifest)
+    {
+        var writer = new SourceWriter();
+
+        writer.Line(FlowEmitter.Header.TrimEnd('\n'));
+        writer.Line("#nullable enable");
+        writer.Line();
+        writer.Line("namespace FlowX.Generated;");
+        writer.Line();
+        writer.Line("/// <summary>The application's compiled manifest. See ADR-0005.</summary>");
+        writer.Line("public static class FlowXManifest");
+        writer.OpenBrace();
+        writer.Line("/// <summary>The manifest document, byte-identical across builds of identical source.</summary>");
+        writer.Line("public const string Json = @\"" + manifest.Replace("\"", "\"\"") + "\";");
+        writer.CloseBrace();
+
+        return writer.ToString();
     }
 
     private static AnalysisResult? Analyze(GeneratorAttributeSyntaxContext context, CancellationToken cancellationToken)

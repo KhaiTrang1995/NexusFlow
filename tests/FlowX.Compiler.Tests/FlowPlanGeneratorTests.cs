@@ -85,8 +85,8 @@ public sealed class FlowPlanGeneratorTests
             """));
 
         run.Ids.ShouldBeEmpty(run.Describe());
-        run.SingleSource.ShouldContainText("partial class PlaceOrderFlow", run.Describe());
-        run.SingleSource.ShouldContainText(
+        run.Plan.ShouldContainText("partial class PlaceOrderFlow", run.Describe());
+        run.Plan.ShouldContainText(
             "CapabilityDescriptor.Create(\"inventory.reserve\", \"1.2.0\", true, \"inventory-ledger\")",
             "Version, idempotency and side effects all come from the [Capability] attribute.");
     }
@@ -106,7 +106,7 @@ public sealed class FlowPlanGeneratorTests
             }
             """));
 
-        var source = run.SingleSource;
+        var source = run.Plan;
         var reserve = source.IndexOf("\"inventory.reserve\"", StringComparison.Ordinal);
         var capture = source.IndexOf("\"payment.capture\"", StringComparison.Ordinal);
 
@@ -135,10 +135,10 @@ public sealed class FlowPlanGeneratorTests
             }
             """));
 
-        run.SingleSource.ShouldContainText(
+        run.Plan.ShouldContainText(
             "StepNode.ForCapability(0, Descriptors.Step0, Descriptors.Step0Compensation)",
             "CompensateWith attaches to the step it follows, not to the next one. " + run.Describe());
-        run.SingleSource.ShouldContainText(
+        run.Plan.ShouldContainText(
             "StepNode.ForCapability(1, Descriptors.Step1)",
             "The second step declared no compensation.");
     }
@@ -156,8 +156,8 @@ public sealed class FlowPlanGeneratorTests
             }
             """));
 
-        run.SingleSource.ShouldContainText("#line ", run.Describe());
-        run.SingleSource.ShouldContainText(
+        run.Plan.ShouldContainText("#line ", run.Describe());
+        run.Plan.ShouldContainText(
             "/src/Flows/Sample.cs",
             "Risk R1: a breakpoint must land in the developer's own file, not in generated code.");
     }
@@ -176,9 +176,9 @@ public sealed class FlowPlanGeneratorTests
             }
             """));
 
-        run.SingleSource.ShouldContainText("ExecutionProfile.Durable", run.Describe());
-        run.SingleSource.ShouldContainText("\"2.0.0\"", "The flow version comes from the attribute.");
-        run.SingleSource.ShouldContainText(
+        run.Plan.ShouldContainText("ExecutionProfile.Durable", run.Describe());
+        run.Plan.ShouldContainText("\"2.0.0\"", "The flow version comes from the attribute.");
+        run.Plan.ShouldContainText(
             "XmlConvert.ToTimeSpan(\"P30D\")", "The deadline comes from [FlowDeadline].");
     }
 
@@ -195,7 +195,7 @@ public sealed class FlowPlanGeneratorTests
             }
             """));
 
-        run.SingleSource.ShouldContainText("ExecutionProfile.Ephemeral",
+        run.Plan.ShouldContainText("ExecutionProfile.Ephemeral",
             "ADR-0003: a flow that says nothing gets the cheap profile.");
     }
 
@@ -329,8 +329,76 @@ public sealed class FlowPlanGeneratorTests
             }
             """;
 
-        GeneratorHarness.Run(WithFlow(Source)).SingleSource
-            .ShouldBe(GeneratorHarness.Run(WithFlow(Source)).SingleSource);
+        var first = GeneratorHarness.Run(WithFlow(Source));
+        var second = GeneratorHarness.Run(WithFlow(Source));
+
+        second.Plan.ShouldBe(first.Plan);
+        second.Manifest.ShouldBe(first.Manifest,
+            "The manifest must be byte-identical too, or `flowx diff` reports changes " +
+            "nobody made on every build and people stop reading it.");
+    }
+
+    [Fact]
+    public void EmitsAManifestAlongsideThePlan()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>().CompensateWith<ReleaseInventory>()
+                    .Emit<OrderPlaced>(ctx => new OrderPlaced("sku"))
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+        run.Sources.Length.ShouldBe(2, "One plan plus one manifest.");
+
+        var manifest = run.ManifestJson.ShouldNotBeNull();
+
+        manifest.ShouldContainText("\"id\": \"order.place\"", "The manifest names the flow.");
+        manifest.ShouldContainText("\"capability\": \"inventory.reserve@1.2.0\"", "and its steps.");
+        manifest.ShouldContainText("\"mode\": \"Authenticated\"", "and each capability's authorisation stance.");
+    }
+
+    [Fact]
+    public void TheEmittedManifestParsesAsJson()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        // Parsing is the assertion: a botched verbatim-string escape produces text that
+        // compiles as C# but is no longer valid JSON, which nothing else would catch.
+        using var document = System.Text.Json.JsonDocument.Parse(run.ManifestJson.ShouldNotBeNull());
+
+        document.RootElement.GetProperty("flows").GetArrayLength().ShouldBe(1);
+    }
+
+    [Fact]
+    public void EmitsNoManifestWhenAnalysisFailed()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1001");
+        run.Sources.ShouldBeEmpty(
+            "A build with errors must not publish a manifest claiming the application " +
+            "has no flows. That is a more dangerous lie than emitting nothing.");
     }
 
     [Fact]

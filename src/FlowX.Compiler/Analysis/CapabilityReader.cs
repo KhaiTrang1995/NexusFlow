@@ -13,7 +13,10 @@ public sealed class CapabilityInfo
         string version,
         bool isIdempotent,
         string[] sideEffects,
-        bool declaresAuthorization)
+        bool declaresAuthorization,
+        string authorizationMode,
+        string inputTypeName,
+        string outputTypeName)
     {
         TypeName = typeName;
         Id = id;
@@ -21,6 +24,9 @@ public sealed class CapabilityInfo
         IsIdempotent = isIdempotent;
         SideEffects = sideEffects;
         DeclaresAuthorization = declaresAuthorization;
+        AuthorizationMode = authorizationMode;
+        InputTypeName = inputTypeName;
+        OutputTypeName = outputTypeName;
     }
 
     /// <summary>Fully-qualified type name, as the emitted code will spell it.</summary>
@@ -40,6 +46,15 @@ public sealed class CapabilityInfo
 
     /// <summary>Whether an authorisation stance was declared at all (FLOWX1010).</summary>
     public bool DeclaresAuthorization { get; }
+
+    /// <summary>The declared stance: Public, Authenticated, Permission, Policy or Internal.</summary>
+    public string AuthorizationMode { get; }
+
+    /// <summary>The <c>TIn</c> of <c>ICapability&lt;TIn, TOut&gt;</c>. Required by the manifest schema.</summary>
+    public string InputTypeName { get; }
+
+    /// <summary>The <c>TOut</c> of <c>ICapability&lt;TIn, TOut&gt;</c>.</summary>
+    public string OutputTypeName { get; }
 }
 
 /// <summary>
@@ -82,6 +97,7 @@ public static class CapabilityReader
         var idempotent = false;
         var sideEffects = new List<string>();
         var declaresAuthorization = false;
+        var authorizationMode = "Public";
 
         foreach (var named in attribute.NamedArguments)
         {
@@ -97,6 +113,7 @@ public static class CapabilityReader
 
                 case "Authorization":
                     declaresAuthorization = true;
+                    authorizationMode = AuthorizationName(named.Value.Value);
                     break;
 
                 case "SideEffects":
@@ -108,15 +125,52 @@ public static class CapabilityReader
             }
         }
 
+        var contract = FindCapabilityContract(type);
+
         return new CapabilityInfo(
-            type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-                .Replace("global::", string.Empty),
+            Display(type),
             id!,
             version,
             idempotent,
             sideEffects.ToArray(),
-            declaresAuthorization);
+            declaresAuthorization,
+            authorizationMode,
+            contract.Input,
+            contract.Output);
     }
+
+    /// <summary>Maps the enum's underlying value back to its name.</summary>
+    /// <remarks>
+    /// An attribute argument arrives as the underlying <see cref="int"/>, not as the
+    /// enum. The names are spelled out rather than derived so that reordering the enum
+    /// — a breaking change the compiler would not otherwise catch here — shows up as a
+    /// failing test rather than as a silently wrong manifest.
+    /// </remarks>
+    private static string AuthorizationName(object? value) => value switch
+    {
+        0 => "Public",
+        1 => "Authenticated",
+        2 => "Permission",
+        3 => "Policy",
+        4 => "Internal",
+        _ => "Public",
+    };
+
+    private static (string Input, string Output) FindCapabilityContract(ITypeSymbol type)
+    {
+        foreach (var contract in type.AllInterfaces)
+        {
+            if (contract.MetadataName == "ICapability`2" && contract.TypeArguments.Length == 2)
+            {
+                return (Display(contract.TypeArguments[0]), Display(contract.TypeArguments[1]));
+            }
+        }
+
+        return ("object", "object");
+    }
+
+    private static string Display(ITypeSymbol symbol) =>
+        symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", string.Empty);
 
     /// <summary>How many times the type implements <c>ICapability&lt;,&gt;</c>. More than one is FLOWX1015.</summary>
     public static int CountCapabilityContracts(ITypeSymbol type)

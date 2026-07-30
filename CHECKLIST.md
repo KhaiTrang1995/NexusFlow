@@ -6,8 +6,8 @@
 >
 > **Last updated:** 2026-07-30 · **Phase:** P0 · **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 206/206 passing ·
-> **Coverage:** 91.9 % line / 80.9 % branch (gates: 80 / 75) · **SDK:** 10.0.110
+> **Build:** 0 warnings, 0 errors · **Tests:** 231/231 passing ·
+> **Coverage:** 93.5 % line / 82.7 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **B1:** 4-step flow through the engine — **169 ns / 5 000 ns budget, 0 B** ·
 > **B3:** dispatch 20 ns / 150 ns, 0 B · **B2:** hard zero, met
 >
@@ -169,8 +169,8 @@ immutable, and rejects every invariant violation under test.
 |---|---|---|---|
 | Compiler warnings | 0 | **0** ✅ | verified locally |
 | Blocker/critical Sonar issues | 0 | **not running** | WP-0 |
-| Line coverage | ≥ 80 % | **91.9 %** ✅ | verified locally |
-| Branch coverage | ≥ 75 % | **80.9 %** ✅ | verified locally |
+| Line coverage | ≥ 80 % | **93.5 %** ✅ | verified locally |
+| Branch coverage | ≥ 75 % | **82.7 %** ✅ | verified locally |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
 | Fitness functions | all green | **31/31** ✅ | plus 8 compiler fitness tests |

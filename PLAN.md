@@ -147,6 +147,7 @@ an exit criterion that is mechanically checkable.
 | **Deliverable** | Manifest writer in `FlowX.Compiler`; schema already committed at `schemas/flowx.manifest.schema.json` |
 | **Exit** | Sample build emits a manifest that validates; two consecutive builds are byte-identical |
 | **Depends on** | WP-5 |
+| **Status** | **Done.** Schema-valid against the committed schema with negative controls; byte-identical across runs and independent of flow discovery order. The on-disk file waits for the CLI at WP-9, because a generator must not do file IO. |
 
 ### WP-7 — Hosting and composition
 

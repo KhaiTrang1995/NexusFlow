@@ -261,7 +261,10 @@ public static class FlowAnalyzer
             info.Version,
             info.IsIdempotent,
             info.SideEffects,
-            FormatLocation(link.Invocation.GetLocation())));
+            FormatLocation(link.Invocation.GetLocation()),
+            info.AuthorizationMode,
+            info.InputTypeName,
+            info.OutputTypeName));
     }
 
     private static void AddEventStep(ChainLink link, SemanticModel semanticModel, List<StepModel> steps)

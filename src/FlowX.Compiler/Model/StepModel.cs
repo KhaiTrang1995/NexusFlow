@@ -19,7 +19,21 @@ public enum StepKindModel
 }
 
 /// <summary>One step of a declared flow, expressed without Roslyn types.</summary>
-public sealed class StepModel
+/// <remarks>
+/// <para>
+/// A <c>record</c> specifically so <see cref="WithCompensation"/> and
+/// <see cref="WithPolicy"/> can use <c>with</c> instead of copying every property by
+/// hand. The hand-written versions listed a dozen properties each, and adding a field
+/// meant remembering all three places — which failed the first time it was tried, in
+/// exactly the way that kind of duplication always fails.
+/// </para>
+/// <para>
+/// Immutable from the emitter's point of view: the analysis layer builds a step, then
+/// <c>.CompensateWith</c> produces a new one carrying the compensation. That is what
+/// makes emitter output reproducible from a model alone.
+/// </para>
+/// </remarks>
+public sealed record StepModel
 {
     private StepModel(int index, StepKindModel kind)
     {
@@ -34,40 +48,49 @@ public sealed class StepModel
     public StepKindModel Kind { get; }
 
     /// <summary>Fully-qualified capability type, or <c>null</c> for non-capability kinds.</summary>
-    public string? CapabilityTypeName { get; private set; }
+    public string? CapabilityTypeName { get; private init; }
 
     /// <summary>Business identity read from the capability's <c>[Capability]</c> attribute.</summary>
-    public string? CapabilityId { get; private set; }
+    public string? CapabilityId { get; private init; }
 
     /// <summary>Contract version from <c>[Capability]</c>.</summary>
-    public string? CapabilityVersion { get; private set; }
+    public string? CapabilityVersion { get; private init; }
 
     /// <summary>Whether the capability declared itself idempotent. Gates retry policies.</summary>
-    public bool IsIdempotent { get; private set; }
+    public bool IsIdempotent { get; private init; }
 
     /// <summary>Declared side effects, in declaration order.</summary>
-    public string[] SideEffects { get; private set; } = System.Array.Empty<string>();
+    public string[] SideEffects { get; private init; } = System.Array.Empty<string>();
+
+    /// <summary>The capability's declared authorisation stance. Reaches the manifest.</summary>
+    public string? AuthorizationMode { get; private init; }
+
+    /// <summary>The capability's input contract, fully qualified. Required by the manifest schema.</summary>
+    public string? CapabilityInput { get; private init; }
+
+    /// <summary>The capability's output contract, fully qualified.</summary>
+    public string? CapabilityOutput { get; private init; }
 
     /// <summary>Fully-qualified compensation type from <c>.CompensateWith&lt;T&gt;()</c>.</summary>
-    public string? CompensationTypeName { get; private set; }
+    public string? CompensationTypeName { get; private init; }
 
     /// <summary>Business identity of the compensation.</summary>
-    public string? CompensationId { get; private set; }
+    public string? CompensationId { get; private init; }
 
     /// <summary>Contract version of the compensation.</summary>
-    public string? CompensationVersion { get; private set; }
+    public string? CompensationVersion { get; private init; }
 
     /// <summary>Event identity for an <see cref="StepKindModel.Emit"/> step.</summary>
-    public string? EventType { get; private set; }
+    public string? EventType { get; private init; }
 
     /// <summary>Signal identity for an <see cref="StepKindModel.AwaitSignal"/> step.</summary>
-    public string? SignalType { get; private set; }
+    public string? SignalType { get; private init; }
 
     /// <summary>Named policy set applied via <c>.WithPolicy(...)</c>.</summary>
-    public string? PolicySetName { get; private set; }
+    public string? PolicySetName { get; private init; }
 
     /// <summary><c>file:line</c> of the call, so a diagnostic points at the right chain link.</summary>
-    public string? Location { get; private set; }
+    public string? Location { get; private init; }
 
     /// <summary>True when the step declared a compensation.</summary>
     public bool IsCompensable => CompensationTypeName != null;
@@ -80,7 +103,10 @@ public sealed class StepModel
         string capabilityVersion,
         bool isIdempotent,
         string[]? sideEffects = null,
-        string? location = null)
+        string? location = null,
+        string? authorizationMode = null,
+        string? capabilityInput = null,
+        string? capabilityOutput = null)
     {
         return new StepModel(index, StepKindModel.Capability)
         {
@@ -90,6 +116,9 @@ public sealed class StepModel
             IsIdempotent = isIdempotent,
             SideEffects = sideEffects ?? System.Array.Empty<string>(),
             Location = location,
+            AuthorizationMode = authorizationMode,
+            CapabilityInput = capabilityInput,
+            CapabilityOutput = capabilityOutput,
         };
     }
 
@@ -114,48 +143,16 @@ public sealed class StepModel
     }
 
     /// <summary>Returns a copy carrying a compensation.</summary>
-    /// <remarks>
-    /// A copy rather than a mutation: the analysis layer builds steps as it walks
-    /// the chain, and <c>.CompensateWith</c> attaches to the step already built.
-    /// Returning a new instance keeps the model immutable from the emitter's point
-    /// of view, which is what makes emitter tests reproducible.
-    /// </remarks>
-    public StepModel WithCompensation(string typeName, string id, string version)
+    public StepModel WithCompensation(string typeName, string id, string version) => this with
     {
-        return new StepModel(Index, Kind)
-        {
-            CapabilityTypeName = CapabilityTypeName,
-            CapabilityId = CapabilityId,
-            CapabilityVersion = CapabilityVersion,
-            IsIdempotent = IsIdempotent,
-            SideEffects = SideEffects,
-            EventType = EventType,
-            SignalType = SignalType,
-            PolicySetName = PolicySetName,
-            Location = Location,
-            CompensationTypeName = typeName,
-            CompensationId = id,
-            CompensationVersion = version,
-        };
-    }
+        CompensationTypeName = typeName,
+        CompensationId = id,
+        CompensationVersion = version,
+    };
 
     /// <summary>Returns a copy carrying a named policy set.</summary>
-    public StepModel WithPolicy(string policySetName)
+    public StepModel WithPolicy(string policySetName) => this with
     {
-        return new StepModel(Index, Kind)
-        {
-            CapabilityTypeName = CapabilityTypeName,
-            CapabilityId = CapabilityId,
-            CapabilityVersion = CapabilityVersion,
-            IsIdempotent = IsIdempotent,
-            SideEffects = SideEffects,
-            EventType = EventType,
-            SignalType = SignalType,
-            Location = Location,
-            CompensationTypeName = CompensationTypeName,
-            CompensationId = CompensationId,
-            CompensationVersion = CompensationVersion,
-            PolicySetName = policySetName,
-        };
-    }
+        PolicySetName = policySetName,
+    };
 }

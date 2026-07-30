@@ -16,11 +16,58 @@ internal sealed record GeneratorRun(
     /// <summary>Diagnostic ids reported, in order.</summary>
     public string[] Ids => [.. Diagnostics.Select(static d => d.Id)];
 
-    /// <summary>The single generated file, when exactly one was produced.</summary>
-    public string SingleSource => Sources.Length == 1
-        ? Sources[0].Source
-        : throw new InvalidOperationException(
-            FormattableString.Invariant($"Expected exactly one generated file, got {Sources.Length}."));
+    /// <summary>The generated plan for the single flow in the run.</summary>
+    /// <remarks>
+    /// Named for what it is rather than for how many files there happen to be. An
+    /// earlier version returned "the one source", which quietly broke every test the
+    /// day the manifest became a second output — the tests were coupled to a file
+    /// count instead of to the thing they were asserting about.
+    /// </remarks>
+    public string Plan
+    {
+        get
+        {
+            var plans = Sources.Where(static s => s.HintName.EndsWith(".Flow.g.cs", StringComparison.Ordinal)).ToArray();
+
+            return plans.Length == 1
+                ? plans[0].Source
+                : throw new InvalidOperationException(
+                    FormattableString.Invariant($"Expected exactly one generated plan, got {plans.Length}."));
+        }
+    }
+
+    /// <summary>The generated manifest holder source, or <c>null</c> when none was produced.</summary>
+    public string? Manifest => Sources
+        .Where(static s => s.HintName == "FlowXManifest.g.cs")
+        .Select(static s => s.Source)
+        .FirstOrDefault();
+
+    /// <summary>The manifest JSON itself, unwrapped from the C# verbatim string.</summary>
+    /// <remarks>
+    /// Asserting on the holder source directly does not work and fails confusingly: the
+    /// JSON lives inside a verbatim string literal, so every <c>"</c> in it appears as
+    /// <c>""</c>. Unwrapping here means tests assert on JSON, which is what they are
+    /// actually about.
+    /// </remarks>
+    public string? ManifestJson
+    {
+        get
+        {
+            var holder = Manifest;
+
+            if (holder is null)
+            {
+                return null;
+            }
+
+            var start = holder.IndexOf("@\"", StringComparison.Ordinal) + 2;
+            var end = holder.LastIndexOf("\";", StringComparison.Ordinal);
+
+            return start < 2 || end <= start
+                ? null
+                : holder[start..end].Replace("\"\"", "\"", StringComparison.Ordinal);
+        }
+    }
 
     /// <summary>Human-readable diagnostics, for assertion messages.</summary>
     public string Describe() => Diagnostics.Length == 0
