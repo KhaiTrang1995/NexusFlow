@@ -35,6 +35,10 @@ namespace FlowX.Cli.Diffing;
 ///   versions attached, in <c>events</c> and in each capability's <c>errors</c>, and
 ///   diffing derived data as well as its source reports every change twice. A consumer
 ///   subscribes to an event type, not to a particular producer of it.</item>
+///   <item>A trigger's consumer group and its agent tool description — the first is how
+///   this application consumes, not an address anyone outside it holds; the second is
+///   prose written to be edited. Neither is something a consumer can act on, and both
+///   would fire often enough to train people to skim the report.</item>
 ///   <item>Array order anywhere — every set is compared as a set.</item>
 /// </list>
 /// <para>
@@ -312,13 +316,13 @@ public static class ManifestDiff
     private static void CompareTriggers(
         List<DiffFinding> findings, string subject, ManifestFlow before, ManifestFlow after)
     {
-        var wasBound = before.Triggers.Select(Describe).ToList();
-        var isBound = after.Triggers.Select(Describe).ToList();
+        var wasBound = Addressed(before.Triggers);
+        var isBound = Addressed(after.Triggers);
 
         // A trigger is the flow's address. Removing one is the most externally visible
         // break there is: a route stops answering, or a consumer group stops draining a
         // topic that producers keep filling.
-        foreach (var trigger in NotIn(wasBound, isBound))
+        foreach (var trigger in NotIn(wasBound.Keys, isBound.Keys))
         {
             findings.Add(new DiffFinding
             {
@@ -330,7 +334,7 @@ public static class ManifestDiff
             });
         }
 
-        foreach (var trigger in NotIn(isBound, wasBound))
+        foreach (var trigger in NotIn(isBound.Keys, wasBound.Keys))
         {
             findings.Add(new DiffFinding
             {
@@ -340,6 +344,150 @@ public static class ManifestDiff
                 Summary = $"trigger added: {trigger}",
             });
         }
+
+        // Same address, different admission terms. The address survived, so nothing above
+        // fires, and what the caller has to do to use it changed anyway.
+        foreach (var address in Common(wasBound, isBound))
+        {
+            CompareTriggerTerms(findings, subject + " trigger " + address, wasBound[address], isBound[address]);
+        }
+    }
+
+    /// <summary>
+    /// Classifies a change to the terms of a trigger whose address did not move.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Idempotency is breaking in both directions</strong>, which is the same
+    /// shape as an authorisation change and for the same reason: each direction breaks a
+    /// different party, and saying only "idempotency changed" makes neither of them stop.
+    /// Turning it <em>on</em> makes the key mandatory at admission, so a request that
+    /// succeeded yesterday is rejected before the flow is created — an outage for every
+    /// caller that never sent one. Turning it <em>off</em> withdraws deduplication: the
+    /// caller's retry after a timeout, which used to return the recorded result, now runs
+    /// the flow a second time. That one is worse, because nothing fails — the second
+    /// charge simply happens.
+    /// </para>
+    /// <para>
+    /// <strong>Confirmation is asymmetric</strong>, like <c>[Sensitive]</c>. Weakening it
+    /// removes a human from the loop on an AI surface: a model that had to ask before
+    /// invoking a flow with side effects now invokes it. No signature moves, no test
+    /// fails, and the control is gone — the same class of finding as a relaxed
+    /// authorisation stance. Strengthening it only adds a prompt, and gating that would
+    /// teach people not to add prompts.
+    /// </para>
+    /// <para>
+    /// <strong>A time zone is reported and not gated.</strong> Moving a nightly job from
+    /// <c>Europe/Berlin</c> to UTC moves when it runs by an hour or two, which downstream
+    /// consumers of its output can certainly notice — but it is an operational schedule,
+    /// not a promise to a caller, and there is no caller to break. It gets a line so a
+    /// reviewer sees it, and no exit code.
+    /// </para>
+    /// <para>
+    /// <strong>Deliberately not compared:</strong> a Kafka consumer group, for the reason
+    /// <see cref="Describe"/> gives — it is how this application consumes, not an address
+    /// anyone else uses. And an agent trigger's <c>description</c>: it is prose written to
+    /// be edited, and a rule that fires every time somebody improves a sentence is a rule
+    /// people learn to ignore.
+    /// </para>
+    /// </remarks>
+    private static void CompareTriggerTerms(
+        List<DiffFinding> findings, string subject, ManifestTrigger before, ManifestTrigger after)
+    {
+        if (before.Idempotent != after.Idempotent)
+        {
+            findings.Add(after.Idempotent == true
+                ? new DiffFinding
+                {
+                    Code = "FLOWX-DIFF-007",
+                    Severity = DiffSeverity.Breaking,
+                    Subject = subject,
+                    Summary = "idempotency key now required",
+                    Consequence =
+                        "Requests without the key are rejected at admission, before the flow exists. " +
+                        "Every caller that does not send one starts failing.",
+                }
+                : new DiffFinding
+                {
+                    Code = "FLOWX-DIFF-008",
+                    Severity = DiffSeverity.Breaking,
+                    Subject = subject,
+                    Summary = "idempotency key no longer required",
+                    Consequence =
+                        "Deduplication is withdrawn: a caller's retry after a timeout now executes the " +
+                        "flow a second time instead of returning the recorded result. Nothing fails — " +
+                        "the work simply happens twice.",
+                });
+        }
+
+        if (Changed(before.Confirmation, after.Confirmation))
+        {
+            var weakened = Prompting(before.Confirmation) is { } was
+                && Prompting(after.Confirmation) is { } now && now < was;
+
+            findings.Add(weakened
+                ? new DiffFinding
+                {
+                    Code = "FLOWX-DIFF-009",
+                    Severity = DiffSeverity.Breaking,
+                    Subject = subject,
+                    Summary = $"agent confirmation weakened: {Show(before.Confirmation)} -> {Show(after.Confirmation)}",
+                    Consequence =
+                        "A model that had to ask a human before invoking this flow now invokes it. " +
+                        "Nothing else in the build will notice this.",
+                }
+                : new DiffFinding
+                {
+                    Code = "FLOWX-DIFF-108",
+                    Severity = DiffSeverity.Additive,
+                    Subject = subject,
+                    Summary = $"agent confirmation strengthened: {Show(before.Confirmation)} -> {Show(after.Confirmation)}",
+                    Consequence = "A human is asked in more cases than before.",
+                });
+        }
+
+        if (Changed(before.TimeZone, after.TimeZone))
+        {
+            findings.Add(new DiffFinding
+            {
+                Code = "FLOWX-DIFF-205",
+                Severity = DiffSeverity.Neutral,
+                Subject = subject,
+                Summary = $"time zone changed: {Show(before.TimeZone)} -> {Show(after.TimeZone)}",
+                Consequence = "The schedule fires at a different wall-clock time, and its DST behaviour changes.",
+            });
+        }
+    }
+
+    /// <summary>How often a confirmation mode puts a human in the loop.</summary>
+    /// <remarks>
+    /// An unrecognised mode has no rank, so a value this build does not know is never
+    /// assumed to be the safest one — nor the least safe.
+    /// </remarks>
+    private static int? Prompting(string? mode) => mode switch
+    {
+        "Always" => 2,
+        "RequiredForSideEffects" => 1,
+        "Never" => 0,
+        _ => null,
+    };
+
+    /// <summary>Indexes a flow's triggers by their address.</summary>
+    /// <remarks>
+    /// Two triggers sharing an address cannot be told apart, and the last one wins. That
+    /// is a declaration nobody should write — two HTTP triggers on the same method and
+    /// route are the same endpoint declared twice — so it is not worth a rule of its own.
+    /// </remarks>
+    private static Dictionary<string, ManifestTrigger> Addressed(IEnumerable<ManifestTrigger> triggers)
+    {
+        var indexed = new Dictionary<string, ManifestTrigger>(StringComparer.Ordinal);
+
+        foreach (var trigger in triggers)
+        {
+            indexed[Describe(trigger)] = trigger;
+        }
+
+        return indexed;
     }
 
     /// <summary>A trigger's externally visible address, which is what a caller depends on.</summary>
