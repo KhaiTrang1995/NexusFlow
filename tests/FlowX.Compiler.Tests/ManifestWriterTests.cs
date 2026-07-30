@@ -263,4 +263,65 @@ public sealed class ManifestWriterTests
             .GetProperty("input").GetProperty("sensitive")[0].GetString()
             .ShouldBe("Odd\"Name");
     }
+
+    [Fact]
+    public void AConditionalIsPublishedNestedWithItsThenBlockFirst()
+    {
+        using var document = Parse(Write(Models.Conditional()));
+
+        var condition = document.RootElement.GetProperty("flows")[0].GetProperty("steps")[1];
+
+        condition.GetProperty("kind").GetString().ShouldBe("Condition");
+        condition.GetProperty("id").GetInt32().ShouldBe(1);
+
+        var branches = condition.GetProperty("branches");
+
+        branches.GetArrayLength().ShouldBe(2, "The `then` block first, the alternative second.");
+        branches[0][0].GetProperty("capability").GetString().ShouldBe("inventory.reserve@1.0.0");
+        branches[1][0].GetProperty("capability").GetString().ShouldBe("payment.capture@2.1.0");
+    }
+
+    [Fact]
+    public void TheJumpThatClosesAThenBlockIsNotPublished()
+    {
+        // It exists only because the compiled plan is one flat array. Publishing it would
+        // invite a consumer to draw an edge that is not part of the declared design — so
+        // ids across a conditional are deliberately not contiguous, and index 3 is absent.
+        using var document = Parse(Write(Models.Conditional()));
+
+        var steps = document.RootElement.GetProperty("flows")[0].GetProperty("steps");
+
+        var ids = steps.EnumerateArray()
+            .SelectMany(step => step.TryGetProperty("branches", out var branches)
+                ? branches.EnumerateArray().SelectMany(block => block.EnumerateArray()).Prepend(step)
+                : [step])
+            .Select(step => step.GetProperty("id").GetInt32())
+            .OrderBy(id => id)
+            .ToList();
+
+        ids.ShouldBe([0, 1, 2, 4, 5]);
+    }
+
+    [Fact]
+    public void AConditionalHasNoCapabilityOrEventOfItsOwn()
+    {
+        using var document = Parse(Write(Models.Conditional()));
+        var condition = document.RootElement.GetProperty("flows")[0].GetProperty("steps")[1];
+
+        condition.TryGetProperty("capability", out _).ShouldBeFalse();
+        condition.TryGetProperty("event", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ACapabilityInvokedOnlyInsideABranchStillReachesTheCapabilityList()
+    {
+        // Otherwise the manifest would describe an application missing whichever
+        // capabilities happen to sit behind a condition — and impact analysis, the agent
+        // tool surface and `flowx diff` all read that list.
+        using var document = Parse(Write(Models.Conditional()));
+
+        document.RootElement.GetProperty("capabilities").EnumerateArray()
+            .Select(c => c.GetProperty("id").GetString())
+            .ShouldContain("payment.capture");
+    }
 }

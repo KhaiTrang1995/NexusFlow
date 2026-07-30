@@ -286,5 +286,8 @@ public sealed class FlowEngineTests
 
         public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
             => ValueTask.FromResult(StepOutcome.Success);
+
+        public bool Evaluate(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no branch step.");
     }
 }

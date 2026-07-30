@@ -169,7 +169,7 @@ public static class ManifestWriter
 
         writer.PropertyName("emits");
         writer.OpenArray();
-        foreach (var evt in flow.Steps
+        foreach (var evt in flow.AllSteps
             .Where(s => s.Kind == StepKindModel.Emit && s.EventType != null)
             .Select(s => s.EventType!)
             .Distinct(System.StringComparer.Ordinal)
@@ -234,8 +234,71 @@ public static class ManifestWriter
         }
 
         WritePolicies(writer, step);
+        WriteBranches(writer, step);
 
         writer.CloseObject();
+    }
+
+    /// <summary>
+    /// Writes a conditional's blocks as the schema's <c>branches</c>: an array of arrays
+    /// of steps, <c>then</c> first and <c>Otherwise</c> second.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Nested, while the compiled plan is flat.</strong> The manifest publishes
+    /// the shape the author declared, not the layout the engine executes — a reader
+    /// comparing the manifest against a <c>Define</c> method should recognise it. So the
+    /// branch-and-jump form stays inside the generated C#, and the jump in particular has
+    /// no manifest entry at all: it exists only because the plan is one array, and
+    /// publishing it would invite a consumer to draw an edge that is not part of the
+    /// design.
+    /// </para>
+    /// <para>
+    /// Step ids stay the compiled flat indices, so a manifest step and a plan step still
+    /// name the same thing. The consequence is that ids are not contiguous across a
+    /// conditional — the jump's index is missing — and a consumer that assumed
+    /// contiguity would be wrong. Renumbering to close the gap would be worse: the ids
+    /// would stop matching the indices in traces, in <c>flowx replay</c> and in the
+    /// generated dispatcher.
+    /// </para>
+    /// <para>
+    /// <strong>The predicate is not published.</strong> The schema's step object is
+    /// <c>additionalProperties: false</c> and has no field for a condition, so there is
+    /// nowhere to put it without changing the committed contract. A reader therefore sees
+    /// that a flow branches and where each branch goes, but not on what — recorded as a
+    /// gap rather than papered over by widening the schema unilaterally.
+    /// </para>
+    /// </remarks>
+    private static void WriteBranches(JsonWriter writer, StepModel step)
+    {
+        if (step.Kind != StepKindModel.Condition)
+        {
+            return;
+        }
+
+        writer.PropertyName("branches");
+        writer.OpenArray();
+
+        WriteBranch(writer, step.Then);
+
+        if (step.Otherwise.Count > 0)
+        {
+            WriteBranch(writer, step.Otherwise);
+        }
+
+        writer.CloseArray();
+    }
+
+    private static void WriteBranch(JsonWriter writer, IReadOnlyList<StepModel> block)
+    {
+        writer.OpenArray();
+
+        foreach (var step in block)
+        {
+            WriteStep(writer, step);
+        }
+
+        writer.CloseArray();
     }
 
     /// <summary>
@@ -345,7 +408,7 @@ public static class ManifestWriter
         var seen = new HashSet<string>(System.StringComparer.Ordinal);
         var capabilities = new List<StepModel>();
 
-        foreach (var step in flows.SelectMany(f => f.Steps).SelectMany(Invoked))
+        foreach (var step in flows.SelectMany(f => f.AllSteps).SelectMany(Invoked))
         {
             if (step.CapabilityId != null && seen.Add(step.CapabilityId + "@" + step.CapabilityVersion))
             {
@@ -373,7 +436,7 @@ public static class ManifestWriter
     }
 
     private static IEnumerable<string> CollectEvents(IEnumerable<FlowModel> flows) => flows
-        .SelectMany(f => f.Steps)
+        .SelectMany(f => f.AllSteps)
         .Where(s => s.Kind == StepKindModel.Emit && s.EventType != null)
         .Select(s => s.EventType!)
         .Distinct(System.StringComparer.Ordinal)
@@ -383,6 +446,7 @@ public static class ManifestWriter
     {
         StepKindModel.Emit => "Emit",
         StepKindModel.AwaitSignal => "AwaitSignal",
+        StepKindModel.Condition => "Condition",
         _ => "Capability",
     };
 

@@ -109,6 +109,23 @@ Three properties this shape guarantees:
 3. **Compensation symmetry** — `completed` is the exact set to unwind, in
    reverse order.
 
+A conditional does not change that shape; it changes only how `i` moves.
+`When`/`Otherwise` compiles into the **same flat array** as everything else: a
+`Branch` step carrying the index to continue at when its predicate is false, and
+a `Jump` step closing the `then` block so a taken branch skips the alternative.
+The loop therefore becomes a `while` whose index advances either by one or to a
+target — the engine holds no branch stack, never recurses, and allocates nothing
+to take a branch. Targets are validated forward and in range when the graph is
+built, which is the only reason the loop is guaranteed to terminate: the DSL
+cannot express a loop, so a backward target is always a layout bug rather than
+something an author asked for.
+
+Predicates are evaluated through `IStepDispatcher.Evaluate`, which is
+**synchronous and returns `bool`**. An awaitable predicate would put a state
+machine on the hot path and would invite exactly the IO `FLOWX1011` forbids; a
+signature that cannot express IO is cheaper to enforce than a diagnostic that
+reports it.
+
 ---
 
 ## 4. Execution profiles — the central trade-off

@@ -122,8 +122,12 @@ public static class FlowAnalyzer
 
         var profile = ReadProfile(flowAttribute);
 
-        // FLOWX1017 — an in-memory wait does not survive a deployment.
-        if (profile != "Durable" && steps.Any(s => s.Kind == StepKindModel.AwaitSignal))
+        // FLOWX1017 — an in-memory wait does not survive a deployment. Searched across
+        // nested blocks too: a suspension point hidden inside a `When` is no more durable
+        // than one at the top level, and only looking at the top level is how a rule like
+        // this quietly stops applying the day branching lands.
+        if (profile != "Durable" &&
+            steps.SelectMany(s => s.SelfAndNested).Any(s => s.Kind == StepKindModel.AwaitSignal))
         {
             diagnostics.Add(Diagnostic.Create(
                 FlowXDiagnostics.AwaitSignalRequiresDurable,
@@ -249,23 +253,48 @@ public static class FlowAnalyzer
         SemanticModel semanticModel,
         List<Diagnostic> diagnostics)
     {
+        var nextIndex = 0;
+
+        return BuildBlock(links, semanticModel, diagnostics, ref nextIndex);
+    }
+
+    /// <summary>
+    /// Builds one block of the chain — the whole <c>Define</c> body, or the body of a
+    /// <c>then</c> or <c>Otherwise</c> lambda.
+    /// </summary>
+    /// <param name="links">The block's chain, in source order.</param>
+    /// <param name="semanticModel">Resolves the chain's type arguments.</param>
+    /// <param name="diagnostics">Collects everything worth reporting.</param>
+    /// <param name="nextIndex">
+    /// The flat index counter, shared by every block. Nesting is a modelling convenience;
+    /// the compiled graph is one flat array, so indices are handed out here in the order
+    /// the array will be laid out and never renumbered afterwards.
+    /// </param>
+    private static List<StepModel> BuildBlock(
+        IReadOnlyList<ChainLink> links,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        ref int nextIndex)
+    {
         var steps = new List<StepModel>();
 
-        foreach (var link in links)
+        for (var i = 0; i < links.Count; i++)
         {
+            var link = links[i];
+
             switch (link.MethodName)
             {
                 case "Step":
-                    AddCapabilityStep(link, semanticModel, diagnostics, steps);
+                    AddCapabilityStep(link, semanticModel, diagnostics, steps, ref nextIndex);
                     break;
 
                 case "Emit":
                 case "EmitOnFailure":
-                    AddEventStep(link, semanticModel, diagnostics, steps);
+                    AddEventStep(link, semanticModel, diagnostics, steps, ref nextIndex);
                     break;
 
                 case "AwaitSignal":
-                    AddSignalStep(link, semanticModel, steps);
+                    AddSignalStep(link, semanticModel, steps, ref nextIndex);
                     break;
 
                 case "CompensateWith":
@@ -276,10 +305,20 @@ public static class FlowAnalyzer
                     AttachPolicy(link, semanticModel, diagnostics, steps);
                     break;
 
+                case "When":
+                    // `Otherwise` is the *next link*, not an argument: the DSL spells the
+                    // pair `.When(predicate, then).Otherwise(alternative)`, so the two
+                    // halves of one conditional arrive as two siblings. Consuming both
+                    // here is what stops the alternative being modelled as a step of its
+                    // own that runs unconditionally after the `then` block.
+                    i += AddConditionStep(
+                        link, NextOtherwise(links, i), semanticModel, diagnostics, steps, ref nextIndex);
+                    break;
+
                 default:
-                    // Return, Otherwise, and anything the DSL grows in a later phase.
-                    // Skipped rather than reported — see the class remarks on why a
-                    // generator must not error on methods it has not learned yet.
+                    // Return, and anything the DSL grows in a later phase. Skipped rather
+                    // than reported — see the class remarks on why a generator must not
+                    // error on methods it has not learned yet.
                     break;
             }
         }
@@ -287,11 +326,71 @@ public static class FlowAnalyzer
         return steps;
     }
 
+    /// <summary>The <c>.Otherwise(...)</c> immediately following the link at <paramref name="index"/>, if any.</summary>
+    private static ChainLink? NextOtherwise(IReadOnlyList<ChainLink> links, int index) =>
+        index + 1 < links.Count && links[index + 1].MethodName == "Otherwise"
+            ? links[index + 1]
+            : null;
+
+    /// <summary>
+    /// Models a conditional and lays out its blocks in the flat index space.
+    /// </summary>
+    /// <returns>How many further links were consumed: 1 for an <c>Otherwise</c>, 0 without.</returns>
+    private static int AddConditionStep(
+        ChainLink when,
+        ChainLink? otherwise,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        List<StepModel> steps,
+        ref int nextIndex)
+    {
+        var arguments = when.Invocation.ArgumentList.Arguments;
+
+        if (arguments.Count < 2)
+        {
+            // `.When(predicate, then)` takes both, so a call missing one does not compile.
+            // Reachable only from a half-typed buffer in the IDE, where the C# compiler is
+            // already saying something more useful than a FlowX diagnostic would.
+            return 0;
+        }
+
+        var branchIndex = nextIndex++;
+        var then = BuildBlock(FlowChainWalker.WalkBlock(when, 1), semanticModel, diagnostics, ref nextIndex);
+        var alternative = new List<StepModel>();
+
+        if (otherwise is not null)
+        {
+            // The jump that closes the `then` block occupies the slot before the
+            // alternative, so the alternative is numbered from one past it. An
+            // `.Otherwise(o => { })` that declares nothing needs no jump to skip over it,
+            // and the reserved slot is given back rather than left as a gap — a gap would
+            // fail StepGraph's contiguity check at type initialisation.
+            var afterJump = nextIndex + 1;
+            alternative = BuildBlock(FlowChainWalker.WalkBlock(otherwise, 0), semanticModel, diagnostics, ref afterJump);
+
+            if (alternative.Count > 0)
+            {
+                nextIndex = afterJump;
+            }
+        }
+
+        steps.Add(StepModel.Condition(
+            branchIndex,
+            arguments[0].Expression.ToString(),
+            then,
+            alternative,
+            FormatLocation(arguments[0].Expression.GetLocation()),
+            FormatLocation(when.CallLocation)));
+
+        return otherwise is null ? 0 : 1;
+    }
+
     private static void AddCapabilityStep(
         ChainLink link,
         SemanticModel semanticModel,
         List<Diagnostic> diagnostics,
-        List<StepModel> steps)
+        List<StepModel> steps,
+        ref int nextIndex)
     {
         if (link.TypeArguments.Count == 0)
         {
@@ -347,7 +446,7 @@ public static class FlowAnalyzer
         }
 
         steps.Add(StepModel.Capability(
-            steps.Count,
+            nextIndex++,
             info.TypeName,
             info.Id,
             info.Version,
@@ -363,7 +462,8 @@ public static class FlowAnalyzer
         ChainLink link,
         SemanticModel semanticModel,
         List<Diagnostic> diagnostics,
-        List<StepModel> steps)
+        List<StepModel> steps,
+        ref int nextIndex)
     {
         if (link.TypeArguments.Count == 0)
         {
@@ -386,12 +486,16 @@ public static class FlowAnalyzer
             symbol.Name));
 
         steps.Add(StepModel.Emit(
-            steps.Count,
+            nextIndex++,
             ToEventIdentity(symbol.Name),
             FormatLocation(link.CallLocation)));
     }
 
-    private static void AddSignalStep(ChainLink link, SemanticModel semanticModel, List<StepModel> steps)
+    private static void AddSignalStep(
+        ChainLink link,
+        SemanticModel semanticModel,
+        List<StepModel> steps,
+        ref int nextIndex)
     {
         if (link.TypeArguments.Count == 0)
         {
@@ -406,7 +510,7 @@ public static class FlowAnalyzer
         }
 
         steps.Add(StepModel.AwaitSignal(
-            steps.Count,
+            nextIndex++,
             ToEventIdentity(symbol.Name),
             FormatLocation(link.CallLocation)));
     }

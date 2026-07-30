@@ -152,6 +152,9 @@ public sealed class ContextPoolingTests
 
         public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
             => ValueTask.FromResult(StepOutcome.Success);
+
+        public bool Evaluate(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no branch step.");
     }
 
     private sealed class StateReadingDispatcher : IStepDispatcher
@@ -166,5 +169,8 @@ public sealed class ContextPoolingTests
 
         public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
             => ValueTask.FromResult(StepOutcome.Success);
+
+        public bool Evaluate(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no branch step.");
     }
 }

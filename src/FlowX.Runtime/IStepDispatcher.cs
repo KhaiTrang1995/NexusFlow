@@ -59,4 +59,45 @@ public interface IStepDispatcher
     /// Only called for steps that both completed and declared one.
     /// </summary>
     ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct);
+
+    /// <summary>
+    /// Evaluates the predicate of the <see cref="StepKind.Branch"/> step at
+    /// <paramref name="stepIndex"/>.
+    /// </summary>
+    /// <param name="stepIndex">
+    /// Position in the plan's step graph. Always a branch — the engine calls this for no
+    /// other kind, so an implementation is free to treat any other index as a defect.
+    /// </param>
+    /// <param name="ctx">The flow's pooled context.</param>
+    /// <returns>
+    /// <c>true</c> to continue at the next step, <c>false</c> to continue at the branch's
+    /// <see cref="StepNode.Target"/>.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Synchronous, returning <c>bool</c> rather than
+    /// <c>ValueTask&lt;bool&gt;</c>.</strong> Both halves of that are load-bearing.
+    /// </para>
+    /// <para>
+    /// An awaitable predicate would put an async state machine on the hot path. The
+    /// engine's loop completes synchronously whenever its steps do — that is what
+    /// <c>EngineAllocationTests</c> asserts and what makes budget B2 a hard zero — so a
+    /// single awaited predicate would cost an allocation on every execution of every
+    /// flow that branches, whether or not the predicate ever actually waits for
+    /// anything.
+    /// </para>
+    /// <para>
+    /// An awaitable predicate is also an invitation to do IO in one, and the determinism
+    /// rules forbid it: a condition may read only the context, the flow input and prior
+    /// step results (FLOWX1011), so that a durable replay takes the branch it took the
+    /// first time. A signature that cannot express IO costs nothing to enforce; a
+    /// diagnostic that reports it has to be written, kept accurate, and can be
+    /// suppressed.
+    /// </para>
+    /// <para>
+    /// There is no cancellation token for the same reason — a pure predicate has nothing
+    /// to cancel, and the engine checks the deadline at the step the branch lands on.
+    /// </para>
+    /// </remarks>
+    bool Evaluate(int stepIndex, FlowContext ctx);
 }
