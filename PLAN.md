@@ -263,18 +263,26 @@ Two things the report explicitly does **not** claim:
 | **Deliverable** | `CapabilityReader` reads `[Sensitive]`; the manifest records it; the generator emits redaction for it |
 | **Exit** | A flow whose input carries a sensitive member cannot emit that member's value into a log record, a `Problem Details` extension, or a trace attribute |
 | **Depends on** | WP-5 |
-| **Status** | **Half done — deliberately, and the half that is missing is named.** The compiler now reads the attribute in both spellings and the manifest carries a `sensitive` array per contract; the sample's `PaymentToken` appears in it. **Redaction is not implemented**, so the exit criterion is not met and this work package stays open. |
+| **Status** | **Done for the one path that exists.** The compiler reads the attribute in both spellings, the manifest carries a `sensitive` array per contract, and the flow's partial class carries `SensitiveMembers`. The HTTP endpoint replaces matching structured error detail with `[redacted]` before writing the body — proven end to end with a dispatcher that deliberately attaches a secret. |
 
-Splitting it this way is the point. The attribute previously documented itself as
-"applied by the generated serialiser… with no code path able to bypass it", which was
-never true. An attribute that reads as a control while doing nothing is worse than no
-attribute: a reviewer sees the field marked and concludes it is handled. Both the
-attribute's own remarks and [12-Observability §4](docs/12-Observability.md) now say
-plainly that this is a declaration, not an enforcement, and point here.
+The attribute previously documented itself as "applied by the generated serialiser… with
+no code path able to bypass it", while nothing read it at all. An attribute that reads as
+a control while doing nothing is worse than no attribute: a reviewer sees the field
+marked and concludes it is handled.
 
-Recording *which* members are sensitive is worth shipping on its own — it is what a
-reviewer, `flowx diff` and an agent need — and it is the prerequisite for redaction.
-It is not redaction, and this file does not claim it is.
+**The exit criterion named three sinks — a log record, a Problem Details extension, and a
+trace attribute. Only the second exists.** There is no logging scope, no journal and no
+replay view in this release, so there is nothing else to redact from. The criterion is
+met for the sink that exists and cannot be met for the two that do not; both the
+attribute's remarks and [12-Observability §4](docs/12-Observability.md) say so in those
+words rather than implying coverage the release does not have. The remaining sinks arrive
+with the observability work in P3 and re-open this.
+
+Redaction matches by member name, case-insensitively, because the wire contract is
+camelCase and the member is PascalCase — a capability writing `.With("paymentToken", …)`
+is naming `PlaceOrder.PaymentToken`, and a case-sensitive match would let through exactly
+the spelling people write. The value is replaced with `[redacted]` rather than dropped: a
+key that silently vanishes reads as a field the server never received.
 
 **Also found and fixed while here:** the manifest listed a compensation only as a name
 on the step it undoes. `inventory.release` had no entry in `capabilities`, so its

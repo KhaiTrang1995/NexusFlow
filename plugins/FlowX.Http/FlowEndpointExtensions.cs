@@ -90,6 +90,11 @@ public static class FlowEndpointExtensions
     /// <param name="requestTypeInfo">Source-generated metadata for <typeparamref name="TRequest"/>.</param>
     /// <param name="responseTypeInfo">Source-generated metadata for <typeparamref name="TResponse"/>.</param>
     /// <param name="requireIdempotencyKey">Whether an <c>Idempotency-Key</c> header is mandatory.</param>
+    /// <param name="sensitiveMembers">
+    /// The flow's generated <c>SensitiveMembers</c>. Structured error detail whose key
+    /// names one of them is redacted rather than sent — the one path in this release that
+    /// serialises anything a capability attached to an error.
+    /// </param>
     public static IEndpointConventionBuilder MapFlow<TRequest, TResponse>(
         this IEndpointRouteBuilder endpoints,
         string method,
@@ -99,7 +104,8 @@ public static class FlowEndpointExtensions
         Func<FlowContext, TResponse> projection,
         JsonTypeInfo<TRequest> requestTypeInfo,
         JsonTypeInfo<TResponse> responseTypeInfo,
-        bool requireIdempotencyKey = false)
+        bool requireIdempotencyKey = false,
+        IReadOnlyCollection<string>? sensitiveMembers = null)
         where TRequest : notnull
     {
         ArgumentNullException.ThrowIfNull(endpoints);
@@ -114,7 +120,7 @@ public static class FlowEndpointExtensions
             route,
             async (HttpContext context) => await HandleAsync(
                 context, plan, dispatcherFactory, projection,
-                requestTypeInfo, responseTypeInfo, requireIdempotencyKey)
+                requestTypeInfo, responseTypeInfo, requireIdempotencyKey, sensitiveMembers)
                 .ConfigureAwait(false));
 
         builder.WithMetadata(new HttpMethodMetadata([method]));
@@ -128,7 +134,8 @@ public static class FlowEndpointExtensions
         Func<FlowContext, TResponse> projection,
         JsonTypeInfo<TRequest> requestTypeInfo,
         JsonTypeInfo<TResponse> responseTypeInfo,
-        bool requireIdempotencyKey)
+        bool requireIdempotencyKey,
+        IReadOnlyCollection<string>? sensitiveMembers)
         where TRequest : notnull
     {
         var invocation = HttpTriggerReader.Read(context, requireIdempotencyKey);
@@ -136,7 +143,7 @@ public static class FlowEndpointExtensions
         if (invocation.IsFailure)
         {
             await WriteProblemAsync(
-                context, invocation.Error, HttpTriggerReader.ReadCorrelationId(context))
+                context, invocation.Error, HttpTriggerReader.ReadCorrelationId(context), sensitiveMembers)
                 .ConfigureAwait(false);
 
             return;
@@ -158,7 +165,8 @@ public static class FlowEndpointExtensions
             await WriteProblemAsync(
                 context,
                 HttpErrors.MalformedBody(exception.Message),
-                invocation.Value.CorrelationId)
+                invocation.Value.CorrelationId,
+                sensitiveMembers)
                 .ConfigureAwait(false);
 
             return;
@@ -167,7 +175,7 @@ public static class FlowEndpointExtensions
         if (input is null)
         {
             await WriteProblemAsync(
-                context, HttpErrors.MissingBody(), invocation.Value.CorrelationId)
+                context, HttpErrors.MissingBody(), invocation.Value.CorrelationId, sensitiveMembers)
                 .ConfigureAwait(false);
 
             return;
@@ -182,7 +190,8 @@ public static class FlowEndpointExtensions
 
         if (result.IsFailure)
         {
-            await WriteProblemAsync(context, result.Error!, invocation.Value.CorrelationId)
+            await WriteProblemAsync(
+                context, result.Error!, invocation.Value.CorrelationId, sensitiveMembers)
                 .ConfigureAwait(false);
 
             return;
@@ -238,9 +247,14 @@ public static class FlowEndpointExtensions
             .ConfigureAwait(false);
     }
 
-    private static async Task WriteProblemAsync(HttpContext context, Error error, string correlationId)
+    private static async Task WriteProblemAsync(
+        HttpContext context,
+        Error error,
+        string correlationId,
+        IReadOnlyCollection<string>? sensitiveMembers = null)
     {
-        var problem = ProblemDetailsMapper.ToProblemDetails(error, context.Request.Path, correlationId);
+        var problem = ProblemDetailsMapper.ToProblemDetails(
+            error, context.Request.Path, correlationId, sensitiveMembers);
 
         context.Response.StatusCode = problem.Status ?? StatusCodes.Status500InternalServerError;
         context.Response.ContentType = ProblemDetailsJson.ContentType;

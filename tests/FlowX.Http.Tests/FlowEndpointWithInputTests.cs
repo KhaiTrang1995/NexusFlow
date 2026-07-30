@@ -157,6 +157,71 @@ public sealed class FlowEndpointWithInputTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ASensitiveFieldIsStrippedFromTheErrorBody()
+    {
+        // The capability author attached a secret to an error — the mistake [Sensitive]
+        // exists to survive. Without redaction it goes into the Problem Details body,
+        // over the network, and into the caller's logs.
+        using var host = await StartRedactingAsync();
+        using var client = host.GetTestClient();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, Route)
+        {
+            Content = new StringContent("{\"sku\":\"SKU-1\",\"quantity\":1}", Encoding.UTF8, "application/json"),
+        };
+
+        request.Headers.Add(FlowXHeaders.IdempotencyKey, "key-leak");
+
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        body.ShouldNotContain("tok_live_secret");
+        body.ShouldContain("[redacted]");
+
+        // The rest still travels, or the caller cannot act on the error.
+        body.ShouldContain("SKU-1");
+    }
+
+    /// <summary>A host whose flow fails with an error carrying a sensitive value.</summary>
+    private static async Task<IHost> StartRedactingAsync() =>
+        await new HostBuilder()
+            .ConfigureWebHost(web => web
+                .UseTestServer()
+                .ConfigureServices(services =>
+                {
+                    services.AddRouting();
+                    services.AddFlowX(o => o.ApplicationName = "Sample.App");
+                })
+                .Configure(app =>
+                {
+                    app.UseRouting();
+                    app.UseEndpoints(endpoints => endpoints.MapFlow(
+                        "POST",
+                        Route,
+                        Plans.PlaceOrder(),
+                        _ => new LeakingDispatcher(),
+                        static ctx => new OrderReceipt("unreachable", 0),
+                        (JsonTypeInfo<OrderRequest>)InputJsonContext.Default.GetTypeInfo(typeof(OrderRequest))!,
+                        (JsonTypeInfo<OrderReceipt>)InputJsonContext.Default.GetTypeInfo(typeof(OrderReceipt))!,
+                        requireIdempotencyKey: true,
+                        sensitiveMembers: ["PaymentToken"]));
+                }))
+            .StartAsync(TestContext.Current.CancellationToken);
+
+    /// <summary>Fails with an error that carries a secret it should not have.</summary>
+    private sealed class LeakingDispatcher : IStepDispatcher
+    {
+        public ValueTask<StepOutcome> ExecuteAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+            => ValueTask.FromResult(StepOutcome.Failed(
+                new Error("payment.declined", "declined", ErrorCategory.Conflict)
+                    .With("paymentToken", "tok_live_secret")
+                    .With("sku", "SKU-1")));
+
+        public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+            => ValueTask.FromResult(StepOutcome.Success);
+    }
+
+    [Fact]
     public void MapFlowWithInputRejectsNullArguments()
     {
         var request = (JsonTypeInfo<OrderRequest>)InputJsonContext.Default.GetTypeInfo(typeof(OrderRequest))!;

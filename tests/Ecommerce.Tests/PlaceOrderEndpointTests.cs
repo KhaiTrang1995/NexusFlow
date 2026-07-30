@@ -132,6 +132,15 @@ public sealed class PlaceOrderEndpointTests
     }
 
     [Fact]
+    public void TheEndpointIsGivenTheFlowsSensitiveMembers()
+    {
+        // The generated list is what the endpoint redacts against. The sample's own
+        // capabilities do not attach the token to an error — so this asserts the wiring,
+        // and FlowX.Http.Tests proves the behaviour end to end with one that does.
+        PlaceOrderFlow.SensitiveMembers.ShouldBe(["PaymentToken"]);
+    }
+
+    [Fact]
     public async Task AMissingIdempotencyKeyIsRefused()
     {
         using var host = await StartAsync();
@@ -243,7 +252,8 @@ public sealed class PlaceOrderEndpointTests
                             PlaceOrderFlow.Projection,
                             EcommerceJsonContext.Default.PlaceOrder,
                             EcommerceJsonContext.Default.OrderPlacedResult,
-                            requireIdempotencyKey: true);
+                            requireIdempotencyKey: true,
+                            sensitiveMembers: PlaceOrderFlow.SensitiveMembers);
                     });
                 }))
             .StartAsync(TestContext.Current.CancellationToken);

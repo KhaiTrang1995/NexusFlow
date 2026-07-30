@@ -57,17 +57,25 @@ public sealed class CapabilityAttribute(string id) : Attribute
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Today this records a fact; it does not enforce one.</strong> The compiler
-/// reads the attribute and lists the member under the contract's <c>sensitive</c> array
-/// in <c>flowx.manifest.json</c>, so a reviewer, <c>flowx diff</c> or an agent can see
-/// which fields carry secrets. Nothing redacts anything yet.
+/// The compiler reads the attribute and does two things with it. It lists the member
+/// under the contract's <c>sensitive</c> array in <c>flowx.manifest.json</c>, so a
+/// reviewer, <c>flowx diff</c> or an agent can see which fields carry secrets. And it
+/// emits the names onto the flow's partial class as <c>SensitiveMembers</c>, which the
+/// HTTP endpoint uses to strip matching structured detail out of an error response.
 /// </para>
 /// <para>
-/// This comment previously claimed redaction was applied by the generated serialiser,
-/// "with no code path able to bypass it". That was never true, and an attribute that
-/// reads as a control while doing nothing is worse than no attribute: a reviewer sees
-/// the field marked and concludes it is handled. The intended behaviour is
-/// <c>docs/12-Observability.md §4</c> and it is still ahead of us.
+/// <strong>That is one path, not every path.</strong> A Problem Details body is the only
+/// thing this release serialises that a capability can attach a value to. There is no
+/// logging scope, no journal and no replay view yet, so there is nothing else to redact
+/// from — and equally, nothing stops your own code from writing the value somewhere the
+/// platform does not see.
+/// </para>
+/// <para>
+/// This comment previously claimed redaction was applied by the generated serialiser
+/// "with no code path able to bypass it", while nothing read the attribute at all. An
+/// attribute that reads as a control while doing nothing is worse than no attribute: a
+/// reviewer sees the field marked and concludes it is handled. The full intent is
+/// <c>docs/12-Observability.md §4</c>.
 /// </para>
 /// </remarks>
 [AttributeUsage(

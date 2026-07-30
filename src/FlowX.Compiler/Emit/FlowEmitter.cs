@@ -101,6 +101,7 @@ public static class FlowEmitter
         EmitPlan(writer, flow);
         writer.Line();
         EmitProjection(writer, flow);
+        EmitSensitiveMembers(writer, flow);
         EmitDispatcher(writer, flow);
 
         writer.CloseBrace();
@@ -132,6 +133,40 @@ public static class FlowEmitter
             "public static readonly Func<FlowContext, " + flow.OutputTypeName + "> Projection = " +
             flow.ReturnProjection + ";");
         EmitLineDirectiveEnd(writer, flow.ReturnLocation);
+        writer.Line();
+    }
+
+    /// <summary>
+    /// Emits the names of the contract members marked <c>[Sensitive]</c>.
+    /// </summary>
+    /// <remarks>
+    /// This is what turns the attribute from a fact recorded in the manifest into
+    /// something a transport can act on. The endpoint uses it to strip matching keys out
+    /// of a Problem Details body, which is the only path in this release that serialises
+    /// anything a capability attached to an error.
+    /// <para>
+    /// Emitted even when empty, unlike the manifest's array: a caller passing
+    /// <c>Flow.SensitiveMembers</c> must not have to know whether the flow has any, and a
+    /// missing field would be a compile error rather than an empty guard.
+    /// </para>
+    /// </remarks>
+    private static void EmitSensitiveMembers(SourceWriter writer, FlowModel flow)
+    {
+        var members = flow.SensitiveInputMembers
+            .Concat(flow.SensitiveOutputMembers)
+            .Distinct()
+            .OrderBy(m => m, System.StringComparer.Ordinal)
+            .ToList();
+
+        writer.Line("/// <summary>Contract members declared <c>[Sensitive]</c>, ordinally sorted.</summary>");
+        writer.Line("/// <remarks>");
+        writer.Line("/// Pass to <c>MapFlow</c> so their values are stripped from an error response.");
+        writer.Line("/// </remarks>");
+        writer.Line(
+            "public static readonly string[] SensitiveMembers = " +
+            (members.Count == 0
+                ? "System.Array.Empty<string>();"
+                : "new[] { " + string.Join(", ", members.Select(m => "\"" + m + "\"")) + " };"));
         writer.Line();
     }
 

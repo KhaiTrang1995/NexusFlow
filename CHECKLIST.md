@@ -6,8 +6,8 @@
 >
 > **Last updated:** 2026-07-30 · **Phase:** P0 · **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 466/466 passing ·
-> **Coverage:** 93.9 % line / 86.5 % branch (gates: 80 / 75) · **SDK:** 10.0.110
+> **Build:** 0 warnings, 0 errors · **Tests:** 473/473 passing ·
+> **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
 >
@@ -166,8 +166,9 @@ immutable, and rejects every invariant violation under test.
 - [~] **WP-10** `samples/ecommerce` — 3-step flow end to end. *Remaining:* ZAP baseline
 - [x] **WP-11** P0 gate — **PASS.** B1 = 172.3 ns / 5 000 ns, B2 = 0 B. Report at
       [docs/benchmarks/P0.md](docs/benchmarks/P0.md)
-- [~] **WP-12a** `[Sensitive]` — the compiler reads it and the manifest records it.
-      **Redaction is still not implemented**, so the exit criterion is not met
+- [~] **WP-12a** `[Sensitive]` — read by the compiler, recorded in the manifest, and
+      **redacted from Problem Details bodies**. The exit criterion named three sinks;
+      only that one exists in this release. Logs, traces and the journal re-open it in P3
 - [x] **WP-12** `FlowX.Testing` — `TestCapabilityContext` and `TestFlowContext`; the
       sample's capability tests lost 27 lines of hand-written stub
 - [x] **WP-13** Diagnostics that were documented and never raised. **All four now fire**
@@ -220,8 +221,8 @@ Three more surfaced while getting the suite green:
 |---|---|---|---|
 | Compiler warnings | 0 | **0** ✅ | verified locally |
 | Blocker/critical Sonar issues | 0 | **not running** | WP-0 |
-| Line coverage | ≥ 80 % | **93.9 %** ✅ | verified locally |
-| Branch coverage | ≥ 75 % | **86.5 %** ✅ | verified locally |
+| Line coverage | ≥ 80 % | **94.0 %** ✅ | verified locally |
+| Branch coverage | ≥ 75 % | **87.0 %** ✅ | verified locally |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
 | Fitness functions | all green | **36/36** ✅ | plus 10 compiler fitness tests |
@@ -256,7 +257,7 @@ Controls from [21-Quality-Gates §3](docs/21-Quality-Gates.md#3-owasp-top-10-map
 | Risk | Control designed | Control enforced |
 |---|---|---|
 | A01 Broken access control | [x] required `Authorization` member | [x] `FLOWX1010` raised and tested; the sample's four capabilities all declare a stance |
-| A02 Cryptographic failures | [x] `[Sensitive]` + generated redaction | [~] **declared, not enforced.** The compiler reads the attribute and the manifest records it (the sample's `PaymentToken`); **no redaction is generated**. The attribute's own docs used to claim otherwise and no longer do |
+| A02 Cryptographic failures | [x] `[Sensitive]` + generated redaction | [~] **enforced on the one sink that exists.** Secrets are stripped from Problem Details bodies, tested end to end; logs, traces and the journal do not exist yet, so the "no code path can forget it" claim is not met |
 | A03 Injection | [x] compile-time graph, no `Do(lambda)` | [~] structurally true; CodeQL + Semgrep wired, unrun |
 | A04 Insecure design | [x] STRIDE per boundary, 12 ADRs | [x] ADR review in CONTRIBUTING |
 | A05 Security misconfiguration | [x] no permissive defaults | [x] startup validation, 8 tests |

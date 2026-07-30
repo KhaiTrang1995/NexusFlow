@@ -150,4 +150,66 @@ public sealed class ProblemDetailsMapperTests
     public void RejectsANullError()
         => Should.Throw<ArgumentNullException>(
             () => ProblemDetailsMapper.ToProblemDetails(null!, "/x", "corr"));
+
+    [Fact]
+    public void RedactsStructuredDetailNamingASensitiveMember()
+    {
+        // The one path in this release that serialises anything a capability attached to
+        // an error. Before this, `[Sensitive]` recorded a fact and stripped nothing.
+        var error = new Error("payment.declined", "no", ErrorCategory.Conflict)
+            .With("paymentToken", "tok_live_secret")
+            .With("attempt", 2);
+
+        var problem = ProblemDetailsMapper.ToProblemDetails(
+            error, "/orders", "corr", ["PaymentToken"]);
+
+        problem.Extensions["paymentToken"].ShouldBe(ProblemDetailsMapper.Redacted);
+
+        // Everything else still travels. A redactor that swallowed the whole payload
+        // would take the caller's ability to act on the error with it.
+        problem.Extensions["attempt"].ShouldBe(2);
+    }
+
+    [Fact]
+    public void TheMatchIsCaseInsensitive()
+    {
+        // The wire contract is camelCase and the member is PascalCase. A case-sensitive
+        // match would let through exactly the spelling a capability actually writes.
+        var error = new Error("x", "y", ErrorCategory.Validation).With("paymentToken", "secret");
+
+        ProblemDetailsMapper.ToProblemDetails(error, "/x", "corr", ["PaymentToken"])
+            .Extensions["paymentToken"].ShouldBe(ProblemDetailsMapper.Redacted);
+    }
+
+    [Fact]
+    public void RedactionUsesAPlaceholderRatherThanDroppingTheKey()
+    {
+        // A key that silently vanishes reads as a field the server never received.
+        var error = new Error("x", "y", ErrorCategory.Validation).With("cardNumber", "4111");
+
+        var problem = ProblemDetailsMapper.ToProblemDetails(error, "/x", "corr", ["CardNumber"]);
+
+        problem.Extensions.ShouldContainKey("cardNumber");
+    }
+
+    [Fact]
+    public void NoSensitiveMembersMeansNoRedaction()
+    {
+        var error = new Error("x", "y", ErrorCategory.Validation).With("sku", "SKU-1");
+
+        ProblemDetailsMapper.ToProblemDetails(error, "/x", "corr").Extensions["sku"].ShouldBe("SKU-1");
+        ProblemDetailsMapper.ToProblemDetails(error, "/x", "corr", []).Extensions["sku"].ShouldBe("SKU-1");
+    }
+
+    [Fact]
+    public void AnInternalErrorWithholdsEveryDetailSensitiveOrNot()
+    {
+        // Internal already withholds all structured detail, so redaction never has to
+        // carry that case — asserted so a future change to either cannot open a gap.
+        var error = new Error("boom", "stack", ErrorCategory.Internal).With("paymentToken", "secret");
+
+        var problem = ProblemDetailsMapper.ToProblemDetails(error, "/x", "corr", ["PaymentToken"]);
+
+        problem.Extensions.ShouldNotContainKey("paymentToken");
+    }
 }
