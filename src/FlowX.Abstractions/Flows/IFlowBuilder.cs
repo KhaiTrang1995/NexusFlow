@@ -58,6 +58,19 @@ public interface IFlowBuilder<TIn, TOut>
         Func<FlowContext<TIn>, bool> predicate,
         Action<IFlowBuilder<TIn, TOut>> then);
 
+    /// <summary>
+    /// Branches on a value rather than on a yes/no question. The selector obeys the same
+    /// determinism rule as a <see cref="When"/> predicate: context, input and prior step
+    /// results only.
+    /// </summary>
+    /// <typeparam name="TValue">
+    /// What the selector produces and the cases are matched against. Inferred, so a
+    /// <c>Case</c> whose value is of the wrong type is a C# compile error rather than an
+    /// arm that never matches.
+    /// </typeparam>
+    /// <param name="selector">Reads the value to branch on. Evaluated exactly once.</param>
+    ISwitchBuilder<TIn, TOut, TValue> Switch<TValue>(Func<FlowContext<TIn>, TValue> selector);
+
     /// <summary>Runs branches concurrently. Branches write to disjoint context slots, enforced at compile time (FLOWX1013).</summary>
     IFlowBuilder<TIn, TOut> Parallel(Action<IParallelBuilder<TIn, TOut>> branches, MergeStrategy merge);
 
@@ -113,6 +126,53 @@ public interface IConditionalBuilder<TIn, TOut> : IFlowBuilder<TIn, TOut>
 {
     /// <summary>Declares the branch taken when the predicate is false.</summary>
     IFlowBuilder<TIn, TOut> Otherwise(Action<IFlowBuilder<TIn, TOut>> otherwise);
+}
+
+/// <summary>A value branch collecting its cases.</summary>
+/// <typeparam name="TIn">Flow input contract.</typeparam>
+/// <typeparam name="TOut">Flow output contract.</typeparam>
+/// <typeparam name="TValue">What the selector produces.</typeparam>
+/// <remarks>
+/// <para>
+/// Extends <see cref="IFlowBuilder{TIn, TOut}"/> so a switch can be followed by ordinary
+/// steps without a <see cref="Default"/> — the same shape as
+/// <see cref="IConditionalBuilder{TIn, TOut}"/>, and for the same reason: not every
+/// branch has an alternative worth naming.
+/// </para>
+/// <para>
+/// <strong>A value that matches no case, in a switch with no <see cref="Default"/>,
+/// continues after the switch.</strong> It is not an error and it is not a
+/// diagnostic. The alternative — requiring a <c>Default</c> — would force
+/// <c>.Default(b =&gt; { })</c> onto every switch that legitimately special-cases two
+/// channels out of five, and would still not make the switch exhaustive, because an
+/// <c>enum</c> can hold a value no member declares. So the rule is the one
+/// <c>When</c> already uses: a branch nobody took does nothing. State the miss
+/// explicitly with <c>.Default(b =&gt; b.Fail(...))</c> when doing nothing is wrong.
+/// </para>
+/// </remarks>
+public interface ISwitchBuilder<TIn, TOut, TValue> : IFlowBuilder<TIn, TOut>
+{
+    /// <summary>
+    /// Declares the block taken when the selector's value equals <paramref name="value"/>.
+    /// </summary>
+    /// <param name="value">
+    /// Compared with <c>EqualityComparer&lt;TValue&gt;.Default</c>, so an <c>enum</c>,
+    /// an <c>int</c> and a <c>string</c> all mean what a reader expects and none of them
+    /// is boxed.
+    /// </param>
+    /// <param name="body">The steps to run when it matches.</param>
+    /// <remarks>
+    /// Cases are tested in declaration order and the first match wins, so two cases with
+    /// the same value are not an error — the second is simply unreachable, exactly as a
+    /// duplicated <c>When</c> would be.
+    /// </remarks>
+    ISwitchBuilder<TIn, TOut, TValue> Case(TValue value, Action<IFlowBuilder<TIn, TOut>> body);
+
+    /// <summary>
+    /// Declares the block taken when no case matched. Returns the plain builder, so a
+    /// switch has at most one <c>Default</c> and it is always last.
+    /// </summary>
+    IFlowBuilder<TIn, TOut> Default(Action<IFlowBuilder<TIn, TOut>> body);
 }
 
 /// <summary>A suspension point awaiting its timeout branch.</summary>

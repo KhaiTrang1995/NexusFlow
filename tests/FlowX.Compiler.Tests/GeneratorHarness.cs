@@ -159,6 +159,34 @@ internal static class GeneratorHarness
             .Select(static d => $"{d.Id}: {d.GetMessage(CultureInfo.InvariantCulture)}")];
     }
 
+    /// <summary>
+    /// Runs the generator and compiles what it produced, returning the errors.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Run"/> discards the updated compilation, so nothing it asserts proves
+    /// the emitted C# builds — and "the text looks right" and "the text compiles" are
+    /// different claims. <c>FlowEmitterTests</c> parses the output, which catches a
+    /// syntax error but not a name that fails to resolve, a delegate whose type argument
+    /// is wrong, or an interface member left unimplemented. This binds it.
+    /// </remarks>
+    public static string[] GeneratedCompileErrorsIn(string source)
+    {
+        var compilation = CSharpCompilation.Create(
+            "FlowX.GeneratorTests.Generated",
+            [CSharpSyntaxTree.ParseText(source, path: "/src/Flows/Sample.cs")],
+            References,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+
+        CSharpGeneratorDriver
+            .Create(new FlowPlanGenerator())
+            .RunGeneratorsAndUpdateCompilation(compilation, out var updated, out _);
+
+        return [.. updated.GetDiagnostics()
+            .Where(static d => d.Severity == DiagnosticSeverity.Error)
+            .Select(static d => $"{d.Id} at {d.Location.GetLineSpan().StartLinePosition}: " +
+                                d.GetMessage(CultureInfo.InvariantCulture))];
+    }
+
     private static ImmutableArray<MetadataReference> BuildReferences()
     {
         var trusted = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string ?? string.Empty)

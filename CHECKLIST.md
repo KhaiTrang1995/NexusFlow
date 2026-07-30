@@ -196,8 +196,17 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       step array* as a linear flow, as a `Branch` plus a `Jump`, so the engine gained no
       branch stack and **both directions allocate 0 B** in Release. The manifest
       deliberately does **not** carry the predicate's source text: it would put business
-      thresholds into a file whose rule is structure-only. `Switch`, `Parallel`,
-      `ForEach` and `SubFlow` remain open — this box does not tick until they land
+      thresholds into a file whose rule is structure-only. `Parallel`, `ForEach` and
+      `SubFlow` remain open — this box does not tick until they land
+- [x] **WP-20** `Switch` / `Case` / `Default` — a value branch through builder, model,
+      analysis, emission, graph and engine. One `StepKind.Switch` carrying a target per
+      case plus a default, and a `Jump` closing each case block, in the *same flat step
+      array*; the dispatcher gained `int Select(...)` returning the matching arm, which
+      is an `int` and not the value so nothing is boxed. **Every arm, the miss and an
+      out-of-range arm allocate 0 B** in Release. A value matching nothing in a switch
+      with no `Default` falls through, exactly as `When` without `Otherwise` does —
+      recorded in `08 §3.2` and on `ISwitchBuilder`. The manifest carries neither the
+      selector nor the case values, for the same reason WP-15 refused the predicate
 - [x] **WP-16** Step binding — **`FLOWX1020`** raised by `StepBindingAnalyzer`. A flow
       whose steps cannot pass values to each other now fails the build. Numbered 1020,
       not 1022: `08-Flow-Definition.md` and both `Get<T>` implementations already

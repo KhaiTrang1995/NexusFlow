@@ -215,6 +215,9 @@ public sealed class FlowEndpointTests : IAsyncLifetime
 
         public bool Evaluate(int stepIndex, FlowContext ctx)
             => throw new NotSupportedException("This double runs plans with no branch step.");
+
+        public int Select(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no switch step.");
     }
 }
 

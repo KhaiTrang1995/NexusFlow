@@ -16,11 +16,13 @@ namespace FlowX.Runtime;
 /// <para>
 /// <strong>Branching is flat.</strong> A <c>When</c>/<c>Otherwise</c> is compiled into
 /// the same step array as everything else, as a <see cref="StepKind.Branch"/> carrying a
-/// false target and a <see cref="StepKind.Jump"/> closing the <c>then</c> block. So the
-/// engine does not recurse, holds no branch stack, and allocates nothing to take a
-/// branch — the only difference from a linear flow is that the loop index sometimes
-/// moves by more than one. A tree of nested plan objects would have read more naturally
-/// and would have cost an enumerator per level on the hot path.
+/// false target and a <see cref="StepKind.Jump"/> closing the <c>then</c> block. A
+/// <c>Switch</c> is the same shape with more destinations: one
+/// <see cref="StepKind.Switch"/> carrying a target per case, and a jump closing each case
+/// block. So the engine does not recurse, holds no branch stack, and allocates nothing to
+/// take a branch or a case — the only difference from a linear flow is that the loop
+/// index sometimes moves by more than one. A tree of nested plan objects would have read
+/// more naturally and would have cost an enumerator per level on the hot path.
 /// </para>
 /// <para>
 /// <strong>Deadlines are enforced at step boundaries.</strong> The engine will not
@@ -226,6 +228,32 @@ public sealed class FlowEngine
                 // The `then` block is laid out immediately after the branch, so the true
                 // path is the ordinary next index and only the false path needs a target.
                 i = taken ? i + 1 : step.Target!.Value;
+                continue;
+            }
+
+            if (step.Kind == StepKind.Switch)
+            {
+                int arm;
+
+                try
+                {
+                    arm = dispatcher.Select(i, context);
+                }
+#pragma warning disable CA1031 // Same reasoning as the predicate above: a selector that
+                catch (Exception exception) //   escapes here would skip the compensation
+                {                           //   the already-completed steps need.
+                    failure = FlowErrors.SelectorFailed(plan.Flow.Id, i, exception);
+                    break;
+                }
+#pragma warning restore CA1031
+
+                // Unsigned, so "no case matched" (-1) and a dispatcher that answered out
+                // of range take the same path — the default target — rather than throwing
+                // an IndexOutOfRangeException from the middle of a flow. One comparison,
+                // one array read, nothing allocated.
+                var cases = step.CaseTargets;
+
+                i = (uint)arm < (uint)cases.Length ? cases[arm] : step.Target!.Value;
                 continue;
             }
 

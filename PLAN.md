@@ -446,7 +446,7 @@ maintainability and scale, not features.
 
 | Roadmap item | Where it stands |
 |---|---|
-| Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **WP-15**, part done — `When`/`Otherwise` ship end to end; `Switch`, `Parallel`, `ForEach`, `SubFlow` remain |
+| Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **WP-15** and **WP-20**, part done — `When`/`Otherwise` and `Switch`/`Case`/`Default` ship end to end; `Parallel`, `ForEach`, `SubFlow` remain |
 | Contract-compatibility checking | **WP-16**, done — as `FLOWX1020`, *step binding* |
 | Diagnostics FLOWX1001–1023 with help URIs | **Done** at WP-13. All raised, all tested, all with help links |
 | Generator snapshot tests | **Done** at WP-5 and extended since |
@@ -474,7 +474,7 @@ maintainability and scale, not features.
 | **Deliverable** | `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` through the whole stack: builder surface, model, analysis, emission, `StepGraph`, engine |
 | **Exit** | A flow using every shape compiles, runs, appears correctly in the manifest, and renders in `flowx graph` |
 | **Depends on** | WP-5 |
-| **Status** | **`When` / `Otherwise` done**, through the whole stack. `Switch`, `Parallel`, `ForEach` and `SubFlow` are still open; the exit criterion above is not met until they land. |
+| **Status** | **`When` / `Otherwise` done**, through the whole stack. `Switch` followed at **WP-20**. `Parallel`, `ForEach` and `SubFlow` are still open; the exit criterion above is not met until they land. |
 
 The engine's step loop walked an array by index, and **budget B2 is a hard zero** — so
 the shape of the change was constrained before it was designed: no allocation per step,
@@ -507,6 +507,55 @@ Newly surfaced by this package, and open:
 - **The `.Step<TCapability, TStepIn>(map)` overload is not honoured** by `FlowAnalyzer`
   or `FlowEmitter` — it parses and is then ignored, which is worse than not existing.
 - **Triggers and capability `errors` are in the manifest schema but never emitted.**
+
+### WP-20 — `Switch` / `Case` / `Default`
+
+| | |
+|---|---|
+| **Goal** | A flow can branch on a *value*, not only on a yes/no question |
+| **Why** | The second shape in [08 §3.2](docs/08-Flow-Definition.md#32-branch-on-a-value), documented since before anything could compile it. Written as nested `When`s it costs one predicate per arm and reads nothing like the decision it is. |
+| **Tests first** | Walker tests for the nested case blocks · model tests for the layout arithmetic · a pinned emitted file · runtime tests per arm and for the miss · an allocation theory over every arm · `StepGraph` invariant tests |
+| **Deliverable** | `Switch`/`Case`/`Default` through the whole stack: builder surface, model, analysis, emission, `StepGraph`, engine |
+| **Exit** | Every arm executes, the default catches a miss, **0 B on every arm**, and the manifest shows the shape without the values |
+| **Depends on** | WP-15 |
+| **Status** | **Done.** |
+
+**A switch is one node, not a chain of branches.** It could have been desugared into
+`n` `StepKind.Branch` steps comparing the selector against each case in turn, which would
+have needed no new step kind, no new engine code and no change to `IStepDispatcher`. It
+was rejected for two reasons: it re-evaluates the selector once per arm, and it publishes
+the author's `Switch` to the manifest as a nest of conditionals — the manifest's whole
+job is to show the shape that was declared. So `StepKind.Switch` carries a target per
+case plus a default target, and the dispatcher gained
+`int Select(int stepIndex, FlowContext ctx)` returning the matching arm, or `-1`.
+
+`Select` returns an **`int`**, not the value it selected. Returning the value means
+returning it as `object` — which boxes an `enum` on every switch a flow takes and loses
+B2 — or making the method generic, which the engine cannot call because it does not know
+the type. `TakingAnyCaseOfASwitchAllocatesNothing` covers all three arms, the miss, and
+an out-of-range arm, and measures **0 B** on every one.
+
+**A miss with no `Default` falls through.** Requiring a `Default` would force
+`.Default(b => { })` onto every switch that legitimately special-cases a few values, and
+would still not make the switch exhaustive — an `enum` can hold a value no member
+declares. So the rule is `When`'s: a branch nobody took does nothing. Recorded in
+[08 §3.2](docs/08-Flow-Definition.md#32-branch-on-a-value) and on `ISwitchBuilder`
+itself, because a reader hits one of those two before they hit this file.
+
+**The manifest carries neither the selector nor the case values**, for exactly the reason
+WP-15 refused the predicate: `Channel.Wholesale` is a business value, and the file's rule
+is structure only. The cases appear as positional `branches`, empty ones included, so a
+reader sees that the flow branches three ways and what is in each arm.
+
+Newly surfaced by this package, and open:
+
+- **`.Fail(error)` is declared on the builder, listed in the §4 table, and not modelled
+  by the compiler.** A block whose only call is `.Fail(...)` compiles to an *empty* block
+  — so `08 §3.2`'s own example, `.Default(b => b.Fail(OrderErrors.UnsupportedChannel))`,
+  currently compiles to a default that does nothing. Documented in place rather than left
+  to be discovered.
+- **`FLOWX1011` now has a second unenforced subject**: a `Switch` selector obeys the same
+  purity rule as a `When` predicate, and nothing checks either.
 
 ### WP-16 — Step binding
 

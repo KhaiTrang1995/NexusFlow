@@ -4,9 +4,9 @@ namespace FlowX.Compiler.Model;
 
 /// <summary>What one call in a <c>Define</c> chain declared.</summary>
 /// <remarks>
-/// The remaining branching kinds — switch, parallel, for-each, sub-flow — arrive with
-/// the DSL surface that can express them. Modelling them now would be shapes nothing can
-/// produce and no test can exercise.
+/// The remaining branching kinds — parallel, for-each, sub-flow — arrive with the DSL
+/// surface that can express them. Modelling them now would be shapes nothing can produce
+/// and no test can exercise.
 /// </remarks>
 public enum StepKindModel
 {
@@ -21,6 +21,57 @@ public enum StepKindModel
 
     /// <summary><c>.When(predicate, then)</c>, with the <c>.Otherwise(...)</c> that may follow it.</summary>
     Condition = 3,
+
+    /// <summary><c>.Switch(selector)</c>, with the <c>.Case(...)</c> and <c>.Default(...)</c> that follow it.</summary>
+    Switch = 4,
+}
+
+/// <summary>One arm of a <c>Switch</c>: a value to match, and the block to run when it does.</summary>
+/// <remarks>
+/// The value is the author's source text, copied verbatim, for the same reason the
+/// predicate and the <c>.Return(...)</c> projection are — see
+/// <see cref="StepModel.Predicate"/>. It reaches the generated dispatcher and nothing
+/// else; in particular it never reaches the manifest, whose rule is structure only,
+/// never values.
+/// </remarks>
+public sealed record SwitchCaseModel
+{
+    /// <summary>Models one <c>.Case(value, body)</c> call.</summary>
+    /// <param name="value">The case value's source text, copied verbatim.</param>
+    /// <param name="steps">The block's steps, already carrying their flat indices.</param>
+    /// <param name="valueLocation"><c>file:line</c> of the value expression.</param>
+    public SwitchCaseModel(string value, IReadOnlyList<StepModel>? steps = null, string? valueLocation = null)
+    {
+        Value = value;
+        Steps = steps ?? System.Array.Empty<StepModel>();
+        ValueLocation = valueLocation;
+    }
+
+    /// <summary>The case value, as it was written.</summary>
+    public string Value { get; }
+
+    /// <summary><c>file:line</c> of the value expression.</summary>
+    public string? ValueLocation { get; }
+
+    /// <summary>Steps declared in this case's block, in declaration order.</summary>
+    public IReadOnlyList<StepModel> Steps { get; }
+
+    /// <summary>
+    /// Where control goes when this case matches: the first step of its block, or the
+    /// join index when the block declared nothing.
+    /// </summary>
+    /// <remarks>
+    /// Derived by <see cref="StepModel.Switch"/> from the blocks themselves, never
+    /// supplied — a caller able to state a target that disagreed with the block it also
+    /// supplied could produce a plan that runs the wrong arm.
+    /// </remarks>
+    public int Target { get; internal init; }
+
+    /// <summary>
+    /// Index of the jump that closes this case's block, or <c>null</c> when there is
+    /// nothing after it to skip.
+    /// </summary>
+    public int? JumpIndex { get; internal init; }
 }
 
 /// <summary>One step of a declared flow, expressed without Roslyn types.</summary>
@@ -139,6 +190,44 @@ public sealed record StepModel
     /// <summary><c>file:line</c> of the predicate expression, for its <c>#line</c> directive.</summary>
     public string? PredicateLocation { get; private init; }
 
+    /// <summary>
+    /// Source text of the <c>.Switch(...)</c> selector, copied verbatim, or <c>null</c>
+    /// for every other kind.
+    /// </summary>
+    public string? Selector { get; private init; }
+
+    /// <summary><c>file:line</c> of the selector expression, for its <c>#line</c> directive.</summary>
+    public string? SelectorLocation { get; private init; }
+
+    /// <summary>
+    /// Fully-qualified type of the value the selector produces.
+    /// </summary>
+    /// <remarks>
+    /// Needed because the emitted selector is a <c>static readonly Func&lt;FlowContext,
+    /// T&gt;</c> field and a field needs a type. It is also what makes the case
+    /// comparison allocation-free: <c>EqualityComparer&lt;T&gt;.Default</c> at the real
+    /// type boxes nothing, where a comparison through <c>object</c> would box an
+    /// <c>enum</c> on every switch a flow takes.
+    /// </remarks>
+    public string? SelectorTypeName { get; private init; }
+
+    /// <summary>The <c>.Case(...)</c> arms, in declaration order. Empty for every other kind.</summary>
+    public IReadOnlyList<SwitchCaseModel> Cases { get; private init; } = System.Array.Empty<SwitchCaseModel>();
+
+    /// <summary>Steps declared in the <c>.Default(...)</c> block. Empty when there is none.</summary>
+    public IReadOnlyList<StepModel> Default { get; private init; } = System.Array.Empty<StepModel>();
+
+    /// <summary>
+    /// Where control goes when no case matched: the first step of the <c>Default</c>
+    /// block, or the join index when there is none.
+    /// </summary>
+    /// <remarks>
+    /// Equal to <see cref="JoinIndex"/> without a <c>Default</c>, which is the whole of
+    /// the documented fall-through rule: a value nothing matched continues after the
+    /// switch. See <c>ISwitchBuilder</c> for why that is the chosen answer.
+    /// </remarks>
+    public int DefaultTarget { get; private init; }
+
     /// <summary>Steps declared in the <c>then</c> block, in declaration order.</summary>
     public IReadOnlyList<StepModel> Then { get; private init; } = System.Array.Empty<StepModel>();
 
@@ -176,11 +265,13 @@ public sealed record StepModel
     /// The flat index immediately after everything this step occupies.
     /// </summary>
     /// <remarks>
-    /// One past its own index for a plain step; the join index for a conditional, which
-    /// occupies its branch, both blocks and possibly a jump. This is what lets a nested
-    /// conditional be laid out without the enclosing block having to know how deep it goes.
+    /// One past its own index for a plain step; the join index for a conditional or a
+    /// switch, which occupies its own node, every block, and the jumps between them. This
+    /// is what lets a nested conditional be laid out without the enclosing block having
+    /// to know how deep it goes.
     /// </remarks>
-    public int NextIndex => Kind == StepKindModel.Condition ? JoinIndex : Index + 1;
+    public int NextIndex =>
+        Kind is StepKindModel.Condition or StepKindModel.Switch ? JoinIndex : Index + 1;
 
     /// <summary>True when the step declared a compensation.</summary>
     public bool IsCompensable => CompensationTypeName != null;
@@ -210,6 +301,25 @@ public sealed record StepModel
             }
 
             foreach (var nested in Otherwise)
+            {
+                foreach (var step in nested.SelfAndNested)
+                {
+                    yield return step;
+                }
+            }
+
+            foreach (var arm in Cases)
+            {
+                foreach (var nested in arm.Steps)
+                {
+                    foreach (var step in nested.SelfAndNested)
+                    {
+                        yield return step;
+                    }
+                }
+            }
+
+            foreach (var nested in Default)
             {
                 foreach (var step in nested.SelfAndNested)
                 {
@@ -310,6 +420,111 @@ public sealed record StepModel
             Otherwise = otherwiseSteps,
             JumpIndex = hasOtherwise ? thenEnd : (int?)null,
             FalseTarget = hasOtherwise ? thenEnd + 1 : thenEnd,
+            JoinIndex = join,
+            Location = location,
+        };
+    }
+
+    /// <summary>Models a <c>.Switch(selector)</c> and the <c>.Case</c>/<c>.Default</c> blocks that follow.</summary>
+    /// <param name="index">Flat index of the switch itself.</param>
+    /// <param name="selector">The selector's source text, copied verbatim.</param>
+    /// <param name="selectorTypeName">Fully-qualified type of the value it produces.</param>
+    /// <param name="cases">The arms, already carrying their blocks' flat indices.</param>
+    /// <param name="default">Steps of the <c>Default</c> block, or empty when there is none.</param>
+    /// <param name="selectorLocation"><c>file:line</c> of the selector expression.</param>
+    /// <param name="location"><c>file:line</c> of the <c>.Switch</c> call.</param>
+    /// <remarks>
+    /// <para>
+    /// The layout is <c>switch · case₀… · jump · case₁… · jump · … · default…</c>, and
+    /// every number in it — each case's target, each closing jump, the default target and
+    /// the join — is derived here from the blocks rather than passed in, for the reason
+    /// given on <see cref="Condition"/>.
+    /// </para>
+    /// <para>
+    /// A block that declared nothing occupies no indices and needs no jump: its target is
+    /// the join, so matching it simply continues after the switch. Only a block with a
+    /// non-empty block <em>after</em> it gets a closing jump, which is why the last one
+    /// never has one.
+    /// </para>
+    /// </remarks>
+    public static StepModel Switch(
+        int index,
+        string selector,
+        string selectorTypeName,
+        IReadOnlyList<SwitchCaseModel> cases,
+        IReadOnlyList<StepModel>? @default = null,
+        string? selectorLocation = null,
+        string? location = null)
+    {
+        var arms = cases ?? (IReadOnlyList<SwitchCaseModel>)System.Array.Empty<SwitchCaseModel>();
+        var defaultSteps = @default ?? (IReadOnlyList<StepModel>)System.Array.Empty<StepModel>();
+
+        // Every block in layout order — the cases, then the default — so the jump
+        // arithmetic is written once and cannot disagree between the two.
+        var blocks = new List<IReadOnlyList<StepModel>>(arms.Count + 1);
+
+        foreach (var arm in arms)
+        {
+            blocks.Add(arm.Steps);
+        }
+
+        blocks.Add(defaultSteps);
+
+        var ends = new int[blocks.Count];
+        var join = index + 1;
+
+        for (var i = 0; i < blocks.Count; i++)
+        {
+            var block = blocks[i];
+
+            ends[i] = block.Count == 0 ? -1 : block[block.Count - 1].NextIndex;
+
+            if (ends[i] > join)
+            {
+                join = ends[i];
+            }
+        }
+
+        // A block's jump exists only to skip what follows it, so it is emitted when some
+        // later block is non-empty and omitted otherwise.
+        var jumps = new int?[blocks.Count];
+
+        for (var i = 0; i < blocks.Count; i++)
+        {
+            if (ends[i] < 0)
+            {
+                continue;
+            }
+
+            for (var later = i + 1; later < blocks.Count; later++)
+            {
+                if (ends[later] >= 0)
+                {
+                    jumps[i] = ends[i];
+                    break;
+                }
+            }
+        }
+
+        var resolved = new List<SwitchCaseModel>(arms.Count);
+
+        for (var i = 0; i < arms.Count; i++)
+        {
+            resolved.Add(arms[i] with
+            {
+                Target = arms[i].Steps.Count == 0 ? join : arms[i].Steps[0].Index,
+                JumpIndex = jumps[i],
+            });
+        }
+
+        return new StepModel(index, StepKindModel.Switch)
+        {
+            Selector = selector,
+            SelectorLocation = selectorLocation,
+            SelectorTypeName = selectorTypeName,
+            Cases = resolved,
+            Default = defaultSteps,
+            DefaultTarget = defaultSteps.Count == 0 ? join : defaultSteps[0].Index,
             JoinIndex = join,
             Location = location,
         };

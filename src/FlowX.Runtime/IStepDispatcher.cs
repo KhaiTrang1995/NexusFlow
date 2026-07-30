@@ -100,4 +100,35 @@ public interface IStepDispatcher
     /// </para>
     /// </remarks>
     bool Evaluate(int stepIndex, FlowContext ctx);
+
+    /// <summary>
+    /// Runs the selector of the <see cref="StepKind.Switch"/> step at
+    /// <paramref name="stepIndex"/> and reports which case matched.
+    /// </summary>
+    /// <param name="stepIndex">
+    /// Position in the plan's step graph. Always a switch — the engine calls this for no
+    /// other kind, so an implementation is free to treat any other index as a defect.
+    /// </param>
+    /// <param name="ctx">The flow's pooled context.</param>
+    /// <returns>
+    /// The zero-based position of the matching case in <see cref="StepNode.CaseTargets"/>,
+    /// or <c>-1</c> when none matched, which sends control to
+    /// <see cref="StepNode.Target"/> — the <c>Default</c> block, or the join when the
+    /// author declared none.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>An <c>int</c>, not the value that was selected.</strong> Returning the
+    /// value would mean returning it as <c>object</c>, which boxes an <c>enum</c> or an
+    /// <c>int</c> on every switch a flow takes and loses budget B2 on the first commit —
+    /// or making this method generic, which the engine cannot call because it does not
+    /// know the type. An arm number is the one shape that carries the answer and no type.
+    /// </para>
+    /// <para>
+    /// Synchronous and cancellation-free for exactly the reasons given on
+    /// <see cref="Evaluate"/>: a selector may read only the context, the flow input and
+    /// prior step results, so a durable replay selects the arm it selected before.
+    /// </para>
+    /// </remarks>
+    int Select(int stepIndex, FlowContext ctx);
 }

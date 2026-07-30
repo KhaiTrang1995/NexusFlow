@@ -79,6 +79,44 @@ internal static class Models
             StepModel.Emit(5, "order.reviewed"),
         ]);
 
+    /// <summary>
+    /// A value branch: <c>validate · switch(reserve | capture | default validate) · emit</c>.
+    /// </summary>
+    /// <remarks>
+    /// The indices are the flat ones the analyzer assigns — 0 validate, 1 switch,
+    /// 2 reserve, (3 jump), 4 capture, (5 jump), 6 validate, 7 emit — because the model
+    /// layer carries the layout and the emitter only renders it. The jumps have no models
+    /// of their own; they are derived from the fact that a non-empty block follows.
+    /// </remarks>
+    public static FlowModel Switching() => new(
+        flowId: "order.price",
+        version: "1.0.0",
+        profile: "Ephemeral",
+        deadline: null,
+        containingNamespace: "Sample.Flows",
+        typeName: "PriceOrderFlow",
+        inputTypeName: "Sample.Contracts.PlaceOrder",
+        outputTypeName: "Sample.Contracts.OrderPlacedResult",
+        steps:
+        [
+            Validate(0),
+            StepModel.Switch(
+                1,
+                "ctx => ctx.Get<ValidatedOrder>().Channel",
+                "Sample.Contracts.Channel",
+                cases:
+                [
+                    new SwitchCaseModel(
+                        "Sample.Contracts.Channel.Retail",
+                        [Reserve(2)],
+                        valueLocation: "/src/Flows/Price.cs:14"),
+                    new SwitchCaseModel("Sample.Contracts.Channel.Wholesale", [Capture(4)]),
+                ],
+                @default: [Validate(6)],
+                selectorLocation: "/src/Flows/Price.cs:13"),
+            StepModel.Emit(7, "order.priced"),
+        ]);
+
     /// <summary>A single-step flow with no namespace, to exercise the degenerate shapes.</summary>
     public static FlowModel Minimal() => new(
         flowId: "ping.send",

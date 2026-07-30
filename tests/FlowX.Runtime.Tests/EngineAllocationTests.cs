@@ -192,6 +192,45 @@ public sealed class EngineAllocationTests
             "something started boxing, closing over, or enumerating.");
     }
 
+    /// <summary>
+    /// Budget B2 has to survive a value branch too — including the arm nobody declared.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every arm, not a representative one. They cost differently in principle: arms 0..2
+    /// are an array read out of <see cref="StepNode.CaseTargets"/>, and the miss is the
+    /// <see cref="StepNode.Target"/> fallback, which is a different line of the engine.
+    /// A theory covering only one of them would pass against an engine that boxed the
+    /// answer on the other.
+    /// </para>
+    /// <para>
+    /// <c>-1</c> is the documented "no case matched", and <c>7</c> is out of range — a
+    /// dispatcher and a plan from different builds. Both must take the default target
+    /// rather than throw, and neither may allocate on the way.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(-1)]
+    [InlineData(7)]
+    public void TakingAnyCaseOfASwitchAllocatesNothing(int arm)
+    {
+        RequireOptimisedBuild();
+
+        var engine = new FlowEngine(new FakeClock(T0));
+        var dispatcher = new NullDispatcher { CaseAnswer = arm };
+
+        var allocated = MeasureSteadyState(engine, Plans.Switching(), dispatcher);
+
+        allocated.ShouldBe(0,
+            $"Measured {allocated} B selecting arm {arm}. Taking a case is one comparison, " +
+            "one read out of an ImmutableArray<int> that already exists, and one assignment " +
+            "to the loop index. If it costs anything, something started boxing the " +
+            "selector's value, looking a case up in a dictionary, or closing over an arm.");
+    }
+
     /// <summary>A dispatcher that allocates nothing itself, so the measurement is the engine's.</summary>
     private sealed class NullDispatcher : IStepDispatcher
     {
@@ -210,6 +249,11 @@ public sealed class EngineAllocationTests
         public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
             => ValueTask.FromResult(StepOutcome.Success);
 
+        /// <summary>What every switch answers. Fixed, so the selector itself allocates nothing.</summary>
+        public int CaseAnswer { get; init; } = -1;
+
         public bool Evaluate(int stepIndex, FlowContext ctx) => PredicateAnswer;
+
+        public int Select(int stepIndex, FlowContext ctx) => CaseAnswer;
     }
 }
