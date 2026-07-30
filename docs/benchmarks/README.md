@@ -12,9 +12,23 @@ The P0 kill-criterion verdict this harness exists to produce is in
 
 That figure is for the one-flow reference sample and does not survive scale.
 [**B12-scale.md**](B12-scale.md) measures P1's exit criterion — a 200-flow synthetic
-solution — and records **+23 %**, a **FAIL**, with `scripts/measure-scale-overhead.sh`.
-Quote the two together or neither: the same generator produces both numbers, and which one
-applies depends entirely on how many flows the project has.
+solution — and records **+18.4 %** (95 % CI +16.3 to +19.9), a **FAIL**, with
+`scripts/measure-scale-overhead.sh`. Quote the two together or neither: the same generator
+produces both numbers, and which one applies depends entirely on how many flows the project
+has.
+
+The number that matters more than either is the **shape**: cost is **linear** in flow
+count — `flows^0.91`, CI [0.82, 1.08], or about **9.5 ms of build time per flow with no
+fixed term**. A superlinear generator would have put
+[ADR-0002](../adr/ADR-0002-compile-time-orchestration.md) itself in question; a linear one
+is a constant factor with an owner. Roughly 62 % of it is `FlowPlanGenerator` and 37 % is
+`StepBindingAnalyzer`.
+
+That report **supersedes a provisional +23 %** measured on a loaded machine, and keeps it
+visible in its §9 rather than deleting it. The harness now has a third outcome besides pass
+and fail — `INCONCLUSIVE`, exit code 2 — returned when the within-arm spread, an A/A
+control run in the same rounds, or the confidence interval says this machine cannot resolve
+the question. It fired on the first attempt at the verdict above, and that is the feature.
 
 ---
 
