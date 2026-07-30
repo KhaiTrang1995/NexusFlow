@@ -6,6 +6,9 @@
 Reproduce with `./scripts/run-benchmarks.sh`. The committed baseline is
 [`baseline.json`](baseline.json).
 
+The P0 kill-criterion verdict this harness exists to produce is in
+[**P0.md**](P0.md).
+
 ---
 
 ## 1. Budget B1 — the engine, measured
