@@ -6,8 +6,9 @@
 >
 > **Last updated:** 2026-07-30 · **Phase:** P0 · **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 127/127 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 135/135 passing ·
 > **Coverage:** 98.5 % line / 95.6 % branch (gates: 80 / 75) · **SDK:** 10.0.110
+> **Benchmarks:** B1 precursor 20 ns / 5 000 ns budget · B3 9.5 ns / 150 ns · 0 alloc on both
 >
 > Legend: `[x]` done and verified · `[~]` done, verification blocked · `[ ]` not started
 
@@ -30,10 +31,9 @@ These gate everything below them. None is code work.
       *Resolved:* `required` members on attribute classes compile and are
       observable via reflection — the construct flagged as highest-risk is sound.
       *Found and fixed by the first build:* see §8.
-- [ ] **B-3 · Delete remote branch `claude/flowx-platform-docs-djjyxi`.**
-      It carries three commits with non-owner authorship. The git proxy here
-      refuses the delete; it must be done from the GitHub UI after switching the
-      default branch to `master`.
+- [x] **B-3 · ~~Delete remote branch `claude/flowx-platform-docs-djjyxi`.~~ RESOLVED.**
+      Gone from the remote. History scan is clean: no commit in any branch has
+      bot authorship, a generated-by footer, or a signature.
 
 ---
 
@@ -41,6 +41,7 @@ These gate everything below them. None is code work.
 
 - [x] 20 specification documents, `docs/01` – `docs/20`
 - [x] 13 ADRs with trade-offs stated (ADR-0013 added by the first compilation)
+- [x] `docs/benchmarks/` — baseline, gate policy, and the honest caveats
 - [x] 9 sample application specifications
 - [x] `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE` (Apache-2.0)
 - [x] `docs/21-Quality-Gates.md` — SonarQube thresholds, OWASP mapping, debt policy
@@ -48,7 +49,8 @@ These gate everything below them. None is code work.
 - [x] `CHECKLIST.md` — this file
 - [x] README references the platform infographics
 - [x] `docs/DEBT.md` — debt register (0 open entries; format + budget defined)
-- [ ] `docs/benchmarks/P0.md` — the kill-criterion report (WP-11)
+- [x] `docs/benchmarks/README.md` — WP-3 baseline results and gate policy
+- [ ] `docs/benchmarks/P0.md` — the kill-criterion report (WP-11, needs dedicated hardware)
 - [~] Internal Markdown links resolve — **4 broken, all of them B-1**: three
       image paths referenced from `README.md` and `docs/05-Architecture.md`.
       Every non-image link resolves. The `docs` job is red until the PNGs land,
@@ -172,8 +174,9 @@ immutable, and rejects every invariant violation under test.
 | DAST findings | 0 | **wired, guarded** — needs WP-10 | WP-0 |
 | Vulnerable dependencies | 0 | **0 by construction** — zero dependencies | WP-1 |
 | Open debt entries | ≤ 20 | **0** | enforced by `quality.yml` |
-| B1 flow overhead p99 | ≤ 5 µs | **not measured** | WP-3 |
-| B2 allocations per step | 0 B | **not measured** | WP-3 |
+| B1 flow overhead p99 (precursor) | ≤ 5 µs | **20 ns** ✅ | WP-3, shared hardware |
+| B2 allocations per step | 0 B | **0 B** ✅ | gated as a unit test |
+| B3 capability dispatch p99 | ≤ 150 ns | **9.7 ns** ✅ | WP-3, shared hardware |
 
 Nothing in the "Now" column is green by assertion — every ✅ was produced by a
 command in this working tree. Every "not measured" is equally honest: the gate

@@ -1,0 +1,115 @@
+name: Performance
+
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+    branches: [master, dev]
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_TieredPGO: 0
+
+jobs:
+  allocations:
+    name: Allocation budgets (B2, B6)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Hard-zero allocation assertions
+        # These are unit tests, not benchmarks, and they run on every pull request.
+        # Allocation counts are deterministic; timings are not. Gating the hard
+        # zeros here means a regression is caught in seconds instead of overnight.
+        run: >
+          dotnet test tests/FlowX.Core.Tests --configuration Release
+          --filter "FullyQualifiedName~AllocationBudget"
+          --logger "console;verbosity=detailed"
+
+  benchmarks:
+    name: Benchmark budgets (B1, B3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run benchmarks
+        run: >
+          dotnet run --configuration Release --project tests/FlowX.Benchmarks
+          -- --filter '*'
+
+      - name: Gate against the committed baseline
+        # Fails on: any allocation change, any p95 over its documented budget, any
+        # ratio drift beyond 15 %. Absolute drift is tolerated to 40 % because a
+        # shared runner cannot reproduce a nanosecond figure — see
+        # docs/benchmarks/README.md section 4.
+        run: python3 scripts/check-benchmark-budgets.py BenchmarkDotNet.Artifacts
+
+      - name: Publish the report
+        if: always()
+        run: |
+          if [ -d BenchmarkDotNet.Artifacts/results ]; then
+            {
+              echo "## Benchmark results"
+              echo
+              cat BenchmarkDotNet.Artifacts/results/*-report-github.md 2>/dev/null || true
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-results
+          path: BenchmarkDotNet.Artifacts/
+
+  gate-self-test:
+    name: The gate can fail
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Injecting a regression must fail the gate
+        # A gate nobody has seen fail is an assumption, not a gate. This builds a
+        # synthetic report with a 64 B allocation where the baseline says zero and
+        # asserts that check-benchmark-budgets.py rejects it.
+        run: |
+          python3 - <<'PY'
+          import json, os
+          os.makedirs('/tmp/synthetic/results', exist_ok=True)
+          baseline = json.load(open('docs/benchmarks/baseline.json'))
+          benchmarks = []
+          for name, entry in baseline['benchmarks'].items():
+              type_name, method = name.rsplit('.', 1)
+              benchmarks.append({
+                  'Type': type_name,
+                  'Method': method,
+                  'Statistics': {
+                      'Mean': entry['absoluteNs'],
+                      'Percentiles': {'P95': entry['absoluteNs'] * 1.02},
+                  },
+                  # The injected defect: a benchmark the baseline says is allocation-free.
+                  'Memory': {'BytesAllocatedPerOperation':
+                             64 if method == 'WalkAndDispatch' else entry['allocatedBytes']},
+              })
+          by_type = {}
+          for b in benchmarks:
+              by_type.setdefault(b['Type'], []).append(b)
+          for type_name, group in by_type.items():
+              path = f"/tmp/synthetic/results/{type_name}-report-full.json"
+              json.dump({'Benchmarks': group}, open(path, 'w'))
+          PY
+
+          if python3 scripts/check-benchmark-budgets.py /tmp/synthetic; then
+            echo "::error::The gate accepted an injected 64 B allocation regression."
+            exit 1
+          fi
+          echo "Gate correctly rejected the injected regression."

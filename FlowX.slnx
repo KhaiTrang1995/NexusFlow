@@ -6,6 +6,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/FlowX.Abstractions.Tests/FlowX.Abstractions.Tests.csproj" />
     <Project Path="tests/FlowX.Architecture.Tests/FlowX.Architecture.Tests.csproj" />
+    <Project Path="tests/FlowX.Benchmarks/FlowX.Benchmarks.csproj" />
     <Project Path="tests/FlowX.Core.Tests/FlowX.Core.Tests.csproj" />
   </Folder>
 </Solution>

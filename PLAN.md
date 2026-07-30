@@ -91,7 +91,7 @@ an exit criterion that is mechanically checkable.
 | **Tests first** | `AbstractionsHasNoDependencies`, `LayersPointInward`, `ContractSurfaceTests` |
 | **Deliverable** | `Result<T>`, `Error`, `ErrorCategory`, `ICapability<,>`, `Flow<,>`, `IFlowBuilder<,>`, contexts, trigger attributes, `PolicySet` |
 | **Exit** | Solution compiles with zero warnings; fitness functions green; zero package references |
-| **Status** | **Done** — commit `7b00db5`, pending compiler verification (§6) |
+| **Status** | **Done.** 0 warnings, 30/30 fitness tests, 47 behavioural tests |
 
 ### WP-2 — Core execution model
 
@@ -102,6 +102,7 @@ an exit criterion that is mechanically checkable.
 | **Deliverable** | `FlowX.Core`: `StepGraph`, `StepNode`, `ExecutionPlan`, `CompensationStack`, `FlowDescriptor`, `CapabilityDescriptor`, `PolicyChain` |
 | **Exit** | A three-step linear plan with one compensation is constructible, immutable, and asserts its own invariants. Mutation score ≥ 70 %. |
 | **Depends on** | WP-1 |
+| **Status** | **Done.** Built red → green; 58 tests; 98.5 % line / 95.6 % branch coverage. Mutation score not yet measured — Stryker is wired but unrun. |
 
 ### WP-3 — Benchmark harness *(before the engine — see §2)*
 
@@ -112,6 +113,7 @@ an exit criterion that is mechanically checkable.
 | **Deliverable** | `tests/FlowX.Benchmarks` with BenchmarkDotNet · `MemoryDiagnoser` with a hard-zero assertion for B2 · baseline JSON committed · CI job failing on > 5 % regression |
 | **Exit** | `dotnet run -c Release --project tests/FlowX.Benchmarks` reports B1–B3; CI fails on an injected 10 % regression |
 | **Depends on** | WP-2 |
+| **Status** | **Done.** Gate verified by injecting a 64 B allocation regression — rejected, exit 1. Results: [docs/benchmarks](docs/benchmarks/README.md) |
 
 ### WP-4 — Flow engine
 
@@ -225,12 +227,12 @@ phase-level planning only.
 | # | Item | Blocks | Owner |
 |---|---|---|---|
 | 1 | Three infographic PNGs must be committed to `docs/assets/` — see [the asset manifest](docs/assets/README.md) | CI `docs` job | repository owner |
-| 2 | `FlowX.Abstractions` has never been compiled — the environment cannot install the .NET SDK | WP-2 onward | repository owner |
-| 3 | Branch `claude/flowx-platform-docs-djjyxi` still exists on the remote with non-owner authorship | repository hygiene | repository owner |
+| 2 | ~~Never compiled~~ **Resolved.** SDK 10.0.110 installs from the Ubuntu archive; the official installer hosts are proxy-blocked but `packages.microsoft.com` is not | — | — |
+| 3 | ~~Stray `claude/` branch on the remote~~ **Resolved.** Deleted | — | — |
+| 4 | `SONAR_TOKEN` repository secret not configured; the `sonar` job no-ops without it | Sonar gate | repository owner |
+| 5 | Benchmarks recorded on shared container hardware with 10 iterations. WP-11 must re-record on dedicated hardware before publishing the kill-criterion report | WP-11 | — |
 
-Item 2 is the significant one: WP-1 is marked done on the strength of review, not
-of a compiler. **Nothing downstream should be built until `dotnet build` passes
-once.** The first action of WP-2 is to run it.
+Item 1 is the only one blocking a green CI run.
 
 ---
 

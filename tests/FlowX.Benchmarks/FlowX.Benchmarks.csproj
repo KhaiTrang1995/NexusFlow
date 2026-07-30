@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+
+    <!-- BenchmarkDotNet needs a stable, un-tiered environment to produce numbers
+         worth comparing against a baseline. -->
+    <Optimize>true</Optimize>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <TieredPGO>false</TieredPGO>
+
+    <!-- BenchmarkDotNet generates and compiles its own runner assemblies, so the
+         trim/AOT analyzers have nothing useful to say here. -->
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+
+    <!--
+      Public benchmark methods are required by BenchmarkDotNet and carry no contract
+      obligation, so the documentation rule does not apply (CS1591, CA1822, CA1515).
+
+      CA1859 tells us to type a field as its concrete class instead of its interface,
+      "for improved performance". Here the interface-typed field IS the measurement:
+      DispatchBenchmarks exists to price interface dispatch against a direct call.
+      Taking the analyzer's advice would delete the benchmark's reason to exist.
+    -->
+    <NoWarn>$(NoWarn);CS1591;CA1822;CA1515;CA1859</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
+  </ItemGroup>
+
+</Project>
