@@ -7,12 +7,13 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 593/593 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 650/650 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
 >
-> Legend: `[x]` done and verified · `[~]` done, verification blocked · `[ ]` not started
+> Legend: `[x]` done and verified · `[~]` partial — shipped but incomplete, blocked, or
+> failing its own criterion, with the gap named on the line · `[ ]` not started
 
 ---
 
@@ -190,9 +191,13 @@ item outstanding and needs a CI run.
 Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages in
 [PLAN.md §4](PLAN.md).
 
-- [ ] **WP-15** The branching DSL — `When` / `Otherwise` / `Switch` / `Parallel` /
-      `ForEach` / `SubFlow`, through builder, model, analysis, emission, graph and
-      engine. The largest remaining piece of P1
+- [~] **WP-15** The branching DSL — **`When` / `Otherwise` done** through builder, model,
+      analysis, emission, graph and engine. A conditional compiles into the *same flat
+      step array* as a linear flow, as a `Branch` plus a `Jump`, so the engine gained no
+      branch stack and **both directions allocate 0 B** in Release. The manifest
+      deliberately does **not** carry the predicate's source text: it would put business
+      thresholds into a file whose rule is structure-only. `Switch`, `Parallel`,
+      `ForEach` and `SubFlow` remain open — this box does not tick until they land
 - [x] **WP-16** Step binding — **`FLOWX1020`** raised by `StepBindingAnalyzer`. A flow
       whose steps cannot pass values to each other now fails the build. Numbered 1020,
       not 1022: `08-Flow-Definition.md` and both `Get<T>` implementations already
@@ -201,8 +206,13 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
 - [x] **WP-17** `flowx diff` v1 — 29 classification rules, text and JSON, exit 1 on a
       breaking change. **Wired into CI** against a committed baseline, and verified by
       flipping `Idempotent` on the sample's real source
-- [ ] **WP-18** Scale — 200 synthetic flows within the 8 % budget, and evidence that
-      the cost scales linearly
+- [~] **WP-18** Scale — harness delivered (project generator, measurement script,
+      report, advisory CI job); **the budget FAILS at +23 %** against +8 %. Recorded as a
+      failure rather than rounded off. The magnitude is provisional — measured under load
+      average 2–34 with an 85 % within-arm spread — so it needs a quiet-machine re-run
+      before it is a verdict. The *direction* is not provisional: at 200 flows the
+      generator costs materially more than the +0.4 % B12 measured at one flow. Still
+      unanswered, and the question the roadmap actually asks: is the growth linear?
 - [x] **WP-19** IDE code fixes — `FLOWX1001`, `FLOWX1010`, `FLOWX1017`, in a separate
       `FlowX.Compiler.CodeFixes` assembly so the analyzer never drags Workspaces into a
       consumer's build. `FLOWX1010` deliberately withholds `Public`
@@ -210,6 +220,20 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
 Already satisfied from P0, per the roadmap's P1 list: diagnostics with help URIs
 (WP-13), generator snapshot tests (WP-5), readable and breakpoint-able emitted code
 (WP-10), and budget B12 (WP-14).
+
+**Gaps WP-15 surfaced**, listed here rather than left in a commit message — each is a
+place where something is documented, reserved or parseable but not actually enforced,
+which is the exact failure mode P1 exists to remove:
+
+- [ ] **`FLOWX1011` — predicate purity is unenforced.** Reserved when nothing could
+      declare a predicate. Something can now. `FlowErrors.PredicateFailed` states the
+      rule at run time — a condition may read only the context, the flow input and prior
+      results — and no analyzer checks it at build time
+- [ ] **`.Step<TCapability, TStepIn>(map)` is parsed and then ignored** by `FlowAnalyzer`
+      and `FlowEmitter`. It is on the builder surface and `FLOWX1020` recommends it as
+      the fix for a binding failure, so a user following the diagnostic reaches an
+      overload that silently does nothing. Worse than not existing
+- [ ] **Triggers and capability `errors` are in the manifest schema and never emitted**
 
 ### WP-10 · what it delivered
 

@@ -446,7 +446,7 @@ maintainability and scale, not features.
 
 | Roadmap item | Where it stands |
 |---|---|
-| Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **WP-15**, open — the largest remaining piece of P1 |
+| Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **WP-15**, part done — `When`/`Otherwise` ship end to end; `Switch`, `Parallel`, `ForEach`, `SubFlow` remain |
 | Contract-compatibility checking | **WP-16**, done — as `FLOWX1020`, *step binding* |
 | Diagnostics FLOWX1001–1023 with help URIs | **Done** at WP-13. All raised, all tested, all with help links |
 | Generator snapshot tests | **Done** at WP-5 and extended since |
@@ -457,7 +457,9 @@ maintainability and scale, not features.
 
 **Exit criteria, from the roadmap:**
 
-- a 200-flow synthetic solution builds with ≤ 8 % overhead → **WP-18**
+- a 200-flow synthetic solution builds with ≤ 8 % overhead → **WP-18**, measured and
+  **FAILING at +23 %**. The harness exists and the number is real; the budget is not met.
+  P1 cannot exit on this criterion until it is
 - every diagnostic passes `EveryDiagnosticIsHelpful` → **already green**
 - emitted code is breakpoint-able → **already true**, and pinned by
   `EachStepGetsItsOwnLineDirective`
@@ -472,10 +474,39 @@ maintainability and scale, not features.
 | **Deliverable** | `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` through the whole stack: builder surface, model, analysis, emission, `StepGraph`, engine |
 | **Exit** | A flow using every shape compiles, runs, appears correctly in the manifest, and renders in `flowx graph` |
 | **Depends on** | WP-5 |
+| **Status** | **`When` / `Otherwise` done**, through the whole stack. `Switch`, `Parallel`, `ForEach` and `SubFlow` are still open; the exit criterion above is not met until they land. |
 
-The engine's step loop currently walks an array by index. Branching makes the graph a
-graph, and **budget B2 is a hard zero** — so the shape of the change is constrained
-before it is designed: no allocation per step, no iterator, no closure per branch.
+The engine's step loop walked an array by index, and **budget B2 is a hard zero** — so
+the shape of the change was constrained before it was designed: no allocation per step,
+no iterator, no closure per branch.
+
+**Branching did not make the graph a graph.** A conditional compiles into the *same flat
+step array* as everything else — a `StepKind.Branch` carrying the false target, and a
+`StepKind.Jump` closing the `then` block. The engine gained no branch stack and no
+recursion; the only change to the loop is that the index sometimes moves by more than
+one. A tree of nested plan objects would have read more naturally and would have cost an
+enumerator per level on the hot path. `TakingEitherBranchOfAConditionalAllocatesNothing`
+asserts **0 B on both directions** in Release, so B2 survived the DSL's most-used shape.
+
+Termination is not an assumption: `StepGraph` rejects any target that is out of range or
+points backwards, which is why that check exists and why the `while` loop is safe.
+
+**The manifest does not carry the predicate.** This package proposed adding a
+`condition` string to `$defs/step` holding the predicate's source text, so `flowx graph`
+could label the branches. **Rejected.** Predicate text carries business values —
+`order.Total > 80` — and the manifest's rule is *structure only, never values*. That rule
+is what `ManifestContainsNoSecrets` asserts and what makes the file safe to publish to
+consumers who are not entitled to the thresholds inside it. A renderer wanting labels can
+read them from source, where the reader is already trusted.
+
+Newly surfaced by this package, and open:
+
+- **`FLOWX1011` (predicate purity) is unimplemented.** It was reserved when nothing could
+  declare a predicate. Something can now, and `FlowErrors.PredicateFailed` documents the
+  rule at run time that no analyzer enforces at build time.
+- **The `.Step<TCapability, TStepIn>(map)` overload is not honoured** by `FlowAnalyzer`
+  or `FlowEmitter` — it parses and is then ignored, which is worse than not existing.
+- **Triggers and capability `errors` are in the manifest schema but never emitted.**
 
 ### WP-16 — Step binding
 
@@ -550,6 +581,26 @@ and array order. A gate that fires on every build is a gate people delete.
 | **Deliverable** | A synthetic-project generator, a measurement script, and a report |
 | **Exit** | 200 flows build within the 8 % budget, and the cost is shown to scale linearly |
 | **Depends on** | WP-14 |
+| **Status** | **Harness done, budget FAILED at +23 %.** Reported as a failure rather than rounded off — the measurement is the deliverable, and the number it produced is the honest one. See [B12-scale](docs/benchmarks/B12-scale.md). |
+
+**The +23 % is not yet a verdict.** It was measured on a machine under load average
+2–34, with an 85 % spread *within* a single arm — wide enough that the arms overlap and
+the ratio is not separable from the noise. The finding that matters is therefore
+provisional in magnitude but not in direction: at 200 flows the generator costs
+materially more than at one, where B12 measured +0.4 %. Two things must happen before
+this criterion is closed either way:
+
+1. **Re-measure on a quiet machine.** Until the within-arm spread is small relative to
+   the difference between arms, neither a pass nor a fail is trustworthy.
+2. **Establish the shape, not just the ratio.** The roadmap's real question is whether
+   cost grows linearly with flow count. Superlinear growth at 200 flows would be a far
+   more important finding than any single percentage, and would change what gets fixed.
+
+The CI job added here is **advisory** (`continue-on-error: true`): it publishes the
+number on every run without failing the build on a measurement whose noise floor is
+larger than its budget. Gating on it while it cannot separate signal from load would
+teach people to re-run CI until it passes, which is worse than not gating at all. It
+becomes a gate when (1) above is satisfied.
 
 ### WP-19 — IDE code fixes
 
