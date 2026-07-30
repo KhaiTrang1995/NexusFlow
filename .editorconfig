@@ -22,7 +22,9 @@ csharp_style_namespace_declarations = file_scoped:error
 csharp_style_var_when_type_is_apparent = true:suggestion
 csharp_style_var_elsewhere = false:suggestion
 dotnet_style_qualification_for_field = false:error
-dotnet_style_require_accessibility_modifiers = always:error
+# Interface members are implicitly public; writing it out is noise that no C#
+# codebase does. Everywhere else an explicit modifier is required.
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:error
 csharp_prefer_braces = true:error
 csharp_style_prefer_pattern_matching = true:suggestion
 
@@ -36,6 +38,15 @@ dotnet_diagnostic.IDE0055.severity = warning
 
 # Public contract surface must be documented (constraint C7).
 dotnet_diagnostic.CS1591.severity = error
+
+# CA1716 (identifier conflicts with a reserved language keyword) is disabled for
+# the whole repository. It fires on Step, Return, When, Then, Error, Get and Set
+# — which is to say, on the FlowX DSL's entire vocabulary. The rule protects
+# VB.NET and F# consumers; FlowX is a C#-first platform whose DSL readability IS
+# the product. Renaming Step to ExecuteStep to please a language FlowX does not
+# target would damage every call site to protect a scenario that does not exist.
+# This is a decision, not debt — see ADR-0013.
+dotnet_diagnostic.CA1716.severity = none
 
 [tests/**/*.cs]
 # Tests legitimately capture context and assert on exceptions.

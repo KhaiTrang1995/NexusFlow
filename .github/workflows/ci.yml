@@ -55,16 +55,33 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Publish AOT
-        # Constraint C2. This job exists so a reflection call cannot reach main
-        # without someone noticing — quality goal Q7 depends on it.
+      - name: Trim and AOT analyzers must be clean
+        # Constraint C2. For libraries the real gate is the analyzer, which
+        # Directory.Build.props enables on everything under src/ via
+        # IsAotCompatible. A reflection call that would break trimming surfaces
+        # here as an IL2xxx/IL3xxx error at build time, not at publish time.
         run: |
-          dotnet publish src/FlowX.Abstractions/FlowX.Abstractions.csproj \
-            --configuration Release /p:PublishAot=true /p:TrimmerSingleWarn=false \
-            2>&1 | tee aot.log
-          if grep -qE 'IL2[0-9]{3}|IL3[0-9]{3}' aot.log; then
+          dotnet build FlowX.slnx --configuration Release 2>&1 | tee build.log
+          if grep -qE 'IL2[0-9]{3}|IL3[0-9]{3}'  build.log; then
             echo "::error::Trim or AOT warnings found — constraint C2 forbids them."
             exit 1
+          fi
+
+      - name: NativeAOT publish smoke test
+        # PublishAot only applies to executables. Until the sample exists (WP-10)
+        # there is nothing to publish, and saying so beats a job that passes
+        # vacuously while looking like it proved something.
+        run: |
+          if [ -d samples/ecommerce/src ] || [ -f samples/ecommerce/*.csproj ] 2>/dev/null; then
+            dotnet publish samples/ecommerce --configuration Release \
+              --runtime linux-x64 --self-contained /p:PublishAot=true \
+              /p:TrimmerSingleWarn=false 2>&1 | tee aot.log
+            if grep -qE 'IL2[0-9]{3}|IL3[0-9]{3}' aot.log; then
+              echo "::error::Trim or AOT warnings in the AOT publish."
+              exit 1
+            fi
+          else
+            echo "No publishable app yet (WP-10). The analyzer gate above is the active check."
           fi
 
   docs:

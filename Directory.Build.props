@@ -42,9 +42,15 @@
 
   <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
     <IsPackable>false</IsPackable>
-    <!-- Test projects legitimately reflect; the rule is about FlowX.Runtime. -->
+    <!--
+      Test projects legitimately reflect — the fitness functions read the contract
+      surface with reflection by design. The AOT/trim rule is about what ships,
+      i.e. everything under src/, and EveryShippedProjectIsAotAnalyzed guards it.
+    -->
     <IsAotCompatible>false</IsAotCompatible>
     <IsTrimmable>false</IsTrimmable>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
   </PropertyGroup>
 
 </Project>

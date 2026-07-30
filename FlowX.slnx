@@ -5,13 +5,4 @@
   <Folder Name="/tests/">
     <Project Path="tests/FlowX.Architecture.Tests/FlowX.Architecture.Tests.csproj" />
   </Folder>
-  <Folder Name="/docs/">
-    <File Path="docs/README.md" />
-    <File Path="docs/05-Architecture.md" />
-  </Folder>
-  <Folder Name="/">
-    <File Path="Directory.Build.props" />
-    <File Path="README.md" />
-    <File Path="CONTRIBUTING.md" />
-  </Folder>
 </Solution>

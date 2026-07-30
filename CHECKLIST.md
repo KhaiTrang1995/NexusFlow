@@ -6,6 +6,9 @@
 >
 > **Last updated:** 2026-07-30 · **Phase:** P0 · **Commit:** see `git log`
 >
+> **Build:** `dotnet build FlowX.slnx -c Release` → 0 warnings, 0 errors ·
+> **Tests:** 29/29 passing · **SDK:** 10.0.110
+>
 > Legend: `[x]` done and verified · `[~]` done, verification blocked · `[ ]` not started
 
 ---
@@ -19,13 +22,14 @@ These gate everything below them. None is code work.
       *Blocks:* CI `docs` job (README currently references three missing files).
       *Owner:* repository owner. *Why not done:* the images exist only in a chat
       transcript; they cannot be written to disk from here.
-- [ ] **B-2 · Run `dotnet build FlowX.slnx` once.**
-      *Blocks:* every work package from WP-2 onward.
-      *Why not done:* this environment's proxy blocks the .NET SDK download
-      (`dot.net` returns 403), so no C# in this repository has ever been compiled.
-      *Highest-risk unverified construct:* `required` members on attribute classes
-      (`CapabilityAttribute.Version`, `.Authorization`, `KafkaTriggerAttribute.Group`,
-      `StreamTriggerAttribute.Window`, `AgentTriggerAttribute.Description`).
+- [x] **B-2 · ~~Run `dotnet build FlowX.slnx` once.~~ RESOLVED.**
+      SDK 10.0.110 installed from the Ubuntu archive (`dot.net` and
+      `builds.dotnet.microsoft.com` are proxy-blocked; `packages.microsoft.com`
+      and `apt` are not). Full solution builds with **0 warnings, 0 errors**;
+      **29/29** fitness tests pass; 0 IL2xxx/IL3xxx trim warnings.
+      *Resolved:* `required` members on attribute classes compile and are
+      observable via reflection — the construct flagged as highest-risk is sound.
+      *Found and fixed by the first build:* see §8.
 - [ ] **B-3 · Delete remote branch `claude/flowx-platform-docs-djjyxi`.**
       It carries three commits with non-owner authorship. The git proxy here
       refuses the delete; it must be done from the GitHub UI after switching the
@@ -36,7 +40,7 @@ These gate everything below them. None is code work.
 ## 1. Documentation
 
 - [x] 20 specification documents, `docs/01` – `docs/20`
-- [x] 12 ADRs with trade-offs stated
+- [x] 13 ADRs with trade-offs stated
 - [x] 9 sample application specifications
 - [x] `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE` (Apache-2.0)
 - [x] `docs/21-Quality-Gates.md` — SonarQube thresholds, OWASP mapping, debt policy
@@ -57,7 +61,8 @@ These gate everything below them. None is code work.
 
 - [x] `ci.yml` — build with warnings-as-errors
 - [x] `ci.yml` — architecture fitness functions gated ahead of the rest of the suite
-- [x] `ci.yml` — NativeAOT publish failing on `IL2xxx`/`IL3xxx`
+- [x] `ci.yml` — trim/AOT analyzer gate failing on `IL2xxx`/`IL3xxx` (verified: 0)
+- [x] `ci.yml` — NativeAOT publish smoke test (guarded until an executable exists at WP-10)
 - [x] `ci.yml` — Mermaid parse gate
 - [x] `ci.yml` — internal link check
 - [x] `ci.yml` — attribution guard (rejects bot authorship)
@@ -71,39 +76,40 @@ These gate everything below them. None is code work.
 
 ---
 
-## 3. WP-1 · `FlowX.Abstractions` *(code written, compiler-unverified)*
+## 3. WP-1 · `FlowX.Abstractions` — **compiled, 0 warnings**
 
-- [~] `Result<T>` — readonly struct, allocation-free failure path
-- [~] `Error`, `ErrorCategory` — closed set, terminal/retryable, HTTP mapping
-- [~] `ICapability<TIn, TOut>` — the seven rules documented on the interface
-- [~] `CapabilityAttribute` — `Version` and `Authorization` as required members
-- [~] `Authorization`, `ApprovedByAttribute`, `SensitiveAttribute`
-- [~] `CapabilityContext`, `FlowContext<TIn>` — clock, ids, randomness, deadline
-- [~] `Flow<TIn, TOut>`, `IFlowBuilder<,>` — no `Do(lambda)`, no trigger types
-- [~] `ExecutionProfile` — `Ephemeral` as the zero value
-- [~] `PolicySet`, `PolicyStage` — stage order encoding the safety guarantees
-- [~] Trigger attributes — http, kafka, cron, stream, agent
-- [~] Zero package references, zero project references
+- [x] `Result<T>` — readonly struct, allocation-free failure path
+- [x] `Error`, `ErrorCategory` — closed set, terminal/retryable, HTTP mapping
+- [x] `ICapability<TIn, TOut>` — the seven rules documented on the interface
+- [x] `CapabilityAttribute` — `Version` and `Authorization` as required members
+- [x] `Authorization`, `ApprovedByAttribute`, `SensitiveAttribute`
+- [x] `CapabilityContext`, `FlowContext<TIn>` — clock, ids, randomness, deadline
+- [x] `Flow<TIn, TOut>`, `IFlowBuilder<,>` — no `Do(lambda)`, no trigger types
+- [x] `ExecutionProfile` — `Ephemeral` as the zero value
+- [x] `PolicySet`, `PolicyStage` — stage order encoding the safety guarantees
+- [x] Trigger attributes — http, kafka, cron, stream, agent
+- [x] Zero package references, zero project references
 
-Every item is `[~]` for the same reason: **B-2**. None of this has been compiled.
+Verified by `dotnet build -c Release` with `TreatWarningsAsErrors`, and by the
+29 fitness tests in §4 which assert these properties by reflection.
 
 ---
 
-## 4. WP-1 · Architecture fitness functions *(written, unverified)*
+## 4. WP-1 · Architecture fitness functions — **29/29 green**
 
-- [~] `AbstractionsHasNoDependencies` — reads the `.csproj`
-- [~] `LayersPointInward`
-- [~] `RuntimeDoesNotReferenceAnyPlugin`
-- [~] `EveryShippedProjectIsAotAnalyzed`
-- [~] `ResultIsAnAllocationFreeValueType`
-- [~] `ErrorCategoryRemainsClosed`
-- [~] `TerminalCategoriesAreNeverRetried`
-- [~] `CapabilityMustDeclareVersionAndAuthorization`
-- [~] `ExecutionProfileDefaultsToEphemeral`
-- [~] `PolicyStageOrderEncodesTheSafetyGuarantees`
-- [~] `TenantScopedIsTheDefaultForEveryScopeEnum`
-- [~] `FlowBuilderExposesNoTransportTypes`
-- [~] `FlowBuilderHasNoEscapeHatchForInlineCode`
+- [x] `AbstractionsHasNoDependencies` — reads the `.csproj`
+- [x] `LayersPointInward`
+- [x] `RuntimeDoesNotReferenceAnyPlugin`
+- [x] `EveryShippedProjectIsAotAnalyzed`
+- [x] `ResultIsAnAllocationFreeValueType`
+- [x] `ErrorCategoryRemainsClosed`
+- [x] `TerminalCategoriesAreNeverRetried`
+- [x] `CapabilityMustDeclareVersionAndAuthorization`
+- [x] `ExecutionProfileDefaultsToEphemeral`
+- [x] `PolicyStageOrderEncodesTheSafetyGuarantees`
+- [x] `TenantScopedIsTheDefaultForEveryScopeEnum`
+- [x] `FlowBuilderExposesNoTransportTypes`
+- [x] `FlowBuilderHasNoEscapeHatchForInlineCode`
 - [ ] `NoCyclicDependencies`
 - [ ] `SuppressionsAreAccountable`
 - [ ] `ManifestContainsNoSecrets`
@@ -135,12 +141,14 @@ Every item is `[~]` for the same reason: **B-2**. None of this has been compiled
 
 | Gate | Target | Now | Source |
 |---|---|---|---|
-| Compiler warnings | 0 | **unknown** | B-2 |
+| Compiler warnings | 0 | **0** ✅ | verified locally |
 | Blocker/critical Sonar issues | 0 | **not running** | WP-0 |
 | Line coverage (new code) | ≥ 80 % | **not measured** | WP-0 |
 | Branch coverage (new code) | ≥ 75 % | **not measured** | WP-0 |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | n/a — no `FlowX.Core` yet | WP-2 |
-| SAST findings | 0 | **wired, unrun** — needs B-2 | WP-0 |
+| Trim/AOT warnings | 0 | **0** ✅ | verified locally |
+| Fitness functions | all green | **29/29** ✅ | verified locally |
+| SAST findings | 0 | **wired, unrun** — needs a CI run | WP-0 |
 | DAST findings | 0 | **wired, guarded** — needs WP-10 | WP-0 |
 | Vulnerable dependencies | 0 | **0 by construction** — zero dependencies | WP-1 |
 | Open debt entries | ≤ 20 | **0** | enforced by `quality.yml` |
@@ -173,7 +181,29 @@ Controls from [21-Quality-Gates §3](docs/21-Quality-Gates.md#3-owasp-top-10-map
 
 ---
 
-## 8. How to update this file
+## 8. What the first compilation found
+
+The build that resolved B-2 produced 31 errors. None was a language error — every
+one was an analyzer rule, which is the outcome the contract surface was written
+for. Recorded here because "it compiled first try" would be a more flattering
+claim than the truth, and a less useful one.
+
+| Finding | Count | Resolution |
+|---|---|---|
+| `CA1716` — identifier matches a reserved keyword | 14 | The rule fires on `Step`, `Return`, `When`, `Then`, `Error`, `Get`, `Set` — the DSL's entire vocabulary. Disabled repo-wide with [ADR-0013](docs/adr/ADR-0013-dsl-vocabulary-over-ca1716.md). A decision, not debt. |
+| `IDE0040` — accessibility modifiers required | 15 | Our own `.editorconfig` defect: `always` demands `public` on interface members, which no C# codebase writes. Changed to `for_non_interface_members`. |
+| `IL2026` — trim analyzer on `GetExportedTypes()` | 1 | Trim analyzers were enabled on test projects, which reflect by design. Disabled for `tests/` only; `EveryShippedProjectIsAotAnalyzed` still guards `src/`. |
+| `CA1859` — return concrete type for perf | 1 | Legitimate. Private helper changed from `IReadOnlyList<string>` to `List<string>`. |
+| `MSB4025` — `.slnx` parse failure | 1 | A solution folder named `/` is invalid. The cosmetic file listings were removed; the solution now lists projects only. |
+
+Two CI jobs were also wrong and are fixed: the AOT job published a **class
+library**, where `PublishAot` does nothing and a RuntimeIdentifier is required.
+The real gate for a library is the analyzer at build time, which now runs; a
+genuine AOT publish is guarded until an executable exists at WP-10.
+
+---
+
+## 9. How to update this file
 
 Update it in the **same commit** as the change it describes — a checklist updated
 separately is a checklist that drifts, and a drifted checklist is worse than

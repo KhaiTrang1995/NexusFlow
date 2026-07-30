@@ -31,7 +31,7 @@ internal static class RepositoryLayout
             .Select(static include => Path.GetFileNameWithoutExtension(include.Replace('\\', '/')))
             .ToList();
 
-    private static IReadOnlyList<string> ItemIncludes(FileInfo project, string itemName)
+    private static List<string> ItemIncludes(FileInfo project, string itemName)
     {
         var document = XDocument.Load(project.FullName);
 
