@@ -248,8 +248,10 @@ could have:
 Two more surfaced while getting the suite green:
 
 - `.Emit<T>()` compiles into the plan and the manifest but publishes nothing. Now
-  **FLOWX1024**, a warning — the only non-error diagnostic in the set — because the
-  manifest promises consumers an event that does not arrive.
+  **FLOWX1024**, a warning — the first non-error diagnostic in the set — because the
+  manifest promises consumers an event that does not arrive. *(It was described here as
+  "the only" one until `FLOWX1011` and `FLOWX1025` joined it. Three warnings now, and
+  they share a shape: the source is not wrong, the published artifact is incomplete.)*
 - The engine's allocation budgets are Release-only assertions that silently measured
   376 B of Debug scaffolding. CI runs Release and never saw it; every contributor
   running `dotnet test` did. Now skipped in Debug with the reason.

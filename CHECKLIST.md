@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 791/791 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 806/806 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -44,7 +44,8 @@ These gate everything below them. None is code work.
 
 - [x] 20 specification documents, `docs/01` – `docs/20`
 - [x] 13 ADRs with trade-offs stated (ADR-0013 added by the first compilation)
-- [x] `docs/diagnostics/` — 11 pages plus an index; every help URI resolves, asserted by test
+- [x] `docs/diagnostics/` — 15 pages plus an index, one per raised diagnostic; every help
+      URI resolves, asserted by test
 - [x] `docs/benchmarks/` — baseline, gate policy, and the honest caveats
 - [x] 9 sample application specifications
 - [x] `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE` (Apache-2.0)
