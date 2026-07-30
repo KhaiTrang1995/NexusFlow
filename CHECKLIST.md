@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 806/806 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 830/830 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -292,6 +292,16 @@ reachable, and enforced or honoured by nothing:
       text — which catches a syntax error but not an unresolved name, a wrong delegate
       type argument, or an unimplemented interface member. Fixed by WP-20's
       `GeneratedCompileErrorsIn`, and a real compile is now asserted
+- [ ] **`ctx.Input` does not compile in any predicate or projection.** Found by WP-25 and
+      confirmed against a real build: the DSL signature is
+      `Func<FlowContext<TIn>, …>`, but `FlowEmitter` writes every emitted delegate as
+      `Func<FlowContext, …>` — the **non-generic base**, on which `Input` is not
+      declared. So the lambda source is copied into a field whose parameter type has lost
+      the member, and the build fails with **CS1061**. This is not a corner: `08 §3.1`
+      states conditions may read `ctx.Input`, `08 §69` and `§200` use it in worked
+      examples, and the `FLOWX1011` page repeats it. **Every one of those examples is
+      uncompilable.** The fix is in `FlowEmitter`, which is why it is not fixed here — it
+      needs its own package
 
 ### WP-10 · what it delivered
 
