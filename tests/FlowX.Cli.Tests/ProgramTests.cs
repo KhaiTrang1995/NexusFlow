@@ -158,6 +158,9 @@ public sealed class ProgramTests : IDisposable
         exitCode.ShouldBe(0, "Asking for help is not an error.");
         output.ShouldContain("flowx graph", Case.Sensitive);
         output.ShouldContain("flowx manifest", Case.Sensitive);
+        output.ShouldContain("flowx diff", Case.Sensitive);
+        output.ShouldContain("1 breaking change", Case.Sensitive,
+            "Exit codes are the contract a pipeline reads; the help has to state them.");
     }
 
     [Fact]
@@ -211,6 +214,162 @@ public sealed class ProgramTests : IDisposable
         {
             Directory.SetCurrentDirectory(previous);
         }
+    }
+
+    private string WriteManifest(string name, string json)
+    {
+        var path = Path.Combine(_directory, name);
+        File.WriteAllText(path, json);
+        return path;
+    }
+
+    /// <summary>The same application with a capability's authorisation opened up.</summary>
+    private const string RelaxedManifest = """
+        {
+          "schemaVersion": "0.1.0",
+          "application": { "name": "Sample.App", "version": "1.1.0" },
+          "flows": [{
+            "id": "order.place", "version": "1.0.0", "profile": "Ephemeral",
+            "steps": [{ "id": 0, "kind": "Capability", "capability": "order.validate@1.0.0" }],
+            "emits": []
+          }],
+          "capabilities": [
+            { "id": "order.validate", "version": "1.0.0", "idempotent": true, "sideEffects": [],
+              "authorization": { "mode": "Public" } }
+          ]
+        }
+        """;
+
+    /// <summary>The baseline for the diff tests: identical shape, restrictive stance.</summary>
+    private const string StrictManifest = """
+        {
+          "schemaVersion": "0.1.0",
+          "application": { "name": "Sample.App", "version": "1.0.0" },
+          "flows": [{
+            "id": "order.place", "version": "1.0.0", "profile": "Ephemeral",
+            "steps": [{ "id": 0, "kind": "Capability", "capability": "order.validate@1.0.0" }],
+            "emits": []
+          }],
+          "capabilities": [
+            { "id": "order.validate", "version": "1.0.0", "idempotent": true, "sideEffects": [],
+              "authorization": { "mode": "Authenticated" } }
+          ]
+        }
+        """;
+
+    [Fact]
+    public void DiffExitsNonZeroOnABreakingChangeSoItGatesWithoutAWrapper()
+    {
+        var (exitCode, output, _) = Run(
+            "diff",
+            "--old", WriteManifest("old.json", StrictManifest),
+            "--new", WriteManifest("new.json", RelaxedManifest));
+
+        exitCode.ShouldBe(1,
+            "A CI step runs this unmodified. If a breaking change exited 0, the gate would " +
+            "have to be reimplemented by every pipeline that uses it.");
+
+        output.ShouldContain("FLOWX-DIFF-014", Case.Sensitive);
+        output.ShouldContain("INCOMPATIBLE", Case.Sensitive);
+    }
+
+    [Fact]
+    public void DiffSucceedsWhenNothingIncompatibleChanged()
+    {
+        var (exitCode, output, _) = Run(
+            "diff",
+            "--old", WriteManifest("old.json", StrictManifest),
+            "--new", WriteManifest("new.json", StrictManifest));
+
+        exitCode.ShouldBe(0);
+        output.ShouldContain("No contract changes.", Case.Sensitive);
+    }
+
+    [Fact]
+    public void DiffKeepsTheBreakingVerdictWhenWritingToAFile()
+    {
+        var output = Path.Combine(_directory, "nested", "diff.json");
+
+        var (exitCode, stdout, _) = Run(
+            "diff",
+            "--old", WriteManifest("old.json", StrictManifest),
+            "--new", WriteManifest("new.json", RelaxedManifest),
+            "--format", "json",
+            "--output", output);
+
+        exitCode.ShouldBe(1, "Redirecting the report must not change the verdict.");
+        stdout.ShouldBeEmpty();
+
+        using var document = JsonDocument.Parse(File.ReadAllText(output));
+
+        document.RootElement.GetProperty("compatible").GetBoolean().ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DiffEmitsParsableJsonWhenAskedTo()
+    {
+        var (exitCode, stdout, _) = Run(
+            "diff",
+            "--old", WriteManifest("old.json", StrictManifest),
+            "--new", WriteManifest("new.json", RelaxedManifest),
+            "--format", "json");
+
+        exitCode.ShouldBe(1);
+
+        using var document = JsonDocument.Parse(stdout);
+
+        document.RootElement.GetProperty("findings").GetArrayLength().ShouldBeGreaterThan(0);
+    }
+
+    [Theory]
+    [InlineData("--old")]
+    [InlineData("--new")]
+    public void DiffWithOnlyOneManifestIsAUsageError(string given)
+    {
+        var (exitCode, _, stderr) = Run("diff", given, WriteManifest("only.json", StrictManifest));
+
+        exitCode.ShouldBe(2);
+        stderr.ShouldContain("requires --old", Case.Sensitive);
+    }
+
+    [Fact]
+    public void DiffRejectsAFormatItCannotProduceRatherThanQuietlyPrintingText()
+    {
+        var (exitCode, _, stderr) = Run(
+            "diff",
+            "--old", WriteManifest("old.json", StrictManifest),
+            "--new", WriteManifest("new.json", StrictManifest),
+            "--format", "yaml");
+
+        exitCode.ShouldBe(2, "A usage error, not a breaking change — the gate never ran.");
+        stderr.ShouldContain("Unknown --format 'yaml'", Case.Sensitive);
+        // Printing text to a caller that asked for JSON produces a parse failure a long
+        // way downstream from the typo.
+    }
+
+    [Fact]
+    public void DiffWithAMissingBaselineIsNotFoundAndSaysWhichSideIsMissing()
+    {
+        var (exitCode, _, stderr) = Run(
+            "diff",
+            "--old", Path.Combine(_directory, "absent.json"),
+            "--new", WriteManifest("new.json", StrictManifest));
+
+        exitCode.ShouldBe(3);
+        stderr.ShouldContain("baseline", Case.Sensitive);
+        stderr.ShouldContain("absent.json", Case.Sensitive);
+    }
+
+    [Fact]
+    public void DiffWithAMissingCandidateIsNotFoundAndSaysWhichSideIsMissing()
+    {
+        var (exitCode, _, stderr) = Run(
+            "diff",
+            "--old", WriteManifest("old.json", StrictManifest),
+            "--new", Path.Combine(_directory, "absent.json"));
+
+        exitCode.ShouldBe(3);
+        stderr.ShouldContain("candidate", Case.Sensitive);
     }
 
     [Fact]

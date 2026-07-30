@@ -20,8 +20,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0   # flowx diff needs history to find the baseline
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -107,6 +105,40 @@ jobs:
           echo "$BODY"
           echo "$BODY" | grep -q '"receiptId"' || {
             echo "::error::The response did not carry the flow's declared output."; exit 1; }
+
+  manifest:
+    name: Manifest compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: The sample's manifest must stay compatible with its committed baseline
+        # ADR-0005 makes the manifest a build artifact so it can be COMPARED. Until
+        # something compares two of them the artifact is a description nobody acts on,
+        # so this is the step that gives it teeth.
+        #
+        # The baseline is committed on purpose. A contract change then arrives as a
+        # reviewable diff of samples/ecommerce/flowx.manifest.baseline.json rather than
+        # as a number in a log, which is the same reasoning the benchmark baseline uses.
+        # Regenerate it deliberately when the change is intended:
+        #
+        #   dotnet run --project src/FlowX.Cli -- manifest \
+        #     --assembly samples/ecommerce/bin/Release/net10.0/Ecommerce.dll \
+        #     --output samples/ecommerce/flowx.manifest.baseline.json
+        run: |
+          dotnet build samples/ecommerce/Ecommerce.csproj --configuration Release
+          dotnet run --project src/FlowX.Cli --configuration Release --no-build -- manifest \
+            --assembly samples/ecommerce/bin/Release/net10.0/Ecommerce.dll \
+            --output "$RUNNER_TEMP/candidate.manifest.json"
+
+          # No `if` and no wrapper: flowx diff exits 1 on a breaking change, and that
+          # exit code is the gate.
+          dotnet run --project src/FlowX.Cli --configuration Release --no-build -- diff \
+            --old samples/ecommerce/flowx.manifest.baseline.json \
+            --new "$RUNNER_TEMP/candidate.manifest.json"
 
   docs:
     name: Documentation gates

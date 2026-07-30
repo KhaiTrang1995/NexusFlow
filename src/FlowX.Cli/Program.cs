@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text.Json;
+using FlowX.Cli.Diffing;
 using FlowX.Cli.Manifest;
 using FlowX.Cli.Rendering;
 
@@ -8,13 +9,22 @@ namespace FlowX.Cli;
 
 /// <summary>The <c>flowx</c> command-line tool.</summary>
 /// <remarks>
-/// Argument parsing is hand-written. The surface is two verbs and four options, and a
-/// command-line library would be a dependency this tool carries forever to save about
-/// forty lines — see <a href="../../docs/03-Design-Principles.md">principle P12</a>.
+/// Argument parsing is hand-written. The surface is three verbs and a handful of
+/// options, and a command-line library would be a dependency this tool carries forever
+/// to save about forty lines — see
+/// <a href="../../docs/03-Design-Principles.md">principle P12</a>.
 /// </remarks>
 public static class Program
 {
     private const int Ok = 0;
+
+    /// <summary>
+    /// A breaking change was found. Distinct from a usage error, because a CI job has to
+    /// tell "the gate says no" apart from "the gate could not run" — the first blocks a
+    /// merge, the second is a broken pipeline, and conflating them gets the gate disabled.
+    /// </summary>
+    private const int BreakingChange = 1;
+
     private const int UsageError = 2;
     private const int NotFound = 3;
 
@@ -35,6 +45,7 @@ public static class Program
             {
                 "graph" => Graph(args.AsSpan(1)),
                 "manifest" => ManifestVerb(args.AsSpan(1)),
+                "diff" => Diff(args.AsSpan(1)),
                 _ => Fail($"Unknown command '{args[0]}'."),
             };
         }
@@ -100,6 +111,56 @@ public static class Program
         return Write(json, options.Value("--output"));
     }
 
+    /// <summary>
+    /// Compares two manifests and reports whether the second can replace the first.
+    /// </summary>
+    /// <remarks>
+    /// The verdict is the exit code, not the output. This runs in a pipeline step whose
+    /// stdout nobody reads until it goes red, so the classification has to be legible to
+    /// <c>$?</c> first and to a person second.
+    /// </remarks>
+    private static int Diff(ReadOnlySpan<string> args)
+    {
+        var options = Options.Parse(args);
+        var baselinePath = options.Value("--old");
+        var candidatePath = options.Value("--new");
+
+        if (baselinePath is null || candidatePath is null)
+        {
+            return Fail("flowx diff requires --old <path> and --new <path>.");
+        }
+
+        var format = options.Value("--format") ?? "text";
+
+        if (format is not ("text" or "json"))
+        {
+            // Rejected rather than defaulted. Silently printing text to a caller that asked
+            // for JSON produces a parse error somewhere downstream, a long way from the typo.
+            return Fail($"Unknown --format '{format}'. Use 'text' or 'json'.");
+        }
+
+        RequireFile(baselinePath, "baseline");
+        RequireFile(candidatePath, "candidate");
+
+        var report = ManifestDiff.Compare(Read(baselinePath), Read(candidatePath));
+
+        var rendered = format is "json"
+            ? DiffFormatter.ToJson(report)
+            : DiffFormatter.ToText(report);
+
+        var written = Write(rendered, options.Value("--output"));
+
+        return written is Ok && report.HasBreakingChange ? BreakingChange : written;
+    }
+
+    private static void RequireFile(string path, string role)
+    {
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException($"No {role} manifest at '{path}'.", path);
+        }
+    }
+
     private static ManifestDocument Read(string path)
     {
         using var stream = File.OpenRead(path);
@@ -144,6 +205,8 @@ public static class Program
         Usage:
           flowx graph    [--manifest <path>] [--flow <id>] [--output <path>]
           flowx manifest  --assembly <path>  [--output <path>]
+          flowx diff      --old <path> --new <path>
+                         [--format text|json] [--output <path>]
 
         graph      Renders the manifest as a Mermaid flowchart. Defaults to
                    ./flowx.manifest.json, and writes to stdout unless --output is given.
@@ -152,7 +215,11 @@ public static class Program
                    emits it as a compiled-in constant rather than a file, because a
                    source generator must not do file IO.
 
-        Exit codes: 0 success, 2 usage error, 3 not found.
+        diff       Compares a released manifest with the one this build produced and
+                   classifies every difference as breaking, additive or neutral. Exits
+                   1 on a breaking change, so it works as a CI gate unmodified.
+
+        Exit codes: 0 success, 1 breaking change, 2 usage error, 3 not found.
 
         """);
 
