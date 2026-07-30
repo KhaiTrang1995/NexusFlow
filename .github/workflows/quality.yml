@@ -1,0 +1,176 @@
+name: Quality
+
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+    branches: [master, dev]
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  coverage:
+    name: Coverage thresholds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Test with coverage
+        run: >
+          dotnet test FlowX.slnx --configuration Release
+          --collect:"XPlat Code Coverage"
+          --results-directory ./TestResults
+
+      - name: Enforce thresholds
+        # Thresholds from docs/21-Quality-Gates.md §2.1. Measured on the whole
+        # assembly here; the diff-scoped gate is Sonar's job below.
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool
+          reportgenerator \
+            -reports:'TestResults/**/coverage.cobertura.xml' \
+            -targetdir:coverage \
+            -reporttypes:'Cobertura;TextSummary'
+          cat coverage/Summary.txt
+          python3 - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse('coverage/Cobertura.xml').getroot()
+          line = float(root.get('line-rate', 0)) * 100
+          branch = float(root.get('branch-rate', 0)) * 100
+          print(f'line={line:.1f}% branch={branch:.1f}%')
+          bad = []
+          if line < 80: bad.append(f'line coverage {line:.1f}% < 80%')
+          if branch < 75: bad.append(f'branch coverage {branch:.1f}% < 75%')
+          for b in bad: print(f'::error::{b}')
+          sys.exit(1 if bad else 0)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage/
+
+  sonar:
+    name: Sonar quality gate
+    runs-on: ubuntu-latest
+    # Fork PRs have no access to the token. Skipping is correct; failing on a
+    # missing secret would just teach contributors that red is normal.
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # Sonar needs history for new-code detection
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Analyze
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then
+            echo "::notice::SONAR_TOKEN not configured — see CHECKLIST.md item WP-0."
+            exit 0
+          fi
+          dotnet tool install --global dotnet-sonarscanner
+          dotnet sonarscanner begin \
+            /k:"votrongdao_FlowX" \
+            /d:sonar.token="$SONAR_TOKEN" \
+            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.cs.opencover.reportsPaths='**/coverage.opencover.xml' \
+            /d:sonar.qualitygate.wait=true
+          dotnet build FlowX.slnx --configuration Release
+          dotnet test FlowX.slnx --configuration Release --no-build \
+            /p:CollectCoverage=true /p:CoverletOutputFormat=opencover
+          dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+  mutation:
+    name: Mutation score (FlowX.Core)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Stryker
+        # Applied to FlowX.Core only, on purpose. Line coverage says which lines
+        # ran; mutation score says whether a test would notice if they were wrong.
+        # FlowX.Core holds the execution semantics, so that distinction matters there.
+        run: |
+          if [ ! -d src/FlowX.Core ]; then
+            echo "FlowX.Core does not exist yet (WP-2). Nothing to mutate."
+            exit 0
+          fi
+          dotnet tool install --global dotnet-stryker
+          dotnet stryker --project FlowX.Core.csproj --threshold-break 70 --reporter progress --reporter html
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-report
+          path: StrykerOutput/
+
+  debt:
+    name: Technical-debt policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Suppressions are accountable and unexpired
+        # docs/21-Quality-Gates.md §6.1. An expired suppression fails the build
+        # rather than warning — a warning about expired debt is itself debt.
+        run: |
+          python3 - <<'PY'
+          import os, re, sys, datetime
+          today = datetime.date.today()
+          pattern = re.compile(
+              r'FLOWX-DEBT:\s*id=(?P<id>DEBT-\d{4})\s+'
+              r'owner=(?P<owner>[\w-]+)\s+'
+              r'expires=(?P<expires>\d{4}-\d{2}-\d{2})')
+          problems, found = [], 0
+          for root, dirs, files in os.walk('.'):
+              dirs[:] = [d for d in dirs if d not in {'.git', 'bin', 'obj'}]
+              for f in files:
+                  if not f.endswith('.cs'):
+                      continue
+                  path = os.path.join(root, f)
+                  text = open(path, encoding='utf-8').read()
+                  for line_no, line in enumerate(text.splitlines(), 1):
+                      if 'SuppressMessage' in line and 'FLOWX-DEBT' not in text:
+                          problems.append(f'{path}:{line_no} suppression without a FLOWX-DEBT marker')
+                  for m in pattern.finditer(text):
+                      found += 1
+                      expires = datetime.date.fromisoformat(m.group('expires'))
+                      if expires < today:
+                          problems.append(f"{path}: {m.group('id')} expired on {expires}")
+                      elif (expires - today).days > 183:
+                          problems.append(f"{path}: {m.group('id')} expires {expires}, more than 6 months out")
+          if found > 20:
+              problems.append(f'{found} debt entries; the budget is 20')
+          for p in problems:
+              print(f'::error::{p}')
+          print(f'{found} debt entries, {len(problems)} problems')
+          sys.exit(1 if problems else 0)
+          PY
+
+      - name: No unaccountable TODOs
+        run: |
+          if grep -rnE '(TODO|FIXME|HACK|XXX)' --include='*.cs' src tests 2>/dev/null | grep -vE 'FLOWX-DEBT|issue #[0-9]+'; then
+            echo "::error::A TODO/FIXME/HACK must reference a FLOWX-DEBT id or an issue number."
+            exit 1
+          fi
+          echo "No unaccountable markers."

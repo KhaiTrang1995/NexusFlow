@@ -129,9 +129,34 @@ flowchart LR
 **The one-sentence strategy:** *move orchestration from run time to build time, and
 make the build's output — the manifest — the thing everything else is derived from.*
 
+### 4.1 The strategy in one picture
+
+![FlowX platform map. Ten numbered areas: core philosophy (flow first, capability
+first, trigger agnostic, compile-time intelligence, policy everywhere, AI native,
+observable everything, cloud native); the unified trigger layer spanning HTTP,
+events, streaming, schedule, polling, webhook, file storage, IoT, AI agent, CLI
+and SignalR; the runtime platform's eight engines; the six core abstractions of
+the programming model — flow, capability, context, policy, event, compensation;
+infrastructure connectors; platform capabilities including observability,
+security, multi-tenancy, AI, marketplace, versioning, governance and monitoring;
+the deployment and runtime environment; the AI and intelligence layer; an
+end-to-end order flow example; and the ten quality attributes.](assets/flowx-platform-map.png)
+
+This is the same strategy the table above states, drawn. Read it top-down: anything
+can trigger a flow, one runtime executes it, six abstractions are all a developer
+learns, and everything touching infrastructure is a plugin. The precise structure
+follows in §5 — this picture is orientation, the diagrams below are the specification.
+
 ---
 
 ## 5. Building Block View
+
+![FlowX runtime architecture in six numbered layers: front door and adapter layer;
+runtime core with eight engines; core abstractions; infrastructure adapters; data
+and state layer covering operational data, event store, cache/lock and object
+storage; and deployment infrastructure. Design principles run down the left,
+cross-cutting concerns — security, observability, resilience, governance,
+multi-tenancy, versioning — down the right.](assets/flowx-runtime-architecture.png)
 
 ### 5.1 C4 Level 2 — containers
 

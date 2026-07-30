@@ -1,0 +1,26 @@
+version: 2
+
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, security]
+    # Grouped so a weekly bump is one reviewable PR rather than eleven. Security
+    # updates are deliberately left ungrouped so they can merge on their own.
+    groups:
+      test-dependencies:
+        patterns: ['xunit*', 'Shouldly', 'Microsoft.NET.Test.Sdk', 'coverlet*']
+      analyzers:
+        patterns: ['*.Analyzers', 'SonarAnalyzer*', 'StyleCop*']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, ci]
+    # Actions are pinned by major tag; this catches the ones that go stale
+    # silently, which is how a supply-chain issue reaches a build (OWASP A08).

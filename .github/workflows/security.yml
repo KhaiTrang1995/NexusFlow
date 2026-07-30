@@ -1,0 +1,144 @@
+name: Security
+
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+    branches: [master, dev]
+  schedule:
+    - cron: '17 2 * * *'   # nightly DAST and fuzzing; :17 to avoid the on-the-hour stampede
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  codeql:
+    name: "SAST: CodeQL"
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
+          queries: security-and-quality
+
+      - run: dotnet build FlowX.slnx --configuration Release
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:csharp
+
+  semgrep:
+    name: "SAST: Semgrep"
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan
+        # OWASP + C# rulesets. --error makes any ERROR-severity finding fail the job;
+        # a security scanner that only warns is a scanner nobody reads.
+        run: semgrep scan --config=p/owasp-top-ten --config=p/csharp --config=p/secrets --error
+
+  secrets:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gitleaks scans history, not just the diff
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependencies:
+    name: "SCA: vulnerable packages"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore FlowX.slnx
+
+      - name: Fail on any known vulnerability
+        # FlowX.Abstractions has zero dependencies by construction (ADR-0009), so
+        # this job's job is mostly to keep it that way as other projects arrive.
+        run: |
+          dotnet list FlowX.slnx package --vulnerable --include-transitive 2>&1 | tee vuln.log
+          if grep -qE '>\s+\S+\s+\S+\s+\S+\s+(Low|Moderate|High|Critical)' vuln.log; then
+            echo "::error::Vulnerable package detected (OWASP A06)."
+            exit 1
+          fi
+
+      - name: Deprecated packages are a warning, not a failure
+        run: dotnet list FlowX.slnx package --deprecated || true
+
+  iac:
+    name: IaC scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkov
+        # Skipped cleanly while there are no manifests yet, rather than failing
+        # on an empty directory and training everyone to ignore this job.
+        run: |
+          if [ -d deploy ] || [ -d charts ]; then
+            pip install checkov
+            checkov -d . --framework kubernetes,helm,dockerfile --compact --quiet
+          else
+            echo "No IaC directories yet — nothing to scan."
+          fi
+
+  dast:
+    name: "DAST: OWASP ZAP"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip until a sample exists
+        id: guard
+        run: |
+          if [ -f samples/ecommerce/Directory.Build.props ] || [ -d samples/ecommerce/src ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "samples/ecommerce is not runnable yet (WP-10). DAST is scheduled, not skipped permanently."
+          fi
+
+      - uses: actions/setup-dotnet@v4
+        if: steps.guard.outputs.ready == 'true'
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run the sample
+        if: steps.guard.outputs.ready == 'true'
+        run: |
+          dotnet run --project samples/ecommerce --configuration Release &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:5000/health && break
+            sleep 2
+          done
+
+      - name: ZAP baseline scan
+        if: steps.guard.outputs.ready == 'true'
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: http://localhost:5000
+          # A DAST finding against a sample is a platform defect until proven
+          # otherwise — the HTTP surface under test is generated code.
+          fail_action: true
