@@ -5,9 +5,9 @@ using Xunit;
 namespace FlowX.Runtime.Tests;
 
 /// <summary>
-/// <c>When</c> / <c>Otherwise</c> as the engine sees it: a <see cref="StepKind.Branch"/>
-/// carrying a false target, and a <see cref="StepKind.Jump"/> closing the <c>then</c>
-/// block.
+/// Branching as the engine sees it: a <see cref="StepKind.Branch"/> carrying a false
+/// target or a <see cref="StepKind.Switch"/> carrying one target per case, and a
+/// <see cref="StepKind.Jump"/> closing each block.
 /// </summary>
 /// <remarks>
 /// Every test here asserts what ran <em>and</em> what did not. Asserting only that the
@@ -173,5 +173,143 @@ public sealed class BranchingTests
 
         result.Error!.Code.ShouldBe("inventory.out_of_stock");
         dispatcher.Executed.ShouldBe([0, 2], "Step 3 is in the same branch and must not run.");
+    }
+
+    [Theory]
+    [InlineData(0, 2)]
+    [InlineData(1, 4)]
+    [InlineData(2, 6)]
+    public async Task EachCaseOfASwitchRunsItsOwnBlockAndNoOther(int arm, int expected)
+    {
+        // Every arm, because the failure this shape invites is a case target that is off
+        // by one — pointing at the previous block's jump instead of at the block. That
+        // still runs *a* block, in a plausible order, and only one arm reveals it.
+        var dispatcher = new RecordingDispatcher().SelectAt(1, arm);
+
+        var result = await Engine().ExecuteAsync(
+            Plans.Switching(), dispatcher, Plans.Invocation, TestContext.Current.CancellationToken);
+
+        result.IsSuccess.ShouldBeTrue();
+        dispatcher.Executed.ShouldBe([0, expected, 9],
+            "Exactly one case block, then the join. A missing jump would run the arms " +
+            "after it as well, in order, and look almost right.");
+    }
+
+    [Fact]
+    public async Task AValueMatchingNoCaseRunsTheDefaultBlock()
+    {
+        var dispatcher = new RecordingDispatcher().SelectAt(1, -1);
+
+        var result = await Engine().ExecuteAsync(
+            Plans.Switching(), dispatcher, Plans.Invocation, TestContext.Current.CancellationToken);
+
+        result.IsSuccess.ShouldBeTrue();
+        dispatcher.Executed.ShouldBe([0, 8, 9]);
+    }
+
+    [Fact]
+    public async Task AnArmOutsideThePlanTakesTheDefaultRatherThanThrowing()
+    {
+        // A dispatcher and a plan from different builds. Indexing the case array with it
+        // would throw IndexOutOfRangeException from the middle of a flow, after some of
+        // its steps had already run; the default is the one destination known to be safe.
+        var dispatcher = new RecordingDispatcher().SelectAt(1, 99);
+
+        var result = await Engine().ExecuteAsync(
+            Plans.Switching(), dispatcher, Plans.Invocation, TestContext.Current.CancellationToken);
+
+        result.IsSuccess.ShouldBeTrue();
+        dispatcher.Executed.ShouldBe([0, 8, 9]);
+    }
+
+    [Fact]
+    public async Task ASwitchIsSelectedExactlyOnce()
+    {
+        var dispatcher = new RecordingDispatcher().SelectAt(1, 1);
+
+        await Engine().ExecuteAsync(
+            Plans.Switching(), dispatcher, Plans.Invocation, TestContext.Current.CancellationToken);
+
+        dispatcher.Selected.ShouldBe([1]);
+        dispatcher.Evaluated.ShouldBeEmpty("A switch is not a branch; Evaluate must not be consulted.");
+    }
+
+    [Fact]
+    public async Task OnlyStepsThatActuallyRanCountAsCompletedAcrossASwitch()
+    {
+        var dispatcher = new RecordingDispatcher().SelectAt(1, 2);
+
+        var result = await Engine().ExecuteAsync(
+            Plans.Switching(), dispatcher, Plans.Invocation, TestContext.Current.CancellationToken);
+
+        result.CompletedSteps.ShouldBe(3,
+            "Validate, the selected case, and the emit. The switch and the three jumps " +
+            "did no work, and counting them would make a one-case flow look like a " +
+            "seven-step one in every metric derived from this number.");
+    }
+
+    [Fact]
+    public async Task OnlyTheCaseThatRanIsCompensated()
+    {
+        // Step 4 is compensable and lives in case 1. Selecting case 0 must leave it off
+        // the compensation stack — undoing work that never happened is how a saga turns
+        // one incident into two.
+        var dispatcher = new RecordingDispatcher()
+            .SelectAt(1, 0)
+            .FailAt(9, new Error("emit.failed", "no", ErrorCategory.Internal));
+
+        var result = await Engine().ExecuteAsync(
+            Plans.Switching(), dispatcher, Plans.Invocation, TestContext.Current.CancellationToken);
+
+        result.IsFailure.ShouldBeTrue();
+        dispatcher.Compensated.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TheCompensationOfASelectedCaseStillUnwinds()
+    {
+        var dispatcher = new RecordingDispatcher()
+            .SelectAt(1, 1)
+            .FailAt(9, new Error("emit.failed", "no", ErrorCategory.Internal));
+
+        var result = await Engine().ExecuteAsync(
+            Plans.Switching(), dispatcher, Plans.Invocation, TestContext.Current.CancellationToken);
+
+        result.Compensation.ShouldBe(CompensationOutcome.Succeeded);
+        dispatcher.Compensated.ShouldBe([4]);
+    }
+
+    [Fact]
+    public async Task ASelectorThatThrowsFailsTheFlowAndStillUnwinds()
+    {
+        var dispatcher = new RecordingDispatcher { ThrowAtSwitch = 1 };
+
+        var result = await Engine().ExecuteAsync(
+            Plans.Switching(), dispatcher, Plans.Invocation, TestContext.Current.CancellationToken);
+
+        result.IsFailure.ShouldBeTrue();
+        result.Error!.Code.ShouldBe("flow.selector_failed");
+        result.Error.Data!["stepIndex"].ShouldBe(1);
+        dispatcher.Executed.ShouldBe([0]);
+    }
+
+    [Theory]
+    [InlineData(0, new[] { 0, 2 })]
+    [InlineData(1, new[] { 0, 4 })]
+    [InlineData(-1, new[] { 0 })]
+    public async Task ASwitchWithNoDefaultFallsThroughWhenNothingMatches(int arm, int[] expected)
+    {
+        // The documented answer to "what happens when nothing matches and there is no
+        // Default": control continues after the switch, exactly as a `When` with no
+        // `Otherwise` does. Here the switch is the tail of the flow, so continuing after
+        // it ends the flow — the target is one past the last step, which is the only
+        // out-of-range value StepGraph deliberately permits.
+        var dispatcher = new RecordingDispatcher().SelectAt(1, arm);
+
+        var result = await Engine().ExecuteAsync(
+            Plans.SwitchWithoutDefault(), dispatcher, Plans.Invocation, TestContext.Current.CancellationToken);
+
+        result.IsSuccess.ShouldBeTrue();
+        dispatcher.Executed.ShouldBe(expected);
     }
 }

@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 650/650 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 791/791 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -196,8 +196,17 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       step array* as a linear flow, as a `Branch` plus a `Jump`, so the engine gained no
       branch stack and **both directions allocate 0 B** in Release. The manifest
       deliberately does **not** carry the predicate's source text: it would put business
-      thresholds into a file whose rule is structure-only. `Switch`, `Parallel`,
-      `ForEach` and `SubFlow` remain open — this box does not tick until they land
+      thresholds into a file whose rule is structure-only. `Parallel`, `ForEach` and
+      `SubFlow` remain open — this box does not tick until they land
+- [x] **WP-20** `Switch` / `Case` / `Default` — a value branch through builder, model,
+      analysis, emission, graph and engine. One `StepKind.Switch` carrying a target per
+      case plus a default, and a `Jump` closing each case block, in the *same flat step
+      array*; the dispatcher gained `int Select(...)` returning the matching arm, which
+      is an `int` and not the value so nothing is boxed. **Every arm, the miss and an
+      out-of-range arm allocate 0 B** in Release. A value matching nothing in a switch
+      with no `Default` falls through, exactly as `When` without `Otherwise` does —
+      recorded in `08 §3.2` and on `ISwitchBuilder`. The manifest carries neither the
+      selector nor the case values, for the same reason WP-15 refused the predicate
 - [x] **WP-16** Step binding — **`FLOWX1020`** raised by `StepBindingAnalyzer`. A flow
       whose steps cannot pass values to each other now fails the build. Numbered 1020,
       not 1022: `08-Flow-Definition.md` and both `Get<T>` implementations already
@@ -225,15 +234,49 @@ Already satisfied from P0, per the roadmap's P1 list: diagnostics with help URIs
 place where something is documented, reserved or parseable but not actually enforced,
 which is the exact failure mode P1 exists to remove:
 
-- [ ] **`FLOWX1011` — predicate purity is unenforced.** Reserved when nothing could
-      declare a predicate. Something can now. `FlowErrors.PredicateFailed` states the
-      rule at run time — a condition may read only the context, the flow input and prior
-      results — and no analyzer checks it at build time
+- [x] **`FLOWX1011` — predicate purity.** Closed by WP-21: `PredicatePurityAnalyzer`
+      raises it on a `When` predicate that reads a clock, ambient randomness, the
+      environment, mutable static state, a captured variable or flow instance state.
+      An **error** in `Durable` flows and a **warning** in `Ephemeral` ones, rather than
+      the Info that ADR-0003 and `06` §5 originally specified — Info is invisible in a
+      build log and `Ephemeral` is the only profile that runs today, so it would have
+      shipped a rule that does nothing anywhere. Scope is decided by proof; impure
+      statics are a list; nothing is interprocedural, and the page says so
 - [ ] **`.Step<TCapability, TStepIn>(map)` is parsed and then ignored** by `FlowAnalyzer`
       and `FlowEmitter`. It is on the builder surface and `FLOWX1020` recommends it as
       the fix for a binding failure, so a user following the diagnostic reaches an
       overload that silently does nothing. Worse than not existing
-- [ ] **Triggers and capability `errors` are in the manifest schema and never emitted**
+- [x] **Triggers and capability `errors` are in the manifest schema and never emitted.**
+      Closed by WP-22. Both are emitted, under a **three-state rule**: a resolved
+      catalogue, a resolved-and-empty one (`[]` — "declares no errors"), or **withheld
+      entirely** when it could not be resolved. A catalogue short by one entry reads
+      exactly like a complete one, so an unresolvable case has to be visibly absent
+      rather than quietly approximated
+
+**Gaps WP-20 and WP-22 surfaced in turn.** Same class again — declared, documented or
+reachable, and enforced or honoured by nothing:
+
+- [ ] **`.Fail(Error)` is parsed and then ignored.** It is on `IFlowBuilder`, it is in
+      the `08 §4` method table, and `FlowAnalyzer` does not model it — so a block whose
+      only call is `.Fail(...)` compiles to an **empty** block. The consequence is worse
+      than a no-op: `08 §3.2`'s own `Switch` example uses `.Default(b => b.Fail(...))` to
+      reject an unsupported channel, and that default currently falls through and accepts
+      it. Flagged in the doc; the fix is a work package
+- [ ] **`FLOWX1011` does not cover `Switch` selectors.** WP-21 scoped the analyzer to
+      `When` predicates; WP-20 then added a second construct under the identical rule.
+      `FlowErrors.SelectorFailed` states it at run time and nothing checks it at build
+      time — the exact position `When` was in before WP-21. `Return`, `Emit`,
+      `EmitOnFailure` and `ForEach`'s selector are in the same position
+- [ ] **An unrecognised `TriggerAttribute` subclass is skipped in silence.** A trigger's
+      `Kind` is an overridden property — executable code, not attribute data — so a
+      third-party transport plugin's trigger cannot be read from metadata. WP-22 declined
+      to guess, which is right, but the skip produces only an absent `triggers` array. It
+      needs a diagnostic
+- [x] **Nothing in the repository had ever compiled generator output.** The generator
+      harness discarded the updated compilation, so every test asserted against *parsed*
+      text — which catches a syntax error but not an unresolved name, a wrong delegate
+      type argument, or an unimplemented interface member. Fixed by WP-20's
+      `GeneratedCompileErrorsIn`, and a real compile is now asserted
 
 ### WP-10 · what it delivered
 

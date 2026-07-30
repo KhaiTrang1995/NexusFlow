@@ -295,6 +295,104 @@ public sealed class FlowChainWalkerTests
             "somethingElse").ShouldBeEmpty();
     }
 
+    [Fact]
+    public void DescendsIntoTheCaseAndDefaultBlocksOfASwitch()
+    {
+        // Same shape as a conditional's blocks and the same hazard: the nested chains are
+        // arguments, not receivers, so unwinding the outer chain never reaches them. A
+        // walker that stopped at the outer level would model a switch whose every arm is
+        // empty — a flow that does nothing whichever value it sees.
+        var links = Walk("""
+            class C
+            {
+                void Define(B flow) => flow
+                    .Step<A>()
+                    .Switch(ctx => ctx.Get<O>().Channel)
+                    .Case(Channel.Retail, retail => retail
+                        .Step<B>())
+                    .Case(Channel.Wholesale, wholesale => wholesale
+                        .Step<C>()
+                        .Step<D>())
+                    .Default(rest => rest
+                        .Step<E>())
+                    .Step<F>();
+            }
+            """);
+
+        links.Select(l => l.MethodName).ShouldBe(
+            ["Step", "Switch", "Case", "Case", "Default", "Step"]);
+
+        FlowChainWalker.WalkBlock(links[2], 1)
+            .Select(l => l.TypeArguments[0].ToString())
+            .ShouldBe(["B"], "A case's block is the second argument of `Case`.");
+
+        FlowChainWalker.WalkBlock(links[3], 1)
+            .Select(l => l.TypeArguments[0].ToString())
+            .ShouldBe(["C", "D"]);
+
+        FlowChainWalker.WalkBlock(links[4], 0)
+            .Select(l => l.TypeArguments[0].ToString())
+            .ShouldBe(["E"], "A `Default` block is its only argument.");
+    }
+
+    [Fact]
+    public void ACaseValueIsNotMistakenForItsBlock()
+    {
+        // `.Case(Channel.Retail, …)` puts an expression where `When` puts a predicate.
+        // Walking argument 0 as if it were a block must yield nothing rather than reading
+        // the value as a chain.
+        var links = Walk("""
+            class C
+            {
+                void Define(B flow) => flow
+                    .Switch(ctx => ctx.Get<O>().Channel)
+                    .Case(Channel.Retail, retail => retail.Step<B>());
+            }
+            """);
+
+        FlowChainWalker.WalkBlock(links[1], 0).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void DescendsIntoASwitchNestedInsideACaseOfAnotherOne()
+    {
+        var links = Walk("""
+            class C
+            {
+                void Define(B flow) => flow
+                    .Switch(ctx => ctx.Get<O>().Channel)
+                    .Case(Channel.Retail, retail => retail
+                        .Switch(ctx => ctx.Get<O>().Tier)
+                        .Case(Tier.Gold, gold => gold.Step<A>()));
+            }
+            """);
+
+        var inner = FlowChainWalker.WalkBlock(links[1], 1);
+
+        inner.Select(l => l.MethodName).ShouldBe(["Switch", "Case"]);
+        FlowChainWalker.WalkBlock(inner[1], 1).Single().TypeArguments[0].ToString().ShouldBe("A");
+    }
+
+    [Fact]
+    public void DescendsIntoABlockBodiedCaseLambda()
+    {
+        var links = Walk("""
+            class C
+            {
+                void Define(B flow) => flow
+                    .Switch(ctx => ctx.Get<O>().Channel)
+                    .Case(Channel.Retail, retail =>
+                    {
+                        retail.Step<A>().Step<B>();
+                    });
+            }
+            """);
+
+        FlowChainWalker.WalkBlock(links[1], 1)
+            .Select(l => l.MethodName)
+            .ShouldBe(["Step", "Step"]);
+    }
+
     [Theory]
     [InlineData(2)]
     [InlineData(-1)]

@@ -315,6 +315,14 @@ public static class FlowAnalyzer
                         link, NextOtherwise(links, i), semanticModel, diagnostics, steps, ref nextIndex);
                     break;
 
+                case "Switch":
+                    // Same reasoning as `When`: `.Case(...)` and `.Default(...)` are the
+                    // *next links*, not arguments, because the DSL spells the whole thing
+                    // as one chain. Consuming them here is what stops each case block
+                    // being modelled as steps that run unconditionally in sequence.
+                    i += AddSwitchStep(links, i, semanticModel, diagnostics, steps, ref nextIndex);
+                    break;
+
                 default:
                     // Return, and anything the DSL grows in a later phase. Skipped rather
                     // than reported — see the class remarks on why a generator must not
@@ -383,6 +391,181 @@ public static class FlowAnalyzer
             FormatLocation(when.CallLocation)));
 
         return otherwise is null ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Models a <c>.Switch(selector).Case(…).Default(…)</c> and lays its blocks out in the
+    /// flat index space.
+    /// </summary>
+    /// <param name="links">The enclosing block's chain.</param>
+    /// <param name="switchIndexInChain">Position of the <c>.Switch</c> link in it.</param>
+    /// <param name="semanticModel">Resolves the selector's value type.</param>
+    /// <param name="diagnostics">Collects everything worth reporting.</param>
+    /// <param name="steps">The block being built.</param>
+    /// <param name="nextIndex">The shared flat index counter.</param>
+    /// <returns>How many further links were consumed — one per <c>Case</c>, plus one for a <c>Default</c>.</returns>
+    /// <remarks>
+    /// <para>
+    /// The layout walk is the general form of the one <see cref="AddConditionStep"/> does
+    /// for two blocks: a block is built at one past the previously committed index when
+    /// the previous block needs a closing jump, and the reserved slot is given back when
+    /// the block turns out to declare nothing. A reserved-and-unused slot would be a gap,
+    /// and <c>StepGraph</c> rejects a gap at type initialisation.
+    /// </para>
+    /// <para>
+    /// A <c>Switch</c> with no <c>Case</c> at all is not modelled as a switch: there is
+    /// nothing to select between, so its <c>Default</c> block always runs and is laid out
+    /// inline. Emitting a one-armed selector instead would put a decision in the manifest
+    /// that the flow does not make.
+    /// </para>
+    /// </remarks>
+    private static int AddSwitchStep(
+        IReadOnlyList<ChainLink> links,
+        int switchIndexInChain,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        List<StepModel> steps,
+        ref int nextIndex)
+    {
+        var switchLink = links[switchIndexInChain];
+        var arguments = switchLink.Invocation.ArgumentList.Arguments;
+
+        var caseLinks = new List<ChainLink>();
+        ChainLink? defaultLink = null;
+        var consumed = 0;
+
+        for (var i = switchIndexInChain + 1; i < links.Count; i++)
+        {
+            if (links[i].MethodName == "Case")
+            {
+                caseLinks.Add(links[i]);
+                consumed++;
+                continue;
+            }
+
+            if (links[i].MethodName == "Default")
+            {
+                defaultLink = links[i];
+                consumed++;
+            }
+
+            // `Default` returns the plain builder, so nothing belonging to this switch can
+            // follow it — and the first link that is neither ends the switch either way.
+            break;
+        }
+
+        if (caseLinks.Count == 0)
+        {
+            if (defaultLink is not null)
+            {
+                steps.AddRange(BuildBlock(
+                    FlowChainWalker.WalkBlock(defaultLink, 0), semanticModel, diagnostics, ref nextIndex));
+            }
+
+            return consumed;
+        }
+
+        // `.Switch(selector)` takes one argument, so a call without it does not compile.
+        // Reachable only from a half-typed buffer, where the C# compiler is already
+        // saying something more useful than a FlowX diagnostic would.
+        if (arguments.Count == 0)
+        {
+            return consumed;
+        }
+
+        var valueType = ResolveSwitchValueType(switchLink, semanticModel);
+
+        if (valueType is null)
+        {
+            // The emitted selector is a typed field; without the type there is no
+            // compilable shape to emit, and guessing `object` would box every value the
+            // cases are compared against.
+            return consumed;
+        }
+
+        var switchIndex = nextIndex++;
+        var committed = nextIndex;
+        var previousNeedsJump = false;
+
+        var cases = new List<SwitchCaseModel>(caseLinks.Count);
+
+        foreach (var caseLink in caseLinks)
+        {
+            var caseArguments = caseLink.Invocation.ArgumentList.Arguments;
+
+            if (caseArguments.Count < 2)
+            {
+                continue;
+            }
+
+            var block = LayOutBlock(
+                caseLink, 1, semanticModel, diagnostics, ref committed, ref previousNeedsJump);
+
+            cases.Add(new SwitchCaseModel(
+                caseArguments[0].Expression.ToString(),
+                block,
+                FormatLocation(caseArguments[0].Expression.GetLocation())));
+        }
+
+        var alternative = defaultLink is null
+            ? new List<StepModel>()
+            : LayOutBlock(defaultLink, 0, semanticModel, diagnostics, ref committed, ref previousNeedsJump);
+
+        nextIndex = committed;
+
+        steps.Add(StepModel.Switch(
+            switchIndex,
+            arguments[0].Expression.ToString(),
+            valueType,
+            cases,
+            alternative,
+            FormatLocation(arguments[0].Expression.GetLocation()),
+            FormatLocation(switchLink.CallLocation)));
+
+        return consumed;
+    }
+
+    /// <summary>
+    /// Builds one block of a switch, reserving a slot for the previous block's closing
+    /// jump and giving it back when this block declares nothing.
+    /// </summary>
+    private static List<StepModel> LayOutBlock(
+        ChainLink link,
+        int argumentIndex,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        ref int committed,
+        ref bool previousNeedsJump)
+    {
+        var cursor = committed + (previousNeedsJump ? 1 : 0);
+        var block = BuildBlock(
+            FlowChainWalker.WalkBlock(link, argumentIndex), semanticModel, diagnostics, ref cursor);
+
+        if (block.Count > 0)
+        {
+            committed = cursor;
+            previousNeedsJump = true;
+        }
+
+        return block;
+    }
+
+    /// <summary>
+    /// The fully-qualified type of the value a <c>.Switch(...)</c> selects on.
+    /// </summary>
+    /// <remarks>
+    /// Read from the resolved method's type argument rather than from the lambda body,
+    /// because that is what C# itself inferred and therefore what every <c>.Case(...)</c>
+    /// was type-checked against. Inferring it again from the body would be a second
+    /// opinion that can disagree with the compiler's.
+    /// </remarks>
+    private static string? ResolveSwitchValueType(ChainLink link, SemanticModel semanticModel)
+    {
+        var method = semanticModel.GetSymbolInfo(link.Invocation).Symbol as IMethodSymbol;
+
+        return method is { TypeArguments.Length: 1 } && method.TypeArguments[0].TypeKind != TypeKind.Error
+            ? Display(method.TypeArguments[0])
+            : null;
     }
 
     private static void AddCapabilityStep(

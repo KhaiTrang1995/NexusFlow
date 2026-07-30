@@ -34,8 +34,11 @@ public sealed class ManifestDiffTests
               "input":  { "type": "Ordering.PlaceOrder", "sensitive": ["PaymentToken"] },
               "output": { "type": "Ordering.OrderPlaced" },
               "triggers": [
-                { "kind": "Http", "method": "POST", "route": "/api/v1/orders" },
-                { "kind": "Bus", "transport": "kafka", "topic": "orders.requested" }
+                { "kind": "Http", "method": "POST", "route": "/api/v1/orders", "idempotent": true },
+                { "kind": "Bus", "transport": "kafka", "topic": "orders.requested", "group": "order-placement" },
+                { "kind": "Schedule", "cron": "0 2 * * *", "timeZone": "Europe/Berlin" },
+                { "kind": "Agent", "description": "Place a customer order",
+                  "confirmation": "RequiredForSideEffects" }
               ],
               "steps": [
                 { "id": 0, "kind": "Capability", "capability": "order.validate@1.0.0" },
@@ -255,6 +258,89 @@ public sealed class ManifestDiffTests
 
         NotFired(report, "FLOWX-DIFF-005");
         NotFired(report, "FLOWX-DIFF-103");
+    }
+
+    /// <summary>
+    /// Both directions break somebody, and the report says which.
+    /// </summary>
+    /// <remarks>
+    /// Requiring the key rejects every caller that does not send one, at admission, before
+    /// the flow exists. Ceasing to require it withdraws deduplication instead: nothing
+    /// fails, and a caller's retry after a timeout executes the flow a second time. Neither
+    /// moves the address, so the removed/added rules stay silent and this is the only thing
+    /// that reports it.
+    /// </remarks>
+    [Fact]
+    public void ChangingWhetherATriggerDemandsAnIdempotencyKeyIsBreakingEitherWay()
+    {
+        var demanded = Mutate(c => Trigger(c, "Http").Idempotent = true);
+        var optional = Mutate(c => Trigger(c, "Http").Idempotent = false);
+
+        var required = ManifestDiff.Compare(optional, demanded);
+        var withdrawn = ManifestDiff.Compare(demanded, optional);
+
+        Fired(required, "FLOWX-DIFF-007").Severity.ShouldBe(DiffSeverity.Breaking);
+        Fired(required, "FLOWX-DIFF-007").Subject.ShouldContain("/api/v1/orders");
+        NotFired(required, "FLOWX-DIFF-005");
+
+        Fired(withdrawn, "FLOWX-DIFF-008").Consequence.ShouldContain("twice");
+        withdrawn.Compatible.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Confirmation is asymmetric, like <c>[Sensitive]</c>, and for the same kind of reason.
+    /// </summary>
+    /// <remarks>
+    /// Weakening it removes a human from the loop on the surface where that matters most:
+    /// a model that had to ask before invoking a flow with side effects now invokes it. No
+    /// signature moves and no test fails, which is exactly the change review misses.
+    /// Strengthening it only adds a prompt, and a gate that failed the build for adding a
+    /// prompt would teach people to stop adding them.
+    /// </remarks>
+    [Fact]
+    public void WeakeningAgentConfirmationIsBreakingWhileStrengtheningItIsAdditive()
+    {
+        var weakened = Diff(candidate => Trigger(candidate, "Agent").Confirmation = "Never");
+        var strengthened = Diff(candidate => Trigger(candidate, "Agent").Confirmation = "Always");
+
+        Fired(weakened, "FLOWX-DIFF-009").Severity.ShouldBe(DiffSeverity.Breaking);
+        weakened.Compatible.ShouldBeFalse();
+
+        Fired(strengthened, "FLOWX-DIFF-108").Severity.ShouldBe(DiffSeverity.Additive);
+        strengthened.Compatible.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ChangingAScheduleTimeZoneIsNeutralButStillWorthALine()
+    {
+        var report = Diff(candidate => Trigger(candidate, "Schedule").TimeZone = "UTC");
+
+        Fired(report, "FLOWX-DIFF-205").Severity.ShouldBe(DiffSeverity.Neutral);
+        report.Compatible.ShouldBeTrue(
+            "A schedule is operational. It fires at a different wall-clock time and breaks " +
+            "no caller, because a schedule has none.");
+    }
+
+    /// <summary>
+    /// The two trigger fields that are deliberately not contract.
+    /// </summary>
+    /// <remarks>
+    /// A consumer group is how this application consumes a topic, not an address anybody
+    /// outside it holds — renaming one re-reads from the configured offset and is an
+    /// operational event, which is why <c>Describe</c> leaves it out of the address. An
+    /// agent tool description is prose, written to be edited; a rule that fired every time
+    /// somebody improved a sentence would train people to skim the report.
+    /// </remarks>
+    [Fact]
+    public void ARenamedConsumerGroupOrAnEditedToolDescriptionIsNotAContractChange()
+    {
+        var report = Diff(candidate =>
+        {
+            Trigger(candidate, "Bus").Group = "order-placement-v2";
+            Trigger(candidate, "Agent").Description = "Place a customer order, taking payment.";
+        });
+
+        report.Findings.ShouldBeEmpty();
     }
 
     // ---------------------------------------------------------------- sensitive
@@ -790,6 +876,9 @@ public sealed class ManifestDiffTests
 
     private static ManifestCapability Cap(ManifestDocument document, string id) =>
         document.Capabilities.Single(c => c.Id == id);
+
+    private static ManifestTrigger Trigger(ManifestDocument document, string kind) =>
+        Flow(document, "order.place").Triggers.Single(t => t.Kind == kind);
 
     private static DiffFinding Fired(DiffReport report, string code)
     {

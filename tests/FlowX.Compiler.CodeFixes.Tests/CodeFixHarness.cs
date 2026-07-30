@@ -79,7 +79,7 @@ internal static class CodeFixHarness
             .Diagnostics;
 
         var analyzed = compilation
-            .WithAnalyzers([new CapabilityAnalyzer()])
+            .WithAnalyzers([new CapabilityAnalyzer(), new PredicatePurityAnalyzer()])
             .GetAnalyzerDiagnosticsAsync()
             .GetAwaiter()
             .GetResult();

@@ -66,7 +66,7 @@ public sealed class StepGraph
                     "silently skip business logic at run time.");
         }
 
-        ValidateJumpTargets(ordered);
+        ValidateTargets(ordered);
 
         return new StepGraph(ordered);
     }
@@ -88,31 +88,45 @@ public sealed class StepGraph
     /// tail of a <c>Define</c> chain, so rejecting it would forbid a shape the DSL can
     /// express.
     /// </para>
+    /// <para>
+    /// A <see cref="StepKind.Switch"/> has one target per case <em>as well as</em> its
+    /// default, and every one of them is checked. Checking only <see cref="StepNode.Target"/>
+    /// would leave the termination proof holding for the arm nobody takes and not for the
+    /// arms they do — which is the wrong way round.
+    /// </para>
     /// </remarks>
-    private static void ValidateJumpTargets(ImmutableArray<StepNode> ordered)
+    private static void ValidateTargets(ImmutableArray<StepNode> ordered)
     {
         foreach (var step in ordered)
         {
-            if (step.Target is not { } target)
+            if (step.Target is { } target)
             {
-                continue;
+                ValidateTarget(step, target, ordered.Length);
             }
 
-            if (target > ordered.Length)
+            foreach (var caseTarget in step.CaseTargets)
             {
-                throw new InvalidFlowPlanException(
-                    $"Step {step.Index} targets step {target}, but the graph has only " +
-                    $"{ordered.Length} step(s). A target may be at most {ordered.Length} — " +
-                    "one past the last step, which ends the flow.");
+                ValidateTarget(step, caseTarget, ordered.Length);
             }
+        }
+    }
 
-            if (target <= step.Index)
-            {
-                throw new InvalidFlowPlanException(
-                    $"Step {step.Index} targets step {target}, which does not point forward. " +
-                    "A backward target is a loop, and the conditional DSL cannot express " +
-                    "one — so this is a layout bug that would make the step loop run forever.");
-            }
+    private static void ValidateTarget(StepNode step, int target, int length)
+    {
+        if (target > length)
+        {
+            throw new InvalidFlowPlanException(
+                $"Step {step.Index} targets step {target}, but the graph has only " +
+                $"{length} step(s). A target may be at most {length} — " +
+                "one past the last step, which ends the flow.");
+        }
+
+        if (target <= step.Index)
+        {
+            throw new InvalidFlowPlanException(
+                $"Step {step.Index} targets step {target}, which does not point forward. " +
+                "A backward target is a loop, and the conditional DSL cannot express " +
+                "one — so this is a layout bug that would make the step loop run forever.");
         }
     }
 }

@@ -99,6 +99,7 @@ public static class FlowEmitter
         EmitDescriptors(writer, flow);
         writer.Line();
         EmitConditions(writer, flow);
+        EmitSelectors(writer, flow);
         EmitPlan(writer, flow);
         writer.Line();
         EmitProjection(writer, flow);
@@ -227,6 +228,52 @@ public static class FlowEmitter
         writer.Line();
     }
 
+    /// <summary>
+    /// Emits one <c>static readonly</c> delegate per <c>.Switch(...)</c> selector.
+    /// </summary>
+    /// <remarks>
+    /// A field, for the same reason the predicates are: budget B2 is a hard zero, and a
+    /// lambda built at the switch would cost a delegate per execution. Typed at the value
+    /// the selector actually produces, so <c>Select</c> below can compare against it
+    /// without boxing.
+    /// </remarks>
+    private static void EmitSelectors(SourceWriter writer, FlowModel flow)
+    {
+        var switches = Switches(flow);
+
+        if (switches.Count == 0)
+        {
+            return;
+        }
+
+        writer.Line("/// <summary>Switch selectors, built once at type initialisation.</summary>");
+        writer.Line("/// <remarks>");
+        writer.Line("/// Each is your <c>.Switch(...)</c> expression, copied verbatim. They obey the same");
+        writer.Line("/// determinism rule as a condition — context, flow input and prior step results");
+        writer.Line("/// only — so that a replay selects the case it selected before.");
+        writer.Line("/// </remarks>");
+        writer.Line("private static class Selectors");
+        writer.OpenBrace();
+
+        foreach (var step in switches)
+        {
+            EmitLineDirective(writer, step.SelectorLocation);
+            writer.Line(
+                "public static readonly Func<FlowContext, " + step.SelectorTypeName + "> Step" + step.Index +
+                " = " + step.Selector + ";");
+            EmitLineDirectiveEnd(writer, step.SelectorLocation);
+        }
+
+        writer.CloseBrace();
+        writer.Line();
+    }
+
+    /// <summary>The flow's value branches, ascending by flat index.</summary>
+    private static System.Collections.Generic.List<StepModel> Switches(FlowModel flow) => flow.AllSteps
+        .Where(s => s.Kind == StepKindModel.Switch)
+        .OrderBy(s => s.Index)
+        .ToList();
+
     private static void EmitDescriptors(SourceWriter writer, FlowModel flow)
     {
         writer.Line("/// <summary>Capability descriptors, built once at type initialisation.</summary>");
@@ -281,32 +328,70 @@ public static class FlowEmitter
     /// Writes the step array, flattening conditionals into branch-and-jump form.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The layout is <c>branch · then… · jump · otherwise…</c>. The branch carries only
     /// its false target, because the <c>then</c> block starts at the very next index; the
     /// jump exists solely so a taken <c>then</c> block skips the alternative, and is
     /// omitted when there is no alternative to skip. Nested conditionals recurse, and
     /// their indices were already assigned in this same order during analysis — which is
     /// why the array comes out contiguous and <c>StepGraph.Create</c> accepts it.
+    /// </para>
+    /// <para>
+    /// A switch is the same shape with more blocks:
+    /// <c>switch · case₀… · jump · case₁… · jump · … · default…</c>. Each block is closed
+    /// by a jump to the join, except the last non-empty one, which falls into the join
+    /// anyway.
+    /// </para>
     /// </remarks>
     private static void EmitStepNodes(SourceWriter writer, System.Collections.Generic.IReadOnlyList<StepModel> steps)
     {
         foreach (var step in steps)
         {
-            if (step.Kind != StepKindModel.Condition)
+            switch (step.Kind)
             {
-                writer.Line("        " + StepNodeExpression(step) + ",");
-                continue;
-            }
+                case StepKindModel.Condition:
+                    writer.Line("        StepNode.ForBranch(" + step.Index + ", " + step.FalseTarget + "),");
+                    EmitStepNodes(writer, step.Then);
 
-            writer.Line("        StepNode.ForBranch(" + step.Index + ", " + step.FalseTarget + "),");
-            EmitStepNodes(writer, step.Then);
+                    if (step.JumpIndex is int jump)
+                    {
+                        writer.Line("        StepNode.ForJump(" + jump + ", " + step.JoinIndex + "),");
+                        EmitStepNodes(writer, step.Otherwise);
+                    }
 
-            if (step.JumpIndex is int jump)
-            {
-                writer.Line("        StepNode.ForJump(" + jump + ", " + step.JoinIndex + "),");
-                EmitStepNodes(writer, step.Otherwise);
+                    break;
+
+                case StepKindModel.Switch:
+                    writer.Line("        " + SwitchNodeExpression(step) + ",");
+
+                    foreach (var arm in step.Cases)
+                    {
+                        EmitStepNodes(writer, arm.Steps);
+
+                        if (arm.JumpIndex is int caseJump)
+                        {
+                            writer.Line("        StepNode.ForJump(" + caseJump + ", " + step.JoinIndex + "),");
+                        }
+                    }
+
+                    EmitStepNodes(writer, step.Default);
+                    break;
+
+                default:
+                    writer.Line("        " + StepNodeExpression(step) + ",");
+                    break;
             }
         }
+    }
+
+    private static string SwitchNodeExpression(StepModel step)
+    {
+        var targets = string.Join(
+            ", ",
+            step.Cases.Select(c => c.Target.ToString(CultureInfo.InvariantCulture)));
+
+        return "StepNode.ForSwitch(" + step.Index + ", new[] { " + targets + " }, defaultTarget: " +
+               step.DefaultTarget + ")";
     }
 
     private static string StepNodeExpression(StepModel step)
@@ -359,6 +444,8 @@ public static class FlowEmitter
         EmitDispatcherCompensate(writer, flow);
         writer.Line();
         EmitDispatcherEvaluate(writer, flow);
+        writer.Line();
+        EmitDispatcherSelect(writer, flow);
 
         writer.CloseBrace();
     }
@@ -397,11 +484,11 @@ public static class FlowEmitter
         writer.Line("switch (stepIndex)");
         writer.OpenBrace();
 
-        // Conditions have no case: the engine reaches a branch through Evaluate, never
-        // through ExecuteAsync, so a case here would be dead code in the file the header
-        // promises is readable.
+        // Conditions and switches have no case: the engine reaches them through Evaluate
+        // and Select, never through ExecuteAsync, so a case here would be dead code in the
+        // file the header promises is readable.
         foreach (var step in flow.AllSteps
-            .Where(s => s.Kind != StepKindModel.Condition)
+            .Where(s => s.Kind is not (StepKindModel.Condition or StepKindModel.Switch))
             .OrderBy(s => s.Index))
         {
             writer.Line("case " + step.Index + ":");
@@ -549,6 +636,88 @@ public static class FlowEmitter
         writer.Line("    nameof(stepIndex),");
         writer.Line("    stepIndex,");
         writer.Line("    \"Step index does not name a branch in the compiled plan. The plan and \" +");
+        writer.Line("    \"this dispatcher are generated together, so this means they came from \" +");
+        writer.Line("    \"different builds.\");");
+        writer.CloseBrace();
+
+        writer.CloseBrace();
+        writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// Emits <c>Select</c>: which case of each switch matched, by step index.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The selector runs <em>once</em> and the arms are then tested against the value it
+    /// produced. Compiling a switch into a chain of equality predicates would have read
+    /// the selector once per arm, which is wrong for a reader and wasteful for a machine.
+    /// </para>
+    /// <para>
+    /// The comparison is <c>EqualityComparer&lt;T&gt;.Default.Equals</c> rather than a C#
+    /// <c>switch</c> statement, because a case value is an arbitrary expression and a
+    /// <c>case</c> label demands a compile-time constant — <c>.Case(Channel.Retail, …)</c>
+    /// would compile and <c>.Case(_defaults.Channel, …)</c> would not. The comparer is a
+    /// cached static at the real type, so an <c>enum</c>, an <c>int</c> and a
+    /// <c>string</c> all compare without boxing and the arm costs nothing to take.
+    /// </para>
+    /// </remarks>
+    private static void EmitDispatcherSelect(SourceWriter writer, FlowModel flow)
+    {
+        var switches = Switches(flow);
+
+        writer.Line("/// <inheritdoc />");
+        writer.Line("public int Select(int stepIndex, FlowContext ctx)");
+        writer.OpenBrace();
+
+        if (switches.Count == 0)
+        {
+            writer.Line("throw new ArgumentOutOfRangeException(");
+            writer.Line("    nameof(stepIndex),");
+            writer.Line("    stepIndex,");
+            writer.Line("    \"This flow declares no switch, so the engine never asks it to select a \" +");
+            writer.Line("    \"case. Reaching this means the plan and this dispatcher came from \" +");
+            writer.Line("    \"different builds.\");");
+            writer.CloseBrace();
+            return;
+        }
+
+        writer.Line("switch (stepIndex)");
+        writer.OpenBrace();
+
+        foreach (var step in switches)
+        {
+            writer.Line("case " + step.Index + ":");
+            writer.OpenBrace();
+            writer.Line("var value = Selectors.Step" + step.Index + "(ctx);");
+
+            for (var arm = 0; arm < step.Cases.Count; arm++)
+            {
+                writer.Line();
+                EmitLineDirective(writer, step.Cases[arm].ValueLocation);
+                writer.Line(
+                    "if (System.Collections.Generic.EqualityComparer<" + step.SelectorTypeName +
+                    ">.Default.Equals(value, " + step.Cases[arm].Value + "))");
+                writer.OpenBrace();
+                writer.Line("return " + arm.ToString(CultureInfo.InvariantCulture) + ";");
+                writer.CloseBrace();
+                EmitLineDirectiveEnd(writer, step.Cases[arm].ValueLocation);
+            }
+
+            writer.Line();
+            writer.Line("// No case matched. The engine takes the switch's default target,");
+            writer.Line("// which is the `Default` block when there is one and the join when");
+            writer.Line("// there is not — a value nothing matched simply continues.");
+            writer.Line("return -1;");
+            writer.CloseBrace();
+        }
+
+        writer.Line("default:");
+        writer.OpenBrace();
+        writer.Line("throw new ArgumentOutOfRangeException(");
+        writer.Line("    nameof(stepIndex),");
+        writer.Line("    stepIndex,");
+        writer.Line("    \"Step index does not name a switch in the compiled plan. The plan and \" +");
         writer.Line("    \"this dispatcher are generated together, so this means they came from \" +");
         writer.Line("    \"different builds.\");");
         writer.CloseBrace();

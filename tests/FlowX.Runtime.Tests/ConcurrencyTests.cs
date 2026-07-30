@@ -113,6 +113,9 @@ public sealed class ConcurrencyTests
 
         public bool Evaluate(int stepIndex, FlowContext ctx)
             => throw new NotSupportedException("This double runs plans with no branch step.");
+
+        public int Select(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no switch step.");
     }
 
     /// <summary>Flags a flow that observes a tenant other than its own.</summary>
@@ -136,5 +139,8 @@ public sealed class ConcurrencyTests
 
         public bool Evaluate(int stepIndex, FlowContext ctx)
             => throw new NotSupportedException("This double runs plans with no branch step.");
+
+        public int Select(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no switch step.");
     }
 }

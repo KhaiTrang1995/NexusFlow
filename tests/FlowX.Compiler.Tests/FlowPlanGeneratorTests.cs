@@ -26,6 +26,8 @@ public sealed class FlowPlanGeneratorTests
         public sealed record OrderResult(string Id);
         public sealed record Reservation(string Sku);
 
+        public enum Channel { Retail, Wholesale, Partner }
+
         [Capability("inventory.reserve", Version = "1.2.0",
             Authorization = Authorization.Authenticated,
             Idempotent = true, SideEffects = new[] { "inventory-ledger" })]
@@ -849,5 +851,146 @@ public sealed class FlowPlanGeneratorTests
         condition.GetProperty("kind").GetString().ShouldBe("Condition");
         condition.GetProperty("branches")[0][0].GetProperty("capability").GetString()
             .ShouldBe("payment.capture@2.1.0");
+    }
+
+    /// <summary>
+    /// A <c>Switch</c> end to end: the selector's value type is inferred by C# and read
+    /// back off the resolved symbol, each case block is walked out of a lambda argument,
+    /// and the whole thing lands in the flat step array as one node with a target per case.
+    /// </summary>
+    [Fact]
+    public void CompilesASwitchIntoOneNodeWithATargetPerCase()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Switch(ctx => ctx.Get<Reservation>().Sku == "rare" ? Channel.Retail : Channel.Wholesale)
+                    .Case(Channel.Retail, retail => retail
+                        .Step<CapturePayment>())
+                    .Case(Channel.Wholesale, wholesale => wholesale
+                        .Step<ReserveInventory>().CompensateWith<ReleaseInventory>())
+                    .Default(rest => rest
+                        .Step<CapturePayment>())
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+
+        var source = run.Plan;
+
+        source.ShouldContainText("StepNode.ForCapability(0, Descriptors.Step0)", run.Describe());
+        source.ShouldContainText(
+            "StepNode.ForSwitch(1, new[] { 2, 4 }, defaultTarget: 6)",
+            "One node, one target per case, and the default where a miss goes.");
+        source.ShouldContainText("StepNode.ForCapability(2, Descriptors.Step2)", "The first case.");
+        source.ShouldContainText("StepNode.ForJump(3, 7)", "and the jump that closes it.");
+        source.ShouldContainText(
+            "StepNode.ForCapability(4, Descriptors.Step4, Descriptors.Step4Compensation)",
+            "The second case, with the compensation it declared inside the lambda.");
+        source.ShouldContainText("StepNode.ForJump(5, 7)", "and the jump that closes that one.");
+        source.ShouldContainText("StepNode.ForCapability(6, Descriptors.Step6)", "The `Default` block.");
+
+        source.ShouldContainText(
+            "public static readonly Func<FlowContext, Sample.Channel> Step1 = " +
+            "ctx => ctx.Get<Reservation>().Sku == \"rare\" ? Channel.Retail : Channel.Wholesale;",
+            "The selector is the author's expression verbatim, typed at what C# inferred.");
+
+        source.ShouldContainText(
+            "System.Collections.Generic.EqualityComparer<Sample.Channel>.Default.Equals(value, Channel.Retail)",
+            "and each case value is the author's expression too, compared without boxing.");
+    }
+
+    [Fact]
+    public void ASwitchWithNoDefaultSendsAMissToTheJoin()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Switch(ctx => Channel.Retail)
+                    .Case(Channel.Retail, retail => retail.Step<CapturePayment>())
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+
+        // The default target is 3 — one past the last step — so a value matching nothing
+        // ends the flow rather than failing it. The last case block is also the last
+        // block, so it needs no closing jump and no index is spent on one.
+        run.Plan.ShouldContainText("StepNode.ForSwitch(1, new[] { 2 }, defaultTarget: 3)", run.Describe());
+        run.Plan.ShouldNotContainText("ForJump", "There is nothing after the only case to skip.");
+    }
+
+    [Fact]
+    public void TheManifestPublishesASwitchAsBranchesWithoutItsValues()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Switch(ctx => Channel.Retail)
+                    .Case(Channel.Retail, retail => retail.Step<CapturePayment>())
+                    .Default(rest => rest.Step<ReserveInventory>())
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        var json = run.ManifestJson.ShouldNotBeNull();
+
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+
+        var node = document.RootElement.GetProperty("flows")[0].GetProperty("steps")[1];
+
+        node.GetProperty("kind").GetString().ShouldBe("Switch");
+        node.GetProperty("branches").GetArrayLength().ShouldBe(2, "One case, then the default.");
+        node.GetProperty("branches")[0][0].GetProperty("capability").GetString()
+            .ShouldBe("payment.capture@2.1.0");
+        node.GetProperty("branches")[1][0].GetProperty("capability").GetString()
+            .ShouldBe("inventory.reserve@1.2.0");
+
+        // The rule that makes this file safe to publish is structure only, never values.
+        // `Channel.Retail` is a business value; that a flow branches on *something* is
+        // structure. Only the second is here.
+        json.Contains("Retail", StringComparison.Ordinal).ShouldBeFalse();
+        json.Contains("Channel", StringComparison.Ordinal).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The generated code for a switch must actually build, not merely parse.
+    /// </summary>
+    /// <remarks>
+    /// The one thing every other test here structurally cannot check. A selector field
+    /// typed at the wrong thing, a case value that does not resolve in the generated
+    /// file's namespace, or an <c>IStepDispatcher</c> member left unimplemented all parse
+    /// perfectly and all break the consumer's build.
+    /// </remarks>
+    [Fact]
+    public void TheGeneratedCodeForASwitchCompiles()
+    {
+        GeneratorHarness.GeneratedCompileErrorsIn(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Switch(ctx => ctx.Get<Reservation>().Sku)
+                    .Case("rare", rare => rare
+                        .Step<CapturePayment>().CompensateWith<ReleaseInventory>())
+                    .Case("common", common => common
+                        .Step<CapturePayment>())
+                    .Default(rest => rest
+                        .Step<ReserveInventory>())
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """)).ShouldBeEmpty();
     }
 }

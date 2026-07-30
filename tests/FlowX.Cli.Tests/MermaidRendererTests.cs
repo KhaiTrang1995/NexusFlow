@@ -321,4 +321,100 @@ public sealed class MermaidRendererTests
         diagram.ShouldContain("f0s1 --> f0s2");
         diagram.ShouldContain("f0s0 --> f0s2");
     }
+
+    /// <summary>A flow with a <c>Switch</c>, as the compiler publishes it.</summary>
+    /// <remarks>
+    /// Two cases and a <c>Default</c>, so <c>branches</c> has three entries and the last
+    /// is the default. Steps 3 and 5 are absent on purpose: they are the jumps closing the
+    /// case blocks, and the manifest does not publish a jump.
+    /// </remarks>
+    private const string SwitchManifest = """
+        {
+          "schemaVersion": "0.1.0",
+          "application": { "name": "Sample.App", "version": "1.0.0" },
+          "flows": [
+            {
+              "id": "order.price", "version": "1.0.0", "profile": "Ephemeral",
+              "steps": [
+                { "id": 0, "kind": "Capability", "capability": "order.validate@1.0.0" },
+                { "id": 1, "kind": "Switch", "branches": [
+                    [ { "id": 2, "kind": "Capability", "capability": "pricing.retail@1.0.0" } ],
+                    [ { "id": 4, "kind": "Capability", "capability": "pricing.wholesale@1.0.0" } ],
+                    [ { "id": 6, "kind": "Capability", "capability": "order.reject@1.0.0" } ]
+                  ] },
+                { "id": 7, "kind": "Capability", "capability": "order.confirm@1.0.0" }
+              ],
+              "emits": []
+            }
+          ],
+          "capabilities": []
+        }
+        """;
+
+    [Fact]
+    public void DrawsASwitchAsAHexagonWithOneEdgePerArm()
+    {
+        var diagram = MermaidRenderer.Render(Parse(SwitchManifest));
+
+        // A hexagon, distinct from a conditional's diamond, so a reader sees a many-way
+        // decision before reading a single label.
+        diagram.ShouldContain("f0s1{{\"switch\"}}");
+
+        // Positional, because the case *values* are business data and the manifest
+        // deliberately does not carry them. The label says which arm, never on what.
+        diagram.ShouldContain("f0s1 -->|case 0| f0s2");
+        diagram.ShouldContain("f0s1 -->|case 1| f0s4");
+        diagram.ShouldContain("f0s1 -->|default| f0s6");
+    }
+
+    [Fact]
+    public void EveryArmOfASwitchRejoinsTheStepThatFollowsIt()
+    {
+        var diagram = MermaidRenderer.Render(Parse(SwitchManifest));
+
+        diagram.ShouldContain("f0s2 --> f0s7");
+        diagram.ShouldContain("f0s4 --> f0s7");
+        diagram.ShouldContain("f0s6 --> f0s7");
+
+        diagram.Contains("f0s1 --> f0s7", StringComparison.Ordinal).ShouldBeFalse(
+            "Every arm is populated and one of them is the default, so no value bypasses " +
+            "the switch and it is not an exit of its own.");
+    }
+
+    [Fact]
+    public void ASwitchWhoseDefaultIsEmptyIsAlsoItsOwnExit()
+    {
+        // An empty last block is how the manifest says "a value matching nothing falls
+        // through". The switch therefore connects straight to what follows as well as
+        // through its cases — the many-way form of the missing-`Otherwise` case above.
+        const string NoDefault = """
+            {
+              "schemaVersion": "0.1.0",
+              "application": { "name": "Sample.App", "version": "1.0.0" },
+              "flows": [
+                {
+                  "id": "order.price", "version": "1.0.0", "profile": "Ephemeral",
+                  "steps": [
+                    { "id": 0, "kind": "Switch", "branches": [
+                        [ { "id": 1, "kind": "Capability", "capability": "pricing.retail@1.0.0" } ],
+                        [ { "id": 3, "kind": "Capability", "capability": "pricing.wholesale@1.0.0" } ],
+                        []
+                      ] },
+                    { "id": 4, "kind": "Capability", "capability": "order.confirm@1.0.0" }
+                  ],
+                  "emits": []
+                }
+              ],
+              "capabilities": []
+            }
+            """;
+
+        var diagram = MermaidRenderer.Render(Parse(NoDefault));
+
+        diagram.ShouldContain("f0s0 -->|case 0| f0s1");
+        diagram.ShouldContain("f0s0 -->|case 1| f0s3");
+        diagram.ShouldContain("f0s1 --> f0s4");
+        diagram.ShouldContain("f0s3 --> f0s4");
+        diagram.ShouldContain("f0s0 --> f0s4");
+    }
 }

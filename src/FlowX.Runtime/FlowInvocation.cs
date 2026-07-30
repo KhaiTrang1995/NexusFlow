@@ -232,4 +232,32 @@ public static class FlowErrors
             .With("stepIndex", stepIndex)
             .With("exceptionType", exception.GetType().FullName);
     }
+
+    /// <summary>
+    /// A <c>Switch</c> selector threw instead of producing a value.
+    /// </summary>
+    /// <param name="flowId">The flow whose switch failed.</param>
+    /// <param name="stepIndex">Index of the switch, so the failure names one selector.</param>
+    /// <param name="exception">What the selector threw.</param>
+    /// <remarks>
+    /// Its own code rather than <see cref="PredicateFailed"/>, because the two point at
+    /// different lines and at different mistakes: a predicate answers yes or no, a
+    /// selector produces the value the cases are matched against. Reported as
+    /// <see cref="ErrorCategory.Internal"/> for the same reason — a selector is pure by
+    /// construction, so it throwing is a defect and never a transient fault.
+    /// </remarks>
+    public static Error SelectorFailed(string flowId, int stepIndex, Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        return new Error(
+            "flow.selector_failed",
+            $"The switch selector at step {stepIndex} of flow '{flowId}' threw " +
+            $"{exception.GetType().Name}. A selector may read only the context, the flow " +
+            "input and prior step results, and must not throw.",
+            ErrorCategory.Internal)
+            .With("flowId", flowId)
+            .With("stepIndex", stepIndex)
+            .With("exceptionType", exception.GetType().FullName);
+    }
 }

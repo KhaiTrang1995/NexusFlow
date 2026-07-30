@@ -128,6 +128,9 @@ public sealed class FlowOutputTests
 
         public bool Evaluate(int stepIndex, FlowContext ctx)
             => throw new NotSupportedException("This double runs plans with no branch step.");
+
+        public int Select(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no switch step.");
     }
 
     private sealed class ProducingDispatcher : IStepDispatcher
@@ -145,6 +148,9 @@ public sealed class FlowOutputTests
 
         public bool Evaluate(int stepIndex, FlowContext ctx)
             => throw new NotSupportedException("This double runs plans with no branch step.");
+
+        public int Select(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no switch step.");
     }
 
     private sealed class FailingDispatcher : IStepDispatcher
@@ -158,5 +164,8 @@ public sealed class FlowOutputTests
 
         public bool Evaluate(int stepIndex, FlowContext ctx)
             => throw new NotSupportedException("This double runs plans with no branch step.");
+
+        public int Select(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no switch step.");
     }
 }

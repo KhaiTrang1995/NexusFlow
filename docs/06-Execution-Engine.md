@@ -120,11 +120,23 @@ built, which is the only reason the loop is guaranteed to terminate: the DSL
 cannot express a loop, so a backward target is always a layout bug rather than
 something an author asked for.
 
+`Switch` is the same shape with more destinations: one `Switch` step carrying a
+target per case plus a default target, and a `Jump` closing each case block. The
+loop still advances by one or to a target, still holds no branch stack, and still
+allocates nothing — taking a case is one bounds check, one read out of the node's
+`CaseTargets`, and one assignment to `i`. Every case target is validated forward
+and in range alongside the default, because a termination proof that covered only
+the arm nobody takes would be the wrong way round.
+
 Predicates are evaluated through `IStepDispatcher.Evaluate`, which is
-**synchronous and returns `bool`**. An awaitable predicate would put a state
-machine on the hot path and would invite exactly the IO `FLOWX1011` forbids; a
-signature that cannot express IO is cheaper to enforce than a diagnostic that
-reports it.
+**synchronous and returns `bool`**; a switch's selector runs through
+`IStepDispatcher.Select`, which is synchronous and returns the matching case's
+position, or `-1` for none. An awaitable predicate would put a state machine on
+the hot path and would invite exactly the IO `FLOWX1011` forbids; a signature
+that cannot express IO is cheaper to enforce than a diagnostic that reports it.
+`Select` returns an `int` rather than the value it selected for a related reason:
+returning the value would mean returning it as `object`, which boxes an `enum` on
+every switch a flow takes.
 
 ---
 
@@ -195,6 +207,14 @@ flowchart LR
 In `Ephemeral` flows these drop to Info — there is no replay, so there is no
 determinism obligation. The analyzer reads the flow's declared profile, so the
 same rule set is strict exactly where it matters.
+
+**`FLOWX1011` is the exception, and ships as a Warning in `Ephemeral` rather than
+Info.** It is the only rule in this table that is implemented, and `Ephemeral` is the
+only profile the runtime executes today, so Info would have made it invisible in every
+build anyone can currently run — which is the state it was already in. See
+[FLOWX1011](diagnostics/FLOWX1011.md#why-the-severity-depends-on-the-profile). The
+remaining rules keep the Info stance for whoever implements them, at which point this
+paragraph is worth revisiting as a set rather than one row at a time.
 
 **Replay contract:** replaying a completed durable instance must produce
 byte-identical step inputs and identical control flow. Verified by

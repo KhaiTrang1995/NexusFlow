@@ -130,9 +130,35 @@ public sealed class ManifestTrigger
     [JsonPropertyName("topic")]
     public string? Topic { get; set; }
 
+    /// <summary>Consumer group, for <c>Bus</c> triggers.</summary>
+    [JsonPropertyName("group")]
+    public string? Group { get; set; }
+
     /// <summary>Cron expression, for <c>Schedule</c> triggers.</summary>
     [JsonPropertyName("cron")]
     public string? Cron { get; set; }
+
+    /// <summary>IANA time zone the cron expression is evaluated in.</summary>
+    [JsonPropertyName("timeZone")]
+    public string? TimeZone { get; set; }
+
+    /// <summary>
+    /// Whether the transport demands an idempotency key before the flow is created.
+    /// </summary>
+    /// <remarks>
+    /// Nullable, and the distinction is used: <c>null</c> means the trigger kind has no
+    /// such notion, which is not the same as declaring that no key is required.
+    /// </remarks>
+    [JsonPropertyName("idempotent")]
+    public bool? Idempotent { get; set; }
+
+    /// <summary>The tool description an agent trigger shows to the model.</summary>
+    [JsonPropertyName("description")]
+    public string? Description { get; set; }
+
+    /// <summary>Never, RequiredForSideEffects or Always, for <c>Agent</c> triggers.</summary>
+    [JsonPropertyName("confirmation")]
+    public string? Confirmation { get; set; }
 }
 
 /// <summary>One step of a flow.</summary>
@@ -160,13 +186,16 @@ public sealed class ManifestStep
 
     /// <summary>
     /// Nested blocks of a branching step: for a <c>Condition</c>, the <c>then</c> block
-    /// first and the <c>Otherwise</c> block second when there is one.
+    /// first and the <c>Otherwise</c> block second when there is one; for a
+    /// <c>Switch</c>, one block per case in declaration order and then the <c>Default</c>,
+    /// which is always present and may be empty.
     /// </summary>
     /// <remarks>
     /// Positional, because that is what the schema gives — <c>branches</c> is an array of
-    /// arrays with nothing naming them. A one-element array therefore means a <c>When</c>
-    /// with no alternative, and the reader has to know that; the alternative would be a
-    /// schema change nobody has agreed to.
+    /// arrays with nothing naming them. A one-element array on a <c>Condition</c>
+    /// therefore means a <c>When</c> with no alternative, and an empty last array on a
+    /// <c>Switch</c> means a value matching nothing falls through. The reader has to know
+    /// that; the alternative would be a schema change nobody has agreed to.
     /// </remarks>
     [JsonPropertyName("branches")]
     public List<List<ManifestStep>> Branches { get; set; } = [];

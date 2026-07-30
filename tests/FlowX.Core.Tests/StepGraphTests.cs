@@ -190,6 +190,103 @@ public sealed class StepGraphTests
     }
 
     [Fact]
+    public void ASwitchCarriesATargetPerCaseAndOneForTheMiss()
+    {
+        var node = StepNode.ForSwitch(0, [1, 3], defaultTarget: 5);
+
+        node.Kind.ShouldBe(StepKind.Switch);
+        node.CaseTargets.ShouldBe([1, 3]);
+        node.Target.ShouldBe(5, "The default target is where a value matching no case goes.");
+        node.IsControlTransfer.ShouldBeTrue();
+        node.Capability.ShouldBeNull();
+        node.IsCompensable.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ANonSwitchHasNoCaseTargets()
+    {
+        Step(0, Fixtures.ValidateOrder).CaseTargets.ShouldBeEmpty();
+        StepNode.ForBranch(0, falseTarget: 1).CaseTargets.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void RejectsASwitchWithNoCases()
+    {
+        // Nothing to select between, so it would always take its default — an
+        // unconditional transfer wearing the costume of a decision.
+        Should.Throw<InvalidFlowPlanException>(() => StepNode.ForSwitch(0, [], defaultTarget: 1))
+            .Message.ShouldContain("no cases");
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(1)]
+    [InlineData(0)]
+    public void ACaseTargetMustPointForward(int target)
+    {
+        // Same three shapes as a branch's, and the same reason: `Case` can only skip
+        // steps, never repeat them, so any of these is a layout bug that would make the
+        // step loop run forever.
+        Should.Throw<InvalidFlowPlanException>(() => StepNode.ForSwitch(2, [target], defaultTarget: 3))
+            .Message.ShouldContain("forward");
+
+        Should.Throw<InvalidFlowPlanException>(() => StepNode.ForSwitch(2, [3], defaultTarget: target))
+            .Message.ShouldContain("forward");
+    }
+
+    [Fact]
+    public void RejectsACaseTargetPastTheEndOfTheGraph()
+    {
+        // The factory cannot catch this — it does not know how many steps there will be.
+        // Checking only the default target would leave the proof holding for the arm
+        // nobody takes and not for the arms they do.
+        var error = Should.Throw<InvalidFlowPlanException>(() => StepGraph.Create([
+            Step(0, Fixtures.ValidateOrder),
+            StepNode.ForSwitch(1, [2, 9], defaultTarget: 3),
+            Step(2, Fixtures.CapturePayment),
+        ]));
+
+        error.Message.ShouldContain("9");
+        error.Message.ShouldContain("3");
+    }
+
+    [Fact]
+    public void AcceptsTheFullSwitchLayout()
+    {
+        // The shape the emitter produces for
+        // `.Switch(s).Case(a, b => b.Step<B>()).Case(c, b => b.Step<C>()).Default(b => b.Step<D>()).Step<E>()`.
+        var graph = StepGraph.Create([
+            Step(0, Fixtures.ValidateOrder),
+            StepNode.ForSwitch(1, [2, 4], defaultTarget: 6),
+            Step(2, Fixtures.ReserveInventory),
+            StepNode.ForJump(3, target: 7),
+            Step(4, Fixtures.CapturePayment),
+            StepNode.ForJump(5, target: 7),
+            Step(6, Fixtures.ValidateOrder),
+            Step(7, Fixtures.CapturePayment),
+        ]);
+
+        graph.Count.ShouldBe(8);
+        graph[1].CaseTargets.ShouldBe([2, 4]);
+        graph[1].Target.ShouldBe(6);
+    }
+
+    [Fact]
+    public void ASwitchWithNoDefaultTargetsTheJoinWhichMayEndTheFlow()
+    {
+        // The layout of a `Switch` written at the tail of a chain with no `Default`: a
+        // value matching nothing has nowhere to go but out. One past the last step is the
+        // only out-of-range target the graph permits, and this is the shape it exists for.
+        var graph = StepGraph.Create([
+            Step(0, Fixtures.ValidateOrder),
+            StepNode.ForSwitch(1, [2], defaultTarget: 3),
+            Step(2, Fixtures.CapturePayment),
+        ]);
+
+        graph[1].Target.ShouldBe(3);
+    }
+
+    [Fact]
     public void TheGraphIsImmutableOnceBuilt()
     {
         var steps = new List<StepNode> { Step(0, Fixtures.ValidateOrder) };

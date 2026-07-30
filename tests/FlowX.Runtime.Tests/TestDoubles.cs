@@ -26,6 +26,7 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     private readonly Dictionary<int, Error> _failures = [];
     private readonly Dictionary<int, Error> _compensationFailures = [];
     private readonly Dictionary<int, bool> _predicates = [];
+    private readonly Dictionary<int, int> _cases = [];
 
     /// <summary>Step indices executed, in the order the engine invoked them.</summary>
     public List<int> Executed { get; } = [];
@@ -41,8 +42,19 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     /// </remarks>
     public List<int> Evaluated { get; } = [];
 
+    /// <summary>Switch indices the engine asked about, in the order it asked.</summary>
+    /// <remarks>
+    /// Recorded for the same reason as <see cref="Evaluated"/>: a selector consulted
+    /// twice would be free here and, in a durable flow, has to answer the same way on
+    /// replay.
+    /// </remarks>
+    public List<int> Selected { get; } = [];
+
     /// <summary>Set to make a branch throw rather than answer.</summary>
     public int? ThrowAtBranch { get; set; }
+
+    /// <summary>Set to make a switch selector throw rather than answer.</summary>
+    public int? ThrowAtSwitch { get; set; }
 
     /// <summary>The context instances seen, for reference-identity assertions only.</summary>
     /// <remarks>
@@ -81,6 +93,17 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     public RecordingDispatcher AnswerAt(int index, bool answer)
     {
         _predicates[index] = answer;
+        return this;
+    }
+
+    /// <summary>Makes the switch at <paramref name="index"/> select case <paramref name="arm"/>.</summary>
+    /// <remarks>
+    /// An unlisted switch selects nothing — arm <c>-1</c> — so a test that says nothing
+    /// exercises the default path, which is the arm most likely to be forgotten.
+    /// </remarks>
+    public RecordingDispatcher SelectAt(int index, int arm)
+    {
+        _cases[index] = arm;
         return this;
     }
 
@@ -126,6 +149,21 @@ internal sealed class RecordingDispatcher : IStepDispatcher
         }
 
         return !_predicates.TryGetValue(stepIndex, out var answer) || answer;
+    }
+
+    /// <inheritdoc />
+    public int Select(int stepIndex, FlowContext ctx)
+    {
+        Selected.Add(stepIndex);
+
+        if (ThrowAtSwitch == stepIndex)
+        {
+            // The realistic failure: a selector reading a value no step on the path so
+            // far produced. FlowContext.Get<T> throws exactly this.
+            throw new InvalidOperationException("The selector read a value no step produced.");
+        }
+
+        return _cases.TryGetValue(stepIndex, out var arm) ? arm : -1;
     }
 }
 
@@ -236,6 +274,54 @@ internal static class Plans
             StepNode.ForCapability(0, Validate),
             StepNode.ForBranch(1, falseTarget: 3),
             StepNode.ForCapability(2, Capture),
+        ]));
+
+    /// <summary>
+    /// A three-case switch with a default, written out as the flat layout the compiler
+    /// produces:
+    /// <c>0 validate · 1 switch(→2,4,6 else 8) · 2 capture · 3 jump→9 · 4 reserve ·
+    /// 5 jump→9 · 6 capture · 7 jump→9 · 8 validate · 9 emit</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Spelled out rather than built by a helper, for the same reason
+    /// <see cref="Conditional"/> is: the layout <em>is</em> what these tests are about,
+    /// and a helper computing the targets the way the emitter does would let a shared bug
+    /// pass on both sides.
+    /// </para>
+    /// <para>
+    /// Every case block but the last is closed by a jump to the join, and the default
+    /// block is not, because nothing follows it to skip. The step in case 1 is
+    /// compensable, so an unwind can be checked to cover only the arm that actually ran.
+    /// </para>
+    /// </remarks>
+    public static ExecutionPlan Switching() => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.price", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForCapability(0, Validate),
+            StepNode.ForSwitch(1, [2, 4, 6], defaultTarget: 8),
+            StepNode.ForCapability(2, Capture),
+            StepNode.ForJump(3, target: 9),
+            StepNode.ForCapability(4, Reserve, Release),
+            StepNode.ForJump(5, target: 9),
+            StepNode.ForCapability(6, Capture),
+            StepNode.ForJump(7, target: 9),
+            StepNode.ForCapability(8, Validate),
+            StepNode.ForEmit(9, "order.priced"),
+        ]));
+
+    /// <summary>
+    /// A switch with no <c>Default</c> and nothing after it, so a value that matches no
+    /// case lands one past the last step and ends the flow.
+    /// </summary>
+    public static ExecutionPlan SwitchWithoutDefault() => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.route", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForCapability(0, Validate),
+            StepNode.ForSwitch(1, [2, 4], defaultTarget: 5),
+            StepNode.ForCapability(2, Reserve),
+            StepNode.ForJump(3, target: 5),
+            StepNode.ForCapability(4, Capture),
         ]));
 
     /// <summary>Two steps, neither compensable.</summary>

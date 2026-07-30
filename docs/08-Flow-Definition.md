@@ -92,7 +92,10 @@ flow.Step<AssessRisk>()
 
 Conditions may read **only** `ctx.State`, `ctx.Input` and prior step results
 (`FLOWX1011`). A condition that reads a clock, a static, or an external service
-is a determinism violation and fails the build in `Durable` flows.
+is a determinism violation and fails the build in `Durable` flows. In `Ephemeral`
+flows it is a warning — see [FLOWX1011](diagnostics/FLOWX1011.md) for what the rule
+detects, what it provably cannot, and why `ctx.UtcNow` is permitted where
+`DateTime.UtcNow` is not.
 
 ### 3.2 Branch on a value
 
@@ -102,6 +105,43 @@ flow.Switch(ctx => ctx.Get<ValidatedOrder>().Channel)
     .Case(Channel.Wholesale, b => b.Step<ApplyWholesalePricing>().Step<RequireCreditCheck>())
     .Default(b => b.Fail(OrderErrors.UnsupportedChannel));
 ```
+
+The selector obeys the same determinism rule as a `When` predicate: context,
+input and prior step results only. It is evaluated **exactly once**, and the
+cases are then tested against the value it produced, in declaration order, with
+`EqualityComparer<TValue>.Default` — so an `enum`, an `int` and a `string` all
+mean what you expect and none of them is boxed. The first match wins; a second
+case with the same value is unreachable rather than an error, exactly as a
+duplicated `When` would be.
+
+`TValue` is inferred from the selector, so a `.Case(...)` whose value is of the
+wrong type is a C# compile error rather than an arm that silently never matches.
+
+**A value that matches no case, in a switch with no `Default`, continues after
+the switch.** It is not an error and there is no diagnostic. Requiring a
+`Default` would force `.Default(b => { })` onto every switch that legitimately
+special-cases two channels out of five, and it still would not make the switch
+exhaustive — an `enum` can hold a value no member declares, so exhaustiveness is
+not a property the compiler can check for the general case. The rule is therefore
+the one `When` already uses: a branch nobody took does nothing. Where doing
+nothing is wrong, say so:
+
+```csharp
+.Default(b => b.Fail(OrderErrors.UnsupportedChannel))
+```
+
+> **Not yet true of `.Fail(...)`.** The builder declares it and the table in §4
+> lists it, but the compiler does not model it: a block whose only call is
+> `.Fail(...)` compiles to an *empty* block, which for a `Default` means the
+> fall-through above. Until `Fail` compiles to a step, spell an unsupported value
+> out as a capability that returns `Result.Fail(...)`.
+
+`Switch` compiles into the same flat step array as everything else — one `Switch`
+node carrying a target per case plus a default target, and a `Jump` closing each
+case block. See [06 §3](06-Execution-Engine.md#3-the-step-loop). The manifest
+publishes the *shape* — that the flow branches, and what is in each arm — and
+never the selector or the case values, because
+[a manifest is structure, never values](adr/ADR-0005-manifest-as-build-artifact.md).
 
 ### 3.3 Parallel
 

@@ -155,6 +155,9 @@ public sealed class ContextPoolingTests
 
         public bool Evaluate(int stepIndex, FlowContext ctx)
             => throw new NotSupportedException("This double runs plans with no branch step.");
+
+        public int Select(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no switch step.");
     }
 
     private sealed class StateReadingDispatcher : IStepDispatcher
@@ -172,5 +175,8 @@ public sealed class ContextPoolingTests
 
         public bool Evaluate(int stepIndex, FlowContext ctx)
             => throw new NotSupportedException("This double runs plans with no branch step.");
+
+        public int Select(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no switch step.");
     }
 }

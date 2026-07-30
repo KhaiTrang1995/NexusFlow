@@ -74,6 +74,37 @@ public static class FlowXDiagnostics
         "There is no permissive default. Declare Authorization explicitly — including " +
         "Authorization.Public, which is a reviewable statement rather than an omission.");
 
+    /// <summary>FLOWX1011 — a <c>When</c> condition reads something outside the flow's state.</summary>
+    /// <remarks>
+    /// <para>
+    /// A <strong>warning</strong> by default and reported as an <strong>error</strong>
+    /// when the flow declares <c>Profile = ExecutionProfile.Durable</c>, which is the
+    /// asymmetry ADR-0003 ratified for the determinism rules: a durable flow is replayed
+    /// and must take the branch it took the first time, an ephemeral one is not replayed
+    /// at all.
+    /// </para>
+    /// <para>
+    /// ADR-0003 and <c>06-Execution-Engine.md</c> §5 say <em>informational</em> for the
+    /// ephemeral case. A warning, deliberately: <c>Ephemeral</c> is the only profile the
+    /// runtime executes today, an Info diagnostic never appears in a build log, and the
+    /// rule would therefore have shipped doing nothing anywhere — which is the state
+    /// FLOWX1011 was already in. The flow is also one attribute away from being replayed,
+    /// and <c>FlowErrors.PredicateFailed</c> already calls an impure predicate a defect
+    /// under either profile.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor PredicateMustBePure = Create(
+        "FLOWX1011",
+        "Condition reads something outside the flow's state",
+        "The condition in flow '{0}' reads '{1}', which is {2}; a condition may read only " +
+        "the flow context, the flow input and prior step results",
+        "A branch decision must be a function of what the flow knows, or the same instance " +
+        "takes different paths on two runs and a durable replay diverges from the run it " +
+        "is replaying. Read time, identity and randomness through the context — ctx.UtcNow, " +
+        "ctx.NewId(), ctx.Random — which the journal reproduces, and move anything needing " +
+        "the outside world into a capability whose result the condition can then read.",
+        DiagnosticSeverity.Warning);
+
     /// <summary>FLOWX1014 — a retry policy is attached to a non-idempotent capability.</summary>
     public static readonly DiagnosticDescriptor RetryRequiresIdempotency = Create(
         "FLOWX1014",
@@ -159,6 +190,7 @@ public static class FlowXDiagnostics
         CapabilityInvokesCapability,
         FlowInheritsFlow,
         CapabilityMissingAuthorization,
+        PredicateMustBePure,
         RetryRequiresIdempotency,
         CapabilityHasMultipleContracts,
         AwaitSignalRequiresDurable,

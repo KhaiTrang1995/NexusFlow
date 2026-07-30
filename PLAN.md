@@ -446,9 +446,10 @@ maintainability and scale, not features.
 
 | Roadmap item | Where it stands |
 |---|---|
-| Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **WP-15**, part done — `When`/`Otherwise` ship end to end; `Switch`, `Parallel`, `ForEach`, `SubFlow` remain |
+| Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **WP-15** and **WP-20**, part done — `When`/`Otherwise` and `Switch`/`Case`/`Default` ship end to end; `Parallel`, `ForEach`, `SubFlow` remain |
 | Contract-compatibility checking | **WP-16**, done — as `FLOWX1020`, *step binding* |
-| Diagnostics FLOWX1001–1023 with help URIs | **Done** at WP-13. All raised, all tested, all with help links |
+| Diagnostics FLOWX1001–1023 with help URIs | **Partly done, and this row previously overstated it.** Raised today: `1001`–`1005`, `1010`, `1011`, `1014`, `1015`, `1017`, `1018`, `1020`, `1023`, `1024`. **Still reserved and raised by nothing:** `1006`–`1009`, `1012`, `1013`, `1016`, `1019`, `1021`, `1022`. Most await machinery that does not exist — `1013` needs `Parallel`, `1021` needs `SubFlow`, `1007`–`1009` and `1012` need durability — so the honest status is *blocked*, not *done*. **WP-21** closed `1011`, which was blocked on nothing |
+| Manifest completeness | **WP-22**, done — `triggers` and per-capability `errors` were declared in the schema and emitted by nothing |
 | Generator snapshot tests | **Done** at WP-5 and extended since |
 | Readable emitted code | **Done** — on disk under `obj/generated`, with per-step `#line` directives (fixed at WP-10) |
 | Build-overhead budget B12 | **Done** at WP-14. **+0.4 %** against +8 % |
@@ -474,7 +475,7 @@ maintainability and scale, not features.
 | **Deliverable** | `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` through the whole stack: builder surface, model, analysis, emission, `StepGraph`, engine |
 | **Exit** | A flow using every shape compiles, runs, appears correctly in the manifest, and renders in `flowx graph` |
 | **Depends on** | WP-5 |
-| **Status** | **`When` / `Otherwise` done**, through the whole stack. `Switch`, `Parallel`, `ForEach` and `SubFlow` are still open; the exit criterion above is not met until they land. |
+| **Status** | **`When` / `Otherwise` done**, through the whole stack. `Switch` followed at **WP-20**. `Parallel`, `ForEach` and `SubFlow` are still open; the exit criterion above is not met until they land. |
 
 The engine's step loop walked an array by index, and **budget B2 is a hard zero** — so
 the shape of the change was constrained before it was designed: no allocation per step,
@@ -503,10 +504,59 @@ Newly surfaced by this package, and open:
 
 - **`FLOWX1011` (predicate purity) is unimplemented.** It was reserved when nothing could
   declare a predicate. Something can now, and `FlowErrors.PredicateFailed` documents the
-  rule at run time that no analyzer enforces at build time.
+  rule at run time that no analyzer enforces at build time. **Closed by WP-21.**
 - **The `.Step<TCapability, TStepIn>(map)` overload is not honoured** by `FlowAnalyzer`
   or `FlowEmitter` — it parses and is then ignored, which is worse than not existing.
 - **Triggers and capability `errors` are in the manifest schema but never emitted.**
+
+### WP-20 — `Switch` / `Case` / `Default`
+
+| | |
+|---|---|
+| **Goal** | A flow can branch on a *value*, not only on a yes/no question |
+| **Why** | The second shape in [08 §3.2](docs/08-Flow-Definition.md#32-branch-on-a-value), documented since before anything could compile it. Written as nested `When`s it costs one predicate per arm and reads nothing like the decision it is. |
+| **Tests first** | Walker tests for the nested case blocks · model tests for the layout arithmetic · a pinned emitted file · runtime tests per arm and for the miss · an allocation theory over every arm · `StepGraph` invariant tests |
+| **Deliverable** | `Switch`/`Case`/`Default` through the whole stack: builder surface, model, analysis, emission, `StepGraph`, engine |
+| **Exit** | Every arm executes, the default catches a miss, **0 B on every arm**, and the manifest shows the shape without the values |
+| **Depends on** | WP-15 |
+| **Status** | **Done.** |
+
+**A switch is one node, not a chain of branches.** It could have been desugared into
+`n` `StepKind.Branch` steps comparing the selector against each case in turn, which would
+have needed no new step kind, no new engine code and no change to `IStepDispatcher`. It
+was rejected for two reasons: it re-evaluates the selector once per arm, and it publishes
+the author's `Switch` to the manifest as a nest of conditionals — the manifest's whole
+job is to show the shape that was declared. So `StepKind.Switch` carries a target per
+case plus a default target, and the dispatcher gained
+`int Select(int stepIndex, FlowContext ctx)` returning the matching arm, or `-1`.
+
+`Select` returns an **`int`**, not the value it selected. Returning the value means
+returning it as `object` — which boxes an `enum` on every switch a flow takes and loses
+B2 — or making the method generic, which the engine cannot call because it does not know
+the type. `TakingAnyCaseOfASwitchAllocatesNothing` covers all three arms, the miss, and
+an out-of-range arm, and measures **0 B** on every one.
+
+**A miss with no `Default` falls through.** Requiring a `Default` would force
+`.Default(b => { })` onto every switch that legitimately special-cases a few values, and
+would still not make the switch exhaustive — an `enum` can hold a value no member
+declares. So the rule is `When`'s: a branch nobody took does nothing. Recorded in
+[08 §3.2](docs/08-Flow-Definition.md#32-branch-on-a-value) and on `ISwitchBuilder`
+itself, because a reader hits one of those two before they hit this file.
+
+**The manifest carries neither the selector nor the case values**, for exactly the reason
+WP-15 refused the predicate: `Channel.Wholesale` is a business value, and the file's rule
+is structure only. The cases appear as positional `branches`, empty ones included, so a
+reader sees that the flow branches three ways and what is in each arm.
+
+Newly surfaced by this package, and open:
+
+- **`.Fail(error)` is declared on the builder, listed in the §4 table, and not modelled
+  by the compiler.** A block whose only call is `.Fail(...)` compiles to an *empty* block
+  — so `08 §3.2`'s own example, `.Default(b => b.Fail(OrderErrors.UnsupportedChannel))`,
+  currently compiles to a default that does nothing. Documented in place rather than left
+  to be discovered.
+- **`FLOWX1011` now has a second unenforced subject**: a `Switch` selector obeys the same
+  purity rule as a `When` predicate, and nothing checks either.
 
 ### WP-16 — Step binding
 
@@ -636,6 +686,70 @@ idempotency the tool cannot verify, or deleting the retry — and the diagnostic
 prevents a duplicate charge), `FLOWX1018` (the repair is splitting a capability in two),
 and `FLOWX1024` (suppression needs a `FLOWX-DEBT` owner and expiry a tool cannot
 invent).
+
+### WP-21 — `FLOWX1011`, predicate purity
+
+| | |
+|---|---|
+| **Goal** | The determinism rule stated in two places is enforced in one |
+| **Why** | `FLOWX1011` was reserved when nothing in the DSL could declare a predicate. WP-15 shipped `When`, so predicates exist — and the rule was documented in `08 §3.1` and restated by `FlowErrors.PredicateFailed` at run time while no analyzer checked it. A documented compile error that nothing raises is the failure mode P1 exists to remove |
+| **Deliverable** | `PredicatePurityAnalyzer`, its documentation page, and a code fix for the type-exact rewrites |
+| **Exit** | An impure predicate fails the reference sample's own build; a legitimate one stays silent |
+| **Depends on** | WP-15 |
+| **Status** | **Done.** Verified by injecting `DateTime.UtcNow` into the real sample: the build fails at the exact span, and reverts clean. |
+
+**It separates what it proves from what it merely lists, and says which is which.**
+Scope is a proof: whether a symbol was declared inside the predicate or outside it comes
+from `DeclaringSyntaxReferences` and cannot be evaded, which is what catches an injected
+service reached through `this` — no catalogue of impure types would ever contain the
+application's own interface. The known-impure statics (`DateTime.UtcNow`, `Guid.NewGuid`,
+`Random`, `Environment`, `File`, `HttpClient`, …) are **a list, not a proof**.
+
+What it cannot catch is documented on the page rather than left for a user to discover:
+**nothing is interprocedural**, so `ctx.Get<Order>().IsStillOpen()` is accepted and its
+body may read a clock; a method-group predicate has no visible body at the call site;
+`static readonly` is treated as constant and is only shallowly so.
+
+**Severity deviates from the profile table, deliberately.** `06 §5` prescribes Info under
+`Ephemeral`; this ships a Warning. Info never surfaces in a build log, and `Ephemeral` is
+the only profile the runtime executes today — so Info would have shipped a rule that does
+nothing anywhere, which is exactly the state `FLOWX1011` was already in. ADR-0003 assigns
+the Info stance to `FLOWX1007`–`1009` specifically, not to this rule, so the ADR is not
+contradicted; `06 §5` was amended to record the deviation and to say the remaining rules
+should be revisited **as a set** rather than one row at a time.
+
+**Scoped to `When` only.** `Return`, `Emit`, `EmitOnFailure`, `ForEach`'s selector,
+`Step<T,TIn>`'s mapping and — since WP-20 — `Switch`'s selector all take the same
+delegate shape and are subject to the same argument. Extending the analyzer is
+mechanical; leaving it unstated would not be.
+
+### WP-22 — The manifest's declared-but-unwritten fields
+
+| | |
+|---|---|
+| **Goal** | The manifest emits everything its own schema declares |
+| **Why** | `triggers` and per-capability `errors` were in the schema and written by nothing. A consumer reading the schema then cannot distinguish *"this capability declares no errors"* from *"the generator never looked"* — and `flowx diff`, blast-radius review and the P8 AI surface all read this file to make decisions. An ambiguous absence is worse than a missing field |
+| **Deliverable** | `TriggerReader`, `ErrorCatalogueReader`, the emission, and `flowx diff` rules for both |
+| **Exit** | The sample's manifest carries its real trigger and real error codes; the CI gate stays green; two builds are byte-identical |
+| **Depends on** | WP-6, WP-17 |
+| **Status** | **Done.** 1 trigger, 3 populated catalogues and 1 empty one on the sample. Determinism confirmed by identical SHA-256 across clean rebuilds. |
+
+**Three states, three renderings.** `errors` is written when empty (`[]` — "declares
+none"), and **withheld entirely** when the catalogue could not be resolved. This is the
+actual fix for the ambiguity above: a catalogue short by one entry reads exactly like a
+complete one, so an unresolvable case must be *visibly* absent rather than quietly
+approximated. Unresolvable means a cross-assembly factory, a non-literal code, or an
+`Error` arriving as a parameter.
+
+**No error messages, only codes and categories.** A code is structure; a message
+interpolating a runtime value is not, and the manifest's rule is the one WP-15 upheld
+against predicate text — structure only, never values.
+
+**A third-party `TriggerAttribute` subclass is skipped, not guessed at.** A trigger's
+`Kind` is an overridden property, which is executable code rather than attribute data, so
+it cannot be read from metadata for a type the abstractions do not ship. Declining to
+invent it is right; doing so *silently* is not, and that gap is recorded in
+[CHECKLIST §5c](CHECKLIST.md).
 
 ---
 

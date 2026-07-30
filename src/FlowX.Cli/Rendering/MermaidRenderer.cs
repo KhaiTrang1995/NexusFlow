@@ -116,9 +116,7 @@ public static class MermaidRenderer
                     continue;
                 }
 
-                // The first block is the `then`, the second the `Otherwise` — position is
-                // all the manifest gives, and all it needs to give.
-                Edge(builder, NodeId(prefix, step.Id), NodeId(prefix, block[0].Id), branch == 0 ? "yes" : "no");
+                Edge(builder, NodeId(prefix, step.Id), NodeId(prefix, block[0].Id), BranchLabel(step, branch));
                 Connect(builder, prefix, block);
             }
 
@@ -136,7 +134,38 @@ public static class MermaidRenderer
         }
     }
 
+    /// <summary>
+    /// The label on the edge into one block, which says <em>which arm</em> and never on
+    /// what.
+    /// </summary>
+    /// <remarks>
+    /// Position is all the manifest gives: for a conditional the first block is the
+    /// <c>then</c> and the second the <c>Otherwise</c>; for a switch the blocks are the
+    /// cases in declaration order and then the <c>Default</c>. The case values are
+    /// deliberately not published — they are business data — so the diagram numbers the
+    /// arms rather than inventing names for them.
+    /// </remarks>
+    private static string BranchLabel(ManifestStep step, int branch)
+    {
+        if (step.Kind != "Switch")
+        {
+            return branch == 0 ? "yes" : "no";
+        }
+
+        return branch == step.Branches.Count - 1
+            ? "default"
+            : "case " + branch.ToString(CultureInfo.InvariantCulture);
+    }
+
     /// <summary>The step ids control can leave <paramref name="step"/> from.</summary>
+    /// <remarks>
+    /// A branching step has more than one exit — the tail of each populated block, plus
+    /// the step itself when some path bypasses it. For a conditional that path is a
+    /// missing <c>Otherwise</c>, which the manifest expresses by having only one block;
+    /// for a switch it is an empty case or an absent <c>Default</c>, which it expresses by
+    /// an empty block. Both reduce to the same question: is there a block that declares
+    /// nothing, or fewer than two blocks at all.
+    /// </remarks>
     private static IEnumerable<int> Exits(ManifestStep step)
     {
         if (step.Branches.Count == 0)
@@ -153,9 +182,7 @@ public static class MermaidRenderer
             }
         }
 
-        // Fewer than two populated blocks means one path bypasses the conditional
-        // entirely, so the conditional itself is also an exit.
-        if (step.Branches.Count(b => b.Count > 0) < 2)
+        if (step.Branches.Count < 2 || step.Branches.Any(b => b.Count == 0))
         {
             yield return step.Id;
         }
@@ -180,12 +207,13 @@ public static class MermaidRenderer
             return "emit " + step.Event;
         }
 
-        if (step.Kind == "Condition")
+        if (step.Kind is "Condition" or "Switch")
         {
-            // Not the predicate: the manifest's step object has no field for it, so the
-            // diagram can show that the flow branches and where each branch goes, but not
-            // on what. Inventing a label would be worse than an honest one.
-            return "condition";
+            // Not the predicate, and not the selector or the case values: the manifest's
+            // step object has no field for any of them, so the diagram can show that the
+            // flow branches and where each branch goes, but not on what. Inventing a
+            // label would be worse than an honest one.
+            return step.Kind == "Switch" ? "switch" : "condition";
         }
 
         if (string.IsNullOrEmpty(step.Capability))
@@ -218,6 +246,7 @@ public static class MermaidRenderer
         "Emit" => $"([{Quote(label)}])",
         "AwaitSignal" => $">{Quote(label)}]",
         "Condition" => $"{{{Quote(label)}}}",
+        "Switch" => $"{{{{{Quote(label)}}}}}",
         _ => $"[{Quote(label)}]",
     };
 
