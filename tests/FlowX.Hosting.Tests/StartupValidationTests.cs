@@ -1,5 +1,6 @@
 using FlowX.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -134,5 +135,50 @@ public sealed class StartupValidationTests
             "produce two engines with two independent context pools.");
 
         await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task AddFlowXRegistersTheHealthProbeAndNotJustItsType()
+    {
+        // Registering the type is not registering the check. AddFlowX did the first and
+        // not the second: MapHealthChecks threw at startup, and an application that also
+        // called AddHealthChecks got a probe that never ran. The sample found it on its
+        // first run; this keeps it found.
+        var services = new ServiceCollection();
+        services.AddLogging();   // HealthCheckService takes an ILogger; a real host has one.
+        services.AddFlowX(o => o.ApplicationName = "Sample.App");
+
+        using var provider = services.BuildServiceProvider();
+
+        var registrations = provider
+            .GetRequiredService<IOptions<HealthCheckServiceOptions>>()
+            .Value.Registrations;
+
+        registrations.Count.ShouldBe(1);
+        registrations.Single().Name.ShouldBe("flowx");
+        registrations.Single().Tags.ShouldContain("ready");
+
+        var report = await provider
+            .GetRequiredService<HealthCheckService>()
+            .CheckHealthAsync(TestContext.Current.CancellationToken);
+
+        // Unhealthy because MarkReady runs from the hosted service, which has not
+        // started here. That it reports at all is the point.
+        report.Entries.ShouldContainKey("flowx");
+    }
+
+    [Fact]
+    public void CallingAddFlowXTwiceRegistersTheHealthProbeOnce()
+    {
+        var services = new ServiceCollection();
+        services.AddFlowX(o => o.ApplicationName = "Sample.App");
+        services.AddFlowX(o => o.ApplicationName = "Sample.App");
+
+        using var provider = services.BuildServiceProvider();
+
+        provider
+            .GetRequiredService<IOptions<HealthCheckServiceOptions>>()
+            .Value.Registrations.Count.ShouldBe(1,
+                "A duplicated probe reports the same condition twice and doubles its cost.");
     }
 }

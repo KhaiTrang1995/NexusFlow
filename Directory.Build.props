@@ -62,4 +62,11 @@
     <EnableAotAnalyzer>false</EnableAotAnalyzer>
   </PropertyGroup>
 
+  <!--
+    Package consumers get this by importing the analyzer package's props. Repository
+    projects reference FlowX.Compiler as a ProjectReference, which does not import it,
+    so the same file is imported here — one definition, not a copy that can drift.
+  -->
+  <Import Project="$(MSBuildThisFileDirectory)src/FlowX.Compiler/build/FlowX.Compiler.props" />
+
 </Project>

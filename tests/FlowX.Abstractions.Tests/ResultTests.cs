@@ -137,4 +137,50 @@ public sealed class ResultTests
         default(Result<int>).IsSuccess.ShouldBeTrue();
         default(Result<int>).Value.ShouldBe(0);
     }
+
+    [Fact]
+    public void AValueConvertsImplicitlyToASuccess()
+    {
+        // This is the shape every capability returns: `return new Reservation(...)`.
+        // Without the conversion the documented style does not compile, which is how
+        // the ecommerce sample found it.
+        Result<int> result = 42;
+
+        result.IsSuccess.ShouldBeTrue();
+        result.Value.ShouldBe(42);
+    }
+
+    [Fact]
+    public void AnErrorConvertsImplicitlyToAFailure()
+    {
+        Result<int> result = new Error("order.rejected", "no", ErrorCategory.Conflict);
+
+        result.IsFailure.ShouldBeTrue();
+        result.Error.Code.ShouldBe("order.rejected");
+    }
+
+    [Fact]
+    public void TheConversionsSurviveTheConditionalOperator()
+    {
+        // A capability that returns one branch or the other in a single expression is
+        // the case that actually exercises both conversions against one target type.
+        static Result<string> Pick(bool ok) => ok
+            ? "receipt-1"
+            : new Error("payment.declined", "no funds", ErrorCategory.Conflict);
+
+        Pick(true).Value.ShouldBe("receipt-1");
+        Pick(false).Error.Code.ShouldBe("payment.declined");
+    }
+
+    [Fact]
+    public void ResultOfErrorStillWorksThroughTheFactories()
+    {
+        // `Result<Error>` is the one instantiation where the two conversions collide,
+        // so an implicit conversion to it is a CS0457 at the call site — loud, never
+        // silent. The factories stay unambiguous, which is what makes that acceptable.
+        var carried = new Error("audit.finding", "found", ErrorCategory.Validation);
+
+        Result.Ok(carried).Value.ShouldBeSameAs(carried);
+        Result.Fail<Error>(carried).Error.ShouldBeSameAs(carried);
+    }
 }

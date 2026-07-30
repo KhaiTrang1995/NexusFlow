@@ -3,34 +3,35 @@
 > **Policy:** [21-Quality-Gates §6](21-Quality-Gates.md#6-technical-debt-policy).
 > **Budget:** ≤ 20 open entries · no entry older than 6 months · every entry has an owner and an expiry.
 >
-> **Open entries: 0**
+> **Open entries: 1**
 
 ---
 
-## Why this file exists and is empty
+## Why this file exists
 
 "No technical debt" is not a state a real codebase reaches, and claiming it would
 be the first lie in this repository. What *is* reachable: **no debt that is
 undeclared, unowned or unexpiring.**
 
-This register is empty because the codebase currently contains no suppressions —
-not because debt is forbidden. When the first one is needed, it goes here, with a
-date on it.
+The register was empty until the reference sample needed the first suppression. It
+now has one entry, with a date on it.
 
 ---
 
 ## Entry format
 
 Every `[SuppressMessage]` in the codebase must carry a `FLOWX-DEBT` marker whose
-`id` matches a row here. The `SuppressionsAreAccountable` gate in
+`id` matches a row here. A `#pragma warning disable` must carry either the same
+marker or a same-line reason — it silences a rule just as completely, and was not
+covered by the gate until the sample used one. The `SuppressionsAreAccountable` gate in
 `.github/workflows/quality.yml` fails the build otherwise, and fails it again the
 day an `expires` date passes.
 
 ```csharp
-// FLOWX-DEBT: id=DEBT-0001 owner=runtime expires=2026-12-31
+// FLOWX-DEBT: id=DEBT-0042 owner=runtime expires=2026-12-31
 //   Reason: <what would have to change for this to be removable>
 //   Tracked by: #<issue>
-[SuppressMessage("Sonar", "S3776:Cognitive Complexity", Justification = "DEBT-0001")]
+[SuppressMessage("Sonar", "S3776:Cognitive Complexity", Justification = "DEBT-0042")]
 ```
 
 | Field | Rule |
@@ -46,7 +47,7 @@ day an `expires` date passes.
 
 | ID | Area | Description | Owner | Created | Expires | Removable when |
 |---|---|---|---|---|---|---|
-| — | — | *none* | — | — | — | — |
+| DEBT-0001 | `samples/ecommerce` | `FLOWX1024` suppressed on `PlaceOrderFlow`'s `.Emit<OrderPlaced>()`. The step is compiled into the plan and recorded in the manifest, so a consumer reading the manifest expects the event — but transactional outbox publication is not implemented, and nothing publishes it. | orders | 2026-07-30 | 2026-12-31 | The outbox ships ([P8](03-Design-Principles.md#p8--event-native)) and `.Emit` actually publishes. Then delete the pragma; the warning disappears on its own. |
 
 ---
 

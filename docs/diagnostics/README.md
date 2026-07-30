@@ -26,6 +26,7 @@ the build.
 | [FLOWX1017](FLOWX1017.md) | AwaitSignal requires the Durable profile | A waiting flow vanishing with its node |
 | [FLOWX1018](FLOWX1018.md) | Cache requires no side effects | Reporting a write that never happened |
 | [FLOWX1023](FLOWX1023.md) | Flow declares no steps | A flow that silently does nothing |
+| [FLOWX1024](FLOWX1024.md) | Emit step is recorded but not published | A consumer waiting for an event the manifest promised |
 
 ## Ids reserved but not yet raised
 

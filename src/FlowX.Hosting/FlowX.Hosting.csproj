@@ -11,14 +11,20 @@
 
   <ItemGroup>
     <!--
-      Abstractions packages only. Referencing Microsoft.Extensions.Hosting itself would
-      drag a host implementation into every consumer, including ones that compose their
-      own — a library takes the contract, not the container.
+      Abstractions where an abstraction exists. Referencing Microsoft.Extensions.Hosting
+      itself would drag a host implementation into every consumer, including ones that
+      compose their own — a library takes the contract, not the container.
+
+      The health-checks package is the exception, and a deliberate one. The Abstractions
+      half has IHealthCheck but not HealthCheckServiceOptions, so a library that takes
+      only the contract can define a probe and cannot register it. AddFlowX shipped in
+      exactly that state: the check was resolvable and never ran. This package is a
+      service, not a host, and registering the probe it defines is this project's job.
     -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>

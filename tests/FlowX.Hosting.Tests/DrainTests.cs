@@ -42,6 +42,49 @@ public sealed class DrainTests
     }
 
     [Fact]
+    public async Task RunsAFlowWithAnOutputAndProjectsIt()
+    {
+        var (host, dispatcher) = NewHost();
+        dispatcher.Release();
+
+        var result = await host.RunAsync(
+            Plans.TwoStep(),
+            dispatcher,
+            Plans.Invocation,
+            "input",
+            static ctx => ctx.Get<string>().Length,
+            TestContext.Current.CancellationToken);
+
+        result.IsSuccess.ShouldBeTrue();
+        result.Value.ShouldBe(5);
+        host.InFlight.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ADrainingHostRefusesAFlowWithAnOutput()
+    {
+        var (host, dispatcher) = NewHost();
+        dispatcher.Release();
+
+        await host.DrainAsync(TestContext.Current.CancellationToken);
+
+        var result = await host.RunAsync(
+            Plans.TwoStep(),
+            dispatcher,
+            Plans.Invocation,
+            "input",
+            static ctx => ctx.Get<string>().Length,
+            TestContext.Current.CancellationToken);
+
+        // The same refusal the non-generic overload gives. An overload that quietly
+        // accepted work during a drain would be a hole in the shutdown contract.
+        result.IsFailure.ShouldBeTrue();
+        result.Error!.Code.ShouldBe("host.draining");
+        result.Error.Category.ShouldBe(ErrorCategory.Unavailable);
+        result.CompletedSteps.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task CountsFlowsWhileTheyAreInFlight()
     {
         var (host, dispatcher) = NewHost();

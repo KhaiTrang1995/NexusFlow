@@ -6,8 +6,8 @@
 >
 > **Last updated:** 2026-07-30 · **Phase:** P0 · **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 343/343 passing ·
-> **Coverage:** 94.8 % line / 85.3 % branch (gates: 80 / 75) · **SDK:** 10.0.110
+> **Build:** 0 warnings, 0 errors · **Tests:** 407/407 passing ·
+> **Coverage:** 93.2 % line / 85.8 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **B1:** 4-step flow through the engine — **169 ns / 5 000 ns budget, 0 B** ·
 > **B3:** dispatch 20 ns / 150 ns, 0 B · **B2:** hard zero, met
 >
@@ -66,7 +66,7 @@ These gate everything below them. None is code work.
 - [x] `ci.yml` — build with warnings-as-errors
 - [x] `ci.yml` — architecture fitness functions gated ahead of the rest of the suite
 - [x] `ci.yml` — trim/AOT analyzer gate failing on `IL2xxx`/`IL3xxx` (verified: 0)
-- [x] `ci.yml` — NativeAOT publish smoke test (guarded until an executable exists at WP-10)
+- [x] `ci.yml` — NativeAOT publish, **and a smoke run of the published binary** (WP-10)
 - [x] `ci.yml` — Mermaid parse gate
 - [x] `ci.yml` — internal link check
 - [x] `ci.yml` — attribution guard (rejects bot authorship)
@@ -150,16 +150,59 @@ immutable, and rejects every invariant violation under test.
 
 ---
 
-## 5b. WP-3 → WP-11 · Not started
-- [ ] **WP-3** `FlowX.Benchmarks` — B1–B3 measurable, baseline committed
-- [ ] **WP-4** `FlowX.Runtime` — step loop, pooled contexts, deadline handling
-- [ ] **WP-5** `FlowX.Compiler` — `FlowPlanGenerator`, model layer separate from emission
-- [ ] **WP-6** Manifest emission, deterministic and schema-valid
-- [ ] **WP-7** `FlowX.Hosting` — DI, startup validation, graceful drain
-- [ ] **WP-8** `plugins/FlowX.Http` — endpoint, binder, RFC 7807, OpenAPI
-- [ ] **WP-9** `FlowX.Cli` — `flowx graph`
-- [ ] **WP-10** `samples/ecommerce` — 3-step flow end to end
+## 5b. WP-3 → WP-12
+
+- [x] **WP-3** `FlowX.Benchmarks` — B1–B3 measurable, baseline committed
+- [x] **WP-4** `FlowX.Runtime` — step loop, pooled contexts, deadline handling, 0 B
+- [~] **WP-5** `FlowX.Compiler` — `FlowPlanGenerator`, model layer separate from emission.
+      *Remaining:* five diagnostics needing a separate `DiagnosticAnalyzer`, the
+      branching DSL, budget B12
+- [x] **WP-6** Manifest emission, deterministic and schema-valid
+- [x] **WP-7** `FlowX.Hosting` — DI, startup validation, graceful drain, health probe
+- [~] **WP-8** `plugins/FlowX.Http` — endpoint, request binding, RFC 7807.
+      *Remaining:* generated endpoints from `[HttpTrigger]`, OpenAPI
+- [x] **WP-9** `FlowX.Cli` — `flowx graph`, `flowx manifest`
+- [~] **WP-10** `samples/ecommerce` — 3-step flow end to end. *Remaining:* ZAP baseline
 - [ ] **WP-11** P0 gate — run the kill criterion and publish the report
+- [ ] **WP-12** `FlowX.Testing` — a supported `CapabilityContext` for tests
+
+### WP-10 · what it delivered
+
+- [x] Four capabilities, one flow, one endpoint — `dotnet run` serves it
+- [x] The endpoint returns the flow's **declared output**, projected from its
+      `.Return(...)` clause, not a step count
+- [x] 28 tests: 10 capability tests with **no host in the file** (quality goal Q2),
+      8 over a real server including the compensation path, 8 on the adapters,
+      2 on the wire contract
+- [x] NativeAOT publish, ~11 MB, 0 trim/AOT warnings — **and CI runs the binary**,
+      because linking and serving a request are different facts
+- [x] `flowx manifest` → `flowx graph` renders the sample's real manifest; `mmdc`
+      validates the output
+- [ ] ZAP baseline scan — the `security` workflow needs a CI run against the sample
+
+**Exit criterion met**, bar the ZAP scan, which cannot run in this working tree.
+
+### WP-10 · what the first consumer found
+
+The sample was the first code written against the platform from outside it. Six
+defects that no test inside the platform could have caught:
+
+| Found | Was |
+|---|---|
+| `Result<T>` had no implicit conversions | The documented capability style did not compile |
+| Every `#line` directive pointed at one line | A breakpoint on step three landed on step one |
+| `.Return(...)` silently dropped | The flow declared an output nothing produced |
+| `MapFlow` never read a request body | A flow's first step had nothing to bind to |
+| `AddFlowX` registered the health-check **type**, not the check | `MapHealthChecks` threw at startup |
+| The manifest embedded an absolute path | Broke ADR-0005 determinism; leaked the agent's layout |
+
+Three more surfaced while getting the suite green:
+
+| Found | Was |
+|---|---|
+| `.Emit<T>()` publishes nothing | Silent. Now **FLOWX1024**, the only warning in the set |
+| Allocation budgets measured 376 B in Debug | Compiler scaffolding, not the engine. CI runs Release and never saw it; every contributor did. Now skipped in Debug, with the reason |
+| The walker read `ArgumentNullException.ThrowIfNull(flow)` as a chain | A statement *after* the chain would have silently replaced it. The walk is now rooted at the builder parameter |
 
 ---
 
@@ -169,23 +212,30 @@ immutable, and rejects every invariant violation under test.
 |---|---|---|---|
 | Compiler warnings | 0 | **0** ✅ | verified locally |
 | Blocker/critical Sonar issues | 0 | **not running** | WP-0 |
-| Line coverage | ≥ 80 % | **94.8 %** ✅ | verified locally |
-| Branch coverage | ≥ 75 % | **85.3 %** ✅ | verified locally |
+| Line coverage | ≥ 80 % | **93.2 %** ✅ | verified locally |
+| Branch coverage | ≥ 75 % | **85.8 %** ✅ | verified locally |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
 | Fitness functions | all green | **34/34** ✅ | plus 10 compiler fitness tests |
+| NativeAOT publish | links **and runs** | **✅** | 11 MB binary served a real order |
 | Concurrent cross-tenant leak | none | **none** ✅ | 64 concurrent flows, 0 overlaps |
 | SAST findings | 0 | **wired, unrun** — needs a CI run | WP-0 |
-| DAST findings | 0 | **wired, guarded** — needs WP-10 | WP-0 |
+| DAST findings | 0 | **wired, unrun** — the sample now exists; needs a CI run | WP-0 |
 | Vulnerable dependencies | 0 | **0 by construction** — zero dependencies | WP-1 |
-| Open debt entries | ≤ 20 | **0** | enforced by `quality.yml` |
+| Open debt entries | ≤ 20 | **1** — [DEBT-0001](docs/DEBT.md) | enforced by `quality.yml` |
 | B1 flow overhead p99 | ≤ 5 µs | **174 ns** ✅ | WP-4, real engine |
-| B2 allocations per step | 0 B | **0 B** ✅ | engine included; gated as a unit test |
+| B2 allocations per step | 0 B | **0 B** ✅ | gated as a unit test — **Release only**, see below |
 | B3 capability dispatch p99 | ≤ 150 ns | **20.6 ns** ✅ | shared hardware |
 
 Nothing in the "Now" column is green by assertion — every ✅ was produced by a
 command in this working tree. Every "not measured" is equally honest: the gate
 exists and the mechanism to run it has not been run here.
+
+**B2 is measured in Release only.** The C# compiler emits async state machines as
+classes in Debug and structs in Release, so a Debug run charges the engine ~376 B of
+Edit-and-Continue scaffolding it does not allocate. The tests now skip in Debug and
+say why, rather than failing in the configuration everyone runs locally — a gate that
+fails by default is a gate people learn to ignore. Run `dotnet test -c Release`.
 
 ---
 
@@ -197,8 +247,8 @@ Controls from [21-Quality-Gates §3](docs/21-Quality-Gates.md#3-owasp-top-10-map
 
 | Risk | Control designed | Control enforced |
 |---|---|---|
-| A01 Broken access control | [x] required `Authorization` member | [ ] needs `FLOWX1010` (WP-5) |
-| A02 Cryptographic failures | [x] `[Sensitive]` + generated redaction | [ ] needs the generator (WP-5) |
+| A01 Broken access control | [x] required `Authorization` member | [x] `FLOWX1010` raised and tested; the sample's four capabilities all declare a stance |
+| A02 Cryptographic failures | [x] `[Sensitive]` + generated redaction | [ ] **nothing consumes the attribute.** The sample marks `PlaceOrder.PaymentToken` sensitive; the compiler does not read it, it is absent from the manifest, and no redaction is generated |
 | A03 Injection | [x] compile-time graph, no `Do(lambda)` | [~] structurally true; CodeQL + Semgrep wired, unrun |
 | A04 Insecure design | [x] STRIDE per boundary, 12 ADRs | [x] ADR review in CONTRIBUTING |
 | A05 Security misconfiguration | [x] no permissive defaults | [x] startup validation, 8 tests |
@@ -227,8 +277,9 @@ claim than the truth, and a less useful one.
 
 Two CI jobs were also wrong and are fixed: the AOT job published a **class
 library**, where `PublishAot` does nothing and a RuntimeIdentifier is required.
-The real gate for a library is the analyzer at build time, which now runs; a
-genuine AOT publish is guarded until an executable exists at WP-10.
+The real gate for a library is the analyzer at build time, which now runs. The
+genuine AOT publish was guarded until an executable existed; the sample is that
+executable, so the guard is gone and CI now publishes **and runs** the binary.
 
 ---
 

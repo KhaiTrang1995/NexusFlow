@@ -56,6 +56,28 @@ public sealed class CapturePayment : ICapability<CaptureRequest, Capture>
 }
 ```
 
+### Returning a result
+
+The `switch` above is explicit about both outcomes because it produces them in one
+expression. In the common shape — an early return for the failure, the value at the
+end — implicit conversions carry both:
+
+```csharp
+if (available < input.Quantity)
+{
+    return OrderErrors.OutOfStock(input.Sku, available);   // Error   → failed Result
+}
+
+await _store.ReserveAsync(input.Sku, input.Quantity, ctx.IdempotencyKey, ct);
+
+return new Reservation(input.Sku, input.Quantity, ctx.IdempotencyKey);   // value → success
+```
+
+`Result.Ok(...)` and `Result.Fail<T>(...)` remain, and are the only option in one
+case: a capability whose success type **is** `Error`. There both conversions apply and
+an implicit one is a `CS0457` at the call site — diagnosed loudly, never silently
+mis-resolved.
+
 ### The attribute is the contract
 
 | Property | Meaning | Consumed by |

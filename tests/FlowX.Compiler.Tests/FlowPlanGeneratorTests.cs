@@ -163,6 +163,118 @@ public sealed class FlowPlanGeneratorTests
     }
 
     [Fact]
+    public void EachStepGetsItsOwnLineDirective()
+    {
+        // A fluent chain nests its receiver inside every later call, so each invocation's
+        // span starts at the head of the chain. Taking the location from the invocation
+        // mapped all three steps to one line, and a breakpoint on the third landed on the
+        // first — which is exactly the debugging experience R1 says must not happen.
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Step<CapturePayment>()
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        var lines = System.Text.RegularExpressions.Regex
+            .Matches(run.Plan ?? string.Empty, @"#line (\d+) ")
+            .Select(m => m.Groups[1].Value)
+            .Distinct()
+            .ToList();
+
+        lines.Count.ShouldBeGreaterThan(1,
+            "Every step reported the same source line. " + run.Describe());
+    }
+
+    [Fact]
+    public void EmitsTheReturnClauseAsAProjection()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Return(ctx => new OrderResult(ctx.Get<Reservation>().Sku));
+            }
+            """));
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+
+        // A static readonly field, so passing it to the engine allocates nothing, and the
+        // author's own expression, so it means what they wrote.
+        run.Plan.ShouldContainText(
+            "public static readonly Func<FlowContext, Sample.OrderResult> Projection =",
+            run.Describe());
+
+        run.Plan.ShouldContainText(
+            "ctx.Get<Reservation>().Sku",
+            "The projection is the author's expression, copied verbatim.");
+    }
+
+    [Fact]
+    public void AFlowWithoutAReturnClauseEmitsNoProjection()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>();
+            }
+            """));
+
+        run.Plan!.Contains("Projection", StringComparison.Ordinal).ShouldBeFalse(
+            "A flow that returns nothing must not get a projection field that returns default.");
+    }
+
+    [Fact]
+    public void CopiesTheDeclaringFilesUsingsSoACopiedProjectionResolves()
+    {
+        // The projection is the author's text. If their file said `using System.Linq;`
+        // and the generated one does not, their expression stops compiling in a file
+        // they did not write.
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Plan.ShouldContainText("using FlowX;", run.Describe());
+        run.Plan!.Split("using FlowX;").Length.ShouldBe(2,
+            "The always-emitted usings must not be duplicated by the copied ones.");
+    }
+
+    [Fact]
+    public void AnEmitStepIsReportedAsNotYetPublished()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Emit<OrderPlaced>(ctx => new OrderPlaced("sku"))
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        // A warning, not an error: the step is real and reaches the manifest, so a
+        // consumer will expect the event. Silence would let that gap ship.
+        run.Ids.ShouldBe(["FLOWX1024"], run.Describe());
+        run.ManifestJson.ShouldNotBeNull()
+            .ShouldContainText("\"event\": \"order.placed\"", run.Describe());
+    }
+
+    [Fact]
     public void ReadsTheDurableProfileAndTheDeclaredDeadline()
     {
         var run = GeneratorHarness.Run(WithFlow("""
@@ -352,7 +464,9 @@ public sealed class FlowPlanGeneratorTests
             }
             """));
 
-        run.Ids.ShouldBeEmpty(run.Describe());
+        // FLOWX1024 is expected: the flow emits, and nothing publishes yet. The manifest
+        // still records the event, which is exactly why the warning exists.
+        run.Ids.ShouldBe(["FLOWX1024"], run.Describe());
         run.Sources.Length.ShouldBe(2, "One plan plus one manifest.");
 
         var manifest = run.ManifestJson.ShouldNotBeNull();

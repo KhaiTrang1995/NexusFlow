@@ -22,6 +22,18 @@ public sealed class ChainLink
 
     /// <summary>The syntax node, for resolving symbols and reporting diagnostics at the right spot.</summary>
     public InvocationExpressionSyntax Invocation { get; }
+
+    /// <summary>Where this call sits in source, for the emitted <c>#line</c> directive.</summary>
+    /// <remarks>
+    /// The member name, deliberately, not <see cref="Invocation"/>. A fluent chain nests
+    /// its receiver inside every later call, so each invocation's span <em>begins</em> at
+    /// the head of the chain — using it maps every step in a flow to the same line, and
+    /// a breakpoint on the third step lands on the first. The name is the only node whose
+    /// span belongs to this link alone.
+    /// </remarks>
+    public Location CallLocation => Invocation.Expression is MemberAccessExpressionSyntax member
+        ? member.Name.GetLocation()
+        : Invocation.GetLocation();
 }
 
 /// <summary>
@@ -43,16 +55,34 @@ public sealed class ChainLink
 public static class FlowChainWalker
 {
     /// <summary>Returns the chain's links in source order, or an empty list if there is no chain.</summary>
-    public static IReadOnlyList<ChainLink> Walk(SyntaxNode? defineBody)
+    /// <param name="defineBody">The <c>Define</c> method's body or arrow clause.</param>
+    /// <param name="builderParameterName">
+    /// The name of <c>Define</c>'s builder parameter. Supplied, the walker accepts only a
+    /// chain rooted at that identifier; omitted, it accepts any invocation chain.
+    /// </param>
+    /// <remarks>
+    /// The parameter name is what tells a chain from an ordinary call. A statement-bodied
+    /// <c>Define</c> that opens with <c>ArgumentNullException.ThrowIfNull(flow)</c> — which
+    /// CA1062 requires — contains two invocation statements, and both are structurally
+    /// identical: a member access on an identifier. Without knowing which identifier is the
+    /// builder, a guard clause reads as a one-link chain named <c>ThrowIfNull</c>, and a
+    /// log line written <em>after</em> the chain silently replaces it.
+    /// </remarks>
+    public static IReadOnlyList<ChainLink> Walk(SyntaxNode? defineBody, string? builderParameterName = null)
     {
-        var links = new List<ChainLink>();
-
         if (defineBody is null)
         {
-            return links;
+            return new List<ChainLink>();
         }
 
-        var current = FindOutermostInvocation(defineBody);
+        return Unwind(FindOutermostInvocation(defineBody, builderParameterName));
+    }
+
+    /// <summary>Unwinds one nested invocation into its links, in source order.</summary>
+    private static List<ChainLink> Unwind(InvocationExpressionSyntax? outermost)
+    {
+        var links = new List<ChainLink>();
+        var current = outermost;
 
         while (current is not null)
         {
@@ -76,7 +106,28 @@ public static class FlowChainWalker
         return links;
     }
 
-    private static InvocationExpressionSyntax? FindOutermostInvocation(SyntaxNode body)
+    /// <summary>True when unwinding this invocation bottoms out at the named identifier.</summary>
+    private static bool IsRootedAt(InvocationExpressionSyntax invocation, string builderParameterName)
+    {
+        ExpressionSyntax current = invocation;
+
+        while (current is InvocationExpressionSyntax call)
+        {
+            if (call.Expression is not MemberAccessExpressionSyntax member)
+            {
+                return false;
+            }
+
+            current = member.Expression;
+        }
+
+        return current is IdentifierNameSyntax identifier &&
+               identifier.Identifier.ValueText == builderParameterName;
+    }
+
+    private static InvocationExpressionSyntax? FindOutermostInvocation(
+        SyntaxNode body,
+        string? builderParameterName)
     {
         switch (body)
         {
@@ -87,12 +138,17 @@ public static class FlowChainWalker
                 return invocation;
 
             case BlockSyntax block:
-                // A statement-bodied Define. Only the last expression statement can be
-                // the chain; anything earlier is setup the DSL does not model.
+                // Last first: a later chain supersedes an earlier one, the same way the
+                // builder itself would have.
                 for (var i = block.Statements.Count - 1; i >= 0; i--)
                 {
-                    if (block.Statements[i] is ExpressionStatementSyntax statement &&
-                        statement.Expression is InvocationExpressionSyntax candidate)
+                    if (block.Statements[i] is not ExpressionStatementSyntax statement ||
+                        statement.Expression is not InvocationExpressionSyntax candidate)
+                    {
+                        continue;
+                    }
+
+                    if (builderParameterName is null || IsRootedAt(candidate, builderParameterName))
                     {
                         return candidate;
                     }

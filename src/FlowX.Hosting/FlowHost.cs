@@ -25,6 +25,16 @@ public sealed class FlowHost
     private readonly FlowXOptions _options;
     private readonly object _sync = new();
 
+    /// <summary>
+    /// Why work is refused during a drain. Accepting work during a drain is why drains
+    /// never finish; <see cref="ErrorCategory.Unavailable"/> is what tells a caller — or
+    /// a load balancer — that another node can take this.
+    /// </summary>
+    private static readonly Error Draining = new(
+        "host.draining",
+        "This node is shutting down and is not accepting new flows.",
+        ErrorCategory.Unavailable);
+
     private TaskCompletionSource? _idle;
     private int _inFlight;
     private volatile bool _draining;
@@ -64,17 +74,75 @@ public sealed class FlowHost
 
         if (!TryEnter())
         {
-            // Accepting work during a drain is why drains never finish. Unavailable is
-            // what tells a caller — or a load balancer — that another node can take this.
-            return FlowExecutionResult.Rejected(new Error(
-                "host.draining",
-                "This node is shutting down and is not accepting new flows.",
-                ErrorCategory.Unavailable));
+            return FlowExecutionResult.Rejected(Draining);
         }
 
         try
         {
             return await _engine.ExecuteAsync(plan, dispatcher, invocation, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            Exit();
+        }
+    }
+
+    /// <summary>Runs a flow with an input, unless the host is shutting down.</summary>
+    public async ValueTask<FlowExecutionResult> RunAsync<TIn>(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowInvocation invocation,
+        TIn input,
+        CancellationToken ct = default)
+        where TIn : notnull
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(dispatcher);
+
+        if (!TryEnter())
+        {
+            return FlowExecutionResult.Rejected(Draining);
+        }
+
+        try
+        {
+            return await _engine.ExecuteAsync(plan, dispatcher, invocation, input, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            Exit();
+        }
+    }
+
+    /// <summary>Runs a flow and projects its declared output, unless the host is shutting down.</summary>
+    /// <param name="plan">The compiled flow.</param>
+    /// <param name="dispatcher">Invokes the capability behind each step index.</param>
+    /// <param name="invocation">Correlation, tenant and the caller's remaining budget.</param>
+    /// <param name="input">The flow's input.</param>
+    /// <param name="projection">The generated <c>.Return(...)</c> clause.</param>
+    /// <param name="ct">The caller's cancellation token.</param>
+    public async ValueTask<FlowExecutionResult<TOut>> RunAsync<TIn, TOut>(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowInvocation invocation,
+        TIn input,
+        Func<FlowContext, TOut> projection,
+        CancellationToken ct = default)
+        where TIn : notnull
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(dispatcher);
+
+        if (!TryEnter())
+        {
+            return FlowExecutionResult.Rejected<TOut>(Draining);
+        }
+
+        try
+        {
+            return await _engine
+                .ExecuteAsync(plan, dispatcher, invocation, input, projection, ct)
+                .ConfigureAwait(false);
         }
         finally
         {

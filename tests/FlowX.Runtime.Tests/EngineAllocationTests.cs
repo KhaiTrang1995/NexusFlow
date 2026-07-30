@@ -10,13 +10,36 @@ namespace FlowX.Runtime.Tests;
 /// success path of an ephemeral flow.
 /// </summary>
 /// <remarks>
+/// <para>
 /// This is WP-4's exit criterion, and it is asserted rather than benchmarked because
 /// allocation counts are deterministic while timings are not. A benchmark would tell
 /// us nightly; this tells us on every pull request.
+/// </para>
+/// <para>
+/// <strong>Release only</strong>, and skipped rather than failed in Debug. The C#
+/// compiler emits an async state machine as a class in Debug and as a struct in
+/// Release, so a Debug run measures 376 B of Edit-and-Continue scaffolding and reports
+/// it as an engine allocation. That number is not the engine's, and a gate that fails
+/// in the configuration everyone runs locally is a gate people learn to ignore.
+/// </para>
 /// </remarks>
 public sealed class EngineAllocationTests
 {
     private static readonly DateTimeOffset T0 = DateTimeOffset.UnixEpoch;
+
+    /// <summary>
+    /// Skips the measurement in Debug, where it would measure the compiler rather than
+    /// the engine. See the class remarks.
+    /// </summary>
+    private static void RequireOptimisedBuild()
+    {
+#if DEBUG
+        Assert.Skip(
+            "Allocation budgets are measured in Release only. In Debug the compiler emits " +
+            "async state machines as classes, which shows up as a few hundred bytes per " +
+            "execution that the engine does not allocate. Run: dotnet test -c Release");
+#endif
+    }
 
     /// <summary>
     /// Measures one execution after the pool, the JIT and the async state machine have
@@ -77,6 +100,8 @@ public sealed class EngineAllocationTests
     [Fact]
     public void ASuccessfulFourStepFlowAllocatesNothingInSteadyState()
     {
+        RequireOptimisedBuild();
+
         var engine = new FlowEngine(new FakeClock(T0));
         var plan = Plans.FourStepSaga();
         var dispatcher = new NullDispatcher();
@@ -92,6 +117,8 @@ public sealed class EngineAllocationTests
     [Fact]
     public void AFlowWithNoCompensableStepsAllocatesNoCompensationStack()
     {
+        RequireOptimisedBuild();
+
         var engine = new FlowEngine(new FakeClock(T0));
 
         var allocated = MeasureSteadyState(engine, Plans.TwoStepQuery(), new NullDispatcher());
@@ -115,6 +142,10 @@ public sealed class EngineAllocationTests
     [Fact]
     public void TheFailurePathAllocatesAndTheAmountIsRecorded()
     {
+        // Guarded for the same reason as the zero assertions: the ceiling is only
+        // meaningful against a Release measurement.
+        RequireOptimisedBuild();
+
         var engine = new FlowEngine(new FakeClock(T0));
         var plan = Plans.FourStepSaga();
         var dispatcher = new NullDispatcher

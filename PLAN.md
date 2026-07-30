@@ -46,6 +46,7 @@ flowchart TD
     WP9["WP-9 · CLI<br/>flowx graph"]
     WP10["WP-10 · Sample<br/>ecommerce, 3 steps"]
     WP11["WP-11 · Gate<br/>run kill criterion"]
+    WP12["WP-12 · Testing<br/>supported test context"]
 
     WP0 --> WP1 --> WP2 --> WP3
     WP2 --> WP4
@@ -54,6 +55,7 @@ flowchart TD
     WP5 --> WP7 --> WP8 --> WP10
     WP6 --> WP9 --> WP10
     WP10 --> WP11
+    WP10 --> WP12
 
     style WP3 fill:#fff3cd,stroke:#856404
     style WP11 fill:#f8d7da,stroke:#721c24
@@ -188,9 +190,32 @@ an exit criterion that is mechanically checkable.
 |---|---|
 | **Goal** | `samples/ecommerce` runs a real 3-step ephemeral flow over HTTP |
 | **Tests first** | End-to-end test hitting the endpoint · `CapabilityTestedWithoutHost` (proves quality goal Q2) |
-| **Deliverable** | Three capabilities, one flow, one trigger, integration test, README |
+| **Deliverable** | Four capabilities, one flow, one endpoint, 20 tests, README |
 | **Exit** | `dotnet run` serves the endpoint; ZAP baseline clean; `flowx graph` renders it |
 | **Depends on** | WP-8, WP-9 |
+| **Status** | **Done**, bar the ZAP baseline. The endpoint serves the flow's declared output over HTTP and as a NativeAOT binary; `flowx graph` renders the sample's real manifest; 20 tests. |
+
+**What the first consumer found.** The sample was the first code written against the
+platform from outside it, and it found six defects that no test inside the platform
+could have:
+
+| Found | Was |
+|---|---|
+| `Result<T>` had no implicit conversions | The documented capability style did not compile. Restored; the `T = Error` collision is real but is a loud `CS0457`, not a silent mis-resolution. |
+| Every step's `#line` directive pointed at the same line | A fluent chain nests its receiver, so each invocation's span starts at the head of the chain. A breakpoint on step three landed on step one. |
+| `.Return(...)` was silently dropped | The flow declared an output type that nothing produced. The endpoint returned a step count. Now generated as a static projection. |
+| `MapFlow` never read a request body | A flow whose first step binds to a contract had nothing to bind to. |
+| `AddFlowX` registered the health-check **type**, not the check | `MapHealthChecks` threw at startup; with `AddHealthChecks` it returned a probe that never ran. |
+| The manifest embedded an absolute source path | Broke the determinism ADR-0005 requires of it, and shipped the build agent's directory layout. |
+
+Two more surfaced while getting the suite green:
+
+- `.Emit<T>()` compiles into the plan and the manifest but publishes nothing. Now
+  **FLOWX1024**, a warning — the only non-error diagnostic in the set — because the
+  manifest promises consumers an event that does not arrive.
+- The engine's allocation budgets are Release-only assertions that silently measured
+  376 B of Debug scaffolding. CI runs Release and never saw it; every contributor
+  running `dotnet test` did. Now skipped in Debug with the reason.
 
 ### WP-11 — P0 gate: run the kill criterion
 
@@ -199,6 +224,28 @@ an exit criterion that is mechanically checkable.
 | **Goal** | Answer the question P0 was built to answer |
 | **Deliverable** | A benchmark report committed to `docs/benchmarks/P0.md` with the measured numbers, the hardware, and an explicit **pass/fail against ADR-0002** |
 | **Exit** | B1 ≤ 5 µs **and** B2 = 0 → proceed to P1. Otherwise → stop, write the ADR that supersedes ADR-0002, and re-plan. |
+| **Depends on** | WP-10 |
+
+### WP-12a — `[Sensitive]` is declared and unread
+
+| | |
+|---|---|
+| **Goal** | The attribute does something |
+| **Why** | `[Sensitive]` exists on the contract surface and the sample applies it to `PlaceOrder.PaymentToken`. The compiler never reads it: it is absent from the manifest, and no redaction is generated. An attribute that looks like a control and is not one is worse than no attribute — a reviewer sees the token marked and concludes it is handled. Found while checking the OWASP A02 row in `CHECKLIST.md`, which claimed it reached the manifest. It does not. |
+| **Tests first** | A test asserting a sensitive member is absent from any emitted log or error payload · a manifest test asserting the field is marked |
+| **Deliverable** | `CapabilityReader` reads `[Sensitive]`; the manifest records it; the generator emits redaction for it |
+| **Exit** | A flow whose input carries a sensitive member cannot emit that member's value into a log record, a `Problem Details` extension, or a trace attribute |
+| **Depends on** | WP-5 |
+
+### WP-12 — A supported test context
+
+| | |
+|---|---|
+| **Goal** | Constructing a `CapabilityContext` in a test costs one line, not nine |
+| **Why** | Quality goal Q2 says a capability is testable by constructing it and calling it. It is — but `CapabilityContext` is abstract with nine members, so every consumer hand-writes the same stub. `tests/Ecommerce.Tests/CapabilityTests.cs` carries one; so will everybody else's first test file. Ceremony that every user pays is a platform defect, not a user problem. |
+| **Tests first** | The sample's own capability tests, rewritten against it — if they do not get shorter, it is not worth shipping |
+| **Deliverable** | `FlowX.Testing` with a context builder: fixed clock, fixed ids, seeded `Random`, overridable per test |
+| **Exit** | `CapabilityTests` constructs its context in one expression and still pins every value it pins today |
 | **Depends on** | WP-10 |
 
 ---

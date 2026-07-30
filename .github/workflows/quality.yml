@@ -156,6 +156,14 @@ jobs:
                   for line_no, line in enumerate(text.splitlines(), 1):
                       if 'SuppressMessage' in line and 'FLOWX-DEBT' not in text:
                           problems.append(f'{path}:{line_no} suppression without a FLOWX-DEBT marker')
+                      # A #pragma silences a rule just as completely as an attribute, and
+                      # was not covered until the sample used one. It needs either a debt
+                      # marker or a same-line reason — a bare pragma is a rule turned off
+                      # by someone who left no way to know whether it should come back.
+                      if '#pragma warning disable' in line and '//' not in line:
+                          problems.append(
+                              f'{path}:{line_no} #pragma warning disable with no justification. '
+                              'Add a FLOWX-DEBT marker, or a same-line comment saying why.')
                   for m in pattern.finditer(text):
                       found += 1
                       expires = datetime.date.fromisoformat(m.group('expires'))

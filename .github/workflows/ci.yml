@@ -67,22 +67,46 @@ jobs:
             exit 1
           fi
 
-      - name: NativeAOT publish smoke test
-        # PublishAot only applies to executables. Until the sample exists (WP-10)
-        # there is nothing to publish, and saying so beats a job that passes
-        # vacuously while looking like it proved something.
+      - name: NativeAOT publish
+        # The reference sample is the executable that makes constraint C2 checkable:
+        # PublishAot is a no-op on a class library, so until WP-10 this step had
+        # nothing to publish and said so rather than passing vacuously.
         run: |
-          if [ -d samples/ecommerce/src ] || [ -f samples/ecommerce/*.csproj ] 2>/dev/null; then
-            dotnet publish samples/ecommerce --configuration Release \
-              --runtime linux-x64 --self-contained /p:PublishAot=true \
-              /p:TrimmerSingleWarn=false 2>&1 | tee aot.log
-            if grep -qE 'IL2[0-9]{3}|IL3[0-9]{3}' aot.log; then
-              echo "::error::Trim or AOT warnings in the AOT publish."
-              exit 1
-            fi
-          else
-            echo "No publishable app yet (WP-10). The analyzer gate above is the active check."
+          dotnet publish samples/ecommerce/Ecommerce.csproj --configuration Release \
+            --runtime linux-x64 --self-contained /p:PublishAot=true \
+            /p:TrimmerSingleWarn=false 2>&1 | tee aot.log
+          if grep -qE 'IL2[0-9]{3}|IL3[0-9]{3}' aot.log; then
+            echo "::error::Trim or AOT warnings in the AOT publish."
+            exit 1
           fi
+
+      - name: The native binary serves a request
+        # Publishing proves it links. This proves it runs: a trim-related failure that
+        # the analyzer misses shows up at startup or on the first request, and a build
+        # that only checks for IL warnings would report success anyway.
+        run: |
+          BIN=samples/ecommerce/bin/Release/net10.0/linux-x64/publish/Ecommerce
+          ASPNETCORE_URLS=http://127.0.0.1:5210 "$BIN" &
+          APP=$!
+          trap 'kill $APP 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:5210/health >/dev/null && break
+            sleep 1
+          done
+
+          curl -sf http://127.0.0.1:5210/health >/dev/null || {
+            echo "::error::The native binary did not become healthy."; exit 1; }
+
+          BODY=$(curl -sf -X POST http://127.0.0.1:5210/api/v1/orders \
+            -H 'Content-Type: application/json' \
+            -H 'Idempotency-Key: ci-smoke' \
+            -d '{"sku":"SKU-1","quantity":1,"paymentToken":"tok"}') || {
+            echo "::error::The native binary refused a valid order."; exit 1; }
+
+          echo "$BODY"
+          echo "$BODY" | grep -q '"receiptId"' || {
+            echo "::error::The response did not carry the flow's declared output."; exit 1; }
 
   docs:
     name: Documentation gates

@@ -115,6 +115,25 @@ public static class FlowXDiagnostics
         "An empty flow has no observable behaviour. This is almost always a Define method " +
         "that returned early or a chain that was never assigned.");
 
+    /// <summary>FLOWX1024 — an <c>.Emit&lt;T&gt;()</c> step that nothing will publish.</summary>
+    /// <remarks>
+    /// A warning, not an error, and the only one in the set. The step is real: it is in
+    /// the compiled plan and in the manifest, and a consumer reading the manifest will
+    /// believe the event is published. Until the outbox exists (design principle P8) it
+    /// is not, and the gap between what the manifest promises and what the process does
+    /// is exactly the kind of thing that is discovered in production. Saying so at build
+    /// time is the cheapest place to find out.
+    /// </remarks>
+    public static readonly DiagnosticDescriptor EmitIsNotYetPublished = Create(
+        "FLOWX1024",
+        "Emit step is recorded but not published",
+        "Flow step '.Emit<{0}>' is compiled into the plan but no event is published yet",
+        "Transactional outbox publication is not implemented in this release. The step " +
+        "appears in the plan and the manifest, so downstream consumers will expect the " +
+        "event — suppress this warning only once you have confirmed nothing depends on " +
+        "it being delivered.",
+        DiagnosticSeverity.Warning);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -127,20 +146,22 @@ public static class FlowXDiagnostics
         CapabilityHasMultipleContracts,
         AwaitSignalRequiresDurable,
         CacheRequiresNoSideEffects,
-        FlowHasNoSteps);
+        FlowHasNoSteps,
+        EmitIsNotYetPublished);
 
     private static DiagnosticDescriptor Create(
         string id,
         string title,
         string messageFormat,
-        string description)
+        string description,
+        DiagnosticSeverity severity = DiagnosticSeverity.Error)
     {
         return new DiagnosticDescriptor(
             id,
             title,
             messageFormat,
             Category,
-            DiagnosticSeverity.Error,
+            severity,
             isEnabledByDefault: true,
             description: description,
             helpLinkUri: HelpRoot + id + ".md");

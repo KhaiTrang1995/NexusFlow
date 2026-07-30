@@ -10,7 +10,11 @@
   <Folder Name="/plugins/">
     <Project Path="plugins/FlowX.Http/FlowX.Http.csproj" />
   </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/ecommerce/Ecommerce.csproj" />
+  </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Ecommerce.Tests/Ecommerce.Tests.csproj" />
     <Project Path="tests/FlowX.Abstractions.Tests/FlowX.Abstractions.Tests.csproj" />
     <Project Path="tests/FlowX.Architecture.Tests/FlowX.Architecture.Tests.csproj" />
     <Project Path="tests/FlowX.Benchmarks/FlowX.Benchmarks.csproj" />
