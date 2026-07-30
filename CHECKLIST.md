@@ -4,7 +4,8 @@
 > "where is this project actually at?" — the [plan](PLAN.md) says what to build,
 > this says what is built.
 >
-> **Last updated:** 2026-07-30 · **Phase:** P0 · **Commit:** see `git log`
+> **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
+> **Commit:** see `git log`
 >
 > **Build:** 0 warnings, 0 errors · **Tests:** 473/473 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
@@ -151,7 +152,7 @@ immutable, and rejects every invariant violation under test.
 
 ---
 
-## 5b. WP-3 → WP-12
+## 5b. P0 · WP-3 → WP-14
 
 - [x] **WP-3** `FlowX.Benchmarks` — B1–B3 measurable, baseline committed
 - [x] **WP-4** `FlowX.Runtime` — step loop, pooled contexts, deadline handling, 0 B
@@ -177,6 +178,30 @@ immutable, and rejects every invariant violation under test.
       real sample, not only the harness
 - [x] **WP-14** Budget **B12** build overhead — **PASS at +0.4 %** against +8 %, on a
       like-for-like build of the sample. Report at [B12.md](docs/benchmarks/B12.md)
+
+**P0's exit criteria are met.** `samples/ecommerce` runs a 3-step ephemeral flow over
+HTTP, B1 and B2 are green, and `flowx graph` renders it. The ZAP baseline is the one
+item outstanding and needs a CI run.
+
+---
+
+## 5c. P1 · Compiler hardening — in progress
+
+Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages in
+[PLAN.md §4](PLAN.md).
+
+- [ ] **WP-15** The branching DSL — `When` / `Otherwise` / `Switch` / `Parallel` /
+      `ForEach` / `SubFlow`, through builder, model, analysis, emission, graph and
+      engine. The largest remaining piece of P1
+- [ ] **WP-16** Contract-compatibility checking — `FLOWX1022`
+- [ ] **WP-17** `flowx diff` v1 — breaking-change gate over two manifests
+- [ ] **WP-18** Scale — 200 synthetic flows within the 8 % budget, and evidence that
+      the cost scales linearly
+- [ ] **WP-19** IDE code fixes for the mechanically fixable diagnostics
+
+Already satisfied from P0, per the roadmap's P1 list: diagnostics with help URIs
+(WP-13), generator snapshot tests (WP-5), readable and breakpoint-able emitted code
+(WP-10), and budget B12 (WP-14).
 
 ### WP-10 · what it delivered
 
