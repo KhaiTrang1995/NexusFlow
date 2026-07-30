@@ -1,17 +1,20 @@
+using System.Collections.Immutable;
+
 namespace FlowX;
 
 /// <summary>What a step does.</summary>
 /// <remarks>
 /// <para>
-/// <see cref="Branch"/> and <see cref="Jump"/> are how a conditional is represented:
-/// structured jumps <em>inside</em> the flat step array, not a nested graph. That is
-/// what keeps the engine one loop over one array — see <see cref="StepNode.Target"/>
-/// for the layout and <c>FlowEngine</c> for the loop it buys.
+/// <see cref="Branch"/>, <see cref="Switch"/> and <see cref="Jump"/> are how a
+/// conditional is represented: structured jumps <em>inside</em> the flat step array, not
+/// a nested graph. That is what keeps the engine one loop over one array — see
+/// <see cref="StepNode.Target"/> for the layout and <c>FlowEngine</c> for the loop it
+/// buys.
 /// </para>
 /// <para>
-/// The remaining branching kinds — switch, parallel, for-each, sub-flow — arrive with
-/// the DSL surface that can express them. Adding them here first would be speculative:
-/// shapes nothing can construct and no test can exercise.
+/// The remaining branching kinds — parallel, for-each, sub-flow — arrive with the DSL
+/// surface that can express them. Adding them here first would be speculative: shapes
+/// nothing can construct and no test can exercise.
 /// </para>
 /// </remarks>
 public enum StepKind
@@ -33,6 +36,19 @@ public enum StepKind
 
     /// <summary>Transfers control unconditionally to <see cref="StepNode.Target"/>.</summary>
     Jump = 4,
+
+    /// <summary>
+    /// Selects one of <see cref="StepNode.CaseTargets"/> by matching a value, and
+    /// continues at <see cref="StepNode.Target"/> when none of them matches.
+    /// </summary>
+    /// <remarks>
+    /// A <see cref="Branch"/> asks a yes/no question and so needs one target; this asks
+    /// <em>which one</em> and so needs several. Compiling it into a chain of branches
+    /// instead would have re-evaluated the selector once per case and published the
+    /// author's <c>Switch</c> to the manifest as a nest of conditionals — two lies for no
+    /// saving, since the flat layout is identical either way.
+    /// </remarks>
+    Switch = 5,
 }
 
 /// <summary>
@@ -94,6 +110,12 @@ public sealed record StepNode
     /// a shape the factories then have to forbid.
     /// </para>
     /// <para>
+    /// A <see cref="StepKind.Switch"/> carries its <em>default</em> target here — where
+    /// control goes when no case matched — for the same reason: it is the one destination
+    /// that is not in <see cref="CaseTargets"/>, and the engine reads it the same way it
+    /// reads a branch's.
+    /// </para>
+    /// <para>
     /// A target equal to the graph's length is legal and means <em>past the last step</em>:
     /// a conditional at the end of a flow jumps out of it. Targets are validated for range
     /// by <see cref="StepGraph"/>, which is the only place that knows the length.
@@ -101,11 +123,24 @@ public sealed record StepNode
     /// </remarks>
     public int? Target { get; private init; }
 
+    /// <summary>
+    /// Where each case of a <see cref="StepKind.Switch"/> begins, in declaration order.
+    /// Empty for every other kind.
+    /// </summary>
+    /// <remarks>
+    /// Indexed by the arm the dispatcher returns from <c>IStepDispatcher.Select</c>, so
+    /// selecting a case is one array read and one assignment to the loop index — no
+    /// dictionary, no boxing of the selector's value, and nothing allocated. The values
+    /// being compared never appear here at all; they live in the generated dispatcher,
+    /// which is what keeps business data out of the plan and out of the manifest.
+    /// </remarks>
+    public ImmutableArray<int> CaseTargets { get; private init; } = ImmutableArray<int>.Empty;
+
     /// <summary>True when this step declared a compensation.</summary>
     public bool IsCompensable => Compensation is not null;
 
     /// <summary>True when this step moves the instruction pointer rather than doing work.</summary>
-    public bool IsControlTransfer => Kind is StepKind.Branch or StepKind.Jump;
+    public bool IsControlTransfer => Kind is StepKind.Branch or StepKind.Jump or StepKind.Switch;
 
     /// <summary>Creates a capability step.</summary>
     /// <param name="index">Position in the graph.</param>
@@ -206,15 +241,63 @@ public sealed record StepNode
         };
     }
 
+    /// <summary>Creates a value branch.</summary>
+    /// <param name="index">Position in the graph.</param>
+    /// <param name="caseTargets">
+    /// Where each case begins, in declaration order. Copied, never aliased. Must point
+    /// forward, and must not be empty.
+    /// </param>
+    /// <param name="defaultTarget">
+    /// Where control continues when no case matched. Must point forward. Equal to the
+    /// join index when the author declared no <c>Default</c>, which is how a miss falls
+    /// through to whatever follows the switch.
+    /// </param>
+    /// <exception cref="InvalidFlowPlanException">
+    /// There are no cases, or a target does not point forward.
+    /// </exception>
+    /// <remarks>
+    /// Like <see cref="ForBranch"/>, this carries no values: the selector and the case
+    /// values live with the generated dispatcher and are reached by step index through
+    /// <c>IStepDispatcher.Select</c>. A plan that carried them would have to know their
+    /// types, which is the one thing the engine is built not to know.
+    /// </remarks>
+    public static StepNode ForSwitch(int index, IReadOnlyList<int> caseTargets, int defaultTarget)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        ArgumentNullException.ThrowIfNull(caseTargets);
+
+        if (caseTargets.Count == 0)
+        {
+            throw new InvalidFlowPlanException(
+                $"Step {index} is a switch with no cases. There is nothing to select " +
+                "between, so it would always take its default — which is an unconditional " +
+                "transfer, and a step that pretends to be a decision is worse than no step.");
+        }
+
+        var targets = ImmutableArray.CreateBuilder<int>(caseTargets.Count);
+
+        foreach (var target in caseTargets)
+        {
+            targets.Add(RequireForwardTarget(index, target, "switch case"));
+        }
+
+        return new StepNode(index, StepKind.Switch)
+        {
+            CaseTargets = targets.MoveToImmutable(),
+            Target = RequireForwardTarget(index, defaultTarget, "switch default"),
+        };
+    }
+
     /// <summary>
     /// Rejects a target that does not point forward.
     /// </summary>
     /// <remarks>
-    /// A backward target is a loop, and neither <c>When</c> nor <c>Otherwise</c> can
-    /// express one — so a backward target is never something an author asked for, it is
-    /// a layout bug in the generator. Left unchecked it is an infinite loop at run time,
-    /// inside a step loop that has no iteration cap by design. Refusing it in the factory
-    /// makes the shape unrepresentable rather than merely unlikely.
+    /// A backward target is a loop, and nothing in the conditional DSL — <c>When</c>,
+    /// <c>Otherwise</c>, <c>Switch</c>, <c>Case</c>, <c>Default</c> — can express one. So
+    /// a backward target is never something an author asked for, it is a layout bug in
+    /// the generator. Left unchecked it is an infinite loop at run time, inside a step
+    /// loop that has no iteration cap by design. Refusing it in the factory makes the
+    /// shape unrepresentable rather than merely unlikely.
     /// </remarks>
     private static int RequireForwardTarget(int index, int target, string what)
     {
@@ -225,8 +308,8 @@ public sealed record StepNode
 
         throw new InvalidFlowPlanException(
             $"Step {index} is a {what} targeting step {target}, which does not point " +
-            "forward. `When` and `Otherwise` can only skip steps, never repeat them, so " +
-            "a backward target is a layout bug — and one that would make the engine's " +
+            "forward. The conditional DSL can only skip steps, never repeat them, so a " +
+            "backward target is a layout bug — and one that would make the engine's " +
             "step loop run forever.");
     }
 
@@ -238,6 +321,7 @@ public sealed record StepNode
         StepKind.AwaitSignal => $"[{Index}] await {SignalType} ({SignalTimeout})",
         StepKind.Branch => $"[{Index}] branch, else {Target}",
         StepKind.Jump => $"[{Index}] jump {Target}",
+        StepKind.Switch => $"[{Index}] switch {string.Join(", ", CaseTargets)}, else {Target}",
         _ => $"[{Index}] {Kind}",
     };
 }

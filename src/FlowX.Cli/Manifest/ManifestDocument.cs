@@ -186,13 +186,16 @@ public sealed class ManifestStep
 
     /// <summary>
     /// Nested blocks of a branching step: for a <c>Condition</c>, the <c>then</c> block
-    /// first and the <c>Otherwise</c> block second when there is one.
+    /// first and the <c>Otherwise</c> block second when there is one; for a
+    /// <c>Switch</c>, one block per case in declaration order and then the <c>Default</c>,
+    /// which is always present and may be empty.
     /// </summary>
     /// <remarks>
     /// Positional, because that is what the schema gives — <c>branches</c> is an array of
-    /// arrays with nothing naming them. A one-element array therefore means a <c>When</c>
-    /// with no alternative, and the reader has to know that; the alternative would be a
-    /// schema change nobody has agreed to.
+    /// arrays with nothing naming them. A one-element array on a <c>Condition</c>
+    /// therefore means a <c>When</c> with no alternative, and an empty last array on a
+    /// <c>Switch</c> means a value matching nothing falls through. The reader has to know
+    /// that; the alternative would be a schema change nobody has agreed to.
     /// </remarks>
     [JsonPropertyName("branches")]
     public List<List<ManifestStep>> Branches { get; set; } = [];

@@ -428,15 +428,23 @@ public static class ManifestWriter
     /// generated dispatcher.
     /// </para>
     /// <para>
-    /// <strong>The predicate is not published.</strong> The schema's step object is
-    /// <c>additionalProperties: false</c> and has no field for a condition, so there is
-    /// nowhere to put it without changing the committed contract. A reader therefore sees
-    /// that a flow branches and where each branch goes, but not on what — recorded as a
-    /// gap rather than papered over by widening the schema unilaterally.
+    /// <strong>The predicate is not published, and neither is a switch's selector or its
+    /// case values.</strong> The schema's step object is <c>additionalProperties: false</c>
+    /// and has no field for either, so there is nowhere to put them without changing the
+    /// committed contract — and there should not be one. <c>Channel.Wholesale</c> is a
+    /// business value, and the rule that makes this file safe to publish is structure
+    /// only, never values. A reader therefore sees that a flow branches and where each
+    /// branch goes, but not on what.
     /// </para>
     /// </remarks>
     private static void WriteBranches(JsonWriter writer, StepModel step)
     {
+        if (step.Kind == StepKindModel.Switch)
+        {
+            WriteSwitchBranches(writer, step);
+            return;
+        }
+
         if (step.Kind != StepKindModel.Condition)
         {
             return;
@@ -451,6 +459,39 @@ public static class ManifestWriter
         {
             WriteBranch(writer, step.Otherwise);
         }
+
+        writer.CloseArray();
+    }
+
+    /// <summary>
+    /// Writes a switch's blocks as <c>branches</c>: one array per case in declaration
+    /// order, then the <c>Default</c> block when there is one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every case gets an entry, empty block or not, because the position in this array is
+    /// the only thing that identifies which arm a block belongs to once the values are
+    /// gone. Dropping the empty ones would silently renumber the rest.
+    /// </para>
+    /// <para>
+    /// The default block is always written too, even when the flow declares none, so the
+    /// last entry is unambiguously the default and a consumer can tell a switch that
+    /// handles a miss from one that falls through. That is the opposite choice from a
+    /// conditional's absent <c>Otherwise</c>, which is simply omitted — but a conditional
+    /// has at most two blocks, so the omission is unambiguous there and would not be here.
+    /// </para>
+    /// </remarks>
+    private static void WriteSwitchBranches(JsonWriter writer, StepModel step)
+    {
+        writer.PropertyName("branches");
+        writer.OpenArray();
+
+        foreach (var arm in step.Cases)
+        {
+            WriteBranch(writer, arm.Steps);
+        }
+
+        WriteBranch(writer, step.Default);
 
         writer.CloseArray();
     }
@@ -662,6 +703,7 @@ public static class ManifestWriter
         StepKindModel.Emit => "Emit",
         StepKindModel.AwaitSignal => "AwaitSignal",
         StepKindModel.Condition => "Condition",
+        StepKindModel.Switch => "Switch",
         _ => "Capability",
     };
 
