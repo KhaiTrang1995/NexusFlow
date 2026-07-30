@@ -271,11 +271,16 @@ reachable, and enforced or honoured by nothing:
       `FlowErrors.SelectorFailed` states it at run time and nothing checks it at build
       time — the exact position `When` was in before WP-21. `Return`, `Emit`,
       `EmitOnFailure` and `ForEach`'s selector are in the same position
-- [ ] **An unrecognised `TriggerAttribute` subclass is skipped in silence.** A trigger's
+- [x] **An unrecognised `TriggerAttribute` subclass is skipped in silence.** A trigger's
       `Kind` is an overridden property — executable code, not attribute data — so a
       third-party transport plugin's trigger cannot be read from metadata. WP-22 declined
-      to guess, which is right, but the skip produces only an absent `triggers` array. It
-      needs a diagnostic
+      to guess, which is right, but the skip produced only an absent `triggers` array —
+      which `flowx diff` cannot tell apart from a flow that declares no trigger, so the
+      gate that calls a removed trigger breaking lost its input without saying so. Closed
+      by `FLOWX1025` (WP-26), a warning: the manifest still refuses to guess, and the
+      refusal is now audible. **What remains open is the cause** — the abstractions give a
+      plugin author no way to declare a kind the compiler can read, so the only fix
+      offered is "use a built-in attribute instead"
 - [x] **Nothing in the repository had ever compiled generator output.** The generator
       harness discarded the updated compilation, so every test asserted against *parsed*
       text — which catches a syntax error but not an unresolved name, a wrong delegate

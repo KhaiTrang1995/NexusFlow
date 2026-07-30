@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Text.Json;
+using FlowX.Compiler.Analysis;
 using Shouldly;
 using Xunit;
 
@@ -154,30 +155,47 @@ public sealed class ManifestTriggerAndErrorTests
     }
 
     /// <summary>
-    /// A trigger attribute this compiler does not know is skipped, not guessed at.
+    /// A trigger attribute this compiler does not know is skipped, not guessed at — and
+    /// the skip is now reported.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A trigger's <c>Kind</c> is an overridden property returning an enum value — that is
     /// executable code, not attribute data, so there is no way to ask an arbitrary
     /// <c>TriggerAttribute</c> subclass what family it belongs to, nor what its
     /// constructor arguments mean. Emitting a plausible kind for one would be inventing
-    /// the fact the manifest exists to publish. This is a real gap and it is recorded as
-    /// one: a transport plugin that declares its own trigger attribute is invisible here.
+    /// the fact the manifest exists to publish, so the manifest half of this assertion is
+    /// unchanged and must stay that way.
+    /// </para>
+    /// <para>
+    /// What changed is that the gap is no longer silent. The absence asserted here is
+    /// indistinguishable to <c>flowx diff</c> from a flow that declares no trigger, which
+    /// is why <c>FLOWX1025</c> now tells the author. Both facts are asserted together
+    /// deliberately: an omission nobody is told about was the defect, and either half
+    /// alone would let it return.
+    /// </para>
     /// </remarks>
     [Fact]
     public void ATriggerAttributeFromOutsideTheAbstractionIsNotGuessedAt()
     {
-        using var manifest = ManifestOf(
+        const string Body =
             """
             public sealed class MqttTriggerAttribute : TriggerAttribute
             {
                 public override TriggerKind Kind => TriggerKind.Bus;
             }
-            """
-            + "\n\n" + FlowWith("[MqttTrigger]"));
+            """;
+
+        using var manifest = ManifestOf(Body + "\n\n" + FlowWith("[MqttTrigger]"));
 
         Flow(manifest).TryGetProperty("triggers", out _).ShouldBeFalse(
             "An unrecognised trigger attribute produces nothing rather than a guessed kind.");
+
+        GeneratorHarness
+            .Analyze(Source(Body + "\n\n" + FlowWith("[MqttTrigger]")), new TriggerDeclarationAnalyzer())
+            .ShouldBe(
+                ["FLOWX1025"],
+                "Skipping it is right; skipping it in silence was the defect FLOWX1025 closes.");
     }
 
     // ------------------------------------------------------------------- errors
