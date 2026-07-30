@@ -47,6 +47,7 @@ flowchart TD
     WP10["WP-10 · Sample<br/>ecommerce, 3 steps"]
     WP11["WP-11 · Gate<br/>run kill criterion"]
     WP12["WP-12 · Testing<br/>supported test context"]
+    WP12a["WP-12a · Sensitive<br/>read + manifest"]
 
     WP0 --> WP1 --> WP2 --> WP3
     WP2 --> WP4
@@ -56,6 +57,7 @@ flowchart TD
     WP6 --> WP9 --> WP10
     WP10 --> WP11
     WP10 --> WP12
+    WP5 --> WP12a
 
     style WP3 fill:#fff3cd,stroke:#856404
     style WP11 fill:#f8d7da,stroke:#721c24
@@ -289,6 +291,25 @@ is a capability that happens to run backwards; `StepModel.Compensation` is now a
 | **Deliverable** | `FlowX.Testing` with a context builder: fixed clock, fixed ids, seeded `Random`, overridable per test |
 | **Exit** | `CapabilityTests` constructs its context in one expression and still pins every value it pins today |
 | **Depends on** | WP-10 |
+| **Status** | **Done.** `TestCapabilityContext` and `TestFlowContext` ship from `src/FlowX.Testing`; 30 tests. The sample's `CapabilityTests` builds its context in one expression and lost 27 lines of stub, pinning everything it pinned before. |
+
+`TestFlowContext` was not in the original deliverable and is the more useful half. A
+generated step dispatcher and a `.Return(...)` projection are ordinary methods that take
+a `FlowContext`, so with a working typed bag they can be called directly — no engine, no
+plan, no host. `Fail(error)` puts the context into the state a compensation actually
+meets, which is otherwise unreachable.
+
+**Also found and fixed while here:** `LayersPointInward` enumerates its projects in
+hand-written `[InlineData]` rows, so adding `FlowX.Testing` created a `src/` project that
+no fitness function checked — it could have referenced anything at all and the theory
+would have passed without looking at it. `EverySourceProjectIsCoveredByTheLayeringRule`
+now fails on any unlisted project; it was verified by deleting the row and watching it
+fail. A rule with a hand-maintained subject list needs a rule about the list.
+
+**Not shipped, and now said so in the docs:** [19-SDK §6](docs/19-SDK.md) described a
+`FlowTestHost` with capability substitution, virtual time, crash simulation and a Kafka
+integration harness. None of it exists. The section now separates what ships from what
+is intended, rather than reading as a description of the current package.
 
 ---
 

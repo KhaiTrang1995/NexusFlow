@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>
+      Test doubles for FlowX contracts: a CapabilityContext and a FlowContext with
+      fixed, overridable values, so testing a capability costs one expression.
+    </Description>
+    <PackageTags>flowx;testing;test-double</PackageTags>
+    <!-- Public surface, so it is documented like any other shipped package. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Abstractions only, and deliberately: a test double for the contract surface must
+      not drag the runtime into a user's test project. If this ever needs FlowX.Runtime,
+      the thing being built is an integration harness, not a test double, and belongs
+      somewhere else.
+    -->
+    <ProjectReference Include="../FlowX.Abstractions/FlowX.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>
