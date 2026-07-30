@@ -17,9 +17,18 @@ namespace Ecommerce;
 /// partial class at build time. They are on disk, under <c>obj/generated</c>, with line
 /// directives back to this file — set a breakpoint on a step and it lands here.
 /// </para>
+/// <para>
+/// <strong>The <c>[HttpTrigger]</c> below is read, not yet acted on.</strong> It reaches
+/// <c>flowx.manifest.json</c>, so the published contract states the address this flow
+/// answers on; the registration that actually serves it is still written by hand in
+/// <c>Program.cs</c> until the endpoint generator lands. The two are deliberately
+/// identical — a declared address that nothing serves would be exactly the kind of
+/// documented-but-not-produced claim the manifest exists to eliminate.
+/// </para>
 /// </remarks>
 [Flow("order.place", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral, Owner = "orders")]
 [FlowDeadline("PT30S")]
+[HttpTrigger("POST", "/api/v1/orders", Idempotent = true)]
 public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult>
 {
     /// <inheritdoc />

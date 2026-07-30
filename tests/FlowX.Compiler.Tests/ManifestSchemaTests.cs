@@ -119,6 +119,69 @@ public sealed class ManifestSchemaTests
         ShouldValidate(ManifestWriter.Write("Sample.App", "1.0.0", [durable]));
     }
 
+    /// <summary>
+    /// Every trigger kind and a full error catalogue, through the committed schema.
+    /// </summary>
+    /// <remarks>
+    /// The schema's <c>trigger</c> object is <c>additionalProperties: false</c>, so a field
+    /// the writer invented for a trigger fails here rather than shipping in a document the
+    /// published contract does not describe. That is the same guard the step object gives,
+    /// and it is why the constraint was added when triggers started being emitted: an open
+    /// object cannot tell an emitter it has drifted.
+    /// </remarks>
+    [Fact]
+    public void AManifestWithTriggersAndErrorCataloguesValidates()
+        => ShouldValidate(ManifestWriter.Write(
+            "Sample.App", "1.0.0", [Models.PlaceOrder()], null,
+            [Models.Triggers()], Models.ErrorCatalogues()));
+
+    [Fact]
+    public void TheSchemaRejectsATriggerFieldItDoesNotDeclare()
+    {
+        const string Malformed = """
+            {
+              "schemaVersion": "0.1.0",
+              "application": { "name": "A", "version": "1.0.0" },
+              "flows": [ { "id": "a.b", "version": "1.0.0", "profile": "Ephemeral",
+                           "input": { "type": "In" }, "output": { "type": "Out" },
+                           "triggers": [ { "kind": "Http", "maxInFlight": 32 } ],
+                           "steps": [ { "id": 0 } ] } ],
+              "capabilities": []
+            }
+            """;
+
+        using var document = JsonDocument.Parse(Malformed);
+
+        Schema.Evaluate(document.RootElement, new EvaluationOptions { OutputFormat = OutputFormat.List })
+            .IsValid.ShouldBeFalse(
+                "Operational tuning is declared on the trigger attributes and deliberately not " +
+                "published; the schema has to say so, or the omission is only a convention.");
+    }
+
+    [Fact]
+    public void TheSchemaRejectsAnErrorCategoryOutsideTheClosedSet()
+    {
+        // ErrorCategory is closed on purpose: a new category silently changes the
+        // transport mapping table for every existing consumer.
+        const string Malformed = """
+            {
+              "schemaVersion": "0.1.0",
+              "application": { "name": "A", "version": "1.0.0" },
+              "flows": [ { "id": "a.b", "version": "1.0.0", "profile": "Ephemeral",
+                           "input": { "type": "In" }, "output": { "type": "Out" },
+                           "steps": [ { "id": 0 } ] } ],
+              "capabilities": [ { "id": "a.b", "version": "1.0.0", "input": "In", "output": "Out",
+                                  "authorization": { "mode": "Internal" }, "idempotent": true,
+                                  "errors": [ { "code": "a.nope", "category": "Whoops" } ] } ]
+            }
+            """;
+
+        using var document = JsonDocument.Parse(Malformed);
+
+        Schema.Evaluate(document.RootElement, new EvaluationOptions { OutputFormat = OutputFormat.List })
+            .IsValid.ShouldBeFalse();
+    }
+
     [Fact]
     public void TheSchemaRejectsAManifestWithAMalformedIdentity()
     {

@@ -110,13 +110,28 @@ public sealed class ManifestWriterTests
         manifest.ShouldNotContainText("commit", "Same reason as builtAt.");
     }
 
+    /// <summary>
+    /// <c>ManifestContainsNoSecrets</c>, over every field the writer can emit.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The manifest says a capability accepts a <c>CaptureRequest</c>; it must never say
+    /// what was in one. That is what makes the file safe to publish, feed to an agent, or
+    /// attach to a build.
+    /// </para>
+    /// <para>
+    /// The document under test carries triggers and an error catalogue as well as steps,
+    /// because a guard that only ever sees the fields that existed when it was written
+    /// stops guarding the moment a field is added. An error's <em>message</em> is the field
+    /// most likely to carry a value — it routinely interpolates one — and the writer never
+    /// receives it at all.
+    /// </para>
+    /// </remarks>
     [Fact]
     public void ContainsStructureButNoValues()
     {
-        // ManifestContainsNoSecrets. The manifest says a capability accepts a
-        // CaptureRequest; it must never say what was in one. This is what makes the
-        // file safe to publish, feed to an agent, or attach to a build.
-        var manifest = Write(Models.PlaceOrder());
+        var manifest = ManifestWriter.Write(
+            "Sample.App", "1.0.0", [Models.PlaceOrder()], null, [Models.Triggers()], Models.ErrorCatalogues());
 
         foreach (var forbidden in new[]
         {
@@ -128,6 +143,118 @@ public sealed class ManifestWriterTests
                 .ShouldBeFalse($"The manifest contains '{forbidden}'. It describes structure, never values.");
         }
     }
+
+    // ------------------------------------------------------------------ triggers
+
+    private static string WriteWithTriggers(params TriggerModel[] triggers) => ManifestWriter.Write(
+        "Sample.App", "1.0.0", [Models.PlaceOrder()], null,
+        [new FlowTriggersModel("order.place", triggers)]);
+
+    [Fact]
+    public void TriggersAreSortedRatherThanLeftInDeclarationOrder()
+    {
+        var http = new TriggerModel("Http", method: "POST", route: "/api/v1/orders");
+        var bus = new TriggerModel("Bus", transport: "kafka", topic: "orders.requested");
+
+        WriteWithTriggers(http, bus).ShouldBe(WriteWithTriggers(bus, http),
+            "Roslyn promises no attribute order, so a flow with two triggers would otherwise " +
+            "differ between builds of identical source.");
+    }
+
+    /// <summary>Omitted rather than emitted empty — and unlike <c>errors</c>, on purpose.</summary>
+    /// <remarks>
+    /// An empty array would read as "this flow cannot be started from outside the process",
+    /// which the compiler cannot know: nothing yet turns a trigger attribute into a
+    /// registration, so a flow with no attribute may still be serving a hand-written route.
+    /// The positive statement is sound; the negative one is not.
+    /// </remarks>
+    [Fact]
+    public void AFlowWithNoDeclaredTriggerCarriesNoTriggersArray()
+    {
+        using var document = Parse(Write(Models.PlaceOrder()));
+
+        document.RootElement.GetProperty("flows")[0].TryGetProperty("triggers", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ATriggerOmitsTheFieldsItsKindDoesNotHave()
+    {
+        using var document = Parse(WriteWithTriggers(new TriggerModel("Schedule", cron: "0 2 * * *", timeZone: "UTC")));
+
+        var trigger = document.RootElement.GetProperty("flows")[0].GetProperty("triggers")[0];
+
+        trigger.GetProperty("cron").GetString().ShouldBe("0 2 * * *");
+        trigger.TryGetProperty("route", out _).ShouldBeFalse();
+        trigger.TryGetProperty("idempotent", out _).ShouldBeFalse(
+            "A schedule has no notion of an idempotency key, and writing `false` would claim it does.");
+    }
+
+    // -------------------------------------------------------------------- errors
+
+    /// <summary>
+    /// Three states, three renderings.
+    /// </summary>
+    /// <remarks>
+    /// A capability that returns no declared error publishes an empty array, and one whose
+    /// failure paths could not all be resolved publishes nothing. Rendering both as
+    /// <c>[]</c> is exactly the ambiguity this field exists to remove: a consumer reading
+    /// an empty catalogue is entitled to conclude the capability never fails with a code,
+    /// and would be wrong if that were also what an unreadable capability produced.
+    /// </remarks>
+    [Fact]
+    public void AnIncompleteCatalogueIsWithheldWhileAnEmptyOneIsPublished()
+    {
+        var complete = ManifestWriter.Write(
+            "Sample.App", "1.0.0", [Models.PlaceOrder()], null, null,
+            [new CapabilityErrorCatalogue("order.validate", "1.0.0", [], isComplete: true)]);
+
+        var incomplete = ManifestWriter.Write(
+            "Sample.App", "1.0.0", [Models.PlaceOrder()], null, null,
+            [new CapabilityErrorCatalogue("order.validate", "1.0.0", [], isComplete: false)]);
+
+        using var published = Parse(complete);
+        using var withheld = Parse(incomplete);
+
+        Capability(published, "order.validate").GetProperty("errors").GetArrayLength().ShouldBe(0);
+        Capability(withheld, "order.validate").TryGetProperty("errors", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ErrorsAreSortedByCodeAndDeduplicated()
+    {
+        var manifest = ManifestWriter.Write(
+            "Sample.App", "1.0.0", [Models.PlaceOrder()], null, null,
+            [
+                new CapabilityErrorCatalogue(
+                    "order.validate",
+                    "1.0.0",
+                    [
+                        new CapabilityErrorModel("order.too_many", "Validation"),
+                        new CapabilityErrorModel("order.invalid_quantity", "Validation"),
+                        new CapabilityErrorModel("order.too_many", "Validation"),
+                    ],
+                    isComplete: true),
+            ]);
+
+        using var document = Parse(manifest);
+
+        Capability(document, "order.validate").GetProperty("errors").EnumerateArray()
+            .Select(e => e.GetProperty("code").GetString())
+            .ShouldBe(["order.invalid_quantity", "order.too_many"]);
+    }
+
+    [Fact]
+    public void ACapabilityWithNoCatalogueAtAllCarriesNoErrorsArray()
+    {
+        using var document = Parse(Write(Models.PlaceOrder()));
+
+        Capability(document, "order.validate").TryGetProperty("errors", out _).ShouldBeFalse(
+            "Nothing was read about this capability, and an empty array would claim otherwise.");
+    }
+
+    private static JsonElement Capability(JsonDocument manifest, string id) =>
+        manifest.RootElement.GetProperty("capabilities").EnumerateArray()
+            .Single(c => c.GetProperty("id").GetString() == id);
 
     [Fact]
     public void DeduplicatesACapabilityUsedByTwoFlows()

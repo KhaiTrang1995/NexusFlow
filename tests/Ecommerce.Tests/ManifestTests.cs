@@ -51,7 +51,7 @@ public sealed class ManifestTests
         // shipping the build agent's directory layout to whoever reads it.
         var source = Flow.GetProperty("source").GetString().ShouldNotBeNull();
 
-        source.ShouldBe("PlaceOrderFlow.cs:23");
+        source.ShouldBe("PlaceOrderFlow.cs:32");
         source.ShouldNotStartWith("/");
         source.ShouldNotContain(":\\");
     }
@@ -103,4 +103,79 @@ public sealed class ManifestTests
         capabilities["payment.capture"].GetProperty("idempotent").GetBoolean().ShouldBeFalse();
         capabilities["inventory.reserve"].GetProperty("idempotent").GetBoolean().ShouldBeTrue();
     }
+
+    /// <summary>
+    /// The address the flow declares, which is also the one <c>Program.cs</c> serves.
+    /// </summary>
+    /// <remarks>
+    /// The registration is still hand-written, so these two agree because somebody kept
+    /// them in step rather than because anything enforces it. The manifest publishes the
+    /// declaration; the endpoint generator is what will make the declaration the only copy.
+    /// </remarks>
+    [Fact]
+    public void PublishesTheAddressTheFlowDeclares()
+    {
+        var trigger = Flow.GetProperty("triggers")[0];
+
+        trigger.GetProperty("kind").GetString().ShouldBe("Http");
+        trigger.GetProperty("method").GetString().ShouldBe("POST");
+        trigger.GetProperty("route").GetString().ShouldBe("/api/v1/orders");
+        trigger.GetProperty("idempotent").GetBoolean().ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Every failure the sample can return, read out of the capabilities themselves.
+    /// </summary>
+    /// <remarks>
+    /// ADR-0007 chose <c>Result&lt;T&gt;</c> over exceptions so that failure paths would be
+    /// "enumerable in the manifest, so error catalogues, OpenAPI responses and client SDKs
+    /// are generated". These are the three <c>OrderErrors</c> factories, reached by
+    /// following the expressions the capabilities actually return — the codes and the
+    /// categories, and none of the messages, which interpolate the sku and the quantity.
+    /// </remarks>
+    [Fact]
+    public void PublishesEachCapabilitysErrorCatalogue()
+    {
+        var capabilities = Manifest.RootElement.GetProperty("capabilities")
+            .EnumerateArray()
+            .ToDictionary(c => c.GetProperty("id").GetString()!, c => c);
+
+        Codes(capabilities["order.validate"]).ShouldBe(["order.invalid_quantity"]);
+        Codes(capabilities["inventory.reserve"]).ShouldBe(["inventory.out_of_stock"]);
+        Codes(capabilities["payment.capture"]).ShouldBe(["payment.declined"]);
+
+        // Present and empty, which is a statement: ReleaseInventory has no failure path,
+        // and that is different from "nothing could be read about it".
+        Codes(capabilities["inventory.release"]).ShouldBeEmpty();
+
+        capabilities["payment.capture"].GetProperty("errors")[0]
+            .GetProperty("category").GetString().ShouldBe("Conflict");
+    }
+
+    [Fact]
+    public void TheFlowsErrorsAreTheUnionOfItsCapabilities()
+        => Flow.GetProperty("errors").EnumerateArray().Select(e => e.GetString())
+            .ShouldBe(["inventory.out_of_stock", "order.invalid_quantity", "payment.declined"]);
+
+    /// <summary>
+    /// The message on an <c>Error</c> never reaches the manifest.
+    /// </summary>
+    /// <remarks>
+    /// <c>OrderErrors.OutOfStock</c> builds <c>"'{sku}' has {available} in stock."</c> and
+    /// attaches the sku and the count as structured detail. Both are business data, and the
+    /// manifest is publishable to consumers not entitled to it — the codes and categories
+    /// are structure, and they are all that crosses the line.
+    /// </remarks>
+    [Fact]
+    public void NoErrorMessageOrStructuredDetailReachesTheManifest()
+    {
+        foreach (var fragment in new[] { "in stock", "Quantity must be positive", "available", "declined:" })
+        {
+            FlowXManifest.Json.ShouldNotContain(fragment, Case.Insensitive);
+        }
+    }
+
+    private static string[] Codes(JsonElement capability) => [.. capability.GetProperty("errors")
+        .EnumerateArray()
+        .Select(e => e.GetProperty("code").GetString()!)];
 }

@@ -192,10 +192,12 @@
       }
     },
     "trigger": {
+      "description": "One declared way of starting a flow (ADR-0004). Address and admission only — operational tuning such as consumer concurrency, cron jitter or stream checkpoint interval is declared on the same attributes and deliberately absent here, because it configures how the platform runs a trigger rather than what the trigger promises anyone outside it.",
       "type": "object",
       "required": [
         "kind"
       ],
+      "additionalProperties": false,
       "properties": {
         "kind": {
           "enum": [
