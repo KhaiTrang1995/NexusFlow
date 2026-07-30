@@ -63,6 +63,14 @@ public readonly struct FlowExecutionResult
     /// <summary>True when every step completed.</summary>
     public bool IsSuccess => Error is null;
 
+    /// <summary>True when the flow ended with an error.</summary>
+    /// <remarks>
+    /// Present for symmetry with <see cref="Result{T}"/>. Call sites that branch on
+    /// failure read better than ones that negate success, and an API where one type
+    /// offers both and its sibling offers one is an API people have to check.
+    /// </remarks>
+    public bool IsFailure => Error is not null;
+
     /// <summary>
     /// A flow that was refused before any step ran — by a draining host, an admission
     /// quota, or anything else that decides not to start work.

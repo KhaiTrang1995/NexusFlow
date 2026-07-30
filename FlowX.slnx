@@ -6,6 +6,9 @@
     <Project Path="src/FlowX.Hosting/FlowX.Hosting.csproj" />
     <Project Path="src/FlowX.Runtime/FlowX.Runtime.csproj" />
   </Folder>
+  <Folder Name="/plugins/">
+    <Project Path="plugins/FlowX.Http/FlowX.Http.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/FlowX.Abstractions.Tests/FlowX.Abstractions.Tests.csproj" />
     <Project Path="tests/FlowX.Architecture.Tests/FlowX.Architecture.Tests.csproj" />
@@ -13,6 +16,7 @@
     <Project Path="tests/FlowX.Compiler.Tests/FlowX.Compiler.Tests.csproj" />
     <Project Path="tests/FlowX.Core.Tests/FlowX.Core.Tests.csproj" />
     <Project Path="tests/FlowX.Hosting.Tests/FlowX.Hosting.Tests.csproj" />
+    <Project Path="tests/FlowX.Http.Tests/FlowX.Http.Tests.csproj" />
     <Project Path="tests/FlowX.Runtime.Tests/FlowX.Runtime.Tests.csproj" />
   </Folder>
 </Solution>

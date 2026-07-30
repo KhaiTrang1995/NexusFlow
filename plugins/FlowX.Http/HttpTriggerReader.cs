@@ -1,0 +1,133 @@
+using System.Security.Claims;
+using FlowX.Runtime;
+using Microsoft.AspNetCore.Http;
+
+namespace FlowX.Http;
+
+/// <summary>The header names FlowX reads and writes.</summary>
+public static class FlowXHeaders
+{
+    /// <summary>W3C trace context. Continued, never restarted.</summary>
+    public const string TraceParent = "traceparent";
+
+    /// <summary>Fallback correlation header for callers that do not speak W3C trace context.</summary>
+    public const string CorrelationId = "X-Correlation-ID";
+
+    /// <summary>Caller-supplied deduplication key for mutating endpoints.</summary>
+    public const string IdempotencyKey = "Idempotency-Key";
+}
+
+/// <summary>
+/// Turns an HTTP request into a transport-agnostic <see cref="FlowInvocation"/>.
+/// </summary>
+/// <remarks>
+/// This is the boundary where HTTP stops. Everything past it — the engine, the
+/// capabilities, the flow — sees correlation, tenant and idempotency, and cannot tell
+/// whether they came from a request, a Kafka record or a cron tick. That is what makes
+/// quality goal Q4 hold in practice rather than on paper.
+/// </remarks>
+public static class HttpTriggerReader
+{
+    /// <summary>Claim types that may carry a tenant, in the order they are consulted.</summary>
+    /// <remarks>
+    /// Claims only. A tenant read from a header or a body field is a tenant the caller
+    /// chooses, which is a cross-tenant read waiting to happen (OWASP A01/A07). There is
+    /// deliberately no configuration hook to add a header source.
+    /// </remarks>
+    public static readonly string[] TenantClaimTypes =
+    [
+        "tid",
+        "tenant_id",
+        "http://schemas.flowx.dev/claims/tenant",
+    ];
+
+    /// <summary>Reads the invocation, or explains why the request cannot produce one.</summary>
+    /// <param name="context">The request.</param>
+    /// <param name="requireIdempotencyKey">
+    /// True for endpoints declared <c>Idempotent = true</c>. When set, a request without
+    /// the header is rejected rather than silently treated as unique — an endpoint that
+    /// promises deduplication and then does not deduplicate is worse than one that never
+    /// promised.
+    /// </param>
+    public static Result<FlowInvocation> Read(HttpContext context, bool requireIdempotencyKey)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        var idempotencyKey = context.Request.Headers[FlowXHeaders.IdempotencyKey].ToString();
+
+        if (requireIdempotencyKey && string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            return Result.Fail<FlowInvocation>(new Error(
+                "http.idempotency_key_required",
+                $"This endpoint requires an '{FlowXHeaders.IdempotencyKey}' header. It is " +
+                "passed to downstream systems so a retried request is not applied twice.",
+                ErrorCategory.Validation));
+        }
+
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            // Not required, so a per-request key is generated. It still makes retries
+            // *within* the flow safe; it just cannot deduplicate across requests, which
+            // is exactly what the caller declined to ask for.
+            idempotencyKey = Guid.NewGuid().ToString("n");
+        }
+
+        return Result.Ok(new FlowInvocation(
+            ReadCorrelationId(context),
+            idempotencyKey,
+            ReadTenant(context.User)));
+    }
+
+    /// <summary>
+    /// Resolves the tenant from validated claims, and from nothing else.
+    /// </summary>
+    /// <remarks>
+    /// Returns <c>null</c> rather than falling back to a header or a default when no
+    /// claim is present. A default tenant is the shape of a cross-tenant data leak: the
+    /// request proceeds, reads succeed, and the wrong customer's data comes back.
+    /// </remarks>
+    public static string? ReadTenant(ClaimsPrincipal? principal)
+    {
+        if (principal?.Identity?.IsAuthenticated != true)
+        {
+            return null;
+        }
+
+        foreach (var claimType in TenantClaimTypes)
+        {
+            var value = principal.FindFirst(claimType)?.Value;
+
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Continues the caller's trace, or starts one.
+    /// </summary>
+    /// <remarks>
+    /// W3C <c>traceparent</c> first: continuing a distributed trace is the whole point,
+    /// and restarting it severs the request from everything upstream of this service.
+    /// </remarks>
+    public static string ReadCorrelationId(HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        var traceParent = context.Request.Headers[FlowXHeaders.TraceParent].ToString();
+
+        if (!string.IsNullOrWhiteSpace(traceParent))
+        {
+            return traceParent;
+        }
+
+        var correlationId = context.Request.Headers[FlowXHeaders.CorrelationId].ToString();
+
+        return string.IsNullOrWhiteSpace(correlationId)
+            ? context.TraceIdentifier
+            : correlationId;
+    }
+}

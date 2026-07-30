@@ -169,6 +169,7 @@ an exit criterion that is mechanically checkable.
 | **Deliverable** | `plugins/FlowX.Http`: endpoint generation, model binding, Problem Details mapping, OpenAPI document |
 | **Exit** | Sample serves `POST /api/v1/orders`; ZAP baseline scan clean; B9 measured |
 | **Depends on** | WP-7 |
+| **Status** | **Mostly done.** The endpoint serves over a real TestServer with RFC 7807 mapping and claims-only tenant resolution; 59 tests. Generated endpoints, OpenAPI, ZAP and B9 all wait for the sample at WP-10. |
 
 ### WP-9 — CLI
 
