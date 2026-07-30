@@ -215,13 +215,17 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
 - [x] **WP-17** `flowx diff` v1 — 29 classification rules, text and JSON, exit 1 on a
       breaking change. **Wired into CI** against a committed baseline, and verified by
       flipping `Idempotent` on the sample's real source
-- [~] **WP-18** Scale — harness delivered (project generator, measurement script,
-      report, advisory CI job); **the budget FAILS at +23 %** against +8 %. Recorded as a
-      failure rather than rounded off. The magnitude is provisional — measured under load
-      average 2–34 with an 85 % within-arm spread — so it needs a quiet-machine re-run
-      before it is a verdict. The *direction* is not provisional: at 200 flows the
-      generator costs materially more than the +0.4 % B12 measured at one flow. Still
-      unanswered, and the question the roadmap actually asks: is the growth linear?
+- [~] **WP-18 + WP-23** Scale — harness delivered, then made trustworthy. **The budget
+      FAILS at +18.4 %**, 95 % CI [+16.3, +19.9], against +8 %. WP-18's provisional +23 %
+      is superseded: it was measured under load average 2–34 with an 85 % within-arm
+      spread, and the rebuilt methodology (sandwiched arms, an A/A control in the same
+      rounds, IQR, interleaved sizes) moved the answer five points. **Growth is linear** —
+      3 ms fixed + 9.54 ms per flow, R² 0.994 — so the constant is too large rather than
+      the design being wrong. Cost splits 62 % `FlowPlanGenerator` / 37 %
+      `StepBindingAnalyzer` / 1 % `CapabilityAnalyzer`, which disproves WP-18's guess
+      about where to look. The harness can now return **exit 2 = INCONCLUSIVE** and did so
+      on its own first run rather than publishing a number its error bars swallowed.
+      Box stays open: the budget is not met
 - [x] **WP-19** IDE code fixes — `FLOWX1001`, `FLOWX1010`, `FLOWX1017`, in a separate
       `FlowX.Compiler.CodeFixes` assembly so the analyzer never drags Workspaces into a
       consumer's build. `FLOWX1010` deliberately withholds `Public`

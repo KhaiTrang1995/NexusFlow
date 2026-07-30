@@ -458,9 +458,10 @@ maintainability and scale, not features.
 
 **Exit criteria, from the roadmap:**
 
-- a 200-flow synthetic solution builds with ≤ 8 % overhead → **WP-18**, measured and
-  **FAILING at +23 %**. The harness exists and the number is real; the budget is not met.
-  P1 cannot exit on this criterion until it is
+- a 200-flow synthetic solution builds with ≤ 8 % overhead → **WP-18** built the harness,
+  **WP-23** made it trustworthy. **FAILING at +18.4 %**, CI [+16.3, +19.9]. Growth is
+  linear (3 ms + 9.54 ms/flow, R² 0.994), so the constant is too large rather than the
+  design being wrong. P1 cannot exit on this criterion until it is met
 - every diagnostic passes `EveryDiagnosticIsHelpful` → **already green**
 - emitted code is breakpoint-able → **already true**, and pinned by
   `EachStepGetsItsOwnLineDirective`
@@ -631,26 +632,43 @@ and array order. A gate that fires on every build is a gate people delete.
 | **Deliverable** | A synthetic-project generator, a measurement script, and a report |
 | **Exit** | 200 flows build within the 8 % budget, and the cost is shown to scale linearly |
 | **Depends on** | WP-14 |
-| **Status** | **Harness done, budget FAILED at +23 %.** Reported as a failure rather than rounded off — the measurement is the deliverable, and the number it produced is the honest one. See [B12-scale](docs/benchmarks/B12-scale.md). |
+| **Status** | **Harness done, budget FAILS.** WP-18's provisional **+23 %** is superseded by **WP-23**'s **+18.4 %, 95 % CI [+16.3, +19.9]**, against +8 %. See [B12-scale](docs/benchmarks/B12-scale.md). |
 
-**The +23 % is not yet a verdict.** It was measured on a machine under load average
-2–34, with an 85 % spread *within* a single arm — wide enough that the arms overlap and
-the ratio is not separable from the noise. The finding that matters is therefore
-provisional in magnitude but not in direction: at 200 flows the generator costs
-materially more than at one, where B12 measured +0.4 %. Two things must happen before
-this criterion is closed either way:
+**WP-18's +23 % was directionally right and numerically inflated.** It was measured under
+load average 2–34 with an 85 % spread *within* a single arm — error bars wider than the
+budget being tested. WP-23 rebuilt the methodology and the answer moved by five points,
+which is roughly what a noise floor that large is worth.
 
-1. **Re-measure on a quiet machine.** Until the within-arm spread is small relative to
-   the difference between arms, neither a pass nor a fail is trustworthy.
-2. **Establish the shape, not just the ratio.** The roadmap's real question is whether
-   cost grows linearly with flow count. Superlinear growth at 200 flows would be a far
-   more important finding than any single percentage, and would change what gets fixed.
+**The growth is linear, and that is the more important finding.** ≈ **3 ms fixed +
+9.54 ms per flow**, R² **0.994**, replicated to within 1 % with the compiler server off.
+The power-law exponent is 0.91, CI [0.82, 1.08]. No interval on either metric reaches
+1.2. Superlinear growth would have meant the generator does not survive a real solution;
+linear growth means the constant is simply too large.
 
-The CI job added here is **advisory** (`continue-on-error: true`): it publishes the
-number on every run without failing the build on a measurement whose noise floor is
-larger than its budget. Gating on it while it cannot separate signal from load would
-teach people to re-run CI until it passes, which is worse than not gating at all. It
-becomes a gate when (1) above is satisfied.
+**Where the cost is**, from Roslyn's own `/reportanalyzer`, marginal per flow:
+
+| | ms/flow | share |
+|---|---:|---:|
+| `FlowPlanGenerator` | 8.07 | **62 %** |
+| `StepBindingAnalyzer` (FLOWX1020) | 4.77 | **37 %** |
+| `CapabilityAnalyzer` | 0.15 | 1 % |
+
+A third of the bill is contract-compatibility checking rather than generation, which is a
+different cost/benefit conversation from "the generator is slow". **WP-18's guess was
+wrong**: it named `CapabilityAnalyzer` as the first place to look, on the reasoning that
+it visits ~2 500 named types; it costs 51 ms of 12 s. Reducing this is its own package and
+needs a profiler.
+
+**The harness can now decline to answer.** Exit **2 = INCONCLUSIVE**, returned when the
+within-arm spread is too wide for a verdict to mean anything. It fired on WP-23's own
+first run — load peaking at 46.7 on four cores — and refused to publish a +23.3 % point
+estimate whose CI was [+7.6, +42.6]. A measurement that reports "I cannot tell" is worth
+more than one that always answers.
+
+The CI job stays **advisory** (`continue-on-error: true`) because the report records a
+FAIL, which is the contract `performance.yml` already stated. When it becomes blocking,
+**exit 2 must remain non-blocking**: inconclusive is not evidence of a regression, and
+failing a pull request for it fails it for the weather.
 
 ### WP-19 — IDE code fixes
 
