@@ -202,6 +202,48 @@ public sealed class DurableExecution
     }
 
     /// <summary>
+    /// Whether this instance has already committed a row saying this step's compensation ran.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>docs/06-Execution-Engine.md §7</c> rule 4: compensation is itself journaled, so a
+    /// crash during compensation resumes compensation rather than repeating it. This is the
+    /// read half. A step whose undo committed is not put back on the rebuilt stack, so the
+    /// resumed unwind continues from where the dead node stopped instead of refunding the same
+    /// payment twice.
+    /// </para>
+    /// <para>
+    /// <see cref="JournalOutcome.Compensated"/> only. A failed compensation attempt commits a
+    /// <see cref="JournalOutcome.Failure"/> row, and treating that as done would be the
+    /// mirror of the mistake <see cref="Completed"/> avoids — an attempt that did not undo the
+    /// step recorded as though it had.
+    /// </para>
+    /// </remarks>
+    internal bool Compensated(StepScope scope, int stepId)
+    {
+        if (Frontier is null)
+        {
+            return false;
+        }
+
+        var committed = Frontier.Committed;
+
+        for (var i = 0; i < committed.Count; i++)
+        {
+            var step = committed[i];
+
+            if (step.Key.StepId == stepId &&
+                step.Key.Scope == scope &&
+                step.Outcome == JournalOutcome.Compensated)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Which attempt at this step in this scope the next commit is: one more than the number
     /// already recorded.
     /// </summary>

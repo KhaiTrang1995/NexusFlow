@@ -68,6 +68,17 @@ public sealed class PolicyChain
                 "capability idempotent and declare it, or handle the failure in the flow.");
         }
 
+        if (policy.Kind == CompensationPolicy.CompensationRetryKind && !capability.IsIdempotent)
+        {
+            throw new InvalidFlowPlanException(
+                $"Capability '{capability.Id}' declares Idempotent = false, so a " +
+                "CompensationRetry policy cannot be attached to it. The chain a compensation " +
+                "carries wraps the compensating capability, not the step it undoes — so it is " +
+                "the compensating capability that has to be safe to run twice, and running a " +
+                "reversal twice is a second reversal. Either make it idempotent and declare " +
+                "it, or accept a single attempt and the CompensationFailed that follows.");
+        }
+
         if (policy.Kind == "Cache" && capability.HasSideEffects)
         {
             throw new InvalidFlowPlanException(

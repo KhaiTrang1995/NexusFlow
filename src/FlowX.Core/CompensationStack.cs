@@ -9,6 +9,10 @@ namespace FlowX;
 /// Non-null only inside a <see cref="StepKind.ForEach"/>, where it is the iteration's
 /// view of the context.
 /// </param>
+/// <param name="JournalScope">
+/// The same iteration, as the journal key spells it. <see cref="StepScope.Root"/> for the
+/// flow body and for every ephemeral execution.
+/// </param>
 /// <remarks>
 /// <para>
 /// <strong>Why the scope has to be recorded rather than recomputed.</strong> A
@@ -23,8 +27,20 @@ namespace FlowX;
 /// <para>
 /// A struct, so recording one costs nothing beyond the push it was already doing.
 /// </para>
+/// <para>
+/// <strong><see cref="JournalScope"/> is the same fact <see cref="Scope"/> carries, said in
+/// the journal's vocabulary.</strong> The two cannot be derived from one another: a
+/// <c>FlowContext</c> is a typed view the dispatcher builds and the journal has never heard
+/// of, and a <see cref="StepScope"/> is a rendered path a store persists. Carrying both is
+/// what lets a compensation row for the third line be keyed as the third line rather than
+/// colliding with the first — the same problem the stack's own duplicate check met, answered
+/// the same way.
+/// </para>
 /// </remarks>
-public readonly record struct CompensationEntry(StepNode Step, FlowContext? Scope)
+public readonly record struct CompensationEntry(
+    StepNode Step,
+    FlowContext? Scope,
+    StepScope JournalScope = default)
 {
     /// <summary>The step's flat index, matching the plan, the manifest and traces.</summary>
     public int Index => Step.Index;
@@ -77,7 +93,12 @@ public sealed class CompensationStack
     /// alone would have made the second element throw. Two completions of the same step in
     /// the same scope remain a defect, which is the case the check was written for.
     /// </remarks>
-    public void RecordCompleted(StepNode step, FlowContext? scope = null)
+    /// <param name="journalScope">
+    /// The same iteration as the journal keys it, so a row written for this step's undo lands
+    /// under the element it undid. <see cref="StepScope.Root"/> outside a loop and for every
+    /// ephemeral execution, which costs an unjournaled flow nothing.
+    /// </param>
+    public void RecordCompleted(StepNode step, FlowContext? scope = null, StepScope journalScope = default)
     {
         ArgumentNullException.ThrowIfNull(step);
 
@@ -95,7 +116,7 @@ public sealed class CompensationStack
                 "its effect twice.");
         }
 
-        _completed.Push(new CompensationEntry(step, scope));
+        _completed.Push(new CompensationEntry(step, scope, journalScope));
     }
 
     /// <summary>

@@ -27,7 +27,8 @@ public sealed class ExecutionPlan
         ImmutableArray<int> compensableStepIndices,
         ImmutableArray<string> sideEffects,
         bool hasParallel,
-        bool hasSubFlow)
+        bool hasSubFlow,
+        bool hasCompensationPolicies)
     {
         Flow = flow;
         Graph = graph;
@@ -35,6 +36,7 @@ public sealed class ExecutionPlan
         SideEffects = sideEffects;
         HasParallel = hasParallel;
         HasSubFlow = hasSubFlow;
+        HasCompensationPolicies = hasCompensationPolicies;
     }
 
     /// <summary>The flow this plan executes.</summary>
@@ -99,6 +101,23 @@ public sealed class ExecutionPlan
     /// </remarks>
     public bool HasSubFlow { get; }
 
+    /// <summary>True when any step's compensation carries a policy the runtime executes.</summary>
+    /// <remarks>
+    /// <para>
+    /// Precomputed for the reason <see cref="HasParallel"/> is, and read in the same shape: a
+    /// flow whose undos declare nothing must not pay for the ones that do. The unwind of a
+    /// plain saga therefore stays the single dispatch per entry it always was — one predictable
+    /// always-false comparison, no retry bookkeeping, no clock read, and the failure-path
+    /// allocation figure `EngineAllocationTests` records is unchanged.
+    /// </para>
+    /// <para>
+    /// <strong>It is the whole of the gate.</strong> The one policy this runtime executes is a
+    /// compensation retry, and a flow that declares none executes no policy at all — which is
+    /// what keeps the Policy Engine in P4 while the unwind gets the slice it cannot do without.
+    /// </para>
+    /// </remarks>
+    public bool HasCompensationPolicies { get; }
+
     /// <summary>Builds a validated plan.</summary>
     /// <param name="flow">The flow's identity and profile.</param>
     /// <param name="graph">Its compiled step sequence.</param>
@@ -116,6 +135,7 @@ public sealed class ExecutionPlan
         var effects = new SortedSet<string>(StringComparer.Ordinal);
         var parallel = false;
         var subFlow = false;
+        var compensationPolicies = false;
 
         foreach (var step in graph.Steps)
         {
@@ -123,6 +143,8 @@ public sealed class ExecutionPlan
             {
                 compensable.Add(step.Index);
             }
+
+            compensationPolicies |= step.CompensationRetry.IsRetrying;
 
             parallel |= step.Kind == StepKind.Parallel ||
                         (step.Kind == StepKind.ForEach && step.MaxDegreeOfParallelism > 1);
@@ -137,7 +159,8 @@ public sealed class ExecutionPlan
             AddEffects(effects, step.Compensation);
         }
 
-        return new ExecutionPlan(flow, graph, compensable.ToImmutable(), [.. effects], parallel, subFlow);
+        return new ExecutionPlan(
+            flow, graph, compensable.ToImmutable(), [.. effects], parallel, subFlow, compensationPolicies);
     }
 
     private static void AddEffects(SortedSet<string> effects, CapabilityDescriptor? capability)
