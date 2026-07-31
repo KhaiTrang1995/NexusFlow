@@ -742,9 +742,12 @@ after `FlowX.Testing` had shipped context doubles under its name at WP-12 — th
 documents described a host that ran flows while the package contained neither. It runs a
 real engine with capabilities substituted by id; `For<TFlow>()` is deliberately not
 offered, because discovering the generated dispatcher would need reflection over
-generated members and constraint C2 forbids it. **`dotnet new flowx` still does not
-exist** and is not claimed anywhere — carried forward as unstarted for the second time,
-which is worth noticing.
+generated members and constraint C2 forbids it. **`dotnet new flowx` is being attempted
+in the current round**, after being carried forward unstarted twice. Until it lands, every
+document that names it — [03 §12](docs/03-Design-Principles.md),
+[19](docs/19-SDK.md), [20](docs/20-Roadmap.md) — is describing a command that does not
+run, and none of them should be softened to hide it: the reason it is worth noticing is
+that two carries is how an item stops being scope and becomes furniture.
 
 **What P1 hands to P2**, in three named piles rather than as "remaining work":
 
@@ -761,8 +764,10 @@ which is worth noticing.
    `CrossTenantAccessIsDenied` (needs P4's policy execution **and** P2's journal for the
    audit event), `RedactionCannotBeBypassed` (needs sinks that do not exist — logs,
    traces, journal, replay), `PluginsPassConformance` (needs a conformance suite and a
-   second plugin, both P3). A test named after a gate is itself a claim of coverage, so
-   none of them exists as a green stub.
+   second plugin, both P3 — **WP-51 has since built a conformance project, but it holds
+   journal and lease suites and no trigger suite, so this blocker is unchanged**). A test
+   named after a gate is itself a claim of coverage, so none of them exists as a green
+   stub.
 3. **The build-overhead exception**, and [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)
    still open behind it.
 
@@ -1251,7 +1256,7 @@ Two things shape the ordering and are argued in [§2](#2-sequencing) rather than
 **budgets come before the journal** (B12's lesson, learned the expensive way), and the
 runtime chain is **sequential because of files**, exactly as the DSL chain was.
 
-### WP-50 — The measurements, before the thing they measure
+### WP-50 — The measurements, before the thing they measure — **not started**
 
 | | |
 |---|---|
@@ -1262,26 +1267,85 @@ runtime chain is **sequential because of files**, exactly as the DSL chain was.
 | **Exit** | B7 and B8 report a number with a confidence interval and an explicit pass/fail; the chaos rig reports the ephemeral floor and refuses to publish a verdict whose spread swallows it |
 | **Depends on** | — (the only P2 package that touches nothing under `src/`) |
 
+> [!IMPORTANT]
+> **WP-51 shipped and WP-50 did not, which inverts the one ordering this section argues
+> for at length.** `JournalBenchmarks` and `scripts/chaos-qr2.sh` do not exist; nothing
+> under `tests/FlowX.Benchmarks/` or `scripts/` measures B7, B8 or QR2. The contracts and
+> the conformance suite went in first anyway, so P2 is now in exactly the position
+> [§2](#the-lesson-b12-taught-twice) describes B12 as having been in — a budget that
+> becomes measurable only after the thing it constrains is built.
+>
+> The cost is smaller than it would have been at WP-53 and it is not zero: WP-51 added no
+> execution path, so there is nothing yet whose commit latency could have been mismeasured,
+> but the baseline WP-53 is supposed to be judged against still does not exist, and the day
+> it is written it will be written by someone who already knows what the journal looks like.
+> **WP-50 must land before WP-53**, not before WP-52, and that is a weaker claim than the
+> one this document made.
+>
+> Two CI-gate repairs — the attribution guard and the DAST job — were carried out in the
+> same round, and [21 §4](docs/21-Quality-Gates.md#4-security-testing-toolchain) and
+> [21 §2.6](docs/21-Quality-Gates.md#26-what-the-analyzers-found-and-what-was-done-about-each)
+> both credited them to WP-50. They are not in this package's deliverable row and never
+> were; crediting them here made an unstarted package look partly delivered. Both labels
+> are corrected. The work was real and unnumbered.
+
 **What can honestly be measured before the journal exists**, since the objection is
 obvious: the commit latency of that transaction shape is a property of Postgres and of the
 schema, not of FlowX, and it is the number R5 turns on. WP-3 measured an empty step loop
 for the same reason. What this package cannot do is price FlowX's own overhead, and its
 report must say so in those words.
 
-### WP-51 — `IFlowJournal`, `ILeaseStore`, and the conformance suite
+### WP-51 — `IFlowJournal`, `ILeaseStore`, and the conformance suite — **shipped**
 
 | | |
 |---|---|
 | **Goal** | The two store contracts exist, in `FlowX.Abstractions`, with a shared conformance suite that a store either passes or fails |
 | **Why** | [ADR-0006](docs/adr/ADR-0006-journal-and-leases.md) promises "a shared conformance suite, so Postgres, Redis, SQL Server or a custom store all behave identically" and there is neither interface nor suite. [ADR-0009](docs/adr/ADR-0009-plugin-contracts.md) fixes where they live. Writing the suite after two stores exist produces a suite shaped like those two stores — the same defect as writing a budget after the thing it constrains |
 | **Tests first** | The conformance suite itself, run against an in-memory reference implementation; and a deliberately broken store — one that accepts a stale fencing token — which the suite must reject by name |
-| **Deliverable** | `IFlowJournal`, `ILeaseStore`, the fencing-token type, the record shapes of [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md) including `scope`, and `FlowX.Conformance.Journal` as a package |
+| **Deliverable** | `IFlowJournal`, `ILeaseStore`, the fencing-token type, the record shapes of [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md) including `scope`, and `FlowX.Conformance.Tests` as a package |
 | **Exit** | The in-memory store passes 100 % of the suite; the stale-token store fails on the assertion whose name says why; `AbstractionsHasNoDependencies` still green |
 | **Depends on** | WP-50 |
 
-**This is where ADR-0015 becomes Accepted or changes.** It is the first contact between
-the schema and code, and the record says explicitly that it stays *Proposed* until this
-suite exists to hold something to it.
+**This deliverable named the package `FlowX.Conformance.Journal`, and this file was the
+only place that said so.** [05 §5.3](docs/05-Architecture.md#53-target-code-structure),
+[09 §11](docs/09-Trigger-Model.md#11-writing-a-trigger-plugin),
+[17 §4](docs/17-Plugin-System.md#4-compatibility-policy) and
+[ADR-0009](docs/adr/ADR-0009-plugin-contracts.md) all named
+`FlowX.Conformance.Tests`, and that is what shipped. Four documents and the code against
+one row: the row was wrong and has been corrected. The name also has to hold more than the
+journal — `LeaseStoreConformance` is in it already, and four more suites are planned — so
+`.Journal` would have been wrong on the merits as well as by majority.
+
+**What shipped, and how it differs from the row above.**
+
+- The contracts landed in **`src/FlowX.Abstractions/Durability/`**, which is where
+  ADR-0009 requires them: a plugin references `FlowX.Abstractions` and nothing else, so a
+  contract one layer up is a contract no third-party store can implement.
+  `docs/05 §5.3` had them in `FlowX.Runtime.Durable/Journal/` and has been corrected.
+- **`FenceAsync` was added to `IFlowJournal` to close a gap ADR-0015 left.** The ADR rests
+  correctness on "committed rows and a fencing token" and never says *when* the fence
+  rises. If a journal learned tokens only from writes, the sequence
+  [11 §3](docs/11-Distributed-Runtime.md) draws — node-2 acquires token 8, reads history,
+  and only then commits — leaves a window in which node-1's stale token 7 is still the
+  highest the journal has seen, so it is accepted. That is split brain with an extra step.
+  The fence has to rise on *acquisition*, and because the lease store and the journal are
+  separate plugins with no shared transaction, the winning node is the only thing that can
+  carry the token between them. `JournalConformance.TheFenceRisesOnAcquisitionNotOnTheFirstWrite`
+  pins it. The ADR should be amended to match when it is next opened.
+- The project is **a test project and is deliberately not packable.** The row says "as a
+  package"; that half is unmet, and the reason is recorded in the `.csproj`: the only
+  implementation held to the suite is the in-memory reference sitting beside it, and
+  publishing a contract that nothing outside its author has pushed back on is how a
+  contract ships wrong. It packs at WP-53/WP-54, when a second and third store exist.
+
+**This was to be where ADR-0015 becomes Accepted or changes. It stays *Proposed*, and
+that is the correct outcome, not a slip.** The ADR's own condition is that the suite hold
+an *implementation* to the schema. The suite holds an in-memory reference implementation
+— a dictionary that satisfies the assertions — which proves the schema is *expressible*
+and proves nothing about whether it survives a real store's transaction boundaries,
+indexes or expand/contract migration. Nothing has ever run against a real database. The
+ADR is re-decided at **WP-53**, against Postgres, which is the first thing that can
+disagree with it.
 
 ### WP-52 — The seam: the runtime reads `ExecutionProfile`
 
@@ -1483,6 +1547,21 @@ is exactly the kind of optimism the DSL chain punished.
    its own trigger. **The abstractions need a way for a plugin author to declare a readable
    kind, and it belongs in WP-70 or it is paid for three times.** The roadmap's P3 Must
    does not mention it.
+
+   **This half of WP-70 has shipped, three phases early.** `[TriggerKind(TriggerKind.Bus)]`
+   carries the kind as an enum constructor argument, which survives to metadata where an
+   overridden property does not; `TriggerReader` walks the base chain, because Roslyn does
+   not honour `Inherited = true` for `ISymbol.GetAttributes` as reflection does. Severity
+   follows who can apply the fix — Error when the attribute is declared in the compilation
+   being built, Warning when it arrives as a reference. It was pulled forward because it is
+   an *abstraction* change: leaving it until P3 means three plugins are written against a
+   contract that is about to change, and this is the cheapest moment it will ever be.
+   **The rest of WP-70 — a `TriggerSourceConformance` suite, `ITriggerSource` declared,
+   the package published — has not shipped and `PluginsPassConformance` is still blocked.**
+   One known hole remains and is stated in three places rather than buried: for an
+   attribute arriving from metadata, nothing checks that the marker and the `Kind` property
+   agree, because reading `Kind` means running a getter and a generator does not run what
+   it compiles.
 2. **P3 is *not* where `[Sensitive]`'s remaining sinks arrive**, though this file said so
    until P1 closed — the roadmap and [12-Observability](docs/12-Observability.md) both put
    them in **P5**, and the correction is at [WP-12a](#wp-12a--sensitive-is-declared-and-unread).
