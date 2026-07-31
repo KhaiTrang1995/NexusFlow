@@ -1039,7 +1039,7 @@ public sealed class FlowEngine
     /// </para>
     /// <para>
     /// <strong>A failed attempt carries no result payload.</strong> An <c>Error</c> is not in
-    /// any generated JSON context — <see cref="JournalPayload.Of{T}"/> requires one, on
+    /// any generated JSON context — <c>JournalPayload.Of</c> requires one, on
     /// purpose — so the row records the outcome, the capability and the timing, and the
     /// error itself reaches the caller and the trace. Journaling errors as payloads is
     /// WP-59's contract question, not something to settle with a reflecting serialiser here.
@@ -1106,6 +1106,11 @@ public sealed class FlowEngine
             // this survives because "roughly where is this stuck instance" is a real question
             // an operator asks of a table.
             ResumeHint = step.Index,
+
+            // The event the step emitted, staged by the same write that records the step.
+            // Gated on the plan rather than on the entry, so a flow that emits nothing never
+            // reads the field — the bargain HasParallel and HasCompensationPolicies struck.
+            Outbox = plan.HasEmit && entry.Event is { } emitted ? [emitted] : [],
         };
 
         var committed = await run.Journal.CommitAsync(commit, ct).ConfigureAwait(false);

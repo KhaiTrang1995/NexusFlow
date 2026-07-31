@@ -49,7 +49,7 @@ them away, an ADR must record it.
 | C1 | .NET 10+, C# 14 | Technical | Roslyn incremental generators; `ref struct` interfaces available |
 | C2 | Must run under NativeAOT | Technical | No reflection, no dynamic codegen, no `System.Text.Json` reflection mode |
 | C3 | Must host inside ASP.NET Core | Technical | Cannot own the process lifecycle or the DI container |
-| C4 | No 2-phase commit | Technical | Consistency is saga-based; outbox for atomic publish. **Both halves exist as of WP-56** — one transaction stages the event with the step, and `PostgresOutboxPublisher` delivers it at-least-once. `.Emit<T>()` does not reach it yet ([FLOWX1024](diagnostics/FLOWX1024.md)), and no broker plugin implements `IEventPublisher` |
+| C4 | No 2-phase commit | Technical | Consistency is saga-based; outbox for atomic publish. **The constraint now describes the system.** `.Emit<T>()` on a `Durable` flow stages its event in the same transaction as the step row, a refused commit discards it, and `PostgresOutboxPublisher` delivers it at-least-once in per-`partition_key` order. What is still missing is the far end: **no broker plugin implements `IEventPublisher`**, so *delivered* means *handed to a publisher*. [FLOWX1024](diagnostics/FLOWX1024.md) survives, narrowed to an `Ephemeral` flow and to a contract no serialiser context declares |
 | C5 | OpenTelemetry is the only telemetry API | Technical | No proprietary metrics interface |
 | C6 | Apache-2.0, no copyleft dependencies | Legal | Vets every transitive dependency ([ADR-0012](adr/ADR-0012-apache-2-license.md)) |
 | C7 | Public contracts follow SemVer with a 2-minor deprecation window | Organisational | Breaking changes are batched into majors |
@@ -743,16 +743,19 @@ What is still true is narrower and worth stating exactly: **nothing in this repo
 declares a policy**, so the emission path has never run against a shipped assembly, and no
 policy *executes* — `FlowX.Runtime` contains no policy engine at all, so a declared `Retry`
 is a manifest entry and nothing more. A completeness check for policies would therefore pass
-vacuously today. It becomes meaningful with P4. The same is true of `events`: `.Emit<T>()`
-reaches the plan and the manifest, and [`FLOWX1024`](diagnostics/FLOWX1024.md) is raised on
-every one of them because nothing publishes it — *after WP-56 that is true for a narrower
-reason than it was. The outbox and its publisher exist; the engine does not stage an emitted
-event into `StepCommit.Outbox`, so there is nothing for the publisher to publish. The
-diagnostic page carries the corrected reason.*
+vacuously today. It becomes meaningful with P4.
+
+**`events` is no longer the same case, and that is the change worth stating.** `.Emit<T>()`
+reaches the plan, the manifest *and* the outbox: a `Durable` flow's emitted event is staged
+by the step's own commit and drained by `PostgresOutboxPublisher`, so a completeness check
+over `events` would not pass vacuously. [`FLOWX1024`](diagnostics/FLOWX1024.md) is no longer
+raised on every `.Emit` — only on the two that still cannot be staged, an `Ephemeral` flow
+and a contract outside every source-generated `JsonSerializerContext`. What remains unproved
+is the network: `IEventPublisher` has no implementation but a recording test double.
 
 *The stale wording was duplicated verbatim in the `ManifestIsComplete` XML doc comment in
-`tests/FlowX.Architecture.Tests/PublishedContractTests.cs`. That comment now carries the
-same correction, so the two no longer disagree.*
+`tests/FlowX.Architecture.Tests/PublishedContractTests.cs`. That comment carries the same
+correction, so the two do not disagree.*
 
 **`PluginsPassConformance` is blocked, not overlooked, and the reason has narrowed.** This
 paragraph used to say "there is no conformance suite to run", and that is no longer true:

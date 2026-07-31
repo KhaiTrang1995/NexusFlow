@@ -288,7 +288,7 @@ public interface IStepDispatcher
     /// </para>
     /// <para>
     /// <strong>Here rather than on the engine, for the reason nothing else typed is on the
-    /// engine either.</strong> <see cref="JournalPayload.Of{T}"/> requires the generated
+    /// engine either.</strong> <c>JournalPayload.Of</c> requires the generated
     /// <c>JsonTypeInfo&lt;T&gt;</c> — there is no overload that reflects over a type — and
     /// only generated code can name one. That requirement is what makes membership of the
     /// generated JSON context a compile error rather than a convention (ADR-0008,

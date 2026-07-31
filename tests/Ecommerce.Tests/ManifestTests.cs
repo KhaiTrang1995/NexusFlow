@@ -72,8 +72,10 @@ public sealed class ManifestTests
     [Fact]
     public void RecordsTheEventTheFlowDeclares()
     {
-        // Recorded even though nothing publishes it — which is the entire reason
-        // FLOWX1024 exists. A consumer reading this would expect the event.
+        // Recorded even though this flow does not publish it: the sample is deliberately
+        // Ephemeral, so it keeps no transaction to stage the event in. That is what
+        // FLOWX1024 reports here, and DEBT-0001 is the dated suppression of it. A consumer
+        // reading this manifest would expect the event.
         Flow.GetProperty("emits").EnumerateArray()
             .Select(e => e.GetString())
             .ShouldBe(["order.placed"]);

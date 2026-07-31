@@ -55,7 +55,13 @@ public sealed class FlowPlanGeneratorTests
         }
         """;
 
-    private static string WithFlow(string flowDeclaration) => Preamble + "\n\n" + flowDeclaration;
+    /// <summary>The shared preamble, plus one flow declaration.</summary>
+    /// <remarks>
+    /// Internal rather than private because <c>EmitStagingTests</c> asks the same questions
+    /// about the same sample types, and a second copy of the preamble would be a second set
+    /// of contracts to keep in step.
+    /// </remarks>
+    internal static string WithFlow(string flowDeclaration) => Preamble + "\n\n" + flowDeclaration;
 
     [Fact]
     public void TheTestPreambleItselfCompiles()

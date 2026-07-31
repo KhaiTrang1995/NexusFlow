@@ -900,5 +900,18 @@ internal static class Plans
             StepNode.ForCapability(1, Validate),
         ]));
 
+    /// <summary>One emit step and nothing else, so the first commit is the one that stages.</summary>
+    /// <remarks>
+    /// Used where the assertion is about the emit step's own commit being refused. In
+    /// <see cref="FourStepSaga"/> the emit is last, so three commits would land before the
+    /// refusal and the test would be reading an outbox that three unrelated rows had already
+    /// had their chance to write to.
+    /// </remarks>
+    public static ExecutionPlan OneStepEmit() => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.place", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForEmit(0, "order.placed"),
+        ]));
+
     public static FlowInvocation Invocation { get; } = new("corr-1", "idem-1", TenantId: "acme");
 }

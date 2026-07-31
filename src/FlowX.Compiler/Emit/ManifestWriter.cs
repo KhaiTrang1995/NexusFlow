@@ -37,6 +37,22 @@ public static class ManifestWriter
     /// <summary>The schema version this writer emits. Bumped when the shape changes.</summary>
     public const string SchemaVersion = "0.1.0";
 
+    /// <summary>
+    /// The version stamped on every published event, in the manifest and on the outbox row.
+    /// </summary>
+    /// <remarks>
+    /// A constant, and named rather than repeated because it is now written in two places
+    /// that must agree: the manifest's <c>events</c> array, which is what a consumer team
+    /// reads, and <c>OutboxWrite.SchemaVersion</c>, which is what arrives beside the body. Two
+    /// literals would be a drift nobody notices until a consumer versions off the wrong one.
+    /// <para>
+    /// It is a constant rather than a declaration because nothing declares one yet — there is
+    /// no attribute on an event contract to read it from. That is ADR-0018's revisit, and
+    /// when it lands both writers change together because they read this.
+    /// </para>
+    /// </remarks>
+    public const string EventSchemaVersion = "1.0.0";
+
     /// <summary>Writes the manifest for a whole application.</summary>
     /// <param name="applicationName">Usually the root assembly name.</param>
     /// <param name="applicationVersion">SemVer of the application.</param>
@@ -105,7 +121,7 @@ public static class ManifestWriter
         {
             writer.OpenObject();
             writer.Property("type", evt);
-            writer.Property("schemaVersion", "1.0.0");
+            writer.Property("schemaVersion", EventSchemaVersion);
             writer.CloseObject();
         }
 

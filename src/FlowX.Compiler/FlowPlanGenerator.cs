@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using FlowX.Compiler.Analysis;
+using FlowX.Compiler.Diagnostics;
 using FlowX.Compiler.Emit;
 using FlowX.Compiler.Model;
 using Microsoft.CodeAnalysis;
@@ -53,6 +54,9 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     /// </remarks>
     private const string HttpEndpointExtensionsName = "FlowX.Http.FlowEndpointExtensions";
 
+    /// <summary>The id whose reporting this class decides rather than passes through.</summary>
+    private static readonly string EmitDiagnosticId = FlowXDiagnostics.EmitIsNotYetPublished.Id;
+
     /// <inheritdoc />
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -62,8 +66,6 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                 predicate: static (node, _) => node is ClassDeclarationSyntax,
                 transform: static (ctx, cancellationToken) => Analyze(ctx, cancellationToken))
             .Where(static result => result is not null);
-
-        context.RegisterSourceOutput(flows, static (production, result) => Produce(production, result!));
 
         // The manifest describes the whole application, so it needs every flow at once.
         // Collect() introduces a barrier — any flow changing regenerates the manifest —
@@ -135,6 +137,15 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                 predicate: static (node, _) => node is ClassDeclarationSyntax,
                 transform: static (ctx, cancellationToken) => ReadJsonContext(ctx, cancellationToken))
             .Where(static result => result is not null);
+
+        // The plan is emitted per flow, and joined to the compilation's serialiser contexts
+        // because an `.Emit` step's body is written through one. Combined rather than
+        // collected on both sides: one flow changing still regenerates one file, and a
+        // context changing regenerates the flows whose events it declares — which is
+        // correct, since that is exactly when a dispatcher gains or loses a DescribeStep.
+        context.RegisterSourceOutput(
+            flows.Combine(jsonContexts.Collect()),
+            static (production, data) => Produce(production, data.Left!, data.Right));
 
         context.RegisterSourceOutput(
             flows.Collect()
@@ -458,11 +469,52 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
         return FlowAnalyzer.Analyze(symbol, declaration, context.SemanticModel);
     }
 
-    private static void Produce(SourceProductionContext production, AnalysisResult result)
+    /// <summary>
+    /// Emits one flow's plan and dispatcher, and settles that flow's <c>FLOWX1024</c>s.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why the warning is decided here and not in analysis.</strong> Whether an
+    /// <c>.Emit</c> step stages anything turns on two facts. The flow's profile is one, and
+    /// <c>FlowAnalyzer</c> knows it. The other — whether exactly one
+    /// <c>JsonSerializerContext</c> in this compilation declares the event contract — is a
+    /// question about every tree in the build, and a per-flow transform that walked them all
+    /// to answer it would trade the generator's incrementality for a warning. So analysis
+    /// raises a provisional diagnostic carrying the contract in its properties, and this
+    /// drops it or restates it with the reason that applies.
+    /// </para>
+    /// <para>
+    /// Restated rather than mutated, because a <c>Diagnostic</c>'s message arguments are
+    /// fixed at creation. The location is the provisional one's, so a
+    /// <c>#pragma warning disable</c> around the author's <c>.Emit</c> still suppresses it.
+    /// </para>
+    /// </remarks>
+    private static void Produce(
+        SourceProductionContext production,
+        AnalysisResult result,
+        ImmutableArray<JsonContextModel?> jsonContexts)
     {
+        var contexts = jsonContexts
+            .Where(static c => c is not null)
+            .Select(static c => c!)
+            .ToList();
+
+        var durable = string.Equals(result.Model?.Profile, "Durable", StringComparison.Ordinal);
+
         foreach (var diagnostic in result.Diagnostics)
         {
-            production.ReportDiagnostic(diagnostic);
+            if (!string.Equals(diagnostic.Id, EmitDiagnosticId, StringComparison.Ordinal))
+            {
+                production.ReportDiagnostic(diagnostic);
+                continue;
+            }
+
+            var settled = SettleEmitDiagnostic(diagnostic, contexts, durable);
+
+            if (settled is not null)
+            {
+                production.ReportDiagnostic(settled);
+            }
         }
 
         if (!result.IsSuccess || result.Model is null)
@@ -474,6 +526,46 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
 
         production.AddSource(
             FlowEmitter.FileNameFor(result.Model),
-            SourceText.From(FlowEmitter.Emit(result.Model), Encoding.UTF8));
+            SourceText.From(FlowEmitter.Emit(result.Model, contexts), Encoding.UTF8));
     }
+
+    /// <summary>
+    /// Turns one provisional <c>FLOWX1024</c> into the diagnostic to report, or into nothing.
+    /// </summary>
+    /// <returns>
+    /// <c>null</c> when the event is staged and published, so there is nothing to warn about.
+    /// </returns>
+    private static Diagnostic? SettleEmitDiagnostic(
+        Diagnostic provisional, List<JsonContextModel> contexts, bool durable)
+    {
+        provisional.Properties.TryGetValue(EmitReasons.ContractProperty, out var contract);
+        provisional.Properties.TryGetValue(EmitReasons.NameProperty, out var name);
+
+        if (!durable)
+        {
+            return Restate(provisional, name, EmitReasons.Ephemeral);
+        }
+
+        if (contract is null)
+        {
+            // The type argument did not resolve, so analysis produced no step either. C# is
+            // already reporting something more useful about the same span.
+            return null;
+        }
+
+        return FlowEmitter.SingleContextFor(contexts, contract) is null
+            ? Restate(
+                provisional,
+                name,
+                string.Format(CultureInfo.InvariantCulture, EmitReasons.NoSerializerContextFormat, contract))
+            : null;
+    }
+
+    private static Diagnostic Restate(Diagnostic provisional, string? name, string reason) =>
+        Diagnostic.Create(
+            FlowXDiagnostics.EmitIsNotYetPublished,
+            provisional.Location,
+            provisional.Properties,
+            name ?? "TEvent",
+            reason);
 }

@@ -310,17 +310,33 @@ flow.Emit<OrderPlaced>(ctx => new OrderPlaced(
 
 Emission is transactional-outbox based in `Durable` flows: the event row is
 written in the same transaction as the step commit, then published by the Event
-Engine. At-least-once, never lost, never published before the step is durable.
+Engine. At-least-once, never lost, never published before the step is durable. The
+`partition_key` is the flow instance, so one instance's events reach a consumer in the
+order it staged them; no global order is offered.
 
-> **Not yet, and the gap is narrower than it was.** The store half is real:
-> `plugins/FlowX.Postgres` writes the outbox row in the step's transaction (WP-53),
-> and `PostgresOutboxPublisher` drains it to an `IEventPublisher` at-least-once,
-> preserving order per `partition_key` (WP-56). **`.Emit<T>()` does not reach it** —
-> `FlowEngine.CommitStepAsync` never populates `StepCommit.Outbox`, so the paragraph
-> above describes rows a host currently has to stage itself. That is what
-> [`FLOWX1024`](diagnostics/FLOWX1024.md) reports on every `Emit` step, and it is the
-> only remaining link. There is also no broker plugin: `IEventPublisher` is declared
-> and unimplemented ([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)).
+A member the contract declares `[Sensitive]` is redacted in the event body, by the same
+structural rule that redacts it in a journal row — the payload is a `JournalPayload` and
+its only exit replaces every marked member.
+
+> **True for a `Durable` flow, with two conditions and one gap.** The chain is whole:
+> the generated dispatcher's `DescribeStep` builds the body from the expression above,
+> `FlowEngine.CommitStepAsync` puts it in `StepCommit.Outbox`, `plugins/FlowX.Postgres`
+> writes it in the step's own transaction (WP-53), and `PostgresOutboxPublisher` drains
+> it at-least-once in `partition_key` order (WP-56). A refused commit discards the event
+> with the step.
+>
+> **Two conditions.** The flow must declare `Profile = Durable` — an ephemeral execution
+> keeps no journal, so there is no transaction for the event to join — and `TEvent` must
+> be declared by exactly one source-generated `JsonSerializerContext` in the compilation,
+> because the body is written through it and never by reflection. Miss either and
+> [`FLOWX1024`](diagnostics/FLOWX1024.md) says which at build time.
+>
+> **The gap is the broker.** `IEventPublisher` is declared and no plugin implements it, so
+> "published" today means "handed to a publisher"
+> ([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)).
+>
+> **`EmitOnFailure` is not distinguished yet.** It compiles to the same `Emit` node in the
+> same position, so it publishes where it is written rather than on the failure path.
 
 ### 3.7 Sub-flows
 

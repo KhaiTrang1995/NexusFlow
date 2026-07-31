@@ -170,10 +170,17 @@ public sealed partial class PublishedContractTests
     /// would pass vacuously — which is the thing docs/21-Quality-Gates §2.4 refuses to do. No
     /// policy <em>executes</em> either: <c>FlowX.Runtime</c> contains no policy engine, so a
     /// declared <c>Retry</c> is a manifest entry and nothing more. It becomes checkable with
-    /// P4. The same holds for <c>events</c>: <c>.Emit&lt;T&gt;()</c> reaches the plan and the
-    /// manifest, and <c>FLOWX1024</c> is raised on every one because nothing publishes it.
-    /// docs/05-Architecture.md §12 carries the corrected wording; this comment was the
-    /// verbatim duplicate it named.
+    /// P4.
+    /// </para>
+    /// <para>
+    /// <strong><c>events</c> has stopped being the same case.</strong> <c>.Emit&lt;T&gt;()</c>
+    /// on a <c>Durable</c> flow now stages its event in the step's own transaction and
+    /// <c>PostgresOutboxPublisher</c> drains it, so a completeness check over <c>events</c>
+    /// would not pass vacuously. <c>FLOWX1024</c> is raised only where the event still cannot
+    /// be staged — an <c>Ephemeral</c> flow, or a contract outside every source-generated
+    /// <c>JsonSerializerContext</c>. What is unproved is the network: no broker plugin
+    /// implements <c>IEventPublisher</c>. docs/05-Architecture.md §12 carries the same
+    /// wording; this comment was the verbatim duplicate it named.
     /// </para>
     /// </remarks>
     [Fact]

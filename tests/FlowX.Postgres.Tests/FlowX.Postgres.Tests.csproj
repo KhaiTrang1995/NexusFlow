@@ -47,6 +47,22 @@
       result worth having: the suite was derivable from outside without an edit.
     -->
     <ProjectReference Include="../FlowX.Conformance.Tests/FlowX.Conformance.Tests.csproj" />
+
+    <!--
+      The compiler, as an ANALYZER. This is the only place besides samples/ecommerce where
+      the generator runs inside a real build, and the only place anywhere where it runs
+      beside System.Text.Json's own generator over a DURABLE flow that emits.
+
+      That combination is the point. The emitter's own tests assert the text of a generated
+      DescribeStep; nothing there proves the text binds against a context another generator
+      produced in the same compilation, and nothing there could — one generator does not see
+      another's output, so the question is only answerable by compiling. Without this
+      reference EmitReachesTheBrokerTests does not compile, which is the loud version of the
+      same fact.
+    -->
+    <ProjectReference Include="../../src/FlowX.Compiler/FlowX.Compiler.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

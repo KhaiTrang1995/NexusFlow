@@ -242,6 +242,18 @@ internal static class Models
             "payment.capture", "2.1.0", [new CapabilityErrorModel("payment.declined", "Conflict")], true),
     ];
 
+    /// <summary>Two capability steps and no event, for the assertions about absence.</summary>
+    public static FlowModel LinearQuery() => new(
+        flowId: "order.get",
+        version: "1.0.0",
+        profile: "Durable",
+        deadline: null,
+        containingNamespace: "Sample.Flows",
+        typeName: "GetOrderFlow",
+        inputTypeName: "Sample.Contracts.PlaceOrder",
+        outputTypeName: "Sample.Contracts.OrderPlacedResult",
+        steps: [Validate(0), Validate(1)]);
+
     /// <summary>A single-step flow with no namespace, to exercise the degenerate shapes.</summary>
     public static FlowModel Minimal() => new(
         flowId: "ping.send",
