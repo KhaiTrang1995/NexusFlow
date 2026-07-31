@@ -22,9 +22,9 @@
 > claim about durability — **both durability budgets are unreported rather than passed**,
 > because WP-50, the benchmark harness, has not started. A journal has been made correct
 > without being made fast. See
-> [§5d](#5d-p2--durable-execution--correct-against-a-real-database-and-unmeasured).
+> [§5d](#5d-p2--durable-execution--nearly-complete-and-entirely-unmeasured).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 1681/1681 passing (a large share against a live
+> **Build:** 0 warnings, 0 errors · **Tests:** 1706/1706 passing (a large share against a live
 > PostgreSQL 16.13 and Redis 7.0.15; 0 skipped). Without `FLOWX_POSTGRES_CONNECTION` the adapter suite skips
 > 79 with reasons; set to an unreachable server it **fails 80 and skips none**, on purpose ·
 > **Coverage:** **83.9 % line / 77.6 % branch** over `src/` and `plugins/`, measured
@@ -463,7 +463,7 @@ analysis), three blocked fitness functions (`CrossTenantAccessIsDenied`,
 `dotnet new flowx`, unshipped since P0 and carried twice, **is being attempted in the
 current round** — until it lands, `docs/19-SDK.md` and `docs/03 §12` still describe a
 command that does not run. See
-[§5d](#5d-p2--durable-execution--correct-against-a-real-database-and-unmeasured) and [PLAN §5](PLAN.md#5-p2--durable-execution).
+[§5d](#5d-p2--durable-execution--nearly-complete-and-entirely-unmeasured) and [PLAN §5](PLAN.md#5-p2--durable-execution).
 
 - [x] **WP-15** The branching DSL — **`When` / `Otherwise` done** through builder, model,
       analysis, emission, graph and engine. A conditional compiles into the *same flat
@@ -936,7 +936,7 @@ Three more surfaced while getting the suite green:
 
 ---
 
-## 5d. P2 · Durable execution — **correct against a real database, and unmeasured**
+## 5d. P2 · Durable execution — **nearly complete, and entirely unmeasured**
 
 Work packages in [PLAN.md §5](PLAN.md#5-p2--durable-execution); the design they are held
 to is [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md), **Accepted at
@@ -944,6 +944,13 @@ WP-53** and [amended by ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md)
 listed in full because P1 handed each item over with a named blocker, and an inventory that
 exists only in a closing summary is one nobody reads.
 
+> **P2's Must is one package from complete, and none of it is measured.** Of the twelve
+> Must packages, ten have shipped. **WP-50 has not started**, so B7, B8 and the chaos rig do
+> not exist — which is why **WP-62, P2's own Done-when, cannot run**: nothing kills a node,
+> nothing crosses a process boundary, nothing has executed ten thousand of anything. And
+> **WP-59** is the last unwritten one. A phase that is functionally complete and entirely
+> unmeasured is a specific state worth naming rather than averaging away.
+>
 > **Where durability actually is, in one paragraph, because the rest of this file depends
 > on it.** `FlowX.Runtime` reads `ExecutionProfile` (WP-52). A `Durable` flow commits one
 > journal row per `(instance, scope, step, attempt)`, captures `ctx.UtcNow`, `ctx.NewId()`
@@ -1091,8 +1098,7 @@ exists only in a closing summary is one nobody reads.
       recorded rather than inferred from the code. This discharges the WP-52 consequence
       that a `Durable` flow was "rejected at its first invocation unless the caller builds
       the session": a host wires it now
-- [~] **WP-56** Transactional outbox and publisher. **Shipped 2026-07-31, and it did *not*
-      retire `FLOWX1024`** — which is why this is `[~]`. `PostgresOutboxPublisher` claims a
+- [x] **WP-56** Transactional outbox and publisher. **Shipped 2026-07-31 in two halves.** `PostgresOutboxPublisher` claims a
       batch under `FOR UPDATE SKIP LOCKED` in staging order, publishes, marks the
       acknowledged prefix and commits, one pass per transaction. Per-`partition_key`
       ordering survives two publishers, which `SKIP LOCKED` alone does not: the claim drops
@@ -1102,12 +1108,23 @@ exists only in a closing summary is one nobody reads.
       makes the second publisher block, dropping the per-key probe lets a newer event
       overtake. Retention refuses to purge an instance holding an unpublished event, with no
       age window, because there is no age at which discarding an unsent event is correct.
-      **`FLOWX1024` stays a Warning and retiring it would have been false:** `FlowEngine`
-      never populates `StepCommit.Outbox` and `DescribeStep` returns no event, so an `.Emit`
-      step stages no row and the publisher drains an empty table. What was false was the
-      diagnostic's stated *reason*. **`IEventPublisher` is declared and nothing implements
-      it** outside a test double, so "an emitted event reaches a broker" is met as "reaches
-      a publisher" — [ADR-0018](docs/adr/ADR-0018-outbox-publication-and-ordering.md)
+      **The second half wired `.Emit` to it.** The publisher shipped first and published
+      nothing — `FlowEngine` never populated `StepCommit.Outbox` and `DescribeStep` returned
+      no event, so the table it drained was always empty. That is closed: one line in
+      `CommitStepAsync`, gated on a plan-level `ExecutionPlan.HasEmit` computed beside
+      `HasParallel`. **B2 stays a measured 0 B on a saga that *contains* an `Emit` step**,
+      with the assertion strengthened to be about the outbox rather than beside it; the
+      durable path pays 768 B → 792 B, one array for the one step that emits.
+      **`[Sensitive]` stays structural, not re-implemented:** `OutboxWrite` carries a
+      `JournalPayload`, so there is no accessor for the value and the only exit is
+      `ToJson()`, which redacts.
+      **`FLOWX1024` is re-scoped rather than retired**, and the distinction is the point. It
+      fires on two things a flow author can fix in one line — an ephemeral profile, and no
+      generated context declaring the event — and deliberately **not** on the one thing still
+      missing, that no broker plugin implements `IEventPublisher`. Warning about that on
+      every `.Emit` would be a warning the author cannot act on, which is how a rule gets
+      suppressed project-wide. So "reaches a broker" is still met as "reaches a publisher"
+      — [ADR-0018](docs/adr/ADR-0018-outbox-publication-and-ordering.md)
 - [~] **WP-57** Compensation with its own policies. **Shipped 2026-07-31, and it resolved
       [open item 7](PLAN.md#9-open-items-blocking-the-plan)** — P2 built the slice rather
       than moving the item to P4. `PolicySet.CompensationRetry` is declared at
