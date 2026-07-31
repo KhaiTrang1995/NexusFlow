@@ -575,7 +575,18 @@ which is the exact failure mode P1 exists to remove:
       risk R2. A `Durable` flow runs the ephemeral path; the profile affects only a plan
       validation and a manifest field. So R2 is not *mitigated* — it is **unreachable**, and
       it goes live the moment P2 lands. This also explains why several determinism
-      diagnostics are blocked on severity rather than analysis
+      diagnostics are blocked on severity rather than analysis.
+      **Still open, and deliberately: WP-42 made it loud, not fixed.** Durability is a
+      phase, not a package. What shipped is `FLOWX1028` — a warning on any flow declaring a
+      profile the runtime does not implement — so the platform no longer accepts a
+      declaration it does not honour in silence. Warning rather than error because the only
+      repair for an error is `Profile = Ephemeral`, which deletes the design decision P2
+      must find, and because `FLOWX1017` is an error on the opposite condition: two errors
+      would leave a suspending flow with no profile it could legally declare. The manifest
+      still publishes `"profile": "Durable"`, which is the declaration faithfully recorded;
+      the untruth was the silence around it, not the field. `RuntimeDoesNotReadTheExecutionProfile`
+      in `FlowX.Architecture.Tests` fails on the day the runtime reads a profile, so the
+      scaffold gets taken down rather than left to rot. This box is ticked by P2
 - [ ] **The cost gate measured a subject that did not compile** — the probe parsed a project
       with `ImplicitUsings=enable` without supplying them, so `ValueTask` and friends never
       bound. Harmless for relative comparisons of syntax-matching code, which is why it still

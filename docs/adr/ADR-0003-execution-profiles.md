@@ -75,7 +75,13 @@ The default is `Ephemeral`: you opt *into* cost, never out of it.
   does not read `ExecutionProfile`: `Durable` executes on the ephemeral path,
   with no journal and no resumption. The decision this ADR records still stands —
   it is what stops durability being made universal — but the second profile is a
-  contract, not yet a runtime.
+  contract, not yet a runtime. The gap is now *reported*:
+  [`FLOWX1028`](../diagnostics/FLOWX1028.md) warns on any flow declaring a profile
+  the runtime does not implement, so the declaration can no longer be made in the
+  belief that it is honoured. It is a warning rather than an error precisely to
+  protect the declaration this ADR calls the most consequential a flow author
+  makes — an error is repaired by writing `Ephemeral`, which erases the record P2
+  must find — and it is deleted, not fixed, when the journal lands.
 - Changing a flow's profile changes its operational characteristics
   significantly; it is a reviewable change, not a tuning knob.
 
