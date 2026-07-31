@@ -1246,11 +1246,11 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | # | Constraint | Enforced by |
 |---|---|---|
 | **C1** .NET 10+/C# 14 | the SDK pin | ✅ |
-| **C2** NativeAOT | AOT job + `IsAotCompatible` analyzers | ✅ **the only constraint with a failing gate** |
+| **C2** NativeAOT | AOT job + `IsAotCompatible` analyzers | ✅ |
 | **C3** hosts in ASP.NET Core | nothing explicit — held by construction | — |
 | **C4** no 2-phase commit | nothing — held by design; the outbox that makes it correct is WP-56 | — |
 | **C5** OpenTelemetry only | vacuous: nothing emits telemetry (P5) | — |
-| **C6** Apache-2.0, no copyleft | **nothing.** `DependencyLicencesAreCompatible` specified in [15 §10](docs/15-Security.md) and ADR-0012, never written; no workflow scans licences; `Npgsql` arrived unvetted at WP-53 | ❌ [open item 9](PLAN.md#9-open-items-blocking-the-plan) |
+| **C6** Apache-2.0, no copyleft | `DependencyLicencesAreCompatible` in `DependencyLicenceTests`, over the resolved transitive graph, against [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md). `Npgsql` vetted (PostgreSQL Licence, permissive); two build-time packages found not to be MIT | ✅ |
 | **C7** SemVer + 2-minor deprecation | `flowx diff` catches breaking changes; **nothing tracks the deprecation window** | partly |
 | **C8** documentation-first | convention. Held well; no gate | — |
 

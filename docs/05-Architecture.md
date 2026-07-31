@@ -699,6 +699,7 @@ reader who saw the name stopped looking for the rule.
 | `ManifestIsComplete` | Q3 | a declared flow or capability is missing from the manifest, or a step names one the manifest never describes | `PublishedContractTests` |
 | `PluginsPassConformance` | Q6 | a plugin fails the shared conformance suite | **not written — see below.** A conformance project now exists; it has no trigger suite |
 | `SuppressionsAreAccountable` | §6.1 | a suppression cites no registered, unexpired `FLOWX-DEBT` id | `DebtAccountabilityTests` |
+| `DependencyLicencesAreCompatible` | C6 | a declared or resolved package has no row in the [dependency licence register](DEPENDENCIES.md), or carries a licence Apache-2.0 redistribution does not permit ([ADR-0012](adr/ADR-0012-apache-2-license.md)) | `DependencyLicenceTests` |
 | `EveryDiagnosticIsHelpful` | P12 | a `FLOWX*` diagnostic lacks title, fix, or help URI | `FlowX.Compiler.Tests` |
 | *(job, not a test)* | Q1, Q7 | > 5 % regression against `baseline.json` — B1, B3 and B12 in isolation | *Benchmark budgets* job, `performance.yml` |
 | `AllocationBudgetTests`, `EngineAllocationTests` | Q7 | any allocation on the linear, conditional or switch path | *Allocation budget (B2)* job, `performance.yml` |

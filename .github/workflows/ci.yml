@@ -33,6 +33,30 @@ jobs:
         # is a warning that hides the next one.
         run: dotnet build FlowX.slnx --configuration Release --no-restore
 
+      - name: Restore the projects that are not in the solution
+        # This exists for exactly one gate, and it does not implement it.
+        #
+        # DependencyLicencesAreCompatible (constraint C6, ADR-0012) vets the *resolved*
+        # transitive dependency graph, which NuGet writes to obj/project.assets.json —
+        # so it needs no network and no licence API, but it does need a restore to have
+        # happened. `dotnet restore FlowX.slnx` above covers every project in the
+        # solution. scripts/generator-cost-probe is deliberately outside it (a
+        # measurement harness, not a build target), so nothing restores it and its
+        # closure would go unread. One line here, and CI vets it too.
+        #
+        # This is NOT a second implementation of the licence rule. There is one, it is
+        # the fitness function, and this repository has already deleted a shell copy of
+        # a rule that had a test — see the `debt` job in quality.yml and docs/DEBT.md:
+        # two gates for one rule disagree eventually, and the weaker one is what a
+        # developer meets first. This step widens the gate's input and decides nothing.
+        #
+        # templates/FlowX.Templates/content/FlowX.Web is deliberately absent: it
+        # references FlowX.* packages by version, and until WP-70 publishes them there
+        # is no feed to restore from. Its declared references are still checked, and
+        # docs/DEPENDENCIES.md §5 records that its closure is not. Add it here when
+        # WP-70 lands.
+        run: dotnet restore scripts/generator-cost-probe/GeneratorCostProbe.csproj
+
       - name: Architecture fitness functions
         # docs/05-Architecture.md §12. A red fitness function is a build failure,
         # not a discussion — so this step runs before the rest of the suite.
