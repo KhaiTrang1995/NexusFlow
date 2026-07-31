@@ -82,7 +82,31 @@ These gate everything below them. None is code work.
 - [x] `.github/dependabot.yml` — NuGet + Actions, grouped
 - [x] `.github/pull_request_template.md` carrying the Definition of Done
 - [ ] Each gate class verified by a deliberate violation on a throwaway branch
-- [ ] `SONAR_TOKEN` repository secret configured (the `sonar` job no-ops without it)
+- [~] `SONAR_TOKEN` repository secret configured — still unset, but the no-op is now
+      **loud**: the job emits a `::warning::` and a step-summary table naming the rows it
+      did not evaluate. It still exits 0, because failing would punish fork contributors
+      for a secret they cannot have — but a green tick can no longer be read as a pass
+- [x] **SonarQube rules actually run** (WP-44). `SonarAnalyzer.CSharp` is referenced
+      `PrivateAssets="all"`, and the default profile — 329 of 471 rules — gates every
+      compile, with `S2245`, `S4507` and `VSTHRD002` as errors, each proved to bite.
+      **The document was wrong about itself**: `S3776`, `S1541`, `S138` and `S107` ship
+      `IsEnabledByDefault=false`, so referencing the package leaves them silent — and a
+      build with the package installed and those rules off looks exactly like one that
+      passes them. Named explicitly they produce **54 findings**, `FlowEngine.RunRangeAsync`
+      failing all four; they are `none` with counts and reasons, thresholds pinned in
+      `SonarLint.xml` because `.editorconfig` silently ignores them
+- [ ] **Three real defects Sonar found in files WP-44 did not own.** Four analyzer
+      semantic-model calls drop `context.CancellationToken` (the class `CA2016` is promoted
+      to error for); `FlowModel.ComposedFlows` and `ReferencedCapabilities` allocate a
+      `List` per read while the emitter reads them repeatedly; and three `Cancel()` calls
+      should be `CancelAsync()` — flagged independently by two analyzers on the same lines
+- [ ] **Two gates in this repository contradict each other.** `S3267` would rewrite the
+      engine's loops into LINQ, which breaks budget B2 — `EngineAllocationTests` is the
+      arbiter and the rule is off. Worth knowing that the quality bar and the performance
+      bar disagree, rather than discovering it at the next upgrade
+- [ ] **`FlowExecutionContext.Random` documents a journaled seed it cannot produce.** It is
+      built as `new Random()`, whose seed nothing can read back, so the replay guarantee the
+      remarks describe cannot hold. Found incidentally while reading an `S2245` finding
 
 ---
 
