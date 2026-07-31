@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>FlowX.Redis.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit.v3" Version="2.0.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.3" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <!--
+      The container implementation, not just its abstractions: the registration test builds
+      a provider and asks which service types AddFlowXRedis actually produced. Asserting on
+      the ServiceDescriptor list instead would assert on what was written down rather than
+      on what a host resolves. The same reasoning, and the same pin, as FlowX.Postgres.Tests.
+    -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../plugins/FlowX.Redis/FlowX.Redis.csproj" />
+
+    <!--
+      The conformance suite is referenced, not copied — and this project is the reason the
+      reference is worth anything. ADR-0009 makes the suite the semantic contract for every
+      store and docs/17-Plugin-System.md §5 says a third party claims conformance by
+      deriving from it; FlowX.Postgres.Tests did that once, and one derivation cannot show
+      that the suite is store-independent, only that it is derivable.
+
+      Nothing in tests/FlowX.Conformance.Tests changed to make this work. That is the
+      finding WP-54 exists to produce: if the suite had needed an edit to accept Redis it
+      would have been a suite written against PostgreSQL, and WP-51 would have failed.
+    -->
+    <ProjectReference Include="../FlowX.Conformance.Tests/FlowX.Conformance.Tests.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -24,8 +24,8 @@
 > without being made fast. See
 > [§5d](#5d-p2--durable-execution--correct-against-a-real-database-and-unmeasured).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 1617/1617 passing (a large share against a live
-> PostgreSQL 16.13; 0 skipped). Without `FLOWX_POSTGRES_CONNECTION` the adapter suite skips
+> **Build:** 0 warnings, 0 errors · **Tests:** 1660/1660 passing (a large share against a live
+> PostgreSQL 16.13 and Redis 7.0.15; 0 skipped). Without `FLOWX_POSTGRES_CONNECTION` the adapter suite skips
 > 79 with reasons; set to an unreachable server it **fails 80 and skips none**, on purpose ·
 > **Coverage:** **83.9 % line / 77.6 % branch** over `src/` and `plugins/`, measured
 > 2026-07-31 with a live PostgreSQL. *This line read 94.0 / 87.0 for several phases. That
@@ -1064,11 +1064,23 @@ exists only in a closing summary is one nobody reads.
       states count as abandoned is agreed between the two implementations by reading rather
       than by an assertion; and `AbandonedInstanceQuery.TenantId` is a filter, not a second
       index, because nothing sets the parameter yet
-- [ ] **WP-54** Redis lease store — concurrent with WP-53, same suite unmodified. **Now the
-      only demonstration left of the split-store arrangement** `ILeaseStore`'s remarks
-      describe: a Redis lease store and a Postgres journal sharing no transaction. WP-53
-      made that arrangement *possible* — the lease has no foreign key into the journal's
-      instance table, which is what a shared-nothing pair requires — and *unproved*
+- [x] **WP-54** Redis lease store. **Shipped 2026-07-31, and the headline is the suite, not
+      the store.** `LeaseStoreConformance` was inherited across an assembly boundary with
+      **zero edits** — verified against the diff, not the report — and all 13 assertions
+      pass at the suite's own default 200 ms TTL, which PostgreSQL needed an override for
+      and Redis did not use. WP-51 wrote a suite, not a description of PostgreSQL.
+      **It is not vacuous either:** mutating to the idiomatic Redis lease (`SET NX PX` plus
+      `DEL` on release) turns **three** assertions red, because expiry deletes the counter,
+      the next acquisition restarts at 1, and the zombie's token then *equals* its
+      successor's — ADR-0016's split brain reproduced in a different technology from a
+      different cause. Expiry is therefore a **field in a hash, never a key TTL**; no path
+      issues `EXPIRE`/`PEXPIRE`/`DEL`. `StepScope.Root` renders as `-`, discharging
+      ADR-0015's portability note at the key space — and the fold turned out to be at the
+      *client*, not the server: Redis keeps `''` distinct from a missing field, but both
+      arrive as values whose `IsNullOrEmpty` agrees.
+      [ADR-0019](docs/adr/ADR-0019-redis-lease-store.md). **One operational requirement is
+      load-bearing:** the key space must not be under an `allkeys-*` eviction policy, since
+      eviction is deletion by another name and would silently restore the reset counter
 - [x] **WP-55** Resume: lease acquisition, recovery scan, re-entry into the same step loop.
       **Shipped 2026-07-31.** `DurableLease` acquires and renews in the background at TTL/3;
       `LeasePolicy` carries the TTL and renewal stance. `FlowRecoveryScan` and
@@ -1265,7 +1277,7 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | **Q7** | startup and footprint | **nothing.** Same gap as V5 |
 | **Q8** | multi-tenant isolation | **nothing.** `CrossTenantAccessIsDenied` blocked on P4 and P3 |
 
-### ADR inventory — 18 records, and which carry undischarged obligations
+### ADR inventory — 19 records, and which carry undischarged obligations
 
 | ADR | Status | Revisit trigger | Obligation this file or the plan is missing |
 |---|---|---|---|

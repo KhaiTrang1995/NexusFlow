@@ -348,7 +348,31 @@ criterion, P1's records which criterion it is closing over.
 > followed and the collision has happened anyway. **The fix is a check that fails, not
 > another paragraph asking for care**: a duplicated id across the reachable history is
 > mechanically detectable, and detecting it at merge is what all four collisions needed and
-> none had. Recorded as the next piece of tooling this project owes itself.
+> none had.
+>
+> **That check now exists.** `IdentifierAllocationTests` in `tests/FlowX.Architecture.Tests`
+> fails the build when an identifier is allocated twice, across all three families that have
+> collided: ADR numbers, `FLOWX` diagnostic ids and the work-package numbers this file
+> allocates. For work packages it reads **this file and nothing else** — a definition site is
+> a `### WP-…` heading or a `| **WP-…** —` row of a phase's package table — and it asserts
+> three things: no number defines two packages; every package sits inside the range its
+> phase reserved, read from the sentence below and from [§6a](#6a-p4p9--what-this-plan-does-not-yet-contain)'s
+> allocator table; and no two phases reserve the same numbers. The middle one is the rule
+> WP-70 to WP-74 needed — none of those *duplicated* a number that had been spent, they took
+> numbers a later phase was holding, which no duplicate check can see.
+>
+> **What it catches, stated so nobody relies on more:** a duplicate present in one working
+> tree — a merge, a rebase onto the branch that took the number first, or one author writing
+> both halves. **It cannot see a duplicate that exists only across two unmerged branches.** A
+> test sees the tree it was built from; asking git about the other claim would need a ref
+> this checkout does not have, and "which branches are live" is not a fact on disk. So it
+> reports at the merge — which is exactly where all four of these were found by a human, and
+> the only thing that was missing was a check that read it first.
+>
+> Claiming the number in this file before the work starts is still the instruction, and it is
+> still worth following: it makes the collision visible in a one-line diff instead of in a
+> finished package. What has changed is that following it is no longer the only thing
+> standing between two branches and a number that means two things.
 
 **The two yellow nodes are the same node WP-3 was.** WP-50 and WP-71 are harnesses
 scheduled ahead of the things they measure, for the reason §2 has stated since P0 and
@@ -1958,7 +1982,7 @@ commit, before the work starts.**
 | **P5** Observability and replay | **WP-90 … WP-99** | [ADR-0008](docs/adr/ADR-0008-serialization-and-schema.md) | [12-Observability](docs/12-Observability.md) — 13 span attributes, 13 metrics, all four `replay` modes, cardinality rules, SLOs | **Recorded**, with one decision to force: [22-CLI §8](docs/22-CLI.md) records that `flowx replay` conflicts with the green fitness function `CliDependsOnNothingButTheManifest`, and it is an ADR either way |
 | **P6** Multi-tenancy | **WP-100 … WP-109** | [ADR-0006](docs/adr/ADR-0006-journal-and-leases.md) | [16-Multi-Tenant](docs/16-Multi-Tenant.md) — `ITenantResolver` with its signature, four isolation levels, six fairness mechanisms, RLS as worked DDL | **Partly.** Resolution, fairness and RLS are recordable. **Journal partitioning would be invented** — [11 §6](docs/11-Distributed-Runtime.md) names sharding as a lever and stops |
 | **P7** Streaming | **WP-110 … WP-119** | [ADR-0003](docs/adr/ADR-0003-execution-profiles.md) | **No dedicated document.** [06 §10](docs/06-Execution-Engine.md) is one backpressure diagram; [09 §9](docs/09-Trigger-Model.md) is a window-semantics table and a DSL sketch | **Invented.** Roughly one of the roadmap's five Must items is specified. Nothing anywhere defines the checkpoint format, watermark generation, how window state is journaled, or budget B13 |
-| **P8** AI surface and Studio | **WP-120 … WP-129** | [ADR-0005](docs/adr/ADR-0005-manifest-as-build-artifact.md), [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md), [ADR-0018](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md) | [13-AI-Native](docs/13-AI-Native.md) — the MCP tool descriptor, the `tools/call` sequence including refusal and confirmation | **Split.** MCP and `AgentTrigger` are recordable. **Studio is 16 one-line mentions and no design.** *This cell read "manifest v1.0 freeze criteria are written nowhere" until [ADR-0018](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md) wrote them. The phase's first Must now has an entry gate — and two of its eight conditions are the outbox (**WP-56**, P2) and a policy engine (**P4**), so P8's freeze is gated on two earlier phases rather than on P8's own work* |
+| **P8** AI surface and Studio | **WP-120 … WP-129** | [ADR-0005](docs/adr/ADR-0005-manifest-as-build-artifact.md), [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md), [ADR-0017](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md) | [13-AI-Native](docs/13-AI-Native.md) — the MCP tool descriptor, the `tools/call` sequence including refusal and confirmation | **Split.** MCP and `AgentTrigger` are recordable. **Studio is 16 one-line mentions and no design.** *This cell read "manifest v1.0 freeze criteria are written nowhere" until [ADR-0017](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md) wrote them. The phase's first Must now has an entry gate — and two of its eight conditions are the outbox (**WP-56**, P2) and a policy engine (**P4**), so P8's freeze is gated on two earlier phases rather than on P8's own work* |
 | **P9** Hardening and 1.0 | **WP-130 … WP-139** | all of them | The roadmap table only | **Invented.** The *targets* are unambiguous (V1–V8, Q1–Q8, B1–B13); there is no design. Note eight of the nine samples are a `README.md` and nothing else |
 
 **Where open item 7 lands.** [WP-57](#wp-57--compensation-with-its-own-policies) needs a
@@ -2021,7 +2045,7 @@ that silently repairs its own premises teaches nobody what it got wrong.
 
 *Closing item 10 moved one thing about the removed item 6 and did not touch the decision:
 ADR-0014's fourth revisit trigger — "P8 approaches manifest v1.0 freeze" — was recorded
-there as "not fired, and **not datable**". [ADR-0018](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md)
+there as "not fired, and **not datable**". [ADR-0017](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md)
 makes it datable. The trigger still has not fired, and the choice is still unmade and
 deliberately untracked.*
 
