@@ -37,21 +37,21 @@ date — enforced by §6.
 Measured on the pull request's diff, not on the whole repository. Legacy debt is
 paid down deliberately (§6), never by blocking unrelated work.
 
-| Metric | Threshold | Enforced by | Class |
-|---|---|---|---|
-| Blocker issues | **0** | SonarAnalyzer + Roslyn, `TreatWarningsAsErrors` | Build |
-| Critical issues | **0** | Sonar quality gate | Merge |
-| Cognitive complexity per method | **≤ 15** | `S3776` as error | Build |
-| Cyclomatic complexity per method | **≤ 10** | `S1541` as error | Build |
-| Method length | **≤ 60 lines** | `S138` as error | Build |
-| Parameters per method | **≤ 7** | `S107` as error | Build |
-| Duplicated lines on new code | **≤ 3 %** | Sonar | Merge |
-| Line coverage on new code | **≥ 80 %** | Coverlet + Sonar | Merge |
-| Branch coverage on new code | **≥ 75 %** | Coverlet + Sonar | Merge |
-| Mutation score on `FlowX.Core` | **≥ 70 %** | Stryker.NET | Merge |
-| Security hotspots reviewed | **100 %** | Sonar | Merge |
-| Public API documented | **100 %** | `CS1591` as error | Build |
-| Compiler warnings | **0** | `TreatWarningsAsErrors` | Build |
+| Metric | Threshold | Enforced by | Class | Runs today |
+|---|---|---|---|---|
+| Blocker issues | **0** | `SonarAnalyzer.CSharp` default profile + `TreatWarningsAsErrors` | Build | **yes** |
+| Critical issues | **0** | Sonar quality gate | Merge | no — needs `SONAR_TOKEN` (§2.6) |
+| Cognitive complexity per method | **≤ 15** | `S3776` as error | Build | **no** — 12 methods over (§2.6) |
+| Cyclomatic complexity per method | **≤ 10** | `S1541` as error | Build | **no** — 24 methods over (§2.6) |
+| Method length | **≤ 60 lines** | `S138` as error | Build | **no** — 4 methods over (§2.6) |
+| Parameters per method | **≤ 7** | `S107` as error | Build | **no** — 14 members over (§2.6) |
+| Duplicated lines on new code | **≤ 3 %** | Sonar | Merge | no — needs `SONAR_TOKEN` |
+| Line coverage on new code | **≥ 80 %** | Coverlet + Sonar | Merge | Coverlet half only, whole-assembly |
+| Branch coverage on new code | **≥ 75 %** | Coverlet + Sonar | Merge | Coverlet half only, whole-assembly |
+| Mutation score on `FlowX.Core` | **≥ 70 %** | Stryker.NET | Merge | **yes** |
+| Security hotspots reviewed | **100 %** | Sonar | Merge | no — needs `SONAR_TOKEN` |
+| Public API documented | **100 %** | `CS1591` as error | Build | **yes** |
+| Compiler warnings | **0** | `TreatWarningsAsErrors` | Build | **yes** |
 
 Mutation testing appears here for one reason: line coverage measures which lines
 ran, not whether anything would notice if they were wrong. `FlowX.Core` holds the
@@ -60,48 +60,76 @@ the step loop is not a test suite. It is applied to `FlowX.Core` only — runnin
 Stryker across the whole solution costs more CI time than it returns.
 
 > [!IMPORTANT]
-> **Eight of the thirteen rows above are not enforced, because
-> `SonarAnalyzer.CSharp` is not referenced by this repository.** Every `S####`
-> rule — `S3776` cognitive complexity, `S1541` cyclomatic complexity, `S138`
-> method length, `S107` parameter count in §2.1, and `S2245`/`S4507` in §2.2 —
-> comes from that package, and no project takes a dependency on it. There is no
-> analyzer to promote to an error, so those five build-class rows do not fail a
-> build. The same is true of `VSTHRD002` in §2.2: `Microsoft.VisualStudio.
-> Threading.Analyzers` is not referenced either.
+> **`SonarAnalyzer.CSharp` is now referenced** (`Directory.Build.props`, pinned,
+> `PrivateAssets="all"`), so the `S####` rules are real analyzers running on
+> every compile. Its default profile — 329 of the package's 471 rules — gates
+> the build, which is what makes the *Blocker issues* row true. Every deviation
+> from that profile is a named rule with a written reason in `.editorconfig`,
+> and §2.6 lists all of them.
+>
+> **Four rows above still do not run, and the reason is not the one this note
+> used to give.** A previous version of this note claimed that adding the
+> package "would make the complexity and method-size rows real without any
+> other change". That was wrong twice over, and both errors are worth keeping
+> on the record because they are the kind that survive review:
+>
+> 1. `S3776`, `S1541`, `S138` and `S107` ship **disabled by default**. Merely
+>    referencing the package leaves them off, and a build with the package
+>    installed and those rules silent looks exactly like a build that passes
+>    them. They have to be named explicitly to run at all.
+> 2. When they *are* named, the repository does not pass them: **54 findings**,
+>    listed in §2.6. So the rows were never one dependency away from being true
+>    — they describe a bar this code has not met.
+>
+> They are therefore set to `none` explicitly rather than left at their default,
+> so that the file records a decision instead of an accident. The thresholds
+> §2.1 names are pinned in `SonarLint.xml` (severities live in `.editorconfig`;
+> **thresholds cannot** — a threshold written there is silently ignored), so
+> turning any of these rows on after the debt is paid is a one-word edit.
+>
+> `VSTHRD002` in §2.2 **now runs** for `src/` and `plugins/`, from
+> `Microsoft.VisualStudio.Threading.Analyzers`. It does not run for `tests/`,
+> and has one file-scoped exception; §2.6 says why.
 >
 > The three merge-class Sonar rows — critical issues, duplicated lines, security
-> hotspots — depend on the *Sonar quality gate* job in `quality.yml`, which
-> **exits 0 with a notice when `SONAR_TOKEN` is absent**. Whether they gate
-> anything depends on a repository secret rather than on the workflow, and
-> `CHECKLIST.md` records the token as not configured.
+> hotspots — still depend on the *Sonar quality gate* job in `quality.yml`,
+> which **exits 0 when `SONAR_TOKEN` is absent**, and `CHECKLIST.md` records the
+> token as not configured. The job no longer does so quietly: it now emits a
+> warning annotation and a step summary naming the three rows that were not
+> evaluated, so a green tick on that job cannot be mistaken for a gate that
+> passed. It is still green, deliberately — see the comment on the job's `if:`.
 >
-> **What does run on every pull request**, and is worth separating from the
-> above: `TreatWarningsAsErrors` (so any warning is a build failure), `CS1591`
-> as an error, `CA2007`, `CA1031`, `CA2016`, `CA1062` as errors and `CA1848` as
-> a warning-that-is-an-error — all set in `.editorconfig` — plus the coverage
-> thresholds (80 / 75, enforced on the whole assembly by the *Coverage
-> thresholds* job) and Stryker at `--threshold-break 70` on `FlowX.Core`.
+> **What runs on every pull request**, for completeness: `TreatWarningsAsErrors`
+> (so any warning is a build failure), `CS1591` as an error, `CA2007`, `CA1031`,
+> `CA2016`, `CA1062` as errors and `CA1848` as a warning-that-is-an-error, the
+> Sonar default profile, `S2245`, `S4507` and `VSTHRD002` as errors — all set in
+> `.editorconfig` — plus the coverage thresholds (80 / 75, enforced on the whole
+> assembly by the *Coverage thresholds* job) and Stryker at `--threshold-break
+> 70` on `FlowX.Core`.
 >
-> Adding `SonarAnalyzer.CSharp` would make the complexity and method-size rows
-> real without any other change, and is the cheapest correction available here.
-> Until it happens, "cognitive complexity ≤ 15 on every method touched" in §5's
-> Definition of Done is a review instruction, not a gate.
+> Until the four complexity rows are paid down, "cognitive complexity ≤ 15 on
+> every method touched" in §5's Definition of Done remains a review instruction,
+> not a gate.
 
 ### 2.2 Rules promoted to errors
 
 These are not style preferences. Each is a defect class that has caused
 production incidents in systems of this shape.
 
-| Rule | Why it is an error here |
-|---|---|
-| `CA2007` — `ConfigureAwait(false)` | Library code that captures a synchronization context deadlocks its host. FlowX is library code everywhere except `FlowX.Cli`. |
-| `CA1031` — no general `catch` | A swallowed exception in the step loop turns a crash into silent data loss, which is strictly worse. |
-| `CA2016` — forward `CancellationToken` | A dropped token means a cancelled flow keeps burning a dependency's capacity after its deadline passed. |
-| `CA1062` — validate public arguments | The contract surface is consumed by code we do not control. |
-| `CA1848` — `LoggerMessage` over interpolation | Interpolated logging allocates on the hot path even when the level is disabled, which breaks budget B6. |
-| `S2245` — no insecure randomness | `Random` for anything security-adjacent. Determinism uses `CapabilityContext.Random`, which is journaled, not secret. |
-| `S4507` — no debug features in production | Delivering stack traces to a caller is an information leak (A05). |
-| `VSTHRD002` — no sync-over-async | `.Result`/`.Wait()` in a runtime this hot is a thread-pool starvation incident waiting for load. |
+| Rule | Why it is an error here | Scope |
+|---|---|---|
+| `CA2007` — `ConfigureAwait(false)` | Library code that captures a synchronization context deadlocks its host. FlowX is library code everywhere except `FlowX.Cli`. | all but `tests/` |
+| `CA1031` — no general `catch` | A swallowed exception in the step loop turns a crash into silent data loss, which is strictly worse. | all but `tests/` |
+| `CA2016` — forward `CancellationToken` | A dropped token means a cancelled flow keeps burning a dependency's capacity after its deadline passed. | everywhere |
+| `CA1062` — validate public arguments | The contract surface is consumed by code we do not control. | everywhere |
+| `CA1848` — `LoggerMessage` over interpolation | Interpolated logging allocates on the hot path even when the level is disabled, which breaks budget B6. | everywhere |
+| `S2245` — no insecure randomness | `Random` for anything security-adjacent. Determinism uses `CapabilityContext.Random`, which is journaled, not secret. | everywhere except the two files that *are* that determinism source (§2.6) |
+| `S4507` — no debug features in production | Delivering stack traces to a caller is an information leak (A05). | everywhere, but it only has anything to bind to in `FlowX.Http` — the rule keys on ASP.NET Core APIs, and that is the only project with a `Microsoft.AspNetCore.App` framework reference |
+| `VSTHRD002` — no sync-over-async | `.Result`/`.Wait()` in a runtime this hot is a thread-pool starvation incident waiting for load. | `src/` and `plugins/`, minus `FlowEngine.cs` (§2.6). Not `tests/`: the rule is about deadlocking on a captured synchronization context, and xUnit does not install one. |
+
+Every rule in this table is an error at build time. The three `S`/`VSTHRD` rows
+were added by the change that introduced the analyzer packages; the five `CA`
+rows predate it.
 
 ### 2.3 Architecture gates
 
@@ -193,6 +221,101 @@ The A01 and A02 rows already carry an inline "the enforcement is not built" corr
 rest of §3 should be read as: **the control column is the design, and the verification
 column is a mixture of gates that run and gates that are scheduled.** Where a row says
 "(merge)" against a name in the table above, no merge is currently blocked by it.
+
+### 2.6 What the analyzers found, and what was done about each
+
+Turning the packages on is a one-line change. Deciding what to do with what they
+say is the rest of the work, and it is recorded here rather than in a commit
+message because a suppression whose reason lives in history is a suppression
+nobody can check.
+
+The rule that governs every row below: **a finding is either fixed, or it is
+switched off by name with a reason.** There is no blanket `NoWarn` in this
+repository, and a rule is never demoted to make a build pass — a threshold
+lowered until today's code fits is a description of the past, not a limit.
+
+#### The four §2.1 rows that cannot be turned on yet
+
+These are the complexity and size gates. All four are off. Together they produce
+**54 findings**, every one of them in code that predates the analyzer.
+
+| Rule | Limit | Over the limit | Worst offender |
+|---|---|---|---|
+| `S1541` cyclomatic complexity | ≤ 10 | 24 methods | 20 — `DeadlineCoherenceAnalyzer` |
+| `S107` parameters | ≤ 7 | 14 members | 15 — `FlowModel`'s constructor |
+| `S3776` cognitive complexity | ≤ 15 | 12 methods | 47 — `FlowEngine.RunRangeAsync` |
+| `S138` method length | ≤ 60 lines | 4 methods | 118 — `FlowEngine.RunRangeAsync` |
+
+Most of the `S1541` and `S3776` findings are marginal (11–18 against limits of 10
+and 15) and concentrated in the compiler's syntax-dispatch code, where a flat
+`switch` over syntax kinds scores as complexity without being hard to read.
+`FlowEngine.RunRangeAsync` is not marginal on any of the four measures and is the
+one place where all four agree.
+
+One of the four should probably be retired rather than paid down: **`S1541` is
+deprecated by Sonar** in favour of `S3776`, which measures the same property
+without counting a flat dispatch as complexity. Keeping both means paying the
+same debt twice against two numbers that disagree about what complexity is.
+
+#### Open findings: real defects this change did not fix
+
+Three rules found genuine problems in files outside this change's scope. They are
+switched off so the build stays green — **not** because the findings are wrong.
+Each `.editorconfig` entry says so at the site, and deleting one turns the build
+red until the listed lines are fixed, which is the intended behaviour.
+
+| Rule | Sites | The defect |
+|---|---|---|
+| `S8949` | `CapabilityThrowAnalyzer.cs:121,141`, `DeadlineCoherenceAnalyzer.cs:107`, `StepBindingAnalyzer.cs:142` | Roslyn semantic-model calls that do not forward `context.CancellationToken`. Same defect class as `CA2016`, which §2.2 promotes to an error. An analyzer that ignores the compiler's cancellation keeps working after the IDE has moved on — on every keystroke. |
+| `S2365` | `FlowModel.cs:167,175` | `ComposedFlows` and `ReferencedCapabilities` are properties that run a LINQ pipeline and allocate a `List` on **every read**, and the emitter reads them more than once per flow. They should be methods, or computed once. |
+| `S6966` / `VSTHRD103` | `FlowEngine.cs:636,836,876`, `samples/ecommerce/Program.cs:43` | `CancellationTokenSource.Cancel()` where `CancelAsync()` exists. `Cancel()` runs every registered callback synchronously on the calling thread — in the parallel-merge path, that is the engine's own thread. Two independent analyzers flagged the same three lines. |
+
+#### Rules switched off because they are wrong about this codebase
+
+Each fired, was read, and was judged wrong here rather than merely inconvenient.
+
+| Rule | Why not |
+|---|---|
+| `S3267` — use `Where`/`Select` | Trades a non-allocating loop for an iterator plus a closure, on `ForEachOutcome`, `ParallelOutcome` and the emitter's step scans. Budget **B2** forbids exactly that and `EngineAllocationTests` fails if it happens, so the two gates would contradict each other. |
+| `S3236` — do not pass `[CallerArgumentExpression]` arguments | In `Identifiers.RequireIdentity`/`RequireSemanticVersion` the explicit `paramName` **is** the point: letting the compiler fill it in would name the helper's own local (`value`) in every `ArgumentException` instead of the caller's parameter. Following the rule would introduce the defect the rule exists to prevent. |
+| `S2094` — no empty classes | `IsExternalInit` and friends in `FlowX.Compiler/Polyfills.cs` exist only so the netstandard2.0 compiler can bind records and `init`. An empty type is the whole design. |
+| `S127` — do not advance the loop variable in the body | `FlowEngine`'s step loop, the CLI's argument parser and `FlowAnalyzer`'s step scan each do it deliberately — a branch advances the index to a jump target rather than by one — and each carries a comment saying so. |
+| `S1075`, `S5332` — hardcoded / insecure URI | The two constants are URIs that *identify* rather than *address*: a WS-Federation-shaped claim type whose scheme is part of its identity, and the RFC 9457 `type` prefix, which the spec requires to be stable. Neither is ever dereferenced. |
+| `S125` — commented-out code | The comment above `FlowEngine`'s step loop quotes the `for` loop it is deliberately not using, in order to explain why. |
+| `VSTHRD200`, `VSTHRD003` | Naming and context rules the document does not ask for, firing only on benchmark entry points (whose names are the labels `docs/benchmarks/` compares runs by) and one test helper. |
+| `S8969`, `S3358`, `S6618`, `S4136` | Stylistic, no behavioural difference, and disagreeing with the house style: redundant null-forgiving operators after an assertion the compiler cannot see through, nested ternaries in expression-bodied mapping code, `string.Create` over `FormattableString` in test helpers, and overload adjacency. |
+
+#### Rules switched off for `tests/` only
+
+`S1215` (`GC.Collect` **is** the measurement in the allocation tests), `S2699`
+(the assertion is that `StartAsync` does not throw), `S2326` (phantom type
+parameters are what is under test), `S3218`, `S5034` (reading
+`ValueTask.IsCompleted` and then `GetAwaiter().GetResult()` is the documented
+synchronous-completion pattern), `S3241`, `S3878`, and `VSTHRD002` — whose
+rationale is deadlock on a captured synchronization context, which xUnit does not
+install.
+
+#### Two file-scoped exceptions
+
+`S2245` stays an error everywhere except `FlowExecutionContext.cs` and
+`ContextValues.cs`. Those two files *are* the determinism source §2.2 already
+names: `CapabilityContext.Random` is journaled so that a replay reproduces the
+run, and journalled and secret are opposites. A CSPRNG there would break replay
+and secure nothing.
+
+`VSTHRD002` stays an error across `src/` and `plugins/` except `FlowEngine.cs`,
+where `Observe` reads `finished.Result` inside `if (finished.IsCompletedSuccessfully)`.
+That is a read of an already-completed task, not a wait; the guard is what keeps
+the parallel fast path allocation-free, and the rule does not model it.
+
+#### One thing the analyzer could not tell us
+
+`FlowExecutionContext.Random` is documented as journaling its seed on first use,
+but it is constructed as `new Random()` — which chooses a seed that nothing can
+read back. Whatever journals the seed cannot be reading it from there. This is
+outside the analyzers' reach and outside this change's scope; it is recorded here
+because it was noticed while reading an `S2245` finding, and a replay guarantee
+that cannot hold is worth more attention than the finding that led to it.
 
 ---
 

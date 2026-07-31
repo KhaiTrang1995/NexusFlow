@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Rule parameters for SonarAnalyzer.CSharp.
+
+  SonarAnalyzer reads rule thresholds from an AdditionalFile named exactly
+  SonarLint.xml. They cannot be set in .editorconfig: .editorconfig carries
+  severities, not parameters, so a threshold written there is silently ignored
+  and the package default applies instead.
+
+  Every threshold docs/21-Quality-Gates.md §2.1 names is written out here even
+  when it happens to equal the package default. The document commits to the
+  number, so the number is pinned in the repository rather than inherited from
+  a package that is free to change its mind on the next version bump — which
+  would move a documented gate without anything in the diff saying so.
+-->
+<AnalysisInput>
+  <Rules>
+
+    <!-- Cognitive complexity per method ≤ 15 (§2.1). Package default: 15. -->
+    <Rule>
+      <Key>S3776</Key>
+      <Parameters>
+        <Parameter>
+          <Key>threshold</Key>
+          <Value>15</Value>
+        </Parameter>
+        <Parameter>
+          <Key>propertyThreshold</Key>
+          <Value>3</Value>
+        </Parameter>
+      </Parameters>
+    </Rule>
+
+    <!-- Cyclomatic complexity per method ≤ 10 (§2.1). Package default: 10. -->
+    <Rule>
+      <Key>S1541</Key>
+      <Parameters>
+        <Parameter>
+          <Key>maximumFunctionComplexityThreshold</Key>
+          <Value>10</Value>
+        </Parameter>
+      </Parameters>
+    </Rule>
+
+    <!--
+      Method length ≤ 60 lines (§2.1). Package default is 80, so this one is a
+      real override: without it the documented 60-line limit would not be the
+      limit that runs.
+    -->
+    <Rule>
+      <Key>S138</Key>
+      <Parameters>
+        <Parameter>
+          <Key>max</Key>
+          <Value>60</Value>
+        </Parameter>
+      </Parameters>
+    </Rule>
+
+    <!-- Parameters per method ≤ 7 (§2.1). Package default: 7. -->
+    <Rule>
+      <Key>S107</Key>
+      <Parameters>
+        <Parameter>
+          <Key>max</Key>
+          <Value>7</Value>
+        </Parameter>
+      </Parameters>
+    </Rule>
+
+  </Rules>
+</AnalysisInput>
