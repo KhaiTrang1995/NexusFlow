@@ -44,7 +44,10 @@ public sealed class DependencyRuleTests
     [InlineData("FlowX.Runtime", new[] { "FlowX.Abstractions", "FlowX.Core" })]
     [InlineData("FlowX.Runtime.Durable", new[] { "FlowX.Abstractions", "FlowX.Core", "FlowX.Runtime" })]
     [InlineData("FlowX.Hosting", new[] { "FlowX.Abstractions", "FlowX.Core", "FlowX.Runtime" })]
-    [InlineData("FlowX.Testing", new[] { "FlowX.Abstractions" })]
+    // FlowX.Testing gained Core and Runtime with FlowTestHost (WP-49), which runs the
+    // real engine over the real compiled plan inside the test process. Still points
+    // inward, and still narrower than Hosting: no transport, no journal, no container.
+    [InlineData("FlowX.Testing", new[] { "FlowX.Abstractions", "FlowX.Core", "FlowX.Runtime" })]
     public void LayersPointInward(string projectName, string[] allowedReferences)
     {
         var project = RepositoryLayout.SourceProjects
