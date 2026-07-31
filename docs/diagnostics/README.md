@@ -11,7 +11,7 @@ from at run time, or expensive enough that discovering it in production is the w
 place. A warning is a rule nobody has to obey; if a rule is worth having, it stops
 the build.
 
-Ten entries below are not errors, and each says why on its own page. Three of the ten —
+Eleven entries below are not errors, and each says why on its own page. Three of the eleven —
 the determinism set [FLOWX1007](FLOWX1007.md), [FLOWX1008](FLOWX1008.md) and
 [FLOWX1009](FLOWX1009.md) — say why *together*, in
 [the section below](#the-severity-of-the-determinism-set), because
@@ -34,6 +34,10 @@ flows and a warning in `Ephemeral` ones, which is the asymmetry
 [ADR-0003](../adr/ADR-0003-execution-profiles.md) ratified for the determinism rules:
 a durable flow is replayed and must take the branch it took the first time, an
 ephemeral one is not replayed at all.
+[FLOWX1012](FLOWX1012.md) is the one rule here whose remedy has a prerequisite outside the
+source file, which is most of why it is not an error;
+[the section below](#the-severity-of-flowx1012-which-is-not-the-determinism-sets-argument)
+is its argument, kept apart from the determinism set's on purpose.
 
 ## The severity of the determinism set
 
@@ -116,6 +120,55 @@ that **nothing replays the capture back into execution yet**: `ReplayDeterminism
 WP-61, and until it exists a determinism leak still leaves no trace at run time. Which is the
 argument for a build-time rule, not against one.
 
+## The severity of `FLOWX1012`, which is not the determinism set's argument
+
+`FLOWX1012` is *about* a profile, arrived through the same ADR bullet, and was unraised for
+the same two phases — so the tempting move is to fold it into the set above and inherit its
+answer. That would be wrong in the one place it matters, and the difference is worth stating
+here rather than only on the page.
+
+**The set's rule is "Warning by default, Error where the compilation can prove the code is on
+a durable flow's replay path". `FLOWX1012` fires *because* the flow is not durable.** Its
+trigger condition and the set's escalation condition are mutually exclusive: there is no
+compilation in which this rule reports and that proof is available. The escalation does not
+transfer, and inventing a different one would be inventing a rule, not applying a stance.
+
+There is exactly one escalation a reader will propose — a `Durable` parent composing this
+flow as a sub-flow, by the same transitive reasoning the determinism set uses — and it is
+the one case the runtime does **not** currently honour. A resumed parent skips a completed
+sub-flow's row and deliberately does not rebuild that child's compensation stack: the entry
+is bound to a context that died with the node, and rebuilding it from the child's own rows
+is WP-57. Escalating there would promise a guarantee the engine does not deliver, on the
+strength of a profile that does not reach the thing being escalated about.
+
+**Why not an error, then.** Three reasons, and only the third is about adoption:
+
+1. **The source is not wrong.** A compensable `Ephemeral` flow compensates correctly on
+   every ordinary failure — the capture declines, the unwind runs, the reservation comes
+   back. What it loses is the crash window. [ADR-0003](../adr/ADR-0003-execution-profiles.md)
+   records that trade deliberately, and `docs/DEBT.md` names it as the example of a
+   *decision* rather than debt. An error would make a decision the ADR ratified
+   inexpressible.
+2. **The remedy has a prerequisite the compiler cannot see.** `Profile = Durable` needs a
+   host with a journal and a lease store registered; without one, `FlowInvocation` refuses
+   the flow with `flow.durability_not_configured` before its first step. An error would stop
+   a build until the author made an edit whose correctness depends on a deployment fact no
+   analyzer can check. That is also why this rule ships with **no code fix** — see the page.
+3. **`Ephemeral` is the default profile**, so an error here breaks every compensable flow in
+   every codebase that has not already opted into durability, on the day it is switched on.
+
+**Why not `Info`, for the same reason as the set, only more so.** Info never reaches a build
+log; and this rule reports *only* on flows that did not opt into durability, which is the
+overwhelming majority. An Info `FLOWX1012` would be invisible in essentially every build
+that could ever contain it — which is precisely the state it was already in for two phases,
+and the state raising it was supposed to end.
+
+**`Warning` is not the lenient option here either.** This repository sets
+`TreatWarningsAsErrors`, and the rule's first finding was `samples/ecommerce` — the
+reference application, a compensable saga on `Ephemeral`. It stopped that build, which is
+the evidence that the rule reports on real code rather than on a fixture. What the sample
+did about it is on [the page](FLOWX1012.md#the-reference-sample-fires-this-rule).
+
 ## Catalogue
 
 | Id | Rule | Prevents |
@@ -130,6 +183,7 @@ argument for a build-time rule, not against one.
 | [FLOWX1009](FLOWX1009.md) | Capability or flow holds mutable state | **Two concurrent invocations of one singleton capability racing on a field** |
 | [FLOWX1010](FLOWX1010.md) | Capability declares no authorisation stance | A permissive default nobody chose |
 | [FLOWX1011](FLOWX1011.md) | Condition, selector or projection reads something outside the flow's state | A branch that takes a different path on replay, or a step input that is not the journaled one |
+| [FLOWX1012](FLOWX1012.md) | Compensation is declared on a flow that is not durable | **A reservation, a hold or an authorisation left standing because the node that would have released it died first** |
 | [FLOWX1013](FLOWX1013.md) | Parallel branches must write disjoint context slots | **Two concurrent branches racing on one context slot** |
 | [FLOWX1014](FLOWX1014.md) | Retry requires an idempotent capability | **A duplicate charge** |
 | [FLOWX1015](FLOWX1015.md) | Capability implements more than one contract | Ambiguous dispatch, meaningless manifest entry |
@@ -174,7 +228,7 @@ argument for a build-time rule, not against one.
 The catalogue is deliberately smaller than the numbering suggests. Codes appear here
 only once the compiler actually reports them — a documented diagnostic that nothing
 raises is a promise the compiler is not keeping. Reserved for later phases:
-`FLOWX1006` (state must be serialisable), `FLOWX1012` (compensable-and-ephemeral) and
+`FLOWX1006` (state must be serialisable) and
 `FLOWX1022` (contract compatibility **across versions** — the analyzer counterpart
 of `flowx diff`, distinct from `FLOWX1020`, which checks one flow's steps against
 each other). `FLOWX1021` left this list when sub-flows landed; `FLOWX1016` and
@@ -182,8 +236,14 @@ each other). `FLOWX1021` left this list when sub-flows landed; `FLOWX1016` and
 
 `FLOWX1007`–`FLOWX1009` left this list in WP-58, with the meanings every other document
 already gave them: ambient clock, ambient identity and randomness, and mutable state on a
-capability or a flow. `FLOWX1012` did **not**, and the row below says exactly what it is
-still blocked on — which is no longer the same thing it was blocked on before WP-52.
+capability or a flow. **`FLOWX1012` left it in WP-60**, with the meaning every other
+document already gave it too: `.CompensateWith` on a flow whose profile is not `Durable`.
+It was reserved for longer than any of them, and the row that used to sit below said why
+— its remedy. That remedy is now real in both halves: WP-52 made the runtime read
+`ExecutionProfile`, and WP-53 and WP-55 gave a host a journal and a lease store to
+register, so `Profile = Durable` no longer means either "changes nothing" or "refuses to
+run". The rule ships as a **Warning**; the argument, which is *not* the determinism set's
+argument, is [below](#the-severity-of-flowx1012-which-is-not-the-determinism-sets-argument).
 
 **What each remaining reservation is blocked on**, so that "reserved" does not
 quietly become "forgotten":
@@ -191,7 +251,6 @@ quietly become "forgotten":
 | Id | Blocked on |
 |---|---|
 | `FLOWX1006` | The generated `System.Text.Json` context [ADR-0008](../adr/ADR-0008-serialization-and-schema.md) chose. Nothing generates one and `IPayloadSerializer` does not exist, so there is no membership the rule could check a contract against. *This cell also said `ctx.State` is serialised nowhere. Since WP-52 there is a path — the journal's state-bag snapshot — but it runs through `JournalPayload.Of<T>`, which requires a `JsonTypeInfo<T>` the caller must already have, and no generator emits one: the shipped dispatchers describe no payloads. The generated payload writer is WP-59, and this rule lands with it.* Checking "is this type serialisable in principle" instead would be a different, weaker rule under a number already spoken for |
-| `FLOWX1012` | **Its remedy, still — and WP-58 measured it rather than reasoning about it.** *This cell said the blocker was gone.* The check is as easy as it always was: `.CompensateWith` under `Profile = Ephemeral`. The fix it must recommend is `Profile = Durable`, and applying that fix to the one application in this repository — `samples/ecommerce`, which is compensable and `Ephemeral` and is therefore the rule's first finding — turns **7 of its 40 tests red with `flow.durability_not_configured`**. Nothing in `src/` implements `IFlowJournal`, `FlowX.Hosting` registers no journal and no lease, and `FlowInvocation` refuses a durable flow that has none before its first step. So the remedy no longer "changes nothing"; it stops the flow running at all, which is a worse trade than the one it was withheld for. It becomes honest when a host can supply a journal — **WP-55** — at which point the caution about WP-57 (a resumed parent does not rebuild a skipped sub-flow's compensations) still has to reach the wording. `flowx verify --cost` flags the same accident today, from the manifest and after the build. [`FLOWX1028`](FLOWX1028.md) does not: it was narrowed to `Streaming` at WP-52 |
 | `FLOWX1022` | `flowx diff`'s question, asked of two manifests. An analyzer sees one compilation and cannot see the previous version's contracts at all |
 
 **A new rule takes the next id above the catalogue, never a reserved one.** Each

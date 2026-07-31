@@ -276,8 +276,15 @@ stays `no`**, and it was never blocked on severity: it checks membership in the 
 `System.Text.Json` context that
 [ADR-0015 commitment 5](adr/ADR-0015-journal-schema-and-durable-execution.md) requires
 payloads to be written through, and that writer is WP-59.
-[`FLOWX1012`](diagnostics/README.md) is unraised for its own reasons and is WP-60,
-though the fix it would recommend — `Profile = Durable` — now changes something.
+[`FLOWX1012`](diagnostics/FLOWX1012.md) was the last id in this family and **shipped at
+WP-60**, once the fix it recommends — `Profile = Durable`, plus a journal and a lease store
+registered on the host — stopped being a lie. Its severity is a `Warning` and is
+deliberately *not* the set's rule restated: it reports precisely because the flow is **not**
+durable, so the escalation above can never apply to it, and the one escalation that looks
+plausible — a durable parent composing the flow — is the case rule 4 and WP-57 below say the
+engine does not honour.
+[Its own section on the diagnostics index](diagnostics/README.md#the-severity-of-flowx1012-which-is-not-the-determinism-sets-argument)
+carries that argument, kept apart from this one.
 
 **`FLOWX1011` stopped being an exception, and nothing about it changed to do so.** It
 shipped as a Warning outside `Durable` rather than Info, deviating from ADR-0003, because
@@ -404,11 +411,15 @@ Rules:
 4. Compensation is itself journaled, so a crash during compensation resumes
    compensation — never re-runs forward steps.
 5. `Ephemeral` flows may declare compensation, but the guarantee is weaker: a
-   process crash during compensation loses it. *No analyzer warns:* `FLOWX1012`
-   does not exist and never has, so a compensable `Ephemeral` flow compiles in
-   silence. ([ADR-0003](adr/ADR-0003-execution-profiles.md) names it in the same
-   breath as `FLOWX1017`, which does exist — the two were written together and
-   only one was built.) Rules 1–3 above are implemented and covered by
+   process crash loses the pending unwind along with the instance, because the
+   stack is a field of an in-memory context and nothing writes it down.
+   **[`FLOWX1012`](diagnostics/FLOWX1012.md) says so at build time since WP-60**,
+   as a warning — *this rule was specified alongside `FLOWX1017` in
+   [ADR-0003](adr/ADR-0003-execution-profiles.md), only one of the pair was built,
+   and for two phases a compensable `Ephemeral` flow compiled in silence.* It fires
+   on the default profile as well as on a declared `Ephemeral` one, which is the
+   whole reason it is not an error; its page carries that argument and the
+   reference sample's answer to it. Rules 1–3 above are implemented and covered by
    `CompensationStackTests` and `FlowEngineTests`; **rule 4 is not.** *The reason
    given was "nothing is journaled", and that stopped being true at WP-52 — but the
    part that matters here never was: `CompensateAsync` writes no journal row.

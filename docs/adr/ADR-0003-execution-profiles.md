@@ -78,15 +78,25 @@ The default is `Ephemeral`: you opt *into* cost, never out of it.
   profile of its own, so it escalates only when a `Durable` flow *in this
   compilation* names it as a step.
 - **A wrong profile is a real bug class.** `Ephemeral` on a payment saga loses
-  work on deploy; `Durable` on a query costs 1 000×. Mitigated today by
-  [`FLOWX1017`](../diagnostics/FLOWX1017.md) alone (signals and timers require
-  durable). *`FLOWX1012` — the compensable-plus-ephemeral warning — was specified
-  alongside it and is still not built, so a compensable `Ephemeral` flow compiles in
-  silence. `flowx verify --cost` **does now**, and flags exactly the accident
-  `FLOWX1012` would have caught at build time — from the manifest rather than the
-  source, and after the build rather than during it. Its second blocker is gone:
-  the fix `FLOWX1012` would recommend, `Profile = Durable`, changed nothing while
-  every profile ran in memory, and since WP-52 it changes something. WP-60.*
+  work on deploy; `Durable` on a query costs 1 000×. Mitigated at build time by
+  **both** of the rules this bullet specified:
+  [`FLOWX1017`](../diagnostics/FLOWX1017.md) (signals and timers require durable) and
+  [`FLOWX1012`](../diagnostics/FLOWX1012.md) (compensation requires durable). *This
+  bullet named the second one for two phases as specified-but-not-built, because its
+  only fix — `Profile = Durable` — changed nothing while every profile ran in memory,
+  and then, briefly after WP-52, refused to run at all for want of a journal to
+  register. WP-53 and WP-55 gave a host one. It shipped at WP-60 as a **Warning**: it
+  reports on flows that are not durable, which is the default, so an error would make
+  the very trade this ADR ratified inexpressible and its remedy depends on a host
+  registration no analyzer can see.* **And this bullet's claim that `flowx verify --cost`
+  covered the gap in the meantime was wrong, which WP-60 found by reading the check.**
+  `ProfileCostCheck` selects the flows whose manifest profile is `Durable` and reports the
+  ones with no compensation, no signal and no timer. A compensable `Ephemeral` flow is
+  never in the set it examines. The verb catches the *expensive* half of "a wrong profile"
+  — durability bought for nothing — and until WP-60 the *lossy* half had no check at all,
+  at build time or after it. The two are complementary rather than overlapping: one is a
+  judgement about intent across a whole manifest that no analyzer can make, the other is a
+  property of one source file that no manifest records.
 - **The asymmetry was theoretical in one direction until WP-52 (2026-07-31), and
   is now partial.** *This bullet said `FlowX.Runtime` does not read
   `ExecutionProfile` and that `Durable` executes on the ephemeral path with no

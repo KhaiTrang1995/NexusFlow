@@ -442,7 +442,7 @@ edge out of it.
 |---|---|---|
 | `.Step<TCapability>()` | invoke a capability, binding its input from the context | all |
 | `.Step<TCapability, TStepIn>(map)` | invoke with an explicit input mapping | all |
-| `.CompensateWith<T>()` | register the inverse of the previous step | all (weak in Ephemeral) |
+| `.CompensateWith<T>()` | register the inverse of the previous step | all — but weak outside `Durable`, and [`FLOWX1012`](diagnostics/FLOWX1012.md) warns when it is |
 | `.WithPolicy(policy)` | attach a policy set to the previous step | all |
 | `.When(pred, then).Otherwise(else)` | conditional | all |
 | `.Switch(sel).Case(v, b).Default(b)` | value branch | all |

@@ -25,8 +25,28 @@ namespace Ecommerce;
 /// serves would be exactly the documented-but-not-produced claim the manifest exists to
 /// eliminate; there is now no way to write one.
 /// </para>
+/// <para>
+/// <strong>This flow is compensable and ephemeral, and <c>FLOWX1012</c> is right to say
+/// so.</strong> The unwind stack lives in the memory of the process that took the request,
+/// so a node that dies between the reservation and the end of the flow leaves the hold
+/// standing with nothing left to release it. The rule is suppressed below because the
+/// answer is <c>Ephemeral</c>, not because the finding is wrong: <c>docs/DEBT.md</c> draws
+/// exactly this line — a trade recorded in an ADR is a decision, not debt — and the ADR is
+/// <a href="../../docs/adr/ADR-0003-execution-profiles.md">ADR-0003</a>.
+/// </para>
+/// <para>
+/// The reason is this sample's whole value. <c>dotnet run</c> serves an order with nothing
+/// behind it, and the only journal FlowX ships is PostgreSQL. Declaring <c>Durable</c> here
+/// would buy a crash-safe unwind for an inventory store that is a dictionary and a payment
+/// gateway that always approves, at the price of a reference application that cannot place
+/// an order without a database. What the choice costs is in the README's known gaps rather
+/// than left to be inferred, and the argument in full is on
+/// <a href="../../docs/diagnostics/FLOWX1012.md">the diagnostic's page</a>.
+/// </para>
 /// </remarks>
+#pragma warning disable FLOWX1012 // Deliberate: an ephemeral saga, argued in docs/diagnostics/FLOWX1012.md
 [Flow("order.place", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral, Owner = "orders")]
+#pragma warning restore FLOWX1012
 [FlowDeadline("PT30S")]
 [HttpTrigger("POST", "/api/v1/orders", Idempotent = true)]
 public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult>
