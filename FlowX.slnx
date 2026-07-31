@@ -23,6 +23,7 @@
     <Project Path="tests/FlowX.Cli.Tests/FlowX.Cli.Tests.csproj" />
     <Project Path="tests/FlowX.Compiler.CodeFixes.Tests/FlowX.Compiler.CodeFixes.Tests.csproj" />
     <Project Path="tests/FlowX.Compiler.Tests/FlowX.Compiler.Tests.csproj" />
+    <Project Path="tests/FlowX.Conformance.Tests/FlowX.Conformance.Tests.csproj" />
     <Project Path="tests/FlowX.Core.Tests/FlowX.Core.Tests.csproj" />
     <Project Path="tests/FlowX.Hosting.Tests/FlowX.Hosting.Tests.csproj" />
     <Project Path="tests/FlowX.Http.Tests/FlowX.Http.Tests.csproj" />
