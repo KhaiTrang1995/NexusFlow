@@ -737,10 +737,14 @@ document:
 | IDE code fixes | **Met** — WP-19, three diagnostics, in a separate assembly |
 | `flowx diff` v1 | **Met** — WP-17, 29 rules, wired into CI |
 
-P1 also carried P0's two unshipped *Should* items. `FlowTestHost` did not ship;
-`FlowX.Testing` shipped instead (WP-12) and the SDK documentation was corrected to say
-which is which. **`dotnet new flowx` still does not exist** and is not claimed anywhere —
-it is carried into P2 as unstarted, for the second time, which is worth noticing.
+P1 also carried P0's two unshipped *Should* items. **`FlowTestHost` shipped at WP-49**,
+after `FlowX.Testing` had shipped context doubles under its name at WP-12 — three
+documents described a host that ran flows while the package contained neither. It runs a
+real engine with capabilities substituted by id; `For<TFlow>()` is deliberately not
+offered, because discovering the generated dispatcher would need reflection over
+generated members and constraint C2 forbids it. **`dotnet new flowx` still does not
+exist** and is not claimed anywhere — carried forward as unstarted for the second time,
+which is worth noticing.
 
 **What P1 hands to P2**, in three named piles rather than as "remaining work":
 

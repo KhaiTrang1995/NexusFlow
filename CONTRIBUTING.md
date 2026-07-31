@@ -119,14 +119,21 @@ Resilience and timing behaviour must be tested with `WithVirtualTime()`. A test
 that sleeps in real time will be asked to change.
 
 > [!IMPORTANT]
-> **`FlowTestHost` does not exist yet, so the block above is the shape to aim at
-> rather than code you can run today.** `FlowX.Testing` ships
-> `TestCapabilityContext` and `TestFlowContext` — context doubles — and nothing
-> that runs a flow. `WithVirtualTime()`, `WithDeadline()` and `host.Trace` are
-> unwritten, and the retry the test asserts on could not happen anyway because no
-> policy executes. It is carried as unstarted P1 scope in
-> [20-Roadmap §P1](docs/20-Roadmap.md), and [19 §3](docs/19-SDK.md) says the same.
-> Write capability tests as plain unit tests against the doubles until it lands.
+> **`FlowTestHost` exists now, but the block above is not quite what it ships.**
+> `FlowX.Testing` runs a real flow through a real engine with capabilities
+> substituted by **capability id** — `Substitute("payment.capture", …)` — because
+> that is what the plan and the manifest are keyed by. `FlowTestHost.For<TFlow>()`
+> is not offered: the generated dispatcher takes concrete sealed capability types,
+> so finding it would need reflection over generated members, which constraint C2
+> forbids, and a container to construct them, which is the mock framework the
+> roadmap excludes. Naming the plan and the dispatcher costs one line.
+>
+> `host.Trace` is real. **`WithVirtualTime()` is not**, and cannot be until a
+> policy executes — the retry this example asserts on still cannot happen, because
+> policy chains reach the plan and the runtime never reads them. Use
+> `WithClock(...)` for deadlines. See
+> [23-Testing-Strategy](docs/23-Testing-Strategy.md) for the shipped surface and
+> for what is deliberately absent.
 
 ## Performance changes
 
