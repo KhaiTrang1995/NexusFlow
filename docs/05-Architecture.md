@@ -522,8 +522,8 @@ Rollout strategy, KEDA scalers and drain semantics in
 | **Logging** | Structured only. Data as fields, never interpolated. `flow.id`, `flow.instance_id`, `step.id`, `capability.id`, `tenant.id`, `trace_id` on every record | [12](12-Observability.md) |
 | **Persistence** | FlowX owns only journal + outbox + idempotency store. Business persistence is inside capabilities and is none of FlowX's business | [11](11-Distributed-Runtime.md) |
 | **Serialisation** | `System.Text.Json` source-generated contexts only (C2 AOT). Journal payloads carry a schema version | [ADR-0008](adr/ADR-0008-serialization-and-schema.md) |
-| **Time** | Capabilities must obtain time from `ctx.Clock`, never `DateTime.UtcNow` — replay determinism (`FLOWX1007`) | [06](06-Execution-Engine.md) |
-| **Randomness / IDs** | `ctx.NewId()` and `ctx.Random` are journaled on first use so replay reproduces them (`FLOWX1008`) | [06](06-Execution-Engine.md) |
+| **Time** | Capabilities must obtain time from `ctx.UtcNow`, never `DateTime.UtcNow` — replay determinism. **Unenforced:** `FLOWX1007` does not exist; the property name is `UtcNow`, not `Clock` | [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) |
+| **Randomness / IDs** | `ctx.NewId()` and `ctx.Random` are *intended* to be journaled on first use so replay reproduces them. **Neither the journalling nor the rule exists:** there is no journal, and `FLOWX1008` does not exist | [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) |
 | **Configuration** | Selects adapters and tunes policy *parameters*. It can never change the graph | Manifesto §"What we refuse" |
 | **Security** | Deny-by-default at the capability boundary; STRIDE per trust boundary | [15](15-Security.md) |
 | **Tenancy** | `TenantId` is ambient in `FlowContext`, enforced at admission and at the journal partition key | [16](16-Multi-Tenant.md) |
@@ -547,6 +547,13 @@ Rollout strategy, KEDA scalers and drain semantics in
 | [0010](adr/ADR-0010-csharp-dsl-over-yaml.md) | C# fluent DSL as the source of truth; YAML is export only | Accepted |
 | [0011](adr/ADR-0011-fixed-policy-stage-order.md) | Fixed policy stage order, not user-composed pipelines | Accepted |
 | [0012](adr/ADR-0012-apache-2-license.md) | Apache-2.0 licence | Accepted |
+| [0013](adr/ADR-0013-dsl-vocabulary-over-ca1716.md) | DSL vocabulary takes precedence over CA1716 | Accepted |
+| [0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) | Keep the derived error catalogue; re-express the build-overhead budget | **Proposed** |
+
+*This index stopped at 0012 while two more ADRs were written. The authoritative
+list, with each record's "Revisit when", is [adr/README.md](adr/README.md); this
+table is a convenience copy and drifted because nothing checks that the two
+agree.*
 
 ---
 
@@ -571,13 +578,43 @@ Rollout strategy, KEDA scalers and drain semantics in
 | # | Risk | Impact | Likelihood | Mitigation | Owner |
 |---|---|---|---|---|---|
 | R1 | **Source-generator complexity becomes the platform's own legacy** — generators are hard to debug and slow builds | High | High | Generators emit *readable* C# to `obj/generated`; snapshot tests on every emitted file; build-time budget gate (≤ 8 %); generator logic kept in a pure, unit-testable model layer separate from Roslyn plumbing | Compiler team |
-| R2 | **Determinism leaks in durable flows** — a capability uses `DateTime.UtcNow`, `Guid.NewGuid()` or ambient statics, so replay diverges | High | High | Analyzers `FLOWX1007/1008/1009` as **errors** in durable flows; replay conformance test asserting byte-identical outputs; journal records all non-deterministic values on first use | Runtime team |
-| R3 | **Abstraction leak under real transports** — a universal trigger model cannot express Kafka rebalance, HTTP streaming, MQTT QoS | Medium | High | Escape hatch: `ITriggerSource` exposes transport-specific options *outside* the flow; conformance suite defines the minimum semantics; documented non-goals per transport | Plugin team |
+| R2 | **Determinism leaks in durable flows** — a capability uses `DateTime.UtcNow`, `Guid.NewGuid()` or ambient statics, so replay diverges | High | High | **None of the three mitigations exists — see below.** Planned: analyzers `FLOWX1007/1008/1009` as **errors** in durable flows; replay conformance test asserting byte-identical outputs; journal records all non-deterministic values on first use | Runtime team |
+| R3 | **Abstraction leak under real transports** — a universal trigger model cannot express Kafka rebalance, HTTP streaming, MQTT QoS | Medium | High | **Untested: there is one transport.** Planned escape hatch: `ITriggerSource` exposes transport-specific options *outside* the flow — *the interface is not declared anywhere in `src/`* — plus a conformance suite defining the minimum semantics, which does not exist. What holds today: documented non-goals per transport ([09 §12](09-Trigger-Model.md#12-known-limits-of-the-abstraction)). The risk cannot be evaluated until P3 adds a second transport | Plugin team |
 | R4 | **Adoption cliff** — teams must rewrite to gain value | High | Medium | Incremental adoption path: FlowX hosts inside existing ASP.NET Core apps; a capability can wrap an existing service; `MediatR` bridge plugin for step-by-step migration | DevRel |
 | R5 | **Journal becomes the bottleneck** at high durable throughput | High | Medium | Batched group-commit writes; per-partition journals; `Ephemeral` remains the default so durability is opt-in; benchmark gate QR2 | Runtime team |
 | R6 | **Fixed policy stage order is too rigid** for a legitimate case | Medium | Medium | Documented escape: a capability may declare `PolicyStage.Custom` handlers within its own stage; revisit ADR-0011 after 3 real counterexamples | Architecture |
 | R7 | **Manifest drift between build and deploy** (config changes behaviour) | Medium | Low | Configuration is structurally forbidden from changing the graph; control plane records the deployed manifest hash; `flowx verify --runtime` compares | Platform |
 | R8 | **Ecosystem thinness** — a platform is only as good as its plugins | High | Medium | Ship 8 first-party plugins at v1; publish the conformance suite as a NuGet package so third parties can self-certify | DevRel |
+
+> [!IMPORTANT]
+> **R2's mitigation column was audited in P1 and none of it is built.** A risk
+> whose mitigation is fictional is not a mitigated risk; it is an unmitigated
+> risk that has stopped being reviewed, which is why this is recorded here rather
+> than quietly softened.
+>
+> | Named mitigation | State | Evidence |
+> |---|---|---|
+> | Analyzers `FLOWX1007/1008/1009` as errors in durable flows | **does not exist** | none of the three is a descriptor `FlowXDiagnostics` declares. The catalogue is deliberately built to hold only ids something reports, so their absence is not an oversight in the compiler — it is the compiler declining to promise them, and [the diagnostics index](diagnostics/README.md) records what each reservation is blocked on |
+> | Replay conformance test asserting byte-identical outputs | **does not exist** | no test in the solution named `ReplayDeterminismTest` or anything like it; no test replays anything |
+> | Journal records non-deterministic values on first use | **does not exist** | there is no journal type in the solution. `ADR-0006` is the only place the word appears outside prose |
+>
+> The audit also found the risk is **currently unreachable rather than
+> mitigated**, which is a different and less comforting statement.
+> `FlowX.Runtime` never reads `ExecutionProfile`: a flow declared `Durable` runs
+> on the identical ephemeral path, so nothing replays and a determinism leak has
+> nowhere to diverge. R2 becomes live the moment the P2 journal lands, and the
+> analyzers must land with it, not after it — which is why
+> [20-Roadmap §3](20-Roadmap.md#3-increment-detail) lists them in P2's **Must**
+> and [§6](20-Roadmap.md#6-standing-risk-review) makes any replay divergence a
+> stop-the-phase trigger.
+>
+> One partial mitigation does exist and is not in the row above:
+> [`FLOWX1011`](diagnostics/FLOWX1011.md) covers the *flow's* deterministic
+> zone — conditions, selectors, projections and step input maps may read only
+> the flow context, the flow input and prior step results. It ships as a Warning
+> because `Ephemeral` is the only profile the runtime executes; it is specified
+> to become an Error under `Durable`. It says nothing about capability bodies,
+> which is where R2's example lives.
 
 **Accepted technical debt for v1:** no dynamic/interpreted flows (P4 trade-off),
 no cross-region durable flows, no human-task/BPM model, no visual editing
@@ -608,8 +645,9 @@ reader who saw the name stopped looking for the rule.
 | `PluginsPassConformance` | Q6 | a plugin fails the shared conformance suite | **not written — see below** |
 | `SuppressionsAreAccountable` | §6.1 | a suppression cites no registered, unexpired `FLOWX-DEBT` id | `DebtAccountabilityTests` |
 | `EveryDiagnosticIsHelpful` | P12 | a `FLOWX*` diagnostic lacks title, fix, or help URI | `FlowX.Compiler.Tests` |
-| `BenchmarkBudgetsHold` | Q1, Q7 | > 5 % regression, or any allocation in `EphemeralDispatch` | *Benchmark budgets* job, `performance.yml` |
-| `AotPublishSucceeds` | C2 | `PublishAot=true` fails or emits trim warnings | *NativeAOT smoke test* job, `ci.yml` |
+| *(job, not a test)* | Q1, Q7 | > 5 % regression against `baseline.json` — B1, B3 and B12 in isolation | *Benchmark budgets* job, `performance.yml` |
+| `AllocationBudgetTests`, `EngineAllocationTests` | Q7 | any allocation on the linear, conditional or switch path | *Allocation budgets* job, `performance.yml` |
+| *(job, not a test)* | C2 | `PublishAot=true` fails, emits trim warnings, or the published binary does not serve a request | *NativeAOT smoke test* job, `ci.yml` |
 
 CI runs these on every pull request. A red fitness function is a build failure,
 not a discussion.
@@ -622,12 +660,25 @@ The one exemption is `MemberInfo.Name`: `typeof(T).Name` compiles to a call on a
 `System.Reflection` type, it is how the runtime says *which* contract a step failed to
 produce, and it discovers nothing. Everything that looks a member up is still caught.
 
-**`ManifestIsComplete` does not check policies, and the row above is written as though it
-did.** Nothing declares a policy: `PolicySet` exists as a contract, no attribute applies one
-to a step, and the generator emits no `policies` section. Asserting a property of code that
-has not been written is what
-[21-Quality-Gates §2.4](21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced)
-refuses to do. It becomes checkable with P4.
+**`ManifestIsComplete` does not check policies or events, and the row above is written as
+though it checked everything.** The reason has changed since this paragraph was written and
+the paragraph did not: it used to say "no attribute applies a policy to a step, and the
+generator emits no `policies` section", and **both halves of that are now false.**
+`.WithPolicy(PolicySet)` attaches one, `FlowAnalyzer` reads the set well enough to raise
+`FLOWX1014` and `FLOWX1018` off its contents, and `ManifestWriter.WritePolicies` emits a
+`policies` array per step with each policy's fixed stage.
+
+What is still true is narrower and worth stating exactly: **nothing in this repository
+declares a policy**, so the emission path has never run against a shipped assembly, and no
+policy *executes* — `FlowX.Runtime` contains no policy engine at all, so a declared `Retry`
+is a manifest entry and nothing more. A completeness check for policies would therefore pass
+vacuously today. It becomes meaningful with P4. The same is true of `events`: `.Emit<T>()`
+reaches the plan and the manifest, and [`FLOWX1024`](diagnostics/FLOWX1024.md) is raised on
+every one of them because nothing publishes it.
+
+*The stale wording is duplicated verbatim in the `ManifestIsComplete` XML doc comment in
+`tests/FlowX.Architecture.Tests/PublishedContractTests.cs`. The document is corrected here;
+the code comment is a separate change.*
 
 **`PluginsPassConformance` is blocked, not overlooked.** There is no conformance suite to
 run — [R3](#11-risks-and-technical-debt) and

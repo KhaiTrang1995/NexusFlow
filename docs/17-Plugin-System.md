@@ -1,7 +1,35 @@
 # 17 — Plugin System
 
-> **Status:** Accepted · **Audience:** plugin authors, platform engineers
+> **Status:** Accepted as a specification · **one extension point, no conformance suite** ·
+> **Audience:** plugin authors, platform engineers
 > **Answers:** what can be extended, against what contract, and how is compatibility guaranteed?
+
+> [!WARNING]
+> **Almost none of the extension surface below is declared yet.**
+> `ITriggerSource`, `ITriggerSink`, `IFlowJournal`, `ILeaseStore`,
+> `IEventPublisher`, `IIdempotencyStore`, `IPayloadSerializer`, `IPolicyHandler`,
+> `ISecretProvider`, `ITenantResolver`, `IJournalArchiver`, `IAiProvider` and
+> `ICapabilityPackage` do not exist in `src/FlowX.Abstractions` or anywhere else.
+> A plugin author cannot compile against them today.
+>
+> There is **one plugin**, `plugins/FlowX.Http`, and it extends FlowX by
+> referencing `FlowX.Abstractions` and mapping ASP.NET Core onto
+> `TriggerEnvelope` — the pattern this document describes, without the interface
+> that would formalise it.
+>
+> **`FlowX.Conformance.Tests` does not exist**, so §5's suite tree, the
+> "conformance suite is the real contract" rule, and the release-blocking gate
+> in [09 §11](09-Trigger-Model.md#11-writing-a-trigger-plugin) are all
+> statements about a package nobody can install. Publishing it is the named
+> mitigation for risks R3 and R8 in
+> [05 §11](05-Architecture.md#11-risks-and-technical-debt) and is a **P3**
+> deliverable; `PluginsPassConformance` is recorded as blocked in
+> [21 §2.4](21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced).
+>
+> One rule in this document is enforced today, and it is the load-bearing one:
+> `AbstractionsHasNoDependencies` fails the build if `FlowX.Abstractions` gains
+> any package or project reference. The contract plugins will depend on stays
+> dependency-free by gate, not by intention.
 
 ---
 

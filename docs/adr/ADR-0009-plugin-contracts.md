@@ -35,13 +35,28 @@ fencing-token rejection.
 Extension points are chosen deliberately, not sprinkled: each one is a
 compatibility obligation held forever.
 
+> [!IMPORTANT]
+> **One half of this decision is enforced; the other is unwritten.** The
+> dependency rule holds by gate: `AbstractionsHasNoDependencies` fails the build
+> if `FlowX.Abstractions` gains any package or project reference, and
+> `RuntimeDoesNotReferenceAnyPlugin` holds the opposite direction. The
+> **conformance suite does not exist** — there is no `FlowX.Conformance.Tests`
+> project or package — and there is one plugin, `plugins/FlowX.Http`, so the rule
+> that "no abstraction ships with fewer than two real implementations" has not
+> been tested against anything. Publishing the suite is a **P3** deliverable and
+> the named mitigation for risks R3 and R8 in
+> [05 §11](../05-Architecture.md#11-risks-and-technical-debt).
+
 ## Consequences
 
 **Positive**
 - First-party plugins are the proof that the extension points are sufficient —
   if Kafka needs an internal API, that is a design bug we discover ourselves.
+  *Unproven: `FlowX.Http` is the only plugin, and the trigger extension point it
+  would implement (`ITriggerSource`) is not declared.*
 - Third parties can self-certify by running `dotnet test`; no gatekeeping
-  committee, and the standard is machine-checkable.
+  committee, and the standard is machine-checkable. *There is nothing to run
+  yet.*
 - Runtime internals stay refactorable, because nothing outside depends on them.
 - Consumers do not inherit a plugin's dependency tree through abstractions.
 - Behavioural drift is caught: the conformance suite is versioned alongside the

@@ -40,22 +40,39 @@ transport: HTTP status, gRPC status, retryability, dead-lettering.
 
 **Positive**
 - Failure paths are visible in signatures and enumerable in the manifest, so
-  error catalogues, OpenAPI responses and client SDKs are generated.
+  error catalogues, OpenAPI responses and client SDKs are generated. *Partly
+  delivered: `ErrorCatalogueReader` derives the manifest's `errors` field from
+  each capability's own source, so the catalogue exists. It withholds the field
+  whenever a failure path cannot be reduced to a literal code and category —
+  which includes any error factory living in a referenced assembly, the very
+  layout [07 §4](../07-Capability-Model.md#4-contract-design) prescribes. No
+  OpenAPI or SDK generation consumes it yet (**P8**), and the derivation is what
+  puts budget B12 over its limit; see
+  [ADR-0014](ADR-0014-derived-error-catalogue-vs-build-budget.md).*
 - No allocation and no throw cost on the failure path — Q1 holds even when things
   go wrong, which is when latency matters most.
 - Retryability is a property of the category, so retry policy is correct by
   default instead of by convention.
-- Unhandled exceptions become a **defect signal**
-  (`flowx_capability_unhandled_total`) rather than being lost among expected
-  failures — a genuinely useful alert.
+- Unhandled exceptions become a **defect signal** rather than being lost among
+  expected failures. *The engine does catch at the capability boundary and
+  produce a distinct `Internal` error for it; the metric named here,
+  `flowx_capability_unhandled_total`, is not emitted — nothing in `src/` emits
+  any metric ([12-Observability](../12-Observability.md), **P5**). The signal
+  exists; the alert does not.*
 
 **Negative / accepted trade-offs**
 - **It is not idiomatic .NET**, and it is the second-most-common early complaint
-  after the no-capability-calls-capability rule. Mitigated by analyzer
-  `FLOWX1016`, code fixes, and templates that show the pattern immediately.
+  after the no-capability-calls-capability rule. Mitigated twice over: the
+  interface signature makes the shape non-optional —
+  `ICapability<TIn, TOut>.ExecuteAsync` returns `ValueTask<Result<TOut>>` — and
+  `FLOWX1016` catches the way round it, a capability throwing an outcome a caller
+  could reasonably handle. *The templates that would "show the pattern
+  immediately" do not exist ([19-SDK](../19-SDK.md)).*
 - **Result propagation is verbose** in capabilities with several failure modes.
-  Mitigated by `Result.Try`, pattern matching and error factory classes; not
-  fully solved.
+  Mitigated by implicit conversion from `Error` and from `T` (so an early
+  `return SomeErrors.X()` and a final `return value` both work),
+  `TryGetValue(out value, out error)`, pattern matching and error factory
+  classes; not fully solved. *`Result.Try` was named here and does not exist.*
 - **Boundary discipline is required**: adapters throw (ADO.NET, HttpClient), so
   capabilities must translate. The runtime catches at the capability boundary as
   a safety net, but a capability that leaks exceptions is a bug and is reported

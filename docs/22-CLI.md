@@ -38,6 +38,22 @@ flowx diff      --old <path> --new <path> [--format text|json] [--output <path>]
 a tool that returns the same code for both gets the step deleted the first time somebody
 mistypes a path.
 
+### 1.1 Verbs other documents name, and this one does not have
+
+**Three verbs. The table above is the whole tool.** Other documents in this set
+invoke `flowx` with fifteen more, none of which is implemented. They are listed
+here because this is the page a reader checks, and finding nothing said about a
+verb they have just read elsewhere is worse than finding it listed as unbuilt.
+
+| Verb | Named in | Blocked on |
+|---|---|---|
+| `flowx replay` (four modes) | [12](12-Observability.md), [20](20-Roadmap.md) | **P5**, behind the **P2** journal |
+| `flowx verify` (`--complete`, `--runtime`, `--cost`) | [01](01-Vision.md), [03](03-Design-Principles.md), [05](05-Architecture.md), [ADR-0003](adr/ADR-0003-execution-profiles.md) | partly superseded — `ManifestIsComplete` is the fitness function that does `--complete`'s job |
+| `flowx query`, `flowx ai …`, `flowx generate` | [13](13-AI-Native.md), [15](15-Security.md), [19](19-SDK.md) | **P8** |
+| `flowx dev`, `flowx new`, `flowx run`, `flowx docs`, `flowx bench`, `flowx fill` | [19](19-SDK.md) | no template or dev-loop tooling exists |
+| `flowx cancel`, `flowx signal` | [06](06-Execution-Engine.md) | **P2** — there is no durable instance to cancel or signal |
+| `flowx tenant`, `flowx purge` | [15](15-Security.md), [16](16-Multi-Tenant.md) | **P6** |
+
 ---
 
 ## 2. `flowx diff` — the gate

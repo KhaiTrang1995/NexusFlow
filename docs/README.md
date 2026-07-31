@@ -58,6 +58,30 @@ yet (constraint C8).
 - **Quality goals** are measurable. "Fast" is not a goal; "p99 ≤ 5 µs" is.
 - **Every sequence diagram involving an external call has its failure twin.**
 - **Every architectural rule has a fitness function** in
-  `tests/FlowX.Architecture.Tests` — see [05 §12](05-Architecture.md#12-architecture-fitness-functions).
+  `tests/FlowX.Architecture.Tests`, **or is marked at the point it is stated as
+  not yet enforced, with the phase that makes it enforceable** — see
+  [05 §12](05-Architecture.md#12-architecture-fitness-functions) for the "Lives
+  in" column and [21 §2.4](21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced)
+  for the gates that are blocked rather than overlooked.
 - **Every decision has an ADR** with an explicit "Revisit when".
-- Diagnostic ids are `FLOWX1001`–`FLOWX1099`; each has a title, a fix and a help URI.
+- Diagnostic ids are `FLOWX1001`–`FLOWX1099`; each **that exists** has a title, a
+  fix and a help URI, asserted by `EveryDiagnosticIsHelpful`. Ids are allocated
+  when something raises them, so the range is not contiguous — see
+  [diagnostics](diagnostics/README.md).
+
+## How to read a claim in these documents
+
+This set is normative and it is ahead of the code, which is deliberate: P0 is
+complete and P1 is in progress out of ten phases in
+[20-Roadmap](20-Roadmap.md). Where the two disagree the document says so at the
+point of the claim, in one of three forms:
+
+| Marker | Means |
+|---|---|
+| **Status** line naming a phase in a document header | the whole document is a specification for work not yet done |
+| *"not enforced" / "does not exist"* next to a rule, test or diagnostic id | the rule is real; nothing checks it yet |
+| A struck-through or corrected name | the document named something that never existed under that name |
+
+**A claim with none of these markers is a claim about code that exists.** That is
+the whole contract, and it is worth more than a document that reads as if
+everything were finished.

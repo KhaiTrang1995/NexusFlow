@@ -1,7 +1,28 @@
 # 10 — Policy Framework
 
-> **Status:** Accepted · **Audience:** application engineers, SRE
+> **Status:** Accepted · **declared, not executed** · **Audience:** application engineers, SRE
 > **Answers:** how are cross-cutting concerns declared, ordered and made safe?
+
+> [!IMPORTANT]
+> **A policy can be declared and published; none is applied at run time.** What
+> ships: `PolicySet` and its builder methods, `.WithPolicy(...)` on a step, a
+> compiler that reads the set's contents well enough to raise
+> [`FLOWX1014`](diagnostics/FLOWX1014.md) (retry on a non-idempotent capability)
+> and [`FLOWX1018`](diagnostics/FLOWX1018.md) (cache on a capability with side
+> effects), and a manifest that records each step's policies with the fixed stage
+> each one runs in. The safety *diagnostics* in this document are real and
+> enforced at build time.
+>
+> What does not ship: the Policy Engine. There is no policy execution in
+> `FlowX.Runtime` — no timeout is armed, no retry is attempted, no breaker opens,
+> no cache is consulted, no authorisation stance is checked at a boundary, and no
+> audit record is written. A step's policy chain is metadata the runtime never
+> reads. Nothing in this repository declares a policy either, so the emission
+> path has not run against a shipped assembly.
+>
+> That is **P4** in [20-Roadmap](20-Roadmap.md). Read §2's stage order as the
+> contract the engine must be built to, and every claim below about behaviour at
+> run time as specification.
 
 ---
 

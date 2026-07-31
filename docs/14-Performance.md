@@ -26,8 +26,44 @@ pull request, and fails the build on regression. Nothing here is aspirational.
 | B9 | HTTP trigger end-to-end (trivial flow, localhost) | p99 | **1.2 ms** | nightly |
 | B10 | Cold start, NativeAOT, ready-to-serve | — | **200 ms** | CI |
 | B11 | Idle RSS, 100 flows registered | — | **60 MB** | CI |
-| B12 | Build overhead vs identical non-FlowX code | **+0.4 %** — [B12.md](benchmarks/B12.md) | **+8 %** | CI |
+| B12 | Build overhead vs identical non-FlowX code | **+46.6 %** at 50 flows · **+77 %** at 200 — [B12-scale.md](benchmarks/B12-scale.md) | **+8 %** | **FAILING** — relative gate in [generator-cost-gate.md](benchmarks/generator-cost-gate.md) |
 | B13 | Streaming throughput, 1 KB records, 8 partitions | sustained | **250 000 rec/s/node** | nightly |
+
+> [!IMPORTANT]
+> **The B12 row read `+0.4 %`, linked only [B12.md](benchmarks/B12.md), and read
+> as a comfortably-met budget. It was neither current nor representative.**
+>
+> `+0.4 %` is real, and it is the figure for the **one-flow reference sample**,
+> measured before the capability error catalogue existed. B12.md itself names why
+> that number does not travel: the generator's cost scales with the number of
+> *flows*, a compilation's cost scales with the number of *files*, and a one-file
+> project maximises the generator's share in a known direction.
+> [B12-scale.md](benchmarks/B12-scale.md) is the document that measures the
+> budget at realistic sizes, and this table never linked it.
+>
+> At scale the budget is **missed, not met**: **+46.6 %** [+42.8, +51.3] at 50
+> flows, **+77 %** at the 200-flow figure that is P1's stated exit criterion —
+> against **+8 %**. About 85 % of the per-flow cost is `FlowPlanGenerator`, and
+> the bulk of that is `SemanticModel.GetTypeInfo` calls made by
+> `ErrorCatalogueReader`: deriving the `errors` field means binding the code it
+> is derived from. [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)
+> is the open decision about which of the two — the field or the budget — gives
+> way.
+>
+> **The Gate column also over-claimed.** The absolute `+8 %` check compared the
+> build against a budget the project was already failing by ten points, so it
+> read identically before and after a 4.9× regression and never fired. It has
+> been replaced by a **relative** gate against a committed baseline, blocking on
+> every pull request, which gates *bytes allocated by the generator* rather than
+> wall clock — over twelve identical runs wall clock moved by 139 % and
+> allocation by 0.069 %. See
+> [generator-cost-gate.md](benchmarks/generator-cost-gate.md). A green relative
+> gate does **not** mean B12 is met; it means the build did not get worse than
+> the last recorded baseline, which is still failing.
+>
+> Quote `+0.4 %` and a scale figure together or neither. The same generator
+> produces both, and which one applies depends entirely on how many flows the
+> project has.
 
 **B2p is a recorded figure, not a budget that was aimed at.** B2 stays a hard zero and
 still means what it always meant — the linear, conditional and switch paths allocate
@@ -53,6 +89,14 @@ still pass if a branch started allocating per step.
 Load tests use **open-loop** generators and report percentiles from HDR
 histograms. Closed-loop generators hide coordinated omission, which is precisely
 how "our p99 is 8 ms" becomes a 4-second production tail.
+
+**Only the first row is in use.** BenchmarkDotNet runs today, driven by
+`scripts/run-benchmarks.sh` and gated by `scripts/check-benchmark-budgets.py`.
+NBomber, `dotnet-counters`, `dotnet-gcdump` and `perf` are not wired into
+anything in this repository — they are the intended tooling for B7–B9 and B13,
+which have no harness because the subsystems they measure are not built. The
+paragraph above is a commitment about how load tests will be run, not a
+description of a run that has happened.
 
 ---
 
@@ -191,7 +235,7 @@ determines your latency:
 | 1 | **Choose the right profile.** `Durable` on a read query costs ~1 000× the platform overhead for zero benefit. |
 | 2 | **Watch the I/O in your capabilities.** A single un-indexed query dwarfs the entire platform overhead by four orders of magnitude. |
 | 3 | **Use `Parallel` for independent steps.** Sequential steps that do not depend on each other are the most common avoidable latency in flows. |
-| 4 | **Set realistic deadlines.** A 30 s flow deadline with 2 s step timeouts and 3 retries is arithmetically incoherent — the analyzer warns (`FLOWX1019`). |
+| 4 | **Set realistic deadlines.** A 30 s flow deadline with 2 s step timeouts and 3 retries is arithmetically incoherent — the analyzer warns (`FLOWX1019`). It counts only the step timeouts the compiler can read and ignores retry backoff, so its number is a floor, not an estimate. *The flow deadline itself is enforced at run time — the engine checks it at every step boundary. The step timeouts it is compared against are not: no policy executes ([10](10-Policy-Framework.md), **P4**), so a step can overrun its declared timeout and only the flow deadline stops it.* |
 | 5 | **Cache at the capability boundary**, with `Scope = Tenant`, only on side-effect-free capabilities. |
 | 6 | **Do not micro-optimise your capabilities** until a profile says so. The platform is fast so that your business code can be readable. |
 
@@ -201,15 +245,31 @@ determines your latency:
 
 ```
 tests/FlowX.Benchmarks/
-├── EphemeralDispatchBenchmarks.cs     # B1, B2, B3
-├── PolicyChainBenchmarks.cs           # B4
-├── TelemetryBenchmarks.cs             # B5, B6
-├── JournalBenchmarks.cs               # B7, B8   (Testcontainers Postgres)
-├── EndToEndHttpBenchmarks.cs          # B9
-├── StartupBenchmarks.cs               # B10, B11 (AOT-published)
-├── CompilerBenchmarks.cs              # B12
-└── StreamingBenchmarks.cs             # B13
+├── Budgets.cs                         # the budgets above, as constants
+├── EngineBenchmarks.cs                # B1  (B2 is asserted by EngineAllocationTests)
+├── DispatchBenchmarks.cs              # B3
+├── StepLoopBenchmarks.cs              # B1 (shape-by-shape)
+└── CompilerBenchmarks.cs              # B12
 ```
+
+**Five of the eight files this listing used to show do not exist**, and neither
+do the budgets they were supposed to measure: there is no
+`PolicyChainBenchmarks` (B4) because no policy executes at run time, no
+`TelemetryBenchmarks` (B5, B6) because nothing emits telemetry, no
+`JournalBenchmarks` (B7, B8) because there is no journal, no
+`EndToEndHttpBenchmarks` (B9), no `StartupBenchmarks` (B10, B11) and no
+`StreamingBenchmarks` (B13). `EphemeralDispatchBenchmarks` was never the name;
+the file that measures B1/B2 is `EngineBenchmarks.cs`, and `Budgets.cs` carries
+the same distinction in code — only the budgets measurable today appear as
+constants, and the rest are listed as unmeasurable with the work package that
+makes them real.
+
+**So B4–B11 and B13 have no gate.** They are budgets stated in advance, which is
+[rule zero](#1-rule-zero--budget-measure-optimise) working as intended, and they
+become measurable with P2 (B7, B8), P3 (B9), P4 (B4), P5 (B5, B6), P7 (B13) and
+the AOT publish job (B10, B11). The five rows in
+[21 §7](21-Quality-Gates.md#7-performance-gates) that name them as gated are
+naming a schedule, not a running check.
 
 ```mermaid
 flowchart LR

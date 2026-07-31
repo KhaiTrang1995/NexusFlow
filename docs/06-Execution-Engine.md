@@ -172,6 +172,19 @@ flowchart TD
 > everything durable and charge everything for it. See
 > [ADR-0003](adr/ADR-0003-execution-profiles.md).
 
+> [!WARNING]
+> **Only the `Ephemeral` column describes something that runs.** `FlowX.Runtime`
+> does not read `ExecutionProfile` anywhere: declaring `Durable` today gets you
+> the ephemeral engine with a different word in the manifest — no journal, no
+> checkpoint, no resume on another node, and a crash loses the instance exactly
+> as the `Ephemeral` column says it would. `Streaming` has no engine at all.
+>
+> This is not a bug to file against the runtime; it is P2 and P7 not having
+> happened. It is called out here because the table reads as a menu, and choosing
+> the middle column currently buys nothing while implying a guarantee. See
+> [§5](#5-the-determinism-boundary) for what that means for replay, and
+> [20-Roadmap](20-Roadmap.md) for the phases.
+
 ---
 
 ## 5. The determinism boundary
@@ -188,7 +201,7 @@ flowchart LR
     end
     subgraph nondet["Non-deterministic zone — journaled, never replayed"]
         C["Capability bodies (I/O)"]
-        T["ctx.Clock"]
+        T["ctx.UtcNow"]
         I["ctx.NewId()"]
         RND["ctx.Random"]
     end
@@ -196,13 +209,13 @@ flowchart LR
     nondet -->|"result recorded in journal"| det
 ```
 
-| Rule | Diagnostic | Severity in `Durable` |
-|---|---|---|
-| No `DateTime.Now/UtcNow`, `DateTimeOffset.Now/UtcNow` in flows or capabilities | `FLOWX1007` | Error |
-| No `Guid.NewGuid()`, `Random.Shared` | `FLOWX1008` | Error |
-| No mutable static state reachable from a flow | `FLOWX1009` | Error |
-| Flow branching, step input mappings and the `Return` projection may only read `ctx.State` and step results | `FLOWX1011` | Error |
-| Anything in `ctx.State` must be serialisable by a generated STJ context | `FLOWX1006` | Error |
+| Rule | Diagnostic | Severity in `Durable` | Built? |
+|---|---|---|---|
+| No `DateTime.Now/UtcNow`, `DateTimeOffset.Now/UtcNow` in flows or capabilities | `FLOWX1007` | Error | **no** — P2 |
+| No `Guid.NewGuid()`, `Random.Shared` | `FLOWX1008` | Error | **no** — P2 |
+| No mutable static state reachable from a flow | `FLOWX1009` | Error | **no** — P2 |
+| Flow branching, step input mappings and the `Return` projection may only read `ctx.State` and step results | `FLOWX1011` | Error | **yes** (Warning in `Ephemeral`) |
+| Anything in `ctx.State` must be serialisable by a generated STJ context | `FLOWX1006` | Error | **no** — P2 |
 
 In `Ephemeral` flows these drop to Info — there is no replay, so there is no
 determinism obligation. The analyzer reads the flow's declared profile, so the
@@ -224,9 +237,24 @@ requires to be byte-identical. The full list, and what the rule provably cannot 
 [its page](diagnostics/FLOWX1011.md#which-delegates-it-covers).
 
 **Replay contract:** replaying a completed durable instance must produce
-byte-identical step inputs and identical control flow. Verified by
-`ReplayDeterminismTest`, which executes a corpus of flows, journals them,
-replays, and diffs.
+byte-identical step inputs and identical control flow.
+
+> **Nothing verifies it, and nothing can yet.** `ReplayDeterminismTest` does not
+> exist. There is no journal type in the solution, so there is no corpus to
+> journal and nothing to replay from. The contract above is a *specification for
+> P2*, not a property under test — and it is cited as an existing mitigation in
+> [risk R2](05-Architecture.md#11-risks-and-technical-debt), which is corrected
+> there for the same reason.
+>
+> One consequence is easy to miss and changes how this whole section reads:
+> **`FlowX.Runtime` never reads `ExecutionProfile`.** A flow declared
+> `Profile = ExecutionProfile.Durable` executes on the identical path as an
+> `Ephemeral` one — same step loop, same pooled context, no checkpoint, no
+> resume, no lease. The profile currently affects exactly two things: a
+> build-time validation in `ExecutionPlan` (an `AwaitSignal` step requires
+> `Durable`, [`FLOWX1017`](diagnostics/FLOWX1017.md)) and a field in the
+> manifest. Everything §4 and §6 describe about durable behaviour is design, not
+> runtime.
 
 ---
 
@@ -293,8 +321,14 @@ Rules:
 4. Compensation is itself journaled, so a crash during compensation resumes
    compensation — never re-runs forward steps.
 5. `Ephemeral` flows may declare compensation, but the guarantee is weaker: a
-   process crash during compensation loses it. The analyzer warns
-   (`FLOWX1012`) when a compensable flow is `Ephemeral`.
+   process crash during compensation loses it. *No analyzer warns:* `FLOWX1012`
+   does not exist and never has, so a compensable `Ephemeral` flow compiles in
+   silence. ([ADR-0003](adr/ADR-0003-execution-profiles.md) names it in the same
+   breath as `FLOWX1017`, which does exist — the two were written together and
+   only one was built.) Rules 1–3 above are implemented and covered by
+   `CompensationStackTests` and `FlowEngineTests`; **rule 4 is not** — nothing is
+   journaled, so a crash during compensation loses the whole flow rather than
+   resuming the unwind.
 
 ---
 
@@ -470,9 +504,14 @@ flowchart LR
 
 The Stream Engine never grows an unbounded queue. When the channel is full it
 **pauses consumption at the source** (Kafka `Pause`, AMQP prefetch, MQTT flow
-control) rather than buffering in memory. This is asserted by
-`BackpressureConformanceTest`: a deliberately slow capability must reduce source
-throughput, not increase memory.
+control) rather than buffering in memory.
+
+> **Design only.** There is no Stream Engine: the `Streaming` profile is an enum
+> value the runtime never reads, no transport but HTTP exists, and no bounded
+> channel is created anywhere in `src/`. `BackpressureConformanceTest` does not
+> exist and has nothing to assert against. This section, and budget B13, are
+> **P7**. Kept because backpressure has to be a design constraint from the first
+> line of the Stream Engine rather than a retrofit — but nothing here is running.
 
 Offset commit is **after** flow completion, giving at-least-once semantics;
 combined with capability idempotency this yields effectively-once processing.

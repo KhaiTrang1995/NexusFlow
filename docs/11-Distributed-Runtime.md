@@ -1,7 +1,25 @@
 # 11 — Distributed Runtime
 
-> **Status:** Accepted · **Audience:** runtime contributors, SRE
+> **Status:** Accepted as a specification · **not built** · **Audience:** runtime contributors, SRE
 > **Answers:** how does durable execution stay correct across nodes, crashes and deployments?
+
+> [!WARNING]
+> **Nothing in this document is implemented.** There is no journal, no lease
+> store, no fencing token, no outbox, no scheduler and no second node — the words
+> appear under `src/` only inside comments describing the intent.
+> `FlowX.Runtime` does not read `ExecutionProfile` at all, so a flow declared
+> `Durable` executes on the identical in-memory path as an `Ephemeral` one and a
+> process kill loses the instance.
+>
+> This is the **P2** increment, and it is the second-riskiest thing in the plan
+> for a reason: the guarantees below — exactly one writer, no duplicate
+> non-idempotent effects, resume p99 ≤ 45 s — are the hard ones, and designing
+> them before writing them is what this document is for. Its exit criterion is
+> QR2 in
+> [05 §10](05-Architecture.md#10-quality-requirements-stimulus--response--measure).
+>
+> Read it as the design a P2 implementer is held to. Do not read any sentence
+> here as describing behaviour you can observe today.
 
 ---
 

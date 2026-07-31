@@ -1,7 +1,31 @@
 # 19 — SDK and Developer Experience
 
-> **Status:** Accepted · **Audience:** application engineers
+> **Status:** Accepted as a specification · **the shape is aspirational** ·
+> **Audience:** application engineers
 > **Answers:** what does using FlowX actually feel like, minute to minute?
+
+> [!WARNING]
+> **This document describes the intended experience, not the current one.** None
+> of the commands in §1 works: there is no `FlowX.Templates` package and no
+> `dotnet new flowx` template, and `flowx dev` is not a CLI verb — the CLI has
+> three, `graph`, `manifest` and `diff` ([22-CLI](22-CLI.md)). Studio does not
+> exist in any form (**P8**), and neither does the startup banner, which would
+> need telemetry that is not emitted (**P5**).
+>
+> Two rows of §2's package table name projects that are not in the solution:
+> **`FlowX.Sdk`** (the metapackage a new user is told to reference) and
+> **`FlowX.Runtime.Durable`** (**P2**). `src/` contains `FlowX.Abstractions`,
+> `FlowX.Core`, `FlowX.Compiler`, `FlowX.Compiler.CodeFixes`, `FlowX.Runtime`,
+> `FlowX.Hosting`, `FlowX.Testing` and `FlowX.Cli`, plus `plugins/FlowX.Http`.
+> Nothing has been published to NuGet.
+>
+> `AddFlowX(...)` in §3 is real and validates its options at start-up. The
+> `.UseHttp()` / `.UseKafka(...)` chain on it is not: `AddFlowX` takes an
+> `Action<FlowXOptions>` and there are no transport registration methods, so
+> `samples/ecommerce` maps its endpoint by hand.
+>
+> The honest current first five minutes: reference the projects, write a flow and
+> its capabilities, `dotnet run`, and map the endpoint yourself.
 
 ---
 
@@ -114,6 +138,13 @@ test — a diagnostic that fails to explain itself fails the build (P12).
 ---
 
 ## 5. The CLI
+
+> **Two of the fourteen rows below exist, and both in a smaller form than shown.**
+> `flowx graph` renders Mermaid only — there is no `dot`, `json`, `yaml` or
+> `--live` — and `flowx diff` takes `--old`/`--new` paths rather than a
+> `--baseline` ref. The third shipped verb, `flowx manifest`, is not in this
+> table at all. [22-CLI](22-CLI.md) is the tool's actual reference, and its
+> §1.1 lists every verb named here with the phase it is waiting on.
 
 | Command | Purpose |
 |---|---|
