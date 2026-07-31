@@ -243,9 +243,23 @@ public sealed class ManifestCapability
     [JsonPropertyName("sideEffects")]
     public List<string> SideEffects { get; set; } = [];
 
-    /// <summary>Every failure this capability can return.</summary>
+    /// <summary>
+    /// Every failure this capability can return, or <c>null</c> when the compiler could
+    /// not resolve the catalogue.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Nullable on purpose, and it must stay that way.</strong> The generator emits
+    /// three distinct states: a resolved catalogue, a resolved-and-empty one (<c>[]</c> —
+    /// "this capability declares no errors"), and <em>no property at all</em> when the
+    /// catalogue could not be read — a factory in a referenced assembly is enough. Defaulting
+    /// this to an empty list collapsed the third state into the second, so a capability whose
+    /// catalogue merely became unreadable was diffed as though every one of its codes had
+    /// been deleted: <c>FLOWX-DIFF-017</c>, Breaking, in a gate that blocks the merge.
+    /// A tool that turns a loss of information into a reported contract break is worse than
+    /// one that says nothing.
+    /// </remarks>
     [JsonPropertyName("errors")]
-    public List<ManifestError> Errors { get; set; } = [];
+    public List<ManifestError>? Errors { get; set; }
 
     /// <summary>Replacement identity and removal date, when the contract is on its way out.</summary>
     [JsonPropertyName("deprecated")]
