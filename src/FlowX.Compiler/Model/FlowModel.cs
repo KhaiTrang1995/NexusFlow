@@ -62,6 +62,31 @@ public sealed class FlowModel
         Usings = usings ?? System.Array.Empty<string>();
         SensitiveInputMembers = sensitiveInputMembers ?? System.Array.Empty<string>();
         SensitiveOutputMembers = sensitiveOutputMembers ?? System.Array.Empty<string>();
+
+        // Both derived lists are folded out of the step tree here, once, from a single
+        // walk of it. Every input they read is complete by the time this constructor
+        // runs — the analysis layer finishes the step tree before it builds the model —
+        // so the answers cannot change later, and computing them now keeps the type
+        // free of mutable state that a generator's cached instances would share across
+        // threads. The alternative, a lazily-filled field, would buy nothing: every
+        // model that is built is handed to the emitter, which reads both of these
+        // several times per flow.
+        var allSteps = AllSteps.ToList();
+
+        ComposedFlows = allSteps
+            .Where(step => step.Kind == StepKindModel.SubFlow && step.SubFlowTypeName != null)
+            .Select(step => step.SubFlowTypeName!)
+            .Distinct(System.StringComparer.Ordinal)
+            .OrderBy(name => name, System.StringComparer.Ordinal)
+            .ToList();
+
+        ReferencedCapabilities = allSteps
+            .SelectMany(step => new[] { step.CapabilityTypeName, step.CompensationTypeName })
+            .Where(name => name != null)
+            .Select(name => name!)
+            .Distinct(System.StringComparer.Ordinal)
+            .OrderBy(name => name, System.StringComparer.Ordinal)
+            .ToList();
     }
 
     /// <summary>Business identity from <c>[Flow]</c>, e.g. <c>order.place</c>.</summary>
@@ -159,24 +184,21 @@ public sealed class FlowModel
 
     /// <summary>Every distinct flow type this flow composes, ordinally sorted.</summary>
     /// <remarks>
+    /// <para>
     /// Drives the generated dispatcher's constructor: a composing flow takes the child's
     /// dispatcher the same way it takes a capability, so the child is injected rather than
     /// constructed — which is what lets the child's own capabilities be resolved by the
     /// container and keeps this flow from having to know them.
+    /// </para>
+    /// <para>
+    /// Computed once, in the constructor: the emitter reads it more than once per flow,
+    /// and a property that rebuilt the list per read would hand out a fresh copy every
+    /// time for an answer that cannot change.
+    /// </para>
     /// </remarks>
-    public IReadOnlyList<string> ComposedFlows => AllSteps
-        .Where(step => step.Kind == StepKindModel.SubFlow && step.SubFlowTypeName != null)
-        .Select(step => step.SubFlowTypeName!)
-        .Distinct(System.StringComparer.Ordinal)
-        .OrderBy(name => name, System.StringComparer.Ordinal)
-        .ToList();
+    public IReadOnlyList<string> ComposedFlows { get; }
 
     /// <summary>Every distinct capability type the flow invokes, compensations included.</summary>
-    public IReadOnlyList<string> ReferencedCapabilities => AllSteps
-        .SelectMany(step => new[] { step.CapabilityTypeName, step.CompensationTypeName })
-        .Where(name => name != null)
-        .Select(name => name!)
-        .Distinct(System.StringComparer.Ordinal)
-        .OrderBy(name => name, System.StringComparer.Ordinal)
-        .ToList();
+    /// <remarks>Computed once, in the constructor, for the reason on <see cref="ComposedFlows"/>.</remarks>
+    public IReadOnlyList<string> ReferencedCapabilities { get; }
 }
