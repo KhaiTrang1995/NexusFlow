@@ -1,4 +1,4 @@
-using System.Globalization;
+using FlowX.Conformance;
 using Npgsql;
 using NpgsqlTypes;
 using Shouldly;
@@ -20,6 +20,18 @@ namespace FlowX.Postgres.Tests;
 /// produce.
 /// </para>
 /// <para>
+/// <strong>The semantics are the conformance suite's; these are the parts that are about this
+/// adapter.</strong> Since <c>RecoveryIndexConformance</c> exists, which states count as
+/// abandoned, the ordering, the page bound, the idle threshold and the tenant filter are
+/// asserted by a suite that also runs against the reference index — and
+/// <c>PostgresRecoveryIndexConformanceTests</c> is where this adapter answers it. What is left
+/// here needs a real database to mean anything: that the journal's commit path moves the column
+/// the filter reads, that the query is served by the partial index rather than by sorting the
+/// table, that the migration carrying that index is applied, and that the handshake with a real
+/// lease store makes losing a candidate a skip. Where an assertion below restates one the suite
+/// makes, the suite is the contract and this is a second opinion from the store.
+/// </para>
+/// <para>
 /// <strong>The skip behaviour is <see cref="PostgresTestDatabase"/>'s and is inherited, not
 /// re-implemented.</strong> No connection string configured is a skip carrying a reason; a
 /// connection string configured with no server behind it is a failure. A test here that
@@ -29,9 +41,6 @@ namespace FlowX.Postgres.Tests;
 /// </remarks>
 public sealed class RecoveryIndexTests
 {
-    private const string FlowId = "order.place";
-    private const string FlowVersion = "1.2.0";
-
     /// <summary>An hour, which is longer than any lease TTL a sweep would use.</summary>
     private const int LongIdle = 3600;
 
@@ -68,9 +77,9 @@ public sealed class RecoveryIndexTests
         var candidate = listed.Value.ShouldHaveSingleItem();
 
         candidate.InstanceId.ShouldBe(instance);
-        candidate.FlowId.ShouldBe(FlowId);
+        candidate.FlowId.ShouldBe(RecoveryStore.FlowId);
         candidate.FlowVersion.ShouldBe(
-            FlowVersion,
+            RecoveryStore.FlowVersion,
             "the version an instance is pinned to for its whole life. A node that does not " +
             "carry it must skip the instance rather than resume it against another plan.");
         candidate.TenantId.ShouldBe("acme");
@@ -516,99 +525,18 @@ public sealed class RecoveryIndexTests
     /// left it.
     /// </summary>
     /// <remarks>
-    /// The state is reached through the journal's own writes — a commit for the states a
-    /// running flow passes through, a completion for the states it ends in — so no test here
-    /// asserts against a row the adapter would not produce. Only <c>updated_at</c> is moved
-    /// by hand, because the alternative is waiting an hour.
+    /// The arrangement lives on <see cref="PostgresTestSchema"/> because
+    /// <c>PostgresRecoveryIndexConformanceTests</c> needs the same one, and a fixture written
+    /// twice is a fixture that can drift while both copies stay green. It reaches each state
+    /// through the journal's own writes and moves only <c>updated_at</c> by hand.
     /// </remarks>
     private static async Task<Guid> AbandonAsync(
         PostgresTestSchema schema,
         FlowInstanceState state,
         int idleSeconds,
-        string? tenantId = null)
-    {
-        var instance = Guid.NewGuid();
-
-        var lease = await schema.Leases.AcquireAsync(
-            instance, "dead-node", TimeSpan.FromMilliseconds(1), Cancellation);
-
-        lease.IsSuccess.ShouldBeTrue(
-            "a node takes the lease before it opens the instance row. The TTL is a " +
-            "millisecond because the node this stands for is not coming back.");
-
-        var started = await schema.Journal.StartAsync(
-            new FlowInstanceStart
-            {
-                InstanceId = instance,
-                FlowId = FlowId,
-                FlowVersion = FlowVersion,
-                TenantId = tenantId,
-                Token = lease.Value.Token,
-            },
-            Cancellation);
-
-        started.IsSuccess.ShouldBeTrue(
-            started.IsFailure ? started.Error.ToString() : string.Empty);
-
-        await MoveAsync(schema, instance, lease.Value.Token, state);
-
-        if (idleSeconds > 0)
-        {
-            await schema.ExecuteAsync(
-                string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"""
-                     UPDATE flow_instance
-                        SET updated_at = now() - interval '{idleSeconds} seconds'
-                      WHERE instance_id = '{instance}'
-                     """),
-                Cancellation);
-        }
-
-        return instance;
-    }
-
-    /// <summary>Moves a freshly opened instance to the state under test.</summary>
-    private static async Task MoveAsync(
-        PostgresTestSchema schema,
-        Guid instance,
-        FencingToken token,
-        FlowInstanceState state)
-    {
-        if (state is FlowInstanceState.Pending)
-        {
-            return;
-        }
-
-        if (state is FlowInstanceState.Completed
-            or FlowInstanceState.Failed
-            or FlowInstanceState.TimedOut
-            or FlowInstanceState.CompensationFailed)
-        {
-            var completed = await schema.Journal.CompleteAsync(
-                instance, token, state, JournalPayload.Empty, Cancellation);
-
-            completed.IsSuccess.ShouldBeTrue(
-                completed.IsFailure ? completed.Error.ToString() : string.Empty);
-
-            return;
-        }
-
-        var committed = await schema.Journal.CommitAsync(
-            new StepCommit
-            {
-                Key = StepKey.First(instance, 0),
-                Token = token,
-                CapabilityId = "order.validate",
-                CapabilityVersion = "1.0.0",
-                Outcome = JournalOutcome.Success,
-                State = state,
-            },
-            Cancellation);
-
-        committed.IsSuccess.ShouldBeTrue(
-            committed.IsFailure ? committed.Error.ToString() : string.Empty);
-    }
+        string? tenantId = null) =>
+        await schema.AbandonAsync(
+            state, TimeSpan.FromSeconds(idleSeconds), tenantId, Cancellation);
 
     /// <summary>Takes a plan of the statement the adapter issues, with its own parameters.</summary>
     private static async Task<string> ExplainAsync(

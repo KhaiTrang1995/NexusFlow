@@ -1,4 +1,7 @@
+using System.Globalization;
+using FlowX.Conformance;
 using Npgsql;
+using Shouldly;
 using Xunit;
 
 namespace FlowX.Postgres.Tests;
@@ -92,6 +95,125 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
             .ConfigureAwait(false);
 
         return schema;
+    }
+
+    /// <summary>
+    /// Opens an instance in this schema, moves it to a state, and makes its row as cold as a
+    /// dead node would have left it.
+    /// </summary>
+    /// <param name="state">The state to leave the instance in.</param>
+    /// <param name="idleFor">
+    /// How long ago the row was last written. <see cref="TimeSpan.Zero"/> leaves it as freshly
+    /// written, which is how a healthy instance is arranged.
+    /// </param>
+    /// <param name="tenantId">The partition key, or null for an untenanted instance.</param>
+    /// <param name="cancellationToken">Cancels the arrangement.</param>
+    /// <returns>The instance that was opened.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Every row is written by the adapter.</strong> The state is reached through the
+    /// journal's own calls — a commit for the states a running flow passes through, a
+    /// completion for the states it ends in — so no assertion built on this can pass against a
+    /// row shape <c>PostgresFlowJournal</c> does not produce.
+    /// </para>
+    /// <para>
+    /// The one thing raw SQL does is move <c>updated_at</c> into the past, because staleness is
+    /// the premise of the whole recovery query and the alternative is a test that sleeps for a
+    /// lease TTL. <c>RecoveryStore</c> names that as the expected exception, and the reference
+    /// store takes it too.
+    /// </para>
+    /// <para>
+    /// Here rather than in either caller, because both <c>RecoveryIndexTests</c> and the
+    /// conformance derivation need it and two copies of a fixture are two fixtures that can
+    /// drift apart while agreeing about nothing.
+    /// </para>
+    /// </remarks>
+    public async ValueTask<Guid> AbandonAsync(
+        FlowInstanceState state,
+        TimeSpan idleFor,
+        string? tenantId,
+        CancellationToken cancellationToken)
+    {
+        var instance = Guid.NewGuid();
+
+        var lease = await Leases.AcquireAsync(
+            instance, "dead-node", TimeSpan.FromMilliseconds(1), cancellationToken);
+
+        lease.IsSuccess.ShouldBeTrue(
+            "a node takes the lease before it opens the instance row. The TTL is a millisecond " +
+            "because the node this stands for is not coming back.");
+
+        var started = await Journal.StartAsync(
+            new FlowInstanceStart
+            {
+                InstanceId = instance,
+                FlowId = RecoveryStore.FlowId,
+                FlowVersion = RecoveryStore.FlowVersion,
+                TenantId = tenantId,
+                Token = lease.Value.Token,
+            },
+            cancellationToken);
+
+        started.IsSuccess.ShouldBeTrue(started.IsFailure ? started.Error.ToString() : string.Empty);
+
+        await MoveAsync(instance, lease.Value.Token, state, cancellationToken);
+
+        if (idleFor > TimeSpan.Zero)
+        {
+            await ExecuteAsync(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"""
+                     UPDATE flow_instance
+                        SET updated_at = now() - interval '{(long)idleFor.TotalSeconds} seconds'
+                      WHERE instance_id = '{instance}'
+                     """),
+                cancellationToken);
+        }
+
+        return instance;
+    }
+
+    /// <summary>Moves a freshly opened instance to the state under test.</summary>
+    private async ValueTask MoveAsync(
+        Guid instance,
+        FencingToken token,
+        FlowInstanceState state,
+        CancellationToken cancellationToken)
+    {
+        if (state is FlowInstanceState.Pending)
+        {
+            return;
+        }
+
+        if (state is FlowInstanceState.Completed
+            or FlowInstanceState.Failed
+            or FlowInstanceState.TimedOut
+            or FlowInstanceState.CompensationFailed)
+        {
+            var completed = await Journal.CompleteAsync(
+                instance, token, state, JournalPayload.Empty, cancellationToken);
+
+            completed.IsSuccess.ShouldBeTrue(
+                completed.IsFailure ? completed.Error.ToString() : string.Empty);
+
+            return;
+        }
+
+        var committed = await Journal.CommitAsync(
+            new StepCommit
+            {
+                Key = StepKey.First(instance, 0),
+                Token = token,
+                CapabilityId = "order.validate",
+                CapabilityVersion = "1.0.0",
+                Outcome = JournalOutcome.Success,
+                State = state,
+            },
+            cancellationToken);
+
+        committed.IsSuccess.ShouldBeTrue(
+            committed.IsFailure ? committed.Error.ToString() : string.Empty);
     }
 
     /// <summary>Runs a statement against this schema.</summary>

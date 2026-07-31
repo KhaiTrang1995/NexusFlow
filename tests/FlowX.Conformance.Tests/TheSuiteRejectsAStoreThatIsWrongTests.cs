@@ -1,3 +1,4 @@
+using FlowX.Conformance.InMemory;
 using Shouldly;
 using Xunit;
 
@@ -17,15 +18,16 @@ namespace FlowX.Conformance;
 /// </para>
 /// <para>
 /// The stores below are naive rather than absurd. Each defect is one a store author reaches
-/// by reading <see cref="IFlowJournal"/> or <see cref="ILeaseStore"/> and implementing the
-/// obvious thing: key on the step, upsert on conflict, trust the writer's token, answer
-/// "where was I" from the column named <c>resume_from_step</c>, restart a counter when a
-/// lease is given back. Each is caught, and the test below names the assertion that catches
-/// it — because a suite that fails without saying which guarantee broke is a suite people
-/// re-run until it goes green.
+/// by reading <see cref="IFlowJournal"/>, <see cref="ILeaseStore"/> or
+/// <see cref="IRecoveryIndex"/> and implementing the obvious thing: key on the step, upsert on
+/// conflict, trust the writer's token, answer "where was I" from the column named
+/// <c>resume_from_step</c>, restart a counter when a lease is given back, read "unfinished" as
+/// "not terminal", return the page in the order the rows turned up. Each is caught, and the
+/// test below names the assertion that catches it — because a suite that fails without saying
+/// which guarantee broke is a suite people re-run until it goes green.
 /// </para>
 /// <para>
-/// The last two tests are the control: the naive stores pass the assertions they get right.
+/// One test per suite is the control: the naive stores pass the assertions they get right.
 /// A suite that rejected everything would be as uninformative as one that accepted
 /// everything, and the difference matters exactly here.
 /// </para>
@@ -133,6 +135,74 @@ public sealed class TheSuiteRejectsAStoreThatIsWrongTests
         failure.Message.ShouldContain("no longer owns anything to release");
     }
 
+    /// <summary>
+    /// A recovery index that reads "unfinished" as "not terminal" is rejected by name.
+    /// </summary>
+    /// <remarks>
+    /// The defect ADR-0016 decision 4 predicted in as many words. Four states are non-terminal
+    /// and three of them are candidates; the fourth, <c>Suspended</c>, is excluded on a
+    /// judgement that "lived in two comments and no assertion" until this suite existed. A
+    /// store author who implements the sentence "unfinished and has not been written to for a
+    /// while" writes exactly this index, and it is the defect with the most persistent
+    /// consequence: a parked instance is permanently stale, so it is swept, resumed, and
+    /// re-swept on every pass of every node for as long as it waits for its signal.
+    /// </remarks>
+    [Fact]
+    public async Task AnIndexThatSweepsSuspendedInstancesFailsASuspendedInstanceIsNotACandidate()
+    {
+        var suite = new NaiveRecoveryIndexUnderTest();
+
+        var failure = await CaughtByAsync(
+            nameof(suite.ASuspendedInstanceIsNotACandidate), suite.ASuspendedInstanceIsNotACandidate);
+
+        failure.Message
+            .Contains("Nobody holds it, so nobody died", StringComparison.Ordinal)
+            .ShouldBeTrue(
+                "the failure must say why a parked instance is not an abandoned one, not " +
+                $"merely that a list was not empty. It said: {failure.Message}");
+    }
+
+    /// <summary>A recovery index that does not order its page is rejected by name.</summary>
+    /// <remarks>
+    /// The cheapest thing a store can do — return the rows in whatever order the table, the
+    /// index or the dictionary held them — and the one the ordering remarks on
+    /// <see cref="IRecoveryIndex.ListAbandonedAsync"/> exist to forbid. It is invisible in any
+    /// test with one candidate, and in production it is what lets an instance nothing can
+    /// resume hold the head of every page for ever.
+    /// </remarks>
+    [Fact]
+    public async Task AnUnorderedIndexFailsCandidatesComeBackOldestFirst()
+    {
+        var suite = new NaiveRecoveryIndexUnderTest();
+
+        var failure = await CaughtByAsync(
+            nameof(suite.CandidatesComeBackOldestFirst), suite.CandidatesComeBackOldestFirst);
+
+        failure.Message.ShouldContain("ordered by staleness, oldest first");
+    }
+
+    /// <summary>
+    /// A recovery index that cuts its page before ordering it is rejected by name.
+    /// </summary>
+    /// <remarks>
+    /// The same defect seen from the other side, and worth its own assertion because a store
+    /// can be talked into sorting the page it returns while still having chosen that page
+    /// arbitrarily. Ordering applied after the cut orders the wrong rows, and the bound is what
+    /// makes the difference permanent: the candidates that were never in the page are not
+    /// merely late, they are unreachable while the table stays this size.
+    /// </remarks>
+    [Fact]
+    public async Task AnIndexThatCutsThePageFirstFailsThePageSizeBoundsWhatComesBackAndKeepsTheOldest()
+    {
+        var suite = new NaiveRecoveryIndexUnderTest();
+
+        var failure = await CaughtByAsync(
+            nameof(suite.ThePageSizeBoundsWhatComesBackAndKeepsTheOldest),
+            suite.ThePageSizeBoundsWhatComesBackAndKeepsTheOldest);
+
+        failure.Message.ShouldContain("the two stalest of the four");
+    }
+
     /// <summary>The control: the naive journal passes what it gets right.</summary>
     /// <remarks>
     /// Without this, the six tests above would be satisfied by a store that threw on every
@@ -157,6 +227,24 @@ public sealed class TheSuiteRejectsAStoreThatIsWrongTests
         await suite.AcquiringAnUnheldInstanceGrantsIt();
         await suite.ALiveLeaseCannotBeAcquiredAgain();
         await suite.AnExpiredLeaseIsAcquirableByAnotherNode();
+    }
+
+    /// <summary>The control, for the recovery-index half.</summary>
+    /// <remarks>
+    /// The naive index gets the expensive half right — it filters at the store, it keeps
+    /// terminal instances out, it scopes to a tenant — which is what makes the three failures
+    /// above findings about ordering and about one state, rather than about a store that
+    /// answers nothing.
+    /// </remarks>
+    [Fact]
+    public async Task TheNaiveRecoveryIndexStillPassesTheAssertionsItSatisfies()
+    {
+        var suite = new NaiveRecoveryIndexUnderTest();
+
+        await suite.AStaleUnfinishedInstanceIsACandidate();
+        await suite.ATerminalInstanceIsNeverACandidate(FlowInstanceState.Completed);
+        await suite.AnInstanceWrittenToRecentlyIsNotACandidate();
+        await suite.ASweepScopedToOneTenantSeesOnlyThatTenant();
     }
 
     /// <summary>
@@ -196,6 +284,21 @@ public sealed class TheSuiteRejectsAStoreThatIsWrongTests
     private sealed class NaiveLeaseStoreUnderTest : LeaseStoreConformance
     {
         protected override ValueTask<ILeaseStore> CreateStoreAsync() => new(new NaiveLeaseStore());
+    }
+
+    /// <summary>
+    /// The naive index, arranged by the reference store so that only the query differs.
+    /// </summary>
+    /// <remarks>
+    /// The rows come from <see cref="InMemoryFlowJournal"/> through its own writes, exactly as
+    /// they do for <c>InMemoryRecoveryIndexConformanceTests</c>. What changes between the store
+    /// that passes and the store that is rejected is one class: the index. A fixture that
+    /// differed as well would leave it open which half the failure came from.
+    /// </remarks>
+    private sealed class NaiveRecoveryIndexUnderTest : RecoveryIndexConformance
+    {
+        protected override ValueTask<RecoveryStore> CreateStoreAsync() =>
+            new(new InMemoryRecoveryStore(static journal => new NaiveRecoveryIndex(journal)));
     }
 
     /// <summary>
@@ -385,6 +488,76 @@ public sealed class TheSuiteRejectsAStoreThatIsWrongTests
             new(_outbox.TryGetValue(instanceId, out var rows)
                 ? Result.Ok<IReadOnlyList<OutboxRecord>>(rows)
                 : Result.Fail<IReadOnlyList<OutboxRecord>>(DurabilityErrors.InstanceNotFound(instanceId)));
+    }
+
+    /// <summary>
+    /// A recovery index built from the sentence on the interface and from nothing else.
+    /// </summary>
+    /// <remarks>
+    /// Two defects, both of them the obvious reading. "Unfinished" is taken to mean "not
+    /// terminal", which sweeps parked instances. And the page is the first rows that matched,
+    /// in the order they were found — there is no <c>ORDER BY</c> anywhere, which is what a
+    /// store gets when the ordering is treated as presentation rather than as the contract's
+    /// anti-starvation property.
+    ///
+    /// Everything else it does is right, including the parts that cost something: it filters on
+    /// idleness at the store rather than fetching and discarding, it scopes to a tenant, and it
+    /// answers "at most none" instead of throwing.
+    /// </remarks>
+    private sealed class NaiveRecoveryIndex : IRecoveryIndex
+    {
+        private readonly InMemoryFlowJournal _journal;
+
+        public NaiveRecoveryIndex(InMemoryFlowJournal journal) => _journal = journal;
+
+        public ValueTask<Result<IReadOnlyList<AbandonedInstance>>> ListAbandonedAsync(
+            AbandonedInstanceQuery query,
+            CancellationToken cancellationToken)
+        {
+            if (query.Limit <= 0)
+            {
+                return new(Result.Ok<IReadOnlyList<AbandonedInstance>>([]));
+            }
+
+            var candidates = new List<AbandonedInstance>();
+
+            foreach (var record in _journal.Instances)
+            {
+                // Defect: "unfinished" read as "not terminal", so a suspended instance —
+                // parked on a signal, held by nobody, and permanently stale — is swept.
+                if (IsTerminal(record.State) || record.UpdatedAt >= query.IdleBefore)
+                {
+                    continue;
+                }
+
+                if (query.TenantId is not null && query.TenantId != record.TenantId)
+                {
+                    continue;
+                }
+
+                candidates.Add(new AbandonedInstance(
+                    record.InstanceId,
+                    record.FlowId,
+                    record.FlowVersion,
+                    record.TenantId,
+                    record.State,
+                    record.UpdatedAt));
+
+                // Defect: the page is cut in the order the rows were found, and never ordered.
+                if (candidates.Count == query.Limit)
+                {
+                    break;
+                }
+            }
+
+            return new(Result.Ok<IReadOnlyList<AbandonedInstance>>(candidates));
+        }
+
+        private static bool IsTerminal(FlowInstanceState state) => state
+            is FlowInstanceState.Completed
+            or FlowInstanceState.Failed
+            or FlowInstanceState.TimedOut
+            or FlowInstanceState.CompensationFailed;
     }
 
     /// <summary>
