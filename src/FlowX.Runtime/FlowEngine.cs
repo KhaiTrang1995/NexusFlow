@@ -965,6 +965,15 @@ public sealed class FlowEngine
     /// memory, for the same reason the resume position is: a number this node is holding is
     /// exactly what is lost when this node is.
     /// </para>
+    /// <para>
+    /// <strong>A store that is unreachable is not caught here, and that is deliberate.</strong>
+    /// <see cref="IFlowJournal"/> draws the line: a refusal is a working store saying no and
+    /// arrives as an <see cref="Error"/>; an exception means the store is broken or gone. The
+    /// second is not this flow's failure and must not be turned into one — compensating would
+    /// undo work a resumed instance would have carried on from, and reporting success would be
+    /// worse. Letting it propagate leaves the instance <c>Running</c> with its committed
+    /// prefix intact, which is exactly the state a recovery scan exists to find.
+    /// </para>
     /// </remarks>
     private async ValueTask<Error?> CommitStepAsync(
         ExecutionPlan plan,

@@ -13,18 +13,26 @@ namespace FlowX.Compiler.Analysis;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>The gap.</strong> <c>FlowX.Runtime</c> never reads <c>ExecutionProfile</c> — the
-/// word does not appear in the assembly, nor in <c>FlowX.Hosting</c>, nor in any transport
-/// plugin. A flow declared <c>Durable</c> is dispatched through the identical step loop as
-/// an <c>Ephemeral</c> one: no journal, no lease, no resumption, no replay. What the
-/// profile does reach is an <c>ExecutionPlan</c> validation and the <c>profile</c> field of
-/// <c>flowx.manifest.json</c>. So the declaration produced a fact in a published contract
-/// and no behaviour at all, and nothing anywhere said so.
+/// <strong>The gap, and what is left of it.</strong> This rule once covered <c>Durable</c>
+/// too, because <c>FlowX.Runtime</c> read no profile at all: a durable flow ran the identical
+/// step loop as an ephemeral one, with no journal, no lease, no resumption and no replay, and
+/// nothing anywhere said so. WP-52 closed that half — the engine journals a durable flow's
+/// step boundaries and refuses to run one that has no journal to write to — so <c>Durable</c>
+/// is now silent here.
 /// </para>
 /// <para>
-/// <strong>Why a diagnostic is the intervention.</strong> The durability itself is a phase
-/// of work — <a href="../../../docs/20-Roadmap.md">P2</a> for the journal, P7 for the
-/// stream engine — and cannot be conjured by a compiler rule. What a compiler rule can do
+/// <strong><c>Streaming</c> is not, and it is the worse hole of the two.</strong>
+/// <c>06 §4</c> puts it plainly: "<c>Streaming</c> has no engine at all". Deleting this rule
+/// outright when the journal landed would have handed <c>Streaming</c> exactly the silence
+/// <c>Durable</c> had — and it would have to be written a second time in P7 to say so. So it
+/// is narrowed rather than removed, which is what
+/// <a href="../../../docs/diagnostics/FLOWX1028.md">its own deletion table</a> and ADR-0015's
+/// take-down list both call for.
+/// </para>
+/// <para>
+/// <strong>Why a diagnostic is the intervention.</strong> The stream engine is a phase of
+/// work — <a href="../../../docs/20-Roadmap.md">P7</a> — and cannot be conjured by a
+/// compiler rule. What a compiler rule can do
 /// is remove the silence, which is the part that turns a missing feature into a
 /// <em>defect</em>: an author who is told gets to decide, and an author who is not told
 /// ships a payment saga believing it survives a deploy. The runtime is the other candidate
@@ -45,17 +53,17 @@ namespace FlowX.Compiler.Analysis;
 /// matching <see cref="TriggerDeclarationAnalyzer"/>. The question is answered entirely
 /// from the <c>[Flow]</c> attribute — no graph, no chain walk, nothing the generator
 /// uniquely knows — and it is worth answering on the keystroke that types
-/// <c>Durable</c>, not when the generator next runs. It is also the answer the
-/// <c>FLOWX1017</c> code fix should provoke: that fix writes
-/// <c>Profile = ExecutionProfile.Durable</c> to clear an error, and the author deserves to
-/// learn in the same editor session that the profile it just set is not yet honoured.
+/// <c>Streaming</c>, not when the generator next runs.
 /// </para>
 /// <para>
-/// <strong>Delete this analyzer when the runtime reads the profile.</strong> It is
-/// scaffolding for a missing phase, and a rule nobody removes when it stops being true
-/// becomes noise. <c>RuntimeDoesNotReadTheExecutionProfile</c> in
-/// <c>FlowX.Architecture.Tests</c> is the executable reminder: it fails the day
-/// <c>ExecutionProfile</c> appears in the runtime, and its message says to come here.
+/// <strong>Delete this analyzer when P7 lands the stream engine.</strong> It is scaffolding
+/// for a missing phase, and a rule nobody removes when it stops being true becomes noise.
+/// The reminder that watched the <c>Durable</c> half —
+/// <c>RuntimeDoesNotReadTheExecutionProfile</c> in <c>FlowX.Architecture.Tests</c> — failed
+/// on WP-52 as it was written to, and was deleted with the half it described rather than
+/// narrowed to a subdirectory. P7 has no equivalent scaffold, because "no stream engine" is
+/// not a claim any file makes that a test could catch changing; what it has is the deletion
+/// table on the diagnostic's own page.
 /// </para>
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
@@ -68,11 +76,20 @@ public sealed class ExecutionProfileAnalyzer : DiagnosticAnalyzer
     /// <c>ExecutionProfile.Ephemeral</c>, as it appears in attribute metadata.
     /// </summary>
     /// <remarks>
-    /// The only profile the runtime implements, and the attribute's default (ADR-0003:
-    /// durability is opted into), so a flow that names no profile reads as zero here and
-    /// is correctly silent.
+    /// The attribute's default (ADR-0003: durability is opted into), so a flow that names no
+    /// profile reads as zero here and is correctly silent.
     /// </remarks>
     private const int EphemeralProfile = 0;
+
+    /// <summary>
+    /// <c>ExecutionProfile.Durable</c>, as it appears in attribute metadata.
+    /// </summary>
+    /// <remarks>
+    /// Implemented since WP-52: the engine journals a durable flow's step boundaries under a
+    /// fencing token and refuses to run one that has no journal. This constant is what
+    /// narrowed the rule rather than deleting it.
+    /// </remarks>
+    private const int DurableProfile = 1;
 
     /// <inheritdoc />
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } =
@@ -144,7 +161,9 @@ public sealed class ExecutionProfileAnalyzer : DiagnosticAnalyzer
     /// this file. That is deliberate: a profile added to <c>ExecutionProfile</c> later is
     /// also one the runtime does not implement on the day it is added, and a hard-coded
     /// list would let it ship silent — the exact defect this rule exists to close,
-    /// reintroduced one enum member at a time.
+    /// reintroduced one enum member at a time. What <em>is</em> hard-coded is the far
+    /// shorter list of profiles that <em>are</em> implemented, which is the safe direction
+    /// for the list to be wrong in.
     /// </para>
     /// <para>
     /// A value outside the enum — <c>(ExecutionProfile)7</c>, which C# permits — is silent.
@@ -155,7 +174,7 @@ public sealed class ExecutionProfileAnalyzer : DiagnosticAnalyzer
     /// </remarks>
     private static string? NameOfDeclaredProfile(TypedConstant declared)
     {
-        if (declared.Value is not int value || value == EphemeralProfile)
+        if (declared.Value is not int value || value is EphemeralProfile or DurableProfile)
         {
             return null;
         }
