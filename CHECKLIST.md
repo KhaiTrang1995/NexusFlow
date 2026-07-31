@@ -24,8 +24,9 @@
 > without being made fast. See
 > [§5d](#5d-p2--durable-execution--correct-against-a-real-database-and-unmeasured).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 1467/1467 passing (63 of them against a live
-> PostgreSQL 16.13; 0 skipped) ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 1490/1490 passing (86 of them against a live
+> PostgreSQL 16.13; 0 skipped). Without `FLOWX_POSTGRES_CONNECTION` the adapter suite skips
+> 79 with reasons; set to an unreachable server it **fails 80 and skips none**, on purpose ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) — *last measured before
 > WP-53, WP-55 and WP-58; not re-run since, and the figure is carried rather than
 > verified* · **SDK:** 10.0.110
@@ -1019,12 +1020,33 @@ exists only in a closing summary is one nobody reads.
       adapter case skips with a reason; a connection string and no server → **59 failures,
       0 skips**, because a skip would report the suite green against a database never
       reached; and three always-on tests gate the skip logic itself.
-      **Two gaps found after the merge, by reading the adapter against the documents rather
-      than by a test:** `state_bag_sequence` is written and **never read** — the frontier
-      query is `WHERE instance_id = @instance ORDER BY sequence` with no lower bound, so
-      B8's mitigation is a column and not yet a shorter scan; and the deliverable row's
+      **Three gaps found after the merge, by reading the adapter against the documents
+      rather than by a test.** One is closed, two stand.
+      *Closed:* the adapter implemented **no `IRecoveryIndex`**, so a Postgres-backed host
+      resolved the scan's query to `null` and silently swept nothing — it fenced correctly
+      and picked up no dead node's work, which made P2's Done-when unreachable.
+      `PostgresRecoveryIndex` closes it; see the entry below.
+      *Standing:* `state_bag_sequence` is written and **never read** — the frontier query is
+      `WHERE instance_id = @instance ORDER BY sequence` with no lower bound, so B8's
+      mitigation is a column and not yet a shorter scan; and the deliverable row's
       **group-commit batching and `tenant_id` partition key are not built**, which is
       defensible only because WP-50's absent numbers are the sole rational basis for either
+- [x] **`IRecoveryIndex` for Postgres** — the class that connects WP-53's store to WP-55's
+      scan. Recorded as its own line because it belongs to neither package: both shipped
+      complete against their own exit criteria, and the gap was *between* them. A separate
+      class rather than a second interface on `PostgresFlowJournal`, because a scan is not
+      part of executing an instance and the type every durable write passes through should
+      not carry a member no write uses ([ADR-0016 decision 4](docs/adr/ADR-0016-postgres-journal-adapter.md)).
+      **Migration `0003` adds the index the query needs, and `0002`'s was the wrong shape:**
+      with `state` leading, `ORDER BY updated_at` inherits no ordering — 1 748 buffers and a
+      top-N sort on 200 000 rows, against 4 with `(updated_at)` partial. `0002`'s index is
+      left in place, because superseded is not unused. The plan is **asserted, not assumed**:
+      a test EXPLAINs the statement read from the class rather than transcribed, and fails on
+      `Seq Scan` or `Sort`. 19 tests, including a real death and recovery over real stores.
+      **Two gaps named and not closed:** there is no `RecoveryIndexConformance`, so which
+      states count as abandoned is agreed between the two implementations by reading rather
+      than by an assertion; and `AbandonedInstanceQuery.TenantId` is a filter, not a second
+      index, because nothing sets the parameter yet
 - [ ] **WP-54** Redis lease store — concurrent with WP-53, same suite unmodified. **Now the
       only demonstration left of the split-store arrangement** `ILeaseStore`'s remarks
       describe: a Redis lease store and a Postgres journal sharing no transaction. WP-53

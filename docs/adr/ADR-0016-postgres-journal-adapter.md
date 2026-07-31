@@ -14,16 +14,23 @@
 ## Context
 
 WP-53 built `plugins/FlowX.Postgres` — schema, migrations, `IFlowJournal`, `ILeaseStore`,
-retention — and ran the WP-51 conformance suite against PostgreSQL 16.13. The suite was
-inherited from `tests/FlowX.Conformance.Tests` **unmodified, from a different assembly**,
+`IRecoveryIndex`, retention — and ran the WP-51 conformance suite against PostgreSQL 16.13.
+The suite was inherited from `tests/FlowX.Conformance.Tests` **unmodified, from a different
+assembly**,
 which is the arrangement [17 §5](../17-Plugin-System.md) describes for a third party
 claiming conformance. Nothing in that project changed to accommodate this adapter.
 
-Result: **45 conformance assertions green against a real database**, plus 18 adapter tests.
+Result: **45 conformance assertions green against a real database**, plus 41 adapter tests.
 
 Three clauses did not survive. Two of them are in the ERD drawn in
 [11 §2](../11-Distributed-Runtime.md#2-the-journal), which ADR-0015 already marks
 superseded; the third is an inconsistency inside ADR-0015 itself.
+
+**Decision 4 was added later and is a different kind of finding.** The first three came
+from a database refusing what a document claimed. The fourth came from reading this adapter
+against [11 §3](../11-Distributed-Runtime.md#3-leases-and-fencing) and noticing that two
+shipped work packages had never been connected to each other — a gap no test could have
+reported, because a scan nobody registers has nothing to fail.
 
 ## Decision
 
@@ -75,6 +82,52 @@ snapshot already covers.
 Added as `flow_instance.state_bag_sequence`, in migration `0002` rather than `0001`, so
 that the expand/contract rule in [11 §7](../11-Distributed-Runtime.md#7-deployment-safety)
 has a worked example in this schema from the start.
+
+### 4. `IRecoveryIndex` is a third class, not a second interface on the journal
+
+Added after the record was first written, because the gap it closes was found by reading
+this adapter against [11 §3](../11-Distributed-Runtime.md#3-leases-and-fencing) rather than
+by any test: **WP-53 shipped a store and WP-55 shipped a recovery scan, and nothing
+connected them.** The only `IRecoveryIndex` anywhere was a test double, and
+`FlowXServiceCollectionExtensions` resolves it with `GetService`, so a Postgres-backed host
+silently swept nothing. It fenced correctly and picked up no dead node's work — which is
+the failure mode an optional dependency produces when the only production implementation
+declines to supply it.
+
+`PostgresRecoveryIndex` is a separate class. The argument for folding it into
+`PostgresFlowJournal` is real — the query reads `flow_instance`, the journal's own table —
+and it loses on three counts. `IRecoveryIndex` was split out of `IFlowJournal` precisely
+because a scan is not part of *executing* an instance; putting it back gives the type every
+durable write passes through a member no write uses and `JournalConformance` says nothing
+about. Nothing is gained in wiring, because the container matches on service type, so a
+journal that also implemented it would still need its own registration line. And it makes
+"this node does not sweep" a declined registration rather than a substituted journal. The
+tie-break is precedent: `PostgresRetention` already reads and deletes `flow_instance` from
+outside the journal for the same reason, so this is the third class over those tables and
+not the first.
+
+**`0002`'s index was the wrong shape, and this is the record correcting itself twice.**
+That migration created `flow_instance_recovery_idx` on `(state, updated_at)` and its
+comment claims it "supports the recovery scan WP-55 adds". It does not: with `state`
+leading, an index scan yields rows grouped by state, so the `ORDER BY updated_at` the
+contract requires inherits no ordering. Measured on 200 000 rows against PostgreSQL 16, a
+page of 64 cost a parallel sequential scan and a top-N heapsort touching **1 748 buffers**;
+against `(updated_at)` partial on the same states it is an ordered index scan touching
+**4**. The ordering is not cosmetic — `ListAbandonedAsync`'s remarks make it the
+anti-starvation property. Migration `0003` adds the right index and **leaves the wrong one
+in place**, because superseded is not unused and a drop belongs to a release after one that
+ships with nothing planning against it.
+
+**Two gaps left open, named rather than closed.** There is no `RecoveryIndexConformance`,
+so "which states count as abandoned" is agreed between the two implementations only by
+reading — and both exclude `Suspended`, on the grounds that a parked instance is unowned
+rather than abandoned, sweeping it would fence out whatever eventually delivers its signal,
+and it would be swept again every pass because it is permanently stale. That reasoning
+lives in two comments and no assertion, which is exactly the shape of a thing that drifts.
+Separately, `AbandonedInstanceQuery.TenantId` is served as a filter over the untenanted
+index rather than by a second partial index, because a second partial index on
+`flow_instance` is a write charged to every step boundary of every flow for a parameter
+`FlowRecoveryScan` never sets.
 
 ## What survived, and what it cost to make it survive
 

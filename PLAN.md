@@ -1460,12 +1460,24 @@ the one honest signal in the area into an ignored one.
 > PostgreSQL 16.13 rather than Testcontainers; batching and partitioning are **not built**,
 > and both are optimisations that WP-50's absent numbers are the only rational basis for.
 >
-> **One gap found after the merge, by reading the adapter against the record.**
-> `state_bag_sequence` is written on every commit and **read by nothing**: the frontier
-> query is `WHERE instance_id = @instance ORDER BY sequence`, with no lower bound. The
-> column that exists to bound B8's read does not yet bound it. Recorded here rather than
-> fixed silently, because narrowing that query without a benchmark is the optimisation
-> B12 taught this project not to make.
+> **Two gaps found after the merge, by reading the adapter against the record.** The
+> first is closed and the second is not, and the difference is the point.
+>
+> *Closed.* The adapter implemented **no `IRecoveryIndex`**, so WP-55's recovery scan —
+> shipped, tested, correct — resolved its query to `null` on any Postgres-backed host and
+> swept nothing. Both packages met their own exit criteria; the gap was *between* them,
+> which is the failure mode an optional dependency produces when the only production
+> implementation declines to supply it. `PostgresRecoveryIndex` and migration `0003` close
+> it, and [ADR-0016 decision 4](docs/adr/ADR-0016-postgres-journal-adapter.md) records why
+> it is a separate class and why `0002`'s index could never have served the query its own
+> comment claims it was for.
+>
+> *Standing.* `state_bag_sequence` is written on every commit and **read by nothing**: the
+> frontier query is `WHERE instance_id = @instance ORDER BY sequence`, with no lower bound.
+> The column that exists to bound B8's read does not yet bound it. Recorded rather than
+> fixed, because narrowing that query without a benchmark is the optimisation B12 taught
+> this project not to make — and unlike the recovery index, nothing is *broken* by leaving
+> it, only slower than the record implies.
 
 | | |
 |---|---|

@@ -12,22 +12,26 @@
 > | § | State |
 > |---|---|
 > | [1 · distribution model](#1-the-distribution-model) | **not built.** Both coordination points now exist — a Postgres journal and a Postgres lease store — but nothing has run as two *processes*. The multi-node behaviour §3 describes is exercised by two hosts inside one test process, Redis is still WP-54, and the outbox is a table nothing publishes from |
-> | [2 · the journal](#2-the-journal) | **built, against a real database.** WP-51 declared `IFlowJournal`, `ILeaseStore` and `FencingToken` in `src/FlowX.Abstractions/Durability/`; WP-52 made `FlowX.Runtime` read `ExecutionProfile` and commit one row per step boundary, and resume by replaying committed rows into the same step loop; WP-53 implemented both in `plugins/FlowX.Postgres/`, where 45 conformance assertions and 18 adapter tests run green against PostgreSQL 16.13. **The ERD below is no longer the drawn version** — it is migrations `0001` and `0002`, after [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md) superseded three of the drawn clauses and [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md) found six more wrong against a real database |
-> | [3 · leases and fencing](#3-leases-and-fencing) | **built.** *This row said that nothing acquires or renews a lease and nothing scans for an abandoned instance; WP-55 built all three.* `DurableLease` acquires, renews and releases; `FlowHost` takes the lease before the first step; `FlowRecoveryScan` and `FlowRecoveryService` are node-2's half of the diagram below. **One half has no PostgreSQL behind it:** `PostgresFlowJournal` implements no `IRecoveryIndex`, so a Postgres-backed node holds and fences leases but scans for nothing |
+> | [2 · the journal](#2-the-journal) | **built, against a real database.** WP-51 declared `IFlowJournal`, `ILeaseStore` and `FencingToken` in `src/FlowX.Abstractions/Durability/`; WP-52 made `FlowX.Runtime` read `ExecutionProfile` and commit one row per step boundary, and resume by replaying committed rows into the same step loop; WP-53 implemented both in `plugins/FlowX.Postgres/`, where 45 conformance assertions and 41 adapter tests run green against PostgreSQL 16.13. **The ERD below is no longer the drawn version** — it is migrations `0001`, `0002` and `0003`, after [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md) superseded three of the drawn clauses and [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md) found six more wrong against a real database |
+> | [3 · leases and fencing](#3-leases-and-fencing) | **built.** *This row said that nothing acquires or renews a lease and nothing scans for an abandoned instance; WP-55 built all three.* `DurableLease` acquires, renews and releases; `FlowHost` takes the lease before the first step; `FlowRecoveryScan` and `FlowRecoveryService` are node-2's half of the diagram below. *A later row said one half had no PostgreSQL behind it — that the adapter implemented no `IRecoveryIndex`, so a Postgres-backed node fenced correctly and scanned for nothing. `PostgresRecoveryIndex` closed it, in a class of its own rather than on the journal, because a scan is not part of executing an instance* |
 > | [4 · exactly-once](#4-exactly-once-honestly) | **not built**, and unchanged by WP-52, WP-53 or WP-55: a process that dies after an effect and before its commit still re-executes the step |
 > | [5 · the outbox](#5-the-transactional-outbox) | **not built.** The table is in the schema and a commit stages rows into the step's transaction, but `.Emit<T>()` hands it nothing and nothing publishes ([`FLOWX1024`](diagnostics/FLOWX1024.md)) — WP-56 |
 > | [6 · partitioning](#6-partitioning-and-scale) · [8 · failure catalogue](#8-failure-catalogue) | **not built.** No second node, no sharding, no scheduler. §8's first two rows — node crash and zombie writes — are what §3 now implements; the rest of the catalogue is design |
-> | [7 · deployment safety](#7-deployment-safety) | **partly built.** *This row said "no migration"; there are two.* Rules 2, 3 and 4 have implementations — an explicit release on drain, a version-pinned candidate the scan leaves alone, and migration `0002` as the expand/contract worked example. Rule 1 is still a number an operator has to set |
+> | [7 · deployment safety](#7-deployment-safety) | **partly built.** *This row said "no migration"; there are three.* Rules 2, 3 and 4 have implementations — an explicit release on drain, a version-pinned candidate the scan leaves alone, and migrations `0002` and `0003` as the expand/contract worked examples. Rule 1 is still a number an operator has to set |
 >
 > So: a `Durable` flow journals its step boundaries to PostgreSQL under a lease that
 > makes one node the instance's only writer, and a node that dies has its instances
 > found and finished by another node's recovery scan. *This box said "a process kill
 > still loses the instance, because nothing on the other side finds it"; the other
-> side exists.* The remaining hole is narrower and it is real: the scan needs a
-> journal that implements `IRecoveryIndex`, and the PostgreSQL one does not — migration
-> `0002` creates the partial index that query wants and no adapter asks it yet. A
-> Postgres-backed instance whose node is killed keeps its committed prefix, keeps its
-> fence, and waits.
+> side exists.* *It then said the remaining hole was that the scan needed a journal
+> implementing `IRecoveryIndex` and the PostgreSQL one did not, so a killed node's
+> instance kept its prefix, kept its fence, and waited. That is closed:
+> `PostgresRecoveryIndex` serves the query, `AddFlowXPostgres` registers it, and
+> `PostgresRecoveryHostTests` plays out a real death — lease dropped without renewal —
+> and a real scan finishing the instance over real stores.* What is left is not a
+> missing part but a missing **demonstration at scale**: nothing has killed a process,
+> nothing has crossed a process boundary, and nothing has run ten thousand of anything.
+> That is WP-62, and the rig it needs is WP-50.
 > A `Durable` flow started with no journal is still **refused** rather than run
 > ephemerally (`flow.durability_not_configured`) — on a host that registers a journal
 > and a lease store, that refusal has stopped being the normal path.
@@ -284,12 +288,17 @@ that has lost the lease aborts rather than compensating an instance another node
 already carried forwards — and the sweep in
 `tests/FlowX.Hosting.Tests/DurableHostTests.cs`.
 
-**One arrow has no PostgreSQL behind it.** Step 5 — *scan expired → 42 available* —
+**Every arrow now has PostgreSQL behind it.** Step 5 — *scan expired → 42 available* —
 goes through `IRecoveryIndex`, which is a separate interface precisely because a scan
-is not part of executing an instance, and which `PostgresFlowJournal` does not
-implement. Migration `0002` creates the partial index that query wants; nothing asks
-it yet. A host whose journal cannot be scanned still runs durable flows and still
-fences correctly. What it does not do is pick up another node's instance.
+is not part of executing an instance. *This paragraph said `PostgresFlowJournal` did
+not implement it and that nothing asked migration `0002`'s index — so a host whose
+journal could not be scanned ran durable flows, fenced correctly, and picked up nobody
+else's instance.* `PostgresRecoveryIndex` serves the query, and it is a class of its
+own rather than a second interface on the journal, for the same reason the interface
+was split: the type every durable write passes through does not need a member no write
+uses. `0002`'s index turned out to be the wrong shape for it — see
+[§7](#7-deployment-safety) — and migration `0003` adds the one the query can actually
+be planned against.
 
 **Fencing tokens are what make this safe.** A monotonically increasing token is
 issued at each acquisition and checked on every journal write. A zombie node that
@@ -461,13 +470,24 @@ Rules that make rolling updates non-events:
    TTL, every sweep.
 4. Schema changes to journal tables use expand/contract: add nullable, backfill,
    switch reads, drop later — never a breaking migration in one release.
-   **Migration `0002` is this schema's worked example, and it exists at `0002` rather
-   than folded into `0001` for that reason**
-   ([ADR-0016](adr/ADR-0016-postgres-journal-adapter.md)): `state_bag_sequence` is
-   added nullable with no default, backfilled from `max(sequence)` only for instances
-   that already carry a snapshot, and the recovery index is created beside it. Every
-   statement is additive, so a pod on the previous release keeps inserting and updating
-   rows without knowing the column exists.
+   **Migrations `0002` and `0003` are this schema's worked examples, and they exist
+   outside `0001` for that reason**
+   ([ADR-0016](adr/ADR-0016-postgres-journal-adapter.md)): in `0002`,
+   `state_bag_sequence` is added nullable with no default and backfilled from
+   `max(sequence)` only for instances that already carry a snapshot; `0003` adds the
+   index the recovery scan is actually planned against. Every statement in both is
+   additive, so a pod on the previous release keeps inserting and updating rows without
+   knowing either exists — an index changes no row and no column, so there is nothing
+   for an older reader to fail on.
+
+   **`0003` is also this schema's first worked example of the rule's *other* half —
+   superseding without dropping.** `0002` created `flow_instance_recovery_idx` on
+   `(state, updated_at)` for this scan, and it cannot serve it: with `state` leading, an
+   index scan yields rows grouped by state, so `ORDER BY updated_at` inherits no
+   ordering and PostgreSQL falls back to reading every candidate and top-N sorting it.
+   `0003` adds `(updated_at)` partial on the same three states and **leaves `0002`'s
+   index in place**, because superseded is not unused and a release must ship with
+   nothing planning against an index before the release that drops it.
    `MigrationTests.TheExpandMigrationDoesNotBreakTheReleaseBeforeIt` asserts that
    coexistence, and `NoMigrationAfterTheFirstIsDestructive` rejects `DROP`, `RENAME`
    and `SET NOT NULL` anywhere after the first migration — so this rule is now enforced
@@ -490,8 +510,10 @@ Rules that make rolling updates non-events:
 | Compensation exhausted | retry exhaustion | `CompensationFailed` + alert + manual replay | **business inconsistency — operator action required** |
 
 The first two rows are what §3 implements; the rest of this catalogue is still the
-design a P2 implementer is held to, and the first row is only as good as the scan
-behind it — see §3 on the journal that does not implement `IRecoveryIndex`.
+design a P2 implementer is held to. *The first row used to carry a caveat that it was
+only as good as a scan no adapter implemented; it is now backed by a store rather than
+by a test double.* What it has never been is exercised across a process boundary — the
+kill is simulated by dropping a lease, not by killing anything (WP-62).
 
 The last row is the only case with no automatic resolution. FlowX makes it
 visible rather than pretending otherwise; the operator runbook is

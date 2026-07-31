@@ -93,11 +93,17 @@ The default is `Ephemeral`: you opt *into* cost, never out of it.
   journal and no resumption.* The runtime reads the profile; a `Durable` flow
   journals one row per step boundary and resumes by replaying that journal into the
   same step loop; a `Durable` flow started with **no** journal is refused rather
-  than run ephemerally. What is still absent is everything around the seam — no
-  lease is acquired, no recovery scan exists, and no store implements
-  `IFlowJournal` outside an in-memory reference in the conformance tests. So the
-  second profile is a runtime that has never met a database, which is a different
-  claim from "a contract, not yet a runtime" and a weaker one than "durable".
+  than run ephemerally. *This bullet then said everything around the seam was absent
+  — no lease acquired, no recovery scan, no `IFlowJournal` outside an in-memory
+  reference — and concluded that the second profile was "a runtime that has never met
+  a database". All three clauses expired the same day: WP-55 acquires and renews a
+  lease and sweeps for abandoned instances, WP-53 is a PostgreSQL journal and lease
+  store that passes the conformance suite unmodified from another assembly, and
+  `PostgresRecoveryIndex` connects the sweep to the store.* What is still absent is
+  the transactional outbox, durable suspension, and a second store — and the one that
+  keeps `Durable` short of being a performance claim, **any measurement at all**: B7
+  and B8 have no harness. The second profile is a runtime that has met a database and
+  has never been timed against one.
   [`FLOWX1028`](../diagnostics/FLOWX1028.md) was **narrowed to `Streaming`**, not
   deleted: `Streaming` still has no engine, and deleting the rule would have handed
   it the silence `Durable` had. It stays a warning rather than an error for the
