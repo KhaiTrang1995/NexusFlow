@@ -39,6 +39,26 @@ public enum CompensationOutcome
     /// remaining undo work because one of them failed leaves strictly more mess.
     /// </summary>
     PartiallyFailed = 2,
+
+    /// <summary>
+    /// There were compensations to run and this node did not run them, because it is no
+    /// longer the instance's writer.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A fenced-out or already-finished instance belongs to another node, which holds the
+    /// journal, the frontier and the only compensation stack that describes what the instance
+    /// really did. Unwinding here would add a second set of real effects on top of the ones
+    /// the lost lease already failed to prevent — an undo racing a redo.
+    /// </para>
+    /// <para>
+    /// Distinct from <see cref="NotRequired"/> on purpose. "Nothing needed undoing" and
+    /// "something needed undoing and this node was not the one to do it" are different facts
+    /// about an instance, and collapsing them would make a disowned saga indistinguishable
+    /// from a query in every metric.
+    /// </para>
+    /// </remarks>
+    Abandoned = 3,
 }
 
 /// <summary>The outcome of one flow execution. A struct: the result path allocates nothing.</summary>

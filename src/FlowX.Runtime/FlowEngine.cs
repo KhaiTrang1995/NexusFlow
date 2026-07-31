@@ -459,12 +459,23 @@ public sealed class FlowEngine
     /// success reported to the caller would be this node claiming an outcome it no longer
     /// controls.
     /// </para>
+    /// <para>
+    /// A flow that already ended because this node was disowned is not sealed at all. The
+    /// terminal state belongs to whoever holds the instance now, and a write under a token
+    /// below the fence can only be refused a second time — which would replace the error that
+    /// explains what happened with a duplicate of itself.
+    /// </para>
     /// </remarks>
     private static async ValueTask<FlowExecutionResult> SealAsync(
         JournalCursor cursor,
         FlowExecutionResult result,
         CancellationToken ct)
     {
+        if (result.Error is { } ended && Disowned(ended))
+        {
+            return result;
+        }
+
         var refusal = await CloseInstanceAsync(cursor, TerminalState(result), ct).ConfigureAwait(false);
 
         return refusal is null
@@ -584,12 +595,55 @@ public sealed class FlowEngine
 
         context.SetError(outcome.Failure);
 
-        var compensation = compensations is null
-            ? CompensationOutcome.NotRequired
-            : await CompensateAsync(compensations, dispatcher, context).ConfigureAwait(false);
+        CompensationOutcome compensation;
+
+        if (compensations is null)
+        {
+            compensation = CompensationOutcome.NotRequired;
+        }
+        else if (Disowned(outcome.Failure))
+        {
+            // The instance belongs to another node now, and that node has the journal, the
+            // frontier and — if it comes to it — the only compensation stack that describes
+            // what the instance actually did. Unwinding here would run this node's undo
+            // effects against work the new owner is carrying forwards, which is a second
+            // set of real effects on top of the ones the lease already failed to prevent.
+            compensation = compensations.IsEmpty
+                ? CompensationOutcome.NotRequired
+                : CompensationOutcome.Abandoned;
+        }
+        else
+        {
+            compensation = await CompensateAsync(compensations, dispatcher, context).ConfigureAwait(false);
+        }
 
         return new FlowExecutionResult(outcome.Failure, outcome.Completed, compensation);
     }
+
+    /// <summary>
+    /// Whether an error means this node is no longer the writer for this instance.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two refusals say it. <c>journal.fenced_out</c> is a lease that was reissued while this
+    /// node was executing — a pause, a partition, a step that outlived its own TTL — and
+    /// <c>journal.instance_terminal</c> is an instance another node has already finished.
+    /// Both are <see cref="ErrorCategory.Forbidden"/> or <see cref="ErrorCategory.Conflict"/>
+    /// and neither is retryable: presenting the same token again can only fail again.
+    /// </para>
+    /// <para>
+    /// Read off the code rather than the category, because the category is shared with
+    /// refusals that <em>are</em> this flow's failure — a duplicate step key is a
+    /// <see cref="ErrorCategory.Conflict"/> and is a defect in this node, not a change of
+    /// ownership.
+    /// </para>
+    /// <para>
+    /// On the failure path only, so an ephemeral flow that never fails never evaluates it and
+    /// one that does pays a string comparison against two constants. Budget B2 is untouched.
+    /// </para>
+    /// </remarks>
+    private static bool Disowned(Error failure) =>
+        failure.Code is DurabilityErrors.FencedOutCode or DurabilityErrors.InstanceTerminalCode;
 
     /// <summary>How a range of steps ended: the first failure in it, and how many ran.</summary>
     /// <remarks>

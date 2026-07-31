@@ -66,6 +66,106 @@ public static class FlowXDiagnostics
         "Inheritance hides control flow from the compiled graph and from the manifest. " +
         "Extract the shared steps into a sub-flow and compose it.");
 
+    /// <summary>FLOWX1007 — time is read from the ambient clock rather than the context.</summary>
+    /// <remarks>
+    /// <para>
+    /// Rule 7 of <c>07-Capability-Model.md §3</c> and the first row of <c>06 §5</c>'s
+    /// determinism table, both of which named this id for a year while
+    /// <c>FlowXDiagnostics</c> contained no descriptor for it. The engine journals
+    /// <c>ctx.UtcNow</c> on first read in a step and reproduces it on replay
+    /// (<c>NondeterminismCapture.UtcNow</c>); <c>DateTime.UtcNow</c> is read again at
+    /// replay time and answers differently, so the step that recorded one instant replays
+    /// against another.
+    /// </para>
+    /// <para>
+    /// <strong>Warning by default, error on a durable replay path</strong> — the severity
+    /// the whole determinism set takes, and the reasoning is on
+    /// <c>docs/diagnostics/README.md</c> rather than repeated on each of the three. In
+    /// short: Info is what ADR-0003 asked for and is invisible in a build log, so it would
+    /// ship a rule that does nothing anywhere; a Warning still stops <em>this</em> build
+    /// under <c>TreatWarningsAsErrors</c> while staying downgradable in a consumer's
+    /// <c>.editorconfig</c>; and the escalation follows FLOWX1011's and FLOWX1025's
+    /// precedent of choosing severity by what the compilation can prove about who is
+    /// affected.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor ClockIsReadAmbiently = Create(
+        "FLOWX1007",
+        "Time is read from the ambient clock rather than the context",
+        "'{0}' reads '{1}', which is the ambient clock; a replay reproduces only what the " +
+        "journal captured, and what it captures is ctx.UtcNow",
+        "A durable flow is replayed, and the only clock reading a replay can reproduce is " +
+        "the one the journal recorded: the engine captures ctx.UtcNow the first time a step " +
+        "reads it and hands the same instant back on the way through again. DateTime.UtcNow " +
+        "is read afresh every time, so the branch, the step input or the stored value that " +
+        "depended on it differs between the run and its replay. Read the clock through the " +
+        "context — ctx.UtcNow in a capability, ctx.UtcNow in a flow delegate — which is also " +
+        "what lets a test pin the time instead of waiting for midnight. If what you need is " +
+        "a duration rather than an instant, measure it inside the capability and keep it in " +
+        "telemetry rather than in a value the flow carries.",
+        DiagnosticSeverity.Warning);
+
+    /// <summary>FLOWX1008 — an identifier or a random value is taken outside the context.</summary>
+    /// <remarks>
+    /// <para>
+    /// The second row of <c>06 §5</c>'s table, and the other half of rule 7 in
+    /// <c>07-Capability-Model.md §3</c>. Separate from FLOWX1007 because the two have
+    /// different consequences and different fixes: a clock that moves changes a decision,
+    /// while an identifier that moves duplicates an <em>effect</em> — the same capture
+    /// retried or replayed under a new id is a second charge, not a second reading.
+    /// <c>06 §5</c> is the document that splits them; <c>07 §3</c> and
+    /// <c>ICapability</c>'s remarks state them as one rule with two ids.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor IdentityIsTakenAmbiently = Create(
+        "FLOWX1008",
+        "Identity or randomness is taken outside the context",
+        "'{0}' reads '{1}', which mints an identifier or a random value outside the " +
+        "context; the journal captures ctx.NewId() and ctx.Random's seed, and reproduces those",
+        "Guid.NewGuid() and Random.Shared answer differently on every call — including the " +
+        "retry of a step, which the engine performs whenever a Retry policy is attached, and " +
+        "the replay of a durable instance. An identifier minted this way is therefore not " +
+        "the one the journal recorded, and a downstream system deduplicating on it sees two " +
+        "operations where the flow performed one. Use ctx.NewId() and ctx.Random, whose " +
+        "values and seed the journal captures, or ctx.IdempotencyKey, which is deliberately " +
+        "stable across both retries and replays and is what a remote system should be given.",
+        DiagnosticSeverity.Warning);
+
+    /// <summary>FLOWX1009 — a capability or a flow declares state that can change after construction.</summary>
+    /// <remarks>
+    /// <para>
+    /// Rule 6 of <c>07-Capability-Model.md §3</c> — "stateless: no mutable instance or
+    /// static fields" — whose <em>Enforced by</em> cell said "— , FLOWX1009 does not exist"
+    /// until this descriptor did. <c>06 §5</c> words the same row as "no mutable static
+    /// state reachable from a flow", which is the wider claim; this rule proves the
+    /// narrower one it can prove, at the declaration, and its page says which part of the
+    /// wider claim is left uncovered.
+    /// </para>
+    /// <para>
+    /// <strong>Its harm is not only a replay concern, and the severity says so on its
+    /// page.</strong> A capability is registered once and invoked concurrently by every
+    /// flow that names it, so a mutable field is a race under <em>either</em> profile —
+    /// which is why the ephemeral severity is a warning rather than the Info ADR-0003
+    /// specified, and why the ephemeral warning is not a statement that the state is
+    /// acceptable there.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor MutableStateIsHeld = Create(
+        "FLOWX1009",
+        "Capability or flow holds mutable state",
+        "'{0}' holds mutable state: the {1} '{2}' can be assigned after construction",
+        "A capability is resolved once and invoked concurrently by every flow that names it, " +
+        "so a field or property something can assign later is shared across in-flight " +
+        "invocations: the value one reads is whatever another wrote, which is right in a test " +
+        "and wrong under load. On a durable flow it is worse than a race — the journal " +
+        "records the step's inputs and result and knows nothing about the field, so a replay " +
+        "runs against whatever the process happens to hold rather than against what was " +
+        "recorded. Keep per-invocation state in the input contract, the result, or the flow's " +
+        "context; mark anything genuinely fixed 'readonly' or 'const'; and put anything that " +
+        "must outlive one invocation behind an injected dependency, where its lifetime is a " +
+        "decision somebody made rather than an accident of where the field was declared.",
+        DiagnosticSeverity.Warning);
+
     /// <summary>FLOWX1010 — a capability does not declare an authorisation stance.</summary>
     public static readonly DiagnosticDescriptor CapabilityMissingAuthorization = Create(
         "FLOWX1010",
@@ -534,6 +634,9 @@ public static class FlowXDiagnostics
         CapabilityReferencesTransport,
         CapabilityInvokesCapability,
         FlowInheritsFlow,
+        ClockIsReadAmbiently,
+        IdentityIsTakenAmbiently,
+        MutableStateIsHeld,
         CapabilityMissingAuthorization,
         PredicateMustBePure,
         ParallelBranchesMustWriteDisjointSlots,

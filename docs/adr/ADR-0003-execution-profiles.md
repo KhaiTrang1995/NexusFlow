@@ -64,18 +64,19 @@ The default is `Ephemeral`: you opt *into* cost, never out of it.
   same `ExecuteAsync` at index 0 —
   [ADR-0015 commitment 2](ADR-0015-journal-schema-and-durable-execution.md). The
   mitigation this bullet claims held; the mechanism it named did not survive.*
-- **Determinism rules apply asymmetrically.** `FLOWX1007–1009` are to be errors
-  in `Durable` flows and informational in `Ephemeral` ones. *None of the three
-  exists yet* — they are WP-58. *What changed at WP-52 is why: they were blocked
-  on severity, because `Ephemeral` was the only profile the runtime executed and
-  an Info diagnostic reaches no build log. The runtime reads the profile now, so
-  an Error under `Durable` is one something can run into, and the three are merely
-  unwritten.* The one determinism rule that does ship,
-  [`FLOWX1011`](../diagnostics/FLOWX1011.md), follows the asymmetry this paragraph
-  describes with one deliberate deviation: it is a **Warning** rather than Info in
-  `Ephemeral`, taken because `Ephemeral` was the only profile the runtime
-  executed. That premise has expired; the deviation is re-decided **as a set** with
-  the rest of the table at WP-58 rather than flipped on its own.
+- **Determinism rules apply asymmetrically, and *informational* did not survive.**
+  This bullet said `FLOWX1007–1009` would be errors in `Durable` flows and
+  informational in `Ephemeral` ones. **They shipped at WP-58 as Warning by default
+  and Error where the compilation can prove the code is on a durable flow's replay
+  path. Info was rejected outright**, and the reasoning supersedes this clause:
+  Info never reaches a build log, `Ephemeral` is the *default* profile, so an Info
+  set would do nothing in nearly every build — which is precisely the state all
+  four ids were already in, and what kept them unraised through two phases.
+  `FLOWX1011` deviated from this clause first and was right to; making the
+  deviation the rule is the honest way to record that, and it stops 1011 being an
+  exception. Escalation is a proof rather than a guess: a capability has no
+  profile of its own, so it escalates only when a `Durable` flow *in this
+  compilation* names it as a step.
 - **A wrong profile is a real bug class.** `Ephemeral` on a payment saga loses
   work on deploy; `Durable` on a query costs 1 000×. Mitigated today by
   [`FLOWX1017`](../diagnostics/FLOWX1017.md) alone (signals and timers require
