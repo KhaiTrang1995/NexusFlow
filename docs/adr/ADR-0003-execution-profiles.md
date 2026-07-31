@@ -57,34 +57,51 @@ The default is `Ephemeral`: you opt *into* cost, never out of it.
 **Negative / accepted trade-offs**
 - **Two runtime paths to test.** The step loop is shared, but journaling,
   resumption and determinism only exist on one path. Mitigated by keeping
-  resumption expressed as `ctx.ResumeFromStep` in the *same* loop, so there is no
-  separate recovery code path to rot.
+  resumption in the *same* loop, so there is no separate recovery code path to rot.
+  *This bullet named `ctx.ResumeFromStep` as the mechanism; the implementation does
+  not use a scalar cursor, because one cannot describe a half-completed `Parallel`
+  fork. WP-52 derives the position from committed journal rows and re-enters the
+  same `ExecuteAsync` at index 0 —
+  [ADR-0015 commitment 2](ADR-0015-journal-schema-and-durable-execution.md). The
+  mitigation this bullet claims held; the mechanism it named did not survive.*
 - **Determinism rules apply asymmetrically.** `FLOWX1007–1009` are to be errors
   in `Durable` flows and informational in `Ephemeral` ones. *None of the three
-  exists yet* — they are a **P2** deliverable. The one determinism rule that does
-  ship, [`FLOWX1011`](../diagnostics/FLOWX1011.md), follows the asymmetry this
-  paragraph describes with one deliberate change: it is a **Warning** rather than
-  Info in `Ephemeral`, because `Ephemeral` is the only profile the runtime
-  executes and an Info diagnostic would never appear in any build anyone can run.
+  exists yet* — they are WP-58. *What changed at WP-52 is why: they were blocked
+  on severity, because `Ephemeral` was the only profile the runtime executed and
+  an Info diagnostic reaches no build log. The runtime reads the profile now, so
+  an Error under `Durable` is one something can run into, and the three are merely
+  unwritten.* The one determinism rule that does ship,
+  [`FLOWX1011`](../diagnostics/FLOWX1011.md), follows the asymmetry this paragraph
+  describes with one deliberate deviation: it is a **Warning** rather than Info in
+  `Ephemeral`, taken because `Ephemeral` was the only profile the runtime
+  executed. That premise has expired; the deviation is re-decided **as a set** with
+  the rest of the table at WP-58 rather than flipped on its own.
 - **A wrong profile is a real bug class.** `Ephemeral` on a payment saga loses
   work on deploy; `Durable` on a query costs 1 000×. Mitigated today by
   [`FLOWX1017`](../diagnostics/FLOWX1017.md) alone (signals and timers require
   durable). *`FLOWX1012` — the compensable-plus-ephemeral warning — was specified
-  alongside it and never built, so a compensable `Ephemeral` flow compiles in
+  alongside it and is still not built, so a compensable `Ephemeral` flow compiles in
   silence. `flowx verify --cost` **does now**, and flags exactly the accident
   `FLOWX1012` would have caught at build time — from the manifest rather than the
-  source, and after the build rather than during it.*
-- **The asymmetry is currently theoretical in one direction.** `FlowX.Runtime`
-  does not read `ExecutionProfile`: `Durable` executes on the ephemeral path,
-  with no journal and no resumption. The decision this ADR records still stands —
-  it is what stops durability being made universal — but the second profile is a
-  contract, not yet a runtime. The gap is now *reported*:
-  [`FLOWX1028`](../diagnostics/FLOWX1028.md) warns on any flow declaring a profile
-  the runtime does not implement, so the declaration can no longer be made in the
-  belief that it is honoured. It is a warning rather than an error precisely to
-  protect the declaration this ADR calls the most consequential a flow author
-  makes — an error is repaired by writing `Ephemeral`, which erases the record P2
-  must find — and it is deleted, not fixed, when the journal lands.
+  source, and after the build rather than during it. Its second blocker is gone:
+  the fix `FLOWX1012` would recommend, `Profile = Durable`, changed nothing while
+  every profile ran in memory, and since WP-52 it changes something. WP-60.*
+- **The asymmetry was theoretical in one direction until WP-52 (2026-07-31), and
+  is now partial.** *This bullet said `FlowX.Runtime` does not read
+  `ExecutionProfile` and that `Durable` executes on the ephemeral path with no
+  journal and no resumption.* The runtime reads the profile; a `Durable` flow
+  journals one row per step boundary and resumes by replaying that journal into the
+  same step loop; a `Durable` flow started with **no** journal is refused rather
+  than run ephemerally. What is still absent is everything around the seam — no
+  lease is acquired, no recovery scan exists, and no store implements
+  `IFlowJournal` outside an in-memory reference in the conformance tests. So the
+  second profile is a runtime that has never met a database, which is a different
+  claim from "a contract, not yet a runtime" and a weaker one than "durable".
+  [`FLOWX1028`](../diagnostics/FLOWX1028.md) was **narrowed to `Streaming`**, not
+  deleted: `Streaming` still has no engine, and deleting the rule would have handed
+  it the silence `Durable` had. It stays a warning rather than an error for the
+  same reason as before — an error is repaired by writing `Ephemeral`, which erases
+  the record P7 must find.
 - Changing a flow's profile changes its operational characteristics
   significantly; it is a reviewable change, not a tuning knob.
 

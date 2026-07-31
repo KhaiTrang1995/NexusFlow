@@ -155,8 +155,10 @@ audit event.
 
 **Status: designed, not built.** Of the seven layers above, one exists —
 `TenantId` is resolved from validated claims at the HTTP boundary and carried on the
-invocation. Nothing consumes it: no policy executes at runtime, there is no journal and
-there is no cache. The table describes P4 and P6; see
+invocation. Nothing consumes it in the way this table needs: no policy executes at runtime
+and there is no cache. *This sentence also said there is no journal; since WP-52 a
+`Durable` flow's instance row carries `tenant_id` — an execution record, not the audit
+event this test asserts, and no store persists it.* The table describes P4 and P6; see
 [21 §2.4](21-Quality-Gates.md) for what the gate is blocked on.
 
 ---
@@ -232,8 +234,8 @@ mechanisms that compliance work needs:
 | `NoPermissiveDefaults` | nothing on the contract surface reaches a permissive stance by omission |
 | `SuppressionsAreAccountable` | every suppression names a registered, unexpired debt id (§6.1 of [21](21-Quality-Gates.md)) |
 | `ManifestContainsNoSecrets` | pattern scan over emitted manifests, matching the shape of a secret rather than a list of forbidden words |
-| `CrossTenantAccessIsDenied` | isolation across every trigger kind — **not yet enforced.** Blocked on P4 policy execution and the P2 journal; see [21 §2.4](21-Quality-Gates.md) |
-| `SensitiveFieldsAreRedacted` / `RedactionCannotBeBypassed` | `[Sensitive]` never appears in logs, traces, journal or replay output — **not yet enforced.** None of those four sinks exists; see [21 §2.4](21-Quality-Gates.md) |
+| `CrossTenantAccessIsDenied` | isolation across every trigger kind — **not yet enforced.** Blocked on P4 policy execution and, for "every trigger kind", on P3's second transport. *It was also blocked on the P2 journal; that half expired at WP-52, and the gate did not move* — see [21 §2.4](21-Quality-Gates.md) |
+| `SensitiveFieldsAreRedacted` / `RedactionCannotBeBypassed` | `[Sensitive]` never appears in logs, traces, journal or replay output — **not yet enforced.** *This cell said none of the four sinks exists; the **journal** does, since WP-52.* Redaction there is structural — `JournalPayload.ToJson()` is the only exit and it redacts — but the gate asserts the negative across all four, and logs, traces and replay output are still absent; see [21 §2.4](21-Quality-Gates.md) |
 | `ErrorsDoNotLeakInternals` | no stack traces, connection strings or type names in RFC 7807 bodies — **not written.** The property holds by construction today (`ProblemDetailsMapper` builds the body from `Error.Code`, `Category` and redacted detail, and never sees an exception), and `ProblemDetailsMapperTests` covers that mapping. Nothing asserts the *negative* |
 | `ExternalCapabilitiesHaveResilience` | outbound calls carry timeout + breaker — **not written**, and the id cited was wrong: `FLOWX1023` is "flow declares no steps". No diagnostic requires a policy on a capability with side effects, and no policy executes at run time. **P4** |
 | `DependencyLicencesAreCompatible` | no non-Apache-2.0-compatible transitive dependency — **not written.** No licence scan runs in any workflow; `AbstractionsHasNoDependencies` proves the core has nothing to scan, which is not the same claim. Also cited as enforced by [ADR-0012](adr/ADR-0012-apache-2-license.md) |

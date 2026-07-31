@@ -5,7 +5,16 @@
 > this says what is built.
 >
 > **Last updated:** 2026-07-31 · **Phase:** **P0 complete · P1 closed with one accepted
-> exception → P2 started at WP-51, out of order** · **Commit:** see `git log`
+> exception → P2 in progress: WP-51 and WP-52 landed, WP-50 still not started** ·
+> **Commit:** see `git log`
+>
+> **The durable seam exists and nothing has run against a store.** WP-52 made
+> `FlowX.Runtime` read `ExecutionProfile`: a `Durable` flow journals one row per
+> `(instance, scope, step, attempt)` and resumes through the same step loop. Lease
+> acquisition, the recovery scan, Postgres, Redis, the outbox and `AwaitSignal` are not
+> built, and the only `IFlowJournal` in the repository is an in-memory reference in
+> `tests/FlowX.Conformance.Tests`. Durability does not work end to end; see
+> [§5d](#5d-p2--durable-execution--the-seam-is-in-nothing-has-run-against-a-store).
 >
 > **Build:** 0 warnings, 0 errors · **Tests:** 1311/1311 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
@@ -232,15 +241,24 @@ anyone looking.
       reaches a permissive stance by being left alone. `Authorization.Public` is the *zero
       value* of its enum, so `required` is the only thing between `default(Authorization)`
       and "anyone may invoke it"
-- [ ] `CrossTenantAccessIsDenied` — **blocked, not overlooked.** Nothing consumes
-      `TenantId`: no policy executes at runtime, so no stage can return `Forbidden`; there
-      is no journal, so there is no audit event to assert; one transport exists, so "every
-      trigger kind" cannot be exercised. Needs P4 (policy execution, audit) and P2
-      (journal). [21-Quality-Gates §2.4](docs/21-Quality-Gates.md)
-- [ ] `RedactionCannotBeBypassed` — **blocked, not overlooked.** Exactly one sink can
-      serialise a contract value today (the RFC 7807 body), and `ProblemDetailsMapperTests`
-      already covers it. Logs, traces, the journal and replay output — the four sinks the
-      rule is about — do not exist. Needs P3 and P5. Same section
+- [ ] `CrossTenantAccessIsDenied` — **blocked, not overlooked, and it lost half its
+      blocker at WP-52 without becoming writable.** Nothing consumes `TenantId`: no policy
+      executes at runtime, so no stage can return `Forbidden`; one transport exists, so
+      "every trigger kind" cannot be exercised. *The third clause — "there is no journal,
+      so there is no audit event to assert" — stopped being true on 2026-07-31: a `Durable`
+      flow journals its step boundaries and the instance row carries `tenant_id`. That is a
+      record, not an audit event, and the `Forbidden` this test asserts still cannot
+      happen.* Needs **P4** (policy execution, audit) and **P3** (a second transport).
+      [21-Quality-Gates §2.4](docs/21-Quality-Gates.md)
+- [ ] `RedactionCannotBeBypassed` — **blocked, not overlooked.** *This entry said exactly
+      one sink can serialise a contract value; since WP-52 (2026-07-31) there are two.* The
+      RFC 7807 body, covered by `ProblemDetailsMapperTests`, and the **journal**, where
+      redaction is structural rather than remembered — a payload enters through
+      `JournalPayload` and its only exit is `ToJson()`, which redacts, so a store has no
+      route to the object graph. Proven by a durable flow whose input, state bag and every
+      step result carry a marked member, read back from all six stored strings
+      (`DurableSeamTests`). Logs, traces and replay output — the remaining two of the four
+      sinks the rule is about — do not exist. Needs P3 and P5. Same section
 
 ### Runtime, transport and published contract · WP-35
 
@@ -362,7 +380,9 @@ immutable, and rejects every invariant violation under test.
       corrected:** the journal is a sink and arrives in **P2**; logs, traces and replay
       output arrive with observability in **P5**, not P3. So P2 creates a sink for
       sensitive values three phases before `RedactionCannotBeBypassed` can be written —
-      WP-52 owns not journaling a marked member in the clear
+      WP-52 owns not journaling a marked member in the clear. **Discharged 2026-07-31:**
+      the second sink exists and redacts by construction, so two of the four sinks are
+      covered and the exit criterion's third is still P5
 - [x] **WP-12** `FlowX.Testing` — `TestCapabilityContext` and `TestFlowContext`; the
       sample's capability tests lost 27 lines of hand-written stub
 - [x] **WP-13** Diagnostics that were documented and never raised. **All four now fire**
@@ -405,7 +425,7 @@ analysis), three blocked fitness functions (`CrossTenantAccessIsDenied`,
 `dotnet new flowx`, unshipped since P0 and carried twice, **is being attempted in the
 current round** — until it lands, `docs/19-SDK.md` and `docs/03 §12` still describe a
 command that does not run. See
-[§5d](#5d-p2--durable-execution--not-started) and [PLAN §5](PLAN.md#5-p2--durable-execution).
+[§5d](#5d-p2--durable-execution--the-seam-is-in-nothing-has-run-against-a-store) and [PLAN §5](PLAN.md#5-p2--durable-execution).
 
 - [x] **WP-15** The branching DSL — **`When` / `Otherwise` done** through builder, model,
       analysis, emission, graph and engine. A conditional compiles into the *same flat
@@ -485,7 +505,8 @@ command that does not run. See
       assembly boundary.
       **Two modes of three ship.** `Inline` and `Detached` are real; **`AwaitCompletion`
       is refused under every profile by `FLOWX1026`** — it needs a durable suspension
-      point and there is no journal, and unlike `AwaitSignal` it has no honest degenerate
+      point, and WP-52's journal is not one: a durable flow still runs to completion inside
+      one invocation (suspension is WP-63). Unlike `AwaitSignal` it has no honest degenerate
       form (running it inline changes the parent's deadline and failure semantics;
       skipping it drops business logic). It is also unrepresentable in `StepNode`.
       **Compensation crosses the boundary upwards.** A child that succeeded is undone when
@@ -692,7 +713,18 @@ which is the exact failure mode P1 exists to remove:
       shared by every flow. It is now a `readonly struct` view over whatever context is
       current, which is what makes it work inside a `ForEach` body and a sub-flow where a
       cast would have thrown. One reference wide, so B2 stays a hard zero
-- [ ] **⚠ `FlowX.Runtime` never reads `ExecutionProfile`.** Found by WP-40 while auditing
+- [x] **⚠ `FlowX.Runtime` never reads `ExecutionProfile`** — **closed 2026-07-31 by WP-52.**
+      The runtime reads the profile; a `Durable` flow journals one row per
+      `(instance, scope, step, attempt)` and resumes through the same step loop;
+      `ExecutionProfileHonestyTests` was observed failing and is deleted; `FLOWX1028` is
+      narrowed to `Streaming`; the warning boxes in `06 §4`, `06 §5`, `11`, ADR-0003 and
+      ADR-0006 are corrected at WP-54. **Risk R2 went from unreachable to live and
+      unmitigated** — its analyzers (WP-58) and its replay test (WP-61) did not land with
+      it. **What this box did *not* buy:** no lease is acquired, no recovery scan exists, no
+      store implements `IFlowJournal` outside an in-memory reference, and a `Durable` flow
+      with no journal wired is now *refused* rather than silently run ephemerally. The
+      original entry follows, unedited.
+      Found by WP-40 while auditing
       risk R2. A `Durable` flow runs the ephemeral path; the profile affects only a plan
       validation and a manifest field. So R2 is not *mitigated* — it is **unreachable**, and
       it goes live the moment P2 lands. This also explains why several determinism
@@ -866,19 +898,34 @@ Three more surfaced while getting the suite green:
 
 ---
 
-## 5d. P2 · Durable execution — **started; one package landed, out of order**
+## 5d. P2 · Durable execution — **the seam is in; nothing has run against a store**
 
 Work packages in [PLAN.md §5](PLAN.md#5-p2--durable-execution); the design they are held
 to is [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md), still
 **Proposed**. It is listed in full because P1 handed each item over with a named blocker,
 and an inventory that exists only in a closing summary is one nobody reads.
 
+> **What WP-52 changed, in one paragraph, because the rest of this file now depends on
+> it.** `FlowX.Runtime` reads `ExecutionProfile` (2026-07-31). A `Durable` flow commits one
+> journal row per `(instance, scope, step, attempt)`, captures `ctx.UtcNow`, `ctx.NewId()`
+> and `Random`'s seed per step, gives a composed sub-flow its own instance row, and resumes
+> by replaying its committed rows into the *same* step loop. **Lease acquisition, the
+> recovery scan, Postgres, Redis, the outbox and `AwaitSignal` are not built**, and the only
+> `IFlowJournal` in the repository is an in-memory reference in
+> `tests/FlowX.Conformance.Tests`. A reader must not conclude durability works end to end:
+> the seam exists, and nothing has run against a store. A `Durable` flow started with no
+> journal is now **refused** (`flow.durability_not_configured`), which until WP-55 means a
+> durable flow is rejected at its first invocation unless its caller builds the session.
+
 > **ADR-0015 stays Proposed, and that is the right answer rather than a slip.** Its own
 > condition for becoming Accepted is that the conformance suite hold an *implementation* to
-> the schema. The suite exists and holds an **in-memory reference** — a dictionary that
-> satisfies the assertions. That proves the schema is expressible; it says nothing about
-> transaction boundaries, indexes or expand/contract migration, and no store has ever run
-> against a real database. It is re-decided at WP-53, against Postgres.
+> the schema. At WP-52 it does — the runtime writes through it — but the implementation on
+> the other side is an **in-memory reference**, a dictionary that satisfies the assertions.
+> That proves the schema is expressible; it says nothing about transaction boundaries,
+> indexes, unique constraints or expand/contract migration, and no store has ever run
+> against a real database. WP-52 also found **two clauses of the ADR wrong** and amended
+> them, which is itself an argument that the record is still moving. It is re-decided at
+> **WP-53**, against Postgres.
 
 **Roadmap Must:**
 
@@ -888,7 +935,11 @@ and an inventory that exists only in a closing summary is one nobody reads.
       **It was not applied on time.** WP-51 landed first, so the baseline WP-53 is to be
       judged against still does not exist and will be written by someone who already knows
       what the journal looks like. It must land before **WP-53**, which is a weaker claim
-      than the plan made. *(The attribution-guard and DAST repairs were credited to WP-50
+      than the plan made. **WP-52 has now landed too, so the inversion is complete:** the
+      journal has a step-commit path and nothing measures B7 or B8 against it. The two
+      entries this package was to remove *first* — `JournalBenchmarks` in `14 §8` and the
+      chaos row in `21 §8` — are now the **last** entries left, and their stated reason
+      ("there is no journal") has stopped being true. *(The attribution-guard and DAST repairs were credited to WP-50
       in `docs/21`; they were not this package's work and the credit is withdrawn.)*
 - [x] **WP-51** `IFlowJournal`, `ILeaseStore` and the shared conformance suite ADR-0006
       promises. **Shipped, with two deviations from its own row, both recorded rather than
@@ -905,11 +956,20 @@ and an inventory that exists only in a closing summary is one nobody reads.
       unwritten. The shape exists and is proved to reject a wrong store by name
       (`TheSuiteRejectsAStoreThatIsWrongTests`); nothing real has met it. It packs at
       WP-53/WP-54, when a second and third store exist to push back on it
-- [ ] **WP-52** The seam — **`FlowX.Runtime` reads `ExecutionProfile`**. Trips
-      `RuntimeDoesNotReadTheExecutionProfile`, which is written to fail here and names its
-      own take-down list. B2 must still measure **0 B** on the ephemeral path afterwards,
-      and a `[Sensitive]` member must reach the journal **redacted** — the journal is a new
-      sink and `RedactionCannotBeBypassed` cannot be written until P5
+- [x] **WP-52** The seam — **`FlowX.Runtime` reads `ExecutionProfile`**. **Shipped
+      2026-07-31.** `RuntimeDoesNotReadTheExecutionProfile` was observed failing and
+      `ExecutionProfileHonestyTests.cs` is deleted, not skipped; `FLOWX1028` is narrowed to
+      `Streaming`. B2 re-measured at **0 B** on the ephemeral path, and `Durable` costs
+      192 B per step, recorded as a ceiling. A `[Sensitive]` member reaches the journal
+      redacted, proved by reading all six stored strings back — structural, not remembered,
+      because `JournalPayload.ToJson()` is the only exit. **Three limits recorded rather
+      than absorbed:** non-determinism attribution inside a `Parallel` is best-effort (one
+      pooled context is shared by the branches, so a sibling's id can land on the wrong row
+      — harmless while nothing replays a capture; WP-61 needs a per-branch context); a
+      skipped sub-flow's compensations are **not** rebuilt on resume, because the parent's
+      entry binds to the child's context and that died with the node (WP-57); and ADR-0015
+      was amended in two places its own first implementation found wrong. The take-down list
+      is worked row by row in WP-54's commits
 - [ ] **WP-53** Postgres journal + lease adapter; B7 and B8 reported with an explicit verdict
 - [ ] **WP-54** Redis lease store — concurrent with WP-53, same suite unmodified
 - [ ] **WP-55** Resume: lease acquisition, recovery scan, re-entry into the same step loop
@@ -918,9 +978,14 @@ and an inventory that exists only in a closing summary is one nobody reads.
 - [ ] **WP-57** Compensation with its own policies. **Has a dependency the roadmap does not
       show:** no policy executes at run time; the policy engine is P4
 - [ ] **WP-58** `FLOWX1007`–`FLOWX1009`, with the determinism severity stance re-decided
-      **as a set**, `FLOWX1011`'s deliberate deviation included
+      **as a set**, `FLOWX1011`'s deliberate deviation included. **No longer blocked on
+      severity:** the runtime reads the profile, so an Error under `Durable` is one a build
+      can reach. The same unblocking applies to `FLOWX1012` (WP-60), whose only fix —
+      `Profile = Durable` — now changes something. Both are simply unwritten
 - [ ] **WP-59** `FLOWX1006` and the generated STJ payload context
-- [ ] **WP-60** `FLOWX1012` — the check was always easy; its *fix* becomes true at WP-52
+- [ ] **WP-60** `FLOWX1012` — the check was always easy, and its *fix* became true at
+      WP-52. **The blocker is discharged; the rule is not written.** Left unticked, because
+      an unblocked rule is not a raised one
 - [ ] **WP-61** `ReplayDeterminismTest` and its corpus. Risk **R2**'s actual mitigation,
       currently cited in `05 §11` as though it existed
 - [ ] **WP-62** QR2 — 10 000 flows, `SIGKILL` at every step boundary, zero duplicate
@@ -936,11 +1001,12 @@ and an inventory that exists only in a closing summary is one nobody reads.
 
 **Fitness functions P2 changes, and one it does not:**
 
-- [ ] `RuntimeDoesNotReadTheExecutionProfile` — **deleted** at WP-52, not skipped
+- [x] `RuntimeDoesNotReadTheExecutionProfile` — **deleted** at WP-52, not skipped.
+      Observed failing first; `ExecutionProfileHonestyTests.cs` no longer exists
 - [ ] `ReplayDeterminismTest` — created at WP-61
-- [ ] `CrossTenantAccessIsDenied` — loses **half** its blocker (the missing journal) and
-      stays blocked on P4's policy execution. It does not become green in P2, and the row
-      in §4 must keep saying so
+- [~] `CrossTenantAccessIsDenied` — lost **half** its blocker at WP-52 (the missing
+      journal) and stays blocked on P4's policy execution and, for "every trigger kind",
+      P3's second transport. It did not become green, and the row in §4 says so
 
 ---
 
@@ -999,7 +1065,7 @@ Controls from [21-Quality-Gates §3](docs/21-Quality-Gates.md#3-owasp-top-10-map
 | Risk | Control designed | Control enforced |
 |---|---|---|
 | A01 Broken access control | [x] required `Authorization` member | [x] `FLOWX1010` raised and tested; the sample's four capabilities all declare a stance |
-| A02 Cryptographic failures | [x] `[Sensitive]` + generated redaction | [~] **enforced on the one sink that exists.** Secrets are stripped from Problem Details bodies, tested end to end; logs, traces and the journal do not exist yet, so the "no code path can forget it" claim is not met |
+| A02 Cryptographic failures | [x] `[Sensitive]` + generated redaction | [~] **enforced on both sinks that exist.** Secrets are stripped from Problem Details bodies, tested end to end, and from journal payloads since WP-52 — structurally, since `JournalPayload.ToJson()` is the only exit and it redacts. *This row said the journal does not exist yet.* Logs, traces and replay output still do not, and redaction is not applied by a **generated** serialiser anywhere, so the "no code path can forget it" claim is still not met |
 | A03 Injection | [x] compile-time graph, no `Do(lambda)` | [~] structurally true; CodeQL + Semgrep wired, unrun |
 | A04 Insecure design | [x] STRIDE per boundary, 12 ADRs | [x] ADR review in CONTRIBUTING |
 | A05 Security misconfiguration | [x] no permissive defaults | [x] startup validation, 8 tests |

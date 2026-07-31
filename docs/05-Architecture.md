@@ -539,7 +539,7 @@ Rollout strategy, KEDA scalers and drain semantics in
 | **Persistence** | FlowX owns only journal + outbox + idempotency store. Business persistence is inside capabilities and is none of FlowX's business | [11](11-Distributed-Runtime.md) |
 | **Serialisation** | `System.Text.Json` source-generated contexts only (C2 AOT). Journal payloads carry a schema version | [ADR-0008](adr/ADR-0008-serialization-and-schema.md) |
 | **Time** | Capabilities must obtain time from `ctx.UtcNow`, never `DateTime.UtcNow` — replay determinism. **Unenforced:** `FLOWX1007` does not exist; the property name is `UtcNow`, not `Clock` | [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) |
-| **Randomness / IDs** | `ctx.NewId()` and `ctx.Random` are *intended* to be journaled on first use so replay reproduces them. **Neither the journalling nor the rule exists:** there is no journal, and `FLOWX1008` does not exist | [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) |
+| **Randomness / IDs** | `ctx.NewId()` and `ctx.Random` are journaled on first use so replay reproduces them. **The journalling exists since WP-52; the rule does not.** A `Durable` flow captures the ids minted and `Random`'s seed per step boundary — `FLOWX1008` does not exist (WP-58), nothing replays a capture back (WP-61), and no store persists one | [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) |
 | **Configuration** | Selects adapters and tunes policy *parameters*. It can never change the graph | Manifesto §"What we refuse" |
 | **Security** | Deny-by-default at the capability boundary; STRIDE per trust boundary | [15](15-Security.md) |
 | **Tenancy** | `TenantId` is ambient in `FlowContext`, enforced at admission and at the journal partition key | [16](16-Multi-Tenant.md) |
@@ -594,7 +594,7 @@ agree.*
 | # | Risk | Impact | Likelihood | Mitigation | Owner |
 |---|---|---|---|---|---|
 | R1 | **Source-generator complexity becomes the platform's own legacy** — generators are hard to debug and slow builds | High | High | Generators emit *readable* C# to `obj/generated`; snapshot tests on every emitted file; build-time budget gate (≤ 8 %); generator logic kept in a pure, unit-testable model layer separate from Roslyn plumbing | Compiler team |
-| R2 | **Determinism leaks in durable flows** — a capability uses `DateTime.UtcNow`, `Guid.NewGuid()` or ambient statics, so replay diverges | High | High | **None of the three mitigations exists — see below.** Planned: analyzers `FLOWX1007/1008/1009` as **errors** in durable flows; replay conformance test asserting byte-identical outputs; journal records all non-deterministic values on first use | Runtime team |
+| R2 | **Determinism leaks in durable flows** — a capability uses `DateTime.UtcNow`, `Guid.NewGuid()` or ambient statics, so replay diverges | High | High | **Live since WP-52, and unmitigated — see below.** One of the three is now half-built: the journal records non-deterministic values on first use. The analyzers `FLOWX1007/1008/1009` (WP-58) and the replay conformance test (WP-61) do not exist | Runtime team |
 | R3 | **Abstraction leak under real transports** — a universal trigger model cannot express Kafka rebalance, HTTP streaming, MQTT QoS | Medium | High | **Untested: there is one transport.** Planned escape hatch: `ITriggerSource` exposes transport-specific options *outside* the flow — *the interface is not declared anywhere in `src/`* — plus a conformance suite defining the minimum semantics. A conformance *project* now exists (WP-51), but it holds `JournalConformance` and `LeaseStoreConformance` and no trigger suite, so this mitigation is untouched. What holds today: documented non-goals per transport ([09 §12](09-Trigger-Model.md#12-known-limits-of-the-abstraction)). The risk cannot be evaluated until P3 adds a second transport | Plugin team |
 | R4 | **Adoption cliff** — teams must rewrite to gain value | High | Medium | Incremental adoption path: FlowX hosts inside existing ASP.NET Core apps; a capability can wrap an existing service; `MediatR` bridge plugin for step-by-step migration | DevRel |
 | R5 | **Journal becomes the bottleneck** at high durable throughput | High | Medium | Batched group-commit writes; per-partition journals; `Ephemeral` remains the default so durability is opt-in; benchmark gate QR2 | Runtime team |
@@ -603,40 +603,46 @@ agree.*
 | R8 | **Ecosystem thinness** — a platform is only as good as its plugins | High | Medium | Ship 8 first-party plugins at v1; publish the conformance suite as a NuGet package so third parties can self-certify. **Begun, and not yet a mitigation:** two of the six suites are written and the project is deliberately **not packable** until a second store exists to be held to it, so there is nothing published and nothing outside this repository can self-certify against anything | DevRel |
 
 > [!IMPORTANT]
-> **R2's mitigation column was audited in P1 and none of it is built.** A risk
+> **R2 went live at WP-52 (2026-07-31) and its mitigations did not.** A risk
 > whose mitigation is fictional is not a mitigated risk; it is an unmitigated
 > risk that has stopped being reviewed, which is why this is recorded here rather
 > than quietly softened.
 >
 > | Named mitigation | State | Evidence |
 > |---|---|---|
-> | Analyzers `FLOWX1007/1008/1009` as errors in durable flows | **does not exist** | none of the three is a descriptor `FlowXDiagnostics` declares. The catalogue is deliberately built to hold only ids something reports, so their absence is not an oversight in the compiler — it is the compiler declining to promise them, and [the diagnostics index](diagnostics/README.md) records what each reservation is blocked on |
-> | Replay conformance test asserting byte-identical outputs | **does not exist** | no test in the solution named `ReplayDeterminismTest` or anything like it; no test replays anything |
-> | Journal records non-deterministic values on first use | **does not exist** | *This row said "there is no journal type in the solution". That is no longer true and the verdict is unchanged.* WP-51 added `IFlowJournal` and `NondeterminismCapture` to `FlowX.Abstractions/Durability/`, and `JournalConformance` pins what a store must do with a captured value. **Nothing writes one.** There is no implementation outside the in-memory reference in `tests/FlowX.Conformance.Tests`, no store has ever run against a real database, and no execution path reaches a journal at all — so no non-deterministic value has ever been recorded on first use or on any use |
+> | Analyzers `FLOWX1007/1008/1009` as errors in durable flows | **does not exist** | none of the three is a descriptor `FlowXDiagnostics` declares. The catalogue is deliberately built to hold only ids something reports, so their absence is not an oversight in the compiler — it is the compiler declining to promise them, and [the diagnostics index](diagnostics/README.md) records what each reservation is blocked on. *What changed at WP-52: they were blocked on severity, since Info in the only profile that ran reaches no build log. That blocker is gone; they are unwritten. **WP-58***  |
+> | Replay conformance test asserting byte-identical outputs | **does not exist** | no test in the solution named `ReplayDeterminismTest` or anything like it; no test replays anything. **WP-61** |
+> | Journal records non-deterministic values on first use | **half.** Written, never read | *This row said "there is no journal type in the solution", then "nothing writes one". Both have stopped being true, in that order.* WP-51 added `IFlowJournal` and `NondeterminismCapture`; **WP-52 writes one**: a `Durable` flow captures `ctx.UtcNow`, the ids `ctx.NewId()` minted and `Random`'s seed per step boundary. Nothing replays a capture *back* into execution, so the guarantee the capture exists for is still unproven — and the only `IFlowJournal` in the repository is the in-memory reference in `tests/FlowX.Conformance.Tests`, which has never run against a database. Inside a `Parallel` the attribution is best-effort: one pooled context is shared by every branch, so a captured id can land on a sibling's row. Harmless while nothing replays it; WP-61 needs a per-branch context |
 >
-> The audit also found the risk is **currently unreachable rather than
-> mitigated**, which is a different and less comforting statement.
-> `FlowX.Runtime` never reads `ExecutionProfile`: a flow declared `Durable` runs
-> on the identical ephemeral path, so nothing replays and a determinism leak has
-> nowhere to diverge. **That unreachability is now stated to the author rather
-> than only recorded here:** [`FLOWX1028`](diagnostics/FLOWX1028.md) warns on every
-> flow declaring a profile the runtime does not implement, so nobody declares
-> `Durable` and infers from the silence that R2 is being managed for them. It does
-> not mitigate R2 — nothing here does — it removes the false comfort, and it is
-> deleted when the journal makes the declaration true.
-> R2 becomes live the moment the P2 journal lands, and the
-> analyzers must land with it, not after it — which is why
-> [20-Roadmap §3](20-Roadmap.md#3-increment-detail) lists them in P2's **Must**
-> and [§6](20-Roadmap.md#6-standing-risk-review) makes any replay divergence a
-> stop-the-phase trigger.
+> **The risk was previously *unreachable* rather than mitigated**, because
+> `FlowX.Runtime` never read `ExecutionProfile` and a flow declared `Durable` ran
+> the identical ephemeral path, so a determinism leak had nowhere to diverge.
+> *That is no longer the case.* A `Durable` flow now journals and can be resumed,
+> which means a leak can produce a divergence — and nothing would detect it. R2 has
+> moved from *unreachable* to **live and unmitigated**, which is the worse of the
+> two positions, and the analyzers were supposed to land *with* the journal rather
+> than after it: [20-Roadmap §3](20-Roadmap.md#3-increment-detail) lists them in
+> P2's **Must** and [§6](20-Roadmap.md#6-standing-risk-review) makes any replay
+> divergence a stop-the-phase trigger.
+>
+> [`FLOWX1028`](diagnostics/FLOWX1028.md) no longer covers this. It warned on every
+> flow declaring a profile the runtime does not implement — removing the false
+> comfort rather than mitigating anything — and WP-52 **narrowed it to
+> `Streaming`**, because `Durable` became implemented. So the author of a durable
+> flow is now told nothing at all, which is correct and is also why the analyzers
+> matter more than they did.
 >
 > One partial mitigation does exist and is not in the row above:
 > [`FLOWX1011`](diagnostics/FLOWX1011.md) covers the *flow's* deterministic
 > zone — conditions, selectors, projections and step input maps may read only
-> the flow context, the flow input and prior step results. It ships as a Warning
-> because `Ephemeral` is the only profile the runtime executes; it is specified
-> to become an Error under `Durable`. It says nothing about capability bodies,
-> which is where R2's example lives.
+> the flow context, the flow input and prior step results. **It now carries more
+> weight than it was designed for.** ADR-0015 originally required the journal to
+> record the branch a `Switch` took; it has no field for one, and
+> [the amendment](adr/ADR-0015-journal-schema-and-durable-execution.md#amendments-the-first-implementation-forced-wp-52)
+> resolved that by replaying the selector against the restored state bag —
+> so replay of control flow now rests on this rule. It still ships as a Warning,
+> it is specified to become an Error under `Durable` at WP-58, and it says nothing
+> about capability bodies, which is where R2's example lives.
 
 **Accepted technical debt for v1:** no dynamic/interpreted flows (P4 trade-off),
 no cross-region durable flows, no human-task/BPM model, no visual editing

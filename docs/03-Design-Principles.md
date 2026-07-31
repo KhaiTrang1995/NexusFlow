@@ -167,8 +167,11 @@ in-flight flows because a flow's state is journaled, not in-memory.
 `FlowX.Runtime` is `readonly` or `const`, by IL scan. *This paragraph named
 `StatelessRuntimeRule`, which never existed under that or any name until WP-35.*
 The chaos test it also claims — kill a node mid-flow, assert completion on a
-survivor — **does not exist and cannot yet**: there is no journal and no second
-node. It is an exit criterion of P2 in [20-Roadmap](20-Roadmap.md).
+survivor — **does not exist and cannot yet**. *This sentence said "there is no journal
+and no second node"; the first half expired at WP-52 (2026-07-31).* A `Durable` flow
+journals its step boundaries and can be resumed — but no store persists them, nothing
+acquires a lease and nothing scans for an abandoned instance, so a killed node's work is
+still simply lost. It is an exit criterion of P2 in [20-Roadmap](20-Roadmap.md).
 
 ---
 
@@ -232,21 +235,24 @@ in P1:**
   any code path. "Traces, metrics and structured logs exist without user
   instrumentation" is true of the *design* — the compiled graph is what makes it
   derivable — and is not true of the runtime. **P5.**
-- **Replay.** `ReplayDeterminismTest` does not exist, and cannot. *This line said
-  there is no journal type in the solution. WP-51 declared `IFlowJournal`, so the
-  reason has changed and the verdict has not:* nothing implements it outside an
-  in-memory reference in `tests/FlowX.Conformance.Tests`, and no code path writes
-  to a journal, so there is nothing to replay *from*. Worse for
-  the claim, `FlowX.Runtime` never reads `ExecutionProfile` at all — a flow
-  declared `Durable` executes on exactly the same path as an `Ephemeral` one,
-  with no checkpoint and no resume. The only thing the profile currently changes
-  is a build-time validation (`ExecutionPlan` requires `AwaitSignal` to be
-  `Durable`) and a field in the manifest. **P2.**
+- **Replay.** `ReplayDeterminismTest` does not exist. *This line has been wrong twice
+  and both corrections are kept.* It said there is no journal type in the solution;
+  WP-51 declared `IFlowJournal`. It then said no code path writes to a journal and that
+  `FlowX.Runtime` never reads `ExecutionProfile`; **WP-52 (2026-07-31) made it read the
+  profile**, and a `Durable` flow now journals a step boundary, captures `ctx.UtcNow`,
+  `ctx.NewId()` and `Random`'s seed per step, and resumes through the same loop. What is
+  still missing is what would make replay *provable*: nothing replays a capture back into
+  execution, there is no corpus, and the only implementation of `IFlowJournal` is an
+  in-memory reference in `tests/FlowX.Conformance.Tests` that has never met a database.
+  So the capture is written and never read, which is exactly the state in which a
+  determinism leak leaves no trace. **P2 · WP-61.**
 
-The determinism *analyzers* this principle leans on are in the same state:
-`FLOWX1007`, `FLOWX1008` and `FLOWX1009` do not exist, and `FLOWX1011` — the one
-rule of the five that ships — is a Warning rather than an Error precisely
-because `Ephemeral` is the only profile the runtime executes. See
+The determinism *analyzers* this principle leans on are further behind:
+`FLOWX1007`, `FLOWX1008` and `FLOWX1009` do not exist — no longer blocked on severity
+since WP-52, merely unwritten (WP-58) — and `FLOWX1011`, the one rule of the five that
+ships, is a Warning rather than an Error on a premise that has now expired: `Ephemeral`
+was the only profile the runtime executed. The stance is re-decided as a set at WP-58
+rather than one row at a time. See
 [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) and risk R2 in
 [05 §11](05-Architecture.md#11-risks-and-technical-debt), which carried the same
 claim as a *mitigation* and has now been corrected to say so.

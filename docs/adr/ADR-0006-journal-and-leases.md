@@ -39,17 +39,39 @@ Both are `IFlowJournal` / `ILeaseStore` plugins with a shared conformance suite,
 so Postgres, Redis, SQL Server or a custom store all behave identically.
 
 > [!WARNING]
-> **Accepted, not implemented.** There is no journal, no lease store, no fencing
-> token, no `IFlowJournal` or `ILeaseStore` interface anywhere in `src/`, and no
-> conformance suite to hold an implementation to. `FlowX.Runtime` does not read
-> `ExecutionProfile`, so a `Durable` flow executes on the ephemeral path today
-> and a process kill loses it.
+> **Accepted; half of it now implemented, and the half that is not is the half
+> this record is about.** *This box said there was no journal, no lease store, no
+> fencing token, no interface in `src/` and no conformance suite. That was true
+> until WP-51 and WP-52 (2026-07-30 to 2026-07-31), and each clause is now
+> separately false or still true:*
 >
-> The decision stands and is what **P2** is built to. Every consequence below is
-> a prediction about a system that has not been written — including the "measured
-> ceiling" in the first negative, which is a figure for Postgres from the
-> literature and not a FlowX benchmark: B7 and B8 have no harness
-> ([14 §8](../14-Performance.md#8-benchmark-suite-and-ci-gating)).
+> - **The journal exists as a contract and as a seam.** `IFlowJournal`,
+>   `ILeaseStore` and `FencingToken` are in `src/FlowX.Abstractions/Durability/`,
+>   `tests/FlowX.Conformance.Tests` holds the shared suite this decision promises,
+>   and `FlowX.Runtime` reads `ExecutionProfile` and commits one row per step
+>   boundary. A `Durable` flow no longer executes on the ephemeral path — it is
+>   refused outright if no journal is supplied.
+> - **No store implements either interface.** The only implementation anywhere is
+>   an in-memory reference in that test project; none has run against a real
+>   database (Postgres is WP-53, Redis WP-54).
+> - **Nothing acquires a lease.** Fencing is enforced — a write below the
+>   instance's fence is rejected and ends the flow — but the token is handed to the
+>   engine by its caller. There is no lease acquisition, no renewal timer and no
+>   recovery scan, so "resumption on another node" has no mechanism yet (WP-55).
+> - **Split brain has never been tested against anything real.** The property is
+>   pinned by the conformance suite against a dictionary.
+>
+> The decision stands and is what **P2** is built to. The consequences below are
+> still predictions — including the "measured ceiling" in the first negative, which
+> remains a figure for Postgres from the literature and **not** a FlowX benchmark:
+> B7 and B8 still have no harness
+> ([14 §8](../14-Performance.md#8-benchmark-suite-and-ci-gating)), and WP-50, which
+> was supposed to build it before the journal, has not started.
+>
+> The schema this journal actually has is not in this record: it is
+> [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md), which fixes the key
+> at `(instance_id, scope, step_id, attempt)` and is deliberately still
+> **Proposed** for the reason this box demonstrates.
 
 ## Consequences
 

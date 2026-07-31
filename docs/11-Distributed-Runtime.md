@@ -1,33 +1,38 @@
 # 11 — Distributed Runtime
 
-> **Status:** Accepted as a specification · **not built** · **Audience:** runtime contributors, SRE
+> **Status:** Accepted as a specification · **§2 partly built, the rest not** · **Audience:** runtime contributors, SRE
 > **Answers:** how does durable execution stay correct across nodes, crashes and deployments?
 
 > [!WARNING]
-> **Nothing in this document is implemented.** There is no journal, no lease
-> store, no outbox, no scheduler and no second node.
+> **One section of this document has an implementation. The rest do not, and there
+> is still no store.** This box is retired section by section as each lands, not
+> wholesale — it said "nothing in this document is implemented", which was true
+> until WP-52 (2026-07-31) and is no longer.
 >
-> *This box said the words appear under `src/` only inside comments describing the
-> intent. That is no longer true.* WP-51 declared `IFlowJournal`, `ILeaseStore`
-> and `FencingToken` in `src/FlowX.Abstractions/Durability/`, and
-> `tests/FlowX.Conformance.Tests` defines what a store must do with them.
-> **Nothing implements them** outside an in-memory reference in that test project,
-> no store has ever run against a real database, and nothing in `src/` calls any
-> of them. What exists is the contract these guarantees would be met *through* —
-> not a step toward meeting them — and the sentence that follows is unaffected.
-> `FlowX.Runtime` does not read `ExecutionProfile` at all, so a flow declared
-> `Durable` executes on the identical in-memory path as an `Ephemeral` one and a
-> process kill loses the instance.
+> | § | State |
+> |---|---|
+> | [1 · distribution model](#1-the-distribution-model) | **not built.** One node, no coordination |
+> | [2 · the journal](#2-the-journal) | **partly built.** WP-51 declared `IFlowJournal`, `ILeaseStore` and `FencingToken` in `src/FlowX.Abstractions/Durability/`; WP-52 made `FlowX.Runtime` read `ExecutionProfile` and commit one row per step boundary, and resume by replaying committed rows into the same step loop. **The schema below is the drawn version and is superseded** by [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md): the key is `(instance_id, scope, step_id, attempt)`, `resume_from_step` is a hint the engine never reads, and a `SubFlow` child is its own instance row. **No store implements it** — the only `IFlowJournal` anywhere is an in-memory reference in `tests/FlowX.Conformance.Tests`, and none has run against a real database (WP-53, WP-54) |
+> | [3 · leases and fencing](#3-leases-and-fencing) | **not built.** Every journal write is guarded by a fencing token and a stale token is rejected — but nothing *acquires* or renews a lease, and nothing scans for an abandoned instance. The token is passed into the engine by whoever starts the flow (WP-55) |
+> | [4 · exactly-once](#4-exactly-once-honestly) | **not built**, and unchanged by WP-52: a process that dies after an effect and before its commit still re-executes the step |
+> | [5 · the outbox](#5-the-transactional-outbox) | **not built.** `.Emit<T>()` publishes nothing ([`FLOWX1024`](diagnostics/FLOWX1024.md)) — WP-56 |
+> | [6 · partitioning](#6-partitioning-and-scale) · [7 · deployment safety](#7-deployment-safety) · [8 · failure catalogue](#8-failure-catalogue) | **not built.** No second node, no migration, no scheduler |
+>
+> So: a `Durable` flow journals its step boundaries and can be resumed, and a
+> process kill still loses the instance, because nothing on the other side finds it.
+> A `Durable` flow started with no journal is now **refused** rather than run
+> ephemerally (`flow.durability_not_configured`).
 >
 > This is the **P2** increment, and it is the second-riskiest thing in the plan
 > for a reason: the guarantees below — exactly one writer, no duplicate
 > non-idempotent effects, resume p99 ≤ 45 s — are the hard ones, and designing
 > them before writing them is what this document is for. Its exit criterion is
 > QR2 in
-> [05 §10](05-Architecture.md#10-quality-requirements-stimulus--response--measure).
+> [05 §10](05-Architecture.md#10-quality-requirements-stimulus--response--measure),
+> and nothing measures it yet: B7, B8 and the chaos rig are WP-50, unstarted.
 >
-> Read it as the design a P2 implementer is held to. Do not read any sentence
-> here as describing behaviour you can observe today.
+> Read the rest as the design a P2 implementer is held to. Outside §2, do not read
+> any sentence here as describing behaviour you can observe today.
 
 ---
 
