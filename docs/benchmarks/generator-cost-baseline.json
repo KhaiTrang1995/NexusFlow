@@ -28,14 +28,14 @@
     "check-generator-cost.py reprints on every run, passing or failing."
   ],
   "recordedOn": {
-    "commit": "083410c",
+    "commit": "b275696",
     "recordedAt": "2026-07-31",
     "roslyn": "4.14.0-3.25262.10+8edf7bcd4f1594c3d68a6a567469f41dbd33dd1b",
     "roslynAssemblyVersion": "4.14.0.0",
     "framework": ".NET 10.0.10",
     "sdk": "10.0.110",
     "nproc": 4,
-    "load1DuringRun": 6.08,
+    "load1DuringRun": 8.37,
     "runsPerSize": 5,
     "warmupPerSize": 2
   },
@@ -85,22 +85,22 @@
   },
   "sizes": {
     "25": {
-      "allocatedBytes": 17179456,
-      "allocatedBytesPerFlow": 687178.2,
+      "allocatedBytes": 17556328,
+      "allocatedBytesPerFlow": 702253.1,
       "sourcesSha256": "c80fa5b5f3bc074258b2a7707f3eaedfb0e192ffc5599ee5c3397250737743f8",
       "generatedTrees": 26,
-      "generatedChars": 334319,
+      "generatedChars": 360069,
       "diagnostics": 24,
-      "observedSpreadPercent": 0.0099
+      "observedSpreadPercent": 0.5698
     },
     "50": {
-      "allocatedBytes": 34351616,
-      "allocatedBytesPerFlow": 687032.3,
+      "allocatedBytes": 35122000,
+      "allocatedBytesPerFlow": 702440.0,
       "sourcesSha256": "63dacc54694291ce27e7110ced5bd4f9061dbeac8554e0ad7eb1aa58b61c7a65",
       "generatedTrees": 51,
-      "generatedChars": 671085,
+      "generatedChars": 722585,
       "diagnostics": 49,
-      "observedSpreadPercent": 0.1188
+      "observedSpreadPercent": 0.4669
     }
   }
 }
