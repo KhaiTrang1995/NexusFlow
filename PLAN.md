@@ -104,7 +104,7 @@ flowchart TD
     style WP20 fill:#cfe2ff,stroke:#084298
     style WP24 fill:#cfe2ff,stroke:#084298
     style WP29 fill:#cfe2ff,stroke:#084298
-    style WP33 fill:#e2e3e5,stroke:#41464b,stroke-dasharray: 4 3
+    style WP33 fill:#cfe2ff,stroke:#084298
     style WP16 fill:#cfe2ff,stroke:#084298
     style WP17 fill:#cfe2ff,stroke:#084298
     style WP18 fill:#cfe2ff,stroke:#084298
@@ -121,9 +121,9 @@ flowchart TD
     style WP32 fill:#cfe2ff,stroke:#084298
 ```
 
-WP-0 through WP-14 are P0 (complete); WP-15 onward are **P1**, in blue. **WP-33 is
-dashed because it is the only one not yet merged** — it is the last item in P1's
-full-DSL Must.
+WP-0 through WP-14 are P0 (complete); WP-15 onward are **P1**, in blue. The DSL chain
+WP-15 → 20 → 24 → 29 → 33 is **complete**: all five shapes the roadmap's full-DSL Must
+names now ship.
 
 **This diagram stopped at WP-19 for most of P1 and was wrong the whole time.** It is
 recorded here rather than quietly corrected, because the failure is the same one the
@@ -498,7 +498,7 @@ maintainability and scale, not features.
 
 | Roadmap item | Where it stands |
 |---|---|
-| Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **WP-15**, **WP-20**, **WP-24** and **WP-29** — four of five ship end to end. **`SubFlow` alone remains**, and with it `FLOWX1021` (sub-flow cycles), which nothing can raise until something can declare one |
+| Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **Done** — WP-15, WP-20, WP-24, WP-29, WP-33. All five ship end to end, with `FLOWX1013` and `FLOWX1021` raised. One documented mode does not: `SubFlow(AwaitCompletion)` is refused by `FLOWX1026`, because it needs a durable suspension point and P2 has not built one |
 | Contract-compatibility checking | **WP-16**, done — as `FLOWX1020`, *step binding* |
 | Diagnostics FLOWX1001–1023 with help URIs | **Partly done, and this row previously overstated it.** Raised today: `1001`–`1005`, `1010`, `1011`, `1014`, `1015`, `1017`, `1018`, `1020`, `1023`, `1024`. **Still reserved and raised by nothing:** `1006`–`1009`, `1012`, `1016`, `1019`, `1021`, `1022`. Most await machinery that does not exist — `1021` needs `SubFlow`, `1007`–`1009` and `1012` need durability — so the honest status is *blocked*, not *done*. **WP-21** closed `1011` and **WP-24** closed `1013`, the latter by shipping the `Parallel` it was blocked on |
 | Manifest completeness | **WP-22**, done — `triggers` and per-capability `errors` were declared in the schema and emitted by nothing |
