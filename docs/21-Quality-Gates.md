@@ -87,9 +87,10 @@ Stryker across the whole solution costs more CI time than it returns.
 > **thresholds cannot** — a threshold written there is silently ignored), so
 > turning any of these rows on after the debt is paid is a one-word edit.
 >
-> `VSTHRD002` in §2.2 **now runs** for `src/` and `plugins/`, from
-> `Microsoft.VisualStudio.Threading.Analyzers`. It does not run for `tests/`,
-> and has one file-scoped exception; §2.6 says why.
+> `VSTHRD002` in §2.2 **now runs** everywhere except `tests/`, from
+> `Microsoft.VisualStudio.Threading.Analyzers` — it is set on `[*.cs]`, so it covers
+> `samples/` and `scripts/` as well as `src/` and `plugins/`. It has one file-scoped
+> exception; §2.6 says why.
 >
 > The three merge-class Sonar rows — critical issues, duplicated lines, security
 > hotspots — still depend on the *Sonar quality gate* job in `quality.yml`,
@@ -125,7 +126,7 @@ production incidents in systems of this shape.
 | `CA1848` — `LoggerMessage` over interpolation | Interpolated logging allocates on the hot path even when the level is disabled, which breaks budget B6. | everywhere |
 | `S2245` — no insecure randomness | `Random` for anything security-adjacent. Determinism uses `CapabilityContext.Random`, which is journaled, not secret. | everywhere except the two files that *are* that determinism source (§2.6) |
 | `S4507` — no debug features in production | Delivering stack traces to a caller is an information leak (A05). | everywhere, but it only has anything to bind to in `FlowX.Http` — the rule keys on ASP.NET Core APIs, and that is the only project with a `Microsoft.AspNetCore.App` framework reference |
-| `VSTHRD002` — no sync-over-async | `.Result`/`.Wait()` in a runtime this hot is a thread-pool starvation incident waiting for load. | `src/` and `plugins/`, minus `FlowEngine.cs` (§2.6). Not `tests/`: the rule is about deadlocking on a captured synchronization context, and xUnit does not install one. |
+| `VSTHRD002` — no sync-over-async | `.Result`/`.Wait()` in a runtime this hot is a thread-pool starvation incident waiting for load. | Everywhere except `tests/`, minus `FlowEngine.cs` (§2.6). Set on `[*.cs]`, so `samples/` and `scripts/` are covered too — this row used to say "`src/` and `plugins/`", which understated it. Not `tests/`: the rule is about deadlocking on a captured synchronization context, and xUnit does not install one. |
 
 Every rule in this table is an error at build time. The three `S`/`VSTHRD` rows
 were added by the change that introduced the analyzer packages; the five `CA`
@@ -222,6 +223,16 @@ rest of §3 should be read as: **the control column is the design, and the verif
 column is a mixture of gates that run and gates that are scheduled.** Where a row says
 "(merge)" against a name in the table above, no merge is currently blocked by it.
 
+**The same is true of four §3 entries that name a tool rather than a fitness function**,
+and they were missed when the list above was written because they do not look like test
+names. `Trivy HIGH/CRITICAL` (A06) and `container scan` (A05) do not run — there is no
+`Dockerfile` in this repository and no image is built, so there is nothing to scan.
+`ADR presence check` (A04) does not exist: no workflow inspects `docs/adr/`, and the ADR
+requirement is carried by review and by the pull-request template. `build reproducibility
+check`, `signature verification` and `SBOM attached` (A08, A06) are all marked "(release)"
+and there is **no release workflow at all**. §4 carries the same correction against the
+toolchain table.
+
 ### 2.6 What the analyzers found, and what was done about each
 
 Turning the packages on is a one-line change. Deciding what to do with what they
@@ -274,10 +285,18 @@ check.
 **One entry bundled two unrelated defects**, and only surfaced when the fix did not turn
 the build green: the row cited `samples/ecommerce/Program.cs:43` alongside the three
 engine lines, but that site is `app.Run()`, not a `Cancel()` call — `S6966` wants
-`await app.RunAsync()`. It remains suppressed, scoped to that one file, on the grounds
-that blocking the main thread until shutdown is what a host entry point does and
-`app.Run()` is the shape every template teaches. A one-line change to `RunAsync` would
-remove both the finding and the suppression.
+`await app.RunAsync()`. It was then suppressed a second time, scoped to that one file,
+on the grounds that blocking the main thread until shutdown is what a host entry point
+does and `app.Run()` is the shape every template teaches.
+
+**That argument was sound and the suppression is still gone** (WP-50). The sample's last
+line is now `await app.RunAsync().ConfigureAwait(false)`, which under top-level statements
+compiles to an async entry point and blocks until shutdown exactly as before — so nothing
+was traded away to remove it. `S6966` now runs at its default severity across the whole
+repository with no file-scoped exception, and the sample was re-run against `/health` and
+`POST /api/v1/orders` to confirm the change is behavioural nothing. The `ConfigureAwait`
+is `CA2007`, which applies everywhere but `tests/` and which the previous `Run()` form
+never had to satisfy; adding it kept the fix from trading one suppression for another.
 
 #### Rules switched off because they are wrong about this codebase
 
@@ -364,27 +383,41 @@ feature. It gets its own mapping because the risks are different in kind.
 
 ## 4. Security testing toolchain
 
-| Stage | Tool | Scope | Gate | Frequency |
-|---|---|---|---|---|
-| SAST | **CodeQL** (`security-and-quality`) | whole solution | any alert ≥ medium fails | every PR |
-| SAST | **Semgrep** (OWASP + C# rulesets) | whole solution | any ERROR fails | every PR |
-| Secrets | **Gitleaks** + GitHub secret scanning | full history on PR | any finding fails | every PR |
-| SCA | `dotnet list package --vulnerable --include-transitive` | all projects | any vulnerability fails | every PR |
-| SCA | **Dependabot** | NuGet + GitHub Actions | review required | weekly |
-| Container | **Trivy** | published image | HIGH/CRITICAL fails | every PR |
-| IaC | **Checkov** | Helm charts, Kubernetes manifests | HIGH fails | every PR |
-| **DAST** | **OWASP ZAP** baseline + full scan | `samples/banking` and `samples/ecommerce` running in Docker | any HIGH fails | nightly + pre-release |
-| Fuzzing | **SharpFuzz** | trigger payload deserialisation | any crash fails | nightly |
-| Supply chain | **CycloneDX SBOM** + Sigstore | release artifacts | missing attestation fails | every release |
+| Stage | Tool | Scope | Gate | Frequency | Runs today |
+|---|---|---|---|---|---|
+| SAST | **CodeQL** (`security-and-quality`) | whole solution | any alert ≥ medium fails | every PR | **partly** — the scan runs and uploads results; `codeql-action/analyze` does not fail a job on findings, so "fails" is branch-protection configuration, not this workflow |
+| SAST | **Semgrep** (OWASP + C# rulesets) | whole solution | any ERROR fails | every PR | **yes** — `--error` |
+| Secrets | **Gitleaks** + GitHub secret scanning | full history on PR | any finding fails | every PR | **yes** |
+| SCA | `dotnet list package --vulnerable --include-transitive` | all projects | any vulnerability fails | every PR | **yes** |
+| SCA | **Dependabot** | NuGet + GitHub Actions | review required | weekly | **yes** — `.github/dependabot.yml` |
+| Container | **Trivy** | published image | HIGH/CRITICAL fails | every PR | **no** — not in any workflow. There is no `Dockerfile` and no image is built anywhere, so there is nothing to scan |
+| IaC | **Checkov** | Helm charts, Kubernetes manifests | HIGH fails | every PR | **no-op** — the step exists and exits cleanly because neither `deploy/` nor `charts/` exists. Deliberate, and stated in the job |
+| **DAST** | **OWASP ZAP** baseline + full scan | `samples/ecommerce` run by `dotnet run` | any HIGH fails | nightly | **newly** — the job's guard tested for two paths that never existed, so it skipped every night since WP-10; fixed in WP-50 and not yet observed on a real scheduled run. `samples/banking` is a README, not a project, and nothing runs in Docker |
+| Fuzzing | **SharpFuzz** | trigger payload deserialisation | any crash fails | nightly | **no** — not in any workflow |
+| Supply chain | **CycloneDX SBOM** + Sigstore | release artifacts | missing attestation fails | every release | **no** — there is no release workflow and no tag-triggered workflow at all |
+
+**The *Runs today* column is new, and four rows of this table were false without it.**
+Trivy, SharpFuzz, SBOM and Sigstore appear nowhere in `.github/`; Checkov is wired but
+has nothing to scan; DAST was guarded off by a condition that could never become true.
+The *Gate* and *Frequency* columns are kept as written because they are the design and
+the design is not in dispute — but read on their own they claimed nine running security
+gates where five run, one is newly unblocked and three do not exist. Every "(release)"
+verification named in §3 — build reproducibility, signature verification, SBOM attached
+— is in the last category: **this repository has no release pipeline**, so no release
+gate of any kind currently runs.
 
 ### 4.1 Why DAST runs against samples
 
 FlowX is a library; there is no FlowX server to point a scanner at. The samples
 are the honest target — they exercise the generated HTTP surface, the generated
 Problem Details mapping, the authorisation stack and the idempotency store the
-way a real application does. `samples/banking` is the primary DAST target because
-it is the sample designed around money and PII, so its threat model is the
-strictest one in the set.
+way a real application does.
+
+This section said `samples/banking` **is** the primary DAST target, "the sample designed
+around money and PII, so its threat model is the strictest one in the set". That is the
+intent and it is not built: `samples/banking` is a `README.md` and nothing else. The one
+sample that exists as a project is `samples/ecommerce`, and it is what the scheduled scan
+points at. Banking becomes the primary target when it becomes a project.
 
 A DAST finding against a sample is treated as a **platform** defect until proven
 to be a sample defect. The generated surface is platform code.
@@ -461,7 +494,7 @@ Budgets live in [14-Performance](14-Performance.md). Their enforcement is here.
 
 | Gate | Rule | Class | State |
 |---|---|---|---|
-| B1, B3, B12 | regression > 5 % vs `baseline.json` fails the build | Merge | **runs** — *Benchmark budgets* job |
+| B1, B3, B12 | allocation change vs `baseline.json`, or p95 over the documented ceiling, fails the build | Merge | **runs** — *Benchmark budgets* job. Timing drift is measured and printed but **advisory**, see below |
 | B2 | allocations must be **exactly 0** — not "low" | Merge | **runs** — `AllocationBudgetTests`, `EngineAllocationTests` |
 | Generator cost | > 2 % more bytes allocated by the generator than the committed baseline fails the build | Merge | **runs** — [generator-cost-gate.md](benchmarks/generator-cost-gate.md) |
 | B12 against its **+8 %** budget | — | — | **failing.** +46.6 % at 50 flows, +77 % at 200. The relative gate above stops it getting worse; it does not make the budget met |
@@ -476,6 +509,20 @@ listing that implied otherwise is corrected too. A budget stated in advance is
 [rule zero](#1-the-rule-that-makes-the-rest-work) working as designed; a budget
 listed as *gated* when nothing measures it is the failure this document exists to
 prevent.
+
+**The B1/B3/B12 row was itself an instance of that failure, and is corrected above.**
+It read "regression > 5 % vs `baseline.json` fails the build". Nothing in this
+repository enforces 5 %, and drift does not fail anything:
+`scripts/check-benchmark-budgets.py` puts drift in `blocking` only under `--strict`,
+the *Benchmark budgets* job does not pass `--strict`, and the tolerances committed in
+`docs/benchmarks/baseline.json` are **40 %** absolute and **15 %** ratio — not 5 %.
+What the job actually blocks on is the two machine-independent checks: allocation
+counts, compared exactly (or against a declared `allocationTolerancePercent` band),
+and p95 against the ceiling written down in [14-Performance](14-Performance.md).
+The split is deliberate — two runs of the same commit disagreed by 63 % on ratio and
+159 % on absolute time on a shared runner — and `--strict` is scheduled for when the
+baseline is recorded on dedicated hardware (WP-11). [CONTRIBUTING](../CONTRIBUTING.md)
+already described this correctly; this table was the copy that had gone stale.
 
 A benchmark that becomes flaky is fixed or deleted, never muted. A muted
 benchmark is a budget nobody is holding.
