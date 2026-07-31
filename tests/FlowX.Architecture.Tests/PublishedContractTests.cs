@@ -157,10 +157,23 @@ public sealed partial class PublishedContractTests
     /// </para>
     /// <para>
     /// <strong>Policies are not checked, and the §12 row says they should be.</strong>
-    /// Nothing declares one: <c>PolicySet</c> exists as a contract, no attribute applies a
-    /// policy to a step, and the generator emits no <c>policies</c> section. A check would be
-    /// asserting a property of code that has not been written, which is the thing
-    /// docs/21-Quality-Gates §2.4 refuses to do. It becomes checkable with P4.
+    /// The reason given here used to be "no attribute applies a policy to a step, and the
+    /// generator emits no <c>policies</c> section", and <strong>both halves are false</strong>.
+    /// <c>.WithPolicy(PolicySet)</c> attaches one, <c>FlowAnalyzer</c> reads the set well
+    /// enough to raise <c>FLOWX1014</c> and <c>FLOWX1018</c> off its contents, and
+    /// <c>ManifestWriter.WritePolicies</c> emits a <c>policies</c> array per step carrying
+    /// each policy's fixed stage.
+    /// </para>
+    /// <para>
+    /// What is true is narrower. <strong>Nothing in this repository declares a policy</strong>,
+    /// so the emission path has never run against a shipped assembly and a completeness check
+    /// would pass vacuously — which is the thing docs/21-Quality-Gates §2.4 refuses to do. No
+    /// policy <em>executes</em> either: <c>FlowX.Runtime</c> contains no policy engine, so a
+    /// declared <c>Retry</c> is a manifest entry and nothing more. It becomes checkable with
+    /// P4. The same holds for <c>events</c>: <c>.Emit&lt;T&gt;()</c> reaches the plan and the
+    /// manifest, and <c>FLOWX1024</c> is raised on every one because nothing publishes it.
+    /// docs/05-Architecture.md §12 carries the corrected wording; this comment was the
+    /// verbatim duplicate it named.
     /// </para>
     /// </remarks>
     [Fact]

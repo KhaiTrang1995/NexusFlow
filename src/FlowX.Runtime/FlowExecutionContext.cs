@@ -83,6 +83,18 @@ public sealed class FlowExecutionContext : FlowContext
     private DateTimeOffset _deadline;
     private IClock _clock = SystemClock.Instance;
     private Random? _random;
+
+    /// <summary>
+    /// The seed <see cref="_random"/> was built from, or <c>null</c> while this execution
+    /// has not asked for randomness.
+    /// </summary>
+    /// <remarks>
+    /// An <c>int?</c> rather than a sentinel because "no seed yet" and "the seed happened to
+    /// be zero" are different facts, and a journal that confused them would replay a run
+    /// that never drew a number as one that did.
+    /// </remarks>
+    private int? _randomSeed;
+
     private Error? _error;
 
     /// <summary>
@@ -125,13 +137,77 @@ public sealed class FlowExecutionContext : FlowContext
 
     /// <inheritdoc />
     /// <remarks>
+    /// <para>
     /// Created on first access, not on reset. Most flows never touch it, and building
     /// a <see cref="System.Random"/> eagerly cost an allocation on every execution —
     /// which measurement caught and review did not. Lazy creation also matches the
-    /// durability contract: the seed is journaled on first use (P2), so a flow that
-    /// never asks for randomness journals nothing.
+    /// durability contract: a flow that never asks for randomness has no seed to journal.
+    /// </para>
+    /// <para>
+    /// <strong>Built from a seed this context keeps, and that is the whole point.</strong>
+    /// <c>new Random()</c> picks its own seed and exposes it to nobody — not to a caller,
+    /// not to reflection, not to the type itself — so a generator built that way cannot be
+    /// reproduced by anything, and the replay guarantee described here would have been
+    /// undeliverable rather than merely unimplemented. Drawing the seed first and holding it
+    /// in <see cref="RandomSeed"/> makes the guarantee <em>possible</em>: the journal that
+    /// records it is P2 work and does not exist yet, but the value it has to record now does.
+    /// </para>
+    /// <para>
+    /// The seed comes from <see cref="System.Random.Shared"/> rather than from the clock or a
+    /// counter. Two executions starting in the same tick must not draw the same stream, and
+    /// <c>Random.Shared</c> is thread-safe and allocation-free — which matters because this
+    /// runs inside the property, on whichever thread first touched it, possibly a parallel
+    /// branch.
+    /// </para>
+    /// <para>
+    /// <strong>Budget B2 is untouched.</strong> The seed is drawn where the generator is
+    /// built — on first use — so a linear, conditional or switch flow that never reads
+    /// <c>ctx.Random</c> does exactly what it did before: nothing. The field costs a pooled
+    /// object four bytes and <see cref="Reset"/> one assignment. <c>EngineAllocationTests</c>
+    /// still measures 0 B on all four of those paths.
+    /// </para>
     /// </remarks>
-    public override Random Random => _random ??= new Random();
+    public override Random Random => _random ??= CreateRandom();
+
+    /// <summary>
+    /// The seed <see cref="Random"/> was constructed from, or <c>null</c> if this execution
+    /// never asked for randomness.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Public because the component that needs it is not the engine. Replay is a durability
+    /// concern: a journal writes this value when the execution ends and hands it back when
+    /// the run is reconstructed, and that journal lives outside this assembly. Nothing in
+    /// <c>FlowX.Runtime</c> reads it, and that is the correct shape — the engine's job is to
+    /// make the seed <em>knowable</em>, not to decide what is done with it.
+    /// </para>
+    /// <para>
+    /// Reading this does not create the generator. A caller that asks a flow which never drew
+    /// a number gets <c>null</c>, which is the honest answer and the one a journal wants:
+    /// there is nothing to record.
+    /// </para>
+    /// <para>
+    /// <strong>What this does not yet do.</strong> Replaying is not merely recording — the
+    /// context has no way to be <em>given</em> a seed, because there is nothing to give it
+    /// one. That direction arrives with the journal in P2. What exists today is the half
+    /// that has to exist first: a seed that is a value rather than a secret the BCL keeps.
+    /// </para>
+    /// </remarks>
+    public int? RandomSeed => _randomSeed;
+
+    /// <summary>Draws this execution's seed and builds the generator from it.</summary>
+    /// <remarks>
+    /// Separate from the property so the lazy path stays a null check and a call, and so the
+    /// two statements cannot drift apart — a generator built without its seed being recorded
+    /// is exactly the defect this replaced.
+    /// </remarks>
+    private Random CreateRandom()
+    {
+        var seed = System.Random.Shared.Next();
+        _randomSeed = seed;
+
+        return new Random(seed);
+    }
 
     /// <inheritdoc />
     public override string FlowId => _flowId;
@@ -368,6 +444,7 @@ public sealed class FlowExecutionContext : FlowContext
         _deadline = default;
         _clock = SystemClock.Instance;
         _random = null;
+        _randomSeed = null;
         _error = null;
         _dispatcher = null;
         _depth = 0;

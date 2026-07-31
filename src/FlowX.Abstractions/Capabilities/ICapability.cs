@@ -6,15 +6,34 @@ namespace FlowX;
 /// <em>around</em> it by the platform, never inside it.
 /// </summary>
 /// <remarks>
-/// <para>Compiler-enforced rules (docs/07-Capability-Model.md §3):</para>
+/// <para>
+/// The rules a capability obeys (docs/07-Capability-Model.md §3). <strong>Not all of them
+/// are enforced</strong>, and this list used to say they were — it was headed
+/// "Compiler-enforced rules" while citing three diagnostics that have no descriptor.
+/// `FlowXDiagnostics` deliberately does not stub a reserved code, on the grounds that
+/// "a descriptor nothing raises is a promise the compiler is not keeping"; a doc comment
+/// naming one is the same promise made somewhere the compiler cannot see it.
+/// </para>
+/// <para><strong>Enforced at build time:</strong></para>
 /// <list type="number">
 ///   <item>Exactly one input type and one output type — no overloads (FLOWX1015).</item>
 ///   <item>Expected failures are <see cref="Result{T}"/> values, not exceptions (FLOWX1016).</item>
 ///   <item>A capability never invokes another capability (FLOWX1004). Composition is the flow's job.</item>
 ///   <item>A capability never references a transport or plugin assembly (FLOWX1003).</item>
 ///   <item>A capability declares an authorisation stance (FLOWX1010).</item>
-///   <item>A capability is stateless: no mutable instance or static fields (FLOWX1009).</item>
-///   <item>Time, identifiers and randomness come from <see cref="CapabilityContext"/> only (FLOWX1007/1008).</item>
+/// </list>
+/// <para>
+/// <strong>Required, and not enforced.</strong> These three are blocked on P2: their
+/// analysis is the determinism check <c>PredicatePurityAnalyzer</c> already performs for
+/// flow delegates, but their severity is defined against the <c>Durable</c> profile, and
+/// the runtime does not yet read <see cref="ExecutionProfile"/> at all — see FLOWX1028.
+/// </para>
+/// <list type="number">
+///   <item>A capability is stateless: no mutable instance or static fields (would be FLOWX1009).</item>
+///   <item>Time, identifiers and randomness come from <see cref="CapabilityContext"/> only
+///     (would be FLOWX1007/1008).</item>
+///   <item>Contract types are immutable records serialisable by a generated context
+///     (would be FLOWX1006, blocked on the serialiser P2 chooses).</item>
 /// </list>
 /// <para>
 /// Rule 3 is the load-bearing one: because capabilities cannot call each other, the
