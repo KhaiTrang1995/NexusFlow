@@ -8,22 +8,28 @@ namespace FlowX.Hosting;
 /// </summary>
 /// <remarks>
 /// <para>
-/// A thin wrapper over <see cref="FlowEngine"/> that adds exactly one concern the
-/// engine deliberately does not have: <strong>lifecycle</strong>. The engine executes
-/// a plan; this decides whether the process is still willing to start one.
+/// A thin wrapper over <see cref="FlowEngine"/> that adds exactly two concerns the
+/// engine deliberately does not have: <strong>lifecycle</strong> and, since WP-55,
+/// <strong>ownership</strong>. The engine executes a plan; this decides whether the process
+/// is still willing to start one, and — for a flow that declared <c>Durable</c> — takes the
+/// lease that makes this node the instance's only writer before it does.
 /// </para>
 /// <para>
-/// Keeping the counter here rather than in the engine matters. The engine is on the
-/// hot path and its allocation budget is a hard zero; a host that wants richer
-/// lifecycle behaviour later — quotas, per-tenant admission — extends this class
-/// without touching the step loop.
+/// Keeping both here rather than in the engine matters. The engine is on the hot path and
+/// its allocation budget is a hard zero; a lease has a TTL, a renewal timer and a store
+/// round trip, and none of those belong inside a step loop an ephemeral flow shares. An
+/// ephemeral flow reaches the engine through the same call it always did, past one
+/// comparison on the plan's declared profile.
 /// </para>
 /// </remarks>
 public sealed class FlowHost
 {
     private readonly FlowEngine _engine;
     private readonly FlowXOptions _options;
+    private readonly FlowDurability? _durability;
+    private readonly LeasePolicy _policy;
     private readonly object _sync = new();
+    private readonly HashSet<DurableLease> _leases = [];
 
     /// <summary>
     /// Why work is refused during a drain. Accepting work during a drain is why drains
@@ -41,23 +47,47 @@ public sealed class FlowHost
     private volatile bool _ready;
 
     /// <summary>Creates a host over an engine.</summary>
-    public FlowHost(FlowEngine engine, FlowXOptions options)
+    /// <param name="engine">The step loop.</param>
+    /// <param name="options">The validated host options.</param>
+    /// <param name="durability">
+    /// The journal and lease store, when this host is wired for durable execution. Null
+    /// leaves a <c>Durable</c> flow refused with <c>flow.durability_not_configured</c>, which
+    /// is the honest answer for a host that has registered no journal.
+    /// </param>
+    public FlowHost(FlowEngine engine, FlowXOptions options, FlowDurability? durability = null)
     {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(options);
 
         _engine = engine;
         _options = options;
+        _durability = durability;
+        _policy = FlowDurability.PolicyFor(options);
     }
 
     /// <summary>How many flows are executing right now.</summary>
     public int InFlight => Volatile.Read(ref _inFlight);
+
+    /// <summary>How many durable instances this node currently owns a lease on.</summary>
+    public int HeldLeases
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _leases.Count;
+            }
+        }
+    }
 
     /// <summary>True once shutdown has begun. New work is refused from this point.</summary>
     public bool IsDraining => _draining;
 
     /// <summary>True once the host is ready to serve. Drives the readiness probe.</summary>
     public bool IsReady => _ready && !_draining;
+
+    /// <summary>Whether this host can execute a flow that declares <c>Durable</c>.</summary>
+    public bool IsDurabilityConfigured => _durability is not null;
 
     /// <summary>Marks the host ready. Called by the hosted service after registration completes.</summary>
     public void MarkReady() => _ready = true;
@@ -79,7 +109,30 @@ public sealed class FlowHost
 
         try
         {
-            return await _engine.ExecuteAsync(plan, dispatcher, invocation, ct).ConfigureAwait(false);
+            if (!IsJournaled(plan))
+            {
+                return await _engine.ExecuteAsync(plan, dispatcher, invocation, ct).ConfigureAwait(false);
+            }
+
+            var opened = await OpenAsync(plan, invocation, ct).ConfigureAwait(false);
+
+            if (opened.IsFailure)
+            {
+                return FlowExecutionResult.Rejected(opened.Error);
+            }
+
+            var session = opened.Value;
+
+            try
+            {
+                return await _engine
+                    .ExecuteAsync(plan, dispatcher, invocation, session.Run, ct)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                await CloseAsync(session.Lease).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -106,7 +159,32 @@ public sealed class FlowHost
 
         try
         {
-            return await _engine.ExecuteAsync(plan, dispatcher, invocation, input, ct).ConfigureAwait(false);
+            if (!IsJournaled(plan))
+            {
+                return await _engine
+                    .ExecuteAsync(plan, dispatcher, invocation, input, ct)
+                    .ConfigureAwait(false);
+            }
+
+            var opened = await OpenAsync(plan, invocation, ct).ConfigureAwait(false);
+
+            if (opened.IsFailure)
+            {
+                return FlowExecutionResult.Rejected(opened.Error);
+            }
+
+            var session = opened.Value;
+
+            try
+            {
+                return await _engine
+                    .ExecuteAsync(plan, dispatcher, invocation, input, session.Run, ct)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                await CloseAsync(session.Lease).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -140,9 +218,126 @@ public sealed class FlowHost
 
         try
         {
-            return await _engine
-                .ExecuteAsync(plan, dispatcher, invocation, input, projection, ct)
+            if (!IsJournaled(plan))
+            {
+                return await _engine
+                    .ExecuteAsync(plan, dispatcher, invocation, input, projection, ct)
+                    .ConfigureAwait(false);
+            }
+
+            var opened = await OpenAsync(plan, invocation, ct).ConfigureAwait(false);
+
+            if (opened.IsFailure)
+            {
+                return FlowExecutionResult.Rejected<TOut>(opened.Error);
+            }
+
+            var session = opened.Value;
+
+            try
+            {
+                return await _engine
+                    .ExecuteAsync(plan, dispatcher, invocation, input, projection, session.Run, ct)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                await CloseAsync(session.Lease).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            Exit();
+        }
+    }
+
+    /// <summary>
+    /// Takes over an instance another node left running and finishes it, through the same
+    /// step loop that started it.
+    /// </summary>
+    /// <param name="instanceId">The instance to take over.</param>
+    /// <param name="registration">The plan the instance is pinned to, and its dispatcher.</param>
+    /// <param name="ct">The caller's cancellation token.</param>
+    /// <returns>
+    /// How the resumed instance ended, or a rejection: <c>host.draining</c> when this node is
+    /// shutting down, <c>lease.held</c> when another node got there first — which during a
+    /// recovery scan is the ordinary answer and not a failure — or the journal's refusal.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>There is no recovery path here, and that is the design.</strong> The lease is
+    /// acquired, its token raises the instance's fence, the frontier is read, and what comes
+    /// back is handed to the same <c>ExecuteAsync</c> a fresh instance uses. Compensation
+    /// ordering, deadline handling and <c>ForEach</c> scoping cannot drift between a first
+    /// run and a resumed one because there is only one of each (ADR-0015).
+    /// </para>
+    /// <para>
+    /// The invocation is rebuilt from the instance row rather than invented: the correlation
+    /// id ties the resumed steps to the request that started the flow, and the deadline is
+    /// the one that trigger bought. An instance whose deadline has passed resumes, finds it
+    /// expired at its first step and times out — which is the correct end for it, and a
+    /// quieter one than never being picked up.
+    /// </para>
+    /// </remarks>
+    public async ValueTask<FlowExecutionResult> ResumeAsync(
+        Guid instanceId,
+        FlowRegistration registration,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(registration);
+
+        if (_durability is null)
+        {
+            return FlowExecutionResult.Rejected(
+                FlowErrors.DurabilityNotConfigured(registration.Plan.Flow.Id));
+        }
+
+        if (!TryEnter())
+        {
+            return FlowExecutionResult.Rejected(Draining);
+        }
+
+        try
+        {
+            var acquired = await DurableLease
+                .AcquireAsync(_durability.Leases, instanceId, _options.NodeName, _policy, ct)
                 .ConfigureAwait(false);
+
+            if (acquired.IsFailure)
+            {
+                return FlowExecutionResult.Rejected(acquired.Error);
+            }
+
+            var lease = acquired.Value;
+
+            Track(lease);
+
+            try
+            {
+                var resumed = await lease.ResumeAsync(_durability.Journal, ct).ConfigureAwait(false);
+
+                if (resumed.IsFailure)
+                {
+                    return FlowExecutionResult.Rejected(resumed.Error);
+                }
+
+                var run = resumed.Value;
+                var record = run.Frontier!.Instance;
+
+                var invocation = new FlowInvocation(
+                    record.CorrelationId,
+                    instanceId.ToString(),
+                    record.TenantId,
+                    record.DeadlineAt);
+
+                return await _engine
+                    .ExecuteAsync(registration.Plan, registration.Dispatcher, invocation, run, ct)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                await CloseAsync(lease).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -172,6 +367,18 @@ public sealed class FlowHost
     /// fire-and-forget saga was mid-way through its effects — and the kill that follows a
     /// successful drain would leave them uncompensated. The engine counts them; this waits
     /// for both.
+    /// </para>
+    /// <para>
+    /// <strong>Held leases are released last, and only the ones nothing gave back.</strong>
+    /// A flow that finished inside the budget released its own; what is left belongs to one
+    /// the budget ran out on, and leaving those to expire would make the next node wait a
+    /// full TTL for work this one has abandoned — the delay
+    /// <c>docs/11-Distributed-Runtime.md §7</c> exists to remove. Releasing while an
+    /// execution is still running is safe in the sense that matters: the next owner fences
+    /// the journal, so this node's remaining commits are refused rather than accepted, and a
+    /// refusal that says "you are not the writer" no longer compensates. It is not safe in
+    /// the other sense — a step already in flight completes and its effects stand — which is
+    /// the same trade the TTL makes, taken sooner and deliberately.
     /// </para>
     /// </remarks>
     public async ValueTask<bool> DrainAsync(CancellationToken ct = default)
@@ -218,7 +425,107 @@ public sealed class FlowHost
             .WaitForDetachedAsync(_options.ShutdownDrainTimeout, ct)
             .ConfigureAwait(false);
 
+        await ReleaseRemainingLeasesAsync().ConfigureAwait(false);
+
         return drained && detached;
+    }
+
+    /// <summary>Whether this execution journals: the flow asked for it and the host can.</summary>
+    /// <remarks>
+    /// One comparison on the ephemeral path, against a field the plan already holds — the
+    /// same bargain <c>ExecutionPlan.HasParallel</c> struck for the fork lock. A
+    /// <c>Durable</c> flow on a host with no journal falls through to the engine, which
+    /// refuses it with <c>flow.durability_not_configured</c>: the refusal belongs where the
+    /// profile is read, and not in two places that can disagree about it.
+    /// </remarks>
+    private bool IsJournaled(ExecutionPlan plan) =>
+        _durability is not null && plan.Flow.Profile == ExecutionProfile.Durable;
+
+    /// <summary>
+    /// Wins the instance and opens it: acquire, then start, in that order and no other.
+    /// </summary>
+    /// <remarks>
+    /// The instance id is minted here and it is version 7, so a journal's primary key is
+    /// time-ordered rather than scattered across its index. A trigger that wants a redelivery
+    /// to be idempotent supplies its own id through <c>DurableExecution.BeginAsync</c>; this
+    /// path is for a caller that has none to offer, and minting one per invocation is the
+    /// honest behaviour for that case.
+    /// </remarks>
+    private async ValueTask<Result<Session>> OpenAsync(
+        ExecutionPlan plan,
+        FlowInvocation invocation,
+        CancellationToken ct)
+    {
+        var durability = _durability!;
+        var instanceId = Guid.CreateVersion7();
+
+        var acquired = await DurableLease
+            .AcquireAsync(durability.Leases, instanceId, _options.NodeName, _policy, ct)
+            .ConfigureAwait(false);
+
+        if (acquired.IsFailure)
+        {
+            return Result.Fail<Session>(acquired.Error);
+        }
+
+        var lease = acquired.Value;
+
+        Track(lease);
+
+        // The token the lease just issued becomes the instance's opening fence, because
+        // StartAsync carries it. There is no window in which the row exists at a fence lower
+        // than the lease that created it.
+        var begun = await lease
+            .BeginAsync(durability.Journal, plan, invocation, input: null, ct)
+            .ConfigureAwait(false);
+
+        if (begun.IsFailure)
+        {
+            await CloseAsync(lease).ConfigureAwait(false);
+
+            return Result.Fail<Session>(begun.Error);
+        }
+
+        return Result.Ok(new Session(lease, begun.Value));
+    }
+
+    private void Track(DurableLease lease)
+    {
+        lock (_sync)
+        {
+            _leases.Add(lease);
+        }
+    }
+
+    private async ValueTask CloseAsync(DurableLease lease)
+    {
+        lock (_sync)
+        {
+            _leases.Remove(lease);
+        }
+
+        await lease.DisposeAsync().ConfigureAwait(false);
+    }
+
+    private async ValueTask ReleaseRemainingLeasesAsync()
+    {
+        DurableLease[] remaining;
+
+        lock (_sync)
+        {
+            if (_leases.Count == 0)
+            {
+                return;
+            }
+
+            remaining = [.. _leases];
+            _leases.Clear();
+        }
+
+        foreach (var lease in remaining)
+        {
+            await lease.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     private bool TryEnter()
@@ -247,4 +554,7 @@ public sealed class FlowHost
             }
         }
     }
+
+    /// <summary>One durable execution as this host holds it: the lease, and what it opened.</summary>
+    private readonly record struct Session(DurableLease Lease, DurableExecution Run);
 }

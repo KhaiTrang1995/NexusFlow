@@ -12,6 +12,15 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+
+    <!--
+      Durable execution end to end is exercised against the reference IFlowJournal and
+      ILeaseStore rather than doubles written here. A second in-memory pair would be a pair
+      nothing holds to the conformance suites, and the first thing it would drift on is the
+      fencing check — the behaviour every guarantee in this package rests on. Referenced for
+      its types; its own suites run in its own assembly.
+    -->
+    <ProjectReference Include="../FlowX.Conformance.Tests/FlowX.Conformance.Tests.csproj" />
   </ItemGroup>
 
 </Project>

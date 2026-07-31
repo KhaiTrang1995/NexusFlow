@@ -38,6 +38,58 @@ public sealed class FlowXOptions
     /// on its own schedule, not on this one.
     /// </remarks>
     public TimeSpan ShutdownDrainTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// How this node identifies itself when it takes a lease.
+    /// </summary>
+    /// <remarks>
+    /// It goes on the lease and into <c>lease.held</c>, so it is what an operator reads to
+    /// answer "who has this instance". The machine name is a defensible default and a poor
+    /// one under an orchestrator that recycles them; set it to the pod name where there is
+    /// one.
+    /// </remarks>
+    public string NodeName { get; set; } = Environment.MachineName;
+
+    /// <summary>How long a lease on a durable instance lasts without a renewal.</summary>
+    /// <remarks>
+    /// Shorter means a crashed node's instances are picked up sooner and every holder renews
+    /// more often. It is a latency setting, not a safety one: what stops a paused node from
+    /// corrupting an instance is the fencing token, which no value here weakens.
+    /// </remarks>
+    public TimeSpan LeaseTtl { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>How often a held lease is renewed. A third of the TTL by default.</summary>
+    /// <remarks>
+    /// The margin absorbs two lost renewals — a GC pause, clock skew, a slow store — before
+    /// the lease lapses. A node that has missed two in a row has something wrong with it that
+    /// another node is better placed to work around.
+    /// </remarks>
+    public TimeSpan LeaseRenewalInterval { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>How often this node looks for instances a dead node left running.</summary>
+    /// <remarks>
+    /// Applied with jitter, and that is not decoration: identical nodes on an identical
+    /// interval converge on the same instant, and a fleet that scans in lockstep is the
+    /// thundering herd <c>docs/11-Distributed-Runtime.md</c> warns about wearing a timer.
+    /// </remarks>
+    public TimeSpan RecoveryScanInterval { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>How many candidates one scan asks the journal for.</summary>
+    /// <remarks>
+    /// A page, never the backlog. After an outage the number of abandoned instances is
+    /// unbounded and the work a node can take is not, so a scan that fetched everything would
+    /// turn one node's recovery into every node's memory pressure.
+    /// </remarks>
+    public int RecoveryScanBatchSize { get; set; } = 64;
+
+    /// <summary>How many abandoned instances this node resumes at once.</summary>
+    /// <remarks>
+    /// The real limit on a stampede. Acquisition decides who wins each instance, but a design
+    /// in which every node tries every instance is wrong even when it is safe — this bounds
+    /// what one node attempts, and it does not ask for another page until the ones it took
+    /// are finished.
+    /// </remarks>
+    public int MaxConcurrentRecoveries { get; set; } = 8;
 }
 
 /// <summary>
@@ -91,6 +143,59 @@ internal sealed class FlowXOptionsValidator : IValidateOptions<FlowXOptions>
             failures.Add(
                 $"{nameof(FlowXOptions.ShutdownDrainTimeout)} cannot be negative; it is " +
                 $"{options.ShutdownDrainTimeout}.");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.NodeName))
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.NodeName)} is required. It is what a lease records as " +
+                "its owner, and an unnamed owner makes 'who holds this instance' " +
+                "unanswerable at exactly the moment it is asked.");
+        }
+
+        if (options.LeaseTtl <= TimeSpan.Zero)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.LeaseTtl)} must be positive; it is {options.LeaseTtl}. " +
+                "A lease that has already expired when it is issued is not a lease.");
+        }
+
+        if (options.LeaseRenewalInterval <= TimeSpan.Zero)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.LeaseRenewalInterval)} must be positive; it is " +
+                $"{options.LeaseRenewalInterval}.");
+        }
+        else if (options.LeaseRenewalInterval >= options.LeaseTtl)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.LeaseRenewalInterval)} ({options.LeaseRenewalInterval}) " +
+                $"must be shorter than {nameof(FlowXOptions.LeaseTtl)} ({options.LeaseTtl}). " +
+                "Renewing no sooner than the expiry means every renewal races the lapse it " +
+                "exists to prevent; docs/11-Distributed-Runtime.md §3 asks for a third of it.");
+        }
+
+        if (options.RecoveryScanInterval <= TimeSpan.Zero)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.RecoveryScanInterval)} must be positive; it is " +
+                $"{options.RecoveryScanInterval}. A zero interval is a scan loop with no " +
+                "pause in it, which is a denial of service aimed at your own journal.");
+        }
+
+        if (options.RecoveryScanBatchSize <= 0)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.RecoveryScanBatchSize)} must be greater than zero; it " +
+                $"is {options.RecoveryScanBatchSize}.");
+        }
+
+        if (options.MaxConcurrentRecoveries <= 0)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.MaxConcurrentRecoveries)} must be greater than zero; " +
+                $"it is {options.MaxConcurrentRecoveries}. Zero is not 'recovery disabled' — " +
+                "leave the journal without an IRecoveryIndex for that.");
         }
 
         return failures.Count == 0

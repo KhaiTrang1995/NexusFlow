@@ -25,6 +25,17 @@ public static class FlowXServiceCollectionExtensions
     /// runs lazily, on the first request after a deploy, when traffic is already
     /// routed to the new pod (OWASP A05).
     /// </para>
+    /// <para>
+    /// <strong>Durability is opted into by registering stores, not by a flag here.</strong>
+    /// An application that registers an <see cref="IFlowJournal"/> and an
+    /// <see cref="ILeaseStore"/> gets a host that runs <c>Durable</c> flows; one that also
+    /// registers an <see cref="IRecoveryIndex"/> gets a node that picks up instances a dead
+    /// node left behind. One that registers neither keeps the behaviour WP-52 landed — a
+    /// <c>Durable</c> flow refused with <c>flow.durability_not_configured</c> — which is
+    /// what an unconfigured host should say. A store implementing more than one of the three
+    /// must be registered under each interface it implements: the container matches on the
+    /// service type, not on what the instance turns out to be.
+    /// </para>
     /// </remarks>
     public static IServiceCollection AddFlowX(
         this IServiceCollection services,
@@ -53,9 +64,20 @@ public static class FlowXServiceCollectionExtensions
             return new FlowEngine(provider.GetRequiredService<IClock>(), options.MaxPooledContexts);
         });
 
+        // The catalogue is registered whether or not anything is put in it. It is only read
+        // by the recovery scan, and a host with no flows registered simply finds no candidate
+        // it can run — which is the same answer as an empty backlog and needs no branch.
+        services.TryAddSingleton<FlowCatalog>();
+
         services.TryAddSingleton(provider => new FlowHost(
             provider.GetRequiredService<FlowEngine>(),
-            provider.GetRequiredService<IOptions<FlowXOptions>>().Value));
+            provider.GetRequiredService<IOptions<FlowXOptions>>().Value,
+            ResolveDurability(provider)));
+
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowRecoveryService>(
+            static provider => new FlowRecoveryService(
+                ResolveScan(provider),
+                provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
 
         services.TryAddSingleton<FlowXHealthCheck>();
 
@@ -73,6 +95,49 @@ public static class FlowXServiceCollectionExtensions
             ServiceDescriptor.Singleton<IHostedService, FlowXLifecycleService>());
 
         return services;
+    }
+
+    /// <summary>
+    /// The stores this host was given, or null when it was given none.
+    /// </summary>
+    /// <remarks>
+    /// Resolved through <see cref="ServiceProviderServiceExtensions.GetService{T}"/> rather
+    /// than required, because an unconfigured host is a supported configuration and not a
+    /// mistake. An application that wants to build the bundle itself — a store that plays two
+    /// roles, or one wrapped in decorators — registers a <see cref="FlowDurability"/> and
+    /// that wins.
+    /// </remarks>
+    private static FlowDurability? ResolveDurability(IServiceProvider provider)
+    {
+        if (provider.GetService<FlowDurability>() is { } configured)
+        {
+            return configured;
+        }
+
+        var journal = provider.GetService<IFlowJournal>();
+        var leases = provider.GetService<ILeaseStore>();
+
+        // Both or neither. A journal with no lease store would write under a token nothing
+        // issued; a lease store with no journal would fence nothing.
+        return journal is not null && leases is not null
+            ? new FlowDurability(journal, leases, provider.GetService<IRecoveryIndex>())
+            : null;
+    }
+
+    /// <summary>The recovery sweep, or null when this host has nothing to sweep with.</summary>
+    private static FlowRecoveryScan? ResolveScan(IServiceProvider provider)
+    {
+        if (ResolveDurability(provider) is not { CanScan: true } durability)
+        {
+            return null;
+        }
+
+        return new FlowRecoveryScan(
+            provider.GetRequiredService<FlowHost>(),
+            provider.GetRequiredService<FlowCatalog>(),
+            durability,
+            provider.GetRequiredService<IOptions<FlowXOptions>>().Value,
+            provider.GetRequiredService<IClock>());
     }
 }
 
