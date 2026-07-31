@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      ADR-0009 makes the conformance suite the semantic contract for every plugin, and
+      docs/17-Plugin-System.md §5 publishes it so a third party can self-certify by running
+      `dotnet test` against it. That is why the suites are public abstract classes with a
+      single abstract factory: a store author derives, supplies a store, and inherits every
+      assertion unchanged. Deriving is the only supported way to claim conformance —
+      copying a test into another repository proves nothing about the version it was copied
+      from.
+
+      The suite is not packed yet. It ships when the second and third stores exist to be
+      held to it (WP-53, WP-54); packing a contract whose only consumer is the reference
+      implementation in this same project would publish a shape nothing has pushed back on.
+      The in-memory store below is what moves out on that day.
+    -->
+    <RootNamespace>FlowX.Conformance</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit.v3" Version="2.0.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.3" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

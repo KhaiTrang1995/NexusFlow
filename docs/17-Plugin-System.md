@@ -1,30 +1,46 @@
 # 17 — Plugin System
 
-> **Status:** Accepted as a specification · **one extension point, no conformance suite** ·
+> **Status:** Accepted as a specification · **one extension point, two of six conformance suites** ·
 > **Audience:** plugin authors, platform engineers
 > **Answers:** what can be extended, against what contract, and how is compatibility guaranteed?
 
 > [!WARNING]
 > **Almost none of the extension surface below is declared yet.**
-> `ITriggerSource`, `ITriggerSink`, `IFlowJournal`, `ILeaseStore`,
-> `IEventPublisher`, `IIdempotencyStore`, `IPayloadSerializer`, `IPolicyHandler`,
-> `ISecretProvider`, `ITenantResolver`, `IJournalArchiver`, `IAiProvider` and
-> `ICapabilityPackage` do not exist in `src/FlowX.Abstractions` or anywhere else.
-> A plugin author cannot compile against them today.
+> `ITriggerSource`, `ITriggerSink`, `IEventPublisher`, `IIdempotencyStore`,
+> `IPayloadSerializer`, `IPolicyHandler`, `ISecretProvider`, `ITenantResolver`,
+> `IJournalArchiver`, `IAiProvider` and `ICapabilityPackage` do not exist in
+> `src/FlowX.Abstractions` or anywhere else. A plugin author cannot compile
+> against them today.
+>
+> **Two do.** `IFlowJournal` and `ILeaseStore` were declared at WP-51, in
+> `src/FlowX.Abstractions/Durability/`, with the conformance suites described
+> below. Nothing implements them outside a test, and `FlowX.Runtime` does not
+> call them: the seam that makes a `Durable` flow use them is WP-52.
 >
 > There is **one plugin**, `plugins/FlowX.Http`, and it extends FlowX by
 > referencing `FlowX.Abstractions` and mapping ASP.NET Core onto
 > `TriggerEnvelope` — the pattern this document describes, without the interface
 > that would formalise it.
 >
-> **`FlowX.Conformance.Tests` does not exist**, so §5's suite tree, the
-> "conformance suite is the real contract" rule, and the release-blocking gate
-> in [09 §11](09-Trigger-Model.md#11-writing-a-trigger-plugin) are all
-> statements about a package nobody can install. Publishing it is the named
+> **`FlowX.Conformance.Tests` is two of §5's six rows and nothing else.**
+> `tests/FlowX.Conformance.Tests` holds `JournalConformance` and
+> `LeaseStoreConformance`; a store claims conformance by deriving from them and
+> supplying itself. `TriggerSourceConformance`, `PublisherConformance`,
+> `SerializerConformance` and `PolicyHandlerConformance` are not written, so the
+> release-blocking gate in
+> [09 §11](09-Trigger-Model.md#11-writing-a-trigger-plugin) is still a statement
+> about tests nobody can run.
+>
+> **It is not published, and it has never met a database.** The project is not
+> packable, so "a third party runs `dotnet test` against the suite" describes
+> P3's WP-70 rather than anything anyone can do today; the two suites that exist
+> have been run against one in-memory reference implementation and against
+> deliberately broken stores that they reject by name. Publishing is the named
 > mitigation for risks R3 and R8 in
-> [05 §11](05-Architecture.md#11-risks-and-technical-debt) and is a **P3**
-> deliverable; `PluginsPassConformance` is recorded as blocked in
-> [21 §2.4](21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced).
+> [05 §11](05-Architecture.md#11-risks-and-technical-debt);
+> `PluginsPassConformance` stays blocked in
+> [21 §2.4](21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced),
+> because one transport is still one data point.
 >
 > One rule in this document is enforced today, and it is the load-bearing one:
 > `AbstractionsHasNoDependencies` fails the build if `FlowX.Abstractions` gains
@@ -152,14 +168,21 @@ while behaviour drifts; the suite is what catches that, for first-party and
 third-party plugins alike.
 
 ```
-FlowX.Conformance.Tests            # shipped as a NuGet package
-├── TriggerSourceConformance       # 7 mandatory tests — see docs/09 §11
-├── JournalConformance             # atomicity, fencing, ordering, idempotent replay
-├── LeaseStoreConformance          # exclusivity, expiry, monotonic fencing tokens
-├── PublisherConformance           # at-least-once, per-key ordering, DLQ
-├── SerializerConformance          # round-trip, versioning, redaction of [Sensitive]
-└── PolicyHandlerConformance       # stage placement, deadline awareness, telemetry schema
+FlowX.Conformance.Tests            # to be shipped as a NuGet package at WP-70
+├── TriggerSourceConformance       # NOT WRITTEN — 7 mandatory tests, see docs/09 §11
+├── JournalConformance             # WP-51 · the key incl. scope, fencing, atomicity,
+│                                  #   commit order, replay capture, derived resume,
+│                                  #   child instances, redacted payloads
+├── LeaseStoreConformance          # WP-51 · exclusivity, expiry, monotonic fencing tokens
+├── PublisherConformance           # NOT WRITTEN — at-least-once, per-key ordering, DLQ
+├── SerializerConformance          # NOT WRITTEN — round-trip, versioning, redaction
+└── PolicyHandlerConformance       # NOT WRITTEN — stage placement, deadline, telemetry
 ```
+
+The two that exist are abstract classes: a store derives, overrides one factory
+method and inherits every assertion. Editing the suite to make a store pass is a
+disagreement about the contract, not a local fix, which is the property that makes
+"the suite is the real contract" mean something.
 
 A third party runs `dotnet test` against the suite and publishes the result — the
 same badge first-party plugins carry. No certification committee, no gatekeeping;
