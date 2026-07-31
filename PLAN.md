@@ -8,9 +8,12 @@
 > with every change. This document changes only when the *plan* changes.
 >
 > **Where we are:** **P0 is complete and passed its kill criterion** (B1 172 ns
-> against 5 µs, B2 zero — [P0.md](docs/benchmarks/P0.md)). **P1 — Compiler
-> hardening** is in progress; §4 below carries its work packages, derived from the
-> roadmap's P1 scope.
+> against 5 µs, B2 zero — [P0.md](docs/benchmarks/P0.md)). **P1 — Compiler hardening
+> is closed with one exit criterion unmet and accepted** — the build-overhead
+> budget, at **+67.1 %** against ≤ 8 %; see [§4](#4-p1--compiler-hardening), which
+> states the exception before it states anything else. **P2 — Durable execution**
+> is next; [§5](#5-p2--durable-execution) carries its work packages and
+> [§6](#6-p3--transport-breadth) sketches P3.
 
 ---
 
@@ -74,6 +77,31 @@ flowchart TD
     WP31["WP-31 · Cost gate<br/>relative · blocking"]
     WP30["WP-30 · Fitness<br/>security gates"]
     WP32["WP-32 · ADR-0014<br/>catalogue vs budget"]
+    WP48["WP-48 · Gate<br/>close P1 · B12 excepted"]
+
+    WP50["WP-50 · Harness first<br/>B7 · B8 · chaos rig"]
+    WP51["WP-51 · Contracts<br/>journal · lease · conformance"]
+    WP52["WP-52 · The seam<br/>runtime reads the profile"]
+    WP53["WP-53 · Postgres<br/>journal + lease"]
+    WP54["WP-54 · Redis<br/>lease store"]
+    WP55["WP-55 · Resume<br/>recovery scan · fencing"]
+    WP56["WP-56 · Outbox<br/>same tx · publisher"]
+    WP57["WP-57 · Compensation<br/>its own policies"]
+    WP58["WP-58 · FLOWX1007-1009<br/>determinism, as a set"]
+    WP59["WP-59 · FLOWX1006<br/>payload contract"]
+    WP60["WP-60 · FLOWX1012<br/>the fix becomes true"]
+    WP61["WP-61 · Replay<br/>determinism corpus"]
+    WP62["WP-62 · QR2<br/>10 000 flows, SIGKILL"]
+    WP63["WP-63 · AwaitSignal<br/>Delay · timers"]
+    WP64["WP-64 · flowx replay<br/>--mode inspect"]
+
+    WP70["WP-70 · Conformance<br/>suite as a package"]
+    WP71["WP-71 · Unchanged-file<br/>assertion, built first"]
+    WP72["WP-72 · Kafka"]
+    WP73["WP-73 · RabbitMQ"]
+    WP74["WP-74 · Azure Service Bus"]
+    WP75["WP-75 · Cron<br/>leader election"]
+    WP76["WP-76 · Should<br/>gRPC · MQTT · webhooks"]
 
     WP0 --> WP1 --> WP2 --> WP3
     WP2 --> WP4
@@ -96,9 +124,42 @@ flowchart TD
     WP15 --> WP21 --> WP25
     WP22 --> WP32
     WP1 --> WP30
+    WP31 --> WP48
+    WP32 --> WP48
+    WP33 --> WP48
+
+    WP48 --> WP50 --> WP51 --> WP52
+    WP51 --> WP53
+    WP51 --> WP54
+    WP52 --> WP55
+    WP53 --> WP55
+    WP54 --> WP55
+    WP53 --> WP56
+    WP52 --> WP58
+    WP52 --> WP59
+    WP52 --> WP60
+    WP55 --> WP57
+    WP55 --> WP61
+    WP55 --> WP63
+    WP58 --> WP61
+    WP56 --> WP62
+    WP57 --> WP62
+    WP61 --> WP62
+    WP61 --> WP64
+
+    WP62 --> WP70 --> WP71
+    WP71 --> WP72
+    WP71 --> WP73
+    WP71 --> WP74
+    WP55 --> WP75
+    WP70 --> WP75
+    WP72 --> WP76
 
     style WP3 fill:#fff3cd,stroke:#856404
     style WP11 fill:#f8d7da,stroke:#721c24
+    style WP48 fill:#f8d7da,stroke:#721c24
+    style WP50 fill:#fff3cd,stroke:#856404
+    style WP71 fill:#fff3cd,stroke:#856404
     style WP1 fill:#d4edda,stroke:#155724
     style WP15 fill:#cfe2ff,stroke:#084298
     style WP20 fill:#cfe2ff,stroke:#084298
@@ -119,11 +180,47 @@ flowchart TD
     style WP30 fill:#cfe2ff,stroke:#084298
     style WP31 fill:#cfe2ff,stroke:#084298
     style WP32 fill:#cfe2ff,stroke:#084298
+
+    style WP51 fill:#e2d9f3,stroke:#432874
+    style WP52 fill:#e2d9f3,stroke:#432874
+    style WP53 fill:#e2d9f3,stroke:#432874
+    style WP54 fill:#e2d9f3,stroke:#432874
+    style WP55 fill:#e2d9f3,stroke:#432874
+    style WP56 fill:#e2d9f3,stroke:#432874
+    style WP57 fill:#e2d9f3,stroke:#432874
+    style WP58 fill:#e2d9f3,stroke:#432874
+    style WP59 fill:#e2d9f3,stroke:#432874
+    style WP60 fill:#e2d9f3,stroke:#432874
+    style WP61 fill:#e2d9f3,stroke:#432874
+    style WP62 fill:#e2d9f3,stroke:#432874
+    style WP63 fill:#e2d9f3,stroke:#432874
+    style WP64 fill:#e2d9f3,stroke:#432874
+
+    style WP70 fill:#ffe5d0,stroke:#8a4b08
+    style WP72 fill:#ffe5d0,stroke:#8a4b08
+    style WP73 fill:#ffe5d0,stroke:#8a4b08
+    style WP74 fill:#ffe5d0,stroke:#8a4b08
+    style WP75 fill:#ffe5d0,stroke:#8a4b08
+    style WP76 fill:#ffe5d0,stroke:#8a4b08
 ```
 
-WP-0 through WP-14 are P0 (complete); WP-15 onward are **P1**, in blue. The DSL chain
+WP-0 through WP-14 are P0 (complete); WP-15 through WP-47 are **P1**, in blue; WP-50
+onward are **P2**, in purple, and WP-70 onward **P3**, in orange. The DSL chain
 WP-15 → 20 → 24 → 29 → 33 is **complete**: all five shapes the roadmap's full-DSL Must
-names now ship.
+names now ship. **WP-48 is a phase gate**, red like WP-11: P0's gate answered a kill
+criterion, P1's records which criterion it is closing over.
+
+**The two yellow nodes are the same node WP-3 was.** WP-50 and WP-71 are harnesses
+scheduled ahead of the things they measure, for the reason §2 has stated since P0 and
+which P1 then proved the hard way — see [below](#the-lesson-b12-taught-twice).
+
+**P2 numbering starts at WP-50, and the gap is deliberate.** WP-45 to WP-49 belong to
+P1's close — WP-48 is this document's own package — and several are in flight on parallel
+branches as this is written. Two rules were once authored against `FLOWX1028`
+simultaneously in separate branches and collided at merge, which is why the diagnostics
+index now requires an id to be claimed in one file, in its own commit, before the rule is
+written. A work-package number is the same kind of object, and this file is where it is
+claimed.
 
 **This diagram stopped at WP-19 for most of P1 and was wrong the whole time.** It is
 recorded here rather than quietly corrected, because the failure is the same one the
@@ -149,6 +246,54 @@ becomes measurable only after the thing it constrains is built is a budget that
 gets renegotiated instead of met. The benchmark harness measures an empty step
 loop first, so every subsequent commit is measured against a number that already
 exists.
+
+### The lesson B12 taught twice
+
+That sentence about WP-3 was written as a principle. **P1 then supplied the
+counterexample, and it is the reason this phase closes over an unmet criterion.**
+
+B12 — build overhead ≤ 8 % — was declared in [14-Performance §1](docs/14-Performance.md)
+and had no harness through the whole of P0. Nothing measured it until WP-14, by which
+point the generator existed; nothing measured it *at realistic scale* until WP-18, by
+which point five DSL shapes and the derived error catalogue existed. The first honest
+number arrived at **+18.4 %** and the current one is **+67.1 %**. The budget was never
+renegotiated in words — it is renegotiated in fact, by being carried as an exception at
+[§4](#4-p1--compiler-hardening). A 4.9× regression also merged in silence across four
+packages, because the only gate was absolute and the absolute gate was already red.
+
+**P2's budgets are in exactly the position B12 was in.** B7 (durable step commit, p99
+15 ms at 5 000 commits/s/node) and B8 (rehydration p99 8 ms) are stated in
+[14 §1](docs/14-Performance.md) and measured by nothing: `JournalBenchmarks` does not
+exist, and [14 §8](docs/14-Performance.md#8-benchmark-suite-and-ci-gating) says so
+plainly. QR2 — P2's entire Done-when — has no rig either. So **WP-50 comes first**, and
+its exit criterion is a committed baseline and a chaos verdict produced *before* there is
+a journal to measure. What can be measured before the journal exists is not nothing: the
+store's commit latency under the exact transaction shape
+[11 §5](docs/11-Distributed-Runtime.md#5-the-transactional-outbox) specifies is a property
+of Postgres, not of FlowX, and the chaos rig run against today's ephemeral engine should
+report **10 000 lost instances** — the honest floor QR2 is measured against. That is the
+same move WP-3 made with an empty step loop.
+
+### What can run concurrently in P2, from file ownership
+
+The DSL chain was sequential because of files, not caution: every shape touched the
+builder, the model, the analyzer, the emitter, `StepGraph` and the engine. P2 splits the
+same way, and the split is legible before any of it is written.
+
+| Cannot run concurrently | Because |
+|---|---|
+| WP-51 → WP-52 → WP-55 → WP-61 → WP-62 | All four land in `src/FlowX.Runtime` — `FlowEngine.cs`, `FlowExecutionContext.cs`, `ContextPool.cs` — plus `ExecutionPlan.cs` in `FlowX.Core`. That is five files and it is the DSL chain's problem exactly. WP-52 also edits the analyzer, two ADRs, three docs and deletes a fitness test; two packages doing that at once merge badly |
+| WP-57 after WP-55 | Compensation across a resume is a property of the resumed loop, not an addition to it. Written first, it is written against a loop that cannot yet resume |
+
+| Can run concurrently | Because |
+|---|---|
+| WP-53 ∥ WP-54 | Two new plugin projects, no shared source. They share the conformance suite **read-only**, which is what makes a conformance suite worth writing first |
+| WP-56 ∥ WP-55 | The outbox is a table, a publisher and a transaction boundary; once WP-51 fixes the schema, it touches the Postgres adapter and its own project, not the engine |
+| WP-58 ∥ WP-59 ∥ WP-60, **conditionally** | Three diagnostics in three different files under `src/FlowX.Compiler/Analysis` — but all three touch `FlowXDiagnostics.cs`, `AnalyzerReleases.Unshipped.md` and `docs/diagnostics/README.md`. Three shared files is the six-file problem in miniature. They parallelise **only** if the ids are claimed in the diagnostics index first, in one commit, which is the rule that file already carries after two rules collided on `FLOWX1028` |
+| WP-63 ∥ WP-64 | A scheduler and a CLI verb; disjoint projects, both reading the journal contract |
+
+**WP-50 is the only package that can start immediately**, because it is the only one that
+touches nothing under `src/`.
 
 ---
 
@@ -394,7 +539,17 @@ replay view in this release, so there is nothing else to redact from. The criter
 met for the sink that exists and cannot be met for the two that do not; both the
 attribute's remarks and [12-Observability §4](docs/12-Observability.md) say so in those
 words rather than implying coverage the release does not have. The remaining sinks arrive
-with the observability work in P3 and re-open this.
+with the observability work and re-open this.
+
+**This paragraph said "in P3" until P1 closed, and it was wrong.** The roadmap puts
+observability in **P5** and transport breadth in P3, and
+[12-Observability](docs/12-Observability.md) says P5 too — so a plan file was the only
+document naming the wrong phase for its own follow-up. Corrected rather than left, because
+`RedactionCannotBeBypassed` is blocked on exactly these sinks and a blocker pointing at the
+wrong phase is a blocker nobody schedules. The journal arrives earlier, in **P2**, which
+means P2 creates a sink for sensitive values two phases before the package that redacts
+them: **[WP-52](#wp-52--the-seam-the-runtime-reads-executionprofile) must not journal a
+`[Sensitive]` member in the clear and leave it for P5.**
 
 Redaction matches by member name, case-insensitively, because the wire contract is
 camelCase and the member is PascalCase — a capability writing `.With("paymentToken", …)`
@@ -491,6 +646,54 @@ Sharpening it needs dedicated hardware, and no decision waits on the difference 
 
 ## 4. P1 — Compiler hardening
 
+> ## ⚠ P1 is closed with one exit criterion unmet, and that was a decision
+>
+> **The roadmap's P1 exit criterion "a 200-flow synthetic solution builds with ≤ 8 %
+> overhead" is not met. The measured figure is +67.1 %, 95 % CI [+61.9, +73.6].** It is
+> failed by 59 points. Nothing about it is close, and no rounding, hardware or
+> methodology argument changes that: the measurement was taken on a quiet machine with a
+> 10.6 % A/A noise floor, and its predecessor returned `INCONCLUSIVE` rather than
+> manufacture a verdict it could not support.
+>
+> **The phase is closed anyway, deliberately, by the repository owner, on 2026-07-31.**
+> Performance is set aside; the criterion is carried into P2 as a **named, accepted
+> exception**. It is not deferred, not quietly dropped, and not restated as met.
+>
+> **Why this box exists at all.** A phase closed over a failing criterion that a later
+> reader has to reconstruct from a benchmark file is precisely the quiet drift this
+> project has spent P1 removing — a gate claimed and absent, a diagnostic documented and
+> unraised, a fitness function named and never written. Closing P1 by hiding its one
+> failure would be the same defect in the plan rather than in the code. So it is stated
+> first, with the number, before anything P1 succeeded at.
+>
+> **What is actually known**, so the exception can be reasoned about rather than
+> re-litigated:
+>
+> - `FlowPlanGenerator` is **90.5 %** of the marginal per-flow cost. `StepBindingAnalyzer`,
+>   once 37 %, is **1.2 %** after WP-27's 89 % cut — a real saving that is invisible in the
+>   criterion.
+> - **Optimising all eight other components perfectly still leaves the criterion failing
+>   by 54 points.** This is not a profiling backlog.
+> - Reaching +8 % needs the generator at ~2.8 ms/flow against today's 23.25 — an **~8×
+>   cut** — and the bulk of what would have to go is the derived error catalogue that
+>   populates the manifest's `errors` field.
+> - Growth is **linear** (R² 0.994). The design scales; the constant is too large. A
+>   superlinear result would have been a kill-criterion-shaped finding and it is not what
+>   was measured.
+> - A **relative** cost gate is blocking (WP-31, threshold +2 % on a deterministic
+>   allocation proxy), so the exception cannot silently get worse. It prints
+>   `ABSOLUTE CRITERION — FAIL` on every run, including passing ones.
+>
+> **The open decision is not "optimise more".** It is
+> [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) — the derived
+> error catalogue or the budget, one of them gives way — and it is still **Proposed**.
+> Closing P1 does not decide it; it decides only that P2 does not wait for it.
+>
+> **Risk R1's trigger has fired and its named action has not been taken.** The roadmap
+> says: *freeze features; invest in the generator's test harness and model layer.*
+> Features were not frozen. That is part of what is being accepted here, and it is written
+> down so the next phase gate re-scores it against a fact rather than an impression.
+
 The roadmap's [P1 scope](docs/20-Roadmap.md#3-increment-detail), item by item, with
 what is already done from P0's overruns marked. P1 exists to mitigate **risk R1** —
 generator complexity becoming our own legacy — so its exit criteria are about
@@ -508,19 +711,62 @@ maintainability and scale, not features.
 | *Should:* `flowx diff` v1 | **WP-17**, done |
 | *Should:* IDE code fixes | **WP-19**, done |
 
-**Exit criteria, from the roadmap:**
+**Exit criteria, from the roadmap — one of three unmet.** Each verdict below was
+produced by a command in this working tree on 2026-07-31, not read off an earlier
+document:
 
-- a 200-flow synthetic solution builds with ≤ 8 % overhead → **FAILING at +67.1 %**
-  [+61.9, +73.6], re-measured at WP-43 on a quiet machine with a 10.6 % A/A noise floor.
-  50 flows: **+46.5 %**. Growth still linear. **Failed by 59 points — nothing about it is
-  close.** The attribution has moved decisively: `FlowPlanGenerator` is now **90.5 %** of
-  the marginal cost, where `StepBindingAnalyzer` was 37 % and is now 1.2 %. **Optimising
-  every other component perfectly leaves the criterion failing by 54 points**, so this has
-  stopped being a profiling backlog and is [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)'s
-  question — the owner's to decide
-- every diagnostic passes `EveryDiagnosticIsHelpful` → **already green**
-- emitted code is breakpoint-able → **already true**, and pinned by
-  `EachStepGetsItsOwnLineDirective`
+| Criterion | Verdict | Evidence |
+|---|---|---|
+| a 200-flow synthetic solution builds with ≤ 8 % overhead | **FAIL at +67.1 %** [+61.9, +73.6]; 50 flows **+46.5 %** | WP-43, quiet machine, 10.6 % A/A noise floor — [B12-scale.md](docs/benchmarks/B12-scale.md). **Closed as an accepted exception**, see the box above |
+| every diagnostic passes `EveryDiagnosticIsHelpful` | **PASS** | `CompilerFitnessTests.EveryDiagnosticIsHelpful`, green. Re-run rather than assumed: the P0 gate's own report was written after a claim about a diagnostic turned out to be untrue |
+| emitted code is breakpoint-able | **PASS** | `FlowPlanGeneratorTests.EachStepGetsItsOwnLineDirective`, plus five more line-directive tests across the emitter, `Fail`, and step-input mapping — all green. This one is pinned by test rather than by inspection precisely because WP-10 found every `#line` pointing at the same line |
+
+**What P1 delivered, against the roadmap's own lists.**
+
+| Roadmap **Must** | Outcome |
+|---|---|
+| Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **Met.** All five ship end to end. One documented mode does not: `SubFlow(AwaitCompletion)` is refused by `FLOWX1026` for want of a durable suspension point |
+| Contract-compatibility checking | **Met** as `FLOWX1020`, step binding (WP-16) |
+| Diagnostics with fixes and help URIs | **Met for every id that exists** — 23 pages, every help URI asserted to resolve. Five ids remain reserved and unraised, each with a named blocker |
+| Generator snapshot tests | **Met** (WP-5, extended since; WP-20 made the harness actually compile its output) |
+| Readable emitted code | **Met** — on disk under `obj/generated`, per-step `#line` directives |
+| Build-overhead budget B12 | **Measured, and failing.** The Must was to *have* the budget, and it is measured, gated relatively, and reported honestly. The **exit criterion** on the same number is the exception above |
+
+| Roadmap **Should** | Outcome |
+|---|---|
+| IDE code fixes | **Met** — WP-19, three diagnostics, in a separate assembly |
+| `flowx diff` v1 | **Met** — WP-17, 29 rules, wired into CI |
+
+P1 also carried P0's two unshipped *Should* items. `FlowTestHost` did not ship;
+`FlowX.Testing` shipped instead (WP-12) and the SDK documentation was corrected to say
+which is which. **`dotnet new flowx` still does not exist** and is not claimed anywhere —
+it is carried into P2 as unstarted, for the second time, which is worth noticing.
+
+**What P1 hands to P2**, in three named piles rather than as "remaining work":
+
+1. **Five reserved diagnostics.** `FLOWX1006` (state must be serialisable),
+   `FLOWX1007`–`FLOWX1009` (determinism in durable flows) and `FLOWX1012`
+   (compensable-and-ephemeral). **Four of the five are blocked on *severity*, not on
+   analysis** — `PredicatePurityAnalyzer` already does the work, and WP-25 rebuilt it
+   around a table of constructs so the next rule is a row rather than a code path. They
+   ship the day the runtime honours a profile. `FLOWX1006` needs the generated STJ
+   serialiser the journal's payload path brings with it.
+   *(`FLOWX1022` is also reserved and is **not** P2's: it is `flowx diff`'s question asked
+   of two manifests, and an analyzer sees one compilation.)*
+2. **Three blocked fitness functions**, each named with its blocker rather than skipped:
+   `CrossTenantAccessIsDenied` (needs P4's policy execution **and** P2's journal for the
+   audit event), `RedactionCannotBeBypassed` (needs sinks that do not exist — logs,
+   traces, journal, replay), `PluginsPassConformance` (needs a conformance suite and a
+   second plugin, both P3). A test named after a gate is itself a claim of coverage, so
+   none of them exists as a green stub.
+3. **The build-overhead exception**, and [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)
+   still open behind it.
+
+Two further items travel with the phase and are not in any of those piles because they are
+defects rather than scope: the derived error catalogue's remaining **withheld** rate
+(42 % of a 38-capability corpus after WP-37), and `07-Capability-Model §4` prescribing a
+layout — contracts in a dedicated assembly — under which the catalogue scan stops at the
+assembly boundary and a conforming team gets no catalogue at all.
 
 ### WP-15 — The branching DSL
 
@@ -983,7 +1229,268 @@ defect it exists to fix.
 
 ---
 
-## 5. Definition of Ready
+## 5. P2 — Durable execution
+
+The roadmap's [P2 scope](docs/20-Roadmap.md#3-increment-detail), broken into packages.
+P2 proves *crash-safe execution with no duplicate effects and no split brain*, and its
+Done-when is **QR2**: kill any node at any step boundary, 10 000 flows, zero duplicate
+non-idempotent effects, zero lost instances, resume p99 ≤ 45 s.
+
+**The design these packages are held to is
+[ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md)**, written for this
+phase and still **Proposed**: it journals the step boundary on
+`(instance, scope, step, attempt)` and resumes through the *same* step loop rather than a
+second engine. It also carries the take-down list — what gets deleted the day the runtime
+reads `ExecutionProfile`, which is WP-52.
+
+Two things shape the ordering and are argued in [§2](#2-sequencing) rather than here: the
+**budgets come before the journal** (B12's lesson, learned the expensive way), and the
+runtime chain is **sequential because of files**, exactly as the DSL chain was.
+
+### WP-50 — The measurements, before the thing they measure
+
+| | |
+|---|---|
+| **Goal** | B7, B8 and QR2 are measurable, with a committed baseline and a stated noise floor, while there is still no journal |
+| **Why** | This is the package that exists because of B12. A budget that becomes measurable only after the thing it constrains is built gets renegotiated instead of met — and P1 has now supplied the proof, closing over a criterion first measured at scale two-thirds of the way through the phase. `JournalBenchmarks` does not exist ([14 §8](docs/14-Performance.md#8-benchmark-suite-and-ci-gating)); the chaos rig does not exist ([21 §7](docs/21-Quality-Gates.md)). Both are named in P2's Must as *outcomes* and by nothing as *tooling* |
+| **Tests first** | The benchmarks are the tests. The chaos rig gets a test of its own: run against today's ephemeral engine it must report **10 000 lost instances**, because a rig that cannot see the failure it exists to detect is WP-30's `ManifestContainsNoSecrets` again |
+| **Deliverable** | `tests/FlowX.Benchmarks/JournalBenchmarks.cs` measuring the transaction shape [11 §5](docs/11-Distributed-Runtime.md#5-the-transactional-outbox) specifies — one `flow_step` insert, one `flow_instance` update, N outbox inserts, one commit — against a real Postgres; `scripts/chaos-qr2.sh` with a verdict and an `INCONCLUSIVE` exit, following WP-23's precedent; both baselines committed |
+| **Exit** | B7 and B8 report a number with a confidence interval and an explicit pass/fail; the chaos rig reports the ephemeral floor and refuses to publish a verdict whose spread swallows it |
+| **Depends on** | — (the only P2 package that touches nothing under `src/`) |
+
+**What can honestly be measured before the journal exists**, since the objection is
+obvious: the commit latency of that transaction shape is a property of Postgres and of the
+schema, not of FlowX, and it is the number R5 turns on. WP-3 measured an empty step loop
+for the same reason. What this package cannot do is price FlowX's own overhead, and its
+report must say so in those words.
+
+### WP-51 — `IFlowJournal`, `ILeaseStore`, and the conformance suite
+
+| | |
+|---|---|
+| **Goal** | The two store contracts exist, in `FlowX.Abstractions`, with a shared conformance suite that a store either passes or fails |
+| **Why** | [ADR-0006](docs/adr/ADR-0006-journal-and-leases.md) promises "a shared conformance suite, so Postgres, Redis, SQL Server or a custom store all behave identically" and there is neither interface nor suite. [ADR-0009](docs/adr/ADR-0009-plugin-contracts.md) fixes where they live. Writing the suite after two stores exist produces a suite shaped like those two stores — the same defect as writing a budget after the thing it constrains |
+| **Tests first** | The conformance suite itself, run against an in-memory reference implementation; and a deliberately broken store — one that accepts a stale fencing token — which the suite must reject by name |
+| **Deliverable** | `IFlowJournal`, `ILeaseStore`, the fencing-token type, the record shapes of [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md) including `scope`, and `FlowX.Conformance.Journal` as a package |
+| **Exit** | The in-memory store passes 100 % of the suite; the stale-token store fails on the assertion whose name says why; `AbstractionsHasNoDependencies` still green |
+| **Depends on** | WP-50 |
+
+**This is where ADR-0015 becomes Accepted or changes.** It is the first contact between
+the schema and code, and the record says explicitly that it stays *Proposed* until this
+suite exists to hold something to it.
+
+### WP-52 — The seam: the runtime reads `ExecutionProfile`
+
+| | |
+|---|---|
+| **Goal** | A `Durable` flow journals its step boundaries; an `Ephemeral` flow is byte-for-byte the execution it is today |
+| **Why** | The keystone. `FlowX.Runtime` never reads `ExecutionProfile`, so a `Durable` flow runs the ephemeral path — no journal, no lease, no resume — and a process kill loses it. That is why risk R2 is *unreachable* rather than mitigated, and why four diagnostics are blocked on severity. This package is the one the whole phase is named for |
+| **Tests first** | `EngineAllocationTests` re-run unchanged — B2 must still be **0 B** for linear, conditional and switch flows, because a durable seam that charges the ephemeral path is a second engine wearing one engine's name; a journaled run whose committed rows reconstruct the execution exactly; `ExecutionProfileHonestyTests` observed **failing**, which is the signal to delete it |
+| **Deliverable** | The step-boundary commit gated on a plan-level flag (the `ExecutionPlan.HasParallel` precedent), the `scope` key threaded from `IterationScope`, the derived resume cursor, the child-instance row for `SubFlow`, the journaled seed that makes `FlowExecutionContext.Random`'s own remarks true, and **redaction of `[Sensitive]` members from journal payloads** |
+| **Exit** | Every row of [ADR-0015's take-down table](docs/adr/ADR-0015-journal-schema-and-durable-execution.md#what-lands-with-this-and-what-is-deleted) is discharged in this package's own commits: `ExecutionProfileHonestyTests` **deleted** rather than skipped, `FLOWX1028` narrowed to `Streaming`, the four warning boxes corrected. B2 = 0 B, measured. A flow whose input carries a `[Sensitive]` member journals it redacted, proven by a test that reads the row back |
+| **Depends on** | WP-51 |
+
+**The take-down is part of the deliverable, not follow-up.** `FLOWX1028` and its fitness
+test are scaffolding for a gap; a scaffold nobody removes when it stops being true is
+noise, and noise is what teaches people to suppress a catalogue. The reminder is written to
+fail on this package and to name what to remove — leaving it red, or skipping it, converts
+the one honest signal in the area into an ignored one.
+
+### WP-53 — Postgres journal and lease store
+
+| | |
+|---|---|
+| **Goal** | The reference store, passing the conformance suite against a real database in CI |
+| **Tests first** | The conformance suite from WP-51 against Testcontainers Postgres; a migration test proving expand/contract ([11 §7](docs/11-Distributed-Runtime.md#7-deployment-safety)) rather than a breaking change |
+| **Deliverable** | `plugins/FlowX.Postgres` — schema, migrations, group-commit batching, `tenant_id` partition key |
+| **Exit** | Conformance green against Postgres in CI; **B7 and B8 reported against WP-50's committed baseline, with an explicit pass or fail** — the criterion is a stated verdict, not a passing one |
+| **Depends on** | WP-51 |
+
+### WP-54 — Redis lease store
+
+| | |
+|---|---|
+| **Goal** | A second store, so "pluggable" is demonstrated rather than asserted |
+| **Why** | ADR-0006's claim is that the two primitives are store-independent. One implementation cannot show that, and the fencing-token argument is the part most likely to be got wrong differently by a different store |
+| **Tests first** | The same conformance suite, unmodified — if it needs a change to accept Redis, the suite was written against Postgres and WP-51 failed |
+| **Deliverable** | `plugins/FlowX.Redis` lease store with monotonic token issuance |
+| **Exit** | Identical conformance results to WP-53's lease half; the stale-token rejection proven against Redis |
+| **Depends on** | WP-51 · **concurrent with WP-53** — disjoint projects, shared suite read-only |
+
+### WP-55 — Resume
+
+| | |
+|---|---|
+| **Goal** | A killed node's instance is finished by another node, once |
+| **Tests first** | Kill mid-step and assert one completion, one effect, and the compensation stack intact across the boundary; a zombie writer with an expired token rejected at the journal, not at the lease |
+| **Deliverable** | Lease acquisition and renewal, the recovery scan, and re-entry into `FlowEngine`'s loop from the derived cursor — no second loop |
+| **Exit** | Three nodes, kill one at a step boundary: the instance completes exactly once and resume latency is **measured against 45 s**, stated whether or not it passes |
+| **Depends on** | WP-52, WP-53, WP-54 |
+
+### WP-56 — The transactional outbox
+
+| | |
+|---|---|
+| **Goal** | State and event are committed atomically, and a crash between publishing and marking republishes rather than loses |
+| **Why** | `.Emit<T>()` currently compiles into the plan and the manifest and publishes nothing — that is `FLOWX1024`, the first warning the catalogue ever raised. The outbox is what retires it |
+| **Tests first** | Kill between `publish` and `UPDATE published_at`, assert a duplicate delivery rather than a lost one; two publishers against one table proving `FOR UPDATE SKIP LOCKED` does not double-publish |
+| **Deliverable** | The outbox table in WP-53's schema, the polling publisher, per-`partition_key` ordering, and the honest statement that global ordering is not offered |
+| **Exit** | An emitted event reaches a broker; a crash produces at-least-once and never zero; `FLOWX1024`'s status is revisited in the same commit |
+| **Depends on** | WP-53 · **concurrent with WP-55** |
+
+### WP-57 — Compensation with its own policies
+
+| | |
+|---|---|
+| **Goal** | A compensation that fails is retried under its own policy set and, if it exhausts, ends as `CompensationFailed` with an alert — not as a silent loss |
+| **Why** | Strict-reverse unwind is proven for an in-process failure. Across a resume it is not: the compensation stack is rebuilt from the journal, and WP-33 made a sub-flow **one entry** in the parent's stack, so `A · child(X, Y) · B` must still unwind `B, Y, X, A` after the node that ran `X` has gone away |
+| **Tests first** | Kill during compensation and assert the remaining unwind order; a compensation that fails permanently and reaches `CompensationFailed`; the sub-flow ordering above, resumed |
+| **Deliverable** | Compensation policy sets, the `CompensationFailed` terminal state, the operator alert, and journal rows for compensating steps |
+| **Exit** | The [11 §8](docs/11-Distributed-Runtime.md#8-failure-catalogue) row with "no automatic resolution" is reachable, observable, and covered by a test |
+| **Depends on** | WP-55 |
+
+> **This package has a dependency the roadmap does not show.** "Compensation with its own
+> policies" is in **P2**'s Must, and **no policy executes at run time at all** — the
+> policy engine is **P4**. Either P2 builds the slice it needs (retry with backoff, at the
+> `Consistency` stage, honouring [ADR-0011](docs/adr/ADR-0011-fixed-policy-stage-order.md)'s
+> fixed order) and P4 generalises it, or the item moves to P4 and P2 ships compensation
+> with a fixed retry. It cannot ship as written without one of those two decisions being
+> taken, and taking it silently is how a phase boundary stops meaning anything.
+
+### WP-58 — `FLOWX1007`–`FLOWX1009`, and the severity stance as a set
+
+| | |
+|---|---|
+| **Goal** | The determinism rules that are blocked on severity ship, and the whole stance is re-decided once |
+| **Why** | The analysis exists. `PredicatePurityAnalyzer` already proves scope from `DeclaringSyntaxReferences` and carries the known-impure catalogue; WP-25 rebuilt it around a table of constructs so a new subject is a row. What blocked these three is that ADR-0003 makes them Info under `Ephemeral`, the only profile that ran — so they would have shipped doing nothing anywhere. WP-52 removes that |
+| **Tests first** | Both directions per rule, over capability bodies as well as flow delegates; the severity asserted per profile |
+| **Deliverable** | The analyzer extension, three diagnostic pages, and the amendment to [06 §5](docs/06-Execution-Engine.md#5-the-determinism-boundary) — which asks for the stance to be revisited **as a set**, including `FLOWX1011`'s deliberate Warning deviation |
+| **Exit** | `06 §5`'s table has no **no — P2** rows left except `FLOWX1006`; `FLOWX1011`'s deviation is either retired or re-argued in the same commit |
+| **Depends on** | WP-52 · concurrent with WP-59 and WP-60 **only if the ids are claimed in the diagnostics index first** |
+
+### WP-59 — `FLOWX1006` and the journal payload contract
+
+| | |
+|---|---|
+| **Goal** | Anything the journal must serialise is provably serialisable at build time |
+| **Why** | `FLOWX1006` is reserved against a generated `System.Text.Json` context that nothing generates; `IPayloadSerializer` does not exist and `ctx.State` is serialised nowhere, so there is no membership the rule could check. The journal is what creates the membership |
+| **Tests first** | A state-bag member outside the generated context fails the build; one inside it is silent; a round trip through the journal preserves it |
+| **Deliverable** | The generated STJ context [ADR-0008](docs/adr/ADR-0008-serialization-and-schema.md) chose, the payload writer, and `FLOWX1006` |
+| **Exit** | A `Durable` flow whose state bag holds a non-serialisable type fails to build, naming the member |
+| **Depends on** | WP-52 |
+
+### WP-60 — `FLOWX1012`, once its fix stops being a lie
+
+| | |
+|---|---|
+| **Goal** | A compensable flow declaring `Ephemeral` is told what it is giving up |
+| **Why** | The check is one predicate — `.CompensateWith` under `Profile = Ephemeral` — and it was **deliberately not raised** in P1 because its only fix, `Profile = Durable`, changed nothing while there was no journal. A rule whose fix is a lie is worse than an unraised id. WP-52 makes the fix true |
+| **Tests first** | Both directions; and the reference sample built with the rule on, because it will fire there |
+| **Deliverable** | The analyzer, its page, and a decision — recorded — about what `samples/ecommerce` declares |
+| **Exit** | The rule fires on a compensable ephemeral flow and its suggested fix produces a flow that is actually crash-safe |
+| **Depends on** | WP-52 |
+
+**The package is the decision, not the code.** It fires on every compensable flow in the
+repository including the sample, so landing it means choosing whether the reference sample
+becomes durable. That choice is worth a paragraph in this file, not a quiet edit.
+
+### WP-61 — Replay determinism, and the corpus
+
+| | |
+|---|---|
+| **Goal** | Replaying a completed durable instance produces byte-identical step inputs and identical control flow |
+| **Why** | This contract is stated in [06 §5](docs/06-Execution-Engine.md#5-the-determinism-boundary), cited as risk R2's mitigation in [05 §11](docs/05-Architecture.md#11-risks-and-technical-debt), and verified by nothing — `ReplayDeterminismTest` does not exist and could not, there being no journal to replay from. R2's trigger is *any* replay divergence in the corpus, and the corpus does not exist either |
+| **Tests first** | The corpus is the test: one journaled instance per DSL shape — linear, `When`, `Switch`, `Parallel`, `ForEach` with more than one element, `SubFlow` including a `Detached` child — replayed and compared byte-wise |
+| **Deliverable** | `ReplayDeterminismTest`, the corpus, and the divergence report a failure produces |
+| **Exit** | Every shape replays identically; an injected impurity (a captured clock read) is **caught by the test**, so it cannot pass by comparing nothing |
+| **Depends on** | WP-55, WP-58 |
+
+### WP-62 — QR2: the chaos test
+
+| | |
+|---|---|
+| **Goal** | P2's Done-when, measured |
+| **Tests first** | WP-50's rig, which already reported the ephemeral floor of 10 000 lost instances |
+| **Deliverable** | The chaos run in CI (nightly), its report, and its verdict against every clause of QR2 separately |
+| **Exit** | 10 000 flows, `SIGKILL` at every step boundary: **zero duplicate non-idempotent effects, zero lost instances, resume p99 ≤ 45 s** — each reported as its own number, and an `INCONCLUSIVE` exit that is never converted into a pass |
+| **Depends on** | WP-56, WP-57, WP-61 |
+
+### WP-63 — *Should:* `AwaitSignal`, `Delay`, timers
+
+| | |
+|---|---|
+| **Goal** | A flow can wait for days without holding a thread, a lease or a context |
+| **Why** | `FLOWX1017` is already an *error* on `AwaitSignal` without `Durable`, and `AwaitSignalRequiresDurableCodeFixProvider` already writes `Profile = Durable` — a quick action whose result currently buys nothing. `SubFlowMode.AwaitCompletion` is refused by `FLOWX1026` for the same missing suspension point, and is the one DSL mode P1 could not ship |
+| **Deliverable** | Suspension and resumption through the journal, the scheduler for timers, the signal endpoint, and `AwaitCompletion` un-refused |
+| **Exit** | A suspended instance costs one row and zero compute, proven by a memory and thread assertion over 10 000 suspended flows; `FLOWX1026`'s second cause is deleted from its page |
+| **Depends on** | WP-55 · concurrent with WP-64 |
+
+### WP-64 — *Should:* `flowx replay --mode inspect`
+
+| | |
+|---|---|
+| **Goal** | An operator can read what an instance did without a debugger |
+| **Deliverable** | The `replay` verb, `--mode inspect` only; the other three modes are P5 |
+| **Exit** | The verb renders a completed and a failed instance from the journal; `CliDependsOnNothingButTheManifest` is re-argued or the CLI's dependency rule is amended deliberately — the journal is a second input and that rule currently forbids it |
+| **Depends on** | WP-61 |
+
+> **That exit criterion contains a real conflict, stated rather than discovered later.**
+> `CliDependsOnNothingButTheManifest` is a green fitness function today. `flowx replay`
+> reads a journal. One of the two has to give, and which one is an architecture decision
+> — plausibly an ADR — not a test edit.
+
+---
+
+## 6. P3 — Transport breadth
+
+Lighter than P2 on purpose: P3's packages are mostly one shape repeated, and the value of
+detail here is lower than the value of naming the two things that are **not** repetition.
+Full detail is written when P2 closes and the shape is known rather than guessed.
+
+The roadmap's Must is Kafka, RabbitMQ, Azure Service Bus, Cron with leader election, and
+the conformance suite as a published package; its Should is gRPC, MQTT and webhooks with
+signature verification. Done when `samples/event-driven` moves a flow HTTP → Kafka → cron
+with **zero** business-logic changes, proven by an unchanged-file assertion in CI.
+
+| Package | Goal | Mechanically checkable exit | Depends on |
+|---|---|---|---|
+| **WP-70** — the transport conformance suite, published | One suite every transport plugin passes, written **before** the second and third transports | `plugins/FlowX.Http` passes it; a deliberately non-conforming plugin fails it by name; `PluginsPassConformance` — blocked since P1 — turns green | WP-62 |
+| **WP-71** — the unchanged-file assertion | P3's Done-when is a *command*, not a judgement | The assertion runs against `samples/ecommerce` today, where it must pass trivially; it fails when a business file is touched | WP-70 |
+| **WP-72** — Kafka | The first non-HTTP transport | Conformance green; the sample serves the same flow over Kafka | WP-71 |
+| **WP-73** — RabbitMQ | The second | Same suite, unmodified | WP-71 · **concurrent with WP-72 and WP-74** |
+| **WP-74** — Azure Service Bus | The third | Same suite, unmodified | WP-71 · concurrent |
+| **WP-75** — Cron with leader election | A schedule fires once across N nodes | Three nodes, one fire per tick, proven under a kill | WP-70, **WP-55** — leader election *is* a lease, which is why P3 follows P2 |
+| **WP-76** — *Should:* gRPC, MQTT, webhooks with signature verification | Breadth, plus the one transport with a security obligation | Conformance green; a webhook with a bad signature is rejected before the flow starts | WP-72 |
+
+**Three transports concurrent, one sequential.** WP-72, WP-73 and WP-74 are three new
+plugin projects with no shared source; they read the conformance suite and do not write it.
+WP-75 is not one of them — it needs the lease store, and putting it in the parallel batch
+is exactly the kind of optimism the DSL chain punished.
+
+**Two things in P3 are not repetition, and both are already visible:**
+
+1. **`FLOWX1025`'s open cause blocks the Must.** A trigger's `Kind` is an overridden
+   property — executable code, not attribute data — so a third-party `TriggerAttribute`
+   subclass cannot be read from metadata, and WP-26 shipped a warning saying so rather than
+   guessing. Today that costs one warning. In P3 it is hit **three times**: each of Kafka,
+   RabbitMQ and Service Bus either uses a first-party attribute (which makes
+   [ADR-0004](docs/adr/ADR-0004-universal-trigger-model.md)'s "one trigger abstraction for
+   all transports" true only for transports we ship) or emits a manifest that cannot record
+   its own trigger. **The abstractions need a way for a plugin author to declare a readable
+   kind, and it belongs in WP-70 or it is paid for three times.** The roadmap's P3 Must
+   does not mention it.
+2. **P3 is *not* where `[Sensitive]`'s remaining sinks arrive**, though this file said so
+   until P1 closed — the roadmap and [12-Observability](docs/12-Observability.md) both put
+   them in **P5**, and the correction is at [WP-12a](#wp-12a--sensitive-is-declared-and-unread).
+   What P3 does add is transports, and a transport is a place a payload is written. The
+   rule that matters is phase-independent and is stated once here: **the phase that
+   creates a sink is the phase that redacts it**, because `RedactionCannotBeBypassed` is
+   blocked on all of them at once and will otherwise be written against sinks that have
+   been leaking for two phases.
+
+---
+
+## 7. Definition of Ready
 
 A work package may start only when all are true. This prevents the most common
 failure mode in a spec-heavy project: building something the spec describes but
@@ -996,7 +1503,7 @@ nobody can verify.
 
 ---
 
-## 6. Estimation and staffing
+## 8. Estimation and staffing
 
 Deliberately absent. This is a specification-driven project with one
 contributor's throughput unknown; a date column here would be fiction, and
@@ -1008,7 +1515,7 @@ phase-level planning only.
 
 ---
 
-## 7. Open items blocking the plan
+## 9. Open items blocking the plan
 
 | # | Item | Blocks | Owner |
 |---|---|---|---|
@@ -1017,8 +1524,13 @@ phase-level planning only.
 | 3 | ~~Stray `claude/` branch on the remote~~ **Resolved.** Deleted | — | — |
 | 4 | `SONAR_TOKEN` repository secret not configured; the `sonar` job no-ops without it | Sonar gate | repository owner |
 | 5 | ~~Benchmarks recorded on shared container hardware with 10 iterations~~ **Resolved at WP-11**, without dedicated hardware. Re-recorded at 30 iterations; the 29× margin is ~11× clear of the worst observed noise factor (2.6×), and [P0.md §5](docs/benchmarks/P0.md) argues the case rather than assuming it. Timing figures remain advisory in the baseline | — | — |
+| 6 | **The build-overhead exception P1 closed over**, and [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) still **Proposed** behind it: the derived error catalogue or the ≤ 8 % budget, one of them gives way | Nothing — P2 proceeds. Listed because an accepted exception with no owner becomes a forgotten one | repository owner |
+| 7 | **P2's Must contains an item whose machinery is scheduled in P4** — "compensation with its own policies", where no policy executes at run time at all. Either P2 builds the slice or the item moves; see [WP-57](#wp-57--compensation-with-its-own-policies) | WP-57's shape | repository owner |
+| 8 | **The journal is a new sink for `[Sensitive]` values, and it arrives in P2 — three phases before the package that redacts sinks.** Redaction is generated for exactly one sink today (the RFC 7807 body). `RedactionCannotBeBypassed` cannot be written until P5 | WP-52 must not journal a marked member in the clear | repository owner |
 
-Item 1 is the only one blocking a green CI run.
+Item 1 is the only one blocking a green CI run. Items 6–8 block no build; they are
+decisions that will otherwise be taken by accident, which is the failure mode this file
+exists to prevent.
 
 ---
 
