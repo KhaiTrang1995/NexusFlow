@@ -210,6 +210,21 @@ WP-15 → 20 → 24 → 29 → 33 is **complete**: all five shapes the roadmap's
 names now ship. **WP-48 is a phase gate**, red like WP-11: P0's gate answered a kill
 criterion, P1's records which criterion it is closing over.
 
+> [!IMPORTANT]
+> **Work-package numbers here are the only authoritative ones, and they were collided
+> with.** Four packages executed after P1 closed were labelled WP-49, WP-70, WP-71,
+> WP-72 and WP-73 by the orchestration that ran them, while this file already reserved
+> WP-70–WP-76 for P3's transports. The work is recorded under what it *did* — the
+> `[TriggerKind]` marker is the abstraction half of WP-70 landing early; the rest were
+> unnumbered maintenance — and **the P3 numbers below are unchanged**.
+>
+> This is the second collision of its kind this project has had, after two diagnostics
+> were authored against `FLOWX1028` in separate branches on the same day, both having
+> correctly read the index's next-free id. The rule `docs/diagnostics/README.md` adopted
+> then applies here too: **claim the number in this file first, in its own commit,
+> before doing the work.** Reading "the next free number" is not enough when someone
+> else is reading it at the same time.
+
 **The two yellow nodes are the same node WP-3 was.** WP-50 and WP-71 are harnesses
 scheduled ahead of the things they measure, for the reason §2 has stated since P0 and
 which P1 then proved the hard way — see [below](#the-lesson-b12-taught-twice).
