@@ -468,25 +468,29 @@ public static class FlowXDiagnostics
     /// <remarks>
     /// <para>
     /// <strong>A scaffold for a missing phase, not a rule about the source.</strong>
-    /// <c>FlowX.Runtime</c> does not read <c>ExecutionProfile</c> anywhere: a flow declared
-    /// <c>Durable</c> executes on the identical ephemeral path, with no journal, no lease,
-    /// no resumption and no replay. The profile reaches an <c>ExecutionPlan</c> validation
-    /// and the <c>profile</c> field of <c>flowx.manifest.json</c>, and stops there — so an
-    /// author who declares <c>Durable</c> on a payment saga is told nothing, and believes
-    /// their flow survives a deploy. This is the diagnostic that stops the platform
-    /// accepting a declaration it does not honour.
+    /// <c>Streaming</c> has no engine at all: a flow that declares it executes on the
+    /// ephemeral path, with no checkpointed offsets, no windowing, no watermarks and no
+    /// backpressure. The profile reaches an <c>ExecutionPlan</c> validation and the
+    /// <c>profile</c> field of <c>flowx.manifest.json</c>, and stops there — so the
+    /// declaration produces a fact in a published contract and no behaviour, and without this
+    /// rule nothing would say so.
+    /// </para>
+    /// <para>
+    /// <strong>This rule was narrowed rather than deleted, and the distinction matters.</strong>
+    /// It covered <c>Durable</c> until WP-52, when the engine began journaling a durable
+    /// flow's step boundaries and refusing to run one that has no journal. Removing the whole
+    /// rule on that day would have handed <c>Streaming</c> exactly the silence <c>Durable</c>
+    /// had just been rescued from, and P7 would have had to write it again to say the same
+    /// thing.
     /// </para>
     /// <para>
     /// <strong>A warning, and the alternative is worse than lax — it is harmful.</strong>
-    /// The only edit that would silence an error is <c>Profile = Ephemeral</c>, which
-    /// deletes the author's design decision to buy back a build. ADR-0003 calls the
-    /// profile the single most consequential decision a flow author makes, and lists its
-    /// greppability — <c>Profile = Durable</c> visible in the code, the manifest and the
-    /// diagram — as a positive consequence of the design. An error would systematically
-    /// erase exactly that record, and P2 would arrive to find no flow declaring the
-    /// profile it needs. Worse, it would deadlock: <c>FLOWX1017</c> is an <em>error</em> on
-    /// a flow that suspends without <c>Durable</c>, so a flow using <c>AwaitSignal</c>
-    /// would have no profile it could legally declare.
+    /// The only edit that would silence an error is a different profile, which deletes the
+    /// author's design decision to buy back a build. ADR-0003 calls the profile the single
+    /// most consequential decision a flow author makes, and lists its greppability —
+    /// <c>Profile = Streaming</c> visible in the code, the manifest and the diagram — as a
+    /// positive consequence of the design. An error would systematically erase exactly that
+    /// record, and P7 would arrive to find no flow declaring the profile it needs.
     /// </para>
     /// <para>
     /// Info was the other candidate and is the option ADR-0003 already rejected once, for
@@ -497,32 +501,30 @@ public static class FlowXDiagnostics
     /// in <c>.editorconfig</c>, which records the decision in the repository that took it.
     /// </para>
     /// <para>
-    /// <strong>Delete this descriptor when the runtime reads the profile it is named
-    /// after.</strong> Narrow it to the profiles still unimplemented when P2 lands the
-    /// journal (dropping <c>Durable</c>), and remove it entirely when P7 lands the stream
-    /// engine (dropping <c>Streaming</c>). A rule that outlives the gap it describes is
-    /// noise, and noise is what teaches people to suppress the catalogue. The reminder is
-    /// executable, not a comment: <c>RuntimeDoesNotReadTheExecutionProfile</c> in
-    /// <c>FlowX.Architecture.Tests</c> fails on the day this stops being true.
+    /// <strong>Delete this descriptor when P7 lands the stream engine.</strong> A rule that
+    /// outlives the gap it describes is noise, and noise is what teaches people to suppress
+    /// the catalogue. The <c>Durable</c> half was taken down by ADR-0015's take-down list on
+    /// the day it stopped being true; the deletion table on
+    /// <c>docs/diagnostics/FLOWX1028.md</c> carries the remaining row.
     /// </para>
     /// </remarks>
     public static readonly DiagnosticDescriptor ProfileIsNotHonouredByTheRuntime = Create(
         "FLOWX1028",
         "Execution profile is declared but not honoured by the runtime",
-        "Flow '{0}' declares Profile = ExecutionProfile.{1}, but the runtime does not read " +
-        "ExecutionProfile: this flow executes on the ephemeral engine",
-        "FlowX.Runtime reads no profile anywhere, so a flow declared Durable gets the " +
-        "ephemeral engine with a different word in the manifest — no journal, no lease, no " +
-        "resumption on another node, no replay, and a crash loses the instance. Streaming " +
-        "has no engine at all. Keep the declaration: it is the design decision ADR-0003 " +
-        "asks you to make, it is what P2 will honour, and changing it to Ephemeral to " +
-        "silence this warning would delete the record of what this flow needs while " +
-        "changing nothing about how it runs. Instead, confirm that losing an in-flight " +
-        "instance on deploy is survivable for this flow until the journal ships — make the " +
-        "steps idempotent and let the caller retry — and if it is, downgrade this rule in " +
-        ".editorconfig with a FLOWX-DEBT marker. If it is not survivable, this flow cannot " +
-        "ship on this release. This rule is deleted, not fixed: it goes away when the " +
-        "runtime implements the profile.",
+        "Flow '{0}' declares Profile = ExecutionProfile.{1}, which the runtime does not " +
+        "implement: this flow executes on the ephemeral engine",
+        "Streaming has no engine at all, so a flow declared Streaming gets the ephemeral one " +
+        "with a different word in the manifest — no checkpointed offsets, no windowing, no " +
+        "watermarks, no backpressure. Keep the declaration: it is the design decision " +
+        "ADR-0003 asks you to make, it is what P7 will honour, and changing it to Ephemeral " +
+        "to silence this warning would delete the record of what this flow needs while " +
+        "changing nothing about how it runs. Instead, confirm that running this flow on the " +
+        "ephemeral engine is survivable until the stream engine ships, and if it is, " +
+        "downgrade this rule in .editorconfig with a FLOWX-DEBT marker. If it is not, this " +
+        "flow cannot ship on this release. Durable no longer reports here: WP-52 made the " +
+        "runtime journal a durable flow's step boundaries, so the declaration is honoured. " +
+        "This rule is deleted, not fixed: it goes away when the runtime implements the " +
+        "remaining profile.",
         DiagnosticSeverity.Warning);
 
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>

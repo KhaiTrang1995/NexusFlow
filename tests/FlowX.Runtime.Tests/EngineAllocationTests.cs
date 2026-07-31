@@ -580,6 +580,237 @@ public sealed class EngineAllocationTests
     }
 
     /// <summary>
+    /// A durable flow pays for its journal, and this records how much of that is the
+    /// engine's rather than the store's.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Budget B2 is unchanged and still a hard zero</strong> for the linear,
+    /// conditional and switch paths of an <em>ephemeral</em> flow, which is what it has
+    /// always covered and what the assertions above pin. B2 was never a budget on durability:
+    /// a journaled step boundary is roughly 1–15 ms against ~1 µs in memory, so a handful of
+    /// bytes is not the interesting cost of one. What matters is that the ephemeral path pays
+    /// none of it — a durable seam that charged every flow would be a second engine wearing
+    /// one engine's name.
+    /// </para>
+    /// <para>
+    /// <strong>The store is deliberately not in the measurement.</strong>
+    /// <see cref="NullJournal"/> accepts every commit and allocates nothing, so what is left
+    /// is what the <em>engine</em> spends to describe a step boundary: the
+    /// <c>StepCommit</c> record, the non-determinism envelope, the scope path where there is
+    /// one, and the awaiters behind an interface call that could have gone asynchronous. A
+    /// real store's row, its transaction and its round trip are its own to measure, and
+    /// <c>JournalBenchmarks</c> is where B7 does it.
+    /// </para>
+    /// <para>
+    /// <strong>The measured figures, Release, .NET 10, x64.</strong> The four-step saga
+    /// declared <c>Durable</c>: <strong>768 B</strong>, which is <strong>192 B per
+    /// step</strong> — a <c>StepCommit</c>, a <c>NondeterminismCapture</c>, and the awaiters
+    /// behind an interface call that could have suspended. The identical plan declared
+    /// <c>Ephemeral</c>: <strong>0 B</strong>, which the assertion below it pins. The ceiling
+    /// is per step rather than per flow so that it keeps its meaning when the plan changes,
+    /// and it is close enough to the figure that a new per-step allocation shows up rather
+    /// than hiding in headroom.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ADurableFlowPaysForItsJournalAndTheAmountIsRecorded()
+    {
+        RequireOptimisedBuild();
+
+        var engine = new FlowEngine(new FakeClock(T0));
+        var plan = Durable(Plans.FourStepSaga());
+
+        var allocated = MeasureDurableSteadyState(engine, plan, new NullDispatcher());
+
+        allocated.ShouldBeGreaterThan(0,
+            "A zero here would mean nothing was journaled, which is a correctness problem " +
+            "wearing a budget's clothes.");
+
+        (allocated / plan.Graph.Count).ShouldBeLessThan(384,
+            $"Measured {allocated} B over {plan.Graph.Count} steps. A journaled boundary is " +
+            "allowed to allocate; it is allowed to allocate per boundary, not per anything " +
+            "else. If this ceiling is hit, something started building a payload, a list or a " +
+            "closure the seam did not need.");
+    }
+
+    /// <summary>
+    /// The ephemeral path pays nothing for the existence of the durable one.
+    /// </summary>
+    /// <remarks>
+    /// The regression this forbids is the one ADR-0015 names as its accepted cost and its
+    /// biggest risk: "the ephemeral hot path grows a branch it does not need". It is allowed
+    /// to grow the branch. It is not allowed to grow an allocation — the same bargain
+    /// <c>ExecutionPlan.HasParallel</c> struck, where a linear flow pays one predictable,
+    /// always-false comparison for a fork lock it never takes.
+    /// </remarks>
+    [Fact]
+    public void TheEphemeralPathPaysNothingForTheExistenceOfTheDurableOne()
+    {
+        RequireOptimisedBuild();
+
+        var engine = new FlowEngine(new FakeClock(T0));
+
+        var allocated = MeasureSteadyState(engine, Plans.FourStepSaga(), new JournallingDispatcher());
+
+        allocated.ShouldBe(0,
+            $"Measured {allocated} B for an ephemeral flow whose dispatcher can describe a " +
+            "step for a journal. The seam is gated on the flow's declared profile, so this " +
+            "must be exactly what it was before the journal existed.");
+    }
+
+    /// <summary>The same plan, re-declared <c>Durable</c>.</summary>
+    private static ExecutionPlan Durable(ExecutionPlan plan) => ExecutionPlan.Create(
+        FlowDescriptor.Create(
+            plan.Flow.Id, plan.Flow.Version, ExecutionProfile.Durable, plan.Flow.Deadline),
+        plan.Graph);
+
+    /// <summary>
+    /// <see cref="MeasureSteadyState"/> for a journaled flow: a fresh instance per run,
+    /// because an append-only journal refuses a key it has already seen.
+    /// </summary>
+    /// <remarks>
+    /// The instance id and the <c>DurableExecution</c> are built outside the measured region,
+    /// so what is counted is the execution and not the session that carries it. Opening an
+    /// instance is once per flow and a store's cost anyway.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureDurableSteadyState(
+        FlowEngine engine, ExecutionPlan plan, IStepDispatcher dispatcher)
+    {
+        var journal = new NullJournal();
+
+        for (var i = 0; i < 64; i++)
+        {
+            RunSync(engine.ExecuteAsync(plan, dispatcher, Plans.Invocation, journal.Open()));
+        }
+
+        var run = journal.Open();
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        RunSync(engine.ExecuteAsync(plan, dispatcher, Plans.Invocation, run));
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    /// <summary>
+    /// A journal that accepts everything and allocates nothing, so the measurement is the
+    /// engine's.
+    /// </summary>
+    /// <remarks>
+    /// Every answer is a pre-built value returned through an already-completed
+    /// <see cref="ValueTask{TResult}"/>, which is the same convention the dispatcher doubles
+    /// in this file follow: what a real store spends on a row and a transaction is its own,
+    /// and mixing the two would produce a number that means nothing about either.
+    /// </remarks>
+    private sealed class NullJournal : IFlowJournal
+    {
+        private static readonly FencingToken Token = new(1);
+
+        private static readonly JournalStep Committed = new()
+        {
+            Key = StepKey.First(Guid.Empty, 0),
+            Sequence = 1,
+            CapabilityId = "measured",
+            CapabilityVersion = "1.0.0",
+            Outcome = JournalOutcome.Success,
+        };
+
+        private readonly ValueTask<Result<JournalStep>> _commit = new(Result.Ok(Committed));
+
+        private FlowInstanceRecord _instance = new()
+        {
+            InstanceId = Guid.Empty,
+            FlowId = "measured",
+            FlowVersion = "1.0.0",
+            State = FlowInstanceState.Running,
+            Fence = Token,
+        };
+
+        /// <summary>A session over a fresh instance, so no key is ever committed twice.</summary>
+        public DurableExecution Open()
+        {
+            var instanceId = Guid.NewGuid();
+
+            _instance = _instance with { InstanceId = instanceId };
+
+            // Through a Task, not off the ValueTask: reading a ValueTask that has not
+            // finished is undefined rather than merely slow, and this runs outside every
+            // measured region so the conversion costs the measurement nothing.
+            var begun = DurableExecution
+                .BeginAsync(this, Plans.FourStepSaga(), Plans.Invocation, instanceId, Token)
+                .AsTask();
+
+            return begun.GetAwaiter().GetResult().Value;
+        }
+
+        public ValueTask<Result<FlowInstanceRecord>> StartAsync(
+            FlowInstanceStart start, CancellationToken cancellationToken) =>
+            new(Result.Ok(_instance));
+
+        public ValueTask<Result<FencingToken>> FenceAsync(
+            Guid instanceId, FencingToken token, CancellationToken cancellationToken) =>
+            new(Result.Ok(token));
+
+        public ValueTask<Result<JournalStep>> CommitAsync(
+            StepCommit commit, CancellationToken cancellationToken) => _commit;
+
+        public ValueTask<Result<FlowInstanceRecord>> CompleteAsync(
+            Guid instanceId,
+            FencingToken token,
+            FlowInstanceState state,
+            JournalPayload stateBag,
+            CancellationToken cancellationToken) =>
+            new(Result.Ok(_instance));
+
+        public ValueTask<Result<FlowInstanceRecord>> ReadInstanceAsync(
+            Guid instanceId, CancellationToken cancellationToken) =>
+            new(Result.Ok(_instance));
+
+        public ValueTask<Result<ResumeFrontier>> ReadResumeFrontierAsync(
+            Guid instanceId, CancellationToken cancellationToken) =>
+            new(Result.Ok(new ResumeFrontier { Instance = _instance, Committed = [] }));
+
+        public ValueTask<Result<IReadOnlyList<OutboxRecord>>> ReadOutboxAsync(
+            Guid instanceId, CancellationToken cancellationToken) =>
+            new(Result.Ok<IReadOnlyList<OutboxRecord>>([]));
+    }
+
+    /// <summary>
+    /// A dispatcher that can describe a step for a journal, and allocates nothing doing it.
+    /// </summary>
+    /// <remarks>
+    /// Present so the ephemeral measurement is taken against a dispatcher that <em>could</em>
+    /// have been asked. A double with no <c>DescribeStep</c> at all would prove only that an
+    /// absent member costs nothing.
+    /// </remarks>
+    private sealed class JournallingDispatcher : IStepDispatcher
+    {
+        private static readonly StepJournalEntry Entry = StepJournalEntry.Nothing;
+
+        public ValueTask<StepOutcome> ExecuteAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+            => ValueTask.FromResult(StepOutcome.Success);
+
+        public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+            => ValueTask.FromResult(StepOutcome.Success);
+
+        public bool Evaluate(int stepIndex, FlowContext ctx) => true;
+
+        public int Select(int stepIndex, FlowContext ctx) => -1;
+
+        public IterationSource BeginIteration(int stepIndex, FlowContext ctx) =>
+            throw new NotSupportedException("This dispatcher has no iteration to begin.");
+
+        public FlowContext EnterIteration(int stepIndex, in IterationSource source, int iteration, FlowContext ctx) =>
+            throw new NotSupportedException("This dispatcher has no iteration to enter.");
+
+        public StepJournalEntry DescribeStep(int stepIndex, FlowContext ctx) => Entry;
+    }
+
+    /// <summary>
     /// The guarded state bag must not cost a flow that never forks anything at all.
     /// </summary>
     /// <remarks>

@@ -13,18 +13,23 @@ namespace FlowX.Compiler.Tests;
 /// <remarks>
 /// <para>
 /// Both directions, and here they carry equal weight for once. The firing direction is the
-/// whole point of the work package: before this rule, <c>Profile = Durable</c> compiled in
-/// silence and bought nothing. The silent direction is what keeps the rule usable —
-/// <c>Ephemeral</c> is the profile the runtime implements and the one the overwhelming
-/// majority of flows declare, so a false positive there would fire on essentially every
-/// flow in existence and be downgraded project-wide within a day.
+/// point of the rule: <c>Streaming</c> has no engine at all, so a flow that declares it
+/// compiles in silence and buys nothing. The silent direction is what keeps the rule usable —
+/// <c>Ephemeral</c> and, since WP-52, <c>Durable</c> are the profiles the runtime implements,
+/// and between them they are very nearly every flow ever written.
+/// </para>
+/// <para>
+/// <strong>Half of this file used to be about <c>Durable</c>.</strong> WP-52 made the engine
+/// journal a durable flow's step boundaries and refuse to run one with no journal, so the
+/// rule was narrowed rather than deleted — deleting it would have handed <c>Streaming</c>
+/// exactly the silence <c>Durable</c> had just been rescued from. The tests that asserted the
+/// old behaviour are inverted here rather than removed, because "this no longer reports" is
+/// the claim that stops the half coming back.
 /// </para>
 /// <para>
 /// The severity is pinned by a test of its own, because it is the decision this rule turns
 /// on and the one a later reader is most likely to "tidy up" into an error. The reasoning
-/// is on the descriptor and on <c>docs/diagnostics/FLOWX1028.md</c>; the deadlock with
-/// <c>FLOWX1017</c> is asserted here rather than only argued, since it is the argument that
-/// is checkable.
+/// is on the descriptor and on <c>docs/diagnostics/FLOWX1028.md</c>.
 /// </para>
 /// </remarks>
 public sealed class ExecutionProfileAnalyzerTests
@@ -75,18 +80,13 @@ public sealed class ExecutionProfileAnalyzerTests
 
     // ------------------------------------------------------------- it must fire
 
-    [Fact]
-    public void ADurableFlowIsReported() =>
-        Analyze(FlowWith("""[Flow("order.place", Profile = ExecutionProfile.Durable)]"""))
-            .ShouldBe(["FLOWX1028"]);
-
     /// <summary>
-    /// <c>Streaming</c> too: it has even less behind it than <c>Durable</c>.
+    /// <c>Streaming</c> is the half that is left, and it is the worse hole of the two.
     /// </summary>
     /// <remarks>
-    /// <c>06 §4</c> puts it plainly — "<c>Streaming</c> has no engine at all". A rule that
-    /// covered only <c>Durable</c> would leave the strictly worse hole open, and would have
-    /// to be written a second time in P7.
+    /// <c>06 §4</c> puts it plainly — "<c>Streaming</c> has no engine at all". Deleting the
+    /// rule when the journal landed would have left the strictly worse gap open, and P7 would
+    /// have had to write it a second time.
     /// </remarks>
     [Fact]
     public void AStreamingFlowIsReported() =>
@@ -103,12 +103,12 @@ public sealed class ExecutionProfileAnalyzerTests
     public void TheMessageNamesTheFlowAndTheDeclaredProfile()
     {
         var messages = GeneratorHarness.AnalyzeWithMessages(
-            FlowWith("""[Flow("order.place", Profile = ExecutionProfile.Durable)]"""),
+            FlowWith("""[Flow("order.place", Profile = ExecutionProfile.Streaming)]"""),
             new ExecutionProfileAnalyzer());
 
         messages.ShouldHaveSingleItem();
         messages[0].ShouldContain("PlaceOrderFlow");
-        messages[0].ShouldContain("ExecutionProfile.Durable");
+        messages[0].ShouldContain("ExecutionProfile.Streaming");
     }
 
     /// <summary>Reported once per flow, at the declaration, however many steps it has.</summary>
@@ -119,10 +119,8 @@ public sealed class ExecutionProfileAnalyzerTests
     /// de-duplicated and would pass against an analyzer reporting nine times.
     /// </remarks>
     [Fact]
-    public void ASuspendingCompensatingFlowIsStillReportedExactlyOnce() =>
+    public void ACompensatingFlowIsStillReportedExactlyOnce() =>
         AnalyzeOnce(Preamble + "\n\n" + """
-            public sealed record PaymentConfirmed(string Id);
-
             [Capability("inventory.release", Version = "1.0.0", Authorization = Authorization.Authenticated, Idempotent = true)]
             public sealed class ReleaseInventory : ICapability<OrderResult, OrderResult>
             {
@@ -130,13 +128,12 @@ public sealed class ExecutionProfileAnalyzerTests
                     => ValueTask.FromResult(Result.Ok(input));
             }
 
-            [Flow("order.place", Profile = ExecutionProfile.Durable)]
+            [Flow("order.place", Profile = ExecutionProfile.Streaming)]
             [FlowDeadline("P30D")]
             public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
             {
                 protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
                     .Step<ReserveInventory>().CompensateWith<ReleaseInventory>()
-                    .AwaitSignal<PaymentConfirmed>(TimeSpan.FromHours(1))
                     .Return(ctx => new OrderResult("id"));
             }
             """)
@@ -149,7 +146,25 @@ public sealed class ExecutionProfileAnalyzerTests
     public void AnEphemeralFlowIsSilent() =>
         Analyze(FlowWith("""[Flow("order.place", Profile = ExecutionProfile.Ephemeral)]"""))
             .ShouldBeEmpty(
-                "Ephemeral is the profile the runtime implements. There is no gap to report.");
+                "Ephemeral is a profile the runtime implements. There is no gap to report.");
+
+    /// <summary>
+    /// <c>Durable</c> is silent, and this is the assertion that keeps the narrowing narrowed.
+    /// </summary>
+    /// <remarks>
+    /// WP-52 made <c>FlowX.Runtime</c> read <c>ExecutionProfile</c>: a durable flow's step
+    /// boundaries are journaled on <c>(instance, scope, step, attempt)</c> under a fencing
+    /// token, resumption re-enters the same step loop from a cursor derived by replaying that
+    /// journal, and a durable flow started with no journal is refused rather than run
+    /// ephemerally. The declaration is honoured, so warning about it would be false — and a
+    /// catalogue that reports things that are not true is a catalogue people stop reading.
+    /// </remarks>
+    [Fact]
+    public void ADurableFlowIsSilentBecauseTheRuntimeNowJournalsIt() =>
+        Analyze(FlowWith("""[Flow("order.place", Profile = ExecutionProfile.Durable)]"""))
+            .ShouldBeEmpty(
+                "The runtime journals a Durable flow's step boundaries since WP-52, so this " +
+                "rule has nothing left to say about that profile.");
 
     /// <summary>A flow naming no profile is silent, because the default is the honoured one.</summary>
     /// <remarks>
@@ -221,32 +236,40 @@ public sealed class ExecutionProfileAnalyzerTests
     }
 
     /// <summary>
-    /// FLOWX1017 and FLOWX1028 must not both be errors, or a suspending flow has no legal
-    /// profile.
+    /// The fix for <c>FLOWX1017</c> produces a flow this rule is silent about.
     /// </summary>
     /// <remarks>
-    /// <c>FLOWX1017</c> is an error on <c>AwaitSignal</c> without <c>Durable</c>; this rule
-    /// reports <c>Durable</c>. Were both errors, <c>Ephemeral</c> would fail 1017 and
-    /// <c>Durable</c> would fail 1028, making a documented construct unbuildable — and
-    /// <c>AwaitSignalRequiresDurableCodeFixProvider</c>, whose entire job is to write
-    /// <c>Profile = ExecutionProfile.Durable</c>, would be a quick action that produces a
-    /// different error. This is the argument for the severity above, asserted rather than
-    /// only written down.
+    /// <para>
+    /// <c>AwaitSignalRequiresDurableCodeFixProvider</c> exists to write
+    /// <c>Profile = ExecutionProfile.Durable</c> onto a flow that suspends. While this rule
+    /// covered <c>Durable</c>, that quick action cleared an error and raised a warning — and
+    /// the two rules jointly left a suspending flow with no profile it could declare
+    /// cleanly, which was the argument that pinned this rule to Warning rather than Error.
+    /// </para>
+    /// <para>
+    /// Narrowing to <c>Streaming</c> retired the conflict outright rather than balancing it,
+    /// so the claim worth asserting is now the stronger one: the fix's output is clean.
+    /// The severity stays a Warning on its own merits, which the test above states.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void TheSuspensionRuleAndThisOneCannotBothBeErrors()
-    {
-        var both = new[]
-        {
-            FlowXDiagnostics.AwaitSignalRequiresDurable,
-            FlowXDiagnostics.ProfileIsNotHonouredByTheRuntime,
-        };
+    public void TheFixForTheSuspensionRuleProducesAFlowThisRuleIsSilentAbout() =>
+        Analyze(Preamble + "\n\n" + """
+            public sealed record PaymentConfirmed(string Id);
 
-        both.Count(static d => d.DefaultSeverity == DiagnosticSeverity.Error).ShouldBeLessThan(
-            2,
-            "A flow using AwaitSignal would then have no profile it could legally declare: " +
-            "Ephemeral fails FLOWX1017 and Durable fails FLOWX1028.");
-    }
+            [Flow("order.place", Profile = ExecutionProfile.Durable)]
+            [FlowDeadline("P30D")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .AwaitSignal<PaymentConfirmed>(TimeSpan.FromHours(1))
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """)
+            .ShouldBeEmpty(
+                "The quick action for FLOWX1017 writes exactly this profile. A fix whose " +
+                "result is a different diagnostic is a fix that is broken.");
 
     /// <summary>The descriptor says when it is deleted, because it is scaffolding.</summary>
     /// <remarks>

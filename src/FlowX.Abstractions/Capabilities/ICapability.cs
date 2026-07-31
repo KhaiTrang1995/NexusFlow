@@ -25,8 +25,10 @@ namespace FlowX;
 /// <para>
 /// <strong>Required, and not enforced.</strong> These three are blocked on P2: their
 /// analysis is the determinism check <c>PredicatePurityAnalyzer</c> already performs for
-/// flow delegates, but their severity is defined against the <c>Durable</c> profile, and
-/// the runtime does not yet read <see cref="ExecutionProfile"/> at all — see FLOWX1028.
+/// flow delegates, but their severity is defined against the <c>Durable</c> profile. WP-52
+/// removed the reason they would have shipped doing nothing — the runtime now reads
+/// <see cref="ExecutionProfile"/> and journals a durable flow — and WP-58 is where they are
+/// raised, with the severity stance re-decided as a set rather than one row at a time.
 /// </para>
 /// <list type="number">
 ///   <item>A capability is stateless: no mutable instance or static fields (would be FLOWX1009).</item>

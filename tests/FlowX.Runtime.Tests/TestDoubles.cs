@@ -444,6 +444,43 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     /// <inheritdoc />
     public void EnterSubFlow(int stepIndex, in SubFlowSource source, FlowContext child) =>
         _seeds[stepIndex](child);
+
+    /// <summary>
+    /// What each step contributes to a journal row, standing in for what the generator will
+    /// emit once the payload writer exists.
+    /// </summary>
+    /// <remarks>
+    /// A delegate rather than a fixed value, because the shape being exercised is that the
+    /// <em>dispatcher</em> decides — it is the only code that can name a
+    /// <c>JsonTypeInfo&lt;T&gt;</c> and the flow's <c>SensitiveMembers</c>, and a test double
+    /// that hard-coded a payload would prove nothing about that division of labour.
+    /// </remarks>
+    public Func<int, FlowContext, StepJournalEntry>? Describe { get; set; }
+
+    /// <summary>What rehydration does with a resumed instance's journaled state bag.</summary>
+    public Action<FlowContext, string>? Restore { get; set; }
+
+    /// <summary>The snapshots the engine handed back for rehydration, in order.</summary>
+    /// <remarks>
+    /// Recorded so a test can assert the engine asked <em>once</em>, before the first step,
+    /// and only when the instance actually committed a snapshot.
+    /// </remarks>
+    public List<string> Restored { get; } = [];
+
+    /// <inheritdoc />
+    public StepJournalEntry DescribeStep(int stepIndex, FlowContext ctx) =>
+        Describe?.Invoke(stepIndex, ctx) ?? StepJournalEntry.Nothing;
+
+    /// <inheritdoc />
+    public void RestoreState(FlowContext ctx, string stateBagJson)
+    {
+        lock (_recording)
+        {
+            Restored.Add(stateBagJson);
+        }
+
+        Restore?.Invoke(ctx, stateBagJson);
+    }
 }
 
 /// <summary>

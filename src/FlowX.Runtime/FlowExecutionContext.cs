@@ -95,6 +95,56 @@ public sealed class FlowExecutionContext : FlowContext
     /// </remarks>
     private int? _randomSeed;
 
+    /// <summary>
+    /// Whether this execution's step boundaries are being journaled, and therefore whether
+    /// what it reads from outside itself has to be captured.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Set from <c>ExecutionPlan.Flow.Profile</c>, so it is a fact about the flow's
+    /// declaration rather than a guess — exactly as <see cref="_guarded"/> is set from
+    /// <c>HasParallel</c>. An ephemeral flow takes the same path it always did and pays one
+    /// predictable, always-false branch on <see cref="UtcNow"/> and <see cref="NewId"/>,
+    /// which is what keeps budget B2 a hard zero for a feature it does not use.
+    /// </para>
+    /// <para>
+    /// It is the runtime reading <c>ExecutionProfile</c>, which is the statement WP-52
+    /// exists to make true and <c>FLOWX1028</c> existed to say was false.
+    /// </para>
+    /// </remarks>
+    private bool _journaled;
+
+    /// <summary>
+    /// What <see cref="UtcNow"/> answered the first time the step now running read it.
+    /// </summary>
+    /// <remarks>
+    /// Pinned rather than merely recorded. "Captured on first use and replayed thereafter"
+    /// is only true if later reads inside the same step get the captured value — a step that
+    /// read the clock twice and journaled the first answer would replay as a run that never
+    /// happened. Cleared at every step boundary by <see cref="TakeNondeterminism"/>, so the
+    /// pinning lasts exactly one step.
+    /// </remarks>
+    private DateTimeOffset? _capturedNow;
+
+    /// <summary>
+    /// The ids <see cref="NewId"/> minted during the step now running, in order.
+    /// </summary>
+    /// <remarks>
+    /// Created on first use and then owned by the pooled context, for the reason the
+    /// compensation stack is: a durable flow that mints ids should not build a list per step,
+    /// and an ephemeral flow should not build one at all.
+    /// </remarks>
+    private List<Guid>? _newIds;
+
+    /// <summary>Whether the random seed has already been written to a journal row.</summary>
+    /// <remarks>
+    /// The seed is drawn once per execution, not once per step, so it belongs on the row for
+    /// the step that first asked for randomness and on no other. Without this flag every
+    /// subsequent row would repeat it, and a reader could not tell one execution that drew a
+    /// number from one that drew several.
+    /// </remarks>
+    private bool _seedRecorded;
+
     private Error? _error;
 
     /// <summary>
@@ -133,7 +183,52 @@ public sealed class FlowExecutionContext : FlowContext
     public override DateTimeOffset Deadline => _deadline;
 
     /// <inheritdoc />
-    public override DateTimeOffset UtcNow => _clock.UtcNow;
+    /// <remarks>
+    /// <para>
+    /// A plain clock read for an ephemeral flow, and one predictable always-false branch on
+    /// top of it. Under <c>Durable</c> the first read of each step is captured into the
+    /// step's <see cref="NondeterminismCapture"/> and every later read in that step returns
+    /// the captured instant, because a replay that re-read the clock would reconstruct a run
+    /// that never happened.
+    /// </para>
+    /// <para>
+    /// The engine's own deadline check is usually the first read of a step, so the captured
+    /// instant is the moment the step started — which is the honest thing for it to be.
+    /// </para>
+    /// </remarks>
+    public override DateTimeOffset UtcNow => _journaled ? CaptureNow() : _clock.UtcNow;
+
+    /// <summary>Reads the clock once per step and answers with the same instant thereafter.</summary>
+    /// <remarks>
+    /// Serialised under the state bag's lock when the flow forks, for the reason every other
+    /// write on this class is: two branches can read the clock at the same instant, and a
+    /// nullable <see cref="DateTimeOffset"/> is wider than a word.
+    /// </remarks>
+    private DateTimeOffset CaptureNow()
+    {
+        if (_guarded)
+        {
+            lock (_state)
+            {
+                return CaptureNowCore();
+            }
+        }
+
+        return CaptureNowCore();
+    }
+
+    private DateTimeOffset CaptureNowCore()
+    {
+        if (_capturedNow is { } captured)
+        {
+            return captured;
+        }
+
+        var now = _clock.UtcNow;
+        _capturedNow = now;
+
+        return now;
+    }
 
     /// <inheritdoc />
     /// <remarks>
@@ -175,11 +270,11 @@ public sealed class FlowExecutionContext : FlowContext
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Public because the component that needs it is not the engine. Replay is a durability
-    /// concern: a journal writes this value when the execution ends and hands it back when
-    /// the run is reconstructed, and that journal lives outside this assembly. Nothing in
-    /// <c>FlowX.Runtime</c> reads it, and that is the correct shape — the engine's job is to
-    /// make the seed <em>knowable</em>, not to decide what is done with it.
+    /// Public because a store, a replay tool and an operator's view of a stuck instance are
+    /// all outside this assembly. Inside it, <see cref="TakeNondeterminism"/> is the one
+    /// reader: a durable execution writes the seed onto the row for the step that first asked
+    /// for randomness, which is what turns this property from a value nobody uses into the
+    /// thing that makes the replay guarantee described above deliverable.
     /// </para>
     /// <para>
     /// Reading this does not create the generator. A caller that asks a flow which never drew
@@ -187,10 +282,10 @@ public sealed class FlowExecutionContext : FlowContext
     /// there is nothing to record.
     /// </para>
     /// <para>
-    /// <strong>What this does not yet do.</strong> Replaying is not merely recording — the
-    /// context has no way to be <em>given</em> a seed, because there is nothing to give it
-    /// one. That direction arrives with the journal in P2. What exists today is the half
-    /// that has to exist first: a seed that is a value rather than a secret the BCL keeps.
+    /// <strong>What this still does not do.</strong> Recording is not replaying — the context
+    /// has no way to be <em>given</em> a seed, so a resumed instance re-draws rather than
+    /// reproducing. That direction is WP-61's <c>ReplayDeterminismTest</c>; what exists now is
+    /// the record it will be held to, which had to exist first.
     /// </para>
     /// </remarks>
     public int? RandomSeed => _randomSeed;
@@ -230,7 +325,37 @@ public sealed class FlowExecutionContext : FlowContext
     public override Error? Error => _error;
 
     /// <inheritdoc />
-    public override Guid NewId() => Guid.NewGuid();
+    /// <remarks>
+    /// An ephemeral flow mints an id and forgets it, exactly as before. A durable one keeps
+    /// every id the step minted, in order, so that the row records what the step read that it
+    /// could not have computed.
+    /// </remarks>
+    public override Guid NewId()
+    {
+        var id = Guid.NewGuid();
+
+        if (_journaled)
+        {
+            RecordNewId(id);
+        }
+
+        return id;
+    }
+
+    private void RecordNewId(Guid id)
+    {
+        if (_guarded)
+        {
+            lock (_state)
+            {
+                (_newIds ??= []).Add(id);
+            }
+
+            return;
+        }
+
+        (_newIds ??= []).Add(id);
+    }
 
     /// <inheritdoc />
     public override T Get<T>() => TryGet<T>(out var value)
@@ -309,6 +434,11 @@ public sealed class FlowExecutionContext : FlowContext
         _dispatcher = dispatcher;
         _depth = depth;
         _guarded = plan.HasParallel;
+
+        // The runtime reading ExecutionProfile, in one line. Everything a durable execution
+        // costs hangs off this field, and everything an ephemeral one does not pay is the
+        // branches that read it being false.
+        _journaled = plan.Flow.Profile == ExecutionProfile.Durable;
         _flowId = plan.Flow.Id;
         _flowVersion = plan.Flow.Version;
         _correlationId = invocation.CorrelationId;
@@ -422,6 +552,55 @@ public sealed class FlowExecutionContext : FlowContext
     internal void SetError(Error? error) => _error = error;
 
     /// <summary>
+    /// Takes what the step that just finished read from outside itself, and clears it ready
+    /// for the next one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The envelope ADR-0015's fourth commitment describes: the clock instant the step
+    /// pinned, the ids it minted, and the seed its generator was built from. Called once per
+    /// journaled step boundary and never on the ephemeral path, so a flow that declared
+    /// nothing pays nothing.
+    /// </para>
+    /// <para>
+    /// <strong>Attribution inside a fork is best-effort, and it is the same fidelity limit
+    /// <see cref="EnterStep"/> already states.</strong> One pooled context is shared by every
+    /// branch, so an id minted by a sibling between this step finishing and its commit is
+    /// attributed to this row. It is safe — the writes are serialised — and it is not yet
+    /// wrong in any way a reader can act on, because nothing replays a capture back into
+    /// execution today. Making it exact needs a per-branch context, which is what WP-61's
+    /// replay work has to buy.
+    /// </para>
+    /// </remarks>
+    internal NondeterminismCapture TakeNondeterminism()
+    {
+        if (_guarded)
+        {
+            lock (_state)
+            {
+                return TakeNondeterminismCore();
+            }
+        }
+
+        return TakeNondeterminismCore();
+    }
+
+    private NondeterminismCapture TakeNondeterminismCore()
+    {
+        var now = _capturedNow;
+        var seed = _seedRecorded ? null : _randomSeed;
+        var ids = _newIds is { Count: > 0 } minted ? minted.ToArray() : [];
+
+        _capturedNow = null;
+        _newIds?.Clear();
+        _seedRecorded |= seed is not null;
+
+        return now is null && seed is null && ids.Length == 0
+            ? NondeterminismCapture.None
+            : new NondeterminismCapture { UtcNow = now, RandomSeed = seed, NewIds = ids };
+    }
+
+    /// <summary>
     /// Clears every field before the instance returns to the pool.
     /// </summary>
     /// <remarks>
@@ -445,6 +624,10 @@ public sealed class FlowExecutionContext : FlowContext
         _clock = SystemClock.Instance;
         _random = null;
         _randomSeed = null;
+        _journaled = false;
+        _capturedNow = null;
+        _newIds?.Clear();
+        _seedRecorded = false;
         _error = null;
         _dispatcher = null;
         _depth = 0;

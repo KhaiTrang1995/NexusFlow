@@ -10,6 +10,15 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+
+    <!--
+      The durable seam is measured against the reference IFlowJournal rather than a
+      journal written for these tests. A second in-memory store would be a store nothing
+      holds to the conformance suite, and the first thing it would drift on is the fencing
+      check — which is the one behaviour the seam's correctness rests on. Referenced for
+      its types; its own suite runs in its own assembly.
+    -->
+    <ProjectReference Include="../FlowX.Conformance.Tests/FlowX.Conformance.Tests.csproj" />
   </ItemGroup>
 
 </Project>

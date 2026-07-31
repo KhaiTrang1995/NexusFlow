@@ -167,12 +167,23 @@ public readonly struct FlowExecutionResult<TOut>
 public static class FlowErrors
 {
     /// <summary>
+    /// The code <see cref="DeadlineExceeded"/> raises.
+    /// </summary>
+    /// <remarks>
+    /// A constant because the engine now branches on it: a durable instance that ran out of
+    /// budget is recorded as <c>TimedOut</c> rather than <c>Failed</c>, and a terminal state
+    /// decided by a string literal repeated in two files is a state that eventually
+    /// disagrees with itself.
+    /// </remarks>
+    public const string DeadlineExceededCode = "flow.deadline_exceeded";
+
+    /// <summary>
     /// The flow ran out of its absolute budget. Retryable: a fresh invocation gets a
     /// fresh deadline, and the work may well succeed.
     /// </summary>
     public static Error DeadlineExceeded(string flowId, DateTimeOffset deadline) =>
         new Error(
-            "flow.deadline_exceeded",
+            DeadlineExceededCode,
             $"Flow '{flowId}' exceeded its deadline of {deadline:O}.",
             ErrorCategory.Unavailable)
             .With("flowId", flowId)
@@ -424,4 +435,112 @@ public static class FlowErrors
             .With("flowId", flowId)
             .With("subFlowId", subFlowId)
             .With("maxDepth", depth);
+
+    /// <summary>
+    /// A flow declaring <see cref="ExecutionProfile.Durable"/> was started with no journal to
+    /// write to.
+    /// </summary>
+    /// <param name="flowId">The flow that declared durability.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Refused rather than run ephemerally, and that is the whole change.</strong>
+    /// Until the runtime read the profile, this was the silent default: a flow declared
+    /// <c>Durable</c>, ran with no journal, no lease and no resume, and nothing anywhere said
+    /// so — the gap <c>FLOWX1028</c> existed to describe. Running it quietly again here would
+    /// reintroduce exactly that, one layer lower and with no diagnostic left to raise it.
+    /// </para>
+    /// <para>
+    /// It is a rejection rather than a failure: no step ran, so there is nothing to
+    /// compensate. <see cref="ErrorCategory.Internal"/> because it is a wiring defect in the
+    /// host and not a business outcome — retrying reaches the same missing journal.
+    /// </para>
+    /// </remarks>
+    public static Error DurabilityNotConfigured(string flowId) =>
+        new Error(
+            "flow.durability_not_configured",
+            $"Flow '{flowId}' declares Profile = ExecutionProfile.Durable, so its step " +
+            "boundaries must be journaled — but it was started without a journal. Supply a " +
+            "DurableExecution (DurableExecution.BeginAsync for a new instance, ResumeAsync " +
+            "for one being picked up), or declare Ephemeral if this flow does not need to " +
+            "survive a crash.",
+            ErrorCategory.Internal)
+            .With("flowId", flowId);
+
+    /// <summary>
+    /// A journal was supplied for a flow that did not declare <see cref="ExecutionProfile.Durable"/>.
+    /// </summary>
+    /// <param name="flowId">The flow that was started.</param>
+    /// <param name="profile">What it actually declares.</param>
+    /// <remarks>
+    /// The mirror of <see cref="DurabilityNotConfigured"/>, and refused for the symmetrical
+    /// reason: the profile is the declaration. Journaling a flow whose author declined
+    /// durability charges it a store round trip per step for a guarantee it did not ask for,
+    /// and quietly ignoring the journal would leave the caller believing an instance exists
+    /// that nothing will ever write to.
+    /// </remarks>
+    public static Error ProfileIsNotDurable(string flowId, ExecutionProfile profile) =>
+        new Error(
+            "flow.profile_is_not_durable",
+            $"Flow '{flowId}' declares Profile = ExecutionProfile.{profile}, so there is " +
+            "nothing to journal, but a DurableExecution was supplied. The profile is the " +
+            "declaration: set Durable on the flow, or start it through the overload that " +
+            "takes no journal.",
+            ErrorCategory.Internal)
+            .With("flowId", flowId)
+            .With("profile", profile.ToString());
+
+    /// <summary>
+    /// A resumed instance's journaled state bag could not be read back.
+    /// </summary>
+    /// <param name="flowId">The flow being resumed.</param>
+    /// <param name="instanceId">The instance whose snapshot could not be restored.</param>
+    /// <param name="exception">What the dispatcher threw.</param>
+    /// <remarks>
+    /// Reported rather than tolerated. A resumed flow whose bag could not be rehydrated would
+    /// run every step after the frontier against values no step produced — which is worse
+    /// than not resuming at all, because the effects would be real. The usual cause is a
+    /// deployment whose contracts no longer match the ones the instance was pinned to.
+    /// </remarks>
+    public static Error StateRestoreFailed(string flowId, Guid instanceId, Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        return new Error(
+            "flow.state_restore_failed",
+            $"Instance '{instanceId}' of flow '{flowId}' could not be rehydrated from its " +
+            $"journaled state bag: {exception.GetType().Name}. Resuming would run the rest " +
+            "of the flow against values no step produced, so it is refused instead.",
+            ErrorCategory.Internal)
+            .With("flowId", flowId)
+            .With("instanceId", instanceId)
+            .With("exceptionType", exception.GetType().FullName);
+    }
+
+    /// <summary>
+    /// A step could not be described for the journal.
+    /// </summary>
+    /// <param name="flowId">The flow whose step was being committed.</param>
+    /// <param name="stepIndex">Index of the step, so the failure names one payload.</param>
+    /// <param name="exception">What the dispatcher threw.</param>
+    /// <remarks>
+    /// Its own code rather than <see cref="Unhandled"/>: the capability worked and the effect
+    /// happened: what failed is writing it down. That distinction is what an operator needs,
+    /// because the two have opposite remedies — one is a broken dependency, the other a
+    /// contract that is not in the generated JSON context.
+    /// </remarks>
+    public static Error JournalPayloadFailed(string flowId, int stepIndex, Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        return new Error(
+            "flow.journal_payload_failed",
+            $"Step {stepIndex} of flow '{flowId}' completed, but describing it for the " +
+            $"journal threw {exception.GetType().Name}. The step's effect has happened and " +
+            "no row records it, so this instance must be treated as having an uncommitted " +
+            "boundary.",
+            ErrorCategory.Internal)
+            .With("flowId", flowId)
+            .With("stepIndex", stepIndex)
+            .With("exceptionType", exception.GetType().FullName);
+    }
 }
