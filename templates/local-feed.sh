@@ -41,6 +41,19 @@ fi
 mkdir -p "$FEED"
 rm -f "$FEED"/*.nupkg
 
+# Evict the previous run's packages from the global cache before repacking.
+#
+# NuGet caches by id and version, and the version here does not change between runs — so
+# a restore after the second pack keeps serving the FIRST build's assemblies. The symptom
+# is the worst kind there is: templates/verify.sh builds, runs and asserts against a
+# generator from an earlier commit, and reports everything green. Only the ids packed
+# below are removed; nothing else in the cache is touched.
+CACHE="${NUGET_PACKAGES:-$HOME/.nuget/packages}"
+
+for project in "${PROJECTS[@]}"; do
+  rm -rf "$CACHE/$(basename "$project" | tr '[:upper:]' '[:lower:]')"
+done
+
 for project in "${PROJECTS[@]}"; do
   # IncludeSymbols is on repository-wide, and the two analyzer projects have no symbol
   # package to make — they ship a netstandard2.0 analyzer asset and no lib/ — so pack

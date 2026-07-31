@@ -23,8 +23,10 @@
 >
 > `AddFlowX(...)` in §3 is real and validates its options at start-up. The
 > `.UseHttp()` / `.UseKafka(...)` chain on it is not: `AddFlowX` takes an
-> `Action<FlowXOptions>` and there are no transport registration methods, so
-> `samples/ecommerce` and the generated project both map their endpoint by hand.
+> `Action<FlowXOptions>` and there are no transport registration methods.
+> **`app.MapFlowX()` is real** — `samples/ecommerce` and the generated project both
+> use it, and neither restates its own route. `AddApplication<T>()` is not, and §3
+> now records why it is not coming.
 
 ---
 
@@ -120,9 +122,47 @@ app.MapFlowX();                                            // generated endpoint
 app.Run();
 ```
 
-There is no `AddMediatR(typeof(X).Assembly)`-style reflection scan. `AddApplication<T>`
-resolves to generated static registration code. This is what makes cold start
-148 ms and NativeAOT possible.
+There is no `AddMediatR(typeof(X).Assembly)`-style reflection scan. This is what makes
+cold start 148 ms and NativeAOT possible.
+
+### What `app.MapFlowX()` actually is
+
+That line is real, and it is the whole of a composition root's transport wiring. The
+generator emits one `FlowX.Generated.FlowXEndpoints` method per `[HttpTrigger]`, from
+the same reading of the attribute that produced the `triggers` block of
+`flowx.manifest.json`:
+
+```csharp
+app.MapFlowX();                 // every declared endpoint
+app.MapPlaceOrderFlow();        // or one at a time, named for the flow
+```
+
+The method, the route, the `Idempotency-Key` rule, the plan, the dispatcher, the
+`.Return(...)` projection and the `[Sensitive]` redaction list all come from the flow.
+`Program.cs` names none of them, so the address an application publishes and the address
+it serves cannot disagree — which was the point: the ten-line `MapFlow` call this
+replaced was the one place a generated project could silently drift from its own flow.
+
+The file is emitted **only** when the compilation references `FlowX.Http`. A Kafka-only
+application gets no file, no type and no IL; the compiler knows the transport by name and
+links against no plugin, which is why adding one still costs `FlowX.Runtime` nothing.
+
+Two things remain hand-written, and the second on purpose:
+
+* **Which `JsonSerializerContext` to use** is inferred when exactly one context in the
+  compilation declares `[JsonSerializable]` for both of a flow's contracts — the common
+  case, and both the sample and the template. With none or several there is nothing to
+  infer, so only `MapPlaceOrderFlow(MyContext.Default)` is generated and the caller names
+  it. Everything else is still generated.
+* **`AddApplication<T>()` is not coming, and this row is the correction to the block
+  above.** Registering the capabilities a dispatcher takes would be mechanical — the
+  generator wrote that constructor — but a service *lifetime* is declared nowhere in a
+  flow, and emitting `AddSingleton` for each would be the generator inventing a fact
+  rather than publishing one. The first capability needing a scoped dependency would find
+  out as a captive-dependency failure inside generated source. A missing registration
+  already fails at start-up and names the type, so the ceremony that remains is loud,
+  short, and cannot drift. §6's rule — *ceremony every user pays is a platform defect* —
+  is about ceremony that restates something already declared. These lines do not.
 
 ---
 

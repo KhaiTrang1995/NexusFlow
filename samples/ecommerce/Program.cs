@@ -1,7 +1,6 @@
 using Ecommerce;
+using FlowX.Generated;
 using FlowX.Hosting;
-using FlowX.Http;
-using FlowX.Runtime;
 
 var builder = WebApplication.CreateSlimBuilder(args);
 
@@ -15,6 +14,12 @@ builder.Services.AddSingleton<IPaymentGateway, AlwaysApprovesGateway>();
 // The capabilities themselves. The generated dispatcher takes them as constructor
 // parameters, so a missing registration is a startup failure rather than a null
 // reference on the first request.
+//
+// These stay hand-written on purpose. The generator knows exactly which types the
+// dispatcher needs — it wrote that constructor — but nothing in the flow model declares
+// a service lifetime, so a generated AddSingleton would be the generator inventing a
+// fact rather than publishing one. A missing line here fails at start-up and names the
+// type; a wrong lifetime would be a captive dependency in a file nobody wrote.
 builder.Services.AddSingleton<ValidateOrder>();
 builder.Services.AddSingleton<ReserveInventory>();
 builder.Services.AddSingleton<ReleaseInventory>();
@@ -25,20 +30,14 @@ var app = builder.Build();
 
 app.MapHealthChecks("/health");
 
-// One endpoint, from the compiled plan. Every piece of it is generated: the plan, the
-// dispatcher and the projection all come from PlaceOrderFlow.Define. The generator will
-// emit this registration too, from the [HttpTrigger] attribute, in a later phase — it is
-// written by hand here so the sample runs against what exists today.
-app.MapFlow(
-    "POST",
-    "/api/v1/orders",
-    PlaceOrderFlow.Plan,
-    services => services.GetRequiredService<PlaceOrderFlow.Dispatcher>(),
-    PlaceOrderFlow.Projection,
-    EcommerceJsonContext.Default.PlaceOrder,
-    EcommerceJsonContext.Default.OrderPlacedResult,
-    requireIdempotencyKey: true,
-    sensitiveMembers: PlaceOrderFlow.SensitiveMembers);
+// Every endpoint this application declares, generated from the [HttpTrigger] on the flow
+// that declares it. The method, the route and the idempotency rule come from the same
+// reading of that attribute which produced flowx.manifest.json, so the address served and
+// the address published cannot disagree — and the plan, the dispatcher, the projection
+// and the sensitive-member list are the flow's own generated members, named rather than
+// restated. Nothing in this file mentions order.place, and nothing in it can drift from
+// the flow.
+app.MapFlowX();
 
 // `await RunAsync()` rather than `Run()`. Identical behaviour — top-level statements compile
 // to an async entry point, so the process still blocks here until shutdown — and it is the
