@@ -722,6 +722,41 @@ which is the exact failure mode P1 exists to remove:
       and the baseline re-recorded. **Left open as a reminder**: a benchmark's subject needs
       a gate of its own, and this one had none
 
+**What building `dotnet new flowx` found out about the platform.** A template is the
+first thing a new user runs, so it is also the cheapest test of our own ergonomics.
+Eleven findings; these are the ones that are ours to fix:
+
+- [x] **The repository could not produce its own packages.** `dotnet pack` failed on both
+      analyzer projects with `NU5017` — `IncludeSymbols` is set repo-wide, those two ship
+      only an analyzer asset, so the symbols package has no content and pack exits 1
+      *after* writing the `.nupkg` correctly. Nothing here ran `pack` until a template
+      needed a local feed, so it would have gone undiscovered until the first release.
+      Fixed; the solution now packs nine packages, exit 0
+- [ ] **`Program.cs` restates the flow — the highest-value missing piece.** `AddFlowX`
+      registers no transport and generates no endpoint, so a generated project
+      hand-writes the method and route `[HttpTrigger]` already declares, plus `Plan`,
+      `Dispatcher`, `Projection`, `SensitiveMembers` and two `JsonTypeInfo`s. Ten lines
+      every consumer writes identically for every flow, and the one place a generated
+      project can silently drift from its own flow. `19-SDK §6`'s own standard is that
+      ceremony every user pays is a platform defect
+- [ ] **`FLOWX1028`'s Warning is defeated by warnings-as-errors.** Its page argues at
+      length that an Error would be *actively harmful* — and this repository mandates
+      `TreatWarningsAsErrors`, so any consumer at the platform's own bar who declares
+      `Durable` gets a hard error anyway. Same shape for `FLOWX1024`. Either they become
+      `Info` or the platform publishes a `WarningsNotAsErrors` recommendation
+- [ ] **`EmitCompilerGeneratedFiles` is documented as on by default and is not.** It is on
+      only via this repo's `Directory.Build.props`, so a consumer writing their own
+      `.csproj` silently loses the ADR-0002 / risk-R1 mitigation. It belongs in
+      `FlowX.Compiler.props`, which every package consumer imports
+- [ ] **`FLOWX1010` fires second and in the wrong file.** Omitting `Authorization`
+      produces `CS9035` first, with no help link; `FLOWX1010` then fires at the *flow's*
+      `.Step<T>()` type argument rather than at the `[Capability]` attribute, so its
+      documented quick action is offered somewhere other than the edit it describes
+- [ ] **No fitness function sees `templates/`.** `SourceSurvey.ShippingTrees` covers
+      `src`, `plugins` and `samples`. The stated reason for including samples — a
+      permissive declaration there is one people copy — applies harder to a template,
+      which is copied by definition
+
 **Gaps WP-20 and WP-22 surfaced in turn.** Same class again — declared, documented or
 reachable, and enforced or honoured by nothing:
 
