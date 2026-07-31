@@ -74,6 +74,42 @@ type from a lambda body, and FlowX will not trade that away for a prettier call
 site — an `object`-typed mapping would move a whole class of binding errors from
 build time to run time, which is the opposite of what this platform is for.
 
+**Where the mapped value lives: at the step, and nowhere else.** The mapping is
+compiled into a `static readonly Func<FlowContext<TIn>, TStepIn>` field — built once
+at type initialisation, like every other delegate on this builder — and the generated
+dispatcher calls it and passes the result straight to the capability:
+
+```csharp
+var result = await _capturePayment
+    .ExecuteAsync(StepInputs.Step2(Typed(ctx)), ctx, ct)
+    .ConfigureAwait(false);
+```
+
+It is **not** written back into the state bag. The bag is keyed on `typeof(T)` and a
+mapping exists precisely because nothing earlier put a `CaptureRequest` there, so
+storing one would invent a producer [FLOWX1020](diagnostics/FLOWX1020.md) cannot see —
+and two mapped steps of the same contract in one flow would overwrite each other's
+input. As a local, each mapped step has its own delegate and its own value, and neither
+is visible to anything else. The step's *output* still goes into the bag, exactly as an
+unmapped step's does, which is what later steps and the `.Return(...)` projection bind
+to.
+
+Two consequences worth stating:
+
+- **A compensation on a mapped step re-runs the mapping.** There is no bag entry to read,
+  and the mapping is pure by construction ([FLOWX1011](diagnostics/FLOWX1011.md)), so it
+  reproduces the input the step ran with. This is the same guarantee an unmapped
+  compensation has, which reads the bag at unwind time rather than at the step.
+- **`TStepIn` must be the capability's declared input**, or something implicitly
+  convertible to it. C# infers it from the lambda and constrains it to nothing, so
+  [FLOWX1028](diagnostics/FLOWX1028.md) checks it — otherwise a mismatch would arrive as
+  a `CS1503` inside generated source.
+
+The mapping costs nothing to reach: a cached static delegate invoked through
+`FlowContext<TIn>`, which is a `readonly struct` over one reference. Budget **B2**
+is unaffected — measured at 0 B in `EngineAllocationTests`. What the mapping's *body*
+allocates is the author's own.
+
 ---
 
 ## 3. Control flow

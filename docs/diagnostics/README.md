@@ -48,6 +48,7 @@ ephemeral one is not replayed at all.
 | [FLOWX1024](FLOWX1024.md) | Emit step is recorded but not published | A consumer waiting for an event the manifest promised |
 | [FLOWX1025](FLOWX1025.md) | Trigger attribute cannot be read by the compiler | A trigger missing from the manifest, and `flowx diff` unable to tell |
 | [FLOWX1027](FLOWX1027.md) | Step is unreachable after `Fail` | A plan, a manifest and a diagram listing work the flow can never do |
+| [FLOWX1028](FLOWX1028.md) | Step input mapping produces the wrong contract | A `CS1503` inside generated source, about a call the developer cannot see |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -100,7 +101,8 @@ a mistake this project has already made once, when a check was built as `FLOWX10
 while three documents described it as `FLOWX1020`. `FLOWX1026` took the next free id
 for exactly that reason: `FLOWX1022` is spoken for, and "sub-flow cannot be
 composed" is not contract compatibility. `FLOWX1027` took the one after it, for the
-same reason. The next is `FLOWX1028`. The range is `FLOWX1001`–`FLOWX1099`.
+same reason, and `FLOWX1028` the one after that. The next is `FLOWX1029`. The range is
+`FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

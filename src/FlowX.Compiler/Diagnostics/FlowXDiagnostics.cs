@@ -414,6 +414,44 @@ public static class FlowXDiagnostics
         "does not fail.",
         DiagnosticSeverity.Warning);
 
+    /// <summary>FLOWX1028 — a step's input mapping produces a type its capability cannot accept.</summary>
+    /// <remarks>
+    /// <para>
+    /// <c>.Step&lt;TCapability, TStepIn&gt;(map)</c> infers <c>TStepIn</c> from the lambda
+    /// and constrains it to nothing: <c>.Step&lt;CapturePayment, string&gt;(ctx =&gt;
+    /// "x")</c> is legal C# at the call site even though <c>CapturePayment</c> consumes a
+    /// <c>Reservation</c>. The generated dispatcher passes the mapping's result straight to
+    /// the capability, so without this rule the mistake surfaces as a <c>CS1503</c> inside
+    /// generated source — the same shape of failure <c>ctx.Input</c> had, and the reason
+    /// generated code is now compiled by the test harness rather than merely parsed.
+    /// </para>
+    /// <para>
+    /// An <strong>error</strong>, because no degenerate form is honest. Ignoring the mapping
+    /// is what this overload did while it was unimplemented, and it is the fix FLOWX1020
+    /// recommends; falling back to binding from the state bag would make that remedy
+    /// silently do something else again.
+    /// </para>
+    /// <para>
+    /// Assignability rather than exact identity, unlike FLOWX1020. That rule asks what a
+    /// <c>Dictionary&lt;Type, object&gt;</c> lookup finds, and a lookup is exact; this one
+    /// asks what a C# argument accepts, and an argument takes anything implicitly
+    /// convertible to it.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor StepInputMappingHasWrongType = Create(
+        "FLOWX1028",
+        "Step input mapping produces the wrong contract",
+        "Step '{0}' in flow '{1}' maps its input to '{2}', which the capability cannot " +
+        "accept — it consumes '{3}'",
+        "'.Step<TCapability, TStepIn>(map)' hands the mapping's result straight to the " +
+        "capability, so TStepIn must be the capability's declared input contract or " +
+        "something implicitly convertible to it. C# infers TStepIn from the lambda and " +
+        "constrains it to nothing, which is why this is checked here rather than by the " +
+        "language. Build the contract the capability declares, or name that contract " +
+        "explicitly as the second type argument so the C# compiler reports the mismatch " +
+        "on the lambda body itself.",
+        DiagnosticSeverity.Error);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -436,7 +474,8 @@ public static class FlowXDiagnostics
         FlowHasNoSteps,
         EmitIsNotYetPublished,
         TriggerCannotBeRead,
-        StepIsUnreachableAfterFail);
+        StepIsUnreachableAfterFail,
+        StepInputMappingHasWrongType);
 
     private static DiagnosticDescriptor Create(
         string id,

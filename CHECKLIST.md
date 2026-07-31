@@ -518,10 +518,21 @@ which is the exact failure mode P1 exists to remove:
       shipped a rule that does nothing anywhere. Scope is decided by proof; impure
       statics are a list; nothing is interprocedural, and the page says so. Scope was
       `When` only until WP-25 widened it to every context delegate — see below
-- [ ] **`.Step<TCapability, TStepIn>(map)` is parsed and then ignored** by `FlowAnalyzer`
+- [x] **`.Step<TCapability, TStepIn>(map)` is parsed and then ignored** by `FlowAnalyzer`
       and `FlowEmitter`. It is on the builder surface and `FLOWX1020` recommends it as
       the fix for a binding failure, so a user following the diagnostic reaches an
-      overload that silently does nothing. Worse than not existing
+      overload that silently does nothing. Worse than not existing.
+      Closed by WP-41. The mapping is modelled, emitted as a cached static
+      `Func<FlowContext<TIn>, TStepIn>` and called at the step; its result is the step's
+      input and is **not** written into the state bag — the bag is keyed on `typeof(T)`
+      and a mapping exists precisely because nothing put a `TStepIn` there, so storing one
+      would invent a producer `FLOWX1020` cannot see and would make two mapped steps of
+      the same contract overwrite each other. A compensation on a mapped step re-runs the
+      mapping, which is sound because it is pure by `FLOWX1011` and is the same guarantee
+      an unmapped compensation has. 0 B on the mapped path. `FLOWX1020`'s silence on this
+      overload is now justified rather than self-defeating, and `FLOWX1028` was added
+      because C# constrains `TStepIn` to nothing — a mapping the capability cannot accept
+      used to be a `CS1503` inside generated source
 - [x] **Triggers and capability `errors` are in the manifest schema and never emitted.**
       Closed by WP-22. Both are emitted, under a **three-state rule**: a resolved
       catalogue, a resolved-and-empty one (`[]` — "declares no errors"), or **withheld

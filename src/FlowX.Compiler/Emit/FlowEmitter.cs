@@ -99,6 +99,7 @@ public static class FlowEmitter
         EmitDescriptors(writer, flow);
         writer.Line();
         EmitTypedContext(writer, flow);
+        EmitStepInputs(writer, flow);
         EmitConditions(writer, flow);
         EmitSelectors(writer, flow);
         EmitIterations(writer, flow);
@@ -201,7 +202,73 @@ public static class FlowEmitter
     /// </remarks>
     private static bool NeedsTypedContext(FlowModel flow) =>
         flow.AllSteps.Any(s => s.Kind is StepKindModel.Condition or StepKindModel.Switch
-            or StepKindModel.ForEach or StepKindModel.SubFlow);
+            or StepKindModel.ForEach or StepKindModel.SubFlow || s.HasInputMapping);
+
+    /// <summary>The flow's explicitly mapped steps, ascending by flat index.</summary>
+    private static System.Collections.Generic.List<StepModel> MappedSteps(FlowModel flow) => flow.AllSteps
+        .Where(s => s.HasInputMapping)
+        .OrderBy(s => s.Index)
+        .ToList();
+
+    /// <summary>
+    /// Emits one <c>static readonly</c> delegate per
+    /// <c>.Step&lt;TCapability, TStepIn&gt;(map)</c> input mapping.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A field, for the reason the predicates, the selectors and the sub-flow mappings are:
+    /// built once at type initialisation rather than once per execution, so a mapped step
+    /// costs no delegate allocation on the hot path. Budget B2 is a hard zero and a lambda
+    /// built at the call site would have lost it for every flow that maps a step.
+    /// </para>
+    /// <para>
+    /// <strong>Where the mapped value lives: nowhere but the call site.</strong> The
+    /// dispatcher passes the result of this delegate straight to the capability and does
+    /// not write it into the state bag. The bag is keyed on <c>typeof(T)</c> and a mapping
+    /// exists precisely because no earlier step put a <c>TStepIn</c> there, so writing one
+    /// back would invent a producer FLOWX1020 cannot see, and two mapped steps of the same
+    /// type in one flow would overwrite each other's input. As a local, each mapped step
+    /// has its own delegate and its own value, and neither is visible to anything else.
+    /// </para>
+    /// <para>
+    /// Typed at the <c>TStepIn</c> C# inferred rather than at the capability's declared
+    /// input, so the field's type is the one the author's lambda actually returns. FLOWX1028
+    /// has already refused the case where the two are unrelated, which is what makes passing
+    /// the first where the second is declared compile.
+    /// </para>
+    /// </remarks>
+    private static void EmitStepInputs(SourceWriter writer, FlowModel flow)
+    {
+        var mapped = MappedSteps(flow);
+
+        if (mapped.Count == 0)
+        {
+            return;
+        }
+
+        writer.Line("/// <summary>Step input mappings, built once at type initialisation.</summary>");
+        writer.Line("/// <remarks>");
+        writer.Line("/// Each is your <c>.Step&lt;TCapability, TStepIn&gt;(...)</c> expression, copied");
+        writer.Line("/// verbatim. They obey the same determinism rule as a condition — context, flow");
+        writer.Line("/// input and prior step results only — so that a replay hands the step the input");
+        writer.Line("/// it had before. The result goes straight to the capability and is never written");
+        writer.Line("/// into the state bag, so two mapped steps of the same type cannot collide.");
+        writer.Line("/// </remarks>");
+        writer.Line("private static class StepInputs");
+        writer.OpenBrace();
+
+        foreach (var step in mapped)
+        {
+            EmitLineDirective(writer, step.StepInputMapLocation);
+            writer.Line(
+                "public static readonly Func<FlowContext<" + flow.InputTypeName + ">, " +
+                step.StepInputTypeName + "> Step" + step.Index + " = " + step.StepInputMap + ";");
+            EmitLineDirectiveEnd(writer, step.StepInputMapLocation);
+        }
+
+        writer.CloseBrace();
+        writer.Line();
+    }
 
     /// <summary>
     /// Emits the names of the contract members marked <c>[Sensitive]</c>.
@@ -1086,7 +1153,7 @@ public static class FlowEmitter
                 EmitCapabilityInvocation(
                     writer,
                     FieldName(step.CapabilityTypeName!),
-                    step.CapabilityInput,
+                    InputExpression(step),
                     step.CapabilityOutput,
                     step.Location);
             }
@@ -1121,19 +1188,39 @@ public static class FlowEmitter
         writer.CloseBrace();
     }
 
+    /// <summary>
+    /// How one step gets its input: out of the state bag by type, or from the mapping the
+    /// author wrote.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Step inputs are bound by type out of the flow's state bag. The flow's own input is
+    /// seeded there by the engine; every later step reads what an earlier one returned.
+    /// That is what lets a chain of differently-typed steps run through an engine that
+    /// knows none of the types.
+    /// </para>
+    /// <para>
+    /// <strong>A mapped step short-circuits that lookup entirely</strong> — it does not
+    /// read the bag and does not write to it. The mapping runs on this thread, immediately
+    /// before the call, and its result is an argument and nothing more. See
+    /// <see cref="EmitStepInputs"/> for why the value deliberately does not live in the
+    /// bag.
+    /// </para>
+    /// </remarks>
+    private static string InputExpression(StepModel step) =>
+        step.HasInputMapping
+            ? "StepInputs.Step" + step.Index + "(Typed(ctx))"
+            : step.CapabilityInput is null
+                ? "ctx"
+                : "ctx.Get<" + step.CapabilityInput + ">()";
+
     private static void EmitCapabilityInvocation(
         SourceWriter writer,
         string field,
-        string? inputType,
+        string input,
         string? outputType,
         string? location)
     {
-        // Step inputs are bound by type out of the flow's state bag. The flow's own
-        // input is seeded there by the engine; every later step reads what an earlier
-        // one returned. That is what lets a chain of differently-typed steps run
-        // through an engine that knows none of the types.
-        var input = inputType is null ? "ctx" : "ctx.Get<" + inputType + ">()";
-
         EmitLineDirective(writer, location);
         writer.Line("var result = await " + field + ".ExecuteAsync(" + input + ", ctx, ct).ConfigureAwait(false);");
         EmitLineDirectiveEnd(writer, location);
@@ -1167,10 +1254,16 @@ public static class FlowEmitter
             writer.OpenBrace();
 
             // The compensation binds to the step's own input — the thing it has to undo.
+            // For a mapped step that means re-running the mapping rather than reading a
+            // bag entry that was never written. Re-running is sound for the same reason
+            // reading the bag is: the mapping is pure and deterministic (FLOWX1011), and
+            // both routes see whatever the context holds at unwind time — a later step
+            // that produced the same type again would move the value under an unmapped
+            // compensation exactly as it moves it under this one.
             EmitCapabilityInvocation(
                 writer,
                 FieldName(step.CompensationTypeName!),
-                step.CapabilityInput,
+                InputExpression(step),
                 outputType: null,
                 step.Location);
 

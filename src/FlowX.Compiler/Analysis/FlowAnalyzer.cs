@@ -1236,6 +1236,8 @@ public static class FlowAnalyzer
                 info.Id));
         }
 
+        var mapping = ReadInputMapping(link, semanticModel, info, diagnostics);
+
         steps.Add(StepModel.Capability(
             nextIndex++,
             info.TypeName,
@@ -1246,7 +1248,150 @@ public static class FlowAnalyzer
             FormatLocation(link.CallLocation),
             info.AuthorizationMode,
             info.InputTypeName,
-            info.OutputTypeName));
+            info.OutputTypeName,
+            mapping?.Text,
+            mapping?.TypeName,
+            mapping?.Location));
+    }
+
+    /// <summary>
+    /// Reads the explicit input mapping of a
+    /// <c>.Step&lt;TCapability, TStepIn&gt;(map)</c>, or <c>null</c> for the overload that
+    /// binds from the state bag.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The two overloads are one step kind.</strong> Only where the input comes
+    /// from differs, so this returns the extra facts and <see cref="AddCapabilityStep"/>
+    /// builds the same <see cref="StepModel.Capability"/> either way. The alternative — a
+    /// second kind — would have made every reader of a capability step ask which one it
+    /// was looking at, for a difference the descriptor, the compensation and the manifest
+    /// entry are all blind to.
+    /// </para>
+    /// <para>
+    /// <c>TStepIn</c> is read from the resolved method's <em>second</em> type argument
+    /// rather than inferred from the lambda body, for the reason
+    /// <see cref="ResolveSubFlowInput"/> gives: that is what C# itself inferred, and the
+    /// emitted mapping is a field typed at it, so a second opinion that disagreed with the
+    /// compiler's would not compile.
+    /// </para>
+    /// <para>
+    /// FLOWX1028 is reported here rather than in a <c>DiagnosticAnalyzer</c> because the
+    /// answer is already in hand: the capability's contract has just been read for the
+    /// step, and asking the same question again in the editor would mean resolving it
+    /// twice. It is an error and it suppresses the mapping, so a flow that cannot compile
+    /// does not also emit a dispatcher that cannot compile — one message about the
+    /// author's own line beats that message plus a CS1503 in generated source.
+    /// </para>
+    /// </remarks>
+    private static InputMapping? ReadInputMapping(
+        ChainLink link,
+        SemanticModel semanticModel,
+        CapabilityInfo info,
+        List<Diagnostic> diagnostics)
+    {
+        var arguments = link.Invocation.ArgumentList.Arguments;
+
+        // `.Step<TCapability>()` — one type argument and no mapping. Also the shape a
+        // `.Branch<TCapability>()` arrives in, which has no mapped form at all.
+        if (link.TypeArguments.Count < 2 || arguments.Count == 0)
+        {
+            return null;
+        }
+
+        if (semanticModel.GetSymbolInfo(link.Invocation).Symbol is not IMethodSymbol
+            {
+                TypeArguments.Length: 2,
+            } method ||
+            method.TypeArguments[1].TypeKind == TypeKind.Error)
+        {
+            // The call does not bind, which means the file does not compile, and that
+            // message is better than this one. Emitting an untyped mapping instead would
+            // guess `object` and box every input.
+            return null;
+        }
+
+        var mapped = method.TypeArguments[1];
+
+        // FLOWX1028 — the mapping's result is handed straight to the capability, and C#
+        // constrains TStepIn to nothing, so this is the only place the mismatch can be
+        // caught before it becomes a CS1503 inside generated code.
+        if (!IsAcceptedBy(semanticModel, mapped, method.TypeArguments[0]))
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.StepInputMappingHasWrongType,
+                link.TypeArguments[1].GetLocation(),
+                info.Id,
+                EnclosingFlowName(link),
+                Display(mapped),
+                info.InputTypeName ?? "its input contract"));
+
+            return null;
+        }
+
+        return new InputMapping(
+            arguments[0].Expression.ToString(),
+            Display(mapped),
+            FormatLocation(arguments[0].Expression.GetLocation()));
+    }
+
+    /// <summary>
+    /// Whether a value of <paramref name="mapped"/> can be passed where the capability
+    /// declares its input.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Assignability, not identity — which is the opposite of the rule FLOWX1020 applies,
+    /// deliberately. That rule asks what a <c>Dictionary&lt;Type, object&gt;</c> lookup
+    /// finds and a lookup is exact; this asks what a C# argument accepts, and an argument
+    /// takes anything implicitly convertible to it. Requiring identity here would report a
+    /// mapping that compiles perfectly.
+    /// </para>
+    /// <para>
+    /// The capability's input is taken from the resolved <c>ICapability&lt;,&gt;</c> rather
+    /// than from <c>CapabilityInfo</c>'s display string, because comparing symbols is exact
+    /// where comparing names is a guess about how two assemblies spell the same type.
+    /// </para>
+    /// </remarks>
+    private static bool IsAcceptedBy(SemanticModel semanticModel, ITypeSymbol mapped, ITypeSymbol capability)
+    {
+        var declared = CapabilityReader.InputContract(capability);
+
+        // Nothing to compare against: a capability with no readable contract is
+        // FLOWX1002's or FLOWX1015's business, and this rule has no defensible answer.
+        if (declared is null)
+        {
+            return true;
+        }
+
+        if (SymbolEqualityComparer.Default.Equals(mapped, declared))
+        {
+            return true;
+        }
+
+        var conversion = semanticModel.Compilation.ClassifyCommonConversion(mapped, declared);
+
+        return conversion.Exists && conversion.IsImplicit;
+    }
+
+    /// <summary>What a <c>.Step&lt;TCapability, TStepIn&gt;(map)</c> supplies its input with.</summary>
+    private sealed class InputMapping
+    {
+        internal InputMapping(string text, string typeName, string? location)
+        {
+            Text = text;
+            TypeName = typeName;
+            Location = location;
+        }
+
+        /// <summary>The mapping lambda's source text, copied verbatim.</summary>
+        internal string Text { get; }
+
+        /// <summary>Fully-qualified type C# inferred for <c>TStepIn</c>.</summary>
+        internal string TypeName { get; }
+
+        /// <summary><c>file:line</c> of the mapping expression.</summary>
+        internal string? Location { get; }
     }
 
     private static void AddEventStep(
