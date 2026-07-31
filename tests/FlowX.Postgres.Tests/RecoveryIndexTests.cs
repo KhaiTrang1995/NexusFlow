@@ -410,9 +410,21 @@ public sealed class RecoveryIndexTests
 
     /// <summary>The migration that carries the index is applied by the migrator.</summary>
     /// <remarks>
+    /// <para>
     /// The plan test above would fail without it, but it would fail by reporting a sequential
     /// scan, which reads as a query problem rather than as a schema that is one version
     /// behind. This says which.
+    /// </para>
+    /// <para>
+    /// <strong>Scoped to this test's own schema, and it has to be.</strong> <c>pg_indexes</c>
+    /// is a catalogue view over the whole database, every test here creates a schema with an
+    /// index of this name in it, and those schemas are dropped as their tests finish. Without
+    /// the <c>schemaname</c> filter this query can pick a row belonging to a schema that is
+    /// being dropped underneath it — <c>indexdef</c> is <c>pg_get_indexdef(oid)</c>, which
+    /// returns null for an index that has gone — and the assertion below fails reporting a
+    /// missing migration. That is a false failure about the loudest possible subject, and it
+    /// was observed under load rather than reasoned about.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task TheAbandonedIndexIsPartOfTheMigratedSchema()
@@ -420,7 +432,8 @@ public sealed class RecoveryIndexTests
         await using var schema = await PostgresTestSchema.CreateAsync(Cancellation);
 
         var definition = await schema.ScalarAsync(
-            "SELECT indexdef FROM pg_indexes WHERE indexname = 'flow_instance_abandoned_idx'",
+            "SELECT indexdef FROM pg_indexes " +
+            $"WHERE indexname = 'flow_instance_abandoned_idx' AND schemaname = '{schema.Options.Schema}'",
             Cancellation) as string;
 
         definition.ShouldNotBeNull(

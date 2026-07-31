@@ -70,4 +70,24 @@ internal static class JournalRows
         PayloadJson = Db.NullableString(reader, 5),
         PublishedAt = Db.NullableTimestamp(reader, 6),
     };
+
+    /// <summary>Reads a row claimed by <see cref="OutboxSql.ClaimPending"/>.</summary>
+    /// <param name="reader">The reader, positioned on the row.</param>
+    /// <returns>The pending event.</returns>
+    /// <remarks>
+    /// The same record as <see cref="Outbox"/> with one column fewer: the claim selects only
+    /// rows whose <c>published_at</c> is null, so reading the column back to discover it is
+    /// null would be a round trip spent confirming the <c>WHERE</c> clause.
+    /// <see cref="IEventPublisher"/> states that every event in a batch is pending, and this
+    /// is where that is true by construction rather than by convention.
+    /// </remarks>
+    public static OutboxRecord PendingOutbox(NpgsqlDataReader reader) => new()
+    {
+        EventId = reader.GetGuid(0),
+        InstanceId = reader.GetGuid(1),
+        Type = reader.GetString(2),
+        SchemaVersion = reader.GetString(3),
+        PartitionKey = Db.NullableString(reader, 4),
+        PayloadJson = Db.NullableString(reader, 5),
+    };
 }

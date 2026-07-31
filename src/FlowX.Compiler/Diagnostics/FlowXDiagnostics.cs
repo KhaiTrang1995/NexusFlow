@@ -527,21 +527,35 @@ public static class FlowXDiagnostics
 
     /// <summary>FLOWX1024 — an <c>.Emit&lt;T&gt;()</c> step that nothing will publish.</summary>
     /// <remarks>
+    /// <para>
     /// A warning, not an error, and the only one in the set. The step is real: it is in
     /// the compiled plan and in the manifest, and a consumer reading the manifest will
-    /// believe the event is published. Until the outbox exists (design principle P8) it
-    /// is not, and the gap between what the manifest promises and what the process does
-    /// is exactly the kind of thing that is discovered in production. Saying so at build
-    /// time is the cheapest place to find out.
+    /// believe the event is published. It is not, and the gap between what the manifest
+    /// promises and what the process does is exactly the kind of thing that is discovered
+    /// in production. Saying so at build time is the cheapest place to find out.
+    /// </para>
+    /// <para>
+    /// <strong>Revisited at WP-56, and kept.</strong> This used to say "until the outbox
+    /// exists (design principle P8)", and that is no longer the gap: the table stages
+    /// events atomically with the step that emitted them (WP-53) and
+    /// <c>PostgresOutboxPublisher</c> drains them to an <c>IEventPublisher</c>
+    /// at-least-once (WP-56). What is still missing is one link earlier —
+    /// <c>FlowEngine.CommitStepAsync</c> never sets <c>StepCommit.Outbox</c>, and
+    /// <c>IStepDispatcher.DescribeStep</c> returns no event for a generated dispatcher to
+    /// have serialised — so an <c>Emit</c> step stages nothing and a publisher has nothing
+    /// to publish. Narrower reason, same warning; the severity stance is argued on
+    /// <c>docs/diagnostics/FLOWX1024.md</c>.
+    /// </para>
     /// </remarks>
     public static readonly DiagnosticDescriptor EmitIsNotYetPublished = Create(
         "FLOWX1024",
         "Emit step is recorded but not published",
         "Flow step '.Emit<{0}>' is compiled into the plan but no event is published yet",
-        "Transactional outbox publication is not implemented in this release. The step " +
-        "appears in the plan and the manifest, so downstream consumers will expect the " +
-        "event — suppress this warning only once you have confirmed nothing depends on " +
-        "it being delivered.",
+        "The transactional outbox and its publisher both exist, and nothing connects an " +
+        "Emit step to them: the engine stages no outbox row for one, so no event is " +
+        "written and none is published. The step appears in the plan and the manifest, so " +
+        "downstream consumers will expect the event — suppress this warning only once you " +
+        "have confirmed nothing depends on it being delivered.",
         DiagnosticSeverity.Warning);
 
     /// <summary>FLOWX1025 — a trigger attribute that declares no <c>[TriggerKind]</c>.</summary>

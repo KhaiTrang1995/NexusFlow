@@ -49,7 +49,7 @@ them away, an ADR must record it.
 | C1 | .NET 10+, C# 14 | Technical | Roslyn incremental generators; `ref struct` interfaces available |
 | C2 | Must run under NativeAOT | Technical | No reflection, no dynamic codegen, no `System.Text.Json` reflection mode |
 | C3 | Must host inside ASP.NET Core | Technical | Cannot own the process lifecycle or the DI container |
-| C4 | No 2-phase commit | Technical | Consistency is saga-based; outbox for atomic publish |
+| C4 | No 2-phase commit | Technical | Consistency is saga-based; outbox for atomic publish. **Both halves exist as of WP-56** — one transaction stages the event with the step, and `PostgresOutboxPublisher` delivers it at-least-once. `.Emit<T>()` does not reach it yet ([FLOWX1024](diagnostics/FLOWX1024.md)), and no broker plugin implements `IEventPublisher` |
 | C5 | OpenTelemetry is the only telemetry API | Technical | No proprietary metrics interface |
 | C6 | Apache-2.0, no copyleft dependencies | Legal | Vets every transitive dependency ([ADR-0012](adr/ADR-0012-apache-2-license.md)) |
 | C7 | Public contracts follow SemVer with a 2-minor deprecation window | Organisational | Breaking changes are batched into majors |
@@ -730,7 +730,10 @@ policy *executes* — `FlowX.Runtime` contains no policy engine at all, so a dec
 is a manifest entry and nothing more. A completeness check for policies would therefore pass
 vacuously today. It becomes meaningful with P4. The same is true of `events`: `.Emit<T>()`
 reaches the plan and the manifest, and [`FLOWX1024`](diagnostics/FLOWX1024.md) is raised on
-every one of them because nothing publishes it.
+every one of them because nothing publishes it — *after WP-56 that is true for a narrower
+reason than it was. The outbox and its publisher exist; the engine does not stage an emitted
+event into `StepCommit.Outbox`, so there is nothing for the publisher to publish. The
+diagnostic page carries the corrected reason.*
 
 *The stale wording was duplicated verbatim in the `ManifestIsComplete` XML doc comment in
 `tests/FlowX.Architecture.Tests/PublishedContractTests.cs`. That comment now carries the

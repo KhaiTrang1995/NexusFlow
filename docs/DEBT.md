@@ -58,7 +58,7 @@ disagree eventually, and the weaker one is what a developer meets first.
 
 | ID | Area | Description | Owner | Created | Expires | Removable when |
 |---|---|---|---|---|---|---|
-| DEBT-0001 | `samples/ecommerce` | `FLOWX1024` suppressed on `PlaceOrderFlow`'s `.Emit<OrderPlaced>()`. The step is compiled into the plan and recorded in the manifest, so a consumer reading the manifest expects the event — but transactional outbox publication is not implemented, and nothing publishes it. | orders | 2026-07-30 | 2026-12-31 | The outbox ships ([P8](03-Design-Principles.md#p8--event-native)) and `.Emit` actually publishes. Then delete the pragma; the warning disappears on its own. |
+| DEBT-0001 | `samples/ecommerce` | `FLOWX1024` suppressed on `PlaceOrderFlow`'s `.Emit<OrderPlaced>()`. The step is compiled into the plan and recorded in the manifest, so a consumer reading the manifest expects the event — and nothing publishes it. *The reason narrowed at WP-56 and the entry stays open: the outbox and `PostgresOutboxPublisher` exist, and the engine still stages nothing into `StepCommit.Outbox` for an `Emit` step, so no event is ever written for a publisher to find.* | orders | 2026-07-30 | 2026-12-31 | `FlowEngine.CommitStepAsync` populates `StepCommit.Outbox` from an `Emit` step, so `.Emit` actually publishes ([P8](03-Design-Principles.md#p8--event-native)). Then delete the pragma; the warning disappears on its own. |
 
 ---
 

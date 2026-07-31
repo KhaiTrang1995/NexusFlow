@@ -6,19 +6,30 @@
 
 > [!WARNING]
 > **Almost none of the extension surface below is declared yet.**
-> `ITriggerSource`, `ITriggerSink`, `IEventPublisher`, `IIdempotencyStore`,
+> `ITriggerSource`, `ITriggerSink`, `IIdempotencyStore`,
 > `IPayloadSerializer`, `IPolicyHandler`, `ISecretProvider`, `ITenantResolver`,
 > `IJournalArchiver`, `IAiProvider` and `ICapabilityPackage` do not exist in
 > `src/FlowX.Abstractions` or anywhere else. A plugin author cannot compile
 > against them today.
 >
-> **Three do.** `IFlowJournal` and `ILeaseStore` were declared at WP-51 in
+> **Four do.** `IFlowJournal` and `ILeaseStore` were declared at WP-51 in
 > `src/FlowX.Abstractions/Durability/`, with the conformance suites described
 > below; `IRecoveryIndex` joined them and is the one durability contract with
 > **no suite at all**. *This paragraph said "two do", that nothing implements
 > them outside a test, and that `FlowX.Runtime` does not call them. All three
 > expired: WP-52 made the runtime call them, and WP-53 implements all three in
 > `plugins/FlowX.Postgres`.*
+>
+> **`IEventPublisher` was on the undeclared list until WP-56 and is now in
+> `src/FlowX.Abstractions/Events/`**
+> ([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)). It is the first
+> contract here declared with **nothing implementing it**:
+> `PostgresOutboxPublisher` consumes it, and no plugin produces one. There is no
+> Kafka, RabbitMQ, Service Bus, Event Hubs or SNS plugin, and the only
+> implementation anywhere is a recording test double in
+> `tests/FlowX.Postgres.Tests`. `PublisherConformance` stays unwritten for the
+> same reason it is worth naming here: a suite written against one test double is
+> a suite that has encoded it.
 >
 > There are **two plugins**. `plugins/FlowX.Http` extends FlowX by referencing
 > `FlowX.Abstractions` and mapping ASP.NET Core onto `TriggerEnvelope` — the
@@ -111,7 +122,7 @@ flowchart TB
 | Contract | Extends | First-party implementations |
 |---|---|---|
 | `ITriggerSource` | how flows are activated | Http, Grpc, GraphQL, Kafka, RabbitMq, AzureServiceBus, Mqtt, Sqs, Cron, FileWatcher, SignalR, Agent |
-| `IEventPublisher` | where events go | Kafka, RabbitMq, ServiceBus, EventHubs, Sns |
+| `IEventPublisher` | where events go | **declared at WP-56; none of Kafka, RabbitMq, ServiceBus, EventHubs, Sns exists** |
 | `IFlowJournal` | durable state | PostgreSql, SqlServer, Redis, Cosmos |
 | `ILeaseStore` | ownership | Redis, PostgreSql, etcd |
 | `IIdempotencyStore` | dedup | Redis, PostgreSql, in-memory |
@@ -196,7 +207,9 @@ FlowX.Conformance.Tests            # to be shipped as a NuGet package at WP-70
 │                                  #   commit order, replay capture, derived resume,
 │                                  #   child instances, redacted payloads
 ├── LeaseStoreConformance          # WP-51 · exclusivity, expiry, monotonic fencing tokens
-├── PublisherConformance           # NOT WRITTEN — at-least-once, per-key ordering, DLQ
+├── PublisherConformance           # NOT WRITTEN — at-least-once, per-key ordering, DLQ.
+│                                  #   IEventPublisher is declared (WP-56) and nothing
+│                                  #   implements it, so a suite would encode a test double
 ├── SerializerConformance          # NOT WRITTEN — round-trip, versioning, redaction
 └── PolicyHandlerConformance       # NOT WRITTEN — stage placement, deadline, telemetry
 ```

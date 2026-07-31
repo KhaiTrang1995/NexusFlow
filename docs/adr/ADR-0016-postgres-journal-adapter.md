@@ -183,10 +183,21 @@ while a detached child is still running, and the child stays readable with its p
 intact. A foreign key on `parent_instance_id` would have turned the purge itself into the
 error.
 
-**One accepted risk, named:** purging an instance cascades to its outbox rows, including
-any that were never published. Today nothing publishes them ([FLOWX1024](../diagnostics/FLOWX1024.md)),
-so nothing is lost; when WP-56 lands a publisher, the purge needs a guard against removing
-a pending event. This is a note for WP-56, not a defect in it.
+**One accepted risk, named — and discharged on 2026-07-31.** purging an instance cascades to
+its outbox rows, including any that were never published. Today nothing publishes them
+([FLOWX1024](../diagnostics/FLOWX1024.md)), so nothing is lost; when WP-56 lands a publisher,
+the purge needs a guard against removing a pending event. This is a note for WP-56, not a
+defect in it.
+
+> **WP-56 landed the publisher and the guard with it**
+> ([ADR-0018](ADR-0018-outbox-publication-and-ordering.md), decision 5). Both purges carry a
+> `NOT EXISTS` over unpublished events, unscoped by any window, and
+> `RetentionSweep.HeldForPendingEvents` counts what they withheld — because the guard's own
+> failure mode, a deployment that stages events and never publishes them, is otherwise
+> invisible until the disk is. `RetentionTests.APurgeKeepsAnInstanceThatStillHoldsAn`
+> `UnpublishedEvent` and its two siblings are where that is asserted rather than intended.
+> The risk above is left standing rather than rewritten: it is the reasoning that produced
+> the guard, and a record that deletes its own premise on discharging it teaches nothing.
 
 ### A portability note the record should carry
 

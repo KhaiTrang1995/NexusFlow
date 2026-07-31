@@ -312,6 +312,16 @@ Emission is transactional-outbox based in `Durable` flows: the event row is
 written in the same transaction as the step commit, then published by the Event
 Engine. At-least-once, never lost, never published before the step is durable.
 
+> **Not yet, and the gap is narrower than it was.** The store half is real:
+> `plugins/FlowX.Postgres` writes the outbox row in the step's transaction (WP-53),
+> and `PostgresOutboxPublisher` drains it to an `IEventPublisher` at-least-once,
+> preserving order per `partition_key` (WP-56). **`.Emit<T>()` does not reach it** —
+> `FlowEngine.CommitStepAsync` never populates `StepCommit.Outbox`, so the paragraph
+> above describes rows a host currently has to stage itself. That is what
+> [`FLOWX1024`](diagnostics/FLOWX1024.md) reports on every `Emit` step, and it is the
+> only remaining link. There is also no broker plugin: `IEventPublisher` is declared
+> and unimplemented ([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)).
+
 ### 3.7 Sub-flows
 
 ```csharp

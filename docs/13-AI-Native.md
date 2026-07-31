@@ -29,7 +29,7 @@
 >
 > *This paragraph used the freeze as a date and never said when it falls, and so did every
 > other document that named it.*
-> [**ADR-0017**](adr/ADR-0017-manifest-v1-freeze-criteria.md) *now states the eight
+> [**ADR-0018**](adr/ADR-0017-manifest-v1-freeze-criteria.md) *now states the eight
 > conditions, none of which holds today. Two bear directly on §3 below: thirteen fields
 > the committed schema declares are written by nothing — including the top-level `schemas`
 > map that every contract-shaped consumer in §4 would be generated from — and
