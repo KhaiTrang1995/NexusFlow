@@ -393,13 +393,14 @@ Stated so the decision is made with the uncertainty visible, not after it.
 exactly as written, and re-deciding them is the owner's to do. This section exists so a
 reader of the ADR discovers the measurements rather than only the questions.
 
-WP-36 went after §6's four open items. The results are in
+WP-36 went after §6's four open items, and WP-37 fixed the defect it found on the way. The
+results are in
 [**B13 — how often the derived error catalogue can actually be read**](../benchmarks/B13-error-catalogue-resolution.md),
 which also states, at length, why its headline number is weaker than it looks.
 
 | §6 open item | What was found |
 |---|---|
-| The real withheld rate | **39 % withheld** over a corpus of 38 capabilities — but the corpus was written by the same hand that reports the rate, so it is a property of that file list and not of any codebase. B13 §2 argues that no admissible rate can be taken until FlowX has users, and §9 names a cheaper substitute that does not require them. |
+| The real withheld rate | **42 % withheld** over a corpus of 38 capabilities — 39 % as WP-36 first measured it, plus the one capability that moved from a wrong catalogue to an honest refusal when WP-37 closed the defect below. The corpus was written by the same hand that reports the rate, so it is a property of that file list and not of any codebase. B13 §2 argues that no admissible rate can be taken until FlowX has users, and §9 names a cheaper substitute that does not require them. |
 | Whether an error-factory edit invalidates a catalogue elsewhere | **It invalidates correctly**, covered by four tests. The mechanism is that `ForAttributeWithMetadataName` combines with the `CompilationProvider`, so the transform re-runs for every capability on every edit anywhere — which answers the incremental-cost item below as a by-product. |
 | Incremental and IDE builds | **The inner loop pays the full derivation cost per edit, by construction**, not a fraction of it. The revisit trigger phrased against this can be considered answered without a timing run. |
 | Whether real projects pay more | Both effects measured. One two-term model fits nine points within 1.8 %: `217 kB/flow + types × (92.7 kB + 7.7 kB per extra statement)`. They are the same order of magnitude and cancel; B13 §6.2 gives the break-even table. |
@@ -407,13 +408,36 @@ which also states, at length, why its headline number is weaker than it looks.
 **Two findings that bear on the reasoning above rather than on §6, and that the owner
 should weigh before re-affirming §4:**
 
-1. **The derived catalogue *can* be wrong.** Four of the 38 capabilities are published with
-   a catalogue that disagrees with what they return — three claiming `errors: []` for a
-   capability that returns a code, one claiming a code it cannot return. This contradicts
-   §8's first positive consequence (*"a field that cannot be wrong"*) and the premise §3 C
-   uses to reject a declared list (*"a derived one cannot"*). It is a defect in
-   `ErrorCatalogueReader`, reported and not fixed, and B13 §5 sets out both directions and
-   what fixing it would cost in coverage. It cuts against §3 B as well as §3 C.
+1. **The derived catalogue *could* be wrong — and WP-37 fixed it.** As WP-36 first
+   measured, four of the 38 capabilities were published with a catalogue that disagrees
+   with what they return: three claiming `errors: []` for a capability that returns a code,
+   one claiming a code it cannot return. That contradicted §8's first positive consequence
+   (*"a field that cannot be wrong"*) and the premise §3 C uses to reject a declared list
+   (*"a derived one cannot"*).
+
+   **WP-37 made the reader incapable of both.** It no longer identifies a failure by
+   searching the class for an `Error`-typed expression; it starts at the capability's
+   `ExecuteAsync` and follows the value out, so a failure carried inside a `Result<T>` is
+   traced or refused, and a member the entry point never reaches is never read. `errors:
+   []` is now published only where every path was traced to a success. The corpus reports
+   **zero** wrong catalogues and asserts it as a property of every specimen.
+
+   What it cost, and what it did to the arguments above:
+
+   * **Coverage: less than B13 predicted.** Withheld 39 % → 42 %, not the 47 % B13 §5.3
+     estimated, because two of the three under-reporting cases became *correct* catalogues
+     rather than withholds. Resolved went 18 → 21.
+   * **`samples/ecommerce`'s manifest baseline is byte-identical**, and the generator got
+     cheaper: −5.7 % allocated on a 50-flow subject, with byte-identical generated output.
+   * **§8's first positive consequence stands as written.** So does §3 B: the argument that
+     the field's existing wrongness reduced the marginal harm of option B's fourth state is
+     withdrawn.
+   * **§3 C's absolute form is restored, with a sharper reason than it gives.** A derived
+     catalogue is not inherently incapable of being wrong — it was wrong, and a reader had
+     to be changed. What a hand-maintained list cannot match is that the defect was fixable
+     in one place and a test now holds it fixed.
+   * **None of this bears on the cost question §4 is deciding.** It was a correctness issue
+     and it has been settled separately, which is what B13 §8 item 1 asked for.
 2. **[07-Capability-Model §4](../07-Capability-Model.md)'s prescribed layout guarantees an
    empty result.** The block that mandates the static error class also says contracts live
    in a dedicated assembly, and the reader cannot follow a symbol into a referenced

@@ -71,8 +71,8 @@ public sealed class ErrorCatalogueCorpusTests
     private static readonly Lazy<ImmutableArray<Row>> Measured = new(Measure);
 
     // The corpus lives beside the test on disk and is copied next to the assembly by the
-    // project file. Reading it as text rather than compiling it in is the whole point: a
-    // third of it does not resolve, and one file is meant to be a different assembly.
+    // project file. Reading it as text rather than compiling it in is the whole point:
+    // much of it does not resolve, and one file is meant to be a different assembly.
     private static DirectoryInfo CorpusDirectory
     {
         get
@@ -131,76 +131,110 @@ public sealed class ErrorCatalogueCorpusTests
         int Count(Outcome outcome) => counts.TryGetValue(outcome, out var value) ? value : 0;
 
         Measured.Value.Length.ShouldBe(38);
-        Count(Outcome.Resolved).ShouldBe(18);
+        Count(Outcome.Resolved).ShouldBe(21);
         Count(Outcome.ResolvedEmpty).ShouldBe(1);
-        Count(Outcome.Withheld).ShouldBe(15);
-        Count(Outcome.FalseComplete).ShouldBe(4);
+        Count(Outcome.Withheld).ShouldBe(16);
+        Count(Outcome.FalseComplete).ShouldBe(0);
     }
 
     /// <summary>
-    /// The reader can publish a catalogue that is complete and wrong.
+    /// No published catalogue disagrees with what its capability returns.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Asserted on its own because it contradicts a premise the rest of the design rests
-    /// on. <c>CapabilityErrorCatalogue</c>'s remarks say a partial catalogue "is not
-    /// published at all, and the manifest's <c>errors</c> array is absent rather than
+    /// This is the premise the rest of the design rests on, and until WP-37 the corpus
+    /// disproved it. <c>CapabilityErrorCatalogue</c>'s remarks say a partial catalogue "is
+    /// not published at all, and the manifest's <c>errors</c> array is absent rather than
     /// short"; ADR-0014 §8 lists "a field that cannot be wrong: correct, or explicitly
     /// absent" as the decision's first positive consequence, and §3 C rejects a declared
     /// list precisely because "a declared list can be wrong, and a derived one cannot".
     /// </para>
     /// <para>
-    /// A derived one can. The reader identifies failure paths by finding expressions of
-    /// type <c>Error</c>, so a failure that never takes that shape in the capability's own
-    /// source is not an unreadable path — it is no path at all. The scan finds nothing,
-    /// has nothing to refuse, and publishes <c>errors: []</c>, which the schema defines as
-    /// the positive statement "analysed, returns no declared error".
+    /// A derived one could, in both directions at once. It identified a failure path by
+    /// finding an expression of type <c>Error</c>, so a failure that stayed inside a
+    /// <c>Result&lt;T&gt;</c> for its whole journey was not an unreadable path but no path
+    /// at all: the scan found nothing, had nothing to refuse, and published <c>errors:
+    /// []</c> — which the schema defines as the positive statement "analysed, returns no
+    /// declared error". And it walked the class lexically without asking what was
+    /// reachable, so an <c>Error</c> built in a member nothing calls was published as one
+    /// the capability returns.
     /// </para>
     /// <para>
-    /// This is reported, not fixed: it is a defect in <c>src/</c>, and which way to fix it
-    /// is a design decision for the owner. See B13 §5.
+    /// The reader now follows the value out of <c>ExecuteAsync</c> rather than searching
+    /// the class for a type, which closes both. This assertion is deliberately the whole
+    /// corpus and not the four specimens that used to fail it: the defect was general, and
+    /// a test naming the four cases would pass again the moment a fifth shape found the
+    /// same hole.
     /// </para>
     /// </remarks>
     [Fact]
-    public void AFailureThatNeverTakesTheShapeOfAnErrorIsPublishedAsNoFailureAtAll()
+    public void NoPublishedCatalogueDisagreesWithWhatItsCapabilityReturns()
     {
         var wrong = Measured.Value
             .Where(static row => row.Actual == Outcome.FalseComplete)
-            .Where(static row => row.Published.Length == 0)
-            .Select(static row => row.Specimen)
+            .Select(static row =>
+                $"{row.Specimen}: truth [{string.Join(", ", row.Truth)}], " +
+                $"published [{string.Join(", ", row.Published)}]")
             .ToArray();
 
-        wrong.ShouldBe(
-            ["DelegatingCapability", "ResultFailFromParts", "ResultReturningHelper"],
-            ignoreOrder: true);
+        wrong.ShouldBeEmpty(
+            "A catalogue is published only when the reader has established what the " +
+            "capability returns. Anything short of that is withheld, which a consumer can " +
+            "see; a catalogue that is present and wrong is one it cannot.");
     }
 
     /// <summary>
-    /// The reader also over-reports: it publishes errors a capability cannot return.
+    /// An empty catalogue is published only for a capability that was traced to no failure.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The mirror of the case above, and it arrives from the opposite direction.
-    /// <c>Roots</c> walks the capability's whole class declaration and asks each node its
-    /// type; it never asks whether anything reaches that node. So an <c>Error</c>
-    /// constructed in a member nothing calls — a hook the base declares and this capability
-    /// overrides but never invokes, a helper left behind by a refactor, a branch guarded by
-    /// a feature flag that is off — is published as a failure the capability can return.
+    /// The half of the fix that is easy to lose. <c>errors: []</c> is the one output that
+    /// looks identical whether it was concluded or merely defaulted to, so the corpus holds
+    /// the list of capabilities entitled to it. <c>Infallible</c> is entitled to it because
+    /// every value that can reach its output was followed to a <c>Result.Ok</c>.
     /// </para>
     /// <para>
-    /// It is the less alarming of the two directions: a consumer that handles an error
-    /// which never arrives has wasted effort, where one that fails to handle an error which
-    /// does arrive has a bug. But it is the same premise breaking. Both are reported to the
-    /// owner rather than fixed; see B13 §5.
+    /// If a specimen ever joins this list, the question to ask is not whether the reader
+    /// found no <c>Error</c> — it is whether the reader established there is none.
     /// </para>
     /// </remarks>
     [Fact]
-    public void AnErrorConstructedInUnreachableCodeIsPublishedAsOneTheCapabilityCanReturn()
+    public void TheOnlyEmptyCatalogueIsOneTheReaderEstablished()
+    {
+        Measured.Value
+            .Where(static row => row.Actual == Outcome.ResolvedEmpty)
+            .Select(static row => row.Specimen)
+            .ShouldBe(["Infallible"]);
+    }
+
+    /// <summary>
+    /// An error constructed in unreachable code is not published.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The over-report, which arrived from the opposite direction to the one above and is
+    /// closed by the same change. <c>InheritedHelper</c> calls exactly one factory and can
+    /// return exactly one code; it also overrides an abstract hook that nothing in it
+    /// calls, and the hook's error used to reach the manifest — as would a helper left by a
+    /// refactor, or a branch behind a feature flag that is off.
+    /// </para>
+    /// <para>
+    /// It was the less alarming of the two directions: a consumer that handles an error
+    /// which never arrives has wasted effort, where one that fails to handle an error which
+    /// does arrive has a bug. It was the same premise breaking, and it is asserted
+    /// separately because a catalogue can be over-reported without ever being empty, so the
+    /// test above would not have caught it on its own.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AnErrorConstructedInUnreachableCodeIsNotPublished()
     {
         var over = Measured.Value.Single(static row => row.Specimen == "InheritedHelper");
 
         over.Truth.ShouldBe(["order.forbidden/Forbidden"]);
-        over.Published.ShouldBe(["order.forbidden/Forbidden", "order.invalid/Validation"]);
+        over.Published.ShouldBe(
+            ["order.forbidden/Forbidden"],
+            "order.invalid is constructed in an override nothing in this capability calls.");
     }
 
     /// <summary>The corpus compiles, or none of the rest means anything.</summary>
