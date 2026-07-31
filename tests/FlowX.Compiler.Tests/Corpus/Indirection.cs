@@ -2,10 +2,10 @@
 //
 // This is where most real code lives. A capability that has grown past a page pushes its
 // failure construction into a base class, an injected translator, an extension method or a
-// second factory, and each of those is a different kind of hop for the reader. Two of the
+// second factory, and each of those is a different kind of hop for the reader. Four of the
 // six are in-assembly and resolve; the rest end at a declaration that contains no
-// Error-typed expression, which the reader treats as "whatever it does, I do not
-// understand it" — the roots.Count == 0 branch.
+// expression that could carry a failure, which the reader treats as "whatever it does, I
+// do not understand it" — the roots.Count == 0 branch.
 
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,14 +16,14 @@ namespace Corpus.Indirection;
 /// <summary>A protected helper inherited from a base class in the same assembly.</summary>
 [Specimen(
     "error factory inherited from a base class, alongside an unreachable override",
-    Expect = Expect.FalseComplete,
+    Expect = Expect.Resolved,
     Truth = ["order.forbidden/Forbidden"],
-    Why = "Forbidden() resolves, as expected — the base class is in this compilation. What "
-          + "was not expected is that the catalogue also carries order.invalid, from the "
-          + "Invalid override, which nothing in this capability calls. Roots walks the "
-          + "whole class declaration lexically and never asks what is reachable, so any "
-          + "Error constructed anywhere in a capability's own source is published as one it "
-          + "can return.")]
+    Why = "Forbidden() resolves — the base class is in this compilation. The Invalid "
+          + "override below is the point of the specimen: nothing in this capability calls "
+          + "it, and the catalogue used to carry its order.invalid anyway, because the scan "
+          + "walked the whole class declaration lexically and never asked what was "
+          + "reachable. It now starts at ExecuteAsync and follows values, so an Error "
+          + "constructed in a member nothing reaches is not published.")]
 [Capability("corpus.base_helper", Version = "1.0.0", Authorization = Authorization.Internal, Idempotent = true)]
 public sealed class InheritedHelper : OrderCapabilityBase, ICapability<Order, Receipt>
 {
@@ -43,12 +43,14 @@ public sealed class InheritedHelper : OrderCapabilityBase, ICapability<Order, Re
     "template method on a base class over an abstract error hook",
     Expect = Expect.Resolved,
     Truth = ["order.rejected_here/Conflict"],
-    Why = "Right answer, and not for the reason it looks like. Reject<T> is never followed "
-          + "at all — its type is Result<Receipt>, so it is not a failure path the reader "
-          + "can see, and the abstract hook it calls is never reached. The catalogue is "
-          + "correct only because the override happens to be declared inside this class, "
-          + "where Roots finds its construction lexically. Move that one line into a "
-          + "factory in a contracts assembly and the same capability withholds.")]
+    Why = "Right answer, and now for the reason it looks like. Reject<T> used not to be "
+          + "followed at all — its type is Result<Receipt>, which the reader could not see "
+          + "as a failure path — so the abstract hook was never reached and the catalogue "
+          + "was correct only because the override happens to be declared inside this "
+          + "class, where a lexical walk found its construction. The result is now the "
+          + "trail, and the hook is dispatched to this capability's override, which is a "
+          + "compile-time fact for a concrete capability. Move that one line into a factory "
+          + "in a contracts assembly and the same capability withholds — that part stands.")]
 [Capability("corpus.abstract_hook", Version = "1.0.0", Authorization = Authorization.Internal, Idempotent = true)]
 public sealed class AbstractHook : OrderCapabilityBase, ICapability<Order, Receipt>
 {

@@ -9,20 +9,30 @@
 >
 > **Headline, with the caveat attached to it because it cannot be separated from it:**
 > against a corpus of **38 capabilities that I wrote**, the reader publishes a catalogue
-> for **23** and withholds for **15** — a **39 % withheld rate**. ADR-0014's revisit
+> for **22** and withholds for **16** — a **42 % withheld rate**. ADR-0014's revisit
 > trigger is *"the withheld rate on real code exceeds 20 % of capabilities"*. This is not
 > real code, and [§2](#2-why-this-number-is-mine-and-not-the-worlds) is a long argument
 > that no honest rate can be taken today.
 >
-> **The finding that does not depend on my sampling at all:** 4 of the 23 published
-> catalogues are **wrong**. Three claim a capability returns no error when it returns one;
-> one claims an error the capability cannot return. That contradicts the premise ADR-0014
-> §8 lists first among the decision's positive consequences — *"a field that cannot be
-> wrong: correct, or explicitly absent"* — and the premise §3 C uses to reject a declared
-> list. See [§5](#5-two-defects-in-the-reader-reported-not-fixed).
+> **The finding that did not depend on my sampling at all, and what happened to it:** as
+> first recorded, 4 of the 23 published catalogues were **wrong** — three claiming a
+> capability returns no error when it returns one, one claiming an error the capability
+> cannot return. That contradicted the premise ADR-0014 §8 lists first among the decision's
+> positive consequences — *"a field that cannot be wrong: correct, or explicitly absent"* —
+> and the premise §3 C uses to reject a declared list. **WP-37 fixed both directions.** The
+> corpus now reports **zero** wrong catalogues. See
+> [§5](#5-two-defects-in-the-reader-found-here-fixed-in-wp-37).
+>
+> **What correctness cost, which is less than this document predicted.** The first
+> recording estimated the fix would move the corpus from 39 % to 47 % withheld. It moved it
+> to **42 %**: of the three under-reporting cases, **two became correct catalogues rather
+> than withholds**, because the code was in the source all along and only the reader's
+> question was wrong. Resolved went **18 → 21**.
 >
 > **Recorded:** 2026-07-31 · **P1** · `tests/FlowX.Compiler.Tests/Corpus/`,
-> `scripts/measure-catalogue-shape.py`
+> `scripts/measure-catalogue-shape.py` ·
+> **§3, §4, §5 and §8 restated after WP-37**; §6 and §7 are as first measured, with one
+> instrument caveat added at [§6.5](#65-what-wp-37-did-to-this-instrument).
 
 ---
 
@@ -34,6 +44,11 @@
 | Whether an error-factory edit invalidates a catalogue in another file | **Answered: it does.** Four tests | [§7](#7-incremental-invalidation-it-is-correct-and-that-is-what-it-costs) |
 | Whether real projects pay more or less than the synthetic one | Both effects measured on their own axes and together | [§6](#6-project-shape-bodies-against-reuse) |
 | Incremental and IDE build cost | Bounded, not timed: the derivation re-runs in full on every edit | [§7](#7-incremental-invalidation-it-is-correct-and-that-is-what-it-costs) |
+
+Two things this document found that ADR-0014 did not ask about, both defects in the reader
+and both **since fixed in WP-37**: a catalogue that could be positively wrong, and an
+instrument that measures a subject which does not bind. [§5](#5-two-defects-in-the-reader-found-here-fixed-in-wp-37)
+and [§6.5](#65-what-wp-37-did-to-this-instrument).
 
 Not measured: end-to-end wall-clock overhead at 200 flows since the duplicated-bind fix
 (that is `scripts/measure-scale-overhead.sh` and half an hour); the reader's cost in
@@ -99,7 +114,7 @@ input nothing can check, so they are the place to attack this document.
   patterns of which three resolve is withheld, and the withheld rate over long capabilities
   is therefore strictly higher than over the shapes they are made of.
 
-I believe the second effect is the larger, so I believe 39 % understates. That belief is
+I believe the second effect is the larger, so I believe 42 % understates. That belief is
 not a measurement and nothing here should be quoted as though it were.
 
 **What one specimen is not:** a claim about frequency. `InterpolatedCode` and
@@ -115,24 +130,35 @@ basis for weighting it any other way — which is exactly what
 38 capabilities, held by `ErrorCatalogueCorpusTests`. Adding a specimen fails that test
 until the numbers below are restated in the same commit.
 
-| Outcome | Count | Share |
-|---|---:|---:|
-| **Resolved** — published and correct | 18 | 47 % |
-| **Resolved-empty** — published, empty, and the capability really cannot fail | 1 | 3 % |
-| **Withheld** — not published, and the capability can fail | 15 | **39 %** |
-| **False-complete** — published and wrong | 4 | **11 %** |
+| Outcome | Count | Share | As first recorded |
+|---|---:|---:|---:|
+| **Resolved** — published and correct | 21 | 55 % | 18 |
+| **Resolved-empty** — published, empty, and the capability really cannot fail | 1 | 3 % | 1 |
+| **Withheld** — not published, and the capability can fail | 16 | **42 %** | 15 |
+| **False-complete** — published and wrong | 0 | **0 %** | 4 |
 
 Read three ways, because they answer different questions:
 
-* **A catalogue is published for 61 % of capabilities.** That is what a consumer sees as
-  "this field is here".
-* **Of the catalogues that are published, 17 % are wrong.** That is the number that matters
-  to a consumer acting on the field, and the design says it should be zero.
-* **50 % of capabilities get a catalogue that is both present and correct.** That is the
-  field's actual delivered value on this corpus.
+* **A catalogue is published for 58 % of capabilities.** That is what a consumer sees as
+  "this field is here". It was 61 %, and four of those were lies.
+* **Of the catalogues that are published, 0 % are wrong.** That is the number that matters
+  to a consumer acting on the field, and the design says it must be zero. It was 17 %.
+* **58 % of capabilities get a catalogue that is both present and correct**, against 50 %
+  before. That is the field's actual delivered value on this corpus, and it went *up* while
+  the field became trustworthy — which is not what §5 predicted and is worth saying plainly.
 
-For comparison, the same reader over `samples/ecommerce` resolves 4 of 4. Both figures are
-real and neither is evidence; they differ because the sample does.
+**Coverage did not have to be spent to buy correctness here, and the reason is specific
+rather than lucky.** Two of the three under-reporting cases were failures the reader could
+read perfectly well and had never been asked to look at:
+`Result.Fail<T>(code, message, category)` puts the code and the category at the call site,
+and a guard helper returning `Result<T>` is an ordinary static method in the same
+compilation. Only `DelegatingCapability` — where the result comes back from an injected
+service — became a withhold, and that is the same answer the reader already gave the
+spelling of that capability which happens to mention an `Error`.
+
+For comparison, the same reader over `samples/ecommerce` resolves 4 of 4, and its committed
+manifest baseline is byte-identical before and after WP-37. Both figures are real and
+neither is evidence; they differ because the sample does.
 
 ---
 
@@ -177,17 +203,22 @@ reach the default and refuse. Written as a ternary instead, `CoalescedFallback` 
 | `AbstractHook` | base template method over an abstract hook | Resolved *(see below)* |
 | `ExtensionMethodError` | extension method on the input type | Resolved |
 | `TwoHopFactory` | domain factory forwarding whole to another | Resolved |
-| `InheritedHelper` | inherited factory, plus an override nothing calls | **False-complete** |
+| `InheritedHelper` | inherited factory, plus an override nothing calls | Resolved *(was **false-complete**)* |
 | `SharedBuilder` | domain factory over a builder that takes the code | **Withheld** |
 | `InjectedTranslator` | error from an injected collaborator | **Withheld** |
 
-`AbstractHook` resolves, and not for the reason it looks like. The base's `Reject<T>` is
-never followed at all — its type is `Result<T>`, so the reader cannot see it as a failure
-path — and the abstract hook it calls is never reached. The catalogue is right only because
-the override happens to be declared inside the capability's own class, where the scan finds
-its construction lexically. Move that one line into a factory and the same capability
-withholds. Recording it as a pass is honest; recording it as evidence that the reader
-follows base classes would not be.
+`AbstractHook` resolves, and — since WP-37 — for the reason it looks like. As first
+recorded the base's `Reject<T>` was never followed at all: its type is `Result<T>`, which
+the reader could not see as a failure path, so the abstract hook it calls was never
+reached, and the catalogue was right only because the override happens to be declared
+inside the capability's own class where a lexical scan found its construction. The reader
+now follows the result into `Reject<T>` and dispatches the hook to this capability's
+override, which is a compile-time fact for a concrete capability. **The caveat that
+survives:** move that one line into a factory in a contracts assembly and the same
+capability still withholds — see [the cross-assembly group](#across-assemblies--the-layout-the-documentation-prescribes).
+
+`InheritedHelper` is the over-report, and it is closed. Its `Invalid` override is still
+there and still uncalled; the manifest no longer names its code.
 
 `InjectedTranslator` is the reader being right: which implementation is registered is not a
 compile-time fact, and refusing is the only correct answer.
@@ -262,35 +293,44 @@ discards every other code it declares, because the catalogue is all-or-nothing b
 |---|---|---|
 | `PropagatedError` | `return Result.Fail<T>(inner.Error);` | **Withheld** |
 | `ErrorAsParameter` | conventional error through a one-line private wrapper | **Withheld** |
-| `ResultFailFromParts` | `Result.Fail<T>(code, message, category)` | **False-complete** |
-| `DelegatingCapability` | delegates wholesale to a service returning `Result<T>` | **False-complete** |
-| `ResultReturningHelper` | guard helper whose return type is `Result<T>` | **False-complete** |
+| `ResultFailFromParts` | `Result.Fail<T>(code, message, category)` | Resolved *(was **false-complete**)* |
+| `DelegatingCapability` | delegates wholesale to a service returning `Result<T>` | **Withheld** *(was **false-complete**)* |
+| `ResultReturningHelper` | guard helper whose return type is `Result<T>` | Resolved *(was **false-complete**)* |
 
 The first two are the reader working: the failure takes the shape of an `Error` somewhere,
 the reader sees it, cannot follow it, and refuses. `ErrorAsParameter` is worth a second
 look — its call site is textbook, and what loses the catalogue is a one-line wrapper a
-developer added for readability, whose parameter has no declaration to follow.
+developer added for readability, whose parameter has no declaration to follow. **That one
+is still open**, and it is the cheapest coverage left on the table: binding a parameter to
+the argument at the call site is real interprocedural work and WP-37 deliberately did not
+attempt it, because a fix for a correctness defect is the wrong place to add a first
+approximation of dataflow.
 
-The last three are [§5](#5-two-defects-in-the-reader-reported-not-fixed).
+The last three were [§5.1](#51-a-failure-that-never-took-the-shape-of-an-error-was-published-as-no-failure-at-all).
+`PropagatedError` and `DelegatingCapability` are the same situation written two ways, and
+before WP-37 they produced opposite manifests. They now agree, and the answer they agree on
+is the true one.
 
 ---
 
-## 5. Two defects in the reader, reported not fixed
+## 5. Two defects in the reader, found here, fixed in WP-37
 
-Both are in `src/`, and how to fix them is a design decision. They are stated here and
-nowhere else changed.
+Both were in `src/`. They were reported and not fixed, because which way to fix them was a
+design decision; WP-37 took the direction the design already had — *withhold* — and found
+that most of the affected cases did not need it. This section states the defects as they
+were, because the argument they bear on is still live, and then what closing them cost.
 
-### 5.1 A failure that never takes the shape of an `Error` is published as no failure at all
+### 5.1 A failure that never took the shape of an `Error` was published as no failure at all
 
-`ErrorCatalogueReader`'s premise, in its own remarks, is that *"every expression of type
+`ErrorCatalogueReader`'s premise, in its own remarks, was that *"every expression of type
 `Error` inside the capability is a failure path"* — an expression's type is the only thing
-that identifies one. The converse does not hold, and the reader treats it as though it
-does.
+that identifies one. The converse does not hold, and the reader treated it as though it
+did.
 
 When a failure is carried inside a `Result<T>` for its entire journey through the
-capability's source, there is no `Error`-typed expression anywhere. The scan finds nothing.
-It also finds nothing it *could not follow*, so `Complete` stays true, and `ManifestWriter`
-emits:
+capability's source, there is no `Error`-typed expression anywhere. The scan found nothing.
+It also found nothing it *could not follow*, so `Complete` stayed true, and
+`ManifestWriter` emitted:
 
 ```json
 "errors": []
@@ -298,61 +338,89 @@ emits:
 
 which the schema, `CapabilityErrorCatalogue`'s remarks and ADR-0014 §3 B(1) all define as a
 positive statement: *"an empty **present** array is a positive statement: analysed, and
-returns no declared error."* It is a lie in all three specimens:
+returns no declared error."* It was a lie in all three specimens:
 
 * **`ResultFailFromParts`** uses `Result.Fail<T>(string code, string message, ErrorCategory
   category)` — a **first-party overload in `FlowX.Abstractions`** whose own summary says it
   is *"for call sites that do not have a shared error factory"*. The code is a string
-  literal, sitting in the capability's own body, and the manifest says the capability
+  literal, sitting in the capability's own body, and the manifest said the capability
   returns nothing.
 * **`ResultReturningHelper`** calls a guard helper whose return type is `Result<T>`. Same
   cause.
 * **`DelegatingCapability`** is one line of delegation to an injected service returning
   `Result<T>` — the shape of a very large fraction of thin capabilities.
 
-The severity is not that three specimens are wrong. It is the **direction**. Everywhere
-else, an obstacle produces *absence*, which a consumer can see. Here it produces a
+The severity was not that three specimens were wrong. It was the **direction**. Everywhere
+else, an obstacle produces *absence*, which a consumer can see. Here it produced a
 confident, complete, positive claim that there are no failures — for a consumer that
 ADR-0014 §3 B describes as *"an agent deciding which failures it must handle"*.
 
-The distinction is razor-thin and invisible to an author. `PropagatedError` writes
-`Result.Fail<T>(inner.Error)`, which mentions an `Error`, so it is honestly withheld.
-`DelegatingCapability` writes `return _service.PlaceAsync(...)`, which does not, so it is
+The distinction was razor-thin and invisible to an author. `PropagatedError` writes
+`Result.Fail<T>(inner.Error)`, which mentions an `Error`, so it was honestly withheld.
+`DelegatingCapability` writes `return _service.PlaceAsync(...)`, which does not, so it was
 confidently wrong. Same situation, opposite manifests.
 
-### 5.2 An `Error` in unreachable code is published as one the capability can return
+**What WP-37 changed.** The reader no longer identifies a failure path by searching for a
+type. It starts at the capability's `ExecuteAsync` — the one member the contract says
+produces the output — and follows the value: through the `ValueTask` that carries the
+result, through `Result.Ok` (a success, and the *only* thing that now entitles a capability
+to an empty catalogue), through both `Result.Fail<T>` overloads, and into any method whose
+source this compilation has. A `Result<T>` whose provenance it cannot name reaches the same
+refusal every other unreadable shape already reached. `errors: []` is now a conclusion the
+reader has to earn, and `TheOnlyEmptyCatalogueIsOneTheReaderEstablished` holds the list of
+capabilities entitled to it.
 
-`Roots` walks the capability's whole class declaration and asks each node its type. It
-never asks whether anything reaches that node. So any `Error` constructed anywhere in the
-capability's own source is published as a failure the capability returns.
+### 5.2 An `Error` in unreachable code was published as one the capability can return
+
+`Roots` walked the capability's whole class declaration and asked each node its type. It
+never asked whether anything reached that node. So any `Error` constructed anywhere in the
+capability's own source was published as a failure the capability returns.
 
 `InheritedHelper` calls exactly one factory and can return exactly one code. It also
-overrides an abstract hook that nothing in it calls, and the manifest publishes that hook's
+overrides an abstract hook that nothing in it calls, and the manifest published that hook's
 error too.
 
 Less alarming than 5.1 — a consumer that handles an error which never arrives has wasted
-effort, where one that misses an error which does arrive has a bug — but it is the same
+effort, where one that misses an error which does arrive has a bug — but it was the same
 premise breaking, from the other side. Dead code, a helper left by a refactor, and a branch
-behind a disabled feature flag all reach the manifest.
+behind a disabled feature flag all reached the manifest.
 
-### 5.3 What these two do to ADR-0014's argument
+**What WP-37 changed.** Rooting the scan at `ExecuteAsync` and following values answers the
+reachability question by construction rather than by adding an analysis: a member nothing
+calls is never visited. This is not full reachability — a branch that is dead for a reason
+only the runtime knows is still followed, and should be — it is the much smaller claim that
+*a member the entry point does not reach is not part of the contract*.
 
-They do not settle the decision, and they cut in more than one direction:
+### 5.3 What closing them cost, and what it did to ADR-0014's argument
 
-* They contradict **§8's first positive consequence** — *"a field that cannot be wrong:
-  correct, or explicitly absent. Nothing else in the document has that property."*
-* They weaken **§3 C's rejection of a declared list** — *"a declared list can be wrong, and
-  a derived one cannot ... A derived catalogue has exactly two outcomes — correct, or
-  absent."* The derived catalogue has three outcomes today, and the third is the one §3 C
-  says makes a declared list unacceptable.
-* They cut **against option B as well.** B's cost is that absence gains a second meaning.
-  If the field can already be silently wrong, the marginal harm of a fourth state is
-  smaller than §3 B argues.
-* They are **fixable**, and 5.1 arguably cheaply — a check for `Result.Fail<T>` and for
-  capability bodies whose return paths are `Result<T>`-valued and untraced would turn the
-  three false-completes into withholdings. That would push the withheld rate on this corpus
-  from 39 % to 47 % while making the published field trustworthy again. **Correctness costs
-  coverage here, and someone has to choose.**
+**Cost, measured on the same corpus:** withheld went 39 % → **42 %**, not the 47 % this
+section originally predicted, and resolved went **18 → 21**. Two of the three
+under-reporting cases turned into *correct catalogues* rather than withholds. The one that
+became a withhold, `DelegatingCapability`, is a capability whose failures genuinely are not
+a compile-time fact.
+
+`samples/ecommerce`'s manifest baseline is **byte-identical** across the change, and the
+generator got **cheaper** — see [§6.5](#65-what-wp-37-did-to-this-instrument).
+
+What this does to the ADR:
+
+* **§8's first positive consequence is true again** — *"a field that cannot be wrong:
+  correct, or explicitly absent."* It was false when this document was first recorded; the
+  corpus now asserts it as a property of every specimen rather than of four named ones, so
+  a fifth shape finding the same hole fails the test rather than joining a list.
+* **§3 C's rejection of a declared list is restored to its absolute form** — *"a declared
+  list can be wrong, and a derived one cannot."* The right reading is narrower than the
+  ADR's wording: a derived catalogue is not *inherently* incapable of being wrong, it was
+  wrong for two years' worth of shapes and a reader had to be made incapable of it. That is
+  still a categorically better position than a hand-maintained list, whose drift no test
+  can catch — but it is a property that has to be defended, not one that comes free.
+* **The argument that cut against option B is withdrawn.** It read: if the field can
+  already be silently wrong, the marginal harm of B's fourth state is smaller than §3 B
+  argues. The field can no longer be silently wrong, so §3 B stands as written.
+* **Nothing here bears on the cost question**, which is what ADR-0014 is actually deciding.
+  This was always a correctness issue and it is now settled independently, which is what
+  [§8](#8-what-this-should-change-in-adr-0014--a-recommendation-not-an-edit) item 1 asked
+  for.
 
 ---
 
@@ -454,6 +522,55 @@ reuse mode also makes flows textually similar, which is inherent to what reuse m
 a confound for the flow half of the generator; the per-flow term is stable across the grid,
 which is weak evidence that it does not matter much.
 
+### 6.5 What WP-37 did to this instrument
+
+**The reader got cheaper, and by less than the cost gate says.** Two numbers, and the gap
+between them is the point.
+
+| 50 flows, capability body padding | before WP-37 | after | change |
+|---|---:|---:|---:|
+| 0 extra statements | 37,812,208 B | 35,643,864 B | **−5.7 %** |
+| 25 extra statements | 88,663,320 B | 86,557,176 B | **−2.4 %** |
+
+Generated output is **byte-identical** at both points, so this is the same work producing
+the same answer for less. The saving is in the **constant** per-capability term — the old
+reader asked every node in the whole class declaration for its type, including the
+constructor, the fields and any member the entry point does not reach; the new one walks
+`ExecuteAsync` and stops descending at the outermost result-carrying expression, resolving
+what is under it structurally instead. The **slope is unchanged**: 7,764 B per extra
+statement per capability type before, 7,773 B after, which is [§6.1](#61-one-two-term-model-fits-every-point)'s
+7.7 kB either way. The padding lives in `ExecuteAsync`, so the reader still walks it, which
+is correct — a longer body really is more to read.
+
+**The caveat, which is about the harness and not about the generator.**
+`scripts/measure-generator-cost.py` — and therefore this section's grid, and the cost gate —
+parses the synthetic project with default parse options, while the project's own csproj
+sets `ImplicitUsings=enable`. Under the probe, `ValueTask`, `Task` and `CancellationToken`
+never bind, so **the subject the gate measures does not compile.** The old reader did not
+notice: it searched for `Error`-typed nodes, which bind fine, and read them. The new reader
+resolves the capability's `ExecuteAsync` through `ICapability<,>` before it reads anything,
+that lookup fails on an unbindable signature, and every capability is withheld immediately.
+
+So the gate reports **−40 %** where the honest figure is **−5.7 %**, and the difference is
+the reader declining to read a compilation that does not bind. That is the right behaviour
+and the wrong measurement. The two rows in the table above were taken on the same
+50-flow subject with the five missing `using` directives prepended to each file, which is
+the only difference.
+
+Consequences, none of which are this document's to act on:
+
+* **The committed baseline was not re-recorded.** Re-recording it against a subject that
+  does not bind would freeze a number that now means "the reader refused", and the next
+  change to the reader would be measured against it.
+* **The body-size grid in [§6](#6-project-shape-bodies-against-reuse) was taken on the same
+  unbindable subject and its slope no longer reproduces under it** — with the new reader,
+  padding 0 / 10 / 25 / 50 all land within 0.1 % of each other, because nothing reads the
+  bodies. The fitted model in §6.1 is unaffected as a statement about the generator: the
+  slope reproduces exactly on a subject that binds, as the table above shows.
+* **The fix is one line in the probe** (`CSharpParseOptions` with the implicit global
+  usings, or a generated `GlobalUsings.cs` in the subject), and it changes the committed
+  baseline, so it belongs to whoever owns that baseline.
+
 ---
 
 ## 7. Incremental invalidation: it is correct, and that is what it costs
@@ -498,21 +615,25 @@ incremental-build measurement shows the inner loop paying full derivation cost p
 The ADR's recommendation is untouched, and it should stay the owner's to make. What this
 evidence supports, in the order it should be considered:
 
-1. **§5.1 is the item to decide first, and it is not about the budget at all.** A field that
-   can be silently, positively wrong is a different object from the one ADR-0014 argues
-   about. Every argument in §3 B and §3 C and §8 that turns on *"correct, or absent"* needs
-   re-reading against §5 above. **This is a correctness issue and it should be separated
-   from the cost question rather than decided alongside it.**
+1. ~~**§5.1 is the item to decide first, and it is not about the budget at all.**~~
+   **Done, in WP-37.** The recommendation was that a field which can be silently, positively
+   wrong is a different object from the one ADR-0014 argues about, and that it should be
+   separated from the cost question rather than decided alongside it. It was: the reader was
+   fixed, the corpus asserts the property, and every argument in §3 B, §3 C and §8 that
+   turns on *"correct, or absent"* can now be read as written. The ADR's decision is
+   untouched and is still about cost.
 2. **The withheld rate is above the ADR's own revisit threshold on this corpus, and the
-   corpus is not admissible as proof.** 39 % against a 20 % trigger. I do not recommend
+   corpus is not admissible as proof.** 42 % against a 20 % trigger. I do not recommend
    treating that as the trigger firing. I recommend
    [§9](#9-what-a-real-measurement-would-need)'s cheaper substitute, which can be done in a
    day and would be admissible.
-3. **§3 C's rejection of a declared list is weaker than the ADR states, but not wrong.** The
-   derived catalogue is not exempt from being wrong. It is still wrong less often and in
-   fewer directions than a hand-maintained list would be, and §5.1 is fixable in a way a
-   hand-maintained list's drift is not. The argument survives; the absolute form of it does
-   not.
+3. **§3 C's rejection of a declared list holds, and the reason it holds is worth writing
+   down.** The original recommendation here was that the argument survives but its absolute
+   form does not. WP-37 restores the absolute form on this corpus — and it did so by
+   changing the reader, which is exactly the move a hand-maintained list does not have
+   available. That, rather than "a derived one cannot be wrong", is the durable version of
+   §3 C's argument: a derived catalogue's defects are *fixable in one place*, and a test can
+   assert they stay fixed.
 4. **07-Capability-Model §4 should be reconciled with the reader before anything else is
    decided.** Today the documented project layout guarantees an empty result. Whether §4
    changes or the reader learns to read a referenced assembly's metadata is a design
