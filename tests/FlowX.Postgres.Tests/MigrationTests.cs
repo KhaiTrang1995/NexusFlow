@@ -163,6 +163,71 @@ public sealed class MigrationTests
                 "whole reason the column has no default and no NOT NULL.");
     }
 
+    /// <summary>
+    /// A previous release's writer keeps staging outbox rows after <c>0004</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same rollout as the test above, one migration later, and the shape of the risk is
+    /// different. <c>0002</c> added a nullable column: an old writer omits it and gets null,
+    /// which is why that test asserts a null. <c>0004</c> adds <c>staged_seq</c> as
+    /// <strong>NOT NULL</strong>, because the publisher orders by it and a null would be a
+    /// row it cannot place. An old writer that omits a NOT NULL column is refused unless the
+    /// column has a default — so the default is the entire compatibility argument, and this
+    /// is where it is checked rather than asserted in a comment.
+    /// </para>
+    /// <para>
+    /// The writer below is the previous release: raw SQL naming exactly the columns
+    /// <c>JournalSql.InsertOutbox</c> named at version 3.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task TheOutboxExpandMigrationDoesNotBreakTheReleaseBeforeIt()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation, throughVersion: 3);
+
+        var instance = Guid.NewGuid();
+
+        await schema.ExecuteAsync(
+            $$"""
+              INSERT INTO flow_instance (instance_id, flow_id, flow_version, state, fence)
+              VALUES ('{{instance}}', 'order.place', '1.2.0', 'Running', 1);
+              INSERT INTO outbox_event (event_id, instance_id, sequence, ordinal, type,
+                                        schema_version, partition_key, payload)
+              VALUES (gen_random_uuid(), '{{instance}}', 1, 0, 'order.placed',
+                      '1.0.0', 'order-7', '{"a":1}');
+              """,
+            Cancellation);
+
+        await schema.Migrator.MigrateAsync(4, Cancellation);
+
+        (await schema.ScalarAsync(
+            $"SELECT count(*) FROM outbox_event WHERE instance_id = '{instance}' AND staged_seq IS NULL",
+            Cancellation))
+            .ShouldBe(
+                0L,
+                "the rewrite gave the row a sequence value, so an event staged before this " +
+                "release still has a position the publisher can order it by.");
+
+        // And the previous release keeps writing, still not mentioning the column.
+        await schema.ExecuteAsync(
+            $$"""
+              INSERT INTO outbox_event (event_id, instance_id, sequence, ordinal, type,
+                                        schema_version, partition_key, payload)
+              VALUES (gen_random_uuid(), '{{instance}}', 2, 0, 'order.paid',
+                      '1.0.0', 'order-7', '{"b":2}')
+              """,
+            Cancellation);
+
+        var published = await schema.OutboxPublisher(new RecordingEventPublisher())
+            .PublishPendingAsync(Cancellation);
+
+        published.Published.ShouldBe(
+            2,
+            "a writer that has never heard of staged_seq takes the default, so its rows are " +
+            "ordered and publishable rather than refused by a NOT NULL it cannot satisfy.");
+    }
+
     /// <summary>The current adapter works against the schema the migrator produces.</summary>
     /// <remarks>
     /// The other direction of the same rollout, and the one that catches a migration that

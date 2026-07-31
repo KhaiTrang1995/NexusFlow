@@ -57,6 +57,7 @@ public sealed class PostgresMigrator
         new(1, "initial_schema", "0001_initial_schema.sql"),
         new(2, "expand_state_bag_sequence", "0002_expand_state_bag_sequence.sql"),
         new(3, "index_abandoned_instances", "0003_index_abandoned_instances.sql"),
+        new(4, "outbox_publication", "0004_outbox_publication.sql"),
     ];
 
     /// <summary>The schema version this build of the adapter reads and writes.</summary>

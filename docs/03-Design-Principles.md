@@ -189,13 +189,20 @@ version and fails on an incompatible change (`CompareEvents` in
 `ManifestDiff`) — that half is real and gated in CI's *Manifest compatibility*
 job.
 
-*The other half is not. There is no outbox and no publication: `.Emit<T>()`
-compiles into the plan and into the manifest, and nothing publishes it. The
-compiler says so out loud — [`FLOWX1024`](diagnostics/FLOWX1024.md) is raised on
-every `Emit` step for exactly this reason, and `samples/ecommerce` suppresses it
-under a dated debt entry rather than hiding it. "Transactional outbox semantics"
-is a **P2** commitment; the integration test proving at-least-once publication
-under process kill cannot be written before the thing it tests.*
+*The other half is closer and still not true. **The outbox exists and publishes**
+(WP-53, WP-56): `plugins/FlowX.Postgres` writes the step row and the event in one
+transaction, `PostgresOutboxPublisher` drains it to an `IEventPublisher` in
+`partition_key` order, and the at-least-once-under-kill test this paragraph said
+"cannot be written before the thing it tests" is now written —
+`ACrashBetweenPublishingAndMarkingDeliversTwiceRatherThanNever`. **What is still
+missing is the link from `.Emit<T>()` to that machinery.** The step compiles into
+the plan and into the manifest, `FlowEngine.CommitStepAsync` stages nothing into
+`StepCommit.Outbox`, and so nothing publishes it. The compiler still says so out
+loud — [`FLOWX1024`](diagnostics/FLOWX1024.md) is raised on every `Emit` step for
+that narrower reason, and `samples/ecommerce` suppresses it under a dated debt
+entry rather than hiding it. And **no broker plugin exists**: `IEventPublisher` is
+a declared contract with a recording test double behind it and nothing else
+([ADR-0017](adr/ADR-0017-outbox-publication-and-ordering.md)).*
 
 ---
 

@@ -235,10 +235,17 @@ with the failures, which this table did not previously say — a flow that ran o
 deadline failed, and keeping it for the completed window would discard the evidence
 before the incident is investigated.
 
-**One accepted risk, named where an operator will meet it:** a purge cascades to the
-instance's outbox rows, including any never published. Nothing publishes them today,
-so nothing is lost; the guard belongs to WP-56, and it is a note for that package
-rather than a defect in it.
+**The risk this table used to accept is now guarded.** A purge cascades to the instance's
+outbox rows, and that used to include any never published — accepted on the grounds that
+nothing published them, so nothing was lost, with the guard left as a note for WP-56.
+WP-56 landed the publisher, so the premise is spent: **both purges now refuse an instance
+that still holds an unpublished event**, whatever its state and however far past its
+window it is. The refusal is deliberately **not scoped to a window** — there is no age at
+which discarding an unsent event becomes correct. `RetentionSweep.HeldForPendingEvents`
+reports how many instances a sweep withheld, because the guard's own failure mode is a
+deployment that stages events and publishes none: it keeps every one of those instances
+for ever, and that number is where an operator sees it happening rather than inferring it
+from disk. See [ADR-0017](adr/ADR-0017-outbox-publication-and-ordering.md), decision 5.
 
 Archival to cold storage is a plugin (`IJournalArchiver`), because the retention
 requirement is regulatory and differs per organisation. *That interface does not
@@ -364,6 +371,21 @@ every incident review template:
 
 ## 5. The transactional outbox
 
+> **Built at WP-56, and one link short of reaching a flow.** `PostgresOutboxPublisher`
+> implements the sequence below against `outbox_event`, and
+> [ADR-0017](adr/ADR-0017-outbox-publication-and-ordering.md) records what it decided.
+> **`.Emit<T>()` still does not reach it**: `FlowEngine.CommitStepAsync` never populates
+> `StepCommit.Outbox`, so an emitted event stages no row and the publisher drains an empty
+> table. That is what [`FLOWX1024`](diagnostics/FLOWX1024.md) now reports, and it is the
+> only remaining link. A host that commits through `IFlowJournal` itself, populating
+> `StepCommit.Outbox`, gets the whole guarantee today.
+>
+> **`IEventPublisher` is declared and nothing implements it.** WP-56 added the contract to
+> `FlowX.Abstractions`; there is no Kafka, RabbitMQ, Service Bus, Event Hubs or SNS plugin,
+> and the only implementation in the repository is a recording test double. Everything on
+> the database side of that seam is proved against PostgreSQL 16.13. Nothing on the network
+> side of it is.
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -379,19 +401,46 @@ sequenceDiagram
     FE->>DB: INSERT outbox_event (order.placed)
     FE->>DB: COMMIT
     Note over FE,DB: state and event are atomic — no dual-write problem
-    PUB->>DB: SELECT unpublished ORDER BY id LIMIT 500 FOR UPDATE SKIP LOCKED
-    PUB->>K: publish batch (key = partition_key, preserves per-key order)
-    PUB->>DB: UPDATE published_at
+    PUB->>DB: BEGIN
+    PUB->>DB: SELECT unpublished ORDER BY staged_seq LIMIT 500 FOR UPDATE SKIP LOCKED
+    PUB->>K: publish batch in claim order (key = partition_key)
+    PUB->>DB: UPDATE published_at for the prefix the broker acknowledged
+    PUB->>DB: COMMIT
+    Note over PUB,DB: a crash anywhere above leaves every row pending — at-least-once
     K->>C: deliver
 ```
 
+*The claim used to be drawn as `ORDER BY id`, and there was no id to order by: `event_id`
+is a random uuid and `outbox_event.sequence` is instance-local. Migration `0004` adds
+`staged_seq`, which is the order events were staged in across instances.*
+
 | Design point | Choice | Reason |
 |---|---|---|
-| Polling vs CDC | polling by default, CDC (Debezium) as a plugin | polling has no extra infrastructure; CDC scales further |
+| Polling vs CDC | polling by default, CDC (Debezium) as a plugin | polling has no extra infrastructure; CDC scales further. **The plugin does not exist** |
 | Batch size | 500, tunable | balances latency and throughput |
 | Locking | `FOR UPDATE SKIP LOCKED` | multiple publishers without contention |
 | Ordering | per `partition_key` only | global ordering is not offered — it does not scale and is rarely needed |
 | Publisher failure | at-least-once republish | consumers must be idempotent; this is stated in every event contract |
+| Transaction boundary | claim, publish and mark in **one** transaction | the mark cannot outlive a publish that did not happen, and cannot be lost by a publish that did |
+| Permanently refused event | retried for ever, blocking its batch | there is **no dead-letter path**; DLQ belongs to the unwritten `PublisherConformance` ([17 §4](17-Plugin-System.md#4-compatibility-policy)) |
+
+### What "per `partition_key` ordering" means with two publishers
+
+`SKIP LOCKED` and per-key ordering pull against each other, and the row above asserts both.
+Publisher A claims key `K`'s older event; publisher B skips the locked row, claims K's newer
+one, and reaches the broker first. **Locking alone therefore does not give the guarantee this
+table offers.**
+
+The claim query carries a second clause for it: a claimed row is dropped from the batch when
+its key has an older pending event that this claim did not take — held by another publisher,
+or beyond the batch limit. It stays pending and goes out in a later pass, behind the sibling
+it has to follow. An event with a **null** `partition_key` asks for no order and is exempt,
+because holding one behind another would serialise the whole unkeyed stream for a guarantee
+nobody declared.
+
+**Global ordering is not offered, and no setting turns it on.** Two events with different
+keys arrive in either order. Offering a total order would serialise every key through one
+publisher, which is the cost this design exists to avoid.
 
 ---
 

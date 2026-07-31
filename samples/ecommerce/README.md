@@ -223,9 +223,12 @@ diagram.
 
 **`.Emit<OrderPlaced>()` publishes nothing.** The step is compiled into the plan and
 recorded in the manifest, so a consumer reading the manifest will expect the event —
-but transactional outbox publication is not implemented in this release. The compiler
-says so as **FLOWX1024**, and the sample suppresses it with an explicit `FLOWX-DEBT`
-marker rather than hiding it. See
+and nothing delivers it. *The reason narrowed at WP-56: transactional outbox
+publication **is** implemented — `plugins/FlowX.Postgres` stages the event in the
+step's transaction and `PostgresOutboxPublisher` drains it at-least-once — and the
+engine still stages nothing into `StepCommit.Outbox` for an `Emit` step, so there is
+no row for a publisher to find.* The compiler says so as **FLOWX1024**, and the sample
+suppresses it with an explicit `FLOWX-DEBT` marker rather than hiding it. See
 [docs/diagnostics/FLOWX1024.md](../../docs/diagnostics/FLOWX1024.md).
 
 **Service registration is written by hand, and stays that way.** The endpoint is

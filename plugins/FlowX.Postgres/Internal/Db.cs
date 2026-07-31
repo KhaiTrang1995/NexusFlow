@@ -65,6 +65,22 @@ internal static class Db
     public static NpgsqlParameter Interval(string name, TimeSpan value) =>
         new(name, NpgsqlDbType.Interval) { Value = value };
 
+    /// <summary>A <c>uuid[]</c> parameter, for an <c>= ANY(…)</c> over a known set of ids.</summary>
+    /// <param name="name">The parameter name.</param>
+    /// <param name="value">The ids.</param>
+    /// <returns>The parameter.</returns>
+    /// <remarks>
+    /// The type is stated as a data type <em>name</em> rather than as
+    /// <c>NpgsqlDbType.Array | NpgsqlDbType.Uuid</c>. The composed form is the driver's
+    /// documented spelling, but <c>NpgsqlDbType</c> carries no <c>[Flags]</c> attribute, so
+    /// combining two of its members is a bitwise operation on an enum that does not declare
+    /// itself a bit field — S3265, and reasonably so, because the same expression on any
+    /// other pair of its members would be nonsense. <c>uuid[]</c> says the same thing to the
+    /// server, with the type still stated rather than inferred.
+    /// </remarks>
+    public static NpgsqlParameter UuidArray(string name, Guid[] value) =>
+        new(name, value) { DataTypeName = "uuid[]" };
+
     /// <summary>
     /// Whether a column on the current row is null.
     /// </summary>

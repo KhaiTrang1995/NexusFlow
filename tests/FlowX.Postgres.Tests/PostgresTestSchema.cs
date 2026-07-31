@@ -58,6 +58,39 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
     public PostgresMigrator Migrator { get; }
 
     /// <summary>
+    /// An outbox publisher over this schema, draining to a given broker.
+    /// </summary>
+    /// <param name="broker">Where published events go.</param>
+    /// <param name="batchSize">How many events one pass claims. Defaults to §5's 500.</param>
+    /// <param name="pollInterval">How long <c>RunAsync</c> waits after an empty pass.</param>
+    /// <returns>The publisher.</returns>
+    /// <remarks>
+    /// Constructed per call rather than held as a property, because more than one of these
+    /// against one schema is exactly the arrangement the <c>SKIP LOCKED</c> tests exist to
+    /// make: two publishers, two brokers, one table. A single shared instance would have made
+    /// that untestable and the sharing invisible.
+    /// </remarks>
+    public PostgresOutboxPublisher OutboxPublisher(
+        IEventPublisher broker,
+        int? batchSize = null,
+        TimeSpan? pollInterval = null)
+    {
+        var options = new PostgresOutboxOptions();
+
+        if (batchSize is { } size)
+        {
+            options = options with { BatchSize = size };
+        }
+
+        if (pollInterval is { } interval)
+        {
+            options = options with { PollInterval = interval };
+        }
+
+        return new PostgresOutboxPublisher(DataSource, broker, options);
+    }
+
+    /// <summary>
     /// Creates a schema and brings it to a version, or refuses to pretend it did.
     /// </summary>
     /// <param name="cancellationToken">Cancels the setup.</param>

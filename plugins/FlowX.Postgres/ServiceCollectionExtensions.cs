@@ -68,6 +68,48 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers <see cref="PostgresOutboxPublisher"/> over the data source
+    /// <see cref="AddFlowXPostgres"/> built.
+    /// </summary>
+    /// <param name="services">The container being built.</param>
+    /// <param name="options">Batch size and poll interval.</param>
+    /// <returns>The same collection, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>Separate from <see cref="AddFlowXPostgres"/> on purpose, and not defaulted
+    /// on.</strong> The publisher needs an <see cref="IEventPublisher"/>, and this repository
+    /// ships none — there is no broker plugin (<c>docs/17-Plugin-System.md §2</c>). Folding
+    /// the registration into the journal's would make a host that wires PostgreSQL fail to
+    /// resolve a service it never asked for, or — worse, and the mistake
+    /// <see cref="PostgresJournalOptions.RegisterRecoveryIndex"/> exists because of — leave a
+    /// deployment believing it publishes while nothing does.
+    /// </para>
+    /// <para>
+    /// <strong>Registering it does not start it.</strong> This produces the publisher; a host
+    /// runs <see cref="PostgresOutboxPublisher.RunAsync"/> on whatever it uses for
+    /// long-running work. Starting a polling loop as a side effect of building a container is
+    /// the same mistake as migrating from one, and the remarks on this class say why.
+    /// </para>
+    /// </remarks>
+    public static IServiceCollection AddFlowXPostgresOutbox(
+        this IServiceCollection services,
+        PostgresOutboxOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        var settings = options ?? new PostgresOutboxOptions();
+
+        services.AddSingleton(settings);
+        services.AddSingleton(provider => new PostgresOutboxPublisher(
+            provider.GetRequiredService<NpgsqlDataSource>(),
+            provider.GetRequiredService<IEventPublisher>(),
+            provider.GetRequiredService<PostgresOutboxOptions>()));
+
+        return services;
+    }
+
+    /// <summary>
     /// Builds a data source whose connections already resolve to the configured schema.
     /// </summary>
     /// <param name="connectionString">How to reach PostgreSQL.</param>

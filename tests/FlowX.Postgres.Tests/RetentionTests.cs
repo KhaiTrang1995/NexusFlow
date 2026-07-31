@@ -149,11 +149,118 @@ public sealed class RetentionTests
             "it, not a guarantee that the row is still there.");
     }
 
+    /// <summary>
+    /// An instance past its window is kept while it still holds an unpublished event.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The obligation WP-56 inherited.</strong> ADR-0016 recorded, under Retention,
+    /// that a purge cascades to the instance's outbox rows "including any that were never
+    /// published. Today nothing publishes them, so nothing is lost; when WP-56 lands a
+    /// publisher, the purge needs a guard against removing a pending event." The publisher has
+    /// landed, so the premise is gone: a thirty-day-old completed instance can be sitting on
+    /// an event a consumer is still owed, and the cascade would take it with no row anywhere
+    /// recording that it happened.
+    /// </para>
+    /// <para>
+    /// The window is not the question. The instance below is ten days past a thirty-day one,
+    /// and there is no age at which discarding an unsent event becomes correct.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task APurgeKeepsAnInstanceThatStillHoldsAnUnpublishedEvent()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation);
+
+        var instance = await CompletedInstanceAsync(schema, 40, emits: "order.placed");
+
+        var sweep = await schema.Retention.PurgeAsync(Cancellation);
+
+        sweep.CompletedInstances.ShouldBe(
+            0,
+            "the window has passed and the instance stays, because deleting it would take " +
+            "an event no consumer has seen with it.");
+
+        sweep.HeldForPendingEvents.ShouldBe(
+            1,
+            "and the sweep says so. A guard that silently retains rows is a leak with good " +
+            "manners — this is the number an operator watches to notice that nothing is " +
+            "publishing.");
+
+        (await schema.Journal.ReadInstanceAsync(instance, Cancellation)).IsSuccess.ShouldBeTrue();
+
+        (await schema.ScalarAsync("SELECT count(*) FROM outbox_event", Cancellation))
+            .ShouldBe(1L, "and the event is still there to be published.");
+    }
+
+    /// <summary>Once the event is published, the instance goes on the next sweep.</summary>
+    /// <remarks>
+    /// The other direction, and the one that keeps the guard from being a retention stop. A
+    /// guard that held instances forever would trade a silent data loss for a disk silently
+    /// filling up, which is a worse bargain than it looks: the first is eventually noticed by
+    /// a consumer, and the second by nobody until the database stops accepting writes.
+    /// </remarks>
+    [Fact]
+    public async Task APublishedEventStopsHoldingItsInstanceBack()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation);
+
+        var instance = await CompletedInstanceAsync(schema, 40, emits: "order.placed");
+
+        (await schema.Retention.PurgeAsync(Cancellation)).CompletedInstances.ShouldBe(0);
+
+        var published = await schema.OutboxPublisher(new RecordingEventPublisher())
+            .PublishPendingAsync(Cancellation);
+
+        published.Published.ShouldBe(1, "the publisher drained it.");
+
+        var sweep = await schema.Retention.PurgeAsync(Cancellation);
+
+        sweep.CompletedInstances.ShouldBe(1, "and now the window is the only question again.");
+        sweep.HeldForPendingEvents.ShouldBe(0, "nothing is being held back.");
+
+        (await schema.Journal.ReadInstanceAsync(instance, Cancellation)).IsFailure.ShouldBeTrue(
+            "the instance is gone.");
+
+        (await schema.ScalarAsync("SELECT count(*) FROM outbox_event", Cancellation))
+            .ShouldBe(
+                0L,
+                "and its outbox row went with it by cascade, which is what the seven-day " +
+                "OutboxPublished window would otherwise have done more slowly.");
+    }
+
+    /// <summary>A failed instance is held by a pending event for the same reason.</summary>
+    /// <remarks>
+    /// The guard is one rule spliced into both purges rather than a clause on the completed
+    /// one. A flow that failed can have emitted before it did — a saga publishes as it unwinds
+    /// — and a hundred and eighty days later that event is no less undelivered than it was on
+    /// the first day.
+    /// </remarks>
+    [Fact]
+    public async Task TheGuardCoversTheFailedWindowToo()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation);
+
+        await CompletedInstanceAsync(
+            schema, 200, FlowInstanceState.Failed, emits: "order.cancelled");
+
+        var sweep = await schema.Retention.PurgeAsync(Cancellation);
+
+        sweep.FailedInstances.ShouldBe(0, "200 days is past the 180-day window, and it stays.");
+        sweep.HeldForPendingEvents.ShouldBe(1);
+    }
+
     /// <summary>Records an instance that finished a given number of days ago.</summary>
+    /// <param name="schema">The schema to record it in.</param>
+    /// <param name="daysAgo">How long ago it last changed.</param>
+    /// <param name="state">The terminal state it reached.</param>
+    /// <param name="emits">An event staged by its one step, or null for an instance that emits nothing.</param>
+    /// <returns>The instance.</returns>
     private static async Task<Guid> CompletedInstanceAsync(
         PostgresTestSchema schema,
         int daysAgo,
-        FlowInstanceState state = FlowInstanceState.Completed)
+        FlowInstanceState state = FlowInstanceState.Completed,
+        string? emits = null)
     {
         var instance = Guid.NewGuid();
 
@@ -175,6 +282,9 @@ public sealed class RetentionTests
                 CapabilityId = "inventory.reserve",
                 CapabilityVersion = "2.1.0",
                 Outcome = JournalOutcome.Success,
+                Outbox = emits is null
+                    ? []
+                    : [new OutboxWrite { Type = emits, SchemaVersion = "1.0.0", PartitionKey = "order-7" }],
             },
             Cancellation);
 

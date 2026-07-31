@@ -61,9 +61,11 @@ public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult>
             .Step<ReserveInventory>().CompensateWith<ReleaseInventory>()
             .Step<CapturePayment>()
 #pragma warning disable FLOWX1024 // FLOWX-DEBT: id=DEBT-0001 owner=orders expires=2026-12-31
-            //   The step is in the plan and in the manifest, but nothing
-            //   publishes it until the outbox lands. Kept, and kept visible,
-            //   because this is the reference sample.
+            //   The step is in the plan and in the manifest, and nothing
+            //   publishes it. The outbox table and its publisher both landed
+            //   at WP-56; what is still missing is the engine staging this
+            //   event into the outbox as part of the step commit. Kept, and
+            //   kept visible, because this is the reference sample.
             //   See docs/diagnostics/FLOWX1024.md and docs/DEBT.md.
             .Emit<OrderPlaced>(ctx => new OrderPlaced(
                 ctx.Get<Reservation>().ReservationId,

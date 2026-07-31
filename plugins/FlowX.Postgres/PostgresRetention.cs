@@ -30,9 +30,57 @@ namespace FlowX.Postgres;
 /// <c>RetentionTests.PurgingAParentLeavesItsRunningChildLegible</c> is where that is
 /// checked rather than assumed.
 /// </para>
+/// <para>
+/// <strong>A pending event outranks every window.</strong> A purge cascades to the instance's
+/// outbox rows, and until WP-56 that included rows nobody had published — which
+/// <c>docs/adr/ADR-0016-postgres-journal-adapter.md</c> recorded as an accepted risk on the
+/// grounds that nothing published them, so nothing was lost. That premise expired the moment
+/// <see cref="PostgresOutboxPublisher"/> existed. Every purge below therefore
+/// refuses an instance with an unpublished event, whatever its state and however far past its
+/// window it is: an event staged in the same transaction as the step that emitted it is a
+/// promise to a consumer, and deleting it is a silent broken promise rather than retention.
+/// </para>
+/// <para>
+/// <strong>The refusal is counted, because a guard that only holds rows back is a leak with
+/// good manners.</strong> A deployment with no publisher wired — the supported configuration
+/// this adapter shipped in until now — stages events nothing will ever publish, and under
+/// this guard those instances are never purged. <see cref="RetentionSweep.HeldForPendingEvents"/>
+/// is how an operator sees that happening instead of discovering it as unexplained growth.
+/// </para>
 /// </remarks>
 public sealed class PostgresRetention
 {
+    /// <summary>
+    /// The guard WP-56 owed this class: no instance is purged while it still has an event
+    /// nobody has published.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One predicate, spliced into both purges rather than written twice, because the two
+    /// windows are two policies and this is one rule. A pending event is not "old data past
+    /// its window" whichever window the instance is under — it is an undelivered promise, and
+    /// the cascade that would remove it is silent.
+    /// </para>
+    /// <para>
+    /// It is deliberately not scoped to a window. The published half of the outbox has its
+    /// own seven-day sweep below; this is about the unpublished half, and there is no age at
+    /// which discarding an unsent event becomes correct. An instance held here is held until
+    /// a publisher drains it, which is a load-bearing consequence rather than a side effect —
+    /// see the count in <see cref="RetentionSweep.HeldForPendingEvents"/>.
+    /// </para>
+    /// <para>
+    /// Answered against <c>outbox_event_pending_instance_idx</c> from migration <c>0004</c>,
+    /// which indexes the pending rows alone. Without it every candidate instance would probe
+    /// every event it ever emitted, and an instance is a purge candidate precisely because it
+    /// is old and has emitted all of them.
+    /// </para>
+    /// </remarks>
+    private const string NoPendingEvent =
+        """
+        NOT EXISTS (SELECT 1 FROM outbox_event e
+                     WHERE e.instance_id = i.instance_id AND e.published_at IS NULL)
+        """;
+
     /// <summary>
     /// Removes completed instances whose window has passed. Steps and outbox rows follow
     /// by cascade.
@@ -44,7 +92,7 @@ public sealed class PostgresRetention
     /// timer" is expressed without a second code path.
     /// </remarks>
     private const string PurgeCompleted =
-        """
+        $"""
         DELETE FROM flow_instance i
          WHERE i.state = 'Completed'
            AND i.updated_at <= now() - COALESCE(
@@ -52,6 +100,7 @@ public sealed class PostgresRetention
                    WHERE p.flow_id = i.flow_id AND p.state_class = 'Completed'),
                  (SELECT p.retain_for FROM retention_policy p
                    WHERE p.flow_id = '*' AND p.state_class = 'Completed'))
+           AND {NoPendingEvent}
         """;
 
     /// <summary>
@@ -63,7 +112,7 @@ public sealed class PostgresRetention
     /// would discard the evidence for an incident sooner than the incident is investigated.
     /// </remarks>
     private const string PurgeFailed =
-        """
+        $"""
         DELETE FROM flow_instance i
          WHERE i.state IN ('Failed', 'TimedOut', 'CompensationFailed')
            AND i.updated_at <= now() - COALESCE(
@@ -71,6 +120,37 @@ public sealed class PostgresRetention
                    WHERE p.flow_id = i.flow_id AND p.state_class = 'Failed'),
                  (SELECT p.retain_for FROM retention_policy p
                    WHERE p.flow_id = '*' AND p.state_class = 'Failed'))
+           AND {NoPendingEvent}
+        """;
+
+    /// <summary>
+    /// Counts the instances a sweep would have removed and did not, because they still have
+    /// an unpublished event.
+    /// </summary>
+    /// <remarks>
+    /// The same two window expressions as the purges above, with the guard inverted. It is a
+    /// third statement rather than a <c>RETURNING</c> clause on the first two because a
+    /// <c>DELETE</c> can only report what it deleted — the rows this exists to count are
+    /// exactly the ones the <c>DELETE</c> did not touch, and a purge that reports nothing
+    /// about them is how a guard becomes invisible growth.
+    /// </remarks>
+    private const string CountHeldForPendingEvents =
+        """
+        SELECT count(*) FROM flow_instance i
+         WHERE ((i.state = 'Completed'
+                 AND i.updated_at <= now() - COALESCE(
+                       (SELECT p.retain_for FROM retention_policy p
+                         WHERE p.flow_id = i.flow_id AND p.state_class = 'Completed'),
+                       (SELECT p.retain_for FROM retention_policy p
+                         WHERE p.flow_id = '*' AND p.state_class = 'Completed')))
+             OR (i.state IN ('Failed', 'TimedOut', 'CompensationFailed')
+                 AND i.updated_at <= now() - COALESCE(
+                       (SELECT p.retain_for FROM retention_policy p
+                         WHERE p.flow_id = i.flow_id AND p.state_class = 'Failed'),
+                       (SELECT p.retain_for FROM retention_policy p
+                         WHERE p.flow_id = '*' AND p.state_class = 'Failed'))))
+           AND EXISTS (SELECT 1 FROM outbox_event e
+                        WHERE e.instance_id = i.instance_id AND e.published_at IS NULL)
         """;
 
     /// <summary>Removes outbox rows a publisher has already sent.</summary>
@@ -115,6 +195,12 @@ public sealed class PostgresRetention
 
         await using var closing = connection.ConfigureAwait(false);
 
+        // Counted before anything is deleted. Afterwards the answer would be the same rows —
+        // the guard is what stopped them going — but reading it first says plainly that this
+        // number is about the sweep that was declined, not about what survived it.
+        var held = await CountAsync(connection, CountHeldForPendingEvents, cancellationToken)
+            .ConfigureAwait(false);
+
         var completed = await ExecuteAsync(connection, PurgeCompleted, cancellationToken)
             .ConfigureAwait(false);
 
@@ -124,7 +210,7 @@ public sealed class PostgresRetention
         var published = await ExecuteAsync(connection, PurgeOutbox, cancellationToken)
             .ConfigureAwait(false);
 
-        return new RetentionSweep(completed, failed, published);
+        return new RetentionSweep(completed, failed, published, held);
     }
 
     /// <summary>
@@ -171,13 +257,35 @@ public sealed class PostgresRetention
 
         return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    private static async ValueTask<int> CountAsync(
+        NpgsqlConnection connection,
+        string query,
+        CancellationToken cancellationToken)
+    {
+        using var command = connection.CreateCommand();
+
+        command.CommandText = query;
+
+        var count = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+
+        return count is long value ? (int)value : 0;
+    }
 }
 
-/// <summary>What one retention sweep removed.</summary>
+/// <summary>What one retention sweep removed, and what it refused to remove.</summary>
 /// <param name="CompletedInstances">Completed instances past their window, with their steps.</param>
 /// <param name="FailedInstances">Failed, timed-out and compensation-failed instances past theirs.</param>
 /// <param name="PublishedEvents">Outbox rows a publisher had already sent.</param>
+/// <param name="HeldForPendingEvents">
+/// Instances past their window that were kept because they still hold an unpublished event.
+/// Persistently non-zero means events are being staged and never published — a deployment
+/// with no <see cref="IEventPublisher"/> wired, a publisher that is not running, or one that
+/// is stuck behind an event the broker keeps refusing. The rows are safe; the pipeline is
+/// not, and this is the number that says so before the disk does.
+/// </param>
 public readonly record struct RetentionSweep(
     int CompletedInstances,
     int FailedInstances,
-    int PublishedEvents);
+    int PublishedEvents,
+    int HeldForPendingEvents);
