@@ -7,14 +7,27 @@
 > **Recommendation: keep the derivation ([option A](#a-keep-it-as-is-re-express-the-budget--recommended)), and re-express B12's budget per unit
 > of work with a size-qualified P1 exit criterion — because deleting the feature does not
 > buy the criterion either.** The pre-catalogue tree was measured at **+18.4 %** at 200
-> flows against a **+8 %** budget. The catalogue takes that to **+77.1 %**, so it is what
+> flows against a **+8 %** budget. The catalogue takes that to **+67.1 %**, so it is what
 > makes the miss enormous, but it is not what makes it a miss. Every option below leaves
 > P1 failing its exit criterion as written; only this one keeps the one field a consumer
 > can actually see.
 >
+> *This record was written against **+77.1 %** and said so in four places.
+> [B12-scale §5.4](../benchmarks/B12-scale.md) re-measured 200 flows at WP-43 and
+> superseded that figure with **+67.1 %**, 95 % CI [+61.9, +73.6]; the figures below are
+> corrected and the superseded ones are kept beside them rather than deleted. Ten points off
+> a fifty-nine-point miss changes no argument in this record — which is the reason to say so
+> plainly rather than to leave the larger number standing.*
+>
 > **The strongest argument against it is in [§5](#5-the-strongest-argument-against-the-recommendation)
 > and it is a good one:** a budget renegotiated the first time it binds is not a budget,
 > and R1's trigger exists precisely to stop this move.
+>
+> **Two of this record's four revisit triggers are no longer open, and it took a whole phase
+> to say so.** One has fired outright and one is crossed on evidence its own author calls
+> inadmissible. The arithmetic is in
+> [§10](#10-which-of-the-four-revisit-triggers-have-fired); the status stays **Proposed**,
+> because a record noticing its own triggers is not the same as a decision being made.
 
 ---
 
@@ -48,17 +61,32 @@ the duplicate since removed.*
 | End-to-end build overhead | Overhead | 95 % CI |
 |---|---:|---|
 | 200 flows, **pre-catalogue** tree `a75c1f0` | **+18.4 %** | [+16.3, +19.9] |
-| 200 flows, **with** the catalogue (before the 20 % fix) | **+77.1 %** | [+72.0, +80.6] |
-| 50 flows, with the catalogue, **after** the 20 % fix | **+46.6 %** | [+42.8, +51.3] |
+| 200 flows, with the catalogue, **re-measured at WP-43** | **+67.1 %** | [+61.9, +73.6] |
+| 200 flows, with the catalogue, before the 20 % fix — *superseded by the row above* | +77.1 % | [+72.0, +80.6] |
+| 50 flows, with the catalogue, **re-measured at WP-43** | **+46.5 %** | [+42.4, +51.0] |
+| 50 flows, with the catalogue, after the 20 % fix — *superseded by the row above* | +46.6 % | [+42.8, +51.3] |
 | **Budget** ([14-Performance §1](../14-Performance.md), B12) | **+8 %** | — |
 
-*200 flows has not been re-measured since the 20 % fix. The 50-flow figure is the most
-recent end-to-end number, and the two sizes are not comparable to each other: overhead is
-a ratio whose denominator scales with something else.*
+*This record said "200 flows has not been re-measured since the 20 % fix". That stopped
+being true at WP-43, and it is why the headline above moved ten points.*
+[B12-scale §5.4](../benchmarks/B12-scale.md) *re-measured both sizes on the quietest machine
+in that document's history — load average median 2.88, within-arm IQR 7.3 % and 7.5 %, A/A
+noise floor 10.6 % — and every figure it records supersedes the ones above it. The 200-flow
+row spans the duplicated-bind fix, WP-37's rewrite of the reader and five new analyzers, so
+its ten points are a consistency argument and not an attribution; that package did not
+bisect. The 50-flow row is the finding: it reproduces the earlier measurement to **0.1
+points** across all of that work, meaning WP-37's saving and the new features cancelled to
+the resolution of the harness. The machine changed between the two runs, so any comparison
+here is of ratios and not of milliseconds. The two sizes remain incomparable to each other:
+overhead is a ratio whose denominator scales with something else.*
 
 **What it costs, stated plainly:** roughly two thirds to four fifths of the generator —
-and the generator is **97.6 %** of the generator-and-analyzer split, the other three
-analyzers together accounting for 2.4 %. **What it buys:** the
+and the generator is **90.5 %** of the generator-and-analyzer split, the eight analyzers
+together accounting for 9.5 %. *This read **97.6 %** against three analyzers, and
+[B12-scale §5.4](../benchmarks/B12-scale.md) names the reason the share fell: five analyzers
+were added, not that the generator got cheaper. `FlowPlanGenerator` was 74–82 % of FlowX's
+total execution time in all six builds at both sizes before any marginal is taken, so every
+route to the budget still runs through it.* **What it buys:** the
 only field in the manifest that answers "what can go wrong here" — which is what
 [ADR-0007](ADR-0007-result-over-exceptions.md) promised when it chose `Result<T>` partly
 so that failures "are enumerable in the manifest, so error catalogues, OpenAPI responses
@@ -82,7 +110,7 @@ in the build.
 
 So:
 
-* Deleting the feature outright moves 200 flows from roughly +77 % back to roughly
+* Deleting the feature outright moves 200 flows from roughly +67 % back to roughly
   +18 %. **It still fails.**
 * Every option in §3 that reduces the derivation's cost lands somewhere between those two
   numbers. **None of them reaches +8 %.**
@@ -148,6 +176,16 @@ returns the pre-feature build time.
    completeness genuinely flips. Under opt-in it would misfire every time a local build is
    diffed against a CI build. **This is a latent defect regardless of the decision** — see
    [§7](#7-follow-ups-that-are-required-whichever-option-is-chosen).
+
+   *Fixed in `7855714`, after this option was written, and it weakens this sub-argument
+   rather than the option's other two.* `ManifestCapability.Errors` is nullable, a null on
+   either side is not compared, and `FLOWX-DIFF-019` **Neutral** records that the comparison
+   was skipped so the silence is visible. The CLI now sees the same three states the
+   compiler emits, so opt-in would no longer manufacture false breaking changes — it would
+   produce a gate that says nothing about errors on every diff between an opting-out build
+   and an opting-in one, which is a smaller harm than the one this paragraph described and
+   still not a small one. **The objections in 1 and 2 above are untouched**, and they are
+   the ones that carry the option.
 
 **Affects:** every consumer, because a field that is sometimes there for a reason nobody
 can read is worse than a field that is never there. The P8 AI surface is the sharpest
@@ -320,25 +358,39 @@ Stated so the decision is made with the uncertainty visible, not after it.
   repository covering whether an edit to an error factory correctly invalidates the
   catalogue of a capability declared in a different file. **That is a correctness question
   as much as a performance one, and it is currently open.**
-* **200 flows has not been re-measured since the 20 % duplicated-bind fix.** The +77.1 %
-  figure is from the tree before it.
+* **200 flows has been re-measured since the 20 % duplicated-bind fix, and this bullet said
+  it had not.** *It read: "the +77.1 % figure is from the tree before it."* WP-43 measured
+  **+67.1 % [+61.9, +73.6]** on different hardware, after that fix and after WP-37's rewrite
+  of the reader ([B12-scale §5.4](../benchmarks/B12-scale.md)). This was the cheapest
+  uncertainty on the list — half an hour of machine time, by B13 §1's own accounting — and
+  it outlived the ones that needed a corpus, which is worth noticing about the list rather
+  than about the number.
 
 ---
 
 ## 7. Follow-ups that are required whichever option is chosen
 
-1. **`flowx diff` collapses "withheld" into "resolved and empty".**
-   `ManifestCapability.Errors` defaults to an empty list, so a manifest with the field
-   absent compares as a manifest with no errors, and a capability whose catalogue becomes
-   unreadable — a factory moved into a referenced assembly is enough — reports every code
-   as `FLOWX-DIFF-017` **Breaking**. The compiler is careful about three states; the first
-   consumer of the manifest sees two. This is a false-breaking-change generator in a gate
-   that blocks merges.
-2. **[14-Performance §1](../14-Performance.md)'s B12 row still reads `+0.4 %`** and links
-   only [B12.md](../benchmarks/B12.md), which was recorded at WP-14 on a one-flow sample
-   before this feature existed. B12-scale §7 says outright that the unqualified +8 %
-   *"is not currently met by any project big enough to notice"*. The budget table should
-   link both documents and carry the size qualification.
+1. ~~**`flowx diff` collapses "withheld" into "resolved and empty".**~~ **Done in
+   `7855714`.** *This item read: "`ManifestCapability.Errors` defaults to an empty list, so
+   a manifest with the field absent compares as a manifest with no errors, and a capability
+   whose catalogue becomes unreadable — a factory moved into a referenced assembly is enough
+   — reports every code as `FLOWX-DIFF-017` **Breaking**. This is a false-breaking-change
+   generator in a gate that blocks merges."* The property is now nullable, a null on either
+   side is not compared, and `FLOWX-DIFF-019` **Neutral** records the skip so that saying
+   nothing is distinguishable from finding nothing. The first consumer of the manifest sees
+   all three states. **The fix is documented nowhere**: `FLOWX-DIFF-019` is absent from
+   [22-CLI §3](../22-CLI.md)'s code tables, which run 017, 018, 020 in the breaking list and
+   200–204 in the neutral one, so a shipped diagnostic code has no published meaning. That
+   is a new follow-up, smaller than the one it replaces.
+2. **[14-Performance §1](../14-Performance.md)'s B12 row no longer reads `+0.4 %`, and it
+   is stale again in the same way this record was.** *This item read: "the row still reads
+   `+0.4 %` and links only [B12.md](../benchmarks/B12.md), which was recorded at WP-14 on a
+   one-flow sample before this feature existed."* The row now carries +46.6 % at 50 flows
+   and **+77 %** at 200, links B12-scale.md, and is followed by a box explaining what
+   +0.4 % was and why it did not travel. What it has not picked up is WP-43: the 200-flow
+   figure in the project's budget table is the superseded one. B12-scale §7 still says
+   outright that the unqualified +8 % *"is not currently met by any project big enough to
+   notice"*, and the row still carries no stated size for the budget itself.
 3. **`ErrorCatalogueReader` and `CapabilityErrorModel` cite
    `docs/07-Capability-Model.md §7`** for the static-factory rule. That rule is in **§4,
    Contract design**; §7 is Idempotency.
@@ -377,21 +429,37 @@ Stated so the decision is made with the uncertainty visible, not after it.
 
 **Revisit when:** any one of —
 - a **real** (non-synthetic) project is measured and the derivation costs more than
-  **2× the ~3 ms per capability type** recorded here; or
+  **2× the ~3 ms per capability type** recorded here — *not fired, and not evaluable as
+  phrased*; or
 - the withheld rate on real code exceeds **20 %** of capabilities, at which point the
-  field is unreliable enough that a declared list is no longer obviously worse; or
+  field is unreliable enough that a declared list is no longer obviously worse —
+  ***crossed at 42 %, on evidence its own author calls inadmissible***; or
 - an incremental-build measurement shows the inner loop paying full derivation cost per
-  edit; or
+  edit — ***fired***; or
 - **P8 approaches manifest v1.0 freeze** — this decision must be re-affirmed before the
-  schema becomes unremovable.
+  schema becomes unremovable — *not fired, and not datable*.
+
+**Each of those four is worked through in [§10](#10-which-of-the-four-revisit-triggers-have-fired).**
+The evidence for two of them has been in this record since it was written, in
+[§9](#9-evidence-recorded-after-this-adr-was-proposed), without the conclusion being drawn.
 
 ---
 
 ## 9. Evidence recorded after this ADR was proposed
 
-**Nothing above has been changed.** §4's decision and the recommendation at the top stand
-exactly as written, and re-deciding them is the owner's to do. This section exists so a
-reader of the ADR discovers the measurements rather than only the questions.
+**§4's decision and the recommendation at the top stand exactly as written**, and
+re-deciding them is the owner's to do. This section exists so a reader of the ADR discovers
+the measurements rather than only the questions.
+
+*This paragraph opened "Nothing above has been changed", and that is no longer the whole
+truth: the figures above have since been corrected against
+[B12-scale §5.4](../benchmarks/B12-scale.md)'s re-measurement, and three statements about
+the repository that had stopped being true — `flowx diff`'s handling of a withheld
+catalogue, 14-Performance's B12 row, and the claim that 200 flows was never re-measured —
+are recorded as corrections rather than deleted. **No argument, option, recommendation or
+consequence has been altered.** The distinction this sentence is drawing is between the
+record's facts, which are maintained, and the record's decision, which is not this
+document's to move.*
 
 WP-36 went after §6's four open items, and WP-37 fixed the defect it found on the way. The
 results are in
@@ -447,6 +515,70 @@ should weigh before re-affirming §4:**
 
 B13 §8 states what this evidence would change if the owner agrees with it, as a
 recommendation.
+
+---
+
+## 10. Which of the four revisit triggers have fired
+
+**This record reported the evidence and never drew the conclusion.** §8's Revisit-when list
+states four conditions and §9's table reports the measurements that answer two of them, and
+nothing connected the two lists. Doing that connecting is not a decision — the status stays
+**Proposed** — but a record whose exits nobody has evaluated cannot be reopened on schedule,
+which is the whole function of a Revisit-when clause.
+
+1. **A real project measures the derivation at more than 2× the ~3 ms per capability type —
+   not fired, and not evaluable as phrased.** No non-synthetic project has been measured,
+   because none exists.
+   [B13 §6](../benchmarks/B13-error-catalogue-resolution.md#6-project-shape-bodies-against-reuse)
+   measured the two effects §6 above said pointed in opposite directions and fitted them —
+   `217 kB/flow + types × (92.7 kB + 7.7 kB per extra statement)`, nine points within 1.8 %
+   — which converts an unknown into a trade with a break-even table, but is a model of
+   project *shape* rather than a measurement of anybody's codebase. B13 §8(5) adds the
+   sharper problem: the "ms per capability type" this trigger is written against is itself
+   **3.9× unstable across project shapes**, so the trigger needs restating as two fitted
+   coefficients at a stated body size before a real project could fire it.
+2. **The withheld rate on real code exceeds 20 % — crossed at 42 %, on the only evidence in
+   existence, which its own author calls inadmissible.**
+   [B13](../benchmarks/B13-error-catalogue-resolution.md) reports 16 withheld of 38
+   capabilities. **The number is more than double the threshold and it should not be read as
+   the trigger firing**, for the reason B13 §2 spends a section on: the corpus was written by
+   the same hand that reports the rate, chosen to exercise the reader's hard cases, so the
+   rate is a property of that file list. §8(2) says it outright — *"I do not recommend
+   treating that as the trigger firing"* — and names a cheaper admissible substitute in §9.
+   The honest position is that neither reading is tested: treating it as unfired requires
+   believing the corpus over-represents indirection, treating it as fired requires believing
+   it does not, and the measurement that would settle it is a day's work nobody has done.
+   **What is not in doubt is that this record's threshold has no admissible measurement
+   against it, a phase after the record was proposed.**
+3. **An incremental-build measurement shows the inner loop paying full derivation cost per
+   edit — fired, and settled without a timing run.**
+   [B13 §7](../benchmarks/B13-error-catalogue-resolution.md#7-incremental-invalidation-it-is-correct-and-that-is-what-it-costs)
+   is structural rather than statistical: `ForAttributeWithMetadataName` combines its
+   syntactic node table with the `CompilationProvider`, the compilation changes on every edit
+   anywhere, so the transform re-runs for **every** attributed node in the compilation.
+   Roslyn's own step tracking reports those re-runs as `Unchanged` — *it ran, the answer was
+   the same* — and never as `Cached`, which would mean it did not run. §6 above asked whether
+   the inner loop "may be far cheaper — or may not"; the answer is **may not**, at full cost,
+   on every keystroke that reaches the compiler. The same mechanism is why an error-factory
+   edit correctly invalidates a catalogue in another file, so the cost and the correctness
+   are one property and cannot be optimised apart without giving up the second.
+4. **P8 approaches manifest v1.0 freeze — not fired, and not datable.** P8 has not started.
+   What this record did not anticipate is that the deadline it set itself cannot be read at
+   all: nothing states what must be true for the freeze to happen.
+   [ADR-0005](ADR-0005-manifest-as-build-artifact.md) does not mention freezing, and
+   [13-AI-Native](../13-AI-Native.md) only warns that adding a field afterwards is expensive.
+   Tracked as [PLAN open item 10](../../PLAN.md#9-open-items-blocking-the-plan), which is
+   waiting on this record while this record waits on it.
+
+**What that adds up to.** One trigger fired and answered; one crossed by more than double on
+evidence that cannot be admitted; one unmeasurable as written; one keyed to a deadline nobody
+can date. **A record in that state has to be decided on its argument rather than on its
+conditions**, and §4's decision is still where it was written — with the repository owner,
+and unmade, through a whole delivery phase
+([PLAN open item 6](../../PLAN.md#9-open-items-blocking-the-plan)).
+[ADR-0002](ADR-0002-compile-time-orchestration.md)'s build-overhead trigger has fired
+independently of all four and points here for the resolution, so this is now the record two
+decisions are waiting on.
 
 ---
 
