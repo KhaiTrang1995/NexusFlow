@@ -95,18 +95,34 @@ FlowX will not let you retry something that is unsafe to retry.
 
 ---
 
-## 3. Rules (all compiler-enforced)
+## 3. Rules
 
-| # | Rule | Diagnostic |
-|---|---|---|
-| 1 | One input type, one output type; no overloads | `FLOWX1015` |
-| 2 | Returns `Result<TOut>`; expected failures are values | `FLOWX1016` |
-| 3 | Never invokes another capability | `FLOWX1004` |
-| 4 | Never references a transport or plugin assembly | `FLOWX1003` |
-| 5 | Declares an authorisation stance | `FLOWX1010` |
-| 6 | Stateless: no mutable instance or static fields | `FLOWX1009` |
-| 7 | Time/ID/randomness only via `ctx` | `FLOWX1007/1008` |
-| 8 | Contract types are immutable records, serialisable by a generated STJ context | `FLOWX1006` |
+**This table said "all compiler-enforced". Three of the eight are.** The
+diagnostic column named five ids the compiler has never raised — `FLOWX1006`,
+`FLOWX1007`, `FLOWX1008`, `FLOWX1009` and `FLOWX1016` are absent from
+`FlowXDiagnostics`, and `FlowXDiagnostics` is deliberately built to contain only
+descriptors something reports. A rule that names an id is the strongest claim
+this documentation set makes, and five of these were the id of nothing. The
+**Enforced by** column below is what is true today.
+
+| # | Rule | Enforced by | Status |
+|---|---|---|---|
+| 1 | One input type, one output type; no overloads | `FLOWX1015` | **partial** — catches a type implementing `ICapability<,>` twice; nothing catches an overload |
+| 2 | Returns `Result<TOut>`; expected failures are values | the interface signature | **enforced by the type system** — `ExecuteAsync` returns `ValueTask<Result<TOut>>`; `FLOWX1016` was never needed and does not exist |
+| 3 | Never invokes another capability | `FLOWX1004` + `CapabilitiesDoNotCallCapabilities` | **enforced** |
+| 4 | Never references a transport or plugin assembly | `FLOWX1003` + `FlowsAreTransportFree` | **enforced** |
+| 5 | Declares an authorisation stance | `FLOWX1010` + `EveryCapabilityDeclaresAuthorization` | **enforced** |
+| 6 | Stateless: no mutable instance or static fields | — | **not enforced.** `FLOWX1009` does not exist. `RuntimeHasNoMutableStatics` covers `FlowX.Runtime`, not application capabilities |
+| 7 | Time/ID/randomness only via `ctx` | — | **not enforced.** `FLOWX1007`/`FLOWX1008` do not exist. `CapabilityContext` offers `UtcNow`, `NewId()` and `Random`; nothing stops a capability calling `DateTime.UtcNow` instead |
+| 8 | Contract types are immutable records, serialisable by a generated STJ context | — | **not enforced.** `FLOWX1006` does not exist |
+
+Rules 6, 7 and 8 are the determinism rules, and they are exactly the rules a
+`Durable` flow needs — which is why they are all blocked on the same phase. They
+are exit criteria of **P2** in [20-Roadmap](20-Roadmap.md), listed there as
+"determinism analyzers FLOWX1007–1009". Until then the same table appears in
+[06 §5](06-Execution-Engine.md#5-the-determinism-boundary), where it is already
+marked as unimplemented. Write capabilities as if the rules held; nothing will
+tell you when they do not.
 
 Rule 3 is the load-bearing one. Because capabilities cannot call each other, the
 capability graph is a **set**, not a graph — all composition lives in flows,
@@ -139,6 +155,41 @@ public static class PaymentErrors
 | No primitive obsession: `OrderId`, `Money`, not `Guid`, `decimal` | the manifest becomes semantically meaningful, not just structurally |
 | Errors are declared in a static class per domain | error codes are enumerable — they appear in the manifest and in generated OpenAPI |
 | Contracts live in `<App>.Contracts`, referenced by nothing else | prevents implementation leaking into the published surface |
+
+> [!WARNING]
+> **These last two rules cancel each other out, and following both produces no
+> error catalogue at all.**
+>
+> The catalogue is not declared, it is *derived*:
+> [`ErrorCatalogueReader`](../src/FlowX.Compiler/Analysis/ErrorCatalogueReader.cs)
+> follows every expression of type `Error` in a capability's body back to the
+> `new Error(code, message, category)` that produced it, and reads the code and
+> the category off that constructor. Following it means reading the factory's
+> **syntax**. A symbol with no `DeclaringSyntaxReferences` — which is every
+> symbol in a *referenced assembly* — ends the trail, and the reader then marks
+> the catalogue incomplete. An incomplete catalogue is not published at all
+> ([ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md); absent is
+> a state a consumer can see, short is not).
+>
+> So a team that puts `PaymentErrors` in `<App>.Contracts` and the capability in
+> `<App>.Application`, exactly as the rows above prescribe, gets `errors`
+> **omitted from the manifest for every capability in the application** — and
+> gets it silently, because omission is the design's honest answer and there is
+> no diagnostic saying why. The generated OpenAPI responses and the agent tool
+> descriptors that the first row promises are then generated from nothing.
+>
+> `samples/ecommerce` does not hit this, and that is not evidence: it is a single
+> project, so `Contracts.cs` and `Capabilities.cs` are in one compilation and the
+> trail never leaves it.
+> [B13](benchmarks/B13-error-catalogue-resolution.md) measured the same thing
+> against a 38-capability corpus.
+>
+> **Until this is resolved, keep the error factory in the same compilation as the
+> capabilities that use it.** That is the layout the derivation supports, and it
+> is the one the reference sample uses. Resolving it properly means either
+> teaching the reader to read metadata across an assembly boundary, or changing
+> what this section prescribes — neither has happened, and the choice belongs
+> with ADR-0014's owner rather than in a doc note.
 
 ---
 
@@ -257,7 +308,7 @@ public async Task CapturePayment_returns_declined_when_gateway_declines()
 
     var result = await sut.ExecuteAsync(
         new CaptureRequest(OrderId.New(), Money.Eur(19.98m), PaymentMethod.Card),
-        CapabilityContext.ForTest(), CancellationToken.None);
+        new TestCapabilityContext(capabilityId: "payment.capture"), CancellationToken.None);
 
     result.IsSuccess.Should().BeFalse();
     result.Error.Code.Should().Be("payment.declined");
@@ -266,9 +317,23 @@ public async Task CapturePayment_returns_declined_when_gateway_declines()
 ```
 
 No host, no DI container, no HTTP, no broker, no database. The testing kit
-(`FlowX.Testing`) provides `CapabilityContext.ForTest()` with a controllable
-clock, a seeded random source and a fixed idempotency key so tests are
-deterministic by construction.
+(`FlowX.Testing`) supplies the context, with a controllable clock, a seeded
+random source and a fixed idempotency key so tests are deterministic by
+construction.
+
+> **The spelling above is not the one that ships.** There is no
+> `CapabilityContext.ForTest()`. `FlowX.Testing` provides
+> [`TestCapabilityContext`](../src/FlowX.Testing/TestCapabilityContext.cs), an
+> ordinary class you construct — every value it returns is settable, and
+> `IdsIssued` counts the ids the capability asked for. The real call is:
+>
+> ```csharp
+> var ctx = new TestCapabilityContext(capabilityId: "payment.capture");
+> ```
+>
+> A static factory on the abstract base would put a testing concern on the
+> production contract, which is why it was not built that way. This paragraph
+> named it for months anyway.
 
 ### The test pyramid FlowX expects
 
@@ -279,19 +344,19 @@ deterministic by construction.
 | Integration | capability against a real adapter | Testcontainers | ~8 % |
 | Conformance | the whole trigger→flow→journal path | Testcontainers | ~2 % |
 
-`FlowX.Testing` supplies `FlowTestHost` for the flow level:
-
-```csharp
-var host = FlowTestHost.For<PlaceOrderFlow>()
-    .Substitute<ReserveInventory>(_ => Result.Fail<Reservation>(InventoryErrors.OutOfStock("SKU-1")))
-    .Build();
-
-var result = await host.RunAsync(new PlaceOrder(...));
-
-result.Should().HaveFailedWith("inventory.out_of_stock");
-result.Should().HaveCompensated();          // asserts the compensation actually ran
-result.Trace.Should().NotHaveExecuted<CapturePayment>();
-```
+> **`FlowTestHost` does not exist**, and the block that used to stand here — a
+> fluent `.Substitute<T>(…)` builder with `HaveCompensated()` and
+> `NotHaveExecuted<T>()` assertions — described an API nobody has written. It was
+> a **Should** of P0 in [20-Roadmap §3](20-Roadmap.md#3-increment-detail) and P0
+> shipped without it.
+>
+> `FlowX.Testing` today is two types —
+> [`TestCapabilityContext`](../src/FlowX.Testing/TestCapabilityContext.cs) and
+> [`TestFlowContext`](../src/FlowX.Testing/TestFlowContext.cs) — and neither runs
+> a flow. The flow level of the pyramid above is reachable, but by driving
+> `FlowEngine` with a substituted `IStepDispatcher`, which is what
+> `tests/FlowX.Runtime.Tests` does and is not a published testing API. Treat the
+> ~20 % row as a target the kit does not yet support.
 
 ---
 

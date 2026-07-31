@@ -36,15 +36,21 @@ and owner — as a **first-class build artifact**, on par with the assembly,
 because a fact stated in exactly one place is the only kind of fact that stays
 true.
 
-`flowx verify --complete` fails the build when anything present in code is absent
-from the manifest.
+The `ManifestIsComplete` fitness function fails the build when a declared flow or
+capability is absent from the manifest, or when a step names one the manifest
+never describes. *This sentence used to name `flowx verify --complete`, which is
+not a CLI verb — the CLI has `graph`, `manifest` and `diff`
+([22-CLI](../22-CLI.md)) — and the check that does exist is narrower than the
+claim: it does not yet cover policies or events, for the reasons in
+[05 §12](../05-Architecture.md#12-architecture-fitness-functions).*
 
 ## Consequences
 
 **Positive**
 - Documentation, diagrams, OpenAPI, AsyncAPI, alerts, dashboards, C4 models, test
   scaffolds, MCP tool descriptors and impact analysis are all *derived* — never
-  maintained.
+  maintained. *One derivation ships: `flowx graph`. The rest are **P8**; this
+  decision is what makes them possible, not what delivers them.*
 - Breaking-change detection (`flowx diff`) becomes a CI gate rather than a code
   review hope.
 - AI tooling receives architecture as data, not as a repository to

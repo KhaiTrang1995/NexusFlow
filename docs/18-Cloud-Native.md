@@ -1,7 +1,25 @@
 # 18 — Cloud-Native Operations
 
-> **Status:** Accepted · **Audience:** SRE, platform engineers
+> **Status:** Accepted as a specification · **no deployment assets exist** ·
+> **Audience:** SRE, platform engineers
 > **Answers:** how does FlowX deploy, scale, roll out and degrade?
+
+> [!WARNING]
+> **This repository contains no Dockerfile, no Helm chart, no Kubernetes
+> manifest and no KEDA scaler.** The three roles in §1 are one image in the sense
+> that they would be; nothing builds that image. The Checkov IaC scan named in
+> [21 §4](21-Quality-Gates.md#4-security-testing-toolchain) has no charts to
+> scan.
+>
+> The subsystems the operational behaviour depends on are also absent: there is
+> no journal, so there are no leases to release on drain and no in-flight state
+> to checkpoint; there is no telemetry, so there is no scaling signal and no
+> readiness signal beyond `FlowXHealthCheck`. `ConfigurationCannotChangeGraph` is
+> named here as a fitness function and is not written — the *property* is real
+> (the graph is emitted as static data at build time and no configuration path
+> reaches it) and nothing asserts it.
+>
+> Read this as the operating model P2, P5 and P9 are built towards.
 
 ---
 

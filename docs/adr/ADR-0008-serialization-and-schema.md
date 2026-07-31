@@ -36,6 +36,21 @@ Every persisted payload carries `schemaVersion`. Contracts are immutable records
 schema evolution follows the additive-only rules in
 [07 §5](../07-Capability-Model.md#5-versioning).
 
+> [!IMPORTANT]
+> **Accepted; almost none of it is built.** There is no generated STJ context, no
+> `schemaVersion` stamp, no `IPayloadSerializer` interface and no binary plugin —
+> and no journal, outbox or replay to serialise into. `[Sensitive]` redaction is
+> **not** applied by a generated serialiser: the compiler records the members in
+> the manifest, and exactly one sink consumes that list, the RFC 7807 body
+> (`ProblemDetailsMapper`). `FLOWX1006`, cited below as the build-time failure
+> for an unannotated contract, does not exist.
+>
+> What holds today is the decision's core: contracts are immutable records, no
+> serialisation path uses reflection, and `EveryShippedRuntimeProjectIsAotAnalyzed`
+> plus the *NativeAOT smoke test* job keep the AOT constraint honest. The
+> `flowx.manifest.json` writer is hand-written and AOT-clean. The rest arrives
+> with **P2** (journal payloads) and **P5** (redaction across every sink).
+
 ## Consequences
 
 **Positive**

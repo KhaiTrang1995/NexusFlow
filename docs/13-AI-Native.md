@@ -1,7 +1,31 @@
 # 13 — AI-Native Architecture
 
-> **Status:** Accepted · **Audience:** architects, AI engineers
+> **Status:** Accepted · **the manifest ships; everything built on it does not** ·
+> **Audience:** architects, AI engineers
 > **Answers:** what does "AI-native" mean concretely, beyond a marketing word?
+
+> [!IMPORTANT]
+> **The foundation of this document is real and the storey above it is not.**
+>
+> `flowx.manifest.json` is emitted on every build, validated against a committed
+> schema (`ManifestSchemaTests`), checked for completeness
+> (`ManifestIsComplete`), scanned for secrets (`ManifestContainsNoSecrets`), and
+> diffed for compatibility in CI (`flowx diff`). It carries flows, steps,
+> capabilities, contracts, triggers, events, errors, side effects, authorisation
+> stances and `[Sensitive]` members. `flowx graph` renders it. That is the
+> concrete claim in §1, and it holds.
+>
+> Of the eleven consumers in the diagram below, **one exists** — diagrams, via
+> `flowx graph`. There is no OpenAPI or AsyncAPI generation, no alert or
+> dashboard generation, no test scaffolding, no impact analysis, no knowledge
+> graph and no MCP tool surface. `flowx query` and `flowx ai …` are not CLI
+> verbs; the CLI has three ([22-CLI](22-CLI.md)). `AgentTriggerAttribute` is
+> declared in `FlowX.Abstractions` and is read by the compiler into the manifest,
+> and nothing serves it — no agent can invoke anything.
+>
+> Everything past §2 is **P8**, gated behind the manifest v1.0 freeze. The point
+> of writing it now is that each consumer is a constraint on what the manifest
+> must contain, and adding a field after the freeze is expensive.
 
 ---
 

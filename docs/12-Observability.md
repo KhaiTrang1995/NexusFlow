@@ -1,7 +1,26 @@
 # 12 — Observability
 
-> **Status:** Accepted · **Audience:** SRE, application engineers
+> **Status:** Accepted as a specification · **not built** · **Audience:** SRE, application engineers
 > **Answers:** what does FlowX emit, and how do you answer "why did instance 42 fail?"
+
+> [!WARNING]
+> **FlowX emits nothing today.** There is no `ActivitySource`, no `Meter`, no
+> `ILogger` and no exporter anywhere under `src/` — not one span, metric or log
+> record in this document is produced by any code path. `flowx replay` is not a
+> CLI verb ([22-CLI](22-CLI.md) has three: `graph`, `manifest`, `diff`), and the
+> journal every replay mode reads from does not exist.
+>
+> This document is therefore a **frozen schema, not a description**. That is
+> deliberate and it is why it is written in the present tense elsewhere: the
+> attribute and metric names below are a contract that generated dashboards,
+> alerts and an estate's worth of queries will depend on, and they are cheaper to
+> agree before emission than after. Read every table as *"what will be emitted"*.
+>
+> Delivery is **P5** in [20-Roadmap](20-Roadmap.md), whose Must list is exactly
+> "frozen span/metric schema · `TelemetryConformanceTest` · `flowx replay` all
+> four modes · generated alerts and dashboards", gated behind the **P2** journal.
+> `TelemetryConformanceTest` is named in four documents as an existing gate and
+> exists in none of them.
 
 ---
 
@@ -58,9 +77,10 @@ span: flow order.place                                    [durable]  1.84s
 | `flowx.error.category` | `Conflict` | step (on failure) |
 | `flowx.attempt` | `2` | step |
 
-These names are frozen: `TelemetryConformanceTest` asserts them exactly, because
-dashboards and alerts across an entire estate depend on them being identical in
-every service.
+These names are frozen because dashboards and alerts across an entire estate
+depend on them being identical in every service. `TelemetryConformanceTest` is
+the gate that will assert them exactly — it is a **P5** deliverable and has not
+been written, and until it exists "frozen" means agreed, not enforced.
 
 **Trace context is continued, never restarted** — across HTTP, Kafka headers,
 MQTT user properties, cron-originated flows (linked to the schedule's span) and
@@ -137,8 +157,11 @@ public sealed record PaymentMethod([property: Sensitive] string Pan, string Bran
 ```
 
 Redaction is applied by the generated serialiser, so there is no code path that
-can forget it. `SecretsNeverLeaveTheProcess` is a CI test that scans emitted
-telemetry fixtures for known secret patterns.
+can forget it. `SecretsNeverLeaveTheProcess` — *a CI test that does not exist,
+and would need emitted telemetry fixtures there are none of* — is intended to
+scan them for known secret patterns. What does run today is
+`ManifestContainsNoSecrets`, which scans the emitted **manifests** for the shape
+of a secret; that is a different artifact and a narrower claim.
 
 > **Status: one path, not every path.** The compiler reads `[Sensitive]`, records the
 > member in `flowx.manifest.json`, and emits the names as `Flow.SensitiveMembers`. The

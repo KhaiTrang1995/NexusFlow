@@ -46,18 +46,26 @@ public readonly record struct TriggerEnvelope(
     DateTimeOffset OccurredAt);
 
 public readonly record struct TriggerHeaders(
-    CorrelationId Correlation,         // created if absent; always propagated
-    TenantId? Tenant,
-    ClaimsPrincipal? Principal,
-    string? IdempotencyKey,
-    DateTimeOffset? Deadline,
-    ActivityContext TraceContext,      // W3C traceparent, continued not restarted
-    IReadOnlyDictionary<string, string>? Extensions);
+    string CorrelationId,              // created if absent; always propagated
+    string? TenantId = null,
+    ClaimsPrincipal? Principal = null,
+    string? IdempotencyKey = null,
+    DateTimeOffset? Deadline = null,
+    string? TraceParent = null);       // W3C traceparent, carried verbatim
 ```
 
 Header propagation is uniform: an HTTP `traceparent`, a Kafka header, and an MQTT
 user property all land in the same field, so a trace spans transports without
 any user code.
+
+*The block above previously printed a shape that never shipped:
+`CorrelationId`/`TenantId` as wrapper types, an `ActivityContext TraceContext`,
+and an `Extensions` dictionary. The real record takes strings, carries the
+traceparent as an unparsed string, and has no extensions bag — a design choice
+that keeps `FlowX.Abstractions` dependency-free, which
+`AbstractionsHasNoDependencies` enforces. `TraceParent` is **carried, not
+continued**: nothing reads it, because nothing starts an `Activity` (see
+[12-Observability](12-Observability.md)).*
 
 ---
 
@@ -321,8 +329,30 @@ Every trigger plugin must pass `FlowX.Conformance.Tests`:
 | `RespectsDeadline` | envelope deadline is enforced |
 | `IsIdempotencyAware` | duplicate keys return the recorded result |
 
-Publishing a plugin without a passing conformance run is a release-blocking
-failure ([17-Plugin-System](17-Plugin-System.md)).
+> [!IMPORTANT]
+> **`FlowX.Conformance.Tests` does not exist, and none of the seven tests above
+> has been written.** There is no such project, no such package, and the
+> interfaces the suite would test against — `ITriggerSource`, `ITriggerSink` —
+> are not declared anywhere in `src/`. The two signatures printed above are a
+> design sketch, not a contract a plugin can compile against.
+>
+> Publishing the suite is named as the mitigation for **both** risk R3 and risk
+> R8 in [05 §11](05-Architecture.md#11-risks-and-technical-debt), and neither has
+> happened. It is a **P3** deliverable. `PluginsPassConformance` is recorded as
+> blocked, with what it is waiting for, in
+> [21 §2.4](21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced).
+>
+> There is also nothing yet to compare: `plugins/FlowX.Http` is the only plugin,
+> so "every plugin agrees on the minimum semantics" has one data point. What
+> `FlowX.Http.Tests` does assert today is narrower and real — that HTTP
+> normalises into a `TriggerEnvelope` (`HttpTriggerReaderTests`) and that every
+> `ErrorCategory` maps to its documented status (`ProblemDetailsMapperTests`).
+> Four of the seven rows above are additionally blocked on subsystems that do
+> not exist at all: trace context (**P5**), backpressure (**P7**), deadline
+> enforcement and idempotency (**P4**).
+>
+> Treat this table as the specification a P3 plugin author will be held to. Do
+> not treat a plugin as conformant because nothing failed.
 
 ---
 

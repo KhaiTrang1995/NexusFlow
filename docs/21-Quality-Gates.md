@@ -59,6 +59,34 @@ execution semantics, so a test suite that cannot detect a mutated comparison in
 the step loop is not a test suite. It is applied to `FlowX.Core` only — running
 Stryker across the whole solution costs more CI time than it returns.
 
+> [!IMPORTANT]
+> **Eight of the thirteen rows above are not enforced, because
+> `SonarAnalyzer.CSharp` is not referenced by this repository.** Every `S####`
+> rule — `S3776` cognitive complexity, `S1541` cyclomatic complexity, `S138`
+> method length, `S107` parameter count in §2.1, and `S2245`/`S4507` in §2.2 —
+> comes from that package, and no project takes a dependency on it. There is no
+> analyzer to promote to an error, so those five build-class rows do not fail a
+> build. The same is true of `VSTHRD002` in §2.2: `Microsoft.VisualStudio.
+> Threading.Analyzers` is not referenced either.
+>
+> The three merge-class Sonar rows — critical issues, duplicated lines, security
+> hotspots — depend on the *Sonar quality gate* job in `quality.yml`, which
+> **exits 0 with a notice when `SONAR_TOKEN` is absent**. Whether they gate
+> anything depends on a repository secret rather than on the workflow, and
+> `CHECKLIST.md` records the token as not configured.
+>
+> **What does run on every pull request**, and is worth separating from the
+> above: `TreatWarningsAsErrors` (so any warning is a build failure), `CS1591`
+> as an error, `CA2007`, `CA1031`, `CA2016`, `CA1062` as errors and `CA1848` as
+> a warning-that-is-an-error — all set in `.editorconfig` — plus the coverage
+> thresholds (80 / 75, enforced on the whole assembly by the *Coverage
+> thresholds* job) and Stryker at `--threshold-break 70` on `FlowX.Core`.
+>
+> Adding `SonarAnalyzer.CSharp` would make the complexity and method-size rows
+> real without any other change, and is the cheapest correction available here.
+> Until it happens, "cognitive complexity ≤ 15 on every method touched" in §5's
+> Definition of Done is a review instruction, not a gate.
+
 ### 2.2 Rules promoted to errors
 
 These are not style preferences. Each is a defect class that has caused
@@ -86,7 +114,7 @@ downstream test result uninteresting.
 | Fitness function | Rule it enforces |
 |---|---|
 | `AbstractionsHasNoDependencies` | `FlowX.Abstractions` has zero package and project references ([ADR-0009](adr/ADR-0009-plugin-contracts.md)) |
-| `LayersPointInward` | Abstractions ← Core ← Runtime ← Runtime.Durable, never the reverse |
+| `LayersPointInward` | Abstractions ← Core ← Runtime ← Hosting / Runtime.Durable, never the reverse. *The `Runtime.Durable` row of the theory passes vacuously — that project is **P2** and does not exist yet* |
 | `EverySourceProjectIsCoveredByTheLayeringRule` | no project under `src/` escapes the rule above by not being named in it |
 | `RuntimeDoesNotReferenceAnyPlugin` | adding a transport never means editing the runtime (quality goal Q6) |
 | `NoCyclicDependencies` | no dependency cycle between any two assemblies or namespaces |
@@ -100,9 +128,9 @@ downstream test result uninteresting.
 | `PublicCapabilitiesAreReviewed` | every `Authorization.Public` carries an `[ApprovedBy]`, and no approval outlives the stance it approved |
 | `NoPermissiveDefaults` | nothing on the contract surface reaches a permissive stance by being left alone |
 | `SuppressionsAreAccountable` | every suppression names a registered, unexpired `FLOWX-DEBT` id (§6.1) |
-| `EveryDiagnosticIsHelpful` | every `FLOWX####` has a message, a fix and a help URI |
+| `EveryDiagnosticIsHelpful` | every `FLOWX####` has a message, a fix and a help URI — *lives in `tests/FlowX.Compiler.Tests/CompilerFitnessTests.cs`, not in `FlowX.Architecture.Tests`, because it reads the descriptor catalogue rather than an assembly* |
 | `ManifestContainsNoSecrets` | the emitted manifest is structure, never values |
-| `EveryShippedProjectIsAotAnalyzed` | no project silences the trim/AOT analyzer (constraint C2) |
+| `EveryShippedRuntimeProjectIsAotAnalyzed` | no project under `src/` silences the trim/AOT analyzer (constraint C2). *This row read `EveryShippedProjectIsAotAnalyzed`, which is not the test's name* |
 
 `NoReflectionOnHotPath`, `RuntimeHasNoMutableStatics`, `FlowsAreTransportFree`,
 `CapabilitiesDoNotCallCapabilities`, `EveryPublicContractIsVersioned` and
@@ -140,6 +168,31 @@ It is decoration — and worse than nothing, because it stops the next reviewer 
 
 All three are exit criteria of their phases in [20-Roadmap](20-Roadmap.md). None should be
 written before then, and none should be cited as present until it is.
+
+### 2.5 The "Verified by" columns in §3 name eight more gates that do not exist
+
+§2.4 says "three rules", and that was true of the fitness-function tables. It was not true
+of the OWASP mapping below, which was written earlier and to a different standard: its
+**Verified by** column reads as a list of running checks, and eight of the names in it have
+never been written. Recorded here rather than struck through in the table, because each one
+is still the right control — it is the *tense* that was wrong.
+
+| Named in §3 as verification | State | Blocked on |
+|---|---|---|
+| `FlowGraphIsCompileTimeConstant` (A03) | not written. The property holds — the DSL has no `Do(lambda)`, and `FlowBuilderHasNoEscapeHatchForInlineCode` in `ContractSurfaceTests` asserts that much of it | — could be written now against the builder surface |
+| `TenantComesFromClaimsOnly` (A07) | not written under that name. `HttpTriggerReaderTests` covers the behaviour for the one transport that exists | **P3** for "every transport" |
+| `EveryDenialIsAudited` (A09) | not written. No authorisation decision is made at run time and no audit record is written | **P4** |
+| `TelemetryConformanceTest` (A09) | not written. Nothing emits a span, metric or log ([12](12-Observability.md)) | **P5** |
+| `EgressIsAllowListed` (A10) | not written. No egress plugin exists, so nothing declares an allow-list | **P3** |
+| `AgentSurfaceEqualsFlowSurface` (LLM01, LLM07) | not written. There is no agent surface; `[AgentTrigger]` reaches the manifest and nothing serves it | **P8** |
+| `InternalCapabilitiesAreNotAgentReachable` (LLM08) | not written, and vacuous today for the same reason | **P8** |
+| replay-determinism corpus (A08) | not written. There is no journal to replay from | **P2** |
+| startup validation test (A05) | **exists** — `FlowXOptionsValidator` runs under `ValidateOnStart`, covered by `StartupValidationTests` in `FlowX.Hosting.Tests` | — |
+
+The A01 and A02 rows already carry an inline "the enforcement is not built" correction. The
+rest of §3 should be read as: **the control column is the design, and the verification
+column is a mixture of gates that run and gates that are scheduled.** Where a row says
+"(merge)" against a name in the table above, no merge is currently blocked by it.
 
 ---
 
@@ -274,12 +327,23 @@ register meaningless, which makes the budget unenforceable.
 
 Budgets live in [14-Performance](14-Performance.md). Their enforcement is here.
 
-| Gate | Rule | Class |
-|---|---|---|
-| B1–B6, B10–B12 | regression > 5 % vs the baseline fails the build | Merge |
-| B2, B6 | allocations must be **exactly 0** — not "low" | Merge |
-| B7–B9, B13 | nightly load test; regression opens a blocking issue | Release |
-| Baseline updates | require a reviewed commit stating why the budget moved | Merge |
+| Gate | Rule | Class | State |
+|---|---|---|---|
+| B1, B3, B12 | regression > 5 % vs `baseline.json` fails the build | Merge | **runs** — *Benchmark budgets* job |
+| B2 | allocations must be **exactly 0** — not "low" | Merge | **runs** — `AllocationBudgetTests`, `EngineAllocationTests` |
+| Generator cost | > 2 % more bytes allocated by the generator than the committed baseline fails the build | Merge | **runs** — [generator-cost-gate.md](benchmarks/generator-cost-gate.md) |
+| B12 against its **+8 %** budget | — | — | **failing.** +46.6 % at 50 flows, +77 % at 200. The relative gate above stops it getting worse; it does not make the budget met |
+| B4, B5, B6, B10, B11 | regression > 5 % vs the baseline | Merge | **no harness.** Policy chain (P4), telemetry (P5) and start-up/RSS (P9) have nothing to measure |
+| B7–B9, B13 | nightly load test; regression opens a blocking issue | Release | **no harness.** Journal (P2), HTTP end-to-end (P3), streaming (P7) |
+| Baseline updates | require a reviewed commit stating why the budget moved | Merge | convention |
+
+**The old version of this table said B1–B6 and B10–B12 were gated on merge and
+B7–B9 and B13 nightly. Nine of the thirteen budgets have no benchmark at all** —
+see [14 §8](14-Performance.md#8-benchmark-suite-and-ci-gating), where the file
+listing that implied otherwise is corrected too. A budget stated in advance is
+[rule zero](#1-the-rule-that-makes-the-rest-work) working as designed; a budget
+listed as *gated* when nothing measures it is the failure this document exists to
+prevent.
 
 A benchmark that becomes flaky is fixed or deleted, never muted. A muted
 benchmark is a budget nobody is holding.
@@ -288,13 +352,17 @@ benchmark is a budget nobody is holding.
 
 ## 8. Reliability gates
 
-| Gate | Rule | Class |
-|---|---|---|
-| Chaos: SIGKILL at every step boundary | 10 000 flows, zero duplicate non-idempotent effects, zero lost instances | Release |
-| Replay determinism corpus | zero divergence across the full corpus | Merge |
-| Backpressure conformance | bounded memory with a deliberately slow capability | Release |
-| Tenant fairness | one tenant at 10× quota degrades another's p99 by ≤ 10 % | Release |
-| Graceful shutdown | in-flight flows drain or checkpoint within the termination grace period | Merge |
+**None of the first four runs, and none can.** They are the exit criteria of the
+phases that build the subsystems they test, listed here so the criteria are
+agreed before the code is written.
+
+| Gate | Rule | Class | State |
+|---|---|---|---|
+| Chaos: SIGKILL at every step boundary | 10 000 flows, zero duplicate non-idempotent effects, zero lost instances | Release | **not written** — no journal, no second node. **P2** (QR2) |
+| Replay determinism corpus | zero divergence across the full corpus | Merge | **not written** — nothing to replay from. **P2** |
+| Backpressure conformance | bounded memory with a deliberately slow capability | Release | **not written** — no Stream Engine. **P7** |
+| Tenant fairness | one tenant at 10× quota degrades another's p99 by ≤ 10 % | Release | **not written** — no quota, no admission control. **P6** |
+| Graceful shutdown | in-flight flows drain within the termination grace period | Merge | **runs** — `DrainTests` in `FlowX.Hosting.Tests`. *Drain only: there is no checkpoint, so a flow still running at the end of the grace period is lost rather than resumed* |
 
 ---
 

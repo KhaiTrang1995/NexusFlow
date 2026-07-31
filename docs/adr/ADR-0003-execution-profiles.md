@@ -48,21 +48,34 @@ The default is `Ephemeral`: you opt *into* cost, never out of it.
   appears in the code, the manifest, the diagram and the cost report.
 - One programming model still covers both worlds — a flow's body is identical
   under either profile.
-- Cost control has a real lever: `flowx verify --cost` flags durable flows with
-  no compensation, no signals and no timers (a profile chosen by accident).
+- Cost control has a real lever *in the design*: `flowx verify --cost` would flag
+  durable flows with no compensation, no signals and no timers (a profile chosen
+  by accident). **It does not exist** — `verify` is not a CLI verb; the CLI has
+  `graph`, `manifest` and `diff` ([22-CLI](../22-CLI.md)).
 
 **Negative / accepted trade-offs**
 - **Two runtime paths to test.** The step loop is shared, but journaling,
   resumption and determinism only exist on one path. Mitigated by keeping
   resumption expressed as `ctx.ResumeFromStep` in the *same* loop, so there is no
   separate recovery code path to rot.
-- **Determinism rules apply asymmetrically.** `FLOWX1007–1009` are errors in
-  `Durable` flows and informational in `Ephemeral` ones. This is initially
-  surprising; the analyzer message explains why.
+- **Determinism rules apply asymmetrically.** `FLOWX1007–1009` are to be errors
+  in `Durable` flows and informational in `Ephemeral` ones. *None of the three
+  exists yet* — they are a **P2** deliverable. The one determinism rule that does
+  ship, [`FLOWX1011`](../diagnostics/FLOWX1011.md), follows the asymmetry this
+  paragraph describes with one deliberate change: it is a **Warning** rather than
+  Info in `Ephemeral`, because `Ephemeral` is the only profile the runtime
+  executes and an Info diagnostic would never appear in any build anyone can run.
 - **A wrong profile is a real bug class.** `Ephemeral` on a payment saga loses
-  work on deploy; `Durable` on a query costs 1 000×. Mitigated by
-  `FLOWX1012` (compensable + ephemeral warning), `FLOWX1017` (signals/timers
-  require durable) and `flowx verify --cost`.
+  work on deploy; `Durable` on a query costs 1 000×. Mitigated today by
+  [`FLOWX1017`](../diagnostics/FLOWX1017.md) alone (signals and timers require
+  durable). *`FLOWX1012` — the compensable-plus-ephemeral warning — was specified
+  alongside it and never built, so a compensable `Ephemeral` flow compiles in
+  silence. `flowx verify --cost` does not exist either.*
+- **The asymmetry is currently theoretical in one direction.** `FlowX.Runtime`
+  does not read `ExecutionProfile`: `Durable` executes on the ephemeral path,
+  with no journal and no resumption. The decision this ADR records still stands —
+  it is what stops durability being made universal — but the second profile is a
+  contract, not yet a runtime.
 - Changing a flow's profile changes its operational characteristics
   significantly; it is a reviewable change, not a tuning knob.
 

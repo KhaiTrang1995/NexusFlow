@@ -139,11 +139,28 @@ A vision that cannot fail is marketing. FlowX succeeds only if:
 | V4 | Durable checkpoint latency | p99 ≤ 15 ms at 5 000 flows/s/node (Postgres journal) | load test in `FlowX.Runtime.Tests` |
 | V5 | Cold start | ≤ 200 ms, NativeAOT-compatible | startup benchmark |
 | V6 | Build overhead | ≤ 8 % versus the same code without FlowX | compiler benchmark |
-| V7 | Architecture knowability | 100 % of flows, capabilities, policies and events present in the manifest | `flowx verify --complete` |
+| V7 | Architecture knowability | 100 % of flows, capabilities, policies and events present in the manifest | `ManifestIsComplete` |
 | V8 | Onboarding | a mid-level engineer ships a correct flow within 2 hours of first contact | onboarding study, n ≥ 10 |
 
-Criteria V3–V6 are enforced as CI quality gates, not aspirations. See
-[14-Performance](14-Performance.md).
+> **What is actually gated today, criterion by criterion.** V3 and V6 are the
+> only two of the four that this section calls CI-enforced and that a CI job
+> measures. **V3 passes** with a wide margin ([P0.md](benchmarks/P0.md): 172.3 ns
+> against a 5 000 ns budget, 0 B). **V6 is failing** — +46.6 % at 50 flows
+> against ≤ 8 % ([B12-scale.md](benchmarks/B12-scale.md)).
+>
+> **V4 and V5 have no harness.** There is no journal to checkpoint into (V4,
+> P2) and no start-up benchmark or AOT-published image to time (V5, P9); the
+> AOT job proves the binary links and serves a request, and does not measure
+> 200 ms. V1 is a review, V2 needs a second transport (P3) and a sample that is
+> currently one `README.md`, V7's gate is `ManifestIsComplete` — *not
+> `flowx verify --complete`, which is not a CLI verb; the CLI has three, see
+> [22-CLI](22-CLI.md)* — and even that does not check the "policies and events"
+> half of the criterion. V8 has not been run.
+>
+> So of eight criteria: **one met and gated, one failing and gated, six not yet
+> measurable.** That is the expected shape with P0 complete and P1 in progress
+> out of ten phases, and it is worth writing down so the table is not read as a
+> scorecard.
 
 ## 8. The ten-year framing
 

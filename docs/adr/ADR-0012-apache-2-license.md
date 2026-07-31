@@ -56,7 +56,13 @@ Apache-2.0 redistribution, verified by an automated licence scan in CI.
   protection at this stage, and BSL-style protection would cost the plugin
   ecosystem.
 - **Dependency choice is constrained** — no GPL/AGPL dependencies, ever, even
-  transitively. Enforced by `DependencyLicencesAreCompatible` in CI.
+  transitively. *Not enforced:* `DependencyLicencesAreCompatible` has never been
+  written and no licence scan runs in any workflow. The constraint currently
+  holds because `FlowX.Abstractions` has zero dependencies by gate
+  (`AbstractionsHasNoDependencies`) and the rest of the solution takes only
+  Microsoft and test-framework packages — which is an observation about today's
+  dependency set, not a control. Adding the scan is cheap and should happen
+  before the first published package.
 - Contributors must sign a DCO (`Signed-off-by`), a small submission friction.
 - Attribution and NOTICE-file obligations must be maintained in distributions.
 

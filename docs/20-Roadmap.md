@@ -52,10 +52,10 @@ gantt
 | | |
 |---|---|
 | **Proves** | a Roslyn generator can emit a correct, readable, fast execution plan; the whole toolchain works end to end |
-| **Scope (Must)** | `FlowX.Abstractions` contracts · minimal `FlowPlanGenerator` (linear steps only) · `FlowEngine` with the step loop · `CapabilityEngine` with generated dispatch · `FlowX.Http` with one endpoint · `flowx.manifest.json` v0 · `flowx graph` · **architecture fitness tests** · benchmark B1–B3 wired into CI |
-| **Scope (Should)** | `FlowTestHost` (substitution only) · `dotnet new flowx` template |
+| **Scope (Must)** | `FlowX.Abstractions` contracts · minimal `FlowPlanGenerator` (linear steps only) · `FlowEngine` with the step loop · generated dispatch (*shipped as the `IStepDispatcher` the generator emits, not as a type called `CapabilityEngine` — that name is used nowhere in the code*) · `FlowX.Http` with one endpoint · `flowx.manifest.json` v0 · `flowx graph` · **architecture fitness tests** · benchmark B1–B3 wired into CI |
+| **Scope (Should)** | ~~`FlowTestHost` (substitution only)~~ · ~~`dotnet new flowx` template~~ — **neither shipped.** `FlowX.Testing` provides `TestCapabilityContext` and `TestFlowContext` and nothing that runs a flow; there is no template package. Carried into P1 as unstarted, not quietly dropped |
 | **Out** | durability, policies, other transports, branching |
-| **Done when** | `samples/ecommerce` runs a 3-step ephemeral flow over HTTP; B1 ≤ 5 µs and B2 = 0 alloc are green in CI; `flowx graph` renders it |
+| **Done when** | `samples/ecommerce` runs a 3-step ephemeral flow over HTTP; B1 ≤ 5 µs and B2 = 0 alloc are green in CI; `flowx graph` renders it — **met** ([P0.md](benchmarks/P0.md): B1 172.3 ns, B2 exactly 0 B) |
 | **Kill criterion** | if generated dispatch cannot hit 5 µs / 0 alloc, [ADR-0002](adr/ADR-0002-compile-time-orchestration.md) is wrong and the platform's thesis must be revisited **before** anything else is built |
 
 ### P1 — Compiler hardening *(mitigates risk R1)*
@@ -63,9 +63,27 @@ gantt
 | | |
 |---|---|
 | **Proves** | the generator is maintainable, debuggable and fast at realistic scale |
-| **Must** | full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` · contract-compatibility checking · diagnostics FLOWX1001–1023 with fixes and help URIs · generator snapshot tests · readable emitted code · build-overhead budget B12 |
+| **Must** | full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` · contract-compatibility checking · diagnostics with fixes and help URIs · generator snapshot tests · readable emitted code · build-overhead budget B12 |
 | **Should** | IDE code fixes · `flowx diff` v1 |
 | **Done when** | a 200-flow synthetic solution builds with ≤ 8 % overhead; every diagnostic passes `EveryDiagnosticIsHelpful`; emitted code is breakpoint-able |
+
+> **P1 status, stated rather than implied.** The DSL Must is met — all five
+> shapes ship. The diagnostics Must is met for every id that exists, and the
+> range in this row used to read "FLOWX1001–1023", which is not what shipped:
+> **18 diagnostics** are raised (1001–1005, 1010, 1011, 1013–1015, 1017, 1018,
+> 1020, 1021, 1023–1026), and **1006–1009, 1012, 1016, 1019 and 1022 do not
+> exist** — most of them the determinism rules, which are P2. A contiguous range
+> in a plan reads as a promise about ids nobody has allocated.
+>
+> **The "Done when" is not met, and it is the one criterion that is failing on a
+> measurement rather than on an absence.** The 200-flow solution builds at
+> **+77 %** against the ≤ 8 % bar, and 50 flows at **+46.6 %** — see
+> [B12-scale.md](benchmarks/B12-scale.md). About 85 % of the per-flow cost is
+> `FlowPlanGenerator`, and most of that is the semantic binding
+> `ErrorCatalogueReader` performs to derive the manifest's `errors` field.
+> [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) is the open
+> decision about which gives way, the field or the budget. P1 does not exit until
+> one of them does.
 
 ### P2 — Durable execution *(the second-riskiest thing)*
 
@@ -167,7 +185,7 @@ re-scored at every phase gate. Two have hard triggers:
 
 | Risk | Trigger | Action |
 |---|---|---|
-| R1 generator complexity | build overhead > 8 %, or > 3 generator bugs per phase | freeze features; invest in the generator's test harness and model layer |
+| R1 generator complexity | build overhead > 8 %, or > 3 generator bugs per phase | freeze features; invest in the generator's test harness and model layer — **⚠ this trigger has fired.** Build overhead is +46.6 % at 50 flows and +77 % at 200 ([B12-scale.md](benchmarks/B12-scale.md)). The named action has not been taken; what was done instead is a blocking *relative* gate ([generator-cost-gate.md](benchmarks/generator-cost-gate.md)) that stops it worsening, and [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md), which puts the choice between the derived catalogue and the budget in front of a decider |
 | R2 determinism leaks | any replay divergence in the conformance corpus | stop P2; strengthen analyzers before proceeding |
 | R5 journal bottleneck | B7 misses budget on target hardware | implement tenant sharding before P6 |
 | R4 adoption | fewer than 3 external pilots by P5 | reprioritise the MediatR bridge and migration tooling |

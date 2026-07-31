@@ -153,8 +153,16 @@ public readonly record struct TriggerEnvelope(
 | `Cli` / `Manual` | `flowx run`, operator replay | at-most-once |
 
 The flow receives only its typed input. `TriggerEnvelope` is available through
-`ctx.Trigger` for diagnostics — reading it to branch business logic is a
-`FLOWX1003` warning. Details in [09-Trigger-Model](09-Trigger-Model.md).
+`ctx.Trigger` for diagnostics — reading it to branch business logic breaks P3 and
+should not be done.
+
+*No diagnostic catches it, and the id this paragraph cited was the wrong one:
+`FLOWX1003` is "capability references a transport", an **error**, and it is about
+a capability's assembly references rather than about a flow reading its
+envelope. The closest rule that does exist is
+[`FLOWX1011`](diagnostics/FLOWX1011.md), which restricts what a condition,
+selector or projection may read — `ctx.Trigger` is on the flow context, so it is
+not outside the flow's state and the rule does not reject it.*
 
 ---
 
@@ -200,14 +208,25 @@ public interface ICapability<TIn, TOut>
 }
 ```
 
-Rules, all compiler-enforced:
+Rules:
 
 1. Exactly one input type, one output type. No overloads, no `params`.
+   *`FLOWX1015` catches a type implementing `ICapability<,>` twice; nothing
+   catches an overload.*
 2. Returns `Result<TOut>` — expected failures are values, not exceptions.
-3. Never calls another capability (`FLOWX1004`).
-4. Never references a transport assembly (`FLOWX1003`).
-5. Declares an authorisation stance (`FLOWX1010`).
-6. Has a semantic version; breaking changes fail `flowx diff`.
+   *Enforced by the interface signature, not by an analyzer.*
+3. Never calls another capability (`FLOWX1004`). **Enforced.**
+4. Never references a transport assembly (`FLOWX1003`). **Enforced.**
+5. Declares an authorisation stance (`FLOWX1010`). **Enforced**, and the
+   `required` member on `[Capability]` makes it a C# compile error before the
+   analyzer ever runs.
+6. Has a semantic version; breaking changes fail `flowx diff`. **Enforced**, by
+   the same `required` member plus `EveryPublicContractIsVersioned`.
+
+This list said "all compiler-enforced". Three are, two hold structurally, and one
+is neither — see [07 §3](07-Capability-Model.md#3-rules), where the same table
+carries the full status including the determinism rules (`FLOWX1006`–`1009`)
+that do not exist yet.
 
 Full contract in [07-Capability-Model](07-Capability-Model.md).
 
@@ -244,24 +263,31 @@ Within a stage, `order` breaks ties. See
 ## 7. Context
 
 ```csharp
-public sealed class FlowContext
-{
-    public CorrelationId CorrelationId { get; }
-    public TenantId Tenant { get; }
-    public ClaimsPrincipal Principal { get; }
-    public Deadline Deadline { get; }          // absolute, propagated to every step
-    public TriggerEnvelope Trigger { get; }    // diagnostics only
-    public IStateBag State { get; }            // typed, per-flow-instance
+public abstract class FlowContext : CapabilityContext   // inherits CorrelationId,
+{                                                       // TenantId, Deadline, UtcNow,
+    public abstract string FlowId { get; }              // NewId(), Random, …
+    public abstract string FlowVersion { get; }
+    public abstract ClaimsPrincipal? Principal { get; }
+    public abstract TriggerEnvelope Trigger { get; }    // diagnostics only
+    public abstract Error? Error { get; }               // set on the failure path
 
-    public T Get<T>();                          // throws if absent — a defect, not a business error
-    public bool TryGet<T>(out T value);
-    public void Set<T>(T value);
+    public abstract T Get<T>();                         // throws if absent — a defect, not a business error
+    public abstract bool TryGet<T>(out T value);
+    public abstract void Set<T>(T value);
 }
 ```
 
+*The block above used to show a sealed class with a `CorrelationId`/`TenantId`/
+`Deadline` of wrapper types and an `IStateBag State` property. What ships is an
+abstract class deriving from `CapabilityContext` — correlation, tenant, deadline,
+clock, ids and randomness are inherited from there as plain types, and the state
+bag is reached through `Get`/`TryGet`/`Set` rather than through a `State`
+property. `FlowContext<TIn>` adds the flow's typed input.*
+
 Context is **pooled and reset**, never allocated per step (P5). In `Durable`
-flows, `State` is serialised into the journal at each checkpoint, so anything
-placed in it must be serialisable — enforced by `FLOWX1006`.
+flows, state is serialised into the journal at each checkpoint, so anything
+placed in it must be serialisable — *which nothing enforces: `FLOWX1006` does not
+exist, and neither does the journal ([06 §5](06-Execution-Engine.md#5-the-determinism-boundary)).*
 
 ---
 
@@ -379,14 +405,16 @@ Consumers of the manifest:
 
 | Consumer | Uses it for |
 |---|---|
-| `flowx graph` | Mermaid / DOT / JSON topology rendering |
-| `flowx diff` | breaking-change detection, CI gate |
-| FlowX Studio | live visualisation, impact analysis |
-| FlowX AI | documentation, tests, review, optimisation hints |
-| OpenAPI / AsyncAPI generators | API contracts, no annotations needed |
-| Agent runtimes (MCP) | typed, policy-guarded tool surface |
+| `flowx graph` | Mermaid rendering — **ships.** *DOT and JSON output were listed here and are not implemented; `MermaidRenderer` is the only renderer* |
+| `flowx diff` | breaking-change detection, CI gate — **ships** |
+| FlowX Studio | live visualisation, impact analysis — **P8**, does not exist |
+| FlowX AI | documentation, tests, review, optimisation hints — **P8**, does not exist |
+| OpenAPI / AsyncAPI generators | API contracts, no annotations needed — **P8**, do not exist |
+| Agent runtimes (MCP) | typed, policy-guarded tool surface — **P8**, does not exist |
 
-See [13-AI-Native](13-AI-Native.md).
+Two of the six consume the manifest today. See
+[13-AI-Native](13-AI-Native.md) for what the other four are waiting on and why
+the manifest's shape is being fixed before they are built.
 
 ---
 
@@ -403,9 +431,15 @@ See [13-AI-Native](13-AI-Native.md).
 | Error code | `<domain>.<snake_case_reason>` | `inventory.out_of_stock` |
 | Policy constant | `Policies.<Purpose>` | `Policies.PaymentGateway` |
 
-Banned in application assemblies: `Manager`, `Processor`, `Handler`, `Helper`,
-`Util`, `Service` as type suffixes (`FLOWX1002`). If you cannot name it as a
-business verb, it is not a capability.
+Banned in application assemblies by convention: `Manager`, `Processor`,
+`Handler`, `Helper`, `Util`, `Service` as type suffixes. If you cannot name it as
+a business verb, it is not a capability.
+
+*This is a review rule, not a compiler rule. `FLOWX1002` — cited here and in
+[P2](03-Design-Principles.md#p2--capability-first) as the analyzer that enforces
+it — is "step type is not a capability", raised when `.Step<T>()` names a type
+that does not implement `ICapability<,>`. No diagnostic anywhere rejects a type
+name.*
 
 ---
 

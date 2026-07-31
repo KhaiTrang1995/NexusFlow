@@ -148,8 +148,10 @@ Summarised here, detailed in [16-Multi-Tenant](16-Multi-Tenant.md):
 | Telemetry | tenant label, cardinality-capped |
 | Residency | tenant → region binding for regulated deployments |
 
-`CrossTenantAccessTest` in the conformance suite attempts a cross-tenant read
-through every trigger kind and asserts a `Forbidden` plus an audit event.
+`CrossTenantAccessTest` — *in a conformance suite that does not exist, under a
+name the fitness functions spell `CrossTenantAccessIsDenied`* — is to attempt a
+cross-tenant read through every trigger kind and assert a `Forbidden` plus an
+audit event.
 
 **Status: designed, not built.** Of the seven layers above, one exists —
 `TenantId` is resolved from validated claims at the HTTP boundary and carried on the
@@ -163,11 +165,11 @@ there is no cache. The table describes P4 and P6; see
 
 | Rule | Mechanism |
 |---|---|
-| No secrets in source, config files or the manifest | CI secret scanning; `ManifestContainsNoSecrets` test |
-| Secrets come from a provider | `ISecretProvider` — Key Vault, Secrets Manager, Vault, Kubernetes Secrets |
-| Rotation without restart | providers support change notification; capabilities receive current values per invocation |
-| No secrets in telemetry | redaction in the generated serialiser + CI fixture scan |
-| Least-privilege runtime identity | workload identity / managed identity; no long-lived credentials in the pod |
+| No secrets in source, config files or the manifest | CI secret scanning; `ManifestContainsNoSecrets` test — **both run** |
+| Secrets come from a provider | `ISecretProvider` — Key Vault, Secrets Manager, Vault, Kubernetes Secrets. **Not declared:** the interface does not exist in `src/`; a capability resolves its own secrets today |
+| Rotation without restart | providers support change notification; capabilities receive current values per invocation — **not built**, same reason |
+| No secrets in telemetry | redaction in the generated serialiser + CI fixture scan — **not built.** No telemetry is emitted and redaction is not generated; see [12 §4](12-Observability.md) |
+| Least-privilege runtime identity | workload identity / managed identity; no long-lived credentials in the pod — **deployment guidance**, and there are no deployment assets in this repository ([18](18-Cloud-Native.md)) |
 
 ---
 
@@ -232,11 +234,11 @@ mechanisms that compliance work needs:
 | `ManifestContainsNoSecrets` | pattern scan over emitted manifests, matching the shape of a secret rather than a list of forbidden words |
 | `CrossTenantAccessIsDenied` | isolation across every trigger kind — **not yet enforced.** Blocked on P4 policy execution and the P2 journal; see [21 §2.4](21-Quality-Gates.md) |
 | `SensitiveFieldsAreRedacted` / `RedactionCannotBeBypassed` | `[Sensitive]` never appears in logs, traces, journal or replay output — **not yet enforced.** None of those four sinks exists; see [21 §2.4](21-Quality-Gates.md) |
-| `ErrorsDoNotLeakInternals` | no stack traces, connection strings or type names in RFC 7807 bodies |
-| `ExternalCapabilitiesHaveResilience` | outbound calls carry timeout + breaker (`FLOWX1023`) |
-| `DependencyLicencesAreCompatible` | no non-Apache-2.0-compatible transitive dependency |
-| SAST (CodeQL) + secret scanning | on every pull request |
-| DAST against the sample apps | nightly |
+| `ErrorsDoNotLeakInternals` | no stack traces, connection strings or type names in RFC 7807 bodies — **not written.** The property holds by construction today (`ProblemDetailsMapper` builds the body from `Error.Code`, `Category` and redacted detail, and never sees an exception), and `ProblemDetailsMapperTests` covers that mapping. Nothing asserts the *negative* |
+| `ExternalCapabilitiesHaveResilience` | outbound calls carry timeout + breaker — **not written**, and the id cited was wrong: `FLOWX1023` is "flow declares no steps". No diagnostic requires a policy on a capability with side effects, and no policy executes at run time. **P4** |
+| `DependencyLicencesAreCompatible` | no non-Apache-2.0-compatible transitive dependency — **not written.** No licence scan runs in any workflow; `AbstractionsHasNoDependencies` proves the core has nothing to scan, which is not the same claim. Also cited as enforced by [ADR-0012](adr/ADR-0012-apache-2-license.md) |
+| SAST (CodeQL) + secret scanning | on every pull request — **runs**, `security.yml` |
+| DAST against the sample apps | nightly — **conditional.** `security.yml` runs ZAP against `samples/ecommerce` only, and skips with a message when it is not runnable. `samples/banking`, named in [21 §4.1](21-Quality-Gates.md#41-why-dast-runs-against-samples) as the *primary* target, is a `README.md` and nothing else |
 
 ---
 

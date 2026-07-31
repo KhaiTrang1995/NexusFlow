@@ -38,6 +38,19 @@ guarantees without introducing consensus into the application runtime.
 Both are `IFlowJournal` / `ILeaseStore` plugins with a shared conformance suite,
 so Postgres, Redis, SQL Server or a custom store all behave identically.
 
+> [!WARNING]
+> **Accepted, not implemented.** There is no journal, no lease store, no fencing
+> token, no `IFlowJournal` or `ILeaseStore` interface anywhere in `src/`, and no
+> conformance suite to hold an implementation to. `FlowX.Runtime` does not read
+> `ExecutionProfile`, so a `Durable` flow executes on the ephemeral path today
+> and a process kill loses it.
+>
+> The decision stands and is what **P2** is built to. Every consequence below is
+> a prediction about a system that has not been written — including the "measured
+> ceiling" in the first negative, which is a figure for Postgres from the
+> literature and not a FlowX benchmark: B7 and B8 have no harness
+> ([14 §8](../14-Performance.md#8-benchmark-suite-and-ci-gating)).
+
 ## Consequences
 
 **Positive**

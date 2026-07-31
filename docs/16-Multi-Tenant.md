@@ -1,7 +1,28 @@
 # 16 — Multi-Tenancy
 
-> **Status:** Accepted · **Audience:** platform engineers, SaaS architects
+> **Status:** Accepted as a specification · **one of seven layers exists** ·
+> **Audience:** platform engineers, SaaS architects
 > **Answers:** what isolation levels exist, and what does the platform guarantee at each?
+
+> [!WARNING]
+> **The platform currently guarantees nothing about tenant isolation.** What
+> exists: `TenantId` is read from validated claims at the HTTP boundary
+> (`HttpTriggerReader`) and carried on `TriggerHeaders` and the flow context.
+> **Nothing consumes it.** There is no admission control, no quota, no rate
+> limit, no journal to partition, no cache to key, no telemetry to label and no
+> residency binding — so every isolation level in §2 is currently the same level,
+> and it is "none enforced by the platform".
+>
+> `ITenantResolver` and `ITenantStoreResolver` are not declared anywhere;
+> `CrossTenantAccessIsDenied` is not written and is recorded as blocked in
+> [21 §2.4](21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced). The
+> layers land with **P4** (admission, quotas, cache) and **P6** (journal
+> partitioning, RLS, residency, the fairness test).
+>
+> An application built on FlowX today must enforce its own tenant scoping inside
+> its capabilities. That is exactly the `WHERE TenantId = @t` this document opens
+> by warning about, and saying so is better than letting the opening paragraph
+> imply otherwise.
 
 ---
 
