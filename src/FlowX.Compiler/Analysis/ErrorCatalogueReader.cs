@@ -107,16 +107,69 @@ public static class ErrorCatalogueReader
     /// The outermost <c>Error</c>-typed expressions inside a node.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Outermost, not every one: in <c>new Error(...).With("sku", sku)</c> both the
     /// creation and the invocation have type <c>Error</c>, and they are one failure, not
     /// two. Stopping the descent at the first hit and unwrapping from there is what keeps
     /// the count right.
+    /// </para>
+    /// <para>
+    /// <strong>One semantic query per node, which is what the walk is written out for.</strong>
+    /// The obvious spelling — <c>DescendantNodes(n =&gt; !IsErrorExpression(n))</c> followed by
+    /// <c>Where(IsErrorExpression)</c> — asks the same question about the same node twice:
+    /// once to decide whether to descend into it, once to decide whether to keep it. Both
+    /// asks bind, and B12-scale §5.2 measured 20 762 of the 39 964 binds this reader
+    /// performed on a 50-flow project as that duplicate. The walk below visits the same
+    /// nodes in the same document order and yields the same list; it just asks once.
+    /// </para>
     /// </remarks>
-    private static List<ExpressionSyntax> Roots(SyntaxNode scope, SemanticModel model) => scope
-        .DescendantNodes(node => !IsErrorExpression(node, model))
-        .OfType<ExpressionSyntax>()
-        .Where(node => IsErrorExpression(node, model))
-        .ToList();
+    private static List<ExpressionSyntax> Roots(SyntaxNode scope, SemanticModel model)
+    {
+        var roots = new List<ExpressionSyntax>();
+
+        // DescendantNodes consults the predicate on the scope itself before descending, and
+        // never yields the scope. Both are reproduced here: an Error-typed scope has no
+        // roots inside it, because it is one.
+        if (IsErrorExpression(scope, model))
+        {
+            return roots;
+        }
+
+        // Explicit stack rather than recursion: this walks whatever depth of nested
+        // expression the source happens to contain, and a generator must not be the thing
+        // that overflows on it.
+        var pending = new Stack<SyntaxNode>();
+        PushChildren(scope, pending);
+
+        while (pending.Count > 0)
+        {
+            var node = pending.Pop();
+
+            if (IsErrorExpression(node, model))
+            {
+                roots.Add((ExpressionSyntax)node);
+                continue;
+            }
+
+            PushChildren(node, pending);
+        }
+
+        return roots;
+    }
+
+    /// <summary>Pushes a node's children so the stack pops them in document order.</summary>
+    private static void PushChildren(SyntaxNode parent, Stack<SyntaxNode> pending)
+    {
+        var children = parent.ChildNodesAndTokens();
+
+        for (var index = children.Count - 1; index >= 0; index--)
+        {
+            if (children[index].AsNode() is { } child)
+            {
+                pending.Push(child);
+            }
+        }
+    }
 
     /// <summary>Whether a node is an expression whose <em>value</em> is an <c>Error</c>.</summary>
     /// <remarks>
