@@ -105,13 +105,14 @@ FlowX will not let you retry something that is unsafe to retry.
 
 ## 3. Rules
 
-**This table said "all compiler-enforced". Four of the eight are.** The
-diagnostic column named four ids the compiler has never raised — `FLOWX1006`,
-`FLOWX1007`, `FLOWX1008` and `FLOWX1009` are absent from `FlowXDiagnostics`,
-which is deliberately built to contain only descriptors something reports. A rule
-that names an id is the strongest claim this documentation set makes, and four of
-these were the id of nothing. The **Enforced by** column below is what is true
-today.
+**This table said "all compiler-enforced". Seven of the eight now are, one of them
+partially.** The diagnostic column named four ids the compiler had never raised —
+`FLOWX1006`, `FLOWX1007`, `FLOWX1008` and `FLOWX1009` were absent from
+`FlowXDiagnostics`, which is deliberately built to contain only descriptors something
+reports. A rule that names an id is the strongest claim this documentation set makes,
+and four of these were the id of nothing. *Three of the four were built at WP-58;
+`FLOWX1006` is the one that is still the id of nothing.* The **Enforced by** column
+below is what is true today.
 
 | # | Rule | Enforced by | Status |
 |---|---|---|---|
@@ -120,17 +121,26 @@ today.
 | 3 | Never invokes another capability | `FLOWX1004` + `CapabilitiesDoNotCallCapabilities` | **enforced** |
 | 4 | Never references a transport or plugin assembly | `FLOWX1003` + `FlowsAreTransportFree` | **enforced** |
 | 5 | Declares an authorisation stance | `FLOWX1010` + `EveryCapabilityDeclaresAuthorization` | **enforced** |
-| 6 | Stateless: no mutable instance or static fields | — | **not enforced.** `FLOWX1009` does not exist. `RuntimeHasNoMutableStatics` covers `FlowX.Runtime`, not application capabilities |
-| 7 | Time/ID/randomness only via `ctx` | — | **not enforced.** `FLOWX1007`/`FLOWX1008` do not exist. `CapabilityContext` offers `UtcNow`, `NewId()` and `Random`; nothing stops a capability calling `DateTime.UtcNow` instead |
-| 8 | Contract types are immutable records, serialisable by a generated STJ context | — | **not enforced.** `FLOWX1006` does not exist |
+| 6 | Stateless: no mutable instance or static fields | [`FLOWX1009`](diagnostics/FLOWX1009.md) | **enforced since WP-58** — Warning, and Error where the compilation shows the type on a durable flow's replay path. *This cell read "**not enforced.** `FLOWX1009` does not exist".* `RuntimeHasNoMutableStatics` still covers only `FlowX.Runtime`; this rule is what covers application capabilities |
+| 7 | Time/ID/randomness only via `ctx` | [`FLOWX1007`](diagnostics/FLOWX1007.md) + [`FLOWX1008`](diagnostics/FLOWX1008.md) | **enforced since WP-58**, at the same severities. *This cell read "**not enforced** … nothing stops a capability calling `DateTime.UtcNow` instead".* `CapabilityContext` offers `UtcNow`, `NewId()` and `Random`; reaching past them is now reported |
+| 8 | Contract types are immutable records, serialisable by a generated STJ context | — | **not enforced.** `FLOWX1006` does not exist — the last of the four ids this table named for nothing. **WP-59** |
 
 Rules 6, 7 and 8 are the determinism rules, and they are exactly the rules a
-`Durable` flow needs — which is why they are all blocked on the same phase. They
-are exit criteria of **P2** in [20-Roadmap](20-Roadmap.md), listed there as
-"determinism analyzers FLOWX1007–1009". Until then the same table appears in
-[06 §5](06-Execution-Engine.md#5-the-determinism-boundary), where it is already
-marked as unimplemented. Write capabilities as if the rules held; nothing will
-tell you when they do not.
+`Durable` flow needs — which is why this paragraph said they were "all blocked on the
+same phase". *They were not blocked on the same thing, and the difference is why two
+of them shipped and one did not.* Rules 6 and 7 were blocked on **severity**:
+ADR-0003 made them informational under `Ephemeral`, `Ephemeral` was the only profile
+the runtime executed, and an Info diagnostic never reaches a build log. WP-52 removed
+that premise and WP-58 raised all three ids, with the severity of the whole
+determinism set re-decided at once —
+[the diagnostics index](diagnostics/README.md#the-severity-of-the-determinism-set) is
+the record. Rule 8 was never a severity question: `FLOWX1006` checks membership in
+the generated `System.Text.Json` context that
+[ADR-0015 commitment 5](adr/ADR-0015-journal-schema-and-durable-execution.md) requires
+journal payloads to be written through, and that writer is **WP-59**. The same table
+appears in [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) with the
+diagnostics' own severities. Write contract types as if rule 8 held; nothing will
+tell you when it does not.
 
 Rule 3 is the load-bearing one. Because capabilities cannot call each other, the
 capability graph is a **set**, not a graph — all composition lives in flows,
@@ -373,9 +383,17 @@ construction.
 **[23-Testing-Strategy](23-Testing-Strategy.md) is the full account**, including which
 levels the kit supports and which it does not. In short: the top two rows are supported;
 the bottom two are not. *This sentence gave the reason as "there is no journal to conform
-against". WP-51 defined one and WP-52 made the runtime write to it, and the conclusion is
-unchanged: there is no store implementation and no Testcontainers harness, so the bottom
-two rows still have nothing to run.*
+against", then as "there is no store implementation and no Testcontainers harness".
+Neither survives intact: WP-51 defined the journal, WP-52 made the runtime write to it,
+and WP-53 shipped `plugins/FlowX.Postgres` with `tests/FlowX.Postgres.Tests` running the
+conformance suite against a real PostgreSQL. The conclusion is unchanged, and the reason
+is narrower than it was — there is still **no Testcontainers anywhere in this
+repository** (that suite takes a connection string from the environment and skips, loudly,
+when there is none), the kit offers nothing for either row, and no test drives a whole
+trigger→flow→journal path. That last one is now a gap rather than an impossibility: the
+generated HTTP endpoint runs through `FlowHost`, so a durable flow **is** reachable over
+HTTP on a host that registered the stores — nothing points a request at one and then reads
+the rows back.*
 
 > **This paragraph said `FlowTestHost` does not exist, and for two phases it was
 > right.** It shipped in WP-49, and the shape changed on contact with what the

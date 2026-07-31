@@ -93,10 +93,13 @@ how "our p99 is 8 ms" becomes a 4-second production tail.
 **Only the first row is in use.** BenchmarkDotNet runs today, driven by
 `scripts/run-benchmarks.sh` and gated by `scripts/check-benchmark-budgets.py`.
 NBomber, `dotnet-counters`, `dotnet-gcdump` and `perf` are not wired into
-anything in this repository — they are the intended tooling for B7–B9 and B13,
-which have no harness because the subsystems they measure are not built. The
-paragraph above is a commitment about how load tests will be run, not a
-description of a run that has happened.
+anything in this repository — they are the intended tooling for B7–B9 and B13, and
+none of the four has a harness. *The reason given was "because the subsystems they
+measure are not built", and for **B7 and B8** that stopped being true: the durable
+step-commit path exists (WP-52) and `plugins/FlowX.Postgres` (WP-53) is a real store
+to run it against. What those two lack is the harness itself — WP-50, unstarted.*
+B9 and B13 are still waiting on the subsystem. The paragraph above is a commitment
+about how load tests will be run, not a description of a run that has happened.
 
 ---
 
@@ -202,8 +205,13 @@ enforces.
 | Trigger fan-out | broker | broker | broker scaling |
 
 Horizontal scaling is linear for ephemeral flows because nodes share nothing.
-Durable flows scale linearly until the journal saturates — which is a documented,
-measured, monitored boundary (risk R5), not a surprise.
+Durable flows scale linearly until the journal saturates — which is a documented
+boundary (risk R5), not a surprise. *It is not a **measured** one, and this sentence
+claimed it was.* The `~20–50k commits/s` in the row above is the same
+literature figure [ADR-0006](adr/ADR-0006-journal-and-leases.md) carries and flags:
+`plugins/FlowX.Postgres` is now a store this could be measured against, and B7 is the
+budget that would say, but no harness runs it (WP-50). Nor is it monitored — nothing
+emits a metric yet (P5).
 
 ---
 
@@ -256,11 +264,15 @@ tests/FlowX.Benchmarks/
 do the budgets they were supposed to measure: there is no
 `PolicyChainBenchmarks` (B4) because no policy executes at run time, no
 `TelemetryBenchmarks` (B5, B6) because nothing emits telemetry, no
-`JournalBenchmarks` (B7, B8) — *this said "because there is no journal", which stopped
-being true at WP-52 (2026-07-31): the runtime commits a step boundary and the cost of one
-was recorded as an allocation ceiling, not a latency. B7 and B8 are still unmeasured, and
-the package that was to build the harness **before** the journal (WP-50) has not started,
-so this is now the last entry on the list rather than the first* — no
+`JournalBenchmarks` (B7, B8) — *this said "because there is no journal", and then that
+the runtime committed a step boundary but no store persisted it. Neither reason survives:
+WP-52 made the runtime commit one and WP-53 gave it PostgreSQL to commit into — the
+Postgres half of the "Postgres, group commit" B7 names; the adapter writes one
+transaction per step and batches nothing, so a harness pointed at it today would measure
+the ungrouped shape. The entry stands anyway, and only the reason has changed — the package that was to build the harness **before** the journal
+(WP-50) has not started, so these two are now the last entries on this list rather than
+the first, and B7's ceiling remains a literature figure rather than a FlowX measurement
+([ADR-0006](adr/ADR-0006-journal-and-leases.md))* — no
 `EndToEndHttpBenchmarks` (B9), no `StartupBenchmarks` (B10, B11) and no
 `StreamingBenchmarks` (B13). `EphemeralDispatchBenchmarks` was never the name;
 the file that measures B1/B2 is `EngineBenchmarks.cs`, and `Budgets.cs` carries
@@ -270,8 +282,9 @@ makes them real.
 
 **So B4–B11 and B13 have no gate.** They are budgets stated in advance, which is
 [rule zero](#1-rule-zero--budget-measure-optimise) working as intended, and they
-become measurable with P2 (B7, B8 — the step-commit path exists since WP-52; the harness
-and a real store do not), P3 (B9), P4 (B4), P5 (B5, B6), P7 (B13) and
+become measurable with P2 (B7, B8 — the step-commit path exists since WP-52 and a real
+store since WP-53; *the harness is the only missing half now*, WP-50), P3 (B9), P4 (B4),
+P5 (B5, B6), P7 (B13) and
 the AOT publish job (B10, B11). The five rows in
 [21 §7](21-Quality-Gates.md#7-performance-gates) that name them as gated are
 naming a schedule, not a running check.

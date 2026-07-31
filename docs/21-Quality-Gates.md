@@ -193,7 +193,7 @@ It is decoration — and worse than nothing, because it stops the next reviewer 
 |---|---|---|
 | `CrossTenantAccessIsDenied` | **P4** — no policy executes at runtime, so no stage exists that could return `Forbidden`. `TenantId` is resolved from claims and carried on the invocation, and nothing consumes it. "Across every trigger kind" additionally needs **P3**: HTTP is the only transport. *This cell also read "**P2** — no journal, so there is no audit event to assert". That half expired on 2026-07-31: WP-52 journals a `Durable` flow's step boundaries and stamps `tenant_id` on the instance row. It is an execution record rather than an audit event, and it changes nothing about this gate, which is blocked on the `Forbidden` that cannot happen.* | That tenant resolution reads validated claims and nothing else. Covered behaviourally by `HttpTriggerReaderTests` — which is the `TenantComesFromClaimsOnly` control the A07 row cites, under a different name, for the one transport that exists. |
 | `RedactionCannotBeBypassed` | **P3** and **P5** — the rule is that no path reaches logs, traces, journal or replay output un-redacted. *This cell said none of the four sinks exists; **the journal does, since WP-52 (2026-07-31)**, and it is the first sink where redaction is structural rather than remembered:* a payload enters only through `JournalPayload`, whose sole way out is `ToJson()`, which redacts — there is no accessor a store could use to reach the graph. Two sinks now exist: that one, and the RFC 7807 body redacted by `ProblemDetailsMapper` (`ProblemDetailsMapperTests`). Logs, traces and replay output still do not. Redaction is still *not* applied by a generated serialiser; see the remarks on `SensitiveAttribute`. | That the compiler records `[Sensitive]` members in the manifest and emits them onto the flow — `ManifestWriterTests`, `PlaceOrderEndpointTests`. That is provenance, not an un-bypassable control. |
-| `PluginsPassConformance` | *This cell said "the conformance suite does not exist". It does now, and the gate is still blocked.* `tests/FlowX.Conformance.Tests` (WP-51) holds **two of six** suites — `JournalConformance`, `LeaseStoreConformance` — and **no `TriggerSourceConformance`**, which is the one this gate would run; `ITriggerSource` is still not declared in `src/`. The project is **not packable**, so nothing outside this repository can run it. Nothing has ever run against a real database — the only implementation is an in-memory reference in the same project. [05-Architecture §11](05-Architecture.md#11-risks-and-technical-debt) names publishing a suite as the mitigation for both R3 and R8, and that has not happened. There is also one plugin — `FlowX.Http` — so "every plugin agrees on the minimum semantics" has one data point and no comparison. | That the one transport that exists normalises HTTP into a `TriggerEnvelope` and maps every `ErrorCategory` to its documented status. `FlowX.Http.Tests` covers it. Writing the named gate against a single plugin would restate those tests under a name claiming ecosystem coverage. Separately assertable, and asserted: that the conformance *mechanism* rejects a wrong store by name — `TheSuiteRejectsAStoreThatIsWrongTests`. That is the suite proving itself, not a plugin passing it. |
+| `PluginsPassConformance` | *This cell said "the conformance suite does not exist". It does now, and the gate is still blocked.* `tests/FlowX.Conformance.Tests` (WP-51) holds **two of six** suites — `JournalConformance`, `LeaseStoreConformance` — and **no `TriggerSourceConformance`**, which is the one this gate would run; `ITriggerSource` is still not declared in `src/`. The project is **not packable**, so nothing outside this repository can run it. *This cell also said "nothing has ever run against a real database"; WP-53 ended that* — `tests/FlowX.Postgres.Tests` inherits `JournalConformance` and `LeaseStoreConformance` unmodified, from a different assembly, and runs them against PostgreSQL 16.13, which is the arrangement a third party would use ([ADR-0016](adr/ADR-0016-postgres-journal-adapter.md)). What that proves is that the *mechanism* travels across an assembly boundary, not that the gate exists. [05-Architecture §11](05-Architecture.md#11-risks-and-technical-debt) names publishing a suite as the mitigation for both R3 and R8, and that has not happened. There is still one **transport** plugin — `FlowX.Http` — so "every plugin agrees on the minimum semantics" has one data point and no comparison for the extension point this gate names. | That the one transport that exists normalises HTTP into a `TriggerEnvelope` and maps every `ErrorCategory` to its documented status. `FlowX.Http.Tests` covers it. Writing the named gate against a single plugin would restate those tests under a name claiming ecosystem coverage. Separately assertable, and asserted: that the conformance *mechanism* rejects a wrong store by name — `TheSuiteRejectsAStoreThatIsWrongTests`. That is the suite proving itself, not a plugin passing it. |
 
 All three are exit criteria of their phases in [20-Roadmap](20-Roadmap.md). None should be
 written before then, and none should be cited as present until it is.
@@ -215,7 +215,7 @@ is still the right control — it is the *tense* that was wrong.
 | `EgressIsAllowListed` (A10) | not written. No egress plugin exists, so nothing declares an allow-list | **P3** |
 | `AgentSurfaceEqualsFlowSurface` (LLM01, LLM07) | not written. There is no agent surface; `[AgentTrigger]` reaches the manifest and nothing serves it | **P8** |
 | `InternalCapabilitiesAreNotAgentReachable` (LLM08) | not written, and vacuous today for the same reason | **P8** |
-| replay-determinism corpus (A08) | not written. There is no journal to replay from | **P2** |
+| replay-determinism corpus (A08) | not written. *"There is no journal to replay from" is no longer the reason* — a durable run leaves committed rows in PostgreSQL and a per-step non-determinism capture. There is no corpus, and nothing replays a capture back into execution: `ReplayDeterminismTest` is **WP-61** | **P2** |
 | startup validation test (A05) | **exists** — `FlowXOptionsValidator` runs under `ValidateOnStart`, covered by `StartupValidationTests` in `FlowX.Hosting.Tests` | — |
 
 The A01 and A02 rows already carry an inline "the enforcement is not built" correction. The
@@ -339,12 +339,18 @@ the parallel fast path allocation-free, and the rule does not model it.
 
 #### One thing the analyzer could not tell us
 
-`FlowExecutionContext.Random` is documented as journaling its seed on first use,
-but it is constructed as `new Random()` — which chooses a seed that nothing can
-read back. Whatever journals the seed cannot be reading it from there. This is
-outside the analyzers' reach and outside this change's scope; it is recorded here
-because it was noticed while reading an `S2245` finding, and a replay guarantee
-that cannot hold is worth more attention than the finding that led to it.
+`FlowExecutionContext.Random` was documented as journaling its seed on first use,
+but it was constructed as `new Random()` — which chooses a seed that nothing can
+read back, so whatever journaled the seed could not have been reading it from
+there. This was outside the analyzers' reach and outside that change's scope; it is
+kept here because it was noticed while reading an `S2245` finding, and a replay
+guarantee that cannot hold is worth more attention than the finding that led to it.
+*It has since been fixed rather than merely noted:*
+[ADR-0015 commitment 4](adr/ADR-0015-journal-schema-and-durable-execution.md) made the
+seed a journaled value, and WP-52 built it — the field is `new Random(seed)` drawn from
+`Random.Shared`, the seed is exposed as `RandomSeed`, and a `Durable` flow writes it into
+the step's `NondeterminismCapture`. The guarantee is now *possible*; nothing replays a
+capture back into execution, so it is still not *proven* (WP-61).
 
 ---
 
@@ -500,7 +506,7 @@ Budgets live in [14-Performance](14-Performance.md). Their enforcement is here.
 | Generator cost | > 2 % more bytes allocated by the generator than the committed baseline fails the build | Merge | **runs** — [generator-cost-gate.md](benchmarks/generator-cost-gate.md) |
 | B12 against its **+8 %** budget | — | — | **failing.** +46.6 % at 50 flows, +77 % at 200. The relative gate above stops it getting worse; it does not make the budget met |
 | B4, B5, B6, B10, B11 | regression > 5 % vs the baseline | Merge | **no harness.** Policy chain (P4), telemetry (P5) and start-up/RSS (P9) have nothing to measure |
-| B7–B9, B13 | nightly load test; regression opens a blocking issue | Release | **no harness.** Journal (P2 — the step-commit path exists since WP-52; nothing measures it and no store backs it, WP-50), HTTP end-to-end (P3), streaming (P7) |
+| B7–B9, B13 | nightly load test; regression opens a blocking issue | Release | **no harness.** Journal (P2 — the step-commit path exists since WP-52 and `plugins/FlowX.Postgres` backs it since WP-53; *"no store backs it" has stopped being the reason* — nothing measures it, WP-50), HTTP end-to-end (P3), streaming (P7) |
 | Baseline updates | require a reviewed commit stating why the budget moved | Merge | convention |
 
 **The old version of this table said B1–B6 and B10–B12 were gated on merge and
@@ -535,16 +541,19 @@ benchmark is a budget nobody is holding.
 **None of the first four runs, and none can.** They are the exit criteria of the
 phases that build the subsystems they test, listed here so the criteria are
 agreed before the code is written. *WP-52 landed a durable seam without moving any of
-them, which is the honest outcome: a journal with no store, no lease and no second node
-does not make a chaos rig runnable.*
+them, and the reason given here was that "a journal with no store, no lease and no second
+node does not make a chaos rig runnable". WP-53 supplied the store, WP-55 the lease and
+the recovery scan, and the first two rows still do not move — because what they were
+waiting on turned out to be the rig, and the rig is **WP-50**, unstarted. The reason has
+inverted; the state has not.*
 
 | Gate | Rule | Class | State |
 |---|---|---|---|
-| Chaos: SIGKILL at every step boundary | 10 000 flows, zero duplicate non-idempotent effects, zero lost instances | Release | **not written.** *The reason given was "no journal, no second node"; the first half expired at WP-52 (2026-07-31)* — a `Durable` flow journals step boundaries, but no store persists them, nothing acquires a lease and nothing scans for an abandoned instance, so a killed node is still simply lost. The rig itself is **WP-50**, unstarted. **P2** (QR2) |
+| Chaos: SIGKILL at every step boundary | 10 000 flows, zero duplicate non-idempotent effects, zero lost instances | Release | **not written.** *The reason given was "no journal, no second node", and neither half survives: the first expired at WP-52 (2026-07-31), the second at WP-53 and WP-55.* A `Durable` flow journals step boundaries, `plugins/FlowX.Postgres` persists them, `DurableLease` acquires and renews, and `FlowRecoveryScan` finds an instance a dead node left running so another host can finish it — pinned by `DurableHostTests`, with two hosts **in one process**. What is missing is the rig: nothing kills a node, nothing crosses a process boundary, and nothing has run 10 000 of anything. **WP-50**, unstarted. **P2** (QR2) |
 | Replay determinism corpus | zero divergence across the full corpus | Merge | **not written** — *"nothing to replay from" is no longer why.* A durable run now leaves committed rows and a per-step non-determinism capture; nothing replays a capture back into execution and there is no corpus. `ReplayDeterminismTest` is **WP-61**. **P2** |
 | Backpressure conformance | bounded memory with a deliberately slow capability | Release | **not written** — no Stream Engine. **P7** |
 | Tenant fairness | one tenant at 10× quota degrades another's p99 by ≤ 10 % | Release | **not written** — no quota, no admission control. **P6** |
-| Graceful shutdown | in-flight flows drain within the termination grace period | Merge | **runs** — `DrainTests` in `FlowX.Hosting.Tests`. *Drain only: there is no checkpoint, so a flow still running at the end of the grace period is lost rather than resumed* |
+| Graceful shutdown | in-flight flows drain within the termination grace period | Merge | **runs** — `DrainTests` in `FlowX.Hosting.Tests`. *Drain only, and the caveat has narrowed: this said "there is no checkpoint, so a flow still running at the end of the grace period is lost rather than resumed". Since WP-52/WP-53 a `Durable` flow has a committed prefix and since WP-55 the host releases its lease on the way out, so another node's recovery scan can pick it up. An `Ephemeral` one — the default — is still simply lost, and the drain test asserts the drain, not the takeover* |
 
 ---
 

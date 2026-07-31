@@ -106,7 +106,7 @@ flowchart LR
 | HTTP ingress | in | HTTP/1.1, HTTP/2, HTTP/3 | FlowX.Http plugin | RFC 7807 + `Retry-After` |
 | gRPC ingress | in | HTTP/2 | FlowX.Grpc plugin | status codes per §4 mapping |
 | Bus ingress/egress | both | Kafka, AMQP, MQTT | transport plugin | dead-letter + poison queue |
-| Journal | both | ADO.NET / Redis / custom | FlowX.Runtime.Durable | lease loss → instance re-leased |
+| Journal | both | ADO.NET / Redis / custom | `FlowX.Abstractions/Durability/`; store plugins implement it (`FlowX.Postgres` is the first) | lease loss → instance re-leased |
 | Telemetry | out | OTLP gRPC | OpenTelemetry SDK | drop, never block the flow |
 | Identity | in | OIDC discovery + JWKS | ASP.NET Core auth | fail closed |
 | Agent surface | in | MCP over stdio/HTTP | FlowX.Ai plugin | policy denial → structured refusal |
@@ -224,7 +224,12 @@ FlowX.Abstractions  ←  FlowX.Core  ←  FlowX.Runtime  ←  FlowX.Runtime.Dura
   what user code references, and what plugin authors implement.
 - `FlowX.Core` — graph model, `Result<T>`, `FlowContext`, policy model. No I/O.
 - `FlowX.Runtime` — the engines. No transport knowledge.
-- `FlowX.Runtime.Durable` — journal, leases, replay, timers. Optional package.
+- `FlowX.Runtime.Durable` — replay and timers. Optional package, and unbuilt. *This
+  read "journal, leases, replay, timers", and the first two went elsewhere: the
+  contracts are in `FlowX.Abstractions/Durability/` (WP-51), the store that implements
+  them is `plugins/FlowX.Postgres` (WP-53), and the lease a node executes under is
+  `DurableLease` in `FlowX.Runtime` (WP-55). [§5.3](#53-target-code-structure) has the
+  reasoning.*
 - `FlowX.Compiler` — analyzers + incremental source generators. Ships as an
   analyzer package; never a runtime dependency.
 - `FlowX.Hosting` — the single composition root.
@@ -293,15 +298,13 @@ src/
 │   └── Model/                    # compile-time graph, symbol resolution
 ├── FlowX.Runtime/
 │   ├── Trigger/  Flow/  Policy/  Capability/  Event/  Scheduler/  Stream/  Observability/
-├── FlowX.Runtime.Durable/        # planned — does not exist yet
-│   ├── Journal/                  # Postgres, Redis adapters — the *implementations*
-│   ├── Leasing/                  # renewal, fencing-token issue — the *implementations*
-│   └── Replay/                   # deterministic re-execution
+├── FlowX.Runtime.Durable/        # planned — does not exist; see the note below
+│   └── Replay/                   # deterministic re-execution — WP-61
 ├── FlowX.Hosting/                # AddFlowX(), options, health checks, graceful drain
 ├── FlowX.Cli/                    # new · graph · diff · verify · replay · bench
 └── plugins/
-    ├── FlowX.Http/  FlowX.Grpc/  FlowX.Kafka/  FlowX.RabbitMq/  FlowX.AzureServiceBus/
-    ├── FlowX.Cron/  FlowX.Stream/  FlowX.SignalR/  FlowX.GraphQL/  FlowX.Ai/
+    ├── FlowX.Http/  FlowX.Postgres/  FlowX.Grpc/  FlowX.Kafka/  FlowX.RabbitMq/
+    ├── FlowX.AzureServiceBus/  FlowX.Cron/  FlowX.Stream/  FlowX.SignalR/  FlowX.GraphQL/  FlowX.Ai/
 tests/
 ├── FlowX.Architecture.Tests/     # fitness functions — written FIRST (see §12)
 ├── FlowX.Compiler.Tests/         # generator snapshot + diagnostic tests
@@ -318,12 +321,25 @@ tests/
 > `FlowX.Abstractions` could not have implemented a contract declared one layer up.
 > Either the contracts move down or the plugin rule is a fiction. The contracts shipped
 > in `FlowX.Abstractions/Durability/` (WP-51) and the tree above now says so.
-> `FlowX.Runtime.Durable` keeps what it was always for — the adapters — and **does not
-> exist yet**; the layering rule carries a row for it as a forward declaration, described
+>
+> **The first adapter did not land in `FlowX.Runtime.Durable` either.** This box said
+> that project "keeps what it was always for — the adapters". WP-53 shipped the
+> PostgreSQL journal and lease store as `plugins/FlowX.Postgres`, referencing
+> `FlowX.Abstractions` and nothing else — which is the same argument one paragraph up,
+> applied one layer further: a store that needs nothing from `Core`, `Runtime` or
+> `Hosting` is a plugin, and putting it under `src/` would claim a coupling that is not
+> there. Lease *renewal* and fencing-token issue did not land there either — they are
+> `DurableLease` and `LeasePolicy` in `FlowX.Runtime` (WP-55), because they are how the
+> engine holds a lease rather than how a store issues one. So `FlowX.Runtime.Durable`
+> **does not exist** and the only thing left in it is deterministic re-execution, which is
+> WP-61; the layering rule still carries a row for it as a forward declaration, described
 > in [§12](#12-architecture-fitness-functions).
 >
-> `tests/FlowX.Conformance.Tests` exists and is a **test project, not a package**. It is
-> deliberately not packable until a second store exists to be held to it.
+> `tests/FlowX.Conformance.Tests` exists and is a **test project, not a package**. *This
+> box said it was "deliberately not packable until a second store exists to be held to
+> it"; that store exists (WP-53) and the project is still not packable.* The condition the
+> csproj actually states is the second **and third** — WP-53 and WP-54 — so a shape that
+> one adapter has pushed back on is not yet a shape two have agreed on. Redis is WP-54.
 
 Where do I add a use case? `src/<App>.Application/<FlowName>/` — one folder
 containing the flow, its capabilities, its contracts and its tests. Nothing else.
@@ -538,8 +554,8 @@ Rollout strategy, KEDA scalers and drain semantics in
 | **Logging** | Structured only. Data as fields, never interpolated. `flow.id`, `flow.instance_id`, `step.id`, `capability.id`, `tenant.id`, `trace_id` on every record | [12](12-Observability.md) |
 | **Persistence** | FlowX owns only journal + outbox + idempotency store. Business persistence is inside capabilities and is none of FlowX's business | [11](11-Distributed-Runtime.md) |
 | **Serialisation** | `System.Text.Json` source-generated contexts only (C2 AOT). Journal payloads carry a schema version | [ADR-0008](adr/ADR-0008-serialization-and-schema.md) |
-| **Time** | Capabilities must obtain time from `ctx.UtcNow`, never `DateTime.UtcNow` — replay determinism. **Unenforced:** `FLOWX1007` does not exist; the property name is `UtcNow`, not `Clock` | [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) |
-| **Randomness / IDs** | `ctx.NewId()` and `ctx.Random` are journaled on first use so replay reproduces them. **The journalling exists since WP-52; the rule does not.** A `Durable` flow captures the ids minted and `Random`'s seed per step boundary — `FLOWX1008` does not exist (WP-58), nothing replays a capture back (WP-61), and no store persists one | [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) |
+| **Time** | Capabilities must obtain time from `ctx.UtcNow`, never `DateTime.UtcNow` — replay determinism. **Enforced since WP-58** by [`FLOWX1007`](diagnostics/FLOWX1007.md): Warning, and Error where the compilation shows the code on a durable flow's replay path. *This row read "**Unenforced:** `FLOWX1007` does not exist".* The property name is `UtcNow`, not `Clock` | [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) |
+| **Randomness / IDs** | `ctx.NewId()` and `ctx.Random` are journaled on first use so replay reproduces them. **The journalling exists since WP-52 and is persisted since WP-53; the rule exists since WP-58.** A `Durable` flow captures the ids minted and `Random`'s seed per step boundary, and [`FLOWX1008`](diagnostics/FLOWX1008.md) reports the ambient alternatives. *This row said `FLOWX1008` did not exist and that no store persisted a capture; both have expired.* What still holds: nothing replays a capture back into execution (WP-61), so the reproduction is specified and unproven | [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) |
 | **Configuration** | Selects adapters and tunes policy *parameters*. It can never change the graph | Manifesto §"What we refuse" |
 | **Security** | Deny-by-default at the capability boundary; STRIDE per trust boundary | [15](15-Security.md) |
 | **Tenancy** | `TenantId` is ambient in `FlowContext`, enforced at admission and at the journal partition key | [16](16-Multi-Tenant.md) |
@@ -594,55 +610,66 @@ agree.*
 | # | Risk | Impact | Likelihood | Mitigation | Owner |
 |---|---|---|---|---|---|
 | R1 | **Source-generator complexity becomes the platform's own legacy** — generators are hard to debug and slow builds | High | High | Generators emit *readable* C# to `obj/generated`; snapshot tests on every emitted file; build-time budget gate (≤ 8 %); generator logic kept in a pure, unit-testable model layer separate from Roslyn plumbing | Compiler team |
-| R2 | **Determinism leaks in durable flows** — a capability uses `DateTime.UtcNow`, `Guid.NewGuid()` or ambient statics, so replay diverges | High | High | **Live since WP-52, and unmitigated — see below.** One of the three is now half-built: the journal records non-deterministic values on first use. The analyzers `FLOWX1007/1008/1009` (WP-58) and the replay conformance test (WP-61) do not exist | Runtime team |
+| R2 | **Determinism leaks in durable flows** — a capability uses `DateTime.UtcNow`, `Guid.NewGuid()` or ambient statics, so replay diverges | High | High | **Live since WP-52, and partly mitigated since WP-58 — see below.** Two of the three named mitigations exist: the journal records non-deterministic values on first use, and `FLOWX1007/1008/1009` are raised — Warning by default, Error where the compilation can prove the code is on a durable flow's replay path. The replay conformance test (WP-61) does not exist, and replay of *control flow* rests additionally on `FLOWX1011`'s coverage | Runtime team |
 | R3 | **Abstraction leak under real transports** — a universal trigger model cannot express Kafka rebalance, HTTP streaming, MQTT QoS | Medium | High | **Untested: there is one transport.** Planned escape hatch: `ITriggerSource` exposes transport-specific options *outside* the flow — *the interface is not declared anywhere in `src/`* — plus a conformance suite defining the minimum semantics. A conformance *project* now exists (WP-51), but it holds `JournalConformance` and `LeaseStoreConformance` and no trigger suite, so this mitigation is untouched. What holds today: documented non-goals per transport ([09 §12](09-Trigger-Model.md#12-known-limits-of-the-abstraction)). The risk cannot be evaluated until P3 adds a second transport | Plugin team |
 | R4 | **Adoption cliff** — teams must rewrite to gain value | High | Medium | Incremental adoption path: FlowX hosts inside existing ASP.NET Core apps; a capability can wrap an existing service; `MediatR` bridge plugin for step-by-step migration | DevRel |
-| R5 | **Journal becomes the bottleneck** at high durable throughput | High | Medium | Batched group-commit writes; per-partition journals; `Ephemeral` remains the default so durability is opt-in; benchmark gate QR2 | Runtime team |
+| R5 | **Journal becomes the bottleneck** at high durable throughput | High | Medium | **Reachable since WP-53, and unmeasured.** `Ephemeral` remains the default, so durability is opt-in, and that is the only one of these mitigations that exists. `plugins/FlowX.Postgres` writes one step row, one instance update and its outbox rows in one transaction per step, with **no** group commit and no partitioning; the benchmark gate QR2 is B7, which has no harness (WP-50), so the ceiling quoted in [14 §5](14-Performance.md#5-scaling-characteristics) and [ADR-0006](adr/ADR-0006-journal-and-leases.md) is still a literature figure | Runtime team |
 | R6 | **Fixed policy stage order is too rigid** for a legitimate case | Medium | Medium | Documented escape: a capability may declare `PolicyStage.Custom` handlers within its own stage; revisit ADR-0011 after 3 real counterexamples | Architecture |
 | R7 | **Manifest drift between build and deploy** (config changes behaviour) | Medium | Low | Configuration is structurally forbidden from changing the graph; control plane records the deployed manifest hash; `flowx verify --runtime` compares | Platform |
-| R8 | **Ecosystem thinness** — a platform is only as good as its plugins | High | Medium | Ship 8 first-party plugins at v1; publish the conformance suite as a NuGet package so third parties can self-certify. **Begun, and not yet a mitigation:** two of the six suites are written and the project is deliberately **not packable** until a second store exists to be held to it, so there is nothing published and nothing outside this repository can self-certify against anything | DevRel |
+| R8 | **Ecosystem thinness** — a platform is only as good as its plugins | High | Medium | Ship 8 first-party plugins at v1; publish the conformance suite as a NuGet package so third parties can self-certify. **Begun, and not yet a mitigation:** two of the six suites are written, and WP-53 showed the mechanism travels — `tests/FlowX.Postgres.Tests` inherits both unmodified from another assembly and runs them against PostgreSQL 16.13. The project is still deliberately **not packable**: *this cell gave the condition as "until a second store exists", and that store now does*; the csproj's condition is the second **and** third (WP-53, WP-54), one adapter's push-back not being agreement. So there is still nothing published and nothing outside this repository can self-certify against anything | DevRel |
 
 > [!IMPORTANT]
-> **R2 went live at WP-52 (2026-07-31) and its mitigations did not.** A risk
-> whose mitigation is fictional is not a mitigated risk; it is an unmitigated
-> risk that has stopped being reviewed, which is why this is recorded here rather
-> than quietly softened.
+> **R2 went live at WP-52 (2026-07-31); one of its three mitigations landed at WP-58,
+> and the one that would *prove* replay is not it.** *This box said the mitigations
+> "did not" land — that a risk whose mitigation is fictional is an unmitigated risk
+> that has stopped being reviewed. Two of the three rows below have since changed, and
+> the reason for keeping the table is unchanged: prevention and proof are different
+> claims, and only the first of them exists.*
 >
 > | Named mitigation | State | Evidence |
 > |---|---|---|
-> | Analyzers `FLOWX1007/1008/1009` as errors in durable flows | **does not exist** | none of the three is a descriptor `FlowXDiagnostics` declares. The catalogue is deliberately built to hold only ids something reports, so their absence is not an oversight in the compiler — it is the compiler declining to promise them, and [the diagnostics index](diagnostics/README.md) records what each reservation is blocked on. *What changed at WP-52: they were blocked on severity, since Info in the only profile that ran reaches no build log. That blocker is gone; they are unwritten. **WP-58***  |
-> | Replay conformance test asserting byte-identical outputs | **does not exist** | no test in the solution named `ReplayDeterminismTest` or anything like it; no test replays anything. **WP-61** |
-> | Journal records non-deterministic values on first use | **half.** Written, never read | *This row said "there is no journal type in the solution", then "nothing writes one". Both have stopped being true, in that order.* WP-51 added `IFlowJournal` and `NondeterminismCapture`; **WP-52 writes one**: a `Durable` flow captures `ctx.UtcNow`, the ids `ctx.NewId()` minted and `Random`'s seed per step boundary. Nothing replays a capture *back* into execution, so the guarantee the capture exists for is still unproven — and the only `IFlowJournal` in the repository is the in-memory reference in `tests/FlowX.Conformance.Tests`, which has never run against a database. Inside a `Parallel` the attribution is best-effort: one pooled context is shared by every branch, so a captured id can land on a sibling's row. Harmless while nothing replays it; WP-61 needs a per-branch context |
+> | Analyzers `FLOWX1007/1008/1009` as errors in durable flows | **exists** — WP-58 | *This row said "does not exist": none of the three was a descriptor `FlowXDiagnostics` declared, because the catalogue holds only ids something reports. All three are now declared and raised — `DeterminismAnalyzer` and `AmbientReads` in `src/FlowX.Compiler/Analysis/`, both directions pinned by `DeterminismAnalyzerTests`.* Not quite "as errors in durable flows": the stance was re-decided for the whole determinism set as **Warning by default, Error where the compilation can prove the code is on a durable flow's replay path**, and a capability reached only from a referenced assembly gets the Warning. Reasoning on [the diagnostics index](diagnostics/README.md#the-severity-of-the-determinism-set) |
+> | Replay conformance test asserting byte-identical outputs | **does not exist** | no test in the solution named `ReplayDeterminismTest` or anything like it; no test replays anything. **WP-61.** This is the row that would turn prevention into proof, and it is the one that has not moved |
+> | Journal records non-deterministic values on first use | **half.** Written, never read | *This row said "there is no journal type in the solution", then "nothing writes one", then that the only journal was an in-memory reference that had never met a database. All three have stopped being true, in that order.* WP-51 added `IFlowJournal` and `NondeterminismCapture`; **WP-52 writes one** — a `Durable` flow captures `ctx.UtcNow`, the ids `ctx.NewId()` minted and `Random`'s seed per step boundary — and **WP-53 persists it**, in `plugins/FlowX.Postgres` against PostgreSQL 16.13. Nothing replays a capture *back* into execution, so the guarantee it exists for is still unproven, and durable storage does not make it less so. Inside a `Parallel` the attribution is best-effort: one pooled context is shared by every branch, so a captured id can land on a sibling's row. Harmless while nothing replays it; WP-61 needs a per-branch context |
 >
 > **The risk was previously *unreachable* rather than mitigated**, because
 > `FlowX.Runtime` never read `ExecutionProfile` and a flow declared `Durable` ran
 > the identical ephemeral path, so a determinism leak had nowhere to diverge.
-> *That is no longer the case.* A `Durable` flow now journals and can be resumed,
-> which means a leak can produce a divergence — and nothing would detect it. R2 has
-> moved from *unreachable* to **live and unmitigated**, which is the worse of the
-> two positions, and the analyzers were supposed to land *with* the journal rather
-> than after it: [20-Roadmap §3](20-Roadmap.md#3-increment-detail) lists them in
-> P2's **Must** and [§6](20-Roadmap.md#6-standing-risk-review) makes any replay
-> divergence a stop-the-phase trigger.
+> *That is no longer the case.* A `Durable` flow now journals, persists and can be
+> resumed, which means a leak can produce a divergence. R2 has moved from
+> *unreachable* through **live and unmitigated** to **live and partly mitigated**:
+> the analyzers stop the ordinary ways a leak is written, and nothing detects one
+> that gets past them — through a capability whose durable caller is in another
+> assembly, or through anything `FLOWX1011` provably cannot see. The analyzers were
+> supposed to land *with* the journal rather than six work packages after it:
+> [20-Roadmap §3](20-Roadmap.md#3-increment-detail) lists them in P2's **Must** and
+> [§6](20-Roadmap.md#6-standing-risk-review) makes any replay divergence a
+> stop-the-phase trigger.
 >
 > [`FLOWX1028`](diagnostics/FLOWX1028.md) no longer covers this. It warned on every
 > flow declaring a profile the runtime does not implement — removing the false
 > comfort rather than mitigating anything — and WP-52 **narrowed it to
-> `Streaming`**, because `Durable` became implemented. So the author of a durable
-> flow is now told nothing at all, which is correct and is also why the analyzers
-> matter more than they did.
+> `Streaming`**, because `Durable` became implemented. *This paragraph then said the
+> author of a durable flow "is now told nothing at all", which was the gap WP-58
+> closed:* a durable flow whose capabilities read the ambient clock, mint an id or
+> hold mutable state is now told, by three rules and at Error.
 >
-> One partial mitigation does exist and is not in the row above:
+> A further mitigation exists and is not in the table above:
 > [`FLOWX1011`](diagnostics/FLOWX1011.md) covers the *flow's* deterministic
 > zone — conditions, selectors, projections and step input maps may read only
-> the flow context, the flow input and prior step results. **It now carries more
+> the flow context, the flow input and prior step results. **It carries more
 > weight than it was designed for.** ADR-0015 originally required the journal to
 > record the branch a `Switch` took; it has no field for one, and
 > [the amendment](adr/ADR-0015-journal-schema-and-durable-execution.md#amendments-the-first-implementation-forced-wp-52)
 > resolved that by replaying the selector against the restored state bag —
-> so replay of control flow now rests on this rule. It still ships as a Warning,
-> it is specified to become an Error under `Durable` at WP-58, and it says nothing
-> about capability bodies, which is where R2's example lives.
+> so replay of control flow rests on this rule. *This paragraph said it was
+> "specified to become an Error under `Durable` at WP-58"; what WP-58 decided is that
+> it already had the right severity and the rest of the set should match it* — Warning
+> outside a provable durable replay path, Error on one. Its own limits are unchanged
+> and are the ones that matter here: it reads builder delegates, so it says nothing
+> about capability bodies, which is where R2's example lives, and
+> [its page](diagnostics/FLOWX1011.md#which-delegates-it-covers) lists what it
+> provably cannot see.
 
 **Accepted technical debt for v1:** no dynamic/interpreted flows (P4 trade-off),
 no cross-region durable flows, no human-task/BPM model, no visual editing
@@ -717,10 +744,12 @@ declared in `src/` — so [R3](#11-risks-and-technical-debt) and
 [R8](#11-risks-and-technical-debt), which both name publishing one as the mitigation, are
 still unmet. Two further things keep the gate honest rather than merely unwritten: the
 conformance project is **not packable**, so no third party can run it, and there is one
-plugin, `FlowX.Http`, so "every plugin agrees on the minimum semantics" has nothing to
-compare. Writing it against the single transport that
-exists would produce a test that restates `FlowX.Http.Tests` under a name claiming
-ecosystem coverage. Recorded in
+**transport** plugin, `FlowX.Http`, so "every plugin agrees on the minimum semantics" has
+nothing to compare. *This sentence read "there is one plugin"; `plugins/FlowX.Postgres`
+is a second one (WP-53), and it agrees with `JournalConformance` and
+`LeaseStoreConformance` — neither of which is the suite this gate would run.* Writing it
+against the single transport that exists would produce a test that restates
+`FlowX.Http.Tests` under a name claiming ecosystem coverage. Recorded in
 [21-Quality-Gates §2.4](21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced) with
 what it is waiting for.
 

@@ -39,39 +39,54 @@ Both are `IFlowJournal` / `ILeaseStore` plugins with a shared conformance suite,
 so Postgres, Redis, SQL Server or a custom store all behave identically.
 
 > [!WARNING]
-> **Accepted; half of it now implemented, and the half that is not is the half
-> this record is about.** *This box said there was no journal, no lease store, no
-> fencing token, no interface in `src/` and no conformance suite. That was true
-> until WP-51 and WP-52 (2026-07-30 to 2026-07-31), and each clause is now
-> separately false or still true:*
+> **Accepted, and both primitives are now built against a real database. What is
+> still a prediction is the arithmetic.** *This box said there was no journal, no
+> lease store, no fencing token, no interface in `src/` and no conformance suite;
+> it then said the journal existed as a seam and that nothing acquired a lease and
+> no store implemented either interface. Both of those states have expired, in that
+> order, and each clause is recorded rather than deleted:*
 >
-> - **The journal exists as a contract and as a seam.** `IFlowJournal`,
+> - **The journal exists as a contract, as a seam, and as a store.** `IFlowJournal`,
 >   `ILeaseStore` and `FencingToken` are in `src/FlowX.Abstractions/Durability/`,
 >   `tests/FlowX.Conformance.Tests` holds the shared suite this decision promises,
 >   and `FlowX.Runtime` reads `ExecutionProfile` and commits one row per step
 >   boundary. A `Durable` flow no longer executes on the ephemeral path — it is
 >   refused outright if no journal is supplied.
-> - **No store implements either interface.** The only implementation anywhere is
->   an in-memory reference in that test project; none has run against a real
->   database (Postgres is WP-53, Redis WP-54).
-> - **Nothing acquires a lease.** Fencing is enforced — a write below the
->   instance's fence is rejected and ends the flow — but the token is handed to the
->   engine by its caller. There is no lease acquisition, no renewal timer and no
->   recovery scan, so "resumption on another node" has no mechanism yet (WP-55).
-> - **Split brain has never been tested against anything real.** The property is
->   pinned by the conformance suite against a dictionary.
+> - **A store implements both interfaces.** *"No store implements either interface"
+>   and "none has run against a real database" were true until WP-53.*
+>   `plugins/FlowX.Postgres` is a schema with migrations, retention and a fenced
+>   write path, and the conformance suite runs against **PostgreSQL 16.13** from a
+>   different assembly, unmodified — the arrangement a third party claiming
+>   conformance would use. Three clauses of the schema did not survive contact and
+>   are amended in [ADR-0016](ADR-0016-postgres-journal-adapter.md). Redis is still
+>   WP-54, so there is one store and nothing yet to disagree with it.
+> - **A lease is acquired, renewed and released.** *"Nothing acquires a lease" and
+>   "resumption on another node has no mechanism yet" were true until WP-55.*
+>   `DurableLease` and `LeasePolicy` (`src/FlowX.Runtime/`) hold the lease a node
+>   executes under and raise the instance's fence on acquisition rather than on the
+>   first write; `FlowRecoveryScan` and `FlowRecoveryService`
+>   (`src/FlowX.Hosting/`) sweep for instances a dead node left running and take
+>   over as many as the node has room for.
+> - **Split brain is pinned by the suite, and the suite now runs against a
+>   database.** *This said the property was pinned "against a dictionary".* It is
+>   also pinned against PostgreSQL, and takeover is exercised end to end by
+>   `DurableHostTests` — with two hosts **in one process**, against a shared store.
+>   No node has ever been killed: the chaos rig is WP-50 and has not started.
 >
 > The decision stands and is what **P2** is built to. The consequences below are
 > still predictions — including the "measured ceiling" in the first negative, which
-> remains a figure for Postgres from the literature and **not** a FlowX benchmark:
-> B7 and B8 still have no harness
-> ([14 §8](../14-Performance.md#8-benchmark-suite-and-ci-gating)), and WP-50, which
-> was supposed to build it before the journal, has not started.
+> remains a figure for Postgres from the literature and **not** a FlowX benchmark.
+> That clause has not been repaired by WP-53, and the reason is unchanged: B7 and
+> B8 still have no harness
+> ([14 §8](../14-Performance.md#8-benchmark-suite-and-ci-gating)), WP-50, which was
+> supposed to build it before the journal, has not started, and no store — Postgres
+> included — has been benchmarked. A store that passes a conformance suite is a
+> store that is *correct*, which is a different claim from a number.
 >
 > The schema this journal actually has is not in this record: it is
 > [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md), which fixes the key
-> at `(instance_id, scope, step_id, attempt)` and is deliberately still
-> **Proposed** for the reason this box demonstrates.
+> at `(instance_id, scope, step_id, attempt)`, and what a real database did to it is
+> [ADR-0016](ADR-0016-postgres-journal-adapter.md).
 
 ## Consequences
 

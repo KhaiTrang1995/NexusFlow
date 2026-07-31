@@ -179,29 +179,39 @@ flowchart TD
 > [ADR-0003](adr/ADR-0003-execution-profiles.md).
 
 > [!WARNING]
-> **The `Durable` column is half-built, and the `Streaming` column has no engine
-> at all.** *Until WP-52 (2026-07-31) this box said only the `Ephemeral` column
-> described something that runs: `FlowX.Runtime` read `ExecutionProfile` nowhere,
-> so declaring `Durable` got you the ephemeral engine with a different word in the
-> manifest. That is no longer true, and the correction is narrower than it sounds.*
+> **The `Durable` column now describes something that runs, one cell excepted; the
+> `Streaming` column has no engine at all.** *Until WP-52 (2026-07-31) this box said
+> only the `Ephemeral` column described something that runs: `FlowX.Runtime` read
+> `ExecutionProfile` nowhere, so declaring `Durable` got you the ephemeral engine
+> with a different word in the manifest. It then said the seam existed but that
+> **nothing acquires a lease**, nothing scans for an abandoned instance, and the
+> only `IFlowJournal` in the repository was an in-memory reference — "no store, no
+> second node". Both of those states have expired.*
 >
-> What runs today: the runtime reads the profile, a `Durable` flow commits one
-> journal row per step boundary, and an instance handed its committed history
-> resumes through the *same* step loop. What does not: **nothing acquires a
-> lease**, nothing scans for an abandoned instance, and the only implementation of
-> `IFlowJournal` in the repository is an in-memory reference in
-> `tests/FlowX.Conformance.Tests` — no store, no second node. So "resumes on
-> another node" in the `Crash` row is still a design statement, and
-> "Suspend/resume — yes (timers, signals)" is still refused at build time by
-> [`FLOWX1017`](diagnostics/FLOWX1017.md).
+> What runs today: the runtime reads the profile; a `Durable` flow takes a lease
+> before its instance is opened, commits one journal row per step boundary under
+> that lease's fencing token, and gives the lease back (WP-55); a host that can scan
+> sweeps for instances a dead node left running and finishes them through the *same*
+> step loop; and `plugins/FlowX.Postgres` (WP-53) persists all of it in PostgreSQL.
+> So **"resumes on another node" in the `Crash` row has a mechanism**, and it is
+> covered by `DurableHostTests` — with two hosts in one process, against a shared
+> store. No node has been killed and nothing crosses a process boundary; the chaos
+> rig that would show this under a `SIGKILL` is WP-50 and has not started
+> ([21 §8](21-Quality-Gates.md#8-reliability-gates)).
 >
-> **A `Durable` flow with no journal is now refused**, not run ephemerally:
-> `flow.durability_not_configured`, before its first step. Until WP-55 wires lease
-> acquisition into the host, that means a `Durable` flow is rejected at its first
-> invocation unless the caller constructs the journal session itself. See
+> **"Suspend/resume — yes (timers, signals)" is the cell that is still design**, and
+> it is refused at build time by [`FLOWX1017`](diagnostics/FLOWX1017.md).
+>
+> **A `Durable` flow with no journal is refused**, not run ephemerally:
+> `flow.durability_not_configured`, before its first step. Since WP-55 that is a
+> statement about a host that registered no stores rather than about the platform —
+> a host with a journal and a lease store runs durable flows; one with neither
+> refuses them, which is the right answer for an unconfigured deployment. See
 > [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md#what-wp-52-landed-and-what-it-did-not)
-> for the in/out list, [§5](#5-the-determinism-boundary) for what it means for
-> replay, and [20-Roadmap](20-Roadmap.md) for the phases.
+> for the in/out list, [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md) for what
+> the schema looked like against a real database,
+> [§5](#5-the-determinism-boundary) for what it means for replay, and
+> [20-Roadmap](20-Roadmap.md) for the phases.
 >
 > **The compiler still says so for `Streaming`.** Declaring `Streaming` is reported
 > as [`FLOWX1028`](diagnostics/FLOWX1028.md), which was narrowed to that one
@@ -236,33 +246,46 @@ flowchart LR
 
 | Rule | Diagnostic | Severity in `Durable` | Built? |
 |---|---|---|---|
-| No `DateTime.Now/UtcNow`, `DateTimeOffset.Now/UtcNow` in flows or capabilities | `FLOWX1007` | Error | **no** — WP-58 |
-| No `Guid.NewGuid()`, `Random.Shared` | `FLOWX1008` | Error | **no** — WP-58 |
-| No mutable static state reachable from a flow | `FLOWX1009` | Error | **no** — WP-58 |
+| No `DateTime.Now/UtcNow`, `DateTimeOffset.Now/UtcNow` in flows or capabilities | `FLOWX1007` | Error | **yes** — WP-58 |
+| No `Guid.NewGuid()`, `Random.Shared` | `FLOWX1008` | Error | **yes** — WP-58 |
+| No mutable static state reachable from a flow | `FLOWX1009` | Error | **yes** — WP-58 |
 | Flow branching, step input mappings and the `Return` projection may only read `ctx.State` and step results | `FLOWX1011` | Error | **yes** (Warning in `Ephemeral`) |
 | Anything in `ctx.State` must be serialisable by a generated STJ context | `FLOWX1006` | Error | **no** — WP-59 |
 
-In `Ephemeral` flows these drop to Info — there is no replay, so there is no
-determinism obligation. The analyzer reads the flow's declared profile, so the
-same rule set is strict exactly where it matters.
+*Outside a durable flow they are **Warnings**, not Info.* This paragraph said they
+"drop to Info — there is no replay, so there is no determinism obligation", which is
+[ADR-0003](adr/ADR-0003-execution-profiles.md)'s clause repeated, and it is the clause
+the set was re-decided against. The decision is **Warning by default, Error where the
+compilation can prove the code is on a durable flow's replay path, never
+informational** — for a flow that is its own `Profile`; for a capability, which has no
+profile, it is a `Durable` flow *in this compilation* naming it as a step, directly or
+through a sub-flow. The reasoning is written once, on
+[the diagnostics index](diagnostics/README.md#the-severity-of-the-determinism-set), and
+[ADR-0003's determinism bullet](adr/ADR-0003-execution-profiles.md) records that its own
+wording is superseded. Repeating it here is what let the two disagree for two phases, so
+it is not repeated again.
 
-**Four of these five rows are still `no`, and the reason changed at WP-52.** They
-were blocked on *severity*: `Ephemeral` was the only profile the runtime executed,
-ADR-0003 makes `FLOWX1007`–`FLOWX1009` informational there, and an Info diagnostic
-never reaches a build log — so they would have shipped doing nothing anywhere. The
-runtime reads the profile now, so an Error under `Durable` is an Error something can
-actually run into. They are simply unwritten, which is a smaller and more ordinary
-thing to be: WP-58 for `FLOWX1007`–`FLOWX1009`, WP-59 for `FLOWX1006`. The same
-unblocking applies to [`FLOWX1012`](diagnostics/README.md), whose only available fix
-— `Profile = Durable` — now changes something.
+**Three of the four `no` rows are now `yes`, and the severity question they were blocked
+on was the one answered.** They were blocked on *severity*, not on analysis: `Ephemeral`
+was the only profile the runtime executed, ADR-0003 makes `FLOWX1007`–`FLOWX1009`
+informational there, and an Info diagnostic never reaches a build log — so they would
+have shipped doing nothing anywhere. WP-52 removed that premise and WP-58 wrote the
+rules: `DeterminismAnalyzer` and `AmbientReads` in `src/FlowX.Compiler/Analysis/`, with
+both directions pinned by `DeterminismAnalyzerTests`. **`FLOWX1006` is the row that
+stays `no`**, and it was never blocked on severity: it checks membership in the generated
+`System.Text.Json` context that
+[ADR-0015 commitment 5](adr/ADR-0015-journal-schema-and-durable-execution.md) requires
+payloads to be written through, and that writer is WP-59.
+[`FLOWX1012`](diagnostics/README.md) is unraised for its own reasons and is WP-60,
+though the fix it would recommend — `Profile = Durable` — now changes something.
 
-**`FLOWX1011` is the exception, and ships as a Warning in `Ephemeral` rather than
-Info.** It is the only rule in this table that is implemented, and it took that
-severity because `Ephemeral` was the only profile the runtime executed, so Info would
-have made it invisible in every build anyone could run. *That premise expired at
-WP-52.* The deviation is not repaired here on purpose: the severity stance for the
-whole table is re-decided **as a set** at WP-58, `FLOWX1011` included, and changing
-one row now is the "one row at a time" this paragraph was written to prevent. See
+**`FLOWX1011` stopped being an exception, and nothing about it changed to do so.** It
+shipped as a Warning outside `Durable` rather than Info, deviating from ADR-0003, because
+Info would have made it invisible in every build anyone could run. The stance for the
+whole table was then re-decided **as a set** at WP-58 — the revisit this paragraph asked
+for, rather than the one row at a time it was written to prevent — and the conclusion was
+that the deviation had been right all along: `Warning` is the rule and `FLOWX1011` is an
+instance of it. See
 [FLOWX1011](diagnostics/FLOWX1011.md#why-the-severity-depends-on-the-profile).
 
 **`FLOWX1011` also carries more weight than it did.** ADR-0015 originally said the
@@ -282,10 +305,12 @@ requires to be byte-identical. The full list, and what the rule provably cannot 
 **Replay contract:** replaying a completed durable instance must produce
 byte-identical step inputs and identical control flow.
 
-> **Nothing verifies it.** `ReplayDeterminismTest` does not exist — it is WP-61,
-> and it is risk [R2](05-Architecture.md#11-risks-and-technical-debt)'s only real
-> mitigation. The contract above is still a *specification*, not a property under
-> test.
+> **Nothing verifies it.** `ReplayDeterminismTest` does not exist — it is WP-61.
+> *This box called it risk [R2](05-Architecture.md#11-risks-and-technical-debt)'s only
+> real mitigation; since WP-58 it is the remaining one.* The three analyzers above
+> report the ordinary ways flow and capability code stops being deterministic, which
+> is prevention; nothing compares a run against its replay, which is proof. The
+> contract above is still a *specification*, not a property under test.
 >
 > *Two earlier versions of this box are now wrong, and both are recorded rather
 > than deleted.* It said there was no journal type in the solution; WP-51 declared
@@ -295,10 +320,13 @@ byte-identical step inputs and identical control flow.
 > resumes by replaying its committed rows into this same loop.
 >
 > **What is still missing is the thing that would make replay provable**, and it is
-> not the journal: there is no corpus, nothing replays a capture *back* into
-> execution, and the only `IFlowJournal` anywhere is an in-memory reference in
-> `tests/FlowX.Conformance.Tests` — no store, no lease acquisition, no second node.
-> So the capture is written and never read, which is exactly the state in which a
+> neither the journal nor, now, the store: there is no corpus and nothing replays a
+> capture *back* into execution. *This paragraph also said "no store, no lease
+> acquisition, no second node". WP-53 and WP-55 took all three off the list — a lease
+> is acquired and renewed, `plugins/FlowX.Postgres` persists the rows, and a host
+> that finds an abandoned instance finishes it — and none of it moved this box, which
+> is the point: replay is a property of the capture, not of where it is stored.* So
+> the capture is written and never read, which is exactly the state in which a
 > determinism leak leaves no trace. One known fidelity limit follows from that and
 > is stated on
 > [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md#what-wp-52-landed-and-what-it-did-not):
@@ -381,9 +409,13 @@ Rules:
    silence. ([ADR-0003](adr/ADR-0003-execution-profiles.md) names it in the same
    breath as `FLOWX1017`, which does exist — the two were written together and
    only one was built.) Rules 1–3 above are implemented and covered by
-   `CompensationStackTests` and `FlowEngineTests`; **rule 4 is not** — nothing is
-   journaled, so a crash during compensation loses the whole flow rather than
-   resuming the unwind.
+   `CompensationStackTests` and `FlowEngineTests`; **rule 4 is not.** *The reason
+   given was "nothing is journaled", and that stopped being true at WP-52 — but the
+   part that matters here never was: `CompensateAsync` writes no journal row.
+   Forward steps are journaled and a store persists them; the unwind is not, so a
+   crash during compensation still loses it* rather than resuming where it stopped.
+   The journal records what *ran forward*; it says nothing about what has been
+   undone.
 
 ---
 
