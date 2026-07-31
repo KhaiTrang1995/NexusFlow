@@ -8,7 +8,7 @@
 > **This document describes the intended experience, not the current one.** None
 > of the commands in §1 works: there is no `FlowX.Templates` package and no
 > `dotnet new flowx` template, and `flowx dev` is not a CLI verb — the CLI has
-> three, `graph`, `manifest` and `diff` ([22-CLI](22-CLI.md)). Studio does not
+> four: `graph`, `manifest`, `diff` and `verify --cost` ([22-CLI](22-CLI.md)). Studio does not
 > exist in any form (**P8**), and neither does the startup banner, which would
 > need telemetry that is not emitted (**P5**).
 >

@@ -48,10 +48,11 @@ The default is `Ephemeral`: you opt *into* cost, never out of it.
   appears in the code, the manifest, the diagram and the cost report.
 - One programming model still covers both worlds — a flow's body is identical
   under either profile.
-- Cost control has a real lever *in the design*: `flowx verify --cost` would flag
-  durable flows with no compensation, no signals and no timers (a profile chosen
-  by accident). **It does not exist** — `verify` is not a CLI verb; the CLI has
-  `graph`, `manifest` and `diff` ([22-CLI](../22-CLI.md)).
+- Cost control has a real lever, and **it exists now**: `flowx verify --cost` flags
+  durable flows with no compensation, no signals and no timers — a profile chosen by
+  accident. It is this bullet's rule unembellished, reads only the manifest, and exits
+  non-zero on a finding ([22-CLI](../22-CLI.md)). *This bullet said "it does not exist"
+  from the day the record was written until the verb was built.*
 
 **Negative / accepted trade-offs**
 - **Two runtime paths to test.** The step loop is shared, but journaling,
@@ -70,7 +71,9 @@ The default is `Ephemeral`: you opt *into* cost, never out of it.
   [`FLOWX1017`](../diagnostics/FLOWX1017.md) alone (signals and timers require
   durable). *`FLOWX1012` — the compensable-plus-ephemeral warning — was specified
   alongside it and never built, so a compensable `Ephemeral` flow compiles in
-  silence. `flowx verify --cost` does not exist either.*
+  silence. `flowx verify --cost` **does now**, and flags exactly the accident
+  `FLOWX1012` would have caught at build time — from the manifest rather than the
+  source, and after the build rather than during it.*
 - **The asymmetry is currently theoretical in one direction.** `FlowX.Runtime`
   does not read `ExecutionProfile`: `Durable` executes on the ephemeral path,
   with no journal and no resumption. The decision this ADR records still stands —

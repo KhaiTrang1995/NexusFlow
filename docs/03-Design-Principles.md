@@ -144,7 +144,7 @@ capability is absent from the emitted manifest, or when a step names one the
 manifest never describes. The manifest schema is versioned and validated in CI
 (`ManifestSchemaTests`).
 
-*This paragraph named `flowx verify --complete`. The CLI has three verbs —
+*This paragraph named `flowx verify --complete`, which does not exist. The CLI has four verbs —
 `graph`, `manifest`, `diff` ([22-CLI](22-CLI.md)) — and `verify` is not one of
 them. `ManifestIsComplete` is the check that exists, and it is narrower than the
 claim in one stated way: it does **not** check policies or events. A policy can

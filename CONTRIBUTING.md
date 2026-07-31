@@ -146,7 +146,7 @@ benchmark output before and after:
 ```
 
 *This said `flowx bench --compare origin/main`. **The CLI has no `bench` verb** —
-it has `graph`, `manifest` and `diff` ([22-CLI](docs/22-CLI.md)) — and there is
+it has `graph`, `manifest`, `diff` and `verify --cost` ([22-CLI](docs/22-CLI.md)) — and there is
 no `--compare`. The script above is what runs the harness and gates it against
 `docs/benchmarks/baseline.json`.*
 
