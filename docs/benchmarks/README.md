@@ -30,6 +30,12 @@ and fail — `INCONCLUSIVE`, exit code 2 — returned when the within-arm spread
 control run in the same rounds, or the confidence interval says this machine cannot resolve
 the question. It fired on the first attempt at the verdict above, and that is the feature.
 
+**None of that caught a 4.9× generator regression, and §5.1 is why.** A gate against a
+budget you are already failing reads the same before a regression as after it.
+[**generator-cost-gate.md**](generator-cost-gate.md) records the *relative* gate that
+replaces it — blocking, on every pull request, against a committed baseline — together with
+the measurement showing that it could not have been built on wall clock.
+
 ---
 
 ## 1. Budget B1 — the engine, measured
@@ -139,6 +145,42 @@ blocking.
 
 The gate was verified by injecting a 72 B allocation into a passing run: blocked,
 exit 1, benchmark named. A gate nobody has seen fail is an assumption.
+
+### 5.1 The same split, applied to compile time
+
+[**generator-cost-gate.md**](generator-cost-gate.md) is this section's argument carried
+over to the generator, because the same thing happened again for the same reason. A commit
+made `FlowPlanGenerator` **4.9× more expensive** and merged unnoticed, because the only
+gate on compile-time cost was *absolute*, against a +8 % budget the project was already
+failing — so it read the same before the regression as after it. See
+[B12-scale.md](B12-scale.md) §5.2 and §5.3.
+
+The replacement gates **bytes allocated by one run of the generator** against a committed
+baseline. Measured over twelve identical runs on a container at load 5.8 to 21.1:
+
+| Metric, the same twelve runs | Worst disagreement between two identical runs | What the real 4.9× regression produces |
+|---|---:|---:|
+| Elapsed wall clock | **+139 %** | +77 % |
+| **Bytes allocated** | **0.071 %** | **+103.6 %** |
+
+The timing row is why the gate is not a timing gate: **a threshold wide enough not to fire
+on nothing is too wide to fire on the incident.** That holds in-process, with MSBuild and
+the compiler server already removed, so it holds a fortiori on a hosted runner. The
+allocation row is why the gate can be blocking, at a **+2 %** threshold — 29× the worst
+deviation of the statistic it gates, and 1/50 of the regression it exists to stop.
+
+| Check | Class | Tolerance |
+|---|---|---|
+| **Generator allocations vs the committed baseline** | **blocking** | +2 % |
+| **Subject or Roslyn version moved** | **blocking** | exact — re-record, never compare across it |
+| Generator elapsed time | advisory | reported, never gated |
+| Baseline gone pessimistic | advisory | −2 %, a notice asking for a re-record |
+
+Verified the way this section demands, and one further way: a fabricated 2.5 % regression
+is rejected in CI (`generator-cost-self-test`), and the real commit `c7ae70a` fails the
+gate at **+102 %**. **P1's +8 % criterion is untouched by all of this and is still
+failing** — `scripts/check-generator-cost.py` reprints it on every run, including passing
+ones, so that a green relative gate cannot be read as a budget that is met.
 
 ## 6. Caveats
 

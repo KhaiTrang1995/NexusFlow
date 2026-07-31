@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The host for scripts/measure-generator-cost.py. It loads a built FlowX.Compiler.dll,
+    runs FlowPlanGenerator over a synthetic project's sources, and reports how many bytes
+    the run allocated.
+
+    Deliberately NOT in FlowX.slnx. It is measurement apparatus, not a shipped project or
+    a test, and `dotnet build FlowX.slnx` must not compile it — CI builds the solution
+    four times across three workflows and none of those builds needs this.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>GeneratorCostProbe</AssemblyName>
+    <RootNamespace>FlowX.GeneratorCostProbe</RootNamespace>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      Workstation, non-concurrent GC. The measurement is a delta of
+      GC.GetTotalAllocatedBytes, which server GC does not change in principle — but a
+      background collector thread that allocates on its own account does, by a small and
+      variable amount, and this number is worth more the less of it moves.
+    -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+
+    <!-- Apparatus, not a shipped assembly: the repository's AOT/trim rules do not apply. -->
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Pinned, and the pin is load-bearing. The number this probe reports is "bytes
+      allocated by FlowPlanGenerator running against this Roslyn", so the committed
+      baseline is only comparable to a candidate measured against the SAME Roslyn.
+      Changing this version is a deliberate act that requires re-recording the baseline,
+      and scripts/check-generator-cost.py refuses to compare across a change to it.
+
+      4.14.0, matching tests/FlowX.Benchmarks, rather than FlowX.Compiler's own 4.8.0
+      floor: the generator is pinned low so it loads in the oldest supported host, and a
+      newer Roslyn is what a real build actually runs it on.
+    -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+  </ItemGroup>
+
+</Project>

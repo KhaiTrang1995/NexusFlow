@@ -1,0 +1,106 @@
+{
+  "$comment": [
+    "Committed baseline for FlowPlanGenerator's compile-time cost, in bytes allocated per",
+    "run against a synthetic project of N flows. Regenerate deliberately:",
+    "",
+    "    ./scripts/measure-generator-cost.py --json /tmp/cost.json",
+    "    ./scripts/check-generator-cost.py /tmp/cost.json --record",
+    "",
+    "and commit the diff. That is the same contract docs/benchmarks/baseline.json and",
+    "samples/ecommerce/flowx.manifest.baseline.json already use, for the same stated",
+    "reason: a real change then arrives as a reviewable diff rather than as a number in a",
+    "log that nobody reads.",
+    "",
+    "WHY BYTES AND NOT MILLISECONDS. docs/benchmarks/B12-scale.md measures build overhead",
+    "in wall clock, because wall clock is what the +8 % budget means. Its own A/A control",
+    "puts that instrument's noise floor at 3.9-8.7 % on a quiet container, and a full run",
+    "costs half an hour. Across twelve independent runs of THIS measurement, taken on a",
+    "4-core container at 1-minute load averages between 5.8 and 21.1, the gated figure",
+    "moved by at most 0.069 % while wall clock over the same runs moved by 123 %. That is",
+    "the whole argument for the choice, and docs/benchmarks/generator-cost-gate.md shows",
+    "the table.",
+    "",
+    "It is the same split scripts/check-benchmark-budgets.py already makes and argues for",
+    "at run time: allocation counts are exact and gateable on shared hardware, timings are",
+    "not.",
+    "",
+    "THIS IS A RELATIVE GATE AND IT IS NOT THE BUDGET. See absoluteCriterion below, which",
+    "check-generator-cost.py reprints on every run, passing or failing."
+  ],
+  "recordedOn": {
+    "commit": "083410c",
+    "recordedAt": "2026-07-31",
+    "roslyn": "4.14.0-3.25262.10+8edf7bcd4f1594c3d68a6a567469f41dbd33dd1b",
+    "roslynAssemblyVersion": "4.14.0.0",
+    "framework": ".NET 10.0.10",
+    "sdk": "10.0.110",
+    "nproc": 4,
+    "load1DuringRun": 6.08,
+    "runsPerSize": 5,
+    "warmupPerSize": 2
+  },
+  "tolerances": {
+    "$comment": [
+      "regressionPercent 2.0 is chosen from the A/A distribution, not from intuition.",
+      "The gated statistic is the median of 5 runs after 2 discarded warm-ups. Across 12",
+      "independent processes on a container at load 5.8-21.1 its worst deviation from the",
+      "central value was 0.069 %, and the worst deviation of any single un-medianed sample",
+      "was 0.576 %. 2.0 % is 29x the first and 3.5x the second, so a degenerate run whose",
+      "median happens to land on a worst-case sample still passes.",
+      "",
+      "At the other end: the commit B12-scale.md section 5.2 bisects, which took the generator",
+      "from 5.60 to 27.28 ms per flow, moves this figure by +101 %. The threshold is 1/50",
+      "of that, so the gate catches a regression fifty times smaller than the one that got",
+      "through, and would have failed the pull request that introduced it.",
+      "",
+      "It can be tightened to 1 % once the same distribution has been measured on a hosted",
+      "runner. It has not been, and widening it is the wrong response if a runner ever",
+      "disagrees: re-record the baseline where the gate runs. See generator-cost-gate.md.",
+      "",
+      "staleBaselinePercent is symmetric with it on purpose. A generator that got 2 %",
+      "cheaper and left the baseline alone has quietly bought itself 2 % of headroom for",
+      "the next regression, so an improvement past the noise floor asks to be recorded too",
+      "-- as a notice, never as a build failure.",
+      "",
+      "maxSpreadPercent 2.0 is the INCONCLUSIVE limit, against a worst observed spread of",
+      "0.59 %. Tripping it does not mean the machine was busy; this measurement does not",
+      "care. It means the same generator gave different answers about the same sources."
+    ],
+    "regressionPercent": 2.0,
+    "staleBaselinePercent": 2.0,
+    "maxSpreadPercent": 2.0
+  },
+  "absoluteCriterion": {
+    "$comment": [
+      "Reprinted by check-generator-cost.py on every run, including passing ones. A",
+      "relative gate answers 'did this change make it worse'. It cannot answer 'is it good",
+      "enough', and this package exists because a criterion nobody could act on stopped",
+      "being watched for four working packages."
+    ],
+    "criterion": "a 200-flow synthetic solution builds with <= +8 % overhead (docs/20-Roadmap.md, P1)",
+    "lastMeasured": "+46.6 % [+42.8, +51.3] at 50 flows; +77.1 % [+72.0, +80.6] at 200 flows on the pre-WP-28 tree",
+    "measuredBy": "./scripts/measure-scale-overhead.sh --rounds 12 --sizes 200 (wall clock)",
+    "recordedIn": "docs/benchmarks/B12-scale.md sections 5.1 and 5.2",
+    "status": "FAIL"
+  },
+  "sizes": {
+    "25": {
+      "allocatedBytes": 17179456,
+      "allocatedBytesPerFlow": 687178.2,
+      "sourcesSha256": "c80fa5b5f3bc074258b2a7707f3eaedfb0e192ffc5599ee5c3397250737743f8",
+      "generatedTrees": 26,
+      "generatedChars": 334319,
+      "diagnostics": 24,
+      "observedSpreadPercent": 0.0099
+    },
+    "50": {
+      "allocatedBytes": 34351616,
+      "allocatedBytesPerFlow": 687032.3,
+      "sourcesSha256": "63dacc54694291ce27e7110ced5bd4f9061dbeac8554e0ad7eb1aa58b61c7a65",
+      "generatedTrees": 51,
+      "generatedChars": 671085,
+      "diagnostics": 49,
+      "observedSpreadPercent": 0.1188
+    }
+  }
+}
