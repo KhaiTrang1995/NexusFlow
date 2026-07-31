@@ -312,77 +312,274 @@ public sealed class ParallelTests
 
     /// <summary>
     /// The failure mode this whole design is arranged around: concurrent writes to the
-    /// flow's shared state bag.
+    /// flow's shared state bag. Provoked on purpose rather than hoped for.
     /// </summary>
     /// <remarks>
-    /// A <c>Dictionary&lt;Type, object&gt;</c> written from two threads does not throw
-    /// reliably — it corrupts, and the corruption surfaces later as a missing entry or an
-    /// infinite loop in a bucket chain. So this hammers the write path from every branch,
-    /// repeatedly, and asserts the flow still completes and the bag still reads back.
     /// <para>
-    /// <strong>Read this as a smoke test, not as proof that the lock is load-bearing.</strong>
-    /// An earlier version of this comment claimed it fails within a handful of iterations
-    /// when <c>_guarded</c> is forced false. It does not: it was run eight times unguarded —
-    /// including a variant inserting twelve extra distinct keys per branch per iteration to
-    /// force dictionary resizes — and passed every time on a four-core machine. Two branches
-    /// being in flight at once (which <c>BranchesOverlapWhenTheirStepsActuallyYield</c> does
-    /// prove) is not the same as two threads colliding inside one dictionary operation, and
-    /// the window for that is narrow.
+    /// <strong>This test fails when the guard is removed.</strong> That is the only claim
+    /// worth making about a race test, and the previous version of this one could not make
+    /// it: it wrote three keys per execution through a single reused engine, and after the
+    /// first execution every one of those writes was an <em>overwrite</em>. An overwrite
+    /// assigns one already-allocated slot; it cannot move an entry, relink a bucket or grow
+    /// an array, so there was nothing left for two threads to corrupt and the test passed
+    /// unguarded every time it was run. Two branches being in flight at once (which
+    /// <c>BranchesOverlapWhenTheirStepsActuallyYield</c> does prove) is not the same as two
+    /// threads colliding inside one dictionary operation.
     /// </para>
     /// <para>
-    /// The lock stays regardless, and not because this test asks for it: concurrent mutation
-    /// of a <c>Dictionary</c> is unsafe by contract, and a race that is merely hard to
-    /// provoke is worse than one that is easy — it reaches production instead of CI. What is
-    /// missing is a test that can actually fail, which needs deterministic interleaving
-    /// rather than more iterations.
+    /// Three things had to change to make the collision reachable. <em>Insertion, not
+    /// assignment</em> — every branch writes keys the bag has never seen, so each write runs
+    /// the path that appends an entry, links a bucket and periodically reallocates both.
+    /// <em>A fresh context per iteration</em> — a pooled context keeps its buckets across
+    /// executions, so a new engine per iteration is what makes the writes inserts rather
+    /// than overwrites. <em>A rendezvous</em> — the branches spin at a gate until the last
+    /// one arrives, so they enter the write loop within nanoseconds of each other instead of
+    /// whenever the thread pool happens to schedule them.
+    /// </para>
+    /// <para>
+    /// The assertion is the invariant, not a crash: unguarded insertion usually loses an
+    /// entry rather than throwing, so what is checked is that every key a branch wrote reads
+    /// back with the value it wrote. <see cref="RendezvousDispatcher.Rendezvoused"/> is
+    /// counted and asserted too — a run in which the branches never actually met would pass
+    /// vacuously, which is exactly the defect this test was rewritten to remove.
+    /// </para>
+    /// <para>
+    /// <strong>Measured, on a four-core machine.</strong> Guarded: twenty consecutive runs,
+    /// forty passes, no failures, and the gate was met in 200 of 200 iterations at both
+    /// branch counts — so the floor asserted below has a wide margin and is there for a
+    /// loaded CI box, not for this one. With <c>_guarded</c> forced to <c>false</c> in
+    /// <c>FlowExecutionContext.Initialise</c>: five consecutive runs, ten failures, no
+    /// passes, every one of them inside the first two iterations. Both failure modes showed
+    /// up — a key that was written and then simply was not in the bag, and an exception
+    /// thrown from inside the dictionary and reported as <c>capability.unhandled</c>.
     /// </para>
     /// </remarks>
-    [Fact]
-    public async Task ConcurrentBranchWritesDoNotCorruptTheSharedStateBag()
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task ConcurrentBranchWritesDoNotCorruptTheSharedStateBag(int branches)
     {
-        var engine = Engine();
-        var plan = Plans.Parallel(MergeStrategy.AllSettled);
+        const int iterations = 200;
 
-        for (var iteration = 0; iteration < 200; iteration++)
+        var plan = ForkOf(branches);
+        var slotsPerBranch = Slots.Length / branches;
+        var met = 0;
+
+        for (var iteration = 0; iteration < iterations; iteration++)
         {
-            var dispatcher = new ContextHammeringDispatcher();
+            // A new engine per iteration, and therefore a new context: the pool would hand
+            // back one whose dictionary already has buckets for every key, turning the
+            // inserts this test depends on into assignments.
+            var dispatcher = new RendezvousDispatcher(branches, slotsPerBranch);
 
-            var result = await engine.ExecuteAsync(plan, dispatcher, Plans.Invocation, Ct);
+            var result = await Engine().ExecuteAsync(
+                plan, dispatcher, Plans.Invocation, "seed", dispatcher.CountUnreadableSlots, Ct);
 
-            result.IsSuccess.ShouldBeTrue();
-            dispatcher.Failure.ShouldBeNull(
-                $"Iteration {iteration} saw the state bag misbehave: {dispatcher.Failure}");
+            result.IsSuccess.ShouldBeTrue(
+                $"Iteration {iteration} did not complete: {result.Error?.Code}. A step that " +
+                "threw here is the state bag failing loudly rather than quietly.");
+
+            result.Value.ShouldBe(0,
+                $"Iteration {iteration} left {result.Value} of {Slots.Length} slots unreadable. " +
+                "Every branch wrote keys no other branch touches, so each one must read back " +
+                "with the value its own branch wrote.");
+
+            dispatcher.UnreadableAfterWrite.ShouldBe(0,
+                $"Iteration {iteration}: a branch could not read back a key it had just " +
+                "written, which means a sibling's insert moved it or dropped it.");
+
+            if (dispatcher.Rendezvoused)
+            {
+                met++;
+            }
         }
+
+        met.ShouldBeGreaterThan(iterations / 2,
+            $"The branches met at the gate in only {met} of {iterations} iterations, so most " +
+            "of this run never put two threads in the write loop at the same time and the " +
+            "passes prove nothing.");
     }
 
-    /// <summary>Writes and reads a distinct slot per branch, as hard as it can.</summary>
+    /// <summary>
+    /// A fork of <paramref name="branches"/> single-step branches, joining at an emit.
+    /// </summary>
     /// <remarks>
-    /// Distinct slots on purpose — that is the shape FLOWX1013 requires and therefore the
-    /// shape the runtime has to make work. Every branch still writes into <em>one</em>
-    /// dictionary, which is where the race lives.
+    /// Built rather than spelled out, unlike the plans in <c>Plans</c>: the branch count is
+    /// the variable under test, and the shape is otherwise the same fork
+    /// <see cref="Plans.Parallel"/> describes. The fork is step 0 so that the branches reach
+    /// an almost-empty state bag — a dictionary that has to grow is a dictionary whose
+    /// entries move.
     /// </remarks>
-    private sealed class ContextHammeringDispatcher : IStepDispatcher
+    private static ExecutionPlan ForkOf(int branches)
     {
-        public string? Failure { get; private set; }
+        var targets = new int[branches];
+        var steps = new List<StepNode>(branches + 2);
+
+        for (var b = 0; b < branches; b++)
+        {
+            targets[b] = b + 1;
+        }
+
+        steps.Add(StepNode.ForParallel(0, targets, joinTarget: branches + 1, MergeStrategy.AllMustSucceed));
+
+        for (var b = 0; b < branches; b++)
+        {
+            steps.Add(StepNode.ForCapability(b + 1, Plans.Validate));
+        }
+
+        steps.Add(StepNode.ForEmit(branches + 1, "order.screened"));
+
+        return ExecutionPlan.Create(
+            FlowDescriptor.Create("order.fork", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+            StepGraph.Create(steps));
+    }
+
+    // ------------------------------------------------------------------ distinct keys
+
+    /// <summary>One key in the state bag, reachable without reflection.</summary>
+    /// <remarks>
+    /// The bag is keyed by <see cref="Type"/> and reached through <c>Set&lt;T&gt;</c>, so a
+    /// distinct key is a distinct type named at a distinct call site. These pairs are the
+    /// call sites, held as delegates so a branch can pick one by index.
+    /// </remarks>
+    private readonly record struct SlotAccessor(
+        Action<FlowContext, int> Write,
+        Func<FlowContext, int, bool> ReadsBack);
+
+    private static SlotAccessor Slot<TRow, TColumn>() => new(
+        static (ctx, value) => ctx.Set(new Cell<TRow, TColumn>(value)),
+        static (ctx, value) => ctx.TryGet<Cell<TRow, TColumn>>(out var cell) && cell.Value == value);
+
+    /// <summary>
+    /// Thirty-six distinct keys, from six tags paired up.
+    /// </summary>
+    /// <remarks>
+    /// Pairing is only a naming device that avoids thirty-six declarations —
+    /// <c>Cell&lt;Tag1, Tag2&gt;</c> and <c>Cell&lt;Tag2, Tag1&gt;</c> are two unrelated
+    /// types and therefore two unrelated keys. Enough of them that a branch's writes span
+    /// several of the dictionary's growth steps rather than fitting inside its initial
+    /// capacity.
+    /// </remarks>
+    private static readonly SlotAccessor[] Slots =
+    [
+        Slot<Tag1, Tag1>(), Slot<Tag1, Tag2>(), Slot<Tag1, Tag3>(),
+        Slot<Tag1, Tag4>(), Slot<Tag1, Tag5>(), Slot<Tag1, Tag6>(),
+        Slot<Tag2, Tag1>(), Slot<Tag2, Tag2>(), Slot<Tag2, Tag3>(),
+        Slot<Tag2, Tag4>(), Slot<Tag2, Tag5>(), Slot<Tag2, Tag6>(),
+        Slot<Tag3, Tag1>(), Slot<Tag3, Tag2>(), Slot<Tag3, Tag3>(),
+        Slot<Tag3, Tag4>(), Slot<Tag3, Tag5>(), Slot<Tag3, Tag6>(),
+        Slot<Tag4, Tag1>(), Slot<Tag4, Tag2>(), Slot<Tag4, Tag3>(),
+        Slot<Tag4, Tag4>(), Slot<Tag4, Tag5>(), Slot<Tag4, Tag6>(),
+        Slot<Tag5, Tag1>(), Slot<Tag5, Tag2>(), Slot<Tag5, Tag3>(),
+        Slot<Tag5, Tag4>(), Slot<Tag5, Tag5>(), Slot<Tag5, Tag6>(),
+        Slot<Tag6, Tag1>(), Slot<Tag6, Tag2>(), Slot<Tag6, Tag3>(),
+        Slot<Tag6, Tag4>(), Slot<Tag6, Tag5>(), Slot<Tag6, Tag6>(),
+    ];
+
+    private sealed record Cell<TRow, TColumn>(int Value);
+
+    private sealed class Tag1;
+
+    private sealed class Tag2;
+
+    private sealed class Tag3;
+
+    private sealed class Tag4;
+
+    private sealed class Tag5;
+
+    private sealed class Tag6;
+
+    /// <summary>
+    /// Holds every branch at a gate until the last one arrives, then has all of them insert
+    /// their own block of keys at once.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Distinct keys per branch on purpose — that is the shape FLOWX1013 requires and
+    /// therefore the shape the runtime has to make work. Every branch still writes into
+    /// <em>one</em> dictionary, which is where the race lives: two inserts that read the
+    /// same free index write the same entry, and one of the two keys is then simply not in
+    /// the bag.
+    /// </para>
+    /// <para>
+    /// The gate spins rather than blocking on a <see cref="Barrier"/>. A barrier wakes its
+    /// participants through the kernel, one at a time and microseconds apart, which is long
+    /// enough for the first branch to finish its whole write loop before the second starts —
+    /// the interleaving would then be no more deterministic than it was without a gate.
+    /// </para>
+    /// </remarks>
+    private sealed class RendezvousDispatcher(int branches, int slotsPerBranch) : IStepDispatcher
+    {
+        /// <summary>Long enough that a busy pool still gets there; short enough to notice.</summary>
+        private const int GateTimeoutMs = 2000;
+
+        private int _arrived;
+        private int _open;
+        private int _passed;
+        private int _unreadableAfterWrite;
+
+        /// <summary>True when every branch reached the gate, so the writes really did overlap.</summary>
+        public bool Rendezvoused => Volatile.Read(ref _passed) == branches;
+
+        /// <summary>Keys a branch could not read back immediately after writing them.</summary>
+        public int UnreadableAfterWrite => Volatile.Read(ref _unreadableAfterWrite);
+
+        /// <summary>
+        /// Counts the slots that do not read back with the value written, once the fork has
+        /// joined and nothing is still running.
+        /// </summary>
+        /// <remarks>
+        /// Passed to the engine as the flow's projection, because that is the only place the
+        /// context can be read: it is pooled and reset the instant the engine returns.
+        /// </remarks>
+        public int CountUnreadableSlots(FlowContext ctx)
+        {
+            var lost = 0;
+
+            for (var slot = 0; slot < Slots.Length; slot++)
+            {
+                if (slot < branches * slotsPerBranch && !Slots[slot].ReadsBack(ctx, slot))
+                {
+                    lost++;
+                }
+            }
+
+            return lost;
+        }
 
         public async ValueTask<StepOutcome> ExecuteAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
         {
+            // Yield before anything else. Branches are started eagerly on the calling
+            // thread, so a branch that waited at the gate before yielding would be waiting
+            // for siblings the engine has not started yet.
             await Task.Yield();
 
-            for (var i = 0; i < 200; i++)
-            {
-                switch (stepIndex)
-                {
-                    case 2: ctx.Set(new SlotA(i)); break;
-                    case 3: ctx.Set(new SlotB(i)); break;
-                    case 4: ctx.Set(new SlotC(i)); break;
-                    default: break;
-                }
+            var branch = stepIndex - 1;
 
-                // Reads race a resize just as writes do, so both are exercised.
-                if (stepIndex is 2 or 3 or 4 && !ctx.TryGet<SlotA>(out _) && i > 0 && stepIndex == 2)
+            if ((uint)branch >= (uint)branches)
+            {
+                return StepOutcome.Success;
+            }
+
+            if (WaitForSiblings())
+            {
+                Interlocked.Increment(ref _passed);
+            }
+
+            var first = branch * slotsPerBranch;
+
+            for (var i = 0; i < slotsPerBranch; i++)
+            {
+                var slot = first + i;
+
+                Slots[slot].Write(ctx, slot);
+
+                // A read racing a sibling's insert can walk a bucket array that is being
+                // replaced, so the read path is exercised here and not only at the join.
+                if (!Slots[slot].ReadsBack(ctx, slot))
                 {
-                    Failure = "A slot written by this branch could not be read back.";
+                    Interlocked.Increment(ref _unreadableAfterWrite);
                 }
             }
 
@@ -405,10 +602,47 @@ public sealed class ParallelTests
 
         public int Select(int stepIndex, FlowContext ctx) => -1;
 
-        private sealed record SlotA(int Value);
+        /// <summary>
+        /// Blocks until every branch has arrived, or gives up. Returns whether they met.
+        /// </summary>
+        /// <remarks>
+        /// Giving up is not a failure: a thread pool that cannot supply one thread per
+        /// branch is a property of the machine, not of the runtime under test. It is counted
+        /// instead, and the test asserts that it stayed rare — an assertion that never met
+        /// its own precondition is worse than no assertion.
+        /// </remarks>
+        private bool WaitForSiblings()
+        {
+            if (Interlocked.Increment(ref _arrived) == branches)
+            {
+                Volatile.Write(ref _open, 1);
+                return true;
+            }
 
-        private sealed record SlotB(int Value);
+            var deadline = Environment.TickCount64 + GateTimeoutMs;
+            var spins = 0;
 
-        private sealed record SlotC(int Value);
+            while (Volatile.Read(ref _open) == 0)
+            {
+                if (++spins < 128)
+                {
+                    Thread.SpinWait(8);
+                    continue;
+                }
+
+                spins = 0;
+
+                if (Environment.TickCount64 > deadline)
+                {
+                    return false;
+                }
+
+                // Yield rather than spin forever: on a machine with fewer cores than
+                // branches, the sibling this one is waiting for needs this core to run on.
+                Thread.Yield();
+            }
+
+            return true;
+        }
     }
 }
