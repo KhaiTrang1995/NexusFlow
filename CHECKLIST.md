@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 1086/1086 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 1111/1111 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -44,7 +44,7 @@ These gate everything below them. None is code work.
 
 - [x] 20 specification documents, `docs/01` – `docs/20`
 - [x] 13 ADRs with trade-offs stated (ADR-0013 added by the first compilation)
-- [x] `docs/diagnostics/` — 20 pages plus an index, one per raised diagnostic; every help
+- [x] `docs/diagnostics/` — 21 pages plus an index, one per raised diagnostic; every help
       URI resolves, asserted by test
 - [x] `docs/benchmarks/` — baseline, gate policy, and the honest caveats
 - [x] 9 sample application specifications
@@ -548,6 +548,40 @@ which is the exact failure mode P1 exists to remove:
       dedicated assembly — across an assembly boundary, which is exactly where the scan
       stops. A team following the documentation exactly gets **no catalogue at all**.
       `samples/ecommerce` misses this only because it is a single project
+
+**Closed this round, and one opened.**
+
+- [x] **The false-complete catalogue.** Fixed by WP-37 by changing the question: the scan
+      roots at `ICapability<,>.ExecuteAsync` and follows the *value*, and `Result.Ok` is the
+      only expression that entitles a capability to `errors: []`. Anything the resolver does
+      not understand marks the catalogue incomplete — that is the safety property.
+      Reachability came free. Better than B13 forecast: **wrong 4 → 0**, correct **47 % →
+      55 %**, withheld only **39 % → 42 %**, because two under-reports became *correct*
+      catalogues rather than withholds. The load-bearing assumption is now written where it
+      can be checked: `Result<T>` is enterable only from `T` and from `Error`
+- [x] **`.Fail(Error)` parsed and ignored** — fixed by WP-38. It compiles to a
+      `StepKind.Fail` whose dispatcher returns `StepOutcome.Failed`, so the engine needed no
+      change. Completed compensable steps unwind, because the documented workaround while it
+      was unimplemented was to spell the rejection as a capability returning `Result.Fail`,
+      and a feature that replaced that workaround without unwinding would silently weaken
+      every saga that took the advice
+- [x] **`ctx.Input` did not compile** — fixed by WP-38, and the root cause was deeper than
+      the emitter: **`FlowContext<TIn>` was an abstract class nothing derived from**. There
+      was no such object at run time and there could not be, since the pooled context is
+      shared by every flow. It is now a `readonly struct` view over whatever context is
+      current, which is what makes it work inside a `ForEach` body and a sub-flow where a
+      cast would have thrown. One reference wide, so B2 stays a hard zero
+- [ ] **⚠ `FlowX.Runtime` never reads `ExecutionProfile`.** Found by WP-40 while auditing
+      risk R2. A `Durable` flow runs the ephemeral path; the profile affects only a plan
+      validation and a manifest field. So R2 is not *mitigated* — it is **unreachable**, and
+      it goes live the moment P2 lands. This also explains why several determinism
+      diagnostics are blocked on severity rather than analysis
+- [ ] **The cost gate measured a subject that did not compile** — the probe parsed a project
+      with `ImplicitUsings=enable` without supplying them, so `ValueTask` and friends never
+      bound. Harmless for relative comparisons of syntax-matching code, which is why it still
+      caught the 4.9× regression; not harmless for anything that resolves a signature. Fixed
+      and the baseline re-recorded. **Left open as a reminder**: a benchmark's subject needs
+      a gate of its own, and this one had none
 
 **Gaps WP-20 and WP-22 surfaced in turn.** Same class again — declared, documented or
 reachable, and enforced or honoured by nothing:
