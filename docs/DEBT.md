@@ -26,12 +26,17 @@ marker or a same-line reason — it silences a rule just as completely, and was 
 covered by the gate until the sample used one. The `SuppressionsAreAccountable` gate fails
 the build otherwise, and fails it again the day an `expires` date passes.
 
-It runs in two places, on purpose. The shell step in `.github/workflows/quality.yml` is
-the one that blocks a merge. The fitness function of the same name in
-`tests/FlowX.Architecture.Tests` is the one that tells you *before* you commit — and it
-asks one thing the shell step does not: that the id has a row in the table below. A marker
-citing `DEBT-0099` when no such row exists is accountable to nobody, and reads as
-accountable to everybody.
+It runs in exactly one place: the `SuppressionsAreAccountable` fitness function in
+`tests/FlowX.Architecture.Tests`. It fails on `dotnet test`, before the commit, and again
+in CI, where the architecture gates run before the rest of the suite.
+
+It used to run in two places. A shell step in `.github/workflows/quality.yml` asked a
+weaker question — whether the *file* contained a `FLOWX-DEBT` marker anywhere — so one
+accountable suppression at the top of a file licensed every unaccountable one below it,
+and it never checked that the id cited had a row in the table below. A marker citing
+`DEBT-0099` when no such row exists is accountable to nobody and reads as accountable to
+everybody. The step was deleted rather than repaired: two implementations of one rule
+disagree eventually, and the weaker one is what a developer meets first.
 
 ```csharp
 // FLOWX-DEBT: id=DEBT-0042 owner=runtime expires=2026-12-31

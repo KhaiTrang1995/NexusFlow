@@ -131,57 +131,31 @@ jobs:
   debt:
     name: Technical-debt policy
     runs-on: ubuntu-latest
+    # The suppression rule of docs/21-Quality-Gates.md §6.1 is NOT here. It is the
+    # SuppressionsAreAccountable fitness function, run by the "Architecture fitness
+    # functions" step of ci.yml on this same trigger.
+    #
+    # A shell copy of it used to live in this job, and the two were not the same
+    # rule. It asked whether the *file* contained a FLOWX-DEBT marker anywhere, so
+    # one accountable suppression at the top licensed every unaccountable one below
+    # it — demonstrably: a file with a marked suppression on line 7 and a bare one
+    # on line 16 exited 0. It also never checked that the id cited had a row in
+    # docs/DEBT.md. The fitness function requires the marker within six lines of the
+    # suppression and the id to be registered, unexpired and inside the budget.
+    #
+    # Two gates for one rule, disagreeing, is worse than one: the weaker is the one
+    # people meet first, and passing it reads as compliance. Deleted rather than
+    # repaired, because repairing it would have produced a second implementation of
+    # a rule that already has one — to be kept in step by hand, forever, with no
+    # test that they agree.
     steps:
       - uses: actions/checkout@v4
 
-      - name: Suppressions are accountable and unexpired
-        # docs/21-Quality-Gates.md §6.1. An expired suppression fails the build
-        # rather than warning — a warning about expired debt is itself debt.
-        run: |
-          python3 - <<'PY'
-          import os, re, sys, datetime
-          today = datetime.date.today()
-          pattern = re.compile(
-              r'FLOWX-DEBT:\s*id=(?P<id>DEBT-\d{4})\s+'
-              r'owner=(?P<owner>[\w-]+)\s+'
-              r'expires=(?P<expires>\d{4}-\d{2}-\d{2})')
-          problems, found = [], 0
-          for root, dirs, files in os.walk('.'):
-              dirs[:] = [d for d in dirs if d not in {'.git', 'bin', 'obj'}]
-              for f in files:
-                  if not f.endswith('.cs'):
-                      continue
-                  path = os.path.join(root, f)
-                  text = open(path, encoding='utf-8').read()
-                  for line_no, line in enumerate(text.splitlines(), 1):
-                      if 'SuppressMessage' in line and 'FLOWX-DEBT' not in text:
-                          problems.append(f'{path}:{line_no} suppression without a FLOWX-DEBT marker')
-                      # A #pragma silences a rule just as completely as an attribute, and
-                      # was not covered until the sample used one. It needs either a debt
-                      # marker or a same-line reason — a bare pragma is a rule turned off
-                      # by someone who left no way to know whether it should come back.
-                      if '#pragma warning disable' in line and '//' not in line:
-                          problems.append(
-                              f'{path}:{line_no} #pragma warning disable with no justification. '
-                              'Add a FLOWX-DEBT marker, or a same-line comment saying why.')
-                  for m in pattern.finditer(text):
-                      found += 1
-                      expires = datetime.date.fromisoformat(m.group('expires'))
-                      if expires < today:
-                          problems.append(f"{path}: {m.group('id')} expired on {expires}")
-                      elif (expires - today).days > 183:
-                          problems.append(f"{path}: {m.group('id')} expires {expires}, more than 6 months out")
-          if found > 20:
-              problems.append(f'{found} debt entries; the budget is 20')
-          for p in problems:
-              print(f'::error::{p}')
-          print(f'{found} debt entries, {len(problems)} problems')
-          sys.exit(1 if problems else 0)
-          PY
-
       - name: No unaccountable TODOs
+        # Every tree that ships or is read as an example, not just src and tests. A
+        # TODO in samples/ is copied by whoever follows the sample.
         run: |
-          if grep -rnE '(TODO|FIXME|HACK|XXX)' --include='*.cs' src tests 2>/dev/null | grep -vE 'FLOWX-DEBT|issue #[0-9]+'; then
+          if grep -rnE '(TODO|FIXME|HACK|XXX)' --include='*.cs' src tests plugins samples scripts 2>/dev/null | grep -vE 'FLOWX-DEBT|issue #[0-9]+'; then
             echo "::error::A TODO/FIXME/HACK must reference a FLOWX-DEBT id or an issue number."
             exit 1
           fi
