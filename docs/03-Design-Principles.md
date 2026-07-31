@@ -189,20 +189,25 @@ version and fails on an incompatible change (`CompareEvents` in
 `ManifestDiff`) — that half is real and gated in CI's *Manifest compatibility*
 job.
 
-*The other half is closer and still not true. **The outbox exists and publishes**
-(WP-53, WP-56): `plugins/FlowX.Postgres` writes the step row and the event in one
-transaction, `PostgresOutboxPublisher` drains it to an `IEventPublisher` in
-`partition_key` order, and the at-least-once-under-kill test this paragraph said
-"cannot be written before the thing it tests" is now written —
-`ACrashBetweenPublishingAndMarkingDeliversTwiceRatherThanNever`. **What is still
-missing is the link from `.Emit<T>()` to that machinery.** The step compiles into
-the plan and into the manifest, `FlowEngine.CommitStepAsync` stages nothing into
-`StepCommit.Outbox`, and so nothing publishes it. The compiler still says so out
-loud — [`FLOWX1024`](diagnostics/FLOWX1024.md) is raised on every `Emit` step for
-that narrower reason, and `samples/ecommerce` suppresses it under a dated debt
-entry rather than hiding it. And **no broker plugin exists**: `IEventPublisher` is
-a declared contract with a recording test double behind it and nothing else
-([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)).*
+*The other half is now true inside the process and unproved outside it.* **`.Emit<T>()`
+has transactional outbox semantics.** The generated dispatcher builds the event body
+from the author's own expression, through the flow's serialiser context and its
+`SensitiveMembers`; `FlowEngine.CommitStepAsync` stages it into `StepCommit.Outbox`;
+`plugins/FlowX.Postgres` writes the step row and the event in one transaction, so a
+refused commit discards both; and `PostgresOutboxPublisher` drains it at-least-once in
+`partition_key` order, which
+`ACrashBetweenPublishingAndMarkingDeliversTwiceRatherThanNever` and
+`EmitReachesTheBrokerTests` hold it to end to end.
+
+*Two things are still not true, and both are stated rather than left to be discovered.*
+**No broker plugin exists**: `IEventPublisher` is a declared contract with a recording
+test double behind it and nothing else, so *published* means *handed to a publisher*
+([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)). And two shapes of `.Emit`
+still stage nothing — one on an `Ephemeral` flow, which keeps no transaction to stage
+into, and one whose contract no source-generated `JsonSerializerContext` declares.
+[`FLOWX1024`](diagnostics/FLOWX1024.md) reports exactly those two, with a fix in user
+code for each, and `samples/ecommerce` is the first of them: it is deliberately
+ephemeral, so it suppresses the warning under a dated debt entry rather than hiding it.*
 
 ---
 

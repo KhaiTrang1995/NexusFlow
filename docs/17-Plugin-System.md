@@ -31,6 +31,15 @@
 > same reason it is worth naming here: a suite written against one test double is
 > a suite that has encoded it.
 >
+> **That gap is now the only one on the event path, which makes it sharper rather
+> than smaller.** `.Emit<T>()` reaches the publisher: the generated dispatcher
+> builds the body, the engine stages it in the step's transaction, and
+> `PostgresOutboxPublisher` hands it over at-least-once. Everything between an
+> author's chain and this interface is exercised end to end by
+> `EmitReachesTheBrokerTests`. Everything on the far side of it — acknowledgement
+> semantics, broker-side partitioning, what a real client does with a batch it half
+> accepted — is still unwritten and unproved.
+>
 > There are **two plugins**. `plugins/FlowX.Http` extends FlowX by referencing
 > `FlowX.Abstractions` and mapping ASP.NET Core onto `TriggerEnvelope` — the
 > pattern this document describes, without the interface that would formalise it.
@@ -126,7 +135,7 @@ flowchart TB
 | Contract | Extends | First-party implementations |
 |---|---|---|
 | `ITriggerSource` | how flows are activated | Http, Grpc, GraphQL, Kafka, RabbitMq, AzureServiceBus, Mqtt, Sqs, Cron, FileWatcher, SignalR, Agent |
-| `IEventPublisher` | where events go | **declared at WP-56; none of Kafka, RabbitMq, ServiceBus, EventHubs, Sns exists** |
+| `IEventPublisher` | where events go | **declared at WP-56 and fed by `.Emit<T>()`; none of Kafka, RabbitMq, ServiceBus, EventHubs, Sns exists** |
 | `IFlowJournal` | durable state | PostgreSql, SqlServer, Redis, Cosmos |
 | `ILeaseStore` | ownership | Redis, PostgreSql, etcd |
 | `IIdempotencyStore` | dedup | Redis, PostgreSql, in-memory |
@@ -212,8 +221,9 @@ FlowX.Conformance.Tests            # to be shipped as a NuGet package at WP-70
 │                                  #   child instances, redacted payloads
 ├── LeaseStoreConformance          # WP-51 · exclusivity, expiry, monotonic fencing tokens
 ├── PublisherConformance           # NOT WRITTEN — at-least-once, per-key ordering, DLQ.
-│                                  #   IEventPublisher is declared (WP-56) and nothing
-│                                  #   implements it, so a suite would encode a test double
+│                                  #   IEventPublisher is declared (WP-56), fed by .Emit<T>()
+│                                  #   and implemented by nothing but a test double, so a
+│                                  #   suite would encode that double
 ├── SerializerConformance          # NOT WRITTEN — round-trip, versioning, redaction
 └── PolicyHandlerConformance       # NOT WRITTEN — stage placement, deadline, telemetry
 ```

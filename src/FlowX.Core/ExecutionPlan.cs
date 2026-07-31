@@ -28,7 +28,8 @@ public sealed class ExecutionPlan
         ImmutableArray<string> sideEffects,
         bool hasParallel,
         bool hasSubFlow,
-        bool hasCompensationPolicies)
+        bool hasCompensationPolicies,
+        bool hasEmit)
     {
         Flow = flow;
         Graph = graph;
@@ -37,6 +38,7 @@ public sealed class ExecutionPlan
         HasParallel = hasParallel;
         HasSubFlow = hasSubFlow;
         HasCompensationPolicies = hasCompensationPolicies;
+        HasEmit = hasEmit;
     }
 
     /// <summary>The flow this plan executes.</summary>
@@ -118,6 +120,25 @@ public sealed class ExecutionPlan
     /// </remarks>
     public bool HasCompensationPolicies { get; }
 
+    /// <summary>True when any step publishes a domain event.</summary>
+    /// <remarks>
+    /// <para>
+    /// Precomputed for the reason <see cref="HasParallel"/> is, and read in the same shape: a
+    /// flow that emits nothing must not pay for the ones that do. The step-commit path reads
+    /// it before it reads <c>StepJournalEntry.Event</c>, so a plan with no <c>Emit</c> node
+    /// never touches the outbox seam at all — no list, no array, no branch beyond one
+    /// predictable always-false comparison on a field the plan already holds.
+    /// </para>
+    /// <para>
+    /// <strong>It is also what keeps budget B2 a hard zero.</strong> An <c>Emit</c> step is
+    /// legal under either profile, and under <see cref="ExecutionProfile.Ephemeral"/> there
+    /// is no transaction for an event to be part of — so the ephemeral path stages nothing
+    /// and allocates nothing, whatever the dispatcher would have described.
+    /// <c>EngineAllocationTests</c> measures exactly that plan.
+    /// </para>
+    /// </remarks>
+    public bool HasEmit { get; }
+
     /// <summary>Builds a validated plan.</summary>
     /// <param name="flow">The flow's identity and profile.</param>
     /// <param name="graph">Its compiled step sequence.</param>
@@ -136,6 +157,7 @@ public sealed class ExecutionPlan
         var parallel = false;
         var subFlow = false;
         var compensationPolicies = false;
+        var emit = false;
 
         foreach (var step in graph.Steps)
         {
@@ -155,12 +177,21 @@ public sealed class ExecutionPlan
             // sub-flow bookkeeping to do.
             subFlow |= step.Kind == StepKind.SubFlow;
 
+            emit |= step.Kind == StepKind.Emit;
+
             AddEffects(effects, step.Capability);
             AddEffects(effects, step.Compensation);
         }
 
         return new ExecutionPlan(
-            flow, graph, compensable.ToImmutable(), [.. effects], parallel, subFlow, compensationPolicies);
+            flow,
+            graph,
+            compensable.ToImmutable(),
+            [.. effects],
+            parallel,
+            subFlow,
+            compensationPolicies,
+            emit);
     }
 
     private static void AddEffects(SortedSet<string> effects, CapabilityDescriptor? capability)

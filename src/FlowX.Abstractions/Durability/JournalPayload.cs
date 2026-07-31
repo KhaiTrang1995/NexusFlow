@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 
 namespace FlowX;
@@ -90,6 +91,61 @@ public sealed class JournalPayload
         IReadOnlyList<string>? sensitiveMembers = null)
     {
         ArgumentNullException.ThrowIfNull(typeInfo);
+
+        return new JournalPayload(value, typeInfo, sensitiveMembers ?? []);
+    }
+
+    /// <summary>
+    /// Wraps a value for the journal, taking its metadata out of a source-generated context.
+    /// </summary>
+    /// <typeparam name="T">The contract type. Must be declared by <paramref name="context"/>.</typeparam>
+    /// <param name="value">The value to record.</param>
+    /// <param name="context">
+    /// The generated context declaring <typeparamref name="T"/>, e.g. <c>MyJsonContext.Default</c>.
+    /// </param>
+    /// <param name="sensitiveMembers">
+    /// The contract members declared <c>[Sensitive]</c> — pass <c>Flow.SensitiveMembers</c>.
+    /// Their values never reach the store.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="context"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The context does not declare <typeparamref name="T"/>.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>Still no reflection.</strong> <c>GetTypeInfo</c> on a source-generated context
+    /// is a switch over the types its <c>[JsonSerializable]</c> attributes named, so this is
+    /// a lookup rather than a discovery and the write path stays trim- and NativeAOT-safe
+    /// (constraint C2). <c>FlowX.Http</c>'s <c>MapFlow</c> resolves a request body the same
+    /// way and for the same reason.
+    /// </para>
+    /// <para>
+    /// <strong>Why the overload exists.</strong> Generated code can name a context <em>type</em>
+    /// — the compiler reads it off the author's <c>[JsonSerializable]</c> attributes — but it
+    /// cannot name the property System.Text.Json's own generator produces for each contract,
+    /// because one source generator does not see another's output. Naming the property by
+    /// convention would break on the first nested or renamed type.
+    /// </para>
+    /// <para>
+    /// The throw is not a fallback to reflection. A context that does not declare the
+    /// contract cannot serialise it at all, and quietly writing nothing would put an empty
+    /// event on a broker.
+    /// </para>
+    /// </remarks>
+    public static JournalPayload Of<T>(
+        T value,
+        JsonSerializerContext context,
+        IReadOnlyList<string>? sensitiveMembers = null)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        if (context.GetTypeInfo(typeof(T)) is not JsonTypeInfo<T> typeInfo)
+        {
+            throw new InvalidOperationException(
+                $"'{context.GetType().Name}' does not declare [JsonSerializable(typeof({typeof(T).Name}))], " +
+                "so it cannot serialise this payload. Add the attribute to the context, or " +
+                "pass one that has it.");
+        }
 
         return new JournalPayload(value, typeInfo, sensitiveMembers ?? []);
     }

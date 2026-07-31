@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using FlowX.Compiler.Model;
@@ -45,13 +46,35 @@ public static class FlowEmitter
     }
 
     /// <summary>Emits the plan and dispatcher for one flow.</summary>
-    public static string Emit(FlowModel flow)
+    /// <param name="flow">The flow to render.</param>
+    /// <remarks>
+    /// The overload for a compilation that declares no serialiser context, and for the tests
+    /// that are about everything except the outbox. A flow whose events cannot be serialised
+    /// gets a dispatcher that describes no event, which is exactly the state
+    /// <c>FLOWX1024</c> reports.
+    /// </remarks>
+    public static string Emit(FlowModel flow) => Emit(flow, []);
+
+    /// <summary>Emits the plan and dispatcher for one flow.</summary>
+    /// <param name="flow">The flow to render.</param>
+    /// <param name="jsonContexts">
+    /// Every <c>JsonSerializerContext</c> the compilation declares. An <c>.Emit</c> step's
+    /// event body is written through the one that declares its contract, exactly as an
+    /// endpoint's request body is — see <c>EndpointEmitter</c>.
+    /// </param>
+    public static string Emit(FlowModel flow, IReadOnlyList<JsonContextModel> jsonContexts)
     {
         if (flow is null)
         {
             throw new System.ArgumentNullException(nameof(flow));
         }
 
+        if (jsonContexts is null)
+        {
+            throw new System.ArgumentNullException(nameof(jsonContexts));
+        }
+
+        var staged = StageableEvents(flow, jsonContexts);
         var writer = new SourceWriter();
 
         writer.Line(Header.TrimEnd('\n'));
@@ -80,7 +103,7 @@ public static class FlowEmitter
             writer.OpenBrace();
         }
 
-        EmitFlowPartial(writer, flow);
+        EmitFlowPartial(writer, flow, staged);
 
         if (hasNamespace)
         {
@@ -90,7 +113,8 @@ public static class FlowEmitter
         return writer.ToString();
     }
 
-    private static void EmitFlowPartial(SourceWriter writer, FlowModel flow)
+    private static void EmitFlowPartial(
+        SourceWriter writer, FlowModel flow, IReadOnlyList<StagedEvent> staged)
     {
         writer.Line("/// <summary>Compiled plan and dispatcher for <c>" + flow.FlowId + "</c>.</summary>");
         writer.Line("partial class " + flow.TypeName);
@@ -98,18 +122,19 @@ public static class FlowEmitter
 
         EmitDescriptors(writer, flow);
         writer.Line();
-        EmitTypedContext(writer, flow);
+        EmitTypedContext(writer, flow, staged);
         EmitStepInputs(writer, flow);
         EmitConditions(writer, flow);
         EmitSelectors(writer, flow);
         EmitIterations(writer, flow);
         EmitSubFlowMaps(writer, flow);
+        EmitEvents(writer, flow, staged);
         EmitFailures(writer, flow);
         EmitPlan(writer, flow);
         writer.Line();
         EmitProjection(writer, flow);
         EmitSensitiveMembers(writer, flow);
-        EmitDispatcher(writer, flow);
+        EmitDispatcher(writer, flow, staged);
 
         writer.CloseBrace();
     }
@@ -177,9 +202,10 @@ public static class FlowEmitter
     /// body work: there the context is the iteration's scope, not the flow's own.
     /// </para>
     /// </remarks>
-    private static void EmitTypedContext(SourceWriter writer, FlowModel flow)
+    private static void EmitTypedContext(
+        SourceWriter writer, FlowModel flow, IReadOnlyList<StagedEvent> staged)
     {
-        if (!NeedsTypedContext(flow))
+        if (!NeedsTypedContext(flow) && staged.Count == 0)
         {
             return;
         }
@@ -209,6 +235,213 @@ public static class FlowEmitter
         .Where(s => s.HasInputMapping)
         .OrderBy(s => s.Index)
         .ToList();
+
+    /// <summary>An <c>.Emit</c> step this build can turn into an outbox row.</summary>
+    private sealed class StagedEvent
+    {
+        public StagedEvent(StepModel step, string jsonContextTypeName)
+        {
+            Step = step;
+            JsonContextTypeName = jsonContextTypeName;
+        }
+
+        /// <summary>The emit step.</summary>
+        public StepModel Step { get; }
+
+        /// <summary>The single serialiser context declaring its contract.</summary>
+        public string JsonContextTypeName { get; }
+    }
+
+    /// <summary>
+    /// The flow's <c>.Emit</c> steps that can actually be staged, ascending by flat index.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Three conditions, and each one is a <c>FLOWX1024</c> when it fails. <strong>The flow
+    /// must be <c>Durable</c></strong> — an ephemeral execution keeps no journal, so there is
+    /// no transaction for the row to be part of and staging it anywhere else would be the
+    /// dual write the outbox exists to remove. <strong>The step must have a factory and a
+    /// resolved contract</strong>, which is only false in a half-typed buffer.
+    /// <strong>Exactly one <c>JsonSerializerContext</c> in the compilation must declare the
+    /// contract</strong>: <c>JournalPayload.Of</c> takes a <c>JsonTypeInfo&lt;T&gt;</c> and has
+    /// no overload that reflects over a type, which is what keeps the write path trim- and
+    /// NativeAOT-safe (constraint C2, ADR-0008).
+    /// </para>
+    /// <para>
+    /// None and several are the same answer, for the reason <c>EndpointEmitter</c> gives:
+    /// picking the first of several would make the event body's shape depend on file order.
+    /// </para>
+    /// </remarks>
+    private static List<StagedEvent> StageableEvents(
+        FlowModel flow, IReadOnlyList<JsonContextModel> jsonContexts)
+    {
+        var staged = new List<StagedEvent>();
+
+        if (!string.Equals(flow.Profile, "Durable", System.StringComparison.Ordinal))
+        {
+            return staged;
+        }
+
+        foreach (var step in flow.AllSteps
+            .Where(s => s.Kind == StepKindModel.Emit)
+            .OrderBy(s => s.Index))
+        {
+            if (step.EventFactory is null || step.EventContractTypeName is null)
+            {
+                continue;
+            }
+
+            var context = SingleContextFor(jsonContexts, step.EventContractTypeName);
+
+            if (context is not null)
+            {
+                staged.Add(new StagedEvent(step, context));
+            }
+        }
+
+        return staged;
+    }
+
+    /// <summary>The single serialiser context declaring a contract, or <c>null</c>.</summary>
+    internal static string? SingleContextFor(
+        IReadOnlyList<JsonContextModel> jsonContexts, string contractTypeName)
+    {
+        string? found = null;
+
+        foreach (var candidate in jsonContexts.Where(c => c.Declares(contractTypeName)))
+        {
+            if (found is not null)
+            {
+                return null;
+            }
+
+            found = candidate.TypeName;
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// Emits one <c>static readonly</c> delegate per <c>.Emit(...)</c> factory.
+    /// </summary>
+    /// <remarks>
+    /// A field, for the reason the predicates and the selectors are: it is built once at type
+    /// initialisation, so describing a step costs no delegate. The author's own expression,
+    /// copied verbatim inside a <c>#line</c> pair, so a breakpoint on the event body lands on
+    /// the body they wrote.
+    /// <para>
+    /// It runs at the step boundary, immediately before the commit, rather than when the step
+    /// executed. That is the same place the journal's other payloads are built, and it is
+    /// sound for the same reason a compensation may re-run a step's input mapping: the
+    /// expression is pure and deterministic (FLOWX1011), and it reads the scope the step
+    /// itself ran under.
+    /// </para>
+    /// </remarks>
+    private static void EmitEvents(
+        SourceWriter writer, FlowModel flow, IReadOnlyList<StagedEvent> staged)
+    {
+        if (staged.Count == 0)
+        {
+            return;
+        }
+
+        writer.Line("/// <summary>Event bodies, built once at type initialisation.</summary>");
+        writer.Line("/// <remarks>");
+        writer.Line("/// Each is your <c>.Emit&lt;TEvent&gt;(...)</c> expression, copied verbatim. It is");
+        writer.Line("/// evaluated at the step boundary and the result is staged into the outbox by the");
+        writer.Line("/// same transaction that records the step, so the state and the event commit");
+        writer.Line("/// together or not at all.");
+        writer.Line("/// </remarks>");
+        writer.Line("private static class Events");
+        writer.OpenBrace();
+
+        foreach (var staging in staged)
+        {
+            EmitLineDirective(writer, staging.Step.EventFactoryLocation);
+            writer.Line(
+                "public static readonly Func<FlowContext<" + flow.InputTypeName + ">, " +
+                staging.Step.EventContractTypeName + "> Step" + staging.Step.Index + " = " +
+                staging.Step.EventFactory + ";");
+            EmitLineDirectiveEnd(writer, staging.Step.EventFactoryLocation);
+        }
+
+        writer.CloseBrace();
+        writer.Line();
+    }
+
+    /// <summary>
+    /// Emits <c>DescribeStep</c>: the outbox row an <c>Emit</c> step contributes to its own
+    /// commit.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Here rather than on the engine, for the reason nothing else typed is on the
+    /// engine either.</strong> <c>JournalPayload.Of</c> needs a <c>JsonTypeInfo&lt;TEvent&gt;</c>
+    /// and only generated code can name one; the step loop holds a
+    /// <c>Dictionary&lt;Type, object&gt;</c> and knows no contract types at all.
+    /// </para>
+    /// <para>
+    /// <strong>The payload carries the flow's <c>SensitiveMembers</c>.</strong> An event body
+    /// is a second sink for a marked member and the worse of the two — a journal row stays in
+    /// one table, where a broker fans the event out to every consumer. The control is
+    /// inherited rather than re-implemented: the payload is a <c>JournalPayload</c>, which has
+    /// no accessor for its value and only leaves through <c>ToJson</c>, which redacts.
+    /// </para>
+    /// <para>
+    /// <strong>The partition key is the instance id.</strong> ADR-0018 offers ordering per
+    /// <c>partition_key</c> and no global order, so this is what makes "two events from one
+    /// order arrive in the order that order staged them" true. There is no DSL surface for
+    /// choosing a business key yet; when there is, it replaces this expression and nothing
+    /// else.
+    /// </para>
+    /// <para>
+    /// Emitted only for a flow that has at least one stageable event. A dispatcher that
+    /// describes nothing inherits <c>IStepDispatcher</c>'s default, which returns
+    /// <c>StepJournalEntry.Nothing</c> — a truthful, resumable record without payloads.
+    /// </para>
+    /// </remarks>
+    private static void EmitDispatcherDescribe(
+        SourceWriter writer, IReadOnlyList<StagedEvent> staged)
+    {
+        writer.Line("/// <inheritdoc />");
+        writer.Line("public StepJournalEntry DescribeStep(int stepIndex, FlowContext ctx)");
+        writer.OpenBrace();
+        writer.Line("switch (stepIndex)");
+        writer.OpenBrace();
+
+        foreach (var staging in staged)
+        {
+            writer.Line("case " + staging.Step.Index + ":");
+            writer.OpenBrace();
+            writer.Line("return StepJournalEntry.OfEvent(new OutboxWrite");
+            writer.OpenBrace();
+            writer.Line("Type = " + Quote(staging.Step.EventType!) + ",");
+            writer.Line("SchemaVersion = " + Quote(ManifestWriter.EventSchemaVersion) + ",");
+            writer.Line();
+            writer.Line("// Per-key ordering, and the key is the instance: ADR-0018 offers no");
+            writer.Line("// global order, so this is the ordering a consumer actually gets.");
+            writer.Line("PartitionKey = ctx.FlowInstanceId,");
+            writer.Line();
+            writer.Line("// The generated context writes it, and SensitiveMembers keeps a");
+            writer.Line("// marked member out of the body a broker fans out.");
+            writer.Line("Payload = JournalPayload.Of(");
+            writer.Line("    Events.Step" + staging.Step.Index + "(Typed(ctx)),");
+            writer.Line("    global::" + staging.JsonContextTypeName + ".Default,");
+            writer.Line("    SensitiveMembers),");
+            writer.CloseBrace(");");
+            writer.CloseBrace();
+        }
+
+        writer.Line("default:");
+        writer.OpenBrace();
+        writer.Line("// Every other step describes nothing: no payload writer exists yet, and");
+        writer.Line("// a journal of step boundaries without payloads is truthful and resumable.");
+        writer.Line("return StepJournalEntry.Nothing;");
+        writer.CloseBrace();
+
+        writer.CloseBrace();
+        writer.CloseBrace();
+    }
 
     /// <summary>
     /// Emits one <c>static readonly</c> delegate per
@@ -798,7 +1031,8 @@ public static class FlowEmitter
             : "System.Xml.XmlConvert.ToTimeSpan(" + Quote(iso8601) + ")";
     }
 
-    private static void EmitDispatcher(SourceWriter writer, FlowModel flow)
+    private static void EmitDispatcher(
+        SourceWriter writer, FlowModel flow, IReadOnlyList<StagedEvent> staged)
     {
         writer.Line("/// <summary>Invokes the capability behind each step index.</summary>");
         writer.Line("/// <remarks>");
@@ -823,6 +1057,12 @@ public static class FlowEmitter
         EmitDispatcherIteration(writer, flow);
         writer.Line();
         EmitDispatcherSubFlow(writer, flow);
+
+        if (staged.Count > 0)
+        {
+            writer.Line();
+            EmitDispatcherDescribe(writer, staged);
+        }
 
         writer.CloseBrace();
     }

@@ -305,7 +305,7 @@ honest content of the section now.*
 
 | Still not in | Owed to |
 |---|---|
-| The transactional **outbox**. `.Emit<T>()` still publishes nothing ([`FLOWX1024`](../diagnostics/FLOWX1024.md)) | WP-56 |
+| ~~The transactional **outbox**~~ **delivered.** A `Durable` flow's `.Emit<T>()` stages its event in the same commit as the step row and `PostgresOutboxPublisher` drains it; what is still not in is a **broker plugin**, so `IEventPublisher` has only a recording test double behind it. [`FLOWX1024`](../diagnostics/FLOWX1024.md) is re-scoped to an `Ephemeral` flow and to a contract no serialiser context declares | WP-56 |
 | **`AwaitSignal`** and durable suspension ([`FLOWX1017`](../diagnostics/FLOWX1017.md)). A durable flow still runs to completion inside one invocation | WP-63 |
 | The generated payload writer and `FLOWX1006` | WP-59 |
 | **B7 and B8 — unreported rather than passed.** The harness they are measured against does not exist, so the read cost this record's "Revisit when" is written around has never been observed | WP-50 |

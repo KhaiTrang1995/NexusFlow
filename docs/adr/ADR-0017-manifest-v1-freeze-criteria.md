@@ -186,10 +186,13 @@ seen fail is an assumption, not a gate"*, and this is the fitness function
 [05 §12](../05-Architecture.md#12-architecture-fitness-functions) already records as written
 *"as though it checked everything"*.
 
-**Today:** unmet, and *vacuously* so, which is the trap. 05 §12 states it exactly: nothing in
-this repository declares a policy, no policy executes, and `.Emit<T>()` publishes nothing — so
-a completeness check over either would pass while proving nothing. **A green vacuous check is
-worse than the gap it hides**, so F3 cannot be closed before F4.
+**Today:** unmet, and *half* of it vacuously so, which is the trap. 05 §12 states the
+surviving half exactly: nothing in this repository declares a policy and no policy executes,
+so a completeness check over `policies` would pass while proving nothing. The `events` half
+has stopped being vacuous — a `Durable` flow's `.Emit<T>()` is staged by the step's own
+commit and drained by `PostgresOutboxPublisher`, so a check over `events` would be checking
+something real. **A green vacuous check is worse than the gap it hides**, so F3 still cannot
+be closed before F4.
 
 ### F4 — The two absent producers have landed
 
@@ -198,11 +201,13 @@ worse than the gap it hides**, so F3 cannot be closed before F4.
 (P4) exist. Both fields the freeze would make permanent describe run-time structure that
 nothing in the repository produces:
 
-* **Events.** [`FLOWX1024`](../diagnostics/FLOWX1024.md) is raised on **every** `.Emit<T>()`
-  in the repository, at `Warning`, and says why: *"the manifest promises the event is
-  published. In this release it is not."* Freezing `event.producedBy` and `event.consumedBy`
-  while that diagnostic still fires freezes a topology against a promise the process does not
-  keep.
+* **Events.** *This bullet said `FLOWX1024` is raised on **every** `.Emit<T>()` in the
+  repository. It is not, any more.* A `Durable` flow's emitted event is staged by the step's
+  own commit and drained by `PostgresOutboxPublisher`, and the rule now fires only where the
+  chain cannot start — an `Ephemeral` flow, or a contract no source-generated
+  `JsonSerializerContext` declares. What is still missing is a **broker plugin**:
+  `IEventPublisher` has one recording test double behind it, so freezing `event.producedBy`
+  and `event.consumedBy` would freeze a topology whose far end nobody has run.
 * **Policies.** `.WithPolicy(...)` reaches the manifest as a per-step `policies` array with
   each policy's fixed stage, and `FlowX.Runtime` contains no policy engine at all, so a
   declared `Retry` *"is a manifest entry and nothing more"* (05 §12). The schema's **top-level**
@@ -212,7 +217,10 @@ nothing in the repository produces:
 **Checked by:** `FLOWX1024` no longer being raised for a published emit, and F3's
 non-vacuous completeness check, which cannot be written honestly until these land.
 
-**Today:** unmet. WP-56 is P2 and not started; P4 has not started.
+**Today:** unmet, and half of it for a new reason. The events half of the check now passes
+for a `Durable` flow whose contract is serialisable — `FLOWX1024` is silent there — and fails
+for the topology, because no `IEventPublisher` implementation exists to give
+`event.consumedBy` a meaning. The policy half is unchanged: P4 has not started.
 
 ### F5 — `flowx diff` can see every field the freeze makes permanent
 

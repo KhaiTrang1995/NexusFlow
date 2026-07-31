@@ -11,11 +11,11 @@
 >
 > | § | State |
 > |---|---|
-> | [1 · distribution model](#1-the-distribution-model) | **not built.** Both coordination points now exist — a Postgres journal and a Postgres lease store — but nothing has run as two *processes*. The multi-node behaviour §3 describes is exercised by two hosts inside one test process, Redis is still WP-54, and the outbox is a table nothing publishes from |
+> | [1 · distribution model](#1-the-distribution-model) | **not built.** Both coordination points now exist — a Postgres journal and a Postgres lease store — but nothing has run as two *processes*. The multi-node behaviour §3 describes is exercised by two hosts inside one test process, Redis is still WP-54, and the outbox now publishes to a test double rather than to a broker |
 > | [2 · the journal](#2-the-journal) | **built, against a real database.** WP-51 declared `IFlowJournal`, `ILeaseStore` and `FencingToken` in `src/FlowX.Abstractions/Durability/`; WP-52 made `FlowX.Runtime` read `ExecutionProfile` and commit one row per step boundary, and resume by replaying committed rows into the same step loop; WP-53 implemented both in `plugins/FlowX.Postgres/`, where 45 conformance assertions and 41 adapter tests run green against PostgreSQL 16.13. **The ERD below is no longer the drawn version** — it is migrations `0001`, `0002` and `0003`, after [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md) superseded three of the drawn clauses and [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md) found six more wrong against a real database |
 > | [3 · leases and fencing](#3-leases-and-fencing) | **built.** *This row said that nothing acquires or renews a lease and nothing scans for an abandoned instance; WP-55 built all three.* `DurableLease` acquires, renews and releases; `FlowHost` takes the lease before the first step; `FlowRecoveryScan` and `FlowRecoveryService` are node-2's half of the diagram below. *A later row said one half had no PostgreSQL behind it — that the adapter implemented no `IRecoveryIndex`, so a Postgres-backed node fenced correctly and scanned for nothing. `PostgresRecoveryIndex` closed it, in a class of its own rather than on the journal, because a scan is not part of executing an instance* |
 > | [4 · exactly-once](#4-exactly-once-honestly) | **not built**, and unchanged by WP-52, WP-53 or WP-55: a process that dies after an effect and before its commit still re-executes the step |
-> | [5 · the outbox](#5-the-transactional-outbox) | **not built.** The table is in the schema and a commit stages rows into the step's transaction, but `.Emit<T>()` hands it nothing and nothing publishes ([`FLOWX1024`](diagnostics/FLOWX1024.md)) — WP-56 |
+> | [5 · the outbox](#5-the-transactional-outbox) | **built end to end, and unproved against a broker.** The table is in the schema, `.Emit<T>()`'s generated `DescribeStep` builds the event, `FlowEngine.CommitStepAsync` stages it in the step's own transaction, and `PostgresOutboxPublisher` drains it at-least-once in per-`partition_key` order. What is not built is a broker: `IEventPublisher` is declared and the only implementation anywhere is a recording test double, so *published* means *handed to a publisher*. [`FLOWX1024`](diagnostics/FLOWX1024.md) survives, narrowed to the two cases that still stage nothing |
 > | [6 · partitioning](#6-partitioning-and-scale) · [8 · failure catalogue](#8-failure-catalogue) | **not built.** No second node, no sharding, no scheduler. §8's first two rows — node crash and zombie writes — are what §3 now implements; the rest of the catalogue is design |
 > | [7 · deployment safety](#7-deployment-safety) | **partly built.** *This row said "no migration"; there are three.* Rules 2, 3 and 4 have implementations — an explicit release on drain, a version-pinned candidate the scan leaves alone, and migrations `0002` and `0003` as the expand/contract worked examples. Rule 1 is still a number an operator has to set |
 >
@@ -371,14 +371,20 @@ every incident review template:
 
 ## 5. The transactional outbox
 
-> **Built at WP-56, and one link short of reaching a flow.** `PostgresOutboxPublisher`
+> **Built at WP-56, and connected to `.Emit<T>()` after it.** `PostgresOutboxPublisher`
 > implements the sequence below against `outbox_event`, and
 > [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md) records what it decided.
-> **`.Emit<T>()` still does not reach it**: `FlowEngine.CommitStepAsync` never populates
-> `StepCommit.Outbox`, so an emitted event stages no row and the publisher drains an empty
-> table. That is what [`FLOWX1024`](diagnostics/FLOWX1024.md) now reports, and it is the
-> only remaining link. A host that commits through `IFlowJournal` itself, populating
-> `StepCommit.Outbox`, gets the whole guarantee today.
+> **`.Emit<T>()` reaches it now.** The generated dispatcher's `DescribeStep` builds the
+> event body from the author's own expression, through the flow's serialiser context and
+> its `SensitiveMembers`; `FlowEngine.CommitStepAsync` puts it in `StepCommit.Outbox`, which
+> the store writes in the same transaction as the step row. A refused commit takes the event
+> with it. That link was the whole of ADR-0018's first accepted trade-off, and it is spent.
+>
+> **Two cases still stage nothing, and [`FLOWX1024`](diagnostics/FLOWX1024.md) reports both
+> at build time.** An `Ephemeral` flow keeps no journal, so there is no transaction for an
+> event to be part of; and a contract no source-generated `JsonSerializerContext` declares
+> has no body that can be written without reflection. Both have a fix in user code, which is
+> what the rule now says.
 >
 > **`IEventPublisher` is declared and nothing implements it.** WP-56 added the contract to
 > `FlowX.Abstractions`; there is no Kafka, RabbitMQ, Service Bus, Event Hubs or SNS plugin,

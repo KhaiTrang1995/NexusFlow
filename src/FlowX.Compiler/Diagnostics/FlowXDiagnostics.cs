@@ -525,37 +525,43 @@ public static class FlowXDiagnostics
         "An empty flow has no observable behaviour. This is almost always a Define method " +
         "that returned early or a chain that was never assigned.");
 
-    /// <summary>FLOWX1024 — an <c>.Emit&lt;T&gt;()</c> step that nothing will publish.</summary>
+    /// <summary>FLOWX1024 — an <c>.Emit&lt;T&gt;()</c> step this build cannot stage.</summary>
     /// <remarks>
     /// <para>
     /// A warning, not an error, and the only one in the set. The step is real: it is in
     /// the compiled plan and in the manifest, and a consumer reading the manifest will
-    /// believe the event is published. It is not, and the gap between what the manifest
-    /// promises and what the process does is exactly the kind of thing that is discovered
-    /// in production. Saying so at build time is the cheapest place to find out.
+    /// believe the event is published. Where one of the two conditions below holds it is
+    /// not, and the gap between what the manifest promises and what the process does is
+    /// exactly the kind of thing that is discovered in production. Saying so at build time
+    /// is the cheapest place to find out.
     /// </para>
     /// <para>
-    /// <strong>Revisited at WP-56, and kept.</strong> This used to say "until the outbox
-    /// exists (design principle P8)", and that is no longer the gap: the table stages
-    /// events atomically with the step that emitted them (WP-53) and
-    /// <c>PostgresOutboxPublisher</c> drains them to an <c>IEventPublisher</c>
-    /// at-least-once (WP-56). What is still missing is one link earlier —
-    /// <c>FlowEngine.CommitStepAsync</c> never sets <c>StepCommit.Outbox</c>, and
-    /// <c>IStepDispatcher.DescribeStep</c> returns no event for a generated dispatcher to
-    /// have serialised — so an <c>Emit</c> step stages nothing and a publisher has nothing
-    /// to publish. Narrower reason, same warning; the severity stance is argued on
-    /// <c>docs/diagnostics/FLOWX1024.md</c>.
+    /// <strong>Re-scoped once the chain was connected.</strong> It used to report the whole
+    /// pipeline: nothing anywhere turned an <c>Emit</c> step into an event. That is no longer
+    /// true — <c>FlowEngine.CommitStepAsync</c> stages what a generated <c>DescribeStep</c>
+    /// describes, in the same transaction as the step row, and <c>PostgresOutboxPublisher</c>
+    /// drains it at-least-once. What survives is two narrow cases where the chain still
+    /// cannot start, both named in <see cref="EmitReasons"/> and both with a fix in user
+    /// code: an <c>Ephemeral</c> flow has no transaction to stage into, and a contract
+    /// outside every source-generated <c>JsonSerializerContext</c> has no body that can be
+    /// written without reflection.
+    /// </para>
+    /// <para>
+    /// <strong>The severity is unchanged and that is still a decision.</strong> The source is
+    /// not wrong; the deployment is incomplete. An error would fail builds of code that is
+    /// one attribute or one profile away from correct, and <c>Info</c> is where
+    /// <c>FLOWX1007</c>–<c>1009</c> sat unraised for two phases.
     /// </para>
     /// </remarks>
     public static readonly DiagnosticDescriptor EmitIsNotYetPublished = Create(
         "FLOWX1024",
-        "Emit step is recorded but not published",
-        "Flow step '.Emit<{0}>' is compiled into the plan but no event is published yet",
-        "The transactional outbox and its publisher both exist, and nothing connects an " +
-        "Emit step to them: the engine stages no outbox row for one, so no event is " +
-        "written and none is published. The step appears in the plan and the manifest, so " +
-        "downstream consumers will expect the event — suppress this warning only once you " +
-        "have confirmed nothing depends on it being delivered.",
+        "Emit step stages no event to publish",
+        "Flow step '.Emit<{0}>' is compiled into the plan and stages no event: {1}",
+        "The transactional outbox, its publisher and the engine's staging all exist, so an " +
+        "Emit step normally reaches a broker. This one does not, for the reason the message " +
+        "names. The step still appears in the plan and the manifest, so downstream consumers " +
+        "will expect the event — suppress this warning only once you have confirmed nothing " +
+        "depends on it being delivered.",
         DiagnosticSeverity.Warning);
 
     /// <summary>FLOWX1025 — a trigger attribute that declares no <c>[TriggerKind]</c>.</summary>

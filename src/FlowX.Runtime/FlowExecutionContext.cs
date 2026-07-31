@@ -80,6 +80,19 @@ public sealed class FlowExecutionContext : FlowContext
     private string _correlationId = string.Empty;
     private string _idempotencyKey = string.Empty;
     private string? _tenantId;
+
+    /// <summary>
+    /// <see cref="Run"/>'s instance id as text, computed the first time it is asked for.
+    /// </summary>
+    /// <remarks>
+    /// Lazily, because the only caller on the hot path is a generated <c>DescribeStep</c>
+    /// choosing an emitted event's partition key, and a flow that emits nothing must not pay
+    /// a string for a question nobody asks. Two parallel branches racing here both compute
+    /// the same text off the same immutable id, so the race is benign and a lock would cost
+    /// every linear flow to make an equal value equal.
+    /// </remarks>
+    private string? _flowInstanceId;
+
     private DateTimeOffset _deadline;
     private IClock _clock = SystemClock.Instance;
     private Random? _random;
@@ -180,7 +193,14 @@ public sealed class FlowExecutionContext : FlowContext
     public override string CorrelationId => _correlationId;
 
     /// <inheritdoc />
-    public override string? FlowInstanceId => null;
+    /// <remarks>
+    /// The journaled instance's id, and <c>null</c> for an ephemeral execution — which is
+    /// exactly what <see cref="CapabilityContext.FlowInstanceId"/> declares it to be. It read
+    /// <c>null</c> unconditionally until an emitted event needed a partition key, and a
+    /// per-instance key is the only ordering ADR-0018 offers.
+    /// </remarks>
+    public override string? FlowInstanceId =>
+        _flowInstanceId ??= Run?.InstanceId.ToString();
 
     /// <inheritdoc />
     public override string CapabilityId => _capabilityId;
@@ -458,6 +478,7 @@ public sealed class FlowExecutionContext : FlowContext
         _correlationId = invocation.CorrelationId;
         _idempotencyKey = invocation.IdempotencyKey;
         _tenantId = invocation.TenantId;
+        _flowInstanceId = null;
         _clock = clock;
 
         // The flow's own budget, shortened by the caller's if the caller has less.
@@ -648,6 +669,7 @@ public sealed class FlowExecutionContext : FlowContext
         _correlationId = string.Empty;
         _idempotencyKey = string.Empty;
         _tenantId = null;
+        _flowInstanceId = null;
         _deadline = default;
         _clock = SystemClock.Instance;
         _random = null;

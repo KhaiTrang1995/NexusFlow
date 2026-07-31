@@ -32,7 +32,7 @@ FLOWX1020 | FlowX | Error | Step consumes a contract no earlier step produces. [
 FLOWX1021 | FlowX | Error | Sub-flow composition forms a cycle. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1021.md)
 FLOWX1026 | FlowX | Error | Sub-flow cannot be composed. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1026.md)
 FLOWX1023 | FlowX | Error | Flow declares no steps. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1023.md)
-FLOWX1024 | FlowX | Warning | Emit step is recorded but not published. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1024.md)
+FLOWX1024 | FlowX | Warning | Emit step stages no event to publish; raised only where the chain cannot start, on an Ephemeral flow or on a contract no source-generated JsonSerializerContext declares. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1024.md)
 FLOWX1025 | FlowX | Warning | Trigger attribute declares no [TriggerKind]; raised as an error when that attribute is declared in the compilation being built. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1025.md)
 FLOWX1027 | FlowX | Warning | Step is unreachable after Fail. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1027.md)
 FLOWX1029 | FlowX | Error | Step input mapping produces the wrong contract. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1029.md)

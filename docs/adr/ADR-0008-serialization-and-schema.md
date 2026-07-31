@@ -57,6 +57,14 @@ schema evolution follows the additive-only rules in
 > `OutboxWrite.SchemaVersion` is declared on a contract nothing writes, and a journal row
 > carries the flow's version and the capability's, not the payload's.
 >
+> *The outbox half of that paragraph is spent.* A `Durable` flow's `.Emit<T>()` stages an
+> `OutboxWrite` in the step's own transaction, and its `Payload` is a `JournalPayload` built
+> through the compilation's own generated context — so an **event body** is now AOT-safe by
+> the same compile-time route a journal payload is, and `[Sensitive]` redaction reaches it
+> without a second implementation. `OutboxWrite.SchemaVersion` is written, from the same
+> constant the manifest's `events` array stamps, so the two cannot drift; it is still a
+> constant rather than something a contract declares. Replay is still absent.
+>
 > *It also said `[Sensitive]` redaction has "exactly one sink, the RFC 7807 body".* **There
 > are two since WP-52**, and the second holds the property by a different mechanism than
 > this record predicted. `ProblemDetailsMapper` (`plugins/FlowX.Http`) still consumes the

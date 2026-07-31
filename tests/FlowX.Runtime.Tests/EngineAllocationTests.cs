@@ -681,25 +681,78 @@ public sealed class EngineAllocationTests
     /// The ephemeral path pays nothing for the existence of the durable one.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The regression this forbids is the one ADR-0015 names as its accepted cost and its
     /// biggest risk: "the ephemeral hot path grows a branch it does not need". It is allowed
     /// to grow the branch. It is not allowed to grow an allocation — the same bargain
     /// <c>ExecutionPlan.HasParallel</c> struck, where a linear flow pays one predictable,
     /// always-false comparison for a fork lock it never takes.
+    /// </para>
+    /// <para>
+    /// <strong>The outbox is inside this assertion, not beside it.</strong> The plan is
+    /// <c>FourStepSaga</c>, whose last step is an <c>Emit</c>, and the dispatcher describes an
+    /// event for it. So an ephemeral flow that emits pays nothing for the outbox: not the
+    /// list, not the array, not the record.
+    /// </para>
     /// </remarks>
     [Fact]
     public void TheEphemeralPathPaysNothingForTheExistenceOfTheDurableOne()
     {
         RequireOptimisedBuild();
 
+        var plan = Plans.FourStepSaga();
+
+        plan.HasEmit.ShouldBeTrue(
+            "The measurement is only about the outbox if the plan has an event in it.");
+
         var engine = new FlowEngine(new FakeClock(T0));
 
-        var allocated = MeasureSteadyState(engine, Plans.FourStepSaga(), new JournallingDispatcher());
+        var allocated = MeasureSteadyState(engine, plan, new JournallingDispatcher());
 
         allocated.ShouldBe(0,
             $"Measured {allocated} B for an ephemeral flow whose dispatcher can describe a " +
-            "step for a journal. The seam is gated on the flow's declared profile, so this " +
-            "must be exactly what it was before the journal existed.");
+            "step for a journal and an event for the outbox. The seam is gated on the flow's " +
+            "declared profile, so this must be exactly what it was before the journal existed.");
+    }
+
+    /// <summary>
+    /// Staging an event costs the durable path one array and no more, and the amount is
+    /// recorded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The complement of the assertion above: the ephemeral path pays nothing, and the
+    /// durable path pays the honest price of the row it is about to write. That price is the
+    /// single-element <c>IReadOnlyList&lt;OutboxWrite&gt;</c> the commit carries — the
+    /// <c>OutboxWrite</c> itself and its <c>JournalPayload</c> are the generated dispatcher's,
+    /// built where the flow's own contract type is nameable, and this double pre-builds them
+    /// for the same reason every other double in this file pre-builds its answers.
+    /// </para>
+    /// <para>
+    /// <strong>Measured, Release, .NET 10, x64: 792 B over four steps</strong>, against 768 B
+    /// for the identical plan whose dispatcher describes no event. The 24 B difference is one
+    /// one-element array, allocated once for the one step that emits.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void StagingAnEventCostsTheDurablePathOneArray()
+    {
+        RequireOptimisedBuild();
+
+        var engine = new FlowEngine(new FakeClock(T0));
+        var plan = Durable(Plans.FourStepSaga());
+
+        var silent = MeasureDurableSteadyState(engine, plan, new NullDispatcher());
+        var emitting = MeasureDurableSteadyState(engine, plan, new JournallingDispatcher());
+
+        (emitting - silent).ShouldBeGreaterThan(0,
+            "A zero here would mean the event never reached the commit, which is the defect " +
+            "this whole package exists to close.");
+
+        (emitting - silent).ShouldBeLessThan(128,
+            $"Measured {emitting} B against {silent} B without an event. Staging is one " +
+            "array per emitting step. Anything materially larger means the seam started " +
+            "building a list, a builder or a closure it does not need.");
     }
 
     /// <summary>The same plan, re-declared <c>Durable</c>.</summary>
@@ -826,13 +879,29 @@ public sealed class EngineAllocationTests
     /// A dispatcher that can describe a step for a journal, and allocates nothing doing it.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Present so the ephemeral measurement is taken against a dispatcher that <em>could</em>
     /// have been asked. A double with no <c>DescribeStep</c> at all would prove only that an
     /// absent member costs nothing.
+    /// </para>
+    /// <para>
+    /// <strong>It describes an event for the plan's <c>Emit</c> step</strong>, because
+    /// <c>Plans.FourStepSaga</c> has one and the point of the measurement is that an
+    /// ephemeral flow pays nothing for the outbox. A double that described a result and no
+    /// event would leave that untested and the assertion would go on reading zero for the
+    /// wrong reason. Step 3 and no other, which is what a generated dispatcher does.
+    /// </para>
+    /// <para>
+    /// The event is a static, so what is measured is the engine's route to it rather than
+    /// this class's litter — the same convention every other double in this file follows.
+    /// </para>
     /// </remarks>
     private sealed class JournallingDispatcher : IStepDispatcher
     {
-        private static readonly StepJournalEntry Entry = StepJournalEntry.Nothing;
+        private const int EmitStep = 3;
+
+        private static readonly StepJournalEntry Entry = StepJournalEntry.OfEvent(
+            new OutboxWrite { Type = "order.placed", SchemaVersion = "1.0.0" });
 
         public ValueTask<StepOutcome> ExecuteAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
             => ValueTask.FromResult(StepOutcome.Success);
@@ -850,7 +919,8 @@ public sealed class EngineAllocationTests
         public FlowContext EnterIteration(int stepIndex, in IterationSource source, int iteration, FlowContext ctx) =>
             throw new NotSupportedException("This dispatcher has no iteration to enter.");
 
-        public StepJournalEntry DescribeStep(int stepIndex, FlowContext ctx) => Entry;
+        public StepJournalEntry DescribeStep(int stepIndex, FlowContext ctx) =>
+            stepIndex == EmitStep ? Entry : StepJournalEntry.Nothing;
     }
 
     /// <summary>

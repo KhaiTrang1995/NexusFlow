@@ -1426,19 +1426,45 @@ public static class FlowAnalyzer
             return;
         }
 
-        // FLOWX1024 — the step reaches the plan and the manifest, but nothing publishes
-        // it until the outbox exists. Warning rather than silence: a consumer reading the
-        // manifest would otherwise wait for an event that never arrives.
+        var arguments = link.Invocation.ArgumentList.Arguments;
+
+        // FLOWX1024, provisionally. Whether this event can actually be staged depends on two
+        // things this analysis cannot see — the flow's profile is known here, but whether the
+        // compilation declares a serialiser context for the contract is a question about
+        // every tree in the build, and asking it per flow would trade the generator's
+        // incrementality for a warning. So the site travels to FlowPlanGenerator.Produce,
+        // which has the answer and either drops this or replaces it with one naming the
+        // reason. Diagnostic properties are the Roslyn-shaped way to carry that; the
+        // alternative was threading a collector through nine block builders.
         diagnostics.Add(Diagnostic.Create(
             FlowXDiagnostics.EmitIsNotYetPublished,
             link.CallLocation,
-            symbol.Name));
+            EmitSiteProperties(symbol),
+            symbol.Name,
+            EmitReasons.Provisional));
 
         steps.Add(StepModel.Emit(
             nextIndex++,
             ToEventIdentity(symbol.Name),
-            FormatLocation(link.CallLocation)));
+            FormatLocation(link.CallLocation),
+            Display(symbol),
+
+            // The author's own factory, copied verbatim, so the generated DescribeStep
+            // builds the body the same way `.Return(...)` builds the output. A call with no
+            // argument does not compile, so the null branch is reachable only from a
+            // half-typed buffer where C# is already saying something more useful.
+            arguments.Count == 0 ? null : arguments[0].Expression.ToString(),
+            arguments.Count == 0 ? null : FormatLocation(arguments[0].Expression.GetLocation())));
     }
+
+    /// <summary>
+    /// What a provisional <c>FLOWX1024</c> carries to the pipeline that decides its fate.
+    /// </summary>
+    private static System.Collections.Immutable.ImmutableDictionary<string, string?> EmitSiteProperties(
+        ITypeSymbol contract) =>
+        System.Collections.Immutable.ImmutableDictionary<string, string?>.Empty
+            .Add(EmitReasons.ContractProperty, Display(contract))
+            .Add(EmitReasons.NameProperty, contract.Name);
 
     private static void AddSignalStep(
         ChainLink link,

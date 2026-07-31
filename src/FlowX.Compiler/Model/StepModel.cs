@@ -283,6 +283,33 @@ public sealed record StepModel
     /// <summary>Event identity for an <see cref="StepKindModel.Emit"/> step.</summary>
     public string? EventType { get; private init; }
 
+    /// <summary>
+    /// Fully-qualified type of the contract an <see cref="StepKindModel.Emit"/> step
+    /// publishes — the <c>TEvent</c> of <c>.Emit&lt;TEvent&gt;(...)</c>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="EventType"/> is the identity a consumer subscribes to (<c>order.placed</c>);
+    /// this is the C# type whose <c>JsonTypeInfo</c> serialises the body. They are different
+    /// facts and the manifest publishes only the first.
+    /// </remarks>
+    public string? EventContractTypeName { get; private init; }
+
+    /// <summary>
+    /// Source text of the <c>.Emit(...)</c> factory, copied verbatim, or <c>null</c> for
+    /// every other kind.
+    /// </summary>
+    /// <remarks>
+    /// Verbatim for the reason the predicate, the selector and the projection are:
+    /// reconstructing an arbitrary C# expression means re-rendering every form the language
+    /// has and being wrong on the first one nobody thought of. It reaches the generated
+    /// dispatcher and nothing else — the manifest publishes that the flow emits the event,
+    /// which is structure, and never how the body is built.
+    /// </remarks>
+    public string? EventFactory { get; private init; }
+
+    /// <summary><c>file:line</c> of the factory expression, for its <c>#line</c> directive.</summary>
+    public string? EventFactoryLocation { get; private init; }
+
     /// <summary>Signal identity for an <see cref="StepKindModel.AwaitSignal"/> step.</summary>
     public string? SignalType { get; private init; }
 
@@ -659,11 +686,26 @@ public sealed record StepModel
     }
 
     /// <summary>Models an <c>.Emit&lt;TEvent&gt;(...)</c> call.</summary>
-    public static StepModel Emit(int index, string eventType, string? location = null)
+    /// <param name="index">Flat index of the step.</param>
+    /// <param name="eventType">The event identity, e.g. <c>order.placed</c>.</param>
+    /// <param name="location"><c>file:line</c> of the <c>.Emit</c> call.</param>
+    /// <param name="contractTypeName">Fully-qualified <c>TEvent</c>, or <c>null</c> when unresolved.</param>
+    /// <param name="factory">The factory expression's source text, copied verbatim.</param>
+    /// <param name="factoryLocation"><c>file:line</c> of the factory expression.</param>
+    public static StepModel Emit(
+        int index,
+        string eventType,
+        string? location = null,
+        string? contractTypeName = null,
+        string? factory = null,
+        string? factoryLocation = null)
     {
         return new StepModel(index, StepKindModel.Emit)
         {
             EventType = eventType,
+            EventContractTypeName = contractTypeName,
+            EventFactory = factory,
+            EventFactoryLocation = factoryLocation,
             Location = location,
         };
     }

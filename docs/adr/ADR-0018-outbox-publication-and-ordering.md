@@ -140,6 +140,14 @@ purged — is otherwise invisible until the disk is.
   `StepCommit.Outbox` and the generated dispatcher produces no event payload for it to
   stage, so the chain is connected everywhere except at its first link. That is stated on
   [FLOWX1024](../diagnostics/FLOWX1024.md) rather than left for a reader to discover.
+
+  > **Spent.** The first link was built immediately after this record: the generated
+  > dispatcher's `DescribeStep` returns the emitted event and `FlowEngine.CommitStepAsync`
+  > puts it in `StepCommit.Outbox`, so an `.Emit` on a `Durable` flow stages a row in the
+  > step's own transaction and `EmitReachesTheBrokerTests` drives it through to a publisher.
+  > `FLOWX1024` survives, re-scoped to the two cases that still cannot stage — an
+  > `Ephemeral` flow, and a contract no source-generated `JsonSerializerContext` declares.
+  > Nothing else in this record changes; the decision it took is untouched.
 - **No broker integration is proved.** The only `IEventPublisher` in the repository is a
   recording test double. Acknowledgement semantics, broker-side partitioning and what a real
   client does with a half-accepted batch are all unproved, and

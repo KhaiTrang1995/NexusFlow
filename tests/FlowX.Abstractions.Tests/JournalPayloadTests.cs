@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Shouldly;
 using Xunit;
 
@@ -157,13 +158,48 @@ public sealed class JournalPayloadTests
     /// <remarks>
     /// Commitment 5 of ADR-0015 made structural: there is no overload that reflects over a
     /// type, so a contract outside the generated context cannot reach the journal, and the
-    /// write path stays NativeAOT- and trim-safe.
+    /// write path stays NativeAOT- and trim-safe. The metadata is spelled either way — the
+    /// <c>JsonTypeInfo&lt;T&gt;</c> itself, or the generated context to look it up in — and
+    /// neither spelling has a null-metadata path that quietly writes something.
     /// </remarks>
     [Fact]
     public void APayloadRequiresGeneratedTypeMetadata()
     {
         Should.Throw<ArgumentNullException>(
-            () => JournalPayload.Of<Order>(null!, null!));
+            () => JournalPayload.Of<Order>(null!, (JsonTypeInfo<Order>)null!));
+
+        Should.Throw<ArgumentNullException>(
+            () => JournalPayload.Of<Order>(null!, (JsonSerializerContext)null!));
+    }
+
+    /// <summary>
+    /// A context that does not declare the contract is refused, not silently skipped.
+    /// </summary>
+    /// <remarks>
+    /// The overload generated code uses names a context type, and the compiler only emits
+    /// that call when it read a <c>[JsonSerializable]</c> for the contract off that very
+    /// context — so this is unreachable from a build. It is asserted because the alternative
+    /// implementation is a silent empty payload, and an empty event on a broker is worse than
+    /// a throw at the step that emitted it.
+    /// </remarks>
+    [Fact]
+    public void AContextThatDoesNotDeclareTheContractIsRefused()
+    {
+        var failure = Should.Throw<InvalidOperationException>(
+            () => JournalPayload.Of(new Undeclared("x"), PayloadJson.Default));
+
+        failure.Message.ShouldContain(nameof(Undeclared));
+    }
+
+    /// <summary>The context overload writes exactly what the type-info overload writes.</summary>
+    [Fact]
+    public void ResolvingTheMetadataThroughTheContextChangesNothingAboutTheOutput()
+    {
+        var order = new Order("order-1", Secret, new Customer("Ada", Secret));
+        string[] members = ["PaymentToken"];
+
+        JournalPayload.Of(order, PayloadJson.Default, members).ToJson()
+            .ShouldBe(JournalPayload.Of(order, PayloadJson.Default.Order, members).ToJson());
     }
 
     private static void ShouldCarry(string? json, string expected, string because) =>
@@ -183,6 +219,9 @@ internal sealed record Customer(string Name, string PaymentToken);
 
 /// <summary>A contract carrying marked members inside a collection.</summary>
 internal sealed record Basket(IReadOnlyList<Customer> Customers);
+
+/// <summary>A contract deliberately left out of the generated context.</summary>
+internal sealed record Undeclared(string Value);
 
 /// <summary>The generated context these payloads are written through (ADR-0008).</summary>
 [JsonSerializable(typeof(Order))]
