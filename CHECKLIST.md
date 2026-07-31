@@ -24,7 +24,7 @@
 > without being made fast. See
 > [§5d](#5d-p2--durable-execution--correct-against-a-real-database-and-unmeasured).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 1490/1490 passing (86 of them against a live
+> **Build:** 0 warnings, 0 errors · **Tests:** 1617/1617 passing (a large share against a live
 > PostgreSQL 16.13; 0 skipped). Without `FLOWX_POSTGRES_CONNECTION` the adapter suite skips
 > 79 with reasons; set to an unreachable server it **fails 80 and skips none**, on purpose ·
 > **Coverage:** **83.9 % line / 77.6 % branch** over `src/` and `plugins/`, measured
@@ -1079,10 +1079,42 @@ exists only in a closing summary is one nobody reads.
       recorded rather than inferred from the code. This discharges the WP-52 consequence
       that a `Durable` flow was "rejected at its first invocation unless the caller builds
       the session": a host wires it now
-- [ ] **WP-56** Transactional outbox and publisher. Retires **`FLOWX1024`**, the warning
-      that says `.Emit<T>()` publishes nothing
-- [ ] **WP-57** Compensation with its own policies. **Has a dependency the roadmap does not
-      show:** no policy executes at run time; the policy engine is P4
+- [~] **WP-56** Transactional outbox and publisher. **Shipped 2026-07-31, and it did *not*
+      retire `FLOWX1024`** — which is why this is `[~]`. `PostgresOutboxPublisher` claims a
+      batch under `FOR UPDATE SKIP LOCKED` in staging order, publishes, marks the
+      acknowledged prefix and commits, one pass per transaction. Per-`partition_key`
+      ordering survives two publishers, which `SKIP LOCKED` alone does not: the claim drops
+      a row whose key has an older pending sibling it did not take. **Global ordering is not
+      offered and no setting turns it on.** Both hard properties were **mutation-checked** —
+      moving mark-and-commit before the publish breaks at-least-once, dropping `SKIP LOCKED`
+      makes the second publisher block, dropping the per-key probe lets a newer event
+      overtake. Retention refuses to purge an instance holding an unpublished event, with no
+      age window, because there is no age at which discarding an unsent event is correct.
+      **`FLOWX1024` stays a Warning and retiring it would have been false:** `FlowEngine`
+      never populates `StepCommit.Outbox` and `DescribeStep` returns no event, so an `.Emit`
+      step stages no row and the publisher drains an empty table. What was false was the
+      diagnostic's stated *reason*. **`IEventPublisher` is declared and nothing implements
+      it** outside a test double, so "an emitted event reaches a broker" is met as "reaches
+      a publisher" — [ADR-0018](docs/adr/ADR-0018-outbox-publication-and-ordering.md)
+- [~] **WP-57** Compensation with its own policies. **Shipped 2026-07-31, and it resolved
+      [open item 7](PLAN.md#9-open-items-blocking-the-plan)** — P2 built the slice rather
+      than moving the item to P4. `PolicySet.CompensationRetry` is declared at
+      `PolicyStage.Consistency`, stage 7, which is where the policy framework already puts
+      compensation registration. **It honours ADR-0011 without becoming a policy engine
+      because the only stage it executes is the last** — there is no earlier stage it can
+      skip, the forward path still executes zero policies, and `PolicyChain`'s stage sort
+      stays the single ordering mechanism. `PolicyChain` refuses a compensation retry on a
+      non-idempotent capability: `FLOWX1014`'s rule applied to the *compensating*
+      capability, because that is what would run twice. **B2 holds at 0 B**, gated on
+      `ExecutionPlan.HasCompensationPolicies` the way `HasParallel` is; the failure path
+      moved 48 B → 56 B against an unchanged 2048 B ceiling. Compensation is now journaled,
+      so a kill mid-unwind resumes rather than repeats.
+      **`[~]` for two named gaps.** There is **no DSL surface** — `CompensateWith<T>(PolicySet)`
+      needs generator work, so no authored flow can declare one yet and the feature is real
+      but unreachable from user code. And a **resumed parent still does not rebuild a
+      skipped child's compensation stack**: it needs a which-instances-are-under-this-parent
+      query `IFlowJournal` deliberately does not answer — the same reason `IRecoveryIndex`
+      was split out. That gap is now pinned by a test that fails when it is fixed
 - [x] **WP-58** `FLOWX1007`–`FLOWX1009`, with the determinism severity stance re-decided
       **as a set**, `FLOWX1011`'s deliberate deviation included. **Shipped 2026-07-31.**
       `DeterminismAnalyzer` raises all three: ambient time (1007), ambient identifiers and
@@ -1098,10 +1130,19 @@ exists only in a closing summary is one nobody reads.
 - [ ] **WP-59** `FLOWX1006` and the generated STJ payload context. **Now the only
       capability rule left unenforced** — WP-58 built the other three, and
       `ICapability`'s doc comment says so
-- [ ] **WP-60** `FLOWX1012` — the check was always easy, and its *fix* became true at
-      WP-52. **The blocker is discharged; the rule is not written.** Left unticked, because
-      an unblocked rule is not a raised one. WP-58 discharged the *severity* half of the
-      same blocker for its own three ids and shipped them; this one did not follow
+- [x] **WP-60** `FLOWX1012` — **shipped 2026-07-31 as a `Warning`, uniformly, with no
+      escalation.** The source is not wrong: a compensable `Ephemeral` flow unwinds
+      correctly on every failure that is not a crash, which is the trade ADR-0003 ratified
+      and `docs/DEBT.md` classes as a decision rather than debt. Its remedy also has a
+      prerequisite outside the compilation — `Profile = Durable` is only a fix where a host
+      registers a journal — so an error would block a build over a deployment fact no
+      analyzer can see. **WP-58's escalation rule does not transfer** and the reason is
+      worth keeping: that set escalates where the compilation proves the code is on a
+      durable flow's replay path, and this rule fires *because* the flow is not durable.
+      Trigger and escalation are mutually exclusive. **No code fix, deliberately** — a
+      one-click `Durable` produces a flow refused at start-up, which is the fix that
+      silences the rule rather than the one that is correct. The reference sample fires it
+      and keeps `Ephemeral` behind a stated-reason pragma
 - [ ] **WP-61** `ReplayDeterminismTest` and its corpus. Risk **R2**'s actual mitigation,
       currently cited in `05 §11` as though it existed
 - [ ] **WP-62** QR2 — 10 000 flows, `SIGKILL` at every step boundary, zero duplicate
@@ -1224,7 +1265,7 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | **Q7** | startup and footprint | **nothing.** Same gap as V5 |
 | **Q8** | multi-tenant isolation | **nothing.** `CrossTenantAccessIsDenied` blocked on P4 and P3 |
 
-### ADR inventory — 16 records, and which carry undischarged obligations
+### ADR inventory — 18 records, and which carry undischarged obligations
 
 | ADR | Status | Revisit trigger | Obligation this file or the plan is missing |
 |---|---|---|---|

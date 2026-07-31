@@ -44,12 +44,16 @@
 > implementations" is as untested as it was — and `FlowX.Http` is still the only
 > *transport* plugin, which is the data point `PluginsPassConformance` needs.
 >
-> **`FlowX.Conformance.Tests` is two of [§4](#4-compatibility-policy)'s six rows
-> and nothing else.**
-> `tests/FlowX.Conformance.Tests` holds `JournalConformance` and
-> `LeaseStoreConformance`; a store claims conformance by deriving from them and
-> supplying itself. `TriggerSourceConformance`, `PublisherConformance`,
-> `SerializerConformance` and `PolicyHandlerConformance` are not written, so the
+> **`FlowX.Conformance.Tests` is three of [§4](#4-compatibility-policy)'s seven
+> rows and nothing else.**
+> `tests/FlowX.Conformance.Tests` holds `JournalConformance`,
+> `LeaseStoreConformance` and `RecoveryIndexConformance`; a store claims
+> conformance by deriving from them and supplying itself. *This paragraph said
+> "two of six" and that `IRecoveryIndex` had no suite; the suite was written on
+> 2026-07-31 and immediately caught a disagreement between the two
+> implementations on a limit of zero or less.* `TriggerSourceConformance`,
+> `PublisherConformance`, `SerializerConformance` and `PolicyHandlerConformance`
+> are not written, so the
 > release-blocking gate in
 > [09 §11](09-Trigger-Model.md#11-writing-a-trigger-plugin) is still a statement
 > about tests nobody can run.
