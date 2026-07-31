@@ -78,9 +78,9 @@
       "being watched for four working packages."
     ],
     "criterion": "a 200-flow synthetic solution builds with <= +8 % overhead (docs/20-Roadmap.md, P1)",
-    "lastMeasured": "+46.6 % [+42.8, +51.3] at 50 flows; +77.1 % [+72.0, +80.6] at 200 flows on the pre-WP-28 tree",
-    "measuredBy": "./scripts/measure-scale-overhead.sh --rounds 12 --sizes 200 (wall clock)",
-    "recordedIn": "docs/benchmarks/B12-scale.md sections 5.1 and 5.2",
+    "lastMeasured": "+46.5 % [+42.4, +51.0] at 50 flows; +67.1 % [+61.9, +73.6] at 200 flows, A/A noise floor 10.6 %",
+    "measuredBy": "./scripts/measure-scale-overhead.sh --rounds 12 --sizes 50,200 (wall clock)",
+    "recordedIn": "docs/benchmarks/B12-scale.md section 5.4",
     "status": "FAIL"
   },
   "sizes": {
