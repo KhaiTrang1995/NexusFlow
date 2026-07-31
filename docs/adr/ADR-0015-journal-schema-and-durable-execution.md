@@ -25,7 +25,10 @@
 >
 > **WP-53 supplied the disagreement, and this record is Accepted on the strength of what
 > survived it.** `plugins/FlowX.Postgres` runs the suite unmodified, from a different
-> assembly, against PostgreSQL 16.13: 45 conformance assertions and 18 adapter tests green.
+> assembly, against PostgreSQL 16.13: **63 conformance assertions and 41 adapter tests**
+> green, 104 in all. *This sentence said "45 … and 18" while ADR-0016 said 41 beside the same
+> 45 — two records disagreeing about one test run, because each was written from a different
+> run and neither re-counted.*
 > **All five Decision commitments below hold against a real database.** Three clauses did
 > not survive — two of them in the ERD this record already declared superseded, one an
 > inconsistency inside this record itself — and they are
@@ -416,7 +419,11 @@ Its message names most of this list; the list is repeated here because the ADR i
 change is decided, and a scaffold that outlives what it describes is noise — noise is what
 teaches people to suppress a catalogue.
 
-**Worked row by row at WP-54 (2026-07-31).** The **State** column records what actually
+**Worked row by row on 2026-07-31, by the take-down package that followed WP-52.** *That
+package was executed under the label "WP-54", which [PLAN](../../PLAN.md#5-p2--durable-execution)
+reserves for the Redis lease store — the third work-package number collision this project has
+had. The rows below keep the label they were written with so the commits remain findable;
+**WP-54 means Redis and has not started.*** The **State** column records what actually
 happened to each, because a take-down list with no verdict beside it is the same kind of
 scaffold it was written to remove.
 

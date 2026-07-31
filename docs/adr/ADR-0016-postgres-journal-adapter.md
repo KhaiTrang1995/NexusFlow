@@ -20,7 +20,10 @@ assembly**,
 which is the arrangement [17 §5](../17-Plugin-System.md) describes for a third party
 claiming conformance. Nothing in that project changed to accommodate this adapter.
 
-Result: **45 conformance assertions green against a real database**, plus 41 adapter tests.
+Result: **63 conformance assertions green against a real database**, plus 41 adapter tests —
+104 in `tests/FlowX.Postgres.Tests`. *This line read "45 … plus 18" and then "45 … plus 41";
+both were taken at different moments and neither was re-derived. The 45 became 63 when
+`RecoveryIndexConformance` closed the first of decision 4's two named gaps.*
 
 Three clauses did not survive. Two of them are in the ERD drawn in
 [11 §2](../11-Distributed-Runtime.md#2-the-journal), which ADR-0015 already marks
@@ -118,8 +121,13 @@ anti-starvation property. Migration `0003` adds the right index and **leaves the
 in place**, because superseded is not unused and a drop belongs to a release after one that
 ships with nothing planning against it.
 
-**Two gaps left open, named rather than closed.** There is no `RecoveryIndexConformance`,
-so "which states count as abandoned" is agreed between the two implementations only by
+**Two gaps were left open here, named rather than closed. One is now closed.**
+*`RecoveryIndexConformance` exists as of 2026-07-31, so the following no longer describes
+today — it is kept because it is why the suite was written, and because the disagreement it
+predicted was real: the two implementations differed on a limit of zero or less, and the
+in-memory one threw where the adapter returned an empty success.* There was no
+`RecoveryIndexConformance`,
+so "which states count as abandoned" was agreed between the two implementations only by
 reading — and both exclude `Suspended`, on the grounds that a parked instance is unowned
 rather than abandoned, sweeping it would fence out whatever eventually delivers its signal,
 and it would be swept again every pass because it is permanently stale. That reasoning
@@ -189,6 +197,15 @@ would reject every root-scope step row. Any future adapter has to map `Root` exp
 
 ## Consequences
 
+*This section had no **Positive** / **Negative** split until 2026-07-31, which
+[the ADR index's own rule](README.md) — "an ADR with no 'Negative' section has not been
+thought through" — makes a defect in the record rather than in the thinking. The trade-offs
+were argued in the body all along, under headings that hid them from anyone scanning for
+them: "the cost is real and accepted", "two gaps left open", "one accepted risk, named".
+What follows **gathers** those and decides nothing new; every negative below names the
+section it comes from.*
+
+**Positive**
 - **ADR-0015's five Decision commitments all hold.** What failed is the drawn ERD it
   already declared superseded, plus its own unstated snapshot position. That is a good
   outcome for the record and an argument for Accepting it.
@@ -198,12 +215,58 @@ would reject every root-scope step row. Any future adapter has to map `Root` exp
 - **The conformance suite was derivable from another assembly without an edit**, which is
   the first evidence that [17 §5](../17-Plugin-System.md)'s self-certification story works.
   It is also the precondition WP-70 needs before packing it.
+- **A gap no test could have reported was found by reading this adapter against the
+  specification** (decision 4): the only `IRecoveryIndex` anywhere was a test double, so a
+  Postgres-backed host fenced correctly and swept nothing. An optional dependency fails that
+  quietly, and nothing in the suite could have said so — which is an argument for writing
+  this kind of record and not only this kind of test.
+
+**Negative / accepted trade-offs**
+- **`json` gives up everything `jsonb` would have bought** (decision 1): no GIN index on any
+  payload column, and every JSON operator re-parses the document. Accepted because a journal
+  payload is written once, read whole and never queried by key — and the moment that stops
+  being true, this decision and ADR-0008 re-open together, which is the Revisit condition
+  below.
+- **Two referential-integrity constraints the schema could have had, it deliberately does
+  not.** `flow_lease` carries no foreign key to `flow_instance`, because the lease is
+  acquired before the instance row exists (decision 2); `parent_instance_id` carries none,
+  because a foreign key would turn a parent's purge into an error while a detached child is
+  still running (Retention). Both are right, and both mean the database will not catch a
+  dangling id that a bug writes.
+- **A superseded index ships and is not dropped.** Migration `0002`'s `(state, updated_at)`
+  is the wrong shape for the scan its own comment claims to support — 1 748 buffers against
+  4 — and `0003` adds the right one while leaving it in place (decision 4). Until a later
+  release drops it, every instance update pays for an index nothing plans against.
+- **Two contract gaps were named rather than closed; one is now closed.**
+  *`RecoveryIndexConformance` was written on 2026-07-31 and both implementations are held
+  to it, so "which states count as abandoned" is an assertion rather than two comments. It
+  immediately earned its keep: the two disagreed on a limit of zero or less — this adapter
+  short-circuits to an empty success and the in-memory reference threw — and the adapter's
+  behaviour was the correct one, because [ADR-0007](ADR-0007-result-over-exceptions.md)
+  makes an exception from a store mean the store could not be reached.* What remains open is
+  the second: `CompleteAsync` on an already-terminal instance is undefined by ADR-0015 *and*
+  by the suite, so this adapter's rule — an identical repeat allowed, a different terminal
+  state refused — is an implementation choice standing in for a specification.
+- **`AbandonedInstanceQuery.TenantId` is served by a filter over the untenanted index**, so
+  a tenant-scoped scan reads more than it needs. Priced deliberately: a second partial index
+  on `flow_instance` is a write charged to every step boundary of every flow, for a
+  parameter `FlowRecoveryScan` never sets.
+- **Purging cascades to unpublished outbox rows.** Nothing publishes them today
+  ([FLOWX1024](../diagnostics/FLOWX1024.md)) so nothing is lost, but WP-56 lands a publisher
+  and inherits an obligation to guard the purge. **This record is the only place that
+  obligation is written down** — neither planning file carries it.
+- **Commitment 1 holds partly by dialect.** `StepScope.Root` renders as the empty string and
+  PostgreSQL distinguishes `''` from `NULL`; a database that folds them rejects every
+  root-scope row. Every future adapter inherits a mapping obligation this one never had to
+  make.
 - **WP-53's exit criterion is only half met, and the unmet half is not this package's to
   meet.** Conformance is green against a real database. **B7 and B8 are unreported**,
   because WP-50 — the benchmark harness they are measured against — has not started. The
   criterion asks for "an explicit pass or fail"; the honest answer is **neither yet**, and
-  ADR-0006's "measured ceiling" stays a literature figure for the same reason it did at
-  WP-54.
+  ADR-0006's "measured ceiling" stays a literature figure for the same reason it did when
+  the take-down package corrected that record's other clauses: no harness, no benchmark.
+  *This sentence read "for the same reason it did at WP-54", which reads as a completed
+  package — WP-54 is the Redis lease store and has not started.*
 
 **Revisit when:** a payload needs indexing inside the journal, at which point decision 1 and
 ADR-0008 are the pair to re-open together — `json` plus a generated expression index is the

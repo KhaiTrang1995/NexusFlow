@@ -48,6 +48,76 @@ public sealed class PostgresJournalConformanceTests : JournalConformance, IAsync
     }
 }
 
+/// <summary>
+/// Runs the whole recovery-index suite against PostgreSQL.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Inherited from another assembly, unmodified, exactly as the journal and lease suites above
+/// are and exactly as <c>docs/17-Plugin-System.md §5</c> describes a third party claiming
+/// conformance. Nothing in <c>tests/FlowX.Conformance.Tests</c> was shaped around this adapter.
+/// </para>
+/// <para>
+/// <strong>This is what closes ADR-0016 decision 4's first gap.</strong> Which states count as
+/// abandoned — and in particular that <c>Suspended</c> does not — was agreed between this
+/// adapter and the reference index by reading, in two comments and no assertion. Both now
+/// answer the same suite, so a disagreement is a red test rather than a difference nobody
+/// notices until one deployment sweeps a parked instance and another does not.
+/// </para>
+/// <para>
+/// The three-way skip behaviour is <see cref="PostgresTestSchema"/>'s and is inherited rather
+/// than re-implemented: no connection string is a skip carrying a reason, a connection string
+/// with no server behind it is a failure.
+/// </para>
+/// </remarks>
+public sealed class PostgresRecoveryIndexConformanceTests : RecoveryIndexConformance, IAsyncLifetime
+{
+    private readonly List<PostgresTestSchema> _schemas = [];
+
+    /// <inheritdoc />
+    protected override async ValueTask<RecoveryStore> CreateStoreAsync()
+    {
+        var schema = await PostgresTestSchema.CreateAsync(Cancellation);
+
+        _schemas.Add(schema);
+
+        return new PostgresRecoveryStore(schema);
+    }
+
+    /// <inheritdoc />
+    public ValueTask InitializeAsync() => ValueTask.CompletedTask;
+
+    /// <inheritdoc />
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var schema in _schemas)
+        {
+            await schema.DisposeAsync();
+        }
+
+        _schemas.Clear();
+    }
+
+    /// <summary>The adapter under test, and the schema's own writes to arrange it.</summary>
+    private sealed class PostgresRecoveryStore : RecoveryStore
+    {
+        private readonly PostgresTestSchema _schema;
+
+        public PostgresRecoveryStore(PostgresTestSchema schema) => _schema = schema;
+
+        /// <inheritdoc />
+        public override IRecoveryIndex Index => _schema.RecoveryIndex;
+
+        /// <inheritdoc />
+        public override ValueTask<Guid> AbandonAsync(
+            FlowInstanceState state,
+            TimeSpan idleFor,
+            string? tenantId,
+            CancellationToken cancellationToken) =>
+            _schema.AbandonAsync(state, idleFor, tenantId, cancellationToken);
+    }
+}
+
 /// <summary>Runs the whole lease suite against PostgreSQL.</summary>
 /// <remarks>
 /// The expiry assertions wait out a real TTL against the database's own clock, which is the
