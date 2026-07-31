@@ -85,12 +85,17 @@ ephemeral one is not replayed at all.
 The catalogue is deliberately smaller than the numbering suggests. Codes appear here
 only once the compiler actually reports them — a documented diagnostic that nothing
 raises is a promise the compiler is not keeping. Reserved for later phases:
-`FLOWX1006` (state must be serialisable), `FLOWX1007`–`FLOWX1009` (determinism in
-durable flows), `FLOWX1012` (compensable-and-ephemeral) and
+`FLOWX1006` (state must be serialisable), `FLOWX1012` (compensable-and-ephemeral) and
 `FLOWX1022` (contract compatibility **across versions** — the analyzer counterpart
 of `flowx diff`, distinct from `FLOWX1020`, which checks one flow's steps against
 each other). `FLOWX1021` left this list when sub-flows landed; `FLOWX1016` and
 `FLOWX1019` left it in WP-39.
+
+**`FLOWX1007`, `FLOWX1008` and `FLOWX1009` are claimed by WP-58** and leave this list
+with the rule that raises them. They keep the meanings every other document already
+gives them — ambient clock, ambient identity and randomness, and mutable state on a
+capability or a flow — and this paragraph is the claim the id-collision rule below asks
+for, made before the descriptor exists.
 
 **What each remaining reservation is blocked on**, so that "reserved" does not
 quietly become "forgotten":
