@@ -242,17 +242,21 @@ in P1:**
   any code path. "Traces, metrics and structured logs exist without user
   instrumentation" is true of the *design* — the compiled graph is what makes it
   derivable — and is not true of the runtime. **P5.**
-- **Replay.** `ReplayDeterminismTest` does not exist. *This line has been wrong twice
-  and both corrections are kept.* It said there is no journal type in the solution;
-  WP-51 declared `IFlowJournal`. It then said no code path writes to a journal and that
-  `FlowX.Runtime` never reads `ExecutionProfile`; **WP-52 (2026-07-31) made it read the
-  profile**, and a `Durable` flow now journals a step boundary, captures `ctx.UtcNow`,
-  `ctx.NewId()` and `Random`'s seed per step, and resumes through the same loop. What is
-  still missing is what would make replay *provable*: nothing replays a capture back into
-  execution, there is no corpus, and the only implementation of `IFlowJournal` is an
-  in-memory reference in `tests/FlowX.Conformance.Tests` that has never met a database.
-  So the capture is written and never read, which is exactly the state in which a
-  determinism leak leaves no trace. **P2 · WP-61.**
+- **Replay.** *This line has been wrong three times and every correction is kept.* It
+  said there is no journal type in the solution; WP-51 declared `IFlowJournal`. It then
+  said no code path writes to a journal and that `FlowX.Runtime` never reads
+  `ExecutionProfile`; **WP-52 (2026-07-31) made it read the profile**, and a `Durable`
+  flow now journals a step boundary, captures `ctx.UtcNow`, `ctx.NewId()` and `Random`'s
+  seed per step, and resumes through the same loop. It then said `ReplayDeterminismTest`
+  does not exist, that nothing replays a capture back into execution, that there is no
+  corpus, and that "the capture is written and never read, which is exactly the state in
+  which a determinism leak leaves no trace". **WP-61 (2026-07-31) ended that state**:
+  `ReplayDeterminismTests` replays a corpus of eight shapes against their own journals
+  and compares them action for action and row for row, and
+  `FlowExecutionContext.ReplayNondeterminism` is the read half of the capture it needed
+  to do it. What is left is three measured gaps — an overlapping `Parallel`, a
+  compensation's ambient reads, and the engine's own deadline check — each pinned by a
+  test that goes red when it is closed. **Done at P2 · WP-61.**
 
 The determinism *analyzers* this principle leans on are further behind:
 `FLOWX1007`, `FLOWX1008` and `FLOWX1009` do not exist — no longer blocked on severity
@@ -361,7 +365,7 @@ corrections now standing above, it is ten.** P1 named `FlowNamingRule`, P2
 benchmark called `EphemeralDispatch` *and* a 5 % regression gate that is
 advisory, P6 the command `flowx verify --complete`, P7 `StatelessRuntimeRule` and
 a chaos test, P9 `BackpressureConformanceTest`, P10 `TelemetryConformanceTest`
-and `ReplayDeterminismTest`, and P12 `DiagnosticQualityTest`. Only P8 and P11
+and `ReplayDeterminismTest` (which WP-61 built, as `ReplayDeterminismTests`), and P12 `DiagnosticQualityTest`. Only P8 and P11
 were sound as written. Three of the six tension resolutions were in the same
 state. Undercounting the problem is the same class of error as the problem: a
 reader who sees "six" assumes the other six were checked. A reader who saw a test

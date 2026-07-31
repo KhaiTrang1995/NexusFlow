@@ -115,10 +115,13 @@ nowhere, so `Durable` ran the ephemeral engine and a determinism violation in a 
 flow was a defect in a replay that could not happen. It now commits one journal row per step
 boundary, captures `ctx.UtcNow`, `ctx.NewId()` and `ctx.Random`'s seed per step, and resumes
 by replaying committed rows into the same step loop. A violation in such a flow is a real
-replay defect. What is still missing — stated so that this section does not overclaim — is
-that **nothing replays the capture back into execution yet**: `ReplayDeterminismTest` is
-WP-61, and until it exists a determinism leak still leaves no trace at run time. Which is the
-argument for a build-time rule, not against one.
+replay defect. *This paragraph then said, so as not to overclaim, that "nothing replays the
+capture back into execution yet" and that until `ReplayDeterminismTest` existed a determinism
+leak left no trace at run time.* **WP-61 (2026-07-31) built it** — `ReplayDeterminismTests`,
+a corpus of eight shapes each replayed against its own journal — so a leak in a shape the
+corpus covers does now leave a trace. That is not an argument against a build-time rule: a
+corpus catches a leak in the flows somebody wrote a corpus entry for, and these rules catch
+it in every flow that compiles, before anything runs.
 
 ## The severity of `FLOWX1012`, which is not the determinism set's argument
 

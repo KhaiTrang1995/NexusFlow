@@ -145,6 +145,30 @@ public sealed class FlowExecutionContext : FlowContext
     /// </remarks>
     private bool _seedRecorded;
 
+    /// <summary>
+    /// The ids the step now running is being <em>given</em>, because a previous execution of
+    /// it minted them and the journal kept them; <c>null</c> when nothing is being replayed.
+    /// </summary>
+    /// <remarks>
+    /// The read half of <see cref="_newIds"/>, and the direction that did not exist until
+    /// WP-61. Recording a value nothing can be handed back makes replay describable and not
+    /// deliverable, which is the state <see cref="RandomSeed"/> said this class was in.
+    /// </remarks>
+    private IReadOnlyList<Guid>? _replayIds;
+
+    /// <summary>How many of <see cref="_replayIds"/> this step has already been given.</summary>
+    /// <remarks>
+    /// A cursor rather than a queue, so replaying a step costs no allocation and the capture
+    /// stays the immutable record it is everywhere else. Once it passes the end, further reads
+    /// mint fresh ids — deliberately, because a replay that reads <em>more</em> than the
+    /// original did has diverged, and the honest way to report that is to let the extra id
+    /// appear on the replayed row where a comparison can see it.
+    /// </remarks>
+    private int _replayIdCursor;
+
+    /// <summary>The seed <see cref="Random"/> must be rebuilt from, when one is being replayed.</summary>
+    private int? _replaySeed;
+
     private Error? _error;
 
     /// <summary>
@@ -294,10 +318,15 @@ public sealed class FlowExecutionContext : FlowContext
     /// there is nothing to record.
     /// </para>
     /// <para>
-    /// <strong>What this still does not do.</strong> Recording is not replaying — the context
-    /// has no way to be <em>given</em> a seed, so a resumed instance re-draws rather than
-    /// reproducing. That direction is WP-61's <c>ReplayDeterminismTest</c>; what exists now is
-    /// the record it will be held to, which had to exist first.
+    /// <strong>The other direction exists now, and this paragraph used to say it did
+    /// not.</strong> It read: "the context has no way to be <em>given</em> a seed, so a
+    /// resumed instance re-draws rather than reproducing". <see cref="ReplayNondeterminism"/>
+    /// is that way, added by WP-61 because a corpus cannot demonstrate replay against a
+    /// capture nothing can read back. What <em>still</em> does not happen is the engine
+    /// calling it on a resume: the step loop skips a committed step rather than re-running it,
+    /// so no resumed execution reaches a step it has a capture for. Replaying the capture into
+    /// execution is what <c>ReplayDeterminismTests</c> drives and what <c>flowx replay</c>
+    /// (WP-64) will.
     /// </para>
     /// </remarks>
     public int? RandomSeed => _randomSeed;
@@ -310,7 +339,10 @@ public sealed class FlowExecutionContext : FlowContext
     /// </remarks>
     private Random CreateRandom()
     {
-        var seed = System.Random.Shared.Next();
+        // The replayed seed when this execution has been given one, and a fresh draw
+        // otherwise. Same statement, same field, so a replayed generator cannot end up
+        // reproducible-looking and unrecorded.
+        var seed = _replaySeed ?? System.Random.Shared.Next();
         _randomSeed = seed;
 
         return new Random(seed);
@@ -344,29 +376,45 @@ public sealed class FlowExecutionContext : FlowContext
     /// </remarks>
     public override Guid NewId()
     {
-        var id = Guid.NewGuid();
-
-        if (_journaled)
+        if (!_journaled)
         {
-            RecordNewId(id);
+            return Guid.NewGuid();
         }
 
-        return id;
+        return MintId();
     }
 
-    private void RecordNewId(Guid id)
+    /// <summary>
+    /// Answers a journaled execution's request for an id: the one the capture holds, if this
+    /// step is being replayed, and a fresh one otherwise — and records it either way.
+    /// </summary>
+    /// <remarks>
+    /// The mint and the record are one operation under one lock. Splitting them let a sibling
+    /// branch interleave between the two, which is how an id could be recorded in an order no
+    /// step actually minted it in.
+    /// </remarks>
+    private Guid MintId()
     {
         if (_guarded)
         {
             lock (_state)
             {
-                (_newIds ??= []).Add(id);
+                return MintIdCore();
             }
-
-            return;
         }
 
+        return MintIdCore();
+    }
+
+    private Guid MintIdCore()
+    {
+        var id = _replayIds is { } replayed && _replayIdCursor < replayed.Count
+            ? replayed[_replayIdCursor++]
+            : Guid.NewGuid();
+
         (_newIds ??= []).Add(id);
+
+        return id;
     }
 
     /// <inheritdoc />
@@ -594,10 +642,13 @@ public sealed class FlowExecutionContext : FlowContext
     /// <strong>Attribution inside a fork is best-effort, and it is the same fidelity limit
     /// <see cref="EnterStep"/> already states.</strong> One pooled context is shared by every
     /// branch, so an id minted by a sibling between this step finishing and its commit is
-    /// attributed to this row. It is safe — the writes are serialised — and it is not yet
-    /// wrong in any way a reader can act on, because nothing replays a capture back into
-    /// execution today. Making it exact needs a per-branch context, which is what WP-61's
-    /// replay work has to buy.
+    /// attributed to this row. It is safe — the writes are serialised — and it is now
+    /// <em>observably</em> wrong rather than merely latent: WP-61 replays a capture back into
+    /// execution, and <c>ReplayDeterminismTests</c> pins both halves — the misattribution
+    /// itself, and the divergence it causes when the misattributed row is replayed. Making it
+    /// exact needs a per-branch context. WP-61 did not buy one; it measured what not having
+    /// one costs, and the cost is that a fork whose branches genuinely overlap does not
+    /// replay.
     /// </para>
     /// </remarks>
     internal NondeterminismCapture TakeNondeterminism()
@@ -613,6 +664,84 @@ public sealed class FlowExecutionContext : FlowContext
         return TakeNondeterminismCore();
     }
 
+    /// <summary>
+    /// Gives the step that is about to run the values a previous execution of it read from
+    /// outside itself, so that it reads the journal rather than the world.
+    /// </summary>
+    /// <param name="captured">
+    /// The envelope committed for this step: the instant it pinned, the ids it minted in
+    /// order, and the seed its generator was built from.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="captured"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// This execution is not journaled, so there is no capture it could have come from.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the direction that did not exist, and its absence is why replay was a
+    /// specification rather than a property under test.</strong> WP-52 made a durable step
+    /// write a <see cref="NondeterminismCapture"/>; nothing could read one back, so
+    /// <see cref="RandomSeed"/> could say what the seed had been and no execution could be
+    /// told to use it. A capture that is written and never read is exactly the shape in which
+    /// a determinism leak leaves no trace: it is recorded, it is wrong, and nothing compares
+    /// it against anything. This method is what lets something compare.
+    /// </para>
+    /// <para>
+    /// <strong>Public for the reason <see cref="RandomSeed"/> is public.</strong> A replay
+    /// tool (<c>flowx replay</c>, WP-64) and a test harness that drives one execution against
+    /// another's journal are both outside this assembly, and both need to hand a step its
+    /// history. Internal visibility would have meant the only code able to prove the replay
+    /// contract lived in the assembly the contract is about.
+    /// </para>
+    /// <para>
+    /// <strong>It does not clear what the step has already read.</strong> Anything minted
+    /// before this call still lands on the replayed row, so a replay that read ahead of its
+    /// capture shows up as an extra id rather than being tidied away. The same is true in the
+    /// other direction: when <see cref="NondeterminismCapture.UtcNow"/> is null this pins
+    /// nothing and the step reads the live clock, because there is no captured instant to
+    /// serve and inventing one would make a replay look faithful that is not.
+    /// </para>
+    /// <para>
+    /// <strong>What it cannot buy is per-branch fidelity.</strong> One pooled context is
+    /// shared by every branch of a <c>Parallel</c>, so a capture written under a fork may have
+    /// been attributed to a sibling's row — and this method replays a row, faithfully,
+    /// including that attribution. Exactness there needs a per-branch context, which
+    /// <see cref="TakeNondeterminism"/> names and this does not deliver.
+    /// </para>
+    /// </remarks>
+    public void ReplayNondeterminism(NondeterminismCapture captured)
+    {
+        ArgumentNullException.ThrowIfNull(captured);
+
+        if (!_journaled)
+        {
+            throw new InvalidOperationException(
+                $"Flow '{_flowId}' is not journaled, so it has no capture to be replayed " +
+                "from. Replaying an ephemeral execution would be replaying a run that was " +
+                "never recorded.");
+        }
+
+        if (_guarded)
+        {
+            lock (_state)
+            {
+                ReplayNondeterminismCore(captured);
+            }
+
+            return;
+        }
+
+        ReplayNondeterminismCore(captured);
+    }
+
+    private void ReplayNondeterminismCore(NondeterminismCapture captured)
+    {
+        _capturedNow = captured.UtcNow;
+        _replaySeed = captured.RandomSeed;
+        _replayIds = captured.NewIds.Count > 0 ? captured.NewIds : null;
+        _replayIdCursor = 0;
+    }
+
     private NondeterminismCapture TakeNondeterminismCore()
     {
         var now = _capturedNow;
@@ -622,6 +751,14 @@ public sealed class FlowExecutionContext : FlowContext
         _capturedNow = null;
         _newIds?.Clear();
         _seedRecorded |= seed is not null;
+
+        // What the step was *given* is cleared with what it read, and for the same reason the
+        // pinning lasts exactly one step: a capture belongs to one row. Leaving it would let
+        // an unreplayed step be served the previous one's history, which would make a replay
+        // that skipped a step look faithful.
+        _replayIds = null;
+        _replayIdCursor = 0;
+        _replaySeed = null;
 
         return now is null && seed is null && ids.Length == 0
             ? NondeterminismCapture.None
@@ -656,6 +793,9 @@ public sealed class FlowExecutionContext : FlowContext
         _capturedNow = null;
         _newIds?.Clear();
         _seedRecorded = false;
+        _replayIds = null;
+        _replayIdCursor = 0;
+        _replaySeed = null;
         _error = null;
         _dispatcher = null;
         _plan = null;
