@@ -21,7 +21,68 @@ public sealed class InMemoryFlowJournal : IFlowJournal
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<Guid, Entry> _instances = [];
+    private readonly List<Guid> _opened = [];
     private long _sequence;
+
+    /// <summary>
+    /// Every instance this journal holds, in the order it was asked to open them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Not part of <see cref="IFlowJournal"/>, and deliberately so: "list the instances" is
+    /// the query <see cref="IRecoveryIndex"/> was split out of the journal to serve, and a
+    /// store that could not serve it cheaply is a store that implements no index rather than
+    /// a journal with a missing member. This is what <see cref="InMemoryRecoveryIndex"/> reads
+    /// — the same one table the PostgreSQL adapter's query reads, expressed the only way a
+    /// dictionary can express it.
+    /// </para>
+    /// <para>
+    /// Insertion order, rather than the dictionary's, because it is order the caller can
+    /// predict. It is emphatically not staleness order — an index that returned this list as
+    /// it stands would fail
+    /// <c>RecoveryIndexConformance.CandidatesComeBackOldestFirst</c>, which is exactly what a
+    /// reference implementation should let a suite catch.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<FlowInstanceRecord> Instances
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return [.. _opened.Select(id => _instances[id].Record)];
+            }
+        }
+    }
+
+    /// <summary>
+    /// Moves an instance's last-written instant into the past, so a suite can arrange a cold
+    /// row without waiting for one.
+    /// </summary>
+    /// <param name="instanceId">The instance to age.</param>
+    /// <param name="updatedAt">When the row should claim it was last written.</param>
+    /// <returns>Whether the instance was there to be aged.</returns>
+    /// <remarks>
+    /// The counterpart of the <c>UPDATE flow_instance SET updated_at = now() - interval …</c>
+    /// the PostgreSQL fixture issues, and it exists for the same reason: staleness is the
+    /// premise of every recovery-index assertion, and the alternative is a test that sleeps for
+    /// a lease TTL. It is not on <see cref="IFlowJournal"/> and no contract member exposes it —
+    /// nothing but a test fixture can reach it.
+    /// </remarks>
+    public bool Backdate(Guid instanceId, DateTimeOffset updatedAt)
+    {
+        lock (_gate)
+        {
+            if (!_instances.TryGetValue(instanceId, out var entry))
+            {
+                return false;
+            }
+
+            entry.Record = entry.Record with { UpdatedAt = updatedAt };
+
+            return true;
+        }
+    }
 
     /// <inheritdoc />
     public ValueTask<Result<FlowInstanceRecord>> StartAsync(
@@ -60,6 +121,7 @@ public sealed class InMemoryFlowJournal : IFlowJournal
             };
 
             _instances[start.InstanceId] = new Entry(record);
+            _opened.Add(start.InstanceId);
 
             return Ok(record);
         }

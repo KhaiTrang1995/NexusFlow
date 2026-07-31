@@ -82,7 +82,7 @@ public sealed class DurableHostTests
         result.CompletedSteps.ShouldBe(2);
         dispatcher.Executed.ShouldBe([0, 1]);
 
-        var instances = await journal.InstancesAsync(ct);
+        var instances = journal.Instances;
 
         instances.Count.ShouldBe(1, "One flow, one instance row.");
         instances[0].State.ShouldBe(FlowInstanceState.Completed);
@@ -144,7 +144,7 @@ public sealed class DurableHostTests
         result.IsSuccess.ShouldBeTrue();
         dispatcher.Executed.ShouldBe([0, 1]);
 
-        (await journal.InstancesAsync(ct)).ShouldBeEmpty("No instance was opened.");
+        journal.Instances.ShouldBeEmpty("No instance was opened.");
         journal.Commits.ShouldBe(0);
     }
 
@@ -173,7 +173,7 @@ public sealed class DurableHostTests
         projected.IsSuccess.ShouldBeTrue();
         projected.Value.ShouldBe(5);
 
-        (await journal.InstancesAsync(ct)).Count.ShouldBe(2);
+        journal.Instances.Count.ShouldBe(2);
         journal.Commits.ShouldBe(4, "Two steps each.");
         host.HeldLeases.ShouldBe(0);
     }
@@ -217,7 +217,7 @@ public sealed class DurableHostTests
         drained.ShouldBeFalse("The flow is still inside its first step.");
         host.HeldLeases.ShouldBe(0, "The drain gave back what the flow did not.");
 
-        var instances = await journal.InstancesAsync(ct);
+        var instances = journal.Instances;
 
         (await leases.ReadAsync(instances[0].InstanceId, ct)).Error.Code.ShouldBe("lease.not_held",
             "Released, so another node acquires immediately instead of after a TTL.");
@@ -357,7 +357,7 @@ public sealed class DurableHostTests
 
         (reports[0].Resumed + reports[1].Resumed).ShouldBeGreaterThanOrEqualTo(Backlog);
 
-        var instances = await journal.InstancesAsync(ct);
+        var instances = journal.Instances;
 
         instances.Count.ShouldBe(Backlog);
         instances.ShouldAllBe(record => record.State == FlowInstanceState.Completed);
@@ -785,18 +785,29 @@ public sealed class DurableHostTests
     /// The reference journal, plus the one query a recovery scan needs.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A wrapper rather than a rewrite: everything a durable flow writes goes through a store
     /// that passes <c>JournalConformance</c>, and what is added is exactly
     /// <see cref="IRecoveryIndex"/> — which is a separate interface precisely because it is
     /// not part of executing an instance and not every store can serve it cheaply.
+    /// </para>
+    /// <para>
+    /// <strong>The query is the reference index's, not this file's.</strong> It used to be
+    /// implemented here, which made this the only implementation of a shipped contract that
+    /// nothing held to a suite — the exact thing this project's build file says it does not do,
+    /// two interfaces out of three. <c>InMemoryRecoveryIndex</c> now answers it and
+    /// <c>RecoveryIndexConformance</c> holds that to the contract, so the double these tests
+    /// sweep against is the one the suite passes.
+    /// </para>
     /// </remarks>
     private sealed class ScannableJournal : IFlowJournal, IRecoveryIndex
     {
         private readonly InMemoryFlowJournal _inner = new();
-        private readonly Lock _gate = new();
-        private readonly List<Guid> _started = [];
+        private readonly InMemoryRecoveryIndex _index;
 
         private int _commits;
+
+        public ScannableJournal() => _index = new InMemoryRecoveryIndex(_inner);
 
         /// <summary>Set to have the index refuse rather than answer.</summary>
         public bool RefuseTheQuery { get; init; }
@@ -804,18 +815,12 @@ public sealed class DurableHostTests
         /// <summary>How many step boundaries have been committed, across every instance.</summary>
         public int Commits => Volatile.Read(ref _commits);
 
+        /// <summary>Every instance this journal has been asked to open, in that order.</summary>
+        public IReadOnlyList<FlowInstanceRecord> Instances => _inner.Instances;
+
         public ValueTask<Result<FlowInstanceRecord>> StartAsync(
-            FlowInstanceStart start, CancellationToken cancellationToken)
-        {
-            ArgumentNullException.ThrowIfNull(start);
-
-            lock (_gate)
-            {
-                _started.Add(start.InstanceId);
-            }
-
-            return _inner.StartAsync(start, cancellationToken);
-        }
+            FlowInstanceStart start, CancellationToken cancellationToken) =>
+            _inner.StartAsync(start, cancellationToken);
 
         public ValueTask<Result<FencingToken>> FenceAsync(
             Guid instanceId, FencingToken token, CancellationToken cancellationToken) =>
@@ -850,76 +855,17 @@ public sealed class DurableHostTests
             _inner.ReadOutboxAsync(instanceId, cancellationToken);
 
         /// <inheritdoc />
-        public async ValueTask<Result<IReadOnlyList<AbandonedInstance>>> ListAbandonedAsync(
-            AbandonedInstanceQuery query, CancellationToken cancellationToken)
-        {
-            ArgumentNullException.ThrowIfNull(query);
-
-            if (RefuseTheQuery)
-            {
-                return Result.Fail<IReadOnlyList<AbandonedInstance>>(
-                    DurabilityErrors.InstanceNotFound(Guid.Empty));
-            }
-
-            var candidates = new List<AbandonedInstance>();
-
-            foreach (var record in await InstancesAsync(cancellationToken).ConfigureAwait(false))
-            {
-                var unfinished = record.State
-                    is FlowInstanceState.Pending
-                    or FlowInstanceState.Running
-                    or FlowInstanceState.Compensating;
-
-                if (!unfinished || record.UpdatedAt >= query.IdleBefore)
-                {
-                    continue;
-                }
-
-                if (query.TenantId is not null && query.TenantId != record.TenantId)
-                {
-                    continue;
-                }
-
-                candidates.Add(new AbandonedInstance(
-                    record.InstanceId,
-                    record.FlowId,
-                    record.FlowVersion,
-                    record.TenantId,
-                    record.State,
-                    record.UpdatedAt));
-            }
-
-            // Oldest first, as the contract asks: a page that advances rather than one that
-            // returns the same head for ever.
-            candidates.Sort(static (left, right) => left.UpdatedAt.CompareTo(right.UpdatedAt));
-
-            return Result.Ok<IReadOnlyList<AbandonedInstance>>(
-                candidates.Count <= query.Limit ? candidates : candidates[..query.Limit]);
-        }
-
-        /// <summary>Every instance this journal has been asked to open.</summary>
-        public async Task<IReadOnlyList<FlowInstanceRecord>> InstancesAsync(CancellationToken ct)
-        {
-            Guid[] ids;
-
-            lock (_gate)
-            {
-                ids = [.. _started];
-            }
-
-            var records = new List<FlowInstanceRecord>(ids.Length);
-
-            foreach (var id in ids)
-            {
-                var record = await ReadInstanceAsync(id, ct).ConfigureAwait(false);
-
-                if (record.IsSuccess)
-                {
-                    records.Add(record.Value);
-                }
-            }
-
-            return records;
-        }
+        /// <remarks>
+        /// The refusal is the only thing this adds. It is a knob no store has — a real store
+        /// fails this query by being unreachable — and it exists so that
+        /// <c>AQueryTheStoreRefusesIsReportedOnTheSweep</c> can check that the sweep reports an
+        /// error rather than swallowing or throwing it.
+        /// </remarks>
+        public ValueTask<Result<IReadOnlyList<AbandonedInstance>>> ListAbandonedAsync(
+            AbandonedInstanceQuery query, CancellationToken cancellationToken) =>
+            RefuseTheQuery
+                ? new(Result.Fail<IReadOnlyList<AbandonedInstance>>(
+                    DurabilityErrors.InstanceNotFound(Guid.Empty)))
+                : _index.ListAbandonedAsync(query, cancellationToken);
     }
 }
