@@ -28,3 +28,4 @@ FLOWX1026 | FlowX | Error | Sub-flow cannot be composed. [Documentation](https:/
 FLOWX1023 | FlowX | Error | Flow declares no steps. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1023.md)
 FLOWX1024 | FlowX | Warning | Emit step is recorded but not published. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1024.md)
 FLOWX1025 | FlowX | Warning | Trigger attribute cannot be read by the compiler. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1025.md)
+FLOWX1027 | FlowX | Warning | Step is unreachable after Fail. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1027.md)

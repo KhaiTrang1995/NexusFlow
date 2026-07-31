@@ -11,11 +11,13 @@ from at run time, or expensive enough that discovering it in production is the w
 place. A warning is a rule nobody has to obey; if a rule is worth having, it stops
 the build.
 
-Three entries below are not errors, and each says why on its own page.
+Four entries below are not errors, and each says why on its own page.
 [FLOWX1024](FLOWX1024.md) and [FLOWX1025](FLOWX1025.md) report gaps between the
 manifest and what the build can actually deliver, rather than mistakes in the source
 — and `FLOWX1025` is additionally about an attribute the developer usually does not
-own, which an error would make unusable. [FLOWX1011](FLOWX1011.md) is an error in `Durable`
+own, which an error would make unusable. [FLOWX1027](FLOWX1027.md) reports code that
+has no effect rather than code that is wrong, which is exactly what C#'s own
+`CS0162` is and exactly the severity C# gives it. [FLOWX1011](FLOWX1011.md) is an error in `Durable`
 flows and a warning in `Ephemeral` ones, which is the asymmetry
 [ADR-0003](../adr/ADR-0003-execution-profiles.md) ratified for the determinism rules:
 a durable flow is replayed and must take the branch it took the first time, an
@@ -43,6 +45,7 @@ ephemeral one is not replayed at all.
 | [FLOWX1023](FLOWX1023.md) | Flow declares no steps | A flow that silently does nothing |
 | [FLOWX1024](FLOWX1024.md) | Emit step is recorded but not published | A consumer waiting for an event the manifest promised |
 | [FLOWX1025](FLOWX1025.md) | Trigger attribute cannot be read by the compiler | A trigger missing from the manifest, and `flowx diff` unable to tell |
+| [FLOWX1027](FLOWX1027.md) | Step is unreachable after `Fail` | A plan, a manifest and a diagram listing work the flow can never do |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -78,8 +81,8 @@ and reusing one would leave two rules describing themselves with the same number
 a mistake this project has already made once, when a check was built as `FLOWX1022`
 while three documents described it as `FLOWX1020`. `FLOWX1026` took the next free id
 for exactly that reason: `FLOWX1022` is spoken for, and "sub-flow cannot be
-composed" is not contract compatibility. The next is `FLOWX1027`. The range is
-`FLOWX1001`–`FLOWX1099`.
+composed" is not contract compatibility. `FLOWX1027` took the one after it, for the
+same reason. The next is `FLOWX1028`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

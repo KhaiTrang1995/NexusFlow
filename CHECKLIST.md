@@ -552,12 +552,18 @@ which is the exact failure mode P1 exists to remove:
 **Gaps WP-20 and WP-22 surfaced in turn.** Same class again — declared, documented or
 reachable, and enforced or honoured by nothing:
 
-- [ ] **`.Fail(Error)` is parsed and then ignored.** It is on `IFlowBuilder`, it is in
-      the `08 §4` method table, and `FlowAnalyzer` does not model it — so a block whose
-      only call is `.Fail(...)` compiles to an **empty** block. The consequence is worse
-      than a no-op: `08 §3.2`'s own `Switch` example uses `.Default(b => b.Fail(...))` to
-      reject an unsupported channel, and that default currently falls through and accepts
-      it. Flagged in the doc; the fix is a work package
+- [x] **`.Fail(Error)` was parsed and then ignored.** It was on `IFlowBuilder`, it was in
+      the `08 §4` method table, and `FlowAnalyzer` did not model it — so a block whose
+      only call was `.Fail(...)` compiled to an **empty** block, and `08 §3.2`'s own
+      `Switch` example, which uses `.Default(b => b.Fail(...))` to reject an unsupported
+      channel, fell through and accepted it. Closed by WP-38. `Fail` is a terminal step:
+      the error is a `static readonly Error` in the generated dispatcher, delivered
+      through the same `ExecuteAsync` a declined payment comes back on, so **the completed
+      compensable steps unwind exactly as they would on a capability failure** — anything
+      else would mean the arm that rejects a request leaves the stock it reserved. The
+      error's *value* never reaches `flowx.manifest.json`, which publishes
+      `"kind": "Fail"` and nothing more; steps written after one are unreachable and
+      reported as `FLOWX1027`
 - [x] **`FLOWX1013` — parallel branch disjointness.** Closed by WP-24:
       `ParallelSlotAnalyzer` reports two branches of a fork whose capabilities declare the
       same output contract, which is the slot the generated dispatcher writes. Its limit is
@@ -588,16 +594,17 @@ reachable, and enforced or honoured by nothing:
       text — which catches a syntax error but not an unresolved name, a wrong delegate
       type argument, or an unimplemented interface member. Fixed by WP-20's
       `GeneratedCompileErrorsIn`, and a real compile is now asserted
-- [ ] **`ctx.Input` does not compile in any predicate or projection.** Found by WP-25 and
-      confirmed against a real build: the DSL signature is
-      `Func<FlowContext<TIn>, …>`, but `FlowEmitter` writes every emitted delegate as
+- [x] **`ctx.Input` did not compile in any predicate or projection.** Found by WP-25,
+      confirmed against a real build, closed by WP-38. The DSL signature is
+      `Func<FlowContext<TIn>, …>`, but `FlowEmitter` wrote every emitted delegate as
       `Func<FlowContext, …>` — the **non-generic base**, on which `Input` is not
-      declared. So the lambda source is copied into a field whose parameter type has lost
-      the member, and the build fails with **CS1061**. This is not a corner: `08 §3.1`
-      states conditions may read `ctx.Input`, `08 §69` and `§200` use it in worked
-      examples, and the `FLOWX1011` page repeats it. **Every one of those examples is
-      uncompilable.** The fix is in `FlowEmitter`, which is why it is not fixed here — it
-      needs its own package
+      declared — so the lambda source was copied into a field whose parameter type had
+      lost the member and the build failed with **CS1061**, in generated code, against
+      three documents that all said it worked. The cause was that `FlowContext<TIn>` was
+      an abstract class **nothing anywhere derived from**: the engine's context is pooled
+      and shared by every flow, so no such object could exist. It is now a `readonly
+      struct` view over any `FlowContext`, which costs a register, allocates nothing, and
+      works inside a `ForEach` body and a sub-flow where a cast would have thrown
 
 ### WP-10 · what it delivered
 

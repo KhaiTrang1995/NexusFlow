@@ -835,6 +835,14 @@ public static class ManifestWriter
         StepKindModel.Parallel => "Parallel",
         StepKindModel.ForEach => "ForEach",
         StepKindModel.SubFlow => "SubFlow",
+
+        // The kind, and deliberately nothing else. The committed schema's step object is
+        // additionalProperties:false and has no field for an error — and the Error an
+        // author writes carries a message that routinely interpolates business values,
+        // which is the same line CapabilityErrorModel draws when it publishes a code and a
+        // category and never a message. "This arm terminates the flow" is structure; what
+        // it terminates with stays in compiled code.
+        StepKindModel.Fail => "Fail",
         _ => "Capability",
     };
 

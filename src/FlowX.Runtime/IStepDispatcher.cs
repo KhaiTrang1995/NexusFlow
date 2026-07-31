@@ -49,6 +49,13 @@ public readonly struct StepOutcome
 public interface IStepDispatcher
 {
     /// <summary>Runs the step at <paramref name="stepIndex"/>.</summary>
+    /// <remarks>
+    /// A <see cref="StepKind.Fail"/> arrives here too, and answers
+    /// <see cref="StepOutcome.Failed"/> with the error its flow declared. That is
+    /// deliberate rather than convenient: it means the engine cannot tell a deliberate
+    /// rejection from a declined payment, so both take the failure path and both unwind
+    /// what completed — which is what a saga needs them to be.
+    /// </remarks>
     /// <param name="stepIndex">Position in the plan's step graph.</param>
     /// <param name="ctx">The flow's pooled context.</param>
     /// <param name="ct">Cancellation linked to the caller's token.</param>

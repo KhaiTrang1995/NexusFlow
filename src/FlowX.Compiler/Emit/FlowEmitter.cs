@@ -98,10 +98,12 @@ public static class FlowEmitter
 
         EmitDescriptors(writer, flow);
         writer.Line();
+        EmitTypedContext(writer, flow);
         EmitConditions(writer, flow);
         EmitSelectors(writer, flow);
         EmitIterations(writer, flow);
         EmitSubFlowMaps(writer, flow);
+        EmitFailures(writer, flow);
         EmitPlan(writer, flow);
         writer.Line();
         EmitProjection(writer, flow);
@@ -115,10 +117,23 @@ public static class FlowEmitter
     /// Emits the flow's output projection from its <c>.Return(...)</c> clause.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A <c>static readonly</c> field, not a method or a lambda built per call: the engine
     /// takes it as a <c>Func</c>, and a field is allocated once at type initialisation, so
     /// passing it costs nothing and the zero-allocation budget survives contact with the
     /// feature that gives a flow an answer to return.
+    /// </para>
+    /// <para>
+    /// <strong>Wrapped in <c>FlowContext.Untyped&lt;TIn, TOut&gt;(...)</c> rather than
+    /// copied bare.</strong> The author's expression is written against
+    /// <c>FlowContext&lt;TIn&gt;</c> — that is the parameter type <c>.Return(...)</c>
+    /// declares, and the only one on which <c>ctx.Input</c> resolves — while
+    /// <c>FlowEngine.ExecuteAsync</c> and <c>MapFlow</c> both take a
+    /// <c>Func&lt;FlowContext, TOut&gt;</c>. One call adapts the first shape to the
+    /// second; retyping the engine would push a generic parameter through two packages to
+    /// save it. The field is still one field, still <c>static readonly</c>, and still the
+    /// author's own text inside a <c>#line</c> pair.
+    /// </para>
     /// </remarks>
     private static void EmitProjection(SourceWriter writer, FlowModel flow)
     {
@@ -135,10 +150,58 @@ public static class FlowEmitter
         EmitLineDirective(writer, flow.ReturnLocation);
         writer.Line(
             "public static readonly Func<FlowContext, " + flow.OutputTypeName + "> Projection = " +
-            flow.ReturnProjection + ";");
+            "FlowContext.Untyped<" + flow.InputTypeName + ", " + flow.OutputTypeName + ">(" +
+            flow.ReturnProjection + ");");
         EmitLineDirectiveEnd(writer, flow.ReturnLocation);
         writer.Line();
     }
+
+    /// <summary>
+    /// Emits the one-line conversion from the engine's context to the typed view every
+    /// copied expression is written against.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the whole of the fix for <c>ctx.Input</c>.</strong> Every delegate on
+    /// <c>IFlowBuilder</c> takes a <c>Func&lt;FlowContext&lt;TIn&gt;, …&gt;</c>, and this
+    /// generator used to copy the author's lambda into a field typed at the non-generic
+    /// <c>FlowContext</c> — on which <c>Input</c> is not declared. A predicate that read it
+    /// compiled in the author's editor and then failed with CS1061 inside generated source.
+    /// The fields below are now typed at the view, and this is what produces one.
+    /// </para>
+    /// <para>
+    /// <c>FlowContext&lt;TIn&gt;</c> is a <c>readonly struct</c> wrapping a reference, so
+    /// this allocates nothing and the JIT inlines it away. It takes the context it is
+    /// handed rather than a cast, which is what makes a predicate inside a <c>ForEach</c>
+    /// body work: there the context is the iteration's scope, not the flow's own.
+    /// </para>
+    /// </remarks>
+    private static void EmitTypedContext(SourceWriter writer, FlowModel flow)
+    {
+        if (!NeedsTypedContext(flow))
+        {
+            return;
+        }
+
+        writer.Line("/// <summary>The typed view your expressions receive: a struct over whatever");
+        writer.Line("/// context is current, so it allocates nothing.</summary>");
+        writer.Line(
+            "private static FlowContext<" + flow.InputTypeName + "> Typed(FlowContext ctx) => " +
+            "new FlowContext<" + flow.InputTypeName + ">(ctx);");
+        writer.Line();
+    }
+
+    /// <summary>
+    /// Whether the dispatcher has a call site that needs the view.
+    /// </summary>
+    /// <remarks>
+    /// The <c>.Return(...)</c> projection deliberately does not count: it is adapted once
+    /// at its own field through <c>FlowContext&lt;TIn&gt;.Untyped(...)</c>, so a linear
+    /// flow — which is most flows — gets no helper it would only call from one place.
+    /// </remarks>
+    private static bool NeedsTypedContext(FlowModel flow) =>
+        flow.AllSteps.Any(s => s.Kind is StepKindModel.Condition or StepKindModel.Switch
+            or StepKindModel.ForEach or StepKindModel.SubFlow);
 
     /// <summary>
     /// Emits the names of the contract members marked <c>[Sensitive]</c>.
@@ -221,8 +284,8 @@ public static class FlowEmitter
         {
             EmitLineDirective(writer, condition.PredicateLocation);
             writer.Line(
-                "public static readonly Func<FlowContext, bool> Step" + condition.Index + " = " +
-                condition.Predicate + ";");
+                "public static readonly Func<FlowContext<" + flow.InputTypeName + ">, bool> Step" +
+                condition.Index + " = " + condition.Predicate + ";");
             EmitLineDirectiveEnd(writer, condition.PredicateLocation);
         }
 
@@ -261,8 +324,8 @@ public static class FlowEmitter
         {
             EmitLineDirective(writer, step.SelectorLocation);
             writer.Line(
-                "public static readonly Func<FlowContext, " + step.SelectorTypeName + "> Step" + step.Index +
-                " = " + step.Selector + ";");
+                "public static readonly Func<FlowContext<" + flow.InputTypeName + ">, " +
+                step.SelectorTypeName + "> Step" + step.Index + " = " + step.Selector + ";");
             EmitLineDirectiveEnd(writer, step.SelectorLocation);
         }
 
@@ -321,8 +384,9 @@ public static class FlowEmitter
         {
             EmitLineDirective(writer, step.SelectorLocation);
             writer.Line(
-                "public static readonly Func<FlowContext, System.Collections.Generic.IReadOnlyList<" +
-                step.ItemTypeName + ">> Step" + step.Index + " = " + step.Selector + ";");
+                "public static readonly Func<FlowContext<" + flow.InputTypeName +
+                ">, System.Collections.Generic.IReadOnlyList<" + step.ItemTypeName + ">> Step" +
+                step.Index + " = " + step.Selector + ";");
             EmitLineDirectiveEnd(writer, step.SelectorLocation);
         }
 
@@ -373,9 +437,65 @@ public static class FlowEmitter
         {
             EmitLineDirective(writer, step.SubFlowMapLocation);
             writer.Line(
-                "public static readonly Func<FlowContext, " + step.SubFlowInputTypeName + "> Step" +
-                step.Index + " = " + step.SubFlowMap + ";");
+                "public static readonly Func<FlowContext<" + flow.InputTypeName + ">, " +
+                step.SubFlowInputTypeName + "> Step" + step.Index + " = " + step.SubFlowMap + ";");
             EmitLineDirectiveEnd(writer, step.SubFlowMapLocation);
+        }
+
+        writer.CloseBrace();
+        writer.Line();
+    }
+
+    /// <summary>The flow's terminal failures, ascending by flat index.</summary>
+    private static System.Collections.Generic.List<StepModel> Failures(FlowModel flow) => flow.AllSteps
+        .Where(s => s.Kind == StepKindModel.Fail)
+        .OrderBy(s => s.Index)
+        .ToList();
+
+    /// <summary>
+    /// Emits one <c>static readonly Error</c> per <c>.Fail(...)</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A field, for the reason the predicates and the selectors are: it is built once at
+    /// type initialisation, so rejecting a request costs no allocation at the moment the
+    /// flow is already about to unwind. An <c>Error</c> is immutable, so one instance
+    /// shared by every execution is not merely cheap but correct.
+    /// </para>
+    /// <para>
+    /// <strong>This is where the error value lives, and the only place it lives.</strong>
+    /// The compiled plan carries a <c>StepKind.Fail</c> node with no payload and the
+    /// manifest carries <c>"kind": "Fail"</c>, because a message interpolating a customer's
+    /// order number is a value and the manifest publishes structure. The expression is the
+    /// author's own, copied verbatim inside a <c>#line</c> pair, so a factory that decorates
+    /// the error with structured detail compiles exactly as written and a breakpoint lands
+    /// on the line they wrote.
+    /// </para>
+    /// </remarks>
+    private static void EmitFailures(SourceWriter writer, FlowModel flow)
+    {
+        var failures = Failures(flow);
+
+        if (failures.Count == 0)
+        {
+            return;
+        }
+
+        writer.Line("/// <summary>Terminal errors, built once at type initialisation.</summary>");
+        writer.Line("/// <remarks>");
+        writer.Line("/// Each is your <c>.Fail(...)</c> expression, copied verbatim. Reaching one ends");
+        writer.Line("/// the flow: the engine takes the failure path and the completed compensable");
+        writer.Line("/// steps unwind in strict reverse, exactly as they would for a declined payment.");
+        writer.Line("/// </remarks>");
+        writer.Line("private static class Failures");
+        writer.OpenBrace();
+
+        foreach (var step in failures)
+        {
+            EmitLineDirective(writer, step.FailureLocation);
+            writer.Line(
+                "public static readonly Error Step" + step.Index + " = " + step.FailureExpression + ";");
+            EmitLineDirectiveEnd(writer, step.FailureLocation);
         }
 
         writer.CloseBrace();
@@ -586,6 +706,11 @@ public static class FlowEmitter
                 return "StepNode.ForAwaitSignal(" + step.Index + ", " + Quote(step.SignalType!) +
                        ", TimeSpan.FromHours(1))";
 
+            case StepKindModel.Fail:
+                // No payload. The error is in `Failures` above, which is where a business
+                // value belongs — the plan says only that the flow ends here.
+                return "StepNode.ForFail(" + step.Index + ")";
+
             default:
                 var compensation = step.IsCompensable
                     ? ", Descriptors.Step" + step.Index + "Compensation"
@@ -681,7 +806,8 @@ public static class FlowEmitter
             writer.OpenBrace();
             writer.Line(
                 "return new SubFlowSource(" + step.SubFlowTypeName + ".Plan, " +
-                SubFlowFieldName(step.SubFlowTypeName!) + ", SubFlowInputs.Step" + step.Index + "(ctx));");
+                SubFlowFieldName(step.SubFlowTypeName!) + ", SubFlowInputs.Step" + step.Index +
+                "(Typed(ctx)));");
             writer.CloseBrace();
         }
 
@@ -799,7 +925,7 @@ public static class FlowEmitter
         {
             writer.Line("case " + step.Index + ":");
             writer.OpenBrace();
-            writer.Line("var items = Iterations.Step" + step.Index + "(ctx);");
+            writer.Line("var items = Iterations.Step" + step.Index + "(Typed(ctx));");
             writer.Line("return new IterationSource(items, items.Count);");
             writer.CloseBrace();
         }
@@ -964,6 +1090,14 @@ public static class FlowEmitter
                     step.CapabilityOutput,
                     step.Location);
             }
+            else if (step.Kind == StepKindModel.Fail)
+            {
+                // `.Fail(...)` invokes nothing; it hands the engine the error your flow
+                // declared. Delivered through the same call a declined payment comes back
+                // on, so the engine treats the two identically — the failure path, and the
+                // unwind of everything compensable that completed before this point.
+                writer.Line("return StepOutcome.Failed(Failures.Step" + step.Index + ");");
+            }
             else
             {
                 // Emit and AwaitSignal have no capability to call; the engine and the
@@ -1087,7 +1221,7 @@ public static class FlowEmitter
         {
             writer.Line("case " + condition.Index + ":");
             writer.OpenBrace();
-            writer.Line("return Conditions.Step" + condition.Index + "(ctx);");
+            writer.Line("return Conditions.Step" + condition.Index + "(Typed(ctx));");
             writer.CloseBrace();
         }
 
@@ -1150,7 +1284,7 @@ public static class FlowEmitter
         {
             writer.Line("case " + step.Index + ":");
             writer.OpenBrace();
-            writer.Line("var value = Selectors.Step" + step.Index + "(ctx);");
+            writer.Line("var value = Selectors.Step" + step.Index + "(Typed(ctx));");
 
             for (var arm = 0; arm < step.Cases.Count; arm++)
             {

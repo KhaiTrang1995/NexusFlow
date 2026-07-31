@@ -165,7 +165,7 @@ public sealed class SubFlowTests
         plan.ShouldContainText("private static class SubFlowInputs",
             "A field, not a lambda per execution: the same reason predicates and selectors " +
             "are cached statics.");
-        plan.ShouldContainText("Func<FlowContext, Sample.FulfilOrder> Step1",
+        plan.ShouldContainText("Func<FlowContext<Sample.PlaceOrder>, Sample.FulfilOrder> Step1",
             "Typed at the child's declared input, so nothing is boxed and a wrong mapping " +
             "is a build error rather than the child's first ctx.Get<T>() throwing.");
         plan.ShouldContainText("child.Set((Sample.FulfilOrder)source.Input!);",
