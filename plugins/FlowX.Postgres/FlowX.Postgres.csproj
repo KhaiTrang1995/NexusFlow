@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>
+      FlowX PostgreSQL journal and lease store: the append-only step history, fenced
+      writes, the transactional outbox, retention and expand/contract migrations.
+    </Description>
+    <PackageTags>flowx;postgres;postgresql;journal;durable-execution;outbox;saga</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Pinned exactly, like every other dependency in this repository: a data-access
+      library that floats can change how a value round-trips between two checkouts of
+      the same commit, and the journal is the replay source.
+
+      Npgsql 10 targets net10.0 directly and its only transitive dependencies are the
+      two Microsoft.Extensions abstractions below, which it would pull in anyway. The
+      static ADO.NET surface this adapter uses — NpgsqlCommand, explicit NpgsqlDbType
+      parameters, typed reader accessors — is the trim- and AOT-safe half of the
+      library. Nothing here touches EnableDynamicJson or any other reflection path,
+      which is what keeps constraint C2 satisfied without a suppression.
+    -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The migrations ship as SQL rather than as C# string constants so that a DBA can
+      read, review and apply them without a .NET toolchain — which is the ordinary way a
+      schema change reaches production. MigrationTests reads the same files.
+    -->
+    <EmbeddedResource Include="Migrations/*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      A plugin depends on the runtime; the runtime never depends on a plugin
+      (RuntimeDoesNotReferenceAnyPlugin). This one depends on less than that: the
+      journal and lease contracts, Result and Error all live in FlowX.Abstractions, so
+      a store needs nothing from Core, Runtime or Hosting. Adding a reference it does
+      not use would make the dependency graph claim a coupling that is not there.
+    -->
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>
