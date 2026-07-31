@@ -24,3 +24,31 @@ public sealed class InMemoryLeaseStoreConformanceTests : LeaseStoreConformance
     protected override ValueTask<ILeaseStore> CreateStoreAsync() =>
         new(new InMemoryLeaseStore());
 }
+
+/// <summary>
+/// Runs the whole recovery-index suite against the reference store.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>This is where the second implementation of <see cref="IRecoveryIndex"/> now
+/// lives.</strong> Until this suite existed it was a private nested class inside
+/// <c>DurableHostTests</c> — a hand-rolled index, in a test file, that nothing held to a
+/// contract, in a project whose own build file says durable execution is exercised "against the
+/// reference <see cref="IFlowJournal"/> and <see cref="ILeaseStore"/> rather than doubles
+/// written here" because "a second in-memory pair would be a pair nothing holds to the
+/// conformance suites". That was true of the journal and the lease store and quietly untrue of
+/// the index.
+/// </para>
+/// <para>
+/// It belongs beside the other two references for the same reason they are here: it is the
+/// implementation a store author reads when a conformance failure message is not enough, and it
+/// is the one that proves the suite is passable at all. <c>DurableHostTests</c> now delegates
+/// to it, so the double the host tests run against is the one this suite holds.
+/// </para>
+/// </remarks>
+public sealed class InMemoryRecoveryIndexConformanceTests : RecoveryIndexConformance
+{
+    /// <inheritdoc />
+    protected override ValueTask<RecoveryStore> CreateStoreAsync() =>
+        new(new InMemoryRecoveryStore());
+}
