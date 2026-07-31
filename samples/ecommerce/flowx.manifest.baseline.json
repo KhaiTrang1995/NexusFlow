@@ -58,7 +58,7 @@
         "order.invalid_quantity",
         "payment.declined"
       ],
-      "source": "PlaceOrderFlow.cs:32"
+      "source": "PlaceOrderFlow.cs:52"
     }
   ],
   "capabilities": [

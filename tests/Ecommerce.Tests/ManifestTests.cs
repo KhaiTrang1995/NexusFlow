@@ -51,7 +51,7 @@ public sealed class ManifestTests
         // shipping the build agent's directory layout to whoever reads it.
         var source = Flow.GetProperty("source").GetString().ShouldNotBeNull();
 
-        source.ShouldBe("PlaceOrderFlow.cs:32");
+        source.ShouldBe("PlaceOrderFlow.cs:52");
         source.ShouldNotStartWith("/");
         source.ShouldNotContain(":\\");
     }

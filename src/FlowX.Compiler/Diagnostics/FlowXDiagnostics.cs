@@ -217,6 +217,65 @@ public static class FlowXDiagnostics
         "whose result the flow can then read.",
         DiagnosticSeverity.Warning);
 
+    /// <summary>FLOWX1012 — compensation declared on a flow whose profile is not <c>Durable</c>.</summary>
+    /// <remarks>
+    /// <para>
+    /// Specified alongside <see cref="AwaitSignalRequiresDurable"/> in ADR-0003's negative
+    /// bullet — "a wrong profile is a real bug class" — and the half of that pair that was
+    /// deliberately not written for two phases. The check was never the obstacle. The
+    /// <em>remedy</em> was: <c>Profile = Durable</c> changed nothing while every profile ran
+    /// in memory, and once WP-52 made the runtime read the profile it changed something
+    /// worse than nothing — a durable flow with no journal is refused outright. Both halves
+    /// expired. WP-53 and WP-55 give a host a journal and a lease store to register, so the
+    /// recommendation this descriptor makes is one a reader can actually carry out.
+    /// </para>
+    /// <para>
+    /// <strong>What the profile actually buys, stated exactly, because overstating it is how
+    /// this rule would become the next thing nobody believes.</strong> A durable flow commits
+    /// a row per step boundary; an instance whose node dies is found by the recovery scan and
+    /// re-entered on the same step loop; the loop replays the committed rows, and a completed
+    /// step that declared a compensation goes back onto the unwind stack as it is skipped. So
+    /// a compensation pending across a crash survives, which is the whole claim. Two things
+    /// are still true under <c>Durable</c> and are named in the description rather than
+    /// discovered later: the unwind itself is not journaled, so a crash <em>during</em>
+    /// compensation still loses it (<c>06 §7</c> rule 4), and a resumed parent does not
+    /// rebuild a skipped sub-flow's compensations (WP-57).
+    /// </para>
+    /// <para>
+    /// <strong>A warning, and not by inheritance from the determinism set.</strong> That set
+    /// escalates to an error where the compilation can prove the code is on a durable flow's
+    /// replay path; this rule reports precisely because the flow is <em>not</em> durable, so
+    /// the escalation condition and the trigger are mutually exclusive and there is nothing
+    /// to inherit. An error is wrong on its own terms as well: the source is not incorrect —
+    /// a compensable ephemeral flow unwinds correctly on every failure that is not a crash,
+    /// which is the trade ADR-0003 ratified and <c>docs/DEBT.md</c> cites as a decision
+    /// rather than debt — and the remedy depends on a host registration no analyzer can see.
+    /// Info is what ADR-0003 already got wrong twice: it never reaches a build log, and this
+    /// rule fires only on flows that declined durability, which is nearly all of them.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor CompensationIsNotDurable = Create(
+        "FLOWX1012",
+        "Compensation is declared on a flow that is not durable",
+        "Flow '{0}' declares compensation ({1}) but its profile is {2}, so an instance that " +
+        "dies between the compensable step and the end of the flow takes the pending " +
+        "compensation with it",
+        "An ephemeral instance lives entirely in the memory of the process that started it, " +
+        "and so does its compensation stack. A crash, a deploy or a scale-in after a " +
+        "compensable step has completed leaves that step's effect standing with nothing left " +
+        "to undo it and no record that it happened — a reservation, a hold or an " +
+        "authorisation that no operator has a way to find. Set " +
+        "Profile = ExecutionProfile.Durable, which journals each step boundary and rebuilds " +
+        "the unwind stack when a recovered instance replays them, and register a journal and " +
+        "a lease store on the host: a durable flow started without them is refused with " +
+        "flow.durability_not_configured rather than run ephemerally. That costs a store round " +
+        "trip per step, so it is a decision and not a formality — if the effect is cheap to " +
+        "leak, or something already sweeps it, keep the profile and record the choice. Two " +
+        "limits remain under Durable and are not fixed by this change: the unwind is not " +
+        "itself journaled, so a crash during compensation still loses it, and a resumed " +
+        "parent does not rebuild a skipped sub-flow's compensations.",
+        DiagnosticSeverity.Warning);
+
     /// <summary>FLOWX1013 — two branches of a <c>Parallel</c> write the same context slot.</summary>
     /// <remarks>
     /// <para>
@@ -639,6 +698,7 @@ public static class FlowXDiagnostics
         MutableStateIsHeld,
         CapabilityMissingAuthorization,
         PredicateMustBePure,
+        CompensationIsNotDurable,
         ParallelBranchesMustWriteDisjointSlots,
         RetryRequiresIdempotency,
         CapabilityHasMultipleContracts,

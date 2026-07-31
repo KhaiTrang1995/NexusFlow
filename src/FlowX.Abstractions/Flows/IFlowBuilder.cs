@@ -273,6 +273,12 @@ public interface IStepBuilder<TIn, TOut> : IFlowBuilder<TIn, TOut>
     /// Registers the business inverse of this step. Compensation runs in strict reverse
     /// order of successfully completed steps, each under its own policy chain.
     /// </summary>
+    /// <remarks>
+    /// Outside <see cref="ExecutionProfile.Durable"/> the unwind stack lives only in the
+    /// memory of the process running the instance, so a crash, a deploy or a scale-in
+    /// between this step and the end of the flow leaves its effect standing with nothing
+    /// left to undo it. <c>FLOWX1012</c> reports that at build time.
+    /// </remarks>
     IStepBuilder<TIn, TOut> CompensateWith<TCompensation>();
 
     /// <summary>Attaches a policy set to this step.</summary>

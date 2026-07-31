@@ -246,9 +246,27 @@ serialiser, while nothing read it at all; it no longer does.
 `Authorization.Authenticated` and `Authorization.Permission`, and those reach the
 manifest, but the policy pipeline that acts on them arrives with P4.
 
-**The flow is ephemeral.** Durable execution — the journal, the crash-and-resume
-guarantee — is P2. Until then a node that dies mid-flow loses the flow, and the
-compensation that would have run with it.
+**The flow is ephemeral, and that is now a choice rather than a wait.** This paragraph used
+to say durable execution was P2 and would arrive. It has: the runtime journals a `Durable`
+flow's step boundaries, `plugins/FlowX.Postgres` is a store that passes the conformance
+suite unmodified, and a recovered instance puts each completed compensable step back on its
+unwind stack as it replays. The compiler says so too — **FLOWX1012** fires on this flow,
+because a compensable saga on `Ephemeral` loses its pending unwind when the node dies, and
+the hold `ReserveInventory` took is then owned by nobody.
+
+The sample keeps `Ephemeral` and suppresses the rule with a stated reason rather than a
+`FLOWX-DEBT` marker: [docs/DEBT.md](../../docs/DEBT.md) is explicit that a trade recorded in
+an ADR is a *decision* rather than debt, and this one is
+[ADR-0003](../../docs/adr/ADR-0003-execution-profiles.md). The reason is this sample's whole
+value — `dotnet run` serves an order with nothing behind it, and the only journal FlowX
+ships is PostgreSQL, so `Durable` here would mean a reference application that cannot place
+an order without a database, buying a crash-safe unwind for an inventory store that is a
+dictionary and a payment gateway that always approves.
+
+So, plainly: **a node that dies between the reservation and the end of this flow leaves the
+hold standing, and nothing anywhere records that it should have been released.** That is
+what the profile costs. The full argument, including what would change the answer, is on
+[docs/diagnostics/FLOWX1012.md](../../docs/diagnostics/FLOWX1012.md#the-reference-sample-fires-this-rule).
 
 ---
 

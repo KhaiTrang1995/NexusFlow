@@ -161,7 +161,8 @@ one is a row rather than a code path. What blocks them is that ADR-0003 makes th
 diagnostic never reaches a build log — so they would ship doing nothing anywhere.
 `FLOWX1012` is blocked the same way from the other end: the check is one predicate, and
 its only available fix, `Profile = Durable`, changes nothing while there is no journal.
-A rule whose fix is a lie is worse than an unraised id.
+A rule whose fix is a lie is worse than an unraised id. *This paragraph under-counted the
+work by one step — see the note below.*
 
 The day the runtime reads the profile, all four stop being blocked at once, and
 `FLOWX1006` follows from commitment 5 above. **That is an argument about ordering, not a
@@ -171,8 +172,14 @@ because five of P2's diagnostics deliverables become cheap on the day it does, a
 to be revisited **as a set** rather than one row at a time.
 
 *WP-52 discharged the premise: the runtime reads the profile, so `FLOWX1007`–`FLOWX1009`
-and `FLOWX1012` are no longer blocked on severity or on a fix that changes nothing. They
-are unwritten, which is a smaller and more ordinary thing to be. WP-58 and WP-60.*
+and `FLOWX1012` are no longer blocked on severity or on a fix that changes nothing.* **All
+four are now written** — WP-58 raised the first three, and WP-60 raised `FLOWX1012`. *The
+ordering argument above held, with one correction it is worth recording: the four did not
+stop being blocked "at once". `FLOWX1012` alone recommends a fix the reader must apply, and
+between WP-52 and WP-55 that fix produced a flow the runtime **refused** — a journal was
+read for but none could be registered. It needed the store adapters this section placed
+after it. The other three escalate on a profile and never ask anyone to change one, which is
+why they could land on the seam alone.*
 
 <a id="amendments-the-first-implementation-forced-wp-52"></a>
 
@@ -422,7 +429,7 @@ scaffold it was written to remove.
 | The closing note in [06 §5](../06-Execution-Engine.md#5-the-determinism-boundary) — "`ReplayDeterminismTest` does not exist" and "`FlowX.Runtime` never reads `ExecutionProfile`" — plus the four **no — P2** rows in its table | The test exists at WP-61; the rows are raised at WP-58 and WP-59. The severity paragraph is re-decided **as a set**, including `FLOWX1011`'s deliberate Warning deviation | **three quarters.** The profile sentence went at WP-52. **WP-58 raised `FLOWX1007`–`FLOWX1009` and re-decided the severity stance as a set** — Warning by default, Error where the compilation can prove the code is on a durable flow's replay path; Info rejected outright, [reasoned in ADR-0003](ADR-0003-execution-profiles.md). The fourth row, `FLOWX1006`, waits on the payload writer (WP-59), and `ReplayDeterminismTest` still does not exist (WP-61) |
 | The header `[!WARNING]` in [11-Distributed-Runtime](../11-Distributed-Runtime.md) — "nothing in this document is implemented" | Section by section, as each lands. It is not removed wholesale on the first commit | **partial, as designed.** §2 (the journal), §3 (resume) and the lease and recovery halves of §4 have an implementation, and §2's ERD is [amended by ADR-0016](ADR-0016-postgres-journal-adapter.md) rather than merely annotated. The outbox and the multi-node sections do not. The box says so per section |
 | The `[!WARNING]` in [ADR-0006](ADR-0006-journal-and-leases.md) — "Accepted, not implemented" — and its literature-derived "measured ceiling", replaced by B7's real number | The record stops being a prediction | **half, and the same half.** "No `IFlowJournal` anywhere in `src/`" and "the runtime does not read `ExecutionProfile`" were corrected at WP-54, and WP-53 makes them false a second way — a store now exists outside the test assembly. The **measured ceiling is still a literature figure**, and WP-53 did not move it: B7 has no harness (WP-50), so a real database has been made *correct* here without ever being made *fast* |
-| [ADR-0003](ADR-0003-execution-profiles.md)'s negative bullet "The asymmetry is currently theoretical in one direction", and the `FLOWX1012` sentence in the bullet above it | Both describe the gap this ADR closes | **done** — WP-54. The asymmetry bullet is rewritten; `FLOWX1012`'s sentence keeps "never built" and loses "its fix would change nothing" |
+| [ADR-0003](ADR-0003-execution-profiles.md)'s negative bullet "The asymmetry is currently theoretical in one direction", and the `FLOWX1012` sentence in the bullet above it | Both describe the gap this ADR closes | **done, and finished at WP-60.** The asymmetry bullet was rewritten at WP-54, when `FLOWX1012`'s sentence kept "never built" and lost "its fix would change nothing". `FLOWX1012` is now built, so the sentence is gone entirely: the bullet names both of the rules it specified, and records why the second is a Warning |
 | Risk **R2** in [05 §11](../05-Architecture.md#11-risks-and-technical-debt) | It stops being *unreachable* and becomes live-and-mitigated, with WP-61 as the mitigation actually named | **live, and now partly mitigated.** R2 went live at WP-52 with nothing standing behind it. WP-58 built three of its four named analyzers, so ambient reads on a replay path are a build error where the compilation can prove the path. What is still missing is the one that would *demonstrate* replay rather than forbid the ways it breaks — `ReplayDeterminismTest`, WP-61 — plus the dependency amendment 1 added on `FLOWX1011`'s coverage |
 | The blocked row for `CrossTenantAccessIsDenied` in [CHECKLIST §4](../../CHECKLIST.md) loses **half** its blocker | "there is no journal, so there is no audit event to assert" ceases to be true. It stays blocked on P4's policy execution, and the row must say so rather than being ticked | **done** — WP-54. Half struck, row still `[ ]`, blocked on P4 (policy execution) and P3 ("every trigger kind") |
 | `JournalBenchmarks` absent from [14 §8](../14-Performance.md#8-benchmark-suite-and-ci-gating), and the "not written — no journal, no second node" chaos row in [21 §7](../21-Quality-Gates.md) | WP-50 writes the harness *before* the journal, so these two are the **first** entries removed, not the last | **not yet, and the prediction inverted.** WP-50 has not started, so both entries stand — but their stated reason ("there is no journal") has stopped being true. They are the *last* entries removed, not the first, and the reason is corrected in both files rather than the state |
