@@ -51,6 +51,7 @@ ephemeral one is not replayed at all.
 | [FLOWX1024](FLOWX1024.md) | Emit step is recorded but not published | A consumer waiting for an event the manifest promised |
 | [FLOWX1025](FLOWX1025.md) | Trigger attribute cannot be read by the compiler | A trigger missing from the manifest, and `flowx diff` unable to tell |
 | [FLOWX1027](FLOWX1027.md) | Step is unreachable after `Fail` | A plan, a manifest and a diagram listing work the flow can never do |
+| [FLOWX1029](FLOWX1029.md) | Step input mapping produces the wrong contract | A `CS1503` inside generated source, about a call the developer cannot see |
 | [FLOWX1028](FLOWX1028.md) | Execution profile is declared but not honoured by the runtime | **A payment saga declaring `Durable` and losing its instance on the next deploy** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
@@ -104,10 +105,17 @@ a mistake this project has already made once, when a check was built as `FLOWX10
 while three documents described it as `FLOWX1020`. `FLOWX1026` took the next free id
 for exactly that reason: `FLOWX1022` is spoken for, and "sub-flow cannot be
 composed" is not contract compatibility. `FLOWX1027` took the one after it, for the
-same reason. `FLOWX1028` took the one after that, and it is the clearest case yet for
-the rule: "the runtime does not honour this profile" is not any of `FLOWX1006`–`1009`
-or `FLOWX1012`, all of which are *about* profiles and all of which are spoken for.
-The next is `FLOWX1029`. The range is `FLOWX1001`–`FLOWX1099`.
+same reason. `FLOWX1028` is the clearest case yet for the rule: "the runtime does not
+honour this profile" is not any of `FLOWX1006`–`1009` or `FLOWX1012`, all of which are
+*about* profiles and all of which are spoken for. `FLOWX1029` followed it.
+
+**Two rules were authored against `FLOWX1028` at the same time**, in separate branches,
+and the collision was caught at merge rather than by either author — which is the failure
+mode this paragraph exists to prevent, arriving from the one direction it did not cover.
+Reading "the next free id" is not enough when someone else is reading it too. Claim the id
+in this file *first*, in its own commit, before writing the rule.
+
+The next is `FLOWX1030`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 
