@@ -348,41 +348,54 @@ public static class FlowXDiagnostics
         "it being delivered.",
         DiagnosticSeverity.Warning);
 
-    /// <summary>FLOWX1025 — a trigger attribute the compiler cannot read.</summary>
+    /// <summary>FLOWX1025 — a trigger attribute that declares no <c>[TriggerKind]</c>.</summary>
     /// <remarks>
     /// <para>
-    /// A <strong>warning</strong>, and the reasoning is the same shape as FLOWX1024's:
-    /// the source is not wrong, the artifact is incomplete. The flow declares a trigger,
-    /// the build succeeds, and <c>flowx.manifest.json</c> simply has no entry for it —
-    /// which <c>flowx diff</c> cannot tell apart from "this flow has no trigger", so the
-    /// gate that classifies a removed trigger as breaking silently loses its input.
+    /// <strong>The rule changed shape when the fix arrived.</strong> It used to say a
+    /// trigger attribute FlowX did not ship "cannot be read", and its advice was to declare
+    /// a built-in attribute instead — advice the author of a transport plugin cannot act
+    /// on, since it amounts to not shipping the attribute. <c>[TriggerKind(...)]</c> makes
+    /// the kind attribute <em>data</em>, readable from a compiled reference, so the rule now
+    /// reports a missing declaration with a one-line fix rather than a structural
+    /// impossibility.
     /// </para>
     /// <para>
-    /// Not an error, deliberately. The attribute usually belongs to a third-party
-    /// transport plugin, so the developer seeing this often cannot fix it in their own
-    /// repository — and <c>17-Plugin-System.md §1</c> commits to the opposite of a
-    /// platform where using a plugin's trigger fails the build. This repository builds
-    /// with <c>TreatWarningsAsErrors</c>, so it is a break <em>here</em>; a consumer who
-    /// has accepted the gap can downgrade it in <c>.editorconfig</c>, which is a decision
-    /// recorded in their repository rather than a suppression scattered through source.
+    /// <strong>Warning by default, error where the fix is in reach.</strong> The default is
+    /// a warning for the reason FLOWX1024 is: the source is not wrong, the artifact is
+    /// incomplete — the build succeeds, and <c>flowx.manifest.json</c> has no entry for the
+    /// trigger, which <c>flowx diff</c> cannot tell apart from "this flow has no trigger",
+    /// so the gate that classifies a removed trigger as breaking silently loses its input.
+    /// Making that an error for everyone would break the build of a team whose only mistake
+    /// was referencing a plugin that has not added the marker yet, and
+    /// <c>17-Plugin-System.md §1</c> commits to the opposite of a platform where using a
+    /// third-party transport fails your build.
+    /// </para>
+    /// <para>
+    /// But when the attribute is declared in the compilation being built, the person seeing
+    /// the diagnostic owns the file that fixes it, and a rule nobody has to obey is not a
+    /// rule. <c>TriggerDeclarationAnalyzer</c> therefore raises it as an <strong>error</strong>
+    /// in that case, the same escalation FLOWX1011 makes for a <c>Durable</c> flow. The
+    /// descriptor's default stays <c>Warning</c> because that is what a consumer configures
+    /// against in <c>.editorconfig</c>, and what the release-tracking table records.
     /// </para>
     /// </remarks>
-    public static readonly DiagnosticDescriptor TriggerCannotBeRead = Create(
+    public static readonly DiagnosticDescriptor TriggerDeclaresNoKind = Create(
         "FLOWX1025",
-        "Trigger attribute cannot be read by the compiler",
-        "Trigger '{0}' on flow '{1}' is not one the compiler can read, so this flow " +
-        "publishes no trigger in the manifest",
-        "A trigger's Kind is an abstract property each attribute overrides — executable " +
-        "code, not attribute data — so the compiler can only read the trigger attributes " +
-        "FlowX.Abstractions ships, and it will not invent a kind for any other. The " +
-        "consequence is not cosmetic: the flow's triggers are absent from the manifest, " +
-        "and 'flowx diff' reads that absence as 'this flow has no trigger' rather than as " +
-        "'the compiler could not tell', so removing the trigger later is not reported as " +
-        "breaking. Declare the flow with one of the built-in trigger attributes — " +
-        "HttpTrigger, KafkaTrigger, CronTrigger, StreamTrigger or AgentTrigger, one of " +
-        "which normally matches the transport's kind even when the plugin ships its own — " +
-        "or accept the gap and downgrade this rule in .editorconfig, knowing the manifest " +
-        "no longer describes how this flow is reached.",
+        "Trigger attribute declares no [TriggerKind]",
+        "Trigger '{0}' on flow '{1}' declares no [TriggerKind], so this flow publishes no " +
+        "trigger in the manifest",
+        "A trigger's Kind property is an abstract property each attribute overrides — " +
+        "executable code, not attribute data — so the compiler cannot read it. The kind " +
+        "must therefore also be declared as data, with [TriggerKind(TriggerKind.Bus)] on " +
+        "the attribute class, which the compiler can read out of a referenced assembly " +
+        "without running it. Without the marker the flow's triggers are absent from the " +
+        "manifest, and 'flowx diff' reads that absence as 'this flow has no trigger' " +
+        "rather than as 'the compiler could not tell', so removing the trigger later is " +
+        "not reported as breaking. Add [TriggerKind(...)] to the trigger attribute, " +
+        "matching the value its Kind property returns. If the attribute belongs to a " +
+        "package you do not own, ask its author to add the marker, and until then either " +
+        "declare a built-in trigger attribute as well or downgrade this rule in " +
+        ".editorconfig, knowing the manifest does not describe how this flow is reached.",
         DiagnosticSeverity.Warning);
 
     /// <summary>FLOWX1027 — a step declared after a <c>.Fail(...)</c>, which ends the flow.</summary>
@@ -533,7 +546,7 @@ public static class FlowXDiagnostics
         SubFlowCannotBeComposed,
         FlowHasNoSteps,
         EmitIsNotYetPublished,
-        TriggerCannotBeRead,
+        TriggerDeclaresNoKind,
         StepIsUnreachableAfterFail,
         StepInputMappingHasWrongType,
         ProfileIsNotHonouredByTheRuntime);

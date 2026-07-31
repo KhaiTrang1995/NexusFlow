@@ -173,21 +173,13 @@ dotnet_diagnostic.S4136.severity = none   # method overloads must be adjacent
 # block's own instruction was that deleting one of these lines turns the build red
 # until the sites are fixed; they are, so it does not.
 #
-# The entry also cited samples/ecommerce/Program.cs:43. That site is real but is
+# The entry also cited samples/ecommerce/Program.cs:43. That site was real but was
 # not a Cancel() call and never was — the two findings were filed as one, which is
-# why fixing the engine did not clear it. It is scoped below rather than left
-# holding the rule off for the whole repository.
-
-[samples/ecommerce/Program.cs]
-# S6966 wants `await app.RunAsync()` in place of `app.Run()` on the last line of
-# the sample. The rule is right in general and wrong about a host entry point:
-# blocking the process's main thread until shutdown is precisely what that call is
-# for, there is no caller left to starve, and `app.Run()` is the form every
-# ASP.NET Core template and every piece of documentation a reader of this sample
-# will have seen uses. A sample teaches its shape as much as its behaviour.
-#
-# Scoped to this one file, so the rule still gates src/, plugins/ and tests/.
-dotnet_diagnostic.S6966.severity = none
+# why fixing the engine did not clear it. It was then scoped to that one file with
+# the argument that blocking the main thread is what a host entry point does. That
+# argument was true and the suppression was still worth losing: the sample's last
+# line is now `await app.RunAsync()`, which is identical in behaviour under
+# top-level statements, so S6966 runs at its default severity everywhere.
 
 [tests/**/*.cs]
 # Sonar rules that are wrong about test code specifically.

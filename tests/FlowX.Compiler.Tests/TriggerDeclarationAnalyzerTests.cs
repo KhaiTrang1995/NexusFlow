@@ -9,21 +9,22 @@ using Xunit;
 namespace FlowX.Compiler.Tests;
 
 /// <summary>
-/// FLOWX1025 — a trigger declaration the compiler cannot read.
+/// FLOWX1025 — a trigger attribute that declares no <c>[TriggerKind]</c>.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Both directions, and the silent direction carries the weight. This rule fires on an
-/// attribute the developer frequently does not own, so a false positive on a built-in
+/// attribute the developer sometimes does not own, so a false positive on a built-in
 /// trigger would be downgraded in the first `.editorconfig` that hit it, and the rule
 /// would then protect nothing. All five attributes <c>FlowX.Abstractions</c> ships are
-/// pinned as cases that must stay silent, individually as well as together.
+/// pinned as cases that must stay silent, individually as well as together, and so is a
+/// plugin-style attribute that declares the marker — which is the whole point of the
+/// marker existing.
 /// </para>
 /// <para>
 /// The positive direction pins the other half of the contract: what the analyzer reports
 /// on is exactly what the manifest omits. Asserting the diagnostic without asserting the
-/// omission would let the two drift apart, which is the state WP-22 left and this work
-/// package exists to close.
+/// omission would let the two drift apart, which is the state WP-22 left and WP-25 closed.
 /// </para>
 /// </remarks>
 public sealed class TriggerDeclarationAnalyzerTests
@@ -46,8 +47,20 @@ public sealed class TriggerDeclarationAnalyzerTests
         }
         """;
 
-    /// <summary>A trigger attribute a transport plugin would ship — outside the abstractions.</summary>
-    private const string PluginTrigger = """
+    /// <summary>A trigger attribute a transport plugin would ship, before the marker was added.</summary>
+    private const string UnmarkedPluginTrigger = """
+        [System.AttributeUsage(System.AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
+        public sealed class MqttTriggerAttribute(string topic) : TriggerAttribute
+        {
+            public override TriggerKind Kind => TriggerKind.Bus;
+
+            public string Topic { get; } = topic;
+        }
+        """;
+
+    /// <summary>The same attribute, declaring its kind as data.</summary>
+    private const string MarkedPluginTrigger = """
+        [TriggerKind(TriggerKind.Bus)]
         [System.AttributeUsage(System.AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
         public sealed class MqttTriggerAttribute(string topic) : TriggerAttribute
         {
@@ -79,9 +92,9 @@ public sealed class TriggerDeclarationAnalyzerTests
     // ------------------------------------------------------------- it must fire
 
     [Fact]
-    public void ATriggerAttributeTheCompilerCannotReadIsReported()
+    public void ATriggerAttributeDeclaringNoKindIsReported()
     {
-        Analyze(FlowWith("""[MqttTrigger("orders/requested")]""", PluginTrigger))
+        Analyze(FlowWith("""[MqttTrigger("orders/requested")]""", UnmarkedPluginTrigger))
             .ShouldBe(["FLOWX1025"]);
     }
 
@@ -90,16 +103,15 @@ public sealed class TriggerDeclarationAnalyzerTests
     /// not the decision.
     /// </summary>
     /// <remarks>
-    /// WP-22 declined to invent a kind for an attribute it cannot read, and that stands:
-    /// a guessed kind in the manifest would be a fact nobody declared, published in the
-    /// document whose value is that it contains only declared facts. This package makes
-    /// the refusal loud, and this test is what stops a later change from making it
-    /// different instead.
+    /// Declining to invent a kind for an attribute that declares none stands: a guessed
+    /// kind in the manifest would be a fact nobody declared, published in the document
+    /// whose value is that it contains only declared facts. What changed with the marker is
+    /// that declaring one is now possible, not that an undeclared one is guessed at.
     /// </remarks>
     [Fact]
     public void TheReportedTriggerIsStillAbsentFromTheManifest()
     {
-        var source = FlowWith("""[MqttTrigger("orders/requested")]""", PluginTrigger);
+        var source = FlowWith("""[MqttTrigger("orders/requested")]""", UnmarkedPluginTrigger);
 
         var run = GeneratorHarness.Run(source);
 
@@ -108,18 +120,18 @@ public sealed class TriggerDeclarationAnalyzerTests
     }
 
     /// <summary>
-    /// A flow declaring both a readable and an unreadable trigger is reported once, and
+    /// A flow declaring both a readable and an undeclared trigger is reported once, and
     /// keeps the trigger that could be read.
     /// </summary>
     [Fact]
-    public void OnlyTheUnreadableTriggerOfAMixedDeclarationIsReported()
+    public void OnlyTheUndeclaredTriggerOfAMixedDeclarationIsReported()
     {
         var source = FlowWith(
             """
             [HttpTrigger("POST", "/api/v1/orders")]
             [MqttTrigger("orders/requested")]
             """,
-            PluginTrigger);
+            UnmarkedPluginTrigger);
 
         Analyze(source).ShouldBe(["FLOWX1025"]);
 
@@ -133,7 +145,7 @@ public sealed class TriggerDeclarationAnalyzerTests
     /// the rule entirely and be invisible again.
     /// </remarks>
     [Fact]
-    public void AnIndirectSubclassIsReportedToo()
+    public void AnIndirectSubclassWithNoMarkerAnywhereInItsChainIsReportedToo()
     {
         Analyze(FlowWith(
             "[Derived]",
@@ -148,7 +160,74 @@ public sealed class TriggerDeclarationAnalyzerTests
             .ShouldBe(["FLOWX1025"]);
     }
 
+    /// <summary>
+    /// A marker carrying a value outside <c>TriggerKind</c> declares nothing readable.
+    /// </summary>
+    /// <remarks>
+    /// A cast integer compiles — an attribute argument is not range-checked against the
+    /// enum's members — and would otherwise reach the manifest as a <c>kind</c> the
+    /// schema's closed enum rejects, discovered by whoever validated the document. Treating
+    /// it as no declaration at all puts the failure at the keystroke that wrote it.
+    /// </remarks>
+    [Fact]
+    public void AMarkerWithAValueOutsideTheEnumIsReportedAsNoDeclaration()
+    {
+        Analyze(FlowWith(
+            """[Mqtt("orders/requested")]""",
+            """
+            [TriggerKind((TriggerKind)99)]
+            public sealed class MqttAttribute(string topic) : TriggerAttribute
+            {
+                public override TriggerKind Kind => TriggerKind.Bus;
+
+                public string Topic { get; } = topic;
+            }
+            """))
+            .ShouldBe(["FLOWX1025"]);
+    }
+
     // ---------------------------------------------------------- it must stay silent
+
+    /// <summary>
+    /// A plugin's own trigger attribute, declaring its kind, is not reported at all.
+    /// </summary>
+    /// <remarks>
+    /// The case the whole work package exists for. Before the marker, this attribute was
+    /// unreadable by construction and the only advice the rule could offer was "declare a
+    /// built-in attribute instead" — which for the author of a transport plugin means
+    /// "do not ship your attribute".
+    /// </remarks>
+    [Fact]
+    public void APluginTriggerThatDeclaresItsKindIsSilent()
+    {
+        Analyze(FlowWith("""[MqttTrigger("orders/requested")]""", MarkedPluginTrigger))
+            .ShouldBeEmpty();
+    }
+
+    /// <summary>The marker declared once on a plugin's intermediate base covers its subclasses.</summary>
+    /// <remarks>
+    /// <c>ISymbol.GetAttributes</c> returns only what is applied to that symbol — Roslyn
+    /// does not apply the marker's <c>Inherited = true</c> to it — so this holds because
+    /// the reader walks the base chain, and would silently stop holding if it stopped.
+    /// Reflection inherits the attribute, so the runtime and the compiler would otherwise
+    /// disagree about a declaration that is right there in the source.
+    /// </remarks>
+    [Fact]
+    public void AMarkerOnAnIntermediateBaseCoversTheAttributesDerivedFromIt()
+    {
+        Analyze(FlowWith(
+            "[Derived]",
+            """
+            [TriggerKind(TriggerKind.Bus)]
+            public abstract class BusTriggerAttribute : TriggerAttribute
+            {
+                public override TriggerKind Kind => TriggerKind.Bus;
+            }
+
+            public sealed class DerivedAttribute : BusTriggerAttribute;
+            """))
+            .ShouldBeEmpty();
+    }
 
     [Theory]
     [InlineData("""[HttpTrigger("POST", "/api/v1/orders", Idempotent = true)]""")]
@@ -187,7 +266,7 @@ public sealed class TriggerDeclarationAnalyzerTests
     }
 
     /// <summary>
-    /// An unreadable trigger on something that is not a flow says nothing.
+    /// An undeclared trigger on something that is not a flow says nothing.
     /// </summary>
     /// <remarks>
     /// The rule is about a manifest entry, and a type without <c>[Flow]</c> has no
@@ -197,42 +276,39 @@ public sealed class TriggerDeclarationAnalyzerTests
     [Fact]
     public void ATriggerOnANonFlowTypeIsSilent()
     {
-        Analyze(Preamble + "\n\n" + PluginTrigger + "\n\n" + """
+        Analyze(Preamble + "\n\n" + UnmarkedPluginTrigger + "\n\n" + """
             [MqttTrigger("orders/requested")]
             public sealed class NotAFlow;
             """)
             .ShouldBeEmpty();
     }
 
-    // ------------------------------------------------------------------ drift guard
+    // ------------------------------------------------------------------ the message
 
     /// <summary>
-    /// Every trigger attribute the abstractions ship must be one the reader recognises.
+    /// The message names the missing declaration, not an impossibility.
     /// </summary>
     /// <remarks>
-    /// <see cref="TriggerReader"/> holds two lists that must agree — the switch that reads
-    /// an attribute and the set <see cref="TriggerReader.IsRecognised"/> answers for — and
-    /// a sixth built-in attribute added to only one of them would either vanish from the
-    /// manifest without a diagnostic, or be reported as unreadable while being read. The
-    /// per-attribute tests above cover the switch; this covers the day a new attribute is
-    /// added and no test is written for it.
+    /// The rule's old message said the trigger "is not one the compiler can read", whose
+    /// only actionable reading was "stop using this attribute". What an author needs to be
+    /// told is which attribute is missing which declaration, because that is the edit.
     /// </remarks>
     [Fact]
-    public void EveryTriggerAttributeTheAbstractionShipsIsRecognised()
+    public void TheMessageNamesTheAttributeAndTheMarkerItIsMissing()
     {
-        var shipped = typeof(TriggerAttribute).Assembly.GetTypes()
-            .Where(static t => t is { IsAbstract: false, IsPublic: true } && typeof(TriggerAttribute).IsAssignableFrom(t))
-            .Select(static t => t.FullName!)
-            .OrderBy(static name => name, StringComparer.Ordinal)
-            .ToArray();
+        var message = GeneratorHarness
+            .AnalyzeWithMessages(
+                FlowWith("""[MqttTrigger("orders/requested")]""", UnmarkedPluginTrigger),
+                new TriggerDeclarationAnalyzer())
+            .ShouldHaveSingleItem();
 
-        shipped.ShouldNotBeEmpty();
-
-        shipped.ShouldBe(
-            [.. TriggerReader.RecognisedAttributes.OrderBy(static name => name, StringComparer.Ordinal)],
-            "A trigger attribute FlowX ships that the reader does not recognise would be " +
-            "skipped by its own compiler and reported as a third party's.");
+        message.ShouldContain("MqttTriggerAttribute");
+        message.ShouldContain("PlaceOrderFlow");
+        message.ShouldContain("[TriggerKind]");
+        message.ShouldNotContain("cannot be read");
     }
+
+    // ------------------------------------------------------------------ severity
 
     /// <summary>The analyzer declares the rule it raises. Roslyn silently drops it otherwise.</summary>
     [Fact]
@@ -244,21 +320,74 @@ public sealed class TriggerDeclarationAnalyzerTests
     }
 
     /// <summary>
-    /// The rule is a warning, not an error, and that is a decision rather than an oversight.
+    /// The rule's default is a warning, and that is a decision rather than an oversight.
     /// </summary>
     /// <remarks>
-    /// The attribute usually belongs to a plugin package the consumer does not own, and
+    /// The marker belongs on the attribute class, so a consumer of a plugin that has not
+    /// added one cannot fix this in their own repository at all —
     /// <c>17-Plugin-System.md §1</c> commits to the opposite of a platform where using a
-    /// third-party transport fails the build. FlowX's own <c>TreatWarningsAsErrors</c>
-    /// still stops this repository's build; a consumer downgrades it in
-    /// <c>.editorconfig</c>, which puts the decision in the repository that accepted it.
+    /// third-party transport fails the build. The default severity is also what a consumer
+    /// configures against in <c>.editorconfig</c> and what the release-tracking table
+    /// records, so it must stay the lenient one even though the in-source case escalates.
+    /// FlowX's own <c>TreatWarningsAsErrors</c> still stops this repository's build.
     /// </remarks>
     [Fact]
-    public void TheRuleIsAWarningSoAPluginTransportDoesNotBreakAConsumersBuild()
+    public void TheDefaultSeverityIsAWarningSoAPluginTransportDoesNotBreakAConsumersBuild()
     {
-        FlowXDiagnostics.TriggerCannotBeRead.DefaultSeverity.ShouldBe(DiagnosticSeverity.Warning);
+        FlowXDiagnostics.TriggerDeclaresNoKind.DefaultSeverity.ShouldBe(DiagnosticSeverity.Warning);
 
-        FlowXDiagnostics.TriggerCannotBeRead.IsEnabledByDefault
+        FlowXDiagnostics.TriggerDeclaresNoKind.IsEnabledByDefault
             .ShouldBeTrue("A rule off by default reports nothing to the people who have not heard of it.");
+    }
+
+    /// <summary>
+    /// When the trigger attribute is declared here, the fix is here, and the rule is an error.
+    /// </summary>
+    /// <remarks>
+    /// The escalation FLOWX1011 makes for a <c>Durable</c> flow, for the same reason: the
+    /// severity follows what the author can do about it. Adding one attribute to a class in
+    /// this compilation is not a trade-off worth a warning that will be scrolled past —
+    /// and a manifest missing a trigger is a contract gate quietly losing its input.
+    /// </remarks>
+    [Fact]
+    public void AnAttributeDeclaredInThisCompilationIsRaisedAsAnError()
+    {
+        GeneratorHarness
+            .Report(
+                FlowWith("""[MqttTrigger("orders/requested")]""", UnmarkedPluginTrigger),
+                new TriggerDeclarationAnalyzer())
+            .ShouldHaveSingleItem()
+            .Severity.ShouldBe(DiagnosticSeverity.Error);
+    }
+
+    // ------------------------------------------------------------------ drift guard
+
+    /// <summary>
+    /// Every trigger attribute the abstractions ship is one whose arguments the reader
+    /// projects.
+    /// </summary>
+    /// <remarks>
+    /// A sixth built-in attribute added without being added to
+    /// <see cref="TriggerReader.AttributesWithKnownShape"/> would still reach the manifest —
+    /// it would carry the marker, so its kind publishes — but with none of its address:
+    /// a <c>Bus</c> trigger with no topic and no group. That is a quiet loss in the document
+    /// whose purpose is to record the address, and it is exactly the kind of omission no
+    /// one writes a test for on the day they add the attribute.
+    /// </remarks>
+    [Fact]
+    public void EveryTriggerAttributeTheAbstractionShipsHasAKnownShape()
+    {
+        var shipped = typeof(TriggerAttribute).Assembly.GetTypes()
+            .Where(static t => t is { IsAbstract: false, IsPublic: true } && typeof(TriggerAttribute).IsAssignableFrom(t))
+            .Select(static t => t.FullName!)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+
+        shipped.ShouldNotBeEmpty();
+
+        shipped.ShouldBe(
+            [.. TriggerReader.AttributesWithKnownShape.OrderBy(static name => name, StringComparer.Ordinal)],
+            "A trigger attribute FlowX ships whose arguments the reader does not project " +
+            "would publish a kind and no address at all.");
     }
 }

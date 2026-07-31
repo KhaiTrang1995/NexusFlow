@@ -7,31 +7,35 @@ using Microsoft.CodeAnalysis.Diagnostics;
 namespace FlowX.Compiler.Analysis;
 
 /// <summary>
-/// Reports a trigger declaration the compiler cannot read: FLOWX1025.
+/// Reports a trigger attribute that declares no <c>[TriggerKind]</c>: FLOWX1025.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <see cref="TriggerReader"/> recognises the five trigger attributes
-/// <c>FlowX.Abstractions</c> ships and skips every other <c>TriggerAttribute</c>
-/// subclass, because a trigger's <c>Kind</c> is an abstract property each attribute
-/// overrides — executable code, not attribute data — and there is no sound way to read
-/// it from metadata. Declining to guess is the right call and
+/// A trigger's <c>Kind</c> property is abstract and each attribute overrides it —
+/// executable code, not attribute data — so it cannot be read from metadata. The kind is
+/// therefore declared a second time <em>as</em> data, with <c>[TriggerKind(...)]</c> on the
+/// attribute class, and <see cref="TriggerReader.KindOf"/> reads that, across an assembly
+/// boundary, without running anything. An attribute carrying no marker declares no family
+/// the compiler can read and is skipped rather than guessed at, which
 /// <a href="../../../docs/adr/ADR-0005-manifest-as-build-artifact.md">ADR-0005</a>
-/// requires it: the manifest publishes what was declared, never what was plausible.
+/// requires: the manifest publishes what was declared, never what was plausible.
 /// </para>
 /// <para>
-/// The defect this closes is that the skip produced <em>nothing</em>. The build
-/// succeeded, the manifest carried no <c>triggers</c> entry, and <c>flowx diff</c> — which
-/// classifies a removed trigger as breaking — saw an absence indistinguishable from a
-/// flow that declares no trigger at all. A contract gate that silently loses its input is
-/// worse than no gate, because a green result is read as a checked result.
+/// <strong>What the rule says now.</strong> Not "this trigger cannot be read" — since the
+/// marker exists, it can be — but "this trigger attribute declares no kind", which is a
+/// defect with an owner and a one-line fix. The consequence is unchanged, and is why it is
+/// worth reporting: the build succeeds, the manifest carries no <c>triggers</c> entry, and
+/// <c>flowx diff</c> — which classifies a removed trigger as breaking — sees an absence
+/// indistinguishable from a flow that declares no trigger at all. A contract gate that
+/// silently loses its input is worse than no gate, because a green result is read as a
+/// checked result.
 /// </para>
 /// <para>
 /// A <see cref="DiagnosticAnalyzer"/> rather than a generator diagnostic, matching
 /// <see cref="CapabilityAnalyzer"/> and <see cref="StepBindingAnalyzer"/>. The generator's
-/// trigger pipeline drops an unrecognised attribute before it has anywhere to report
-/// from, and the question is worth answering in the editor on the keystroke that applies
-/// the attribute, not only when the generator next runs.
+/// trigger pipeline drops an undeclared attribute before it has anywhere to report from,
+/// and the question is worth answering in the editor on the keystroke that applies the
+/// attribute, not only when the generator next runs.
 /// </para>
 /// <para>
 /// <strong>Scoped to <c>[Flow]</c> types.</strong> A trigger attribute applied to
@@ -46,7 +50,7 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
 
     /// <inheritdoc />
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } =
-        ImmutableArray.Create(FlowXDiagnostics.TriggerCannotBeRead);
+        ImmutableArray.Create(FlowXDiagnostics.TriggerDeclaresNoKind);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -81,19 +85,47 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
 
         foreach (var attribute in attributes)
         {
+            // Exactly what TriggerReader skips: a trigger whose family it cannot read.
             if (!TriggerReader.IsTrigger(attribute.AttributeClass) ||
-                TriggerReader.IsRecognised(attribute.AttributeClass))
+                TriggerReader.KindOf(attribute.AttributeClass) is not null)
             {
                 continue;
             }
 
             context.ReportDiagnostic(Diagnostic.Create(
-                FlowXDiagnostics.TriggerCannotBeRead,
+                FlowXDiagnostics.TriggerDeclaresNoKind,
                 LocationOf(attribute, type, context.CancellationToken),
+                SeverityFor(attribute.AttributeClass!),
+                additionalLocations: null,
+                properties: null,
                 attribute.AttributeClass!.Name,
                 type.Name));
         }
     }
+
+    /// <summary>How loud to be, given who can fix it.</summary>
+    /// <remarks>
+    /// <para>
+    /// An <strong>error</strong> when the trigger attribute is declared in this
+    /// compilation: the fix is one line in a file the person reading the diagnostic owns,
+    /// and a rule nobody has to obey is not a rule. The same escalation FLOWX1011 makes for
+    /// a <c>Durable</c> flow, and for the same reason — the severity follows what the
+    /// author can actually do about it.
+    /// </para>
+    /// <para>
+    /// A <strong>warning</strong> when it arrives from a referenced assembly. The marker
+    /// belongs on the attribute class, so a consumer of a plugin that has not added one
+    /// cannot fix this in their own repository at all; erroring would make using a
+    /// third-party transport fail their build over someone else's omission, which
+    /// <c>17-Plugin-System.md §1</c> rules out. It stays a warning they can see, report
+    /// upstream, and downgrade with a recorded reason.
+    /// </para>
+    /// </remarks>
+    /// <param name="attributeClass">The trigger attribute that carries no marker.</param>
+    private static DiagnosticSeverity SeverityFor(INamedTypeSymbol attributeClass) =>
+        attributeClass.Locations.Any(static location => location.IsInSource)
+            ? DiagnosticSeverity.Error
+            : DiagnosticSeverity.Warning;
 
     /// <summary>The attribute's own span, falling back to the type it is applied to.</summary>
     /// <remarks>
