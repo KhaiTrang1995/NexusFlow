@@ -166,10 +166,27 @@ dotnet_diagnostic.S4136.severity = none   # method overloads must be adjacent
 # were listed here. Both are fixed, so both entries are gone and the two rules
 # now run at their default severity and guard the fix.
 
-# S6966 — CancellationTokenSource.Cancel() where CancelAsync() is available
-# (FlowX.Runtime/FlowEngine.cs:636,836,876 and samples/ecommerce/Program.cs:43).
-# Cancel() runs every registered callback synchronously on the calling thread;
-# in the parallel-merge path that is the engine's own thread.
+# S6966 was here, off repository-wide, for the three
+# CancellationTokenSource.Cancel() calls in FlowX.Runtime/FlowEngine.cs. All three
+# now await CancelAsync() through FlowEngine.StopSiblingsAsync, so the rule is back
+# on its default severity and those three lines are no longer listed above. The
+# block's own instruction was that deleting one of these lines turns the build red
+# until the sites are fixed; they are, so it does not.
+#
+# The entry also cited samples/ecommerce/Program.cs:43. That site is real but is
+# not a Cancel() call and never was — the two findings were filed as one, which is
+# why fixing the engine did not clear it. It is scoped below rather than left
+# holding the rule off for the whole repository.
+
+[samples/ecommerce/Program.cs]
+# S6966 wants `await app.RunAsync()` in place of `app.Run()` on the last line of
+# the sample. The rule is right in general and wrong about a host entry point:
+# blocking the process's main thread until shutdown is precisely what that call is
+# for, there is no caller left to starve, and `app.Run()` is the form every
+# ASP.NET Core template and every piece of documentation a reader of this sample
+# will have seen uses. A sample teaches its shape as much as its behaviour.
+#
+# Scoped to this one file, so the rule still gates src/, plugins/ and tests/.
 dotnet_diagnostic.S6966.severity = none
 
 [tests/**/*.cs]
@@ -231,12 +248,12 @@ dotnet_diagnostic.VSTHRD002.severity = error
 # docs/benchmarks/ compares runs by. The document does not ask for this rule.
 dotnet_diagnostic.VSTHRD200.severity = none
 
-# VSTHRD103 fired on exactly the three CancellationTokenSource.Cancel() calls
-# that Sonar's S6966 found (FlowEngine.cs:636,836,876). Two analyzers agreeing
-# is worth recording, but it is one finding, tracked once — under S6966 in the
-# open-findings block above. Leaving both on would fail the build twice for the
-# same three lines.
-dotnet_diagnostic.VSTHRD103.severity = none
+# VSTHRD103 was off for exactly the three CancellationTokenSource.Cancel() calls
+# that Sonar's S6966 also found (FlowEngine.cs:636,836,876) — one finding, two
+# analyzers, tracked once. Those three sites now await CancelAsync(), so both
+# rules are back on. Keeping this line would mean the next Cancel() written in an
+# async method is caught by one analyzer instead of two, which is a worse gate
+# than the one the original entry was protecting.
 
 # VSTHRD003 (awaiting a Task started outside the current context) fired once, in
 # DrainTests, on a task the test starts itself and hands to a helper. The rule

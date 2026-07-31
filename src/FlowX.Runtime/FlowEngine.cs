@@ -633,7 +633,7 @@ public sealed class FlowEngine
             // work than the merge needs.
             if (ShouldCancelSiblings(merge, outcome.Failure is null, succeeded))
             {
-                cancellation?.Cancel();
+                await StopSiblingsAsync(cancellation).ConfigureAwait(false);
             }
         }
 
@@ -833,7 +833,7 @@ public sealed class FlowEngine
                 {                           //   be drained before this returns.
                     fatal = FlowErrors.IterationFailed(plan.Flow.Id, step.Index, exception);
                     stopped = true;
-                    cancellation?.Cancel();
+                    await StopSiblingsAsync(cancellation).ConfigureAwait(false);
                     break;
                 }
 #pragma warning restore CA1031
@@ -873,7 +873,7 @@ public sealed class FlowEngine
                 // Stopping does not end the loop: the iterations already in flight still
                 // have to be drained. It only stops the window from starting more.
                 stopped = true;
-                cancellation?.Cancel();
+                await StopSiblingsAsync(cancellation).ConfigureAwait(false);
                 continue;
             }
 
@@ -949,6 +949,46 @@ public sealed class FlowEngine
 
         return new RangeOutcome(FlowErrors.Unhandled(flowId, fault), 0);
     }
+
+    /// <summary>
+    /// Cancels a fork's linked source and waits for its callbacks, without running any of
+    /// them on the engine's own thread.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="CancellationTokenSource.Cancel()"/> invokes every registered callback
+    /// <em>synchronously, on the caller</em>. The caller here is the thread draining a fork
+    /// or a <c>ForEach</c> window, and the callbacks belong to whatever the branches handed
+    /// the token to — an HTTP handler, a database driver, a capability's own registration.
+    /// One of those blocking stalls the drain; one of them throwing derails it. The drain is
+    /// what keeps a branch from outliving its flow and writing into the <em>next</em>
+    /// execution's pooled context, which may belong to another tenant, so it is not
+    /// something to run arbitrary third-party code in the middle of.
+    /// </para>
+    /// <para>
+    /// <strong>The await is the point, not an artefact of the signature.</strong>
+    /// <c>Cancel()</c> guarantees that cancellation has fully propagated by the time it
+    /// returns. Discarding the task <see cref="CancellationTokenSource.CancelAsync"/> hands
+    /// back would give that guarantee up and let the callbacks race the drain they exist to
+    /// unblock. Awaiting keeps the guarantee and moves the callbacks onto the thread pool,
+    /// which is the whole difference between the two methods.
+    /// </para>
+    /// <para>
+    /// <strong>Why awaiting is safe at all three call sites.</strong> None of them is in a
+    /// <c>finally</c>, so the await cannot be reached during an unwind. None of them ends
+    /// the loop it sits in: cancelling stops branches doing <em>more</em> work, it never
+    /// stops them being observed, and every started branch is still awaited before the
+    /// method returns. And the state each site has already recorded — the outcome, the
+    /// first failure, the <c>stopped</c> flag — is written before the await, so a
+    /// continuation resuming on another thread reads it rather than races it.
+    /// </para>
+    /// <para>
+    /// <c>null</c> is the case that cancels nothing and therefore allocated no source at all:
+    /// <c>AllSettled</c> for a fork, <c>ContinueOnError</c> for a loop.
+    /// </para>
+    /// </remarks>
+    private static Task StopSiblingsAsync(CancellationTokenSource? cancellation) =>
+        cancellation?.CancelAsync() ?? Task.CompletedTask;
 
     /// <summary>Whether the branch that just finished means the rest can stop.</summary>
     private static bool ShouldCancelSiblings(MergeStrategy merge, bool branchSucceeded, int succeeded) =>
