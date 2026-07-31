@@ -75,9 +75,20 @@ not resolvable by compromise.
 **Gained:**
 - The DSL reads as designed, in code and in documentation, identically.
 
-**Reversal condition:** if a first-class VB.NET or F# consumer story is ever
-adopted as a goal, this ADR is superseded and the rule is re-enabled with
-per-member suppressions on the DSL surface only.
+**Revisit when:** a first-class VB.NET or F# consumer story is adopted as a goal — at
+which point this ADR is superseded and the rule is re-enabled with per-member suppressions
+on the DSL surface only.
+
+*This clause was headed **"Reversal condition"** until 2026-07-31, which is why
+[the ADR index's own rule](README.md) — "an ADR with no 'Revisit when' is a decision nobody
+can ever safely change" — read this record as having none. It was **renamed rather than
+supplemented**: the condition already stated is exactly what a `Revisit when` is for, and
+adding a second clause beside it would have given one decision two triggers that could
+disagree. Nothing about the condition changed, and the ADR index summarises the same one it
+always did. The Consequences above are headed **Accepted** and **Gained** rather than Negative
+and Positive; that is the same labelling drift in the other direction and it is left alone,
+because the section the rule asks for is present and argued — the rule is about a record
+that has not been thought through, not about a heading.*
 
 ## Why this is not technical debt
 
