@@ -330,16 +330,28 @@ Every trigger plugin must pass `FlowX.Conformance.Tests`:
 | `IsIdempotencyAware` | duplicate keys return the recorded result |
 
 > [!IMPORTANT]
-> **`FlowX.Conformance.Tests` does not exist, and none of the seven tests above
-> has been written.** There is no such project, no such package, and the
-> interfaces the suite would test against — `ITriggerSource`, `ITriggerSink` —
-> are not declared anywhere in `src/`. The two signatures printed above are a
-> design sketch, not a contract a plugin can compile against.
+> **This box said `FlowX.Conformance.Tests` does not exist. That is now wrong,
+> and what replaces it is narrower than it sounds.** `tests/FlowX.Conformance.Tests`
+> exists (WP-51) and holds two suites — `JournalConformance` and
+> `LeaseStoreConformance` — neither of which is a trigger suite. **None of the
+> seven tests above has been written**, `TriggerSourceConformance` does not
+> exist, and the interfaces they would test against — `ITriggerSource`,
+> `ITriggerSink` — are still not declared anywhere in `src/`. The two signatures
+> printed above remain a design sketch, not a contract a plugin can compile
+> against.
 >
-> Publishing the suite is named as the mitigation for **both** risk R3 and risk
-> R8 in [05 §11](05-Architecture.md#11-risks-and-technical-debt), and neither has
-> happened. It is a **P3** deliverable. `PluginsPassConformance` is recorded as
-> blocked, with what it is waiting for, in
+> What is true is that the *shape* now exists: a suite is an abstract class with
+> a factory, a store author derives from it and inherits every assertion, and
+> that mechanism is proved to reject a wrong implementation by name
+> (`TheSuiteRejectsAStoreThatIsWrongTests`). Nothing real has met it — the only
+> implementation held to it is an in-memory reference in the same project, the
+> project is **not packable**, and no suite has ever run against a real store.
+> A trigger plugin has nothing to derive from at all.
+>
+> Publishing a *trigger* suite is named as the mitigation for **both** risk R3
+> and risk R8 in [05 §11](05-Architecture.md#11-risks-and-technical-debt), and
+> that has not happened. It is a **P3** deliverable. `PluginsPassConformance`
+> remains blocked, with what it is waiting for, in
 > [21 §2.4](21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced).
 >
 > There is also nothing yet to compare: `plugins/FlowX.Http` is the only plugin,

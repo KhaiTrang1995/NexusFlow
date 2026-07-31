@@ -232,8 +232,11 @@ in P1:**
   any code path. "Traces, metrics and structured logs exist without user
   instrumentation" is true of the *design* — the compiled graph is what makes it
   derivable — and is not true of the runtime. **P5.**
-- **Replay.** `ReplayDeterminismTest` does not exist, and cannot: there is no
-  journal type in the solution, so there is nothing to replay *from*. Worse for
+- **Replay.** `ReplayDeterminismTest` does not exist, and cannot. *This line said
+  there is no journal type in the solution. WP-51 declared `IFlowJournal`, so the
+  reason has changed and the verdict has not:* nothing implements it outside an
+  in-memory reference in `tests/FlowX.Conformance.Tests`, and no code path writes
+  to a journal, so there is nothing to replay *from*. Worse for
   the claim, `FlowX.Runtime` never reads `ExecutionProfile` at all — a flow
   declared `Durable` executes on exactly the same path as an `Ephemeral` one,
   with no checkpoint and no resume. The only thing the profile currently changes

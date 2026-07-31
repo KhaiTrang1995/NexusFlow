@@ -5,8 +5,16 @@
 
 > [!WARNING]
 > **Nothing in this document is implemented.** There is no journal, no lease
-> store, no fencing token, no outbox, no scheduler and no second node — the words
-> appear under `src/` only inside comments describing the intent.
+> store, no outbox, no scheduler and no second node.
+>
+> *This box said the words appear under `src/` only inside comments describing the
+> intent. That is no longer true.* WP-51 declared `IFlowJournal`, `ILeaseStore`
+> and `FencingToken` in `src/FlowX.Abstractions/Durability/`, and
+> `tests/FlowX.Conformance.Tests` defines what a store must do with them.
+> **Nothing implements them** outside an in-memory reference in that test project,
+> no store has ever run against a real database, and nothing in `src/` calls any
+> of them. What exists is the contract these guarantees would be met *through* —
+> not a step toward meeting them — and the sentence that follows is unaffected.
 > `FlowX.Runtime` does not read `ExecutionProfile` at all, so a flow declared
 > `Durable` executes on the identical in-memory path as an `Ephemeral` one and a
 > process kill loses the instance.
