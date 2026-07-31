@@ -58,9 +58,10 @@ public sealed class CapabilityErrorModel : IEquatable<CapabilityErrorModel>
 /// <remarks>
 /// <para>
 /// <strong><see cref="IsComplete"/> is the load-bearing field.</strong> The catalogue is
-/// read out of the capability's own source, by following every expression of type
-/// <c>Error</c> back to the literal code and category that produced it. That works for
-/// the documented pattern — a static factory class per domain
+/// read out of the capability's own source, by following the value that leaves
+/// <c>ExecuteAsync</c> — through the <c>Result&lt;T&gt;</c> that carries it and, once a
+/// failure takes the shape of an <c>Error</c>, back to the literal code and category that
+/// produced it. That works for the documented pattern — a static factory class per domain
 /// (<c>docs/07-Capability-Model.md §7</c>) — and it does not work when the trail leaves
 /// the compilation or ends at a value only known at run time.
 /// </para>
@@ -72,6 +73,16 @@ public sealed class CapabilityErrorModel : IEquatable<CapabilityErrorModel>
 /// is absent rather than short. An empty <em>present</em> array is then a real statement:
 /// this capability was analysed, and it returns no declared error.
 /// </para>
+/// <para>
+/// <strong>That last sentence is a claim the reader has to earn, and for a while it did
+/// not.</strong> Identifying a failure by searching the capability for an
+/// <c>Error</c>-typed expression made "found none" indistinguishable from "there is none",
+/// so a failure that stayed inside a <c>Result&lt;T&gt;</c> its whole journey — a
+/// one-line delegation to a service, a guard helper, <c>Result.Fail&lt;T&gt;(code,
+/// message, category)</c> — was published as a capability that cannot fail. An empty list
+/// is now reached only by tracing every path to a success. See WP-37 and
+/// <c>docs/benchmarks/B13-error-catalogue-resolution.md §5</c>.
+/// </para>
 /// </remarks>
 public sealed class CapabilityErrorCatalogue : IEquatable<CapabilityErrorCatalogue>
 {
@@ -80,8 +91,9 @@ public sealed class CapabilityErrorCatalogue : IEquatable<CapabilityErrorCatalog
     /// <param name="capabilityVersion">Contract version from <c>[Capability]</c>.</param>
     /// <param name="errors">The failures found, in any order.</param>
     /// <param name="isComplete">
-    /// False when at least one failure path could not be reduced to a literal code and
-    /// category. The catalogue is then not published.
+    /// False when at least one path out of the capability could not be accounted for —
+    /// a failure that could not be reduced to a literal code and category, or a result
+    /// whose provenance the reader could not name. The catalogue is then not published.
     /// </param>
     public CapabilityErrorCatalogue(
         string capabilityId,
