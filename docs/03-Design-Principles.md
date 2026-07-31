@@ -258,12 +258,18 @@ in P1:**
   compensation's ambient reads, and the engine's own deadline check — each pinned by a
   test that goes red when it is closed. **Done at P2 · WP-61.**
 
-The determinism *analyzers* this principle leans on are further behind:
-`FLOWX1007`, `FLOWX1008` and `FLOWX1009` do not exist — no longer blocked on severity
-since WP-52, merely unwritten (WP-58) — and `FLOWX1011`, the one rule of the five that
-ships, is a Warning rather than an Error on a premise that has now expired: `Ephemeral`
-was the only profile the runtime executed. The stance is re-decided as a set at WP-58
-rather than one row at a time. See
+The determinism *analyzers* this principle leans on **shipped at WP-58**.
+*This paragraph said `FLOWX1007`, `FLOWX1008` and `FLOWX1009` "do not exist", and that
+`FLOWX1011` was "the one rule of the five that ships" whose Warning severity rested on a
+premise that had expired. All three were raised on 2026-07-31.* The stance was re-decided
+**as a set** rather than one row at a time, and `Info` was rejected outright: it never
+reaches a build log, and `Ephemeral` is the *default* profile, so an informational set
+would do nothing in nearly every build — which is precisely the state that kept all four
+ids unraised through two phases. They ship **Warning by default, and Error where the
+compilation can prove the code is on a durable flow's replay path**, so `FLOWX1011`'s
+deviation stopped being an exception and became the rule. `FLOWX1006` is the one of the
+five still unwritten, and it was never a severity question — it waits on the generated
+payload writer (WP-59). See
 [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) and risk R2 in
 [05 §11](05-Architecture.md#11-risks-and-technical-debt), which carried the same
 claim as a *mitigation* and has now been corrected to say so.

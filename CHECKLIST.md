@@ -24,7 +24,7 @@
 > without being made fast. See
 > [§5d](#5d-p2--durable-execution--correct-against-a-real-database-and-unmeasured).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 1660/1660 passing (a large share against a live
+> **Build:** 0 warnings, 0 errors · **Tests:** 1681/1681 passing (a large share against a live
 > PostgreSQL 16.13 and Redis 7.0.15; 0 skipped). Without `FLOWX_POSTGRES_CONNECTION` the adapter suite skips
 > 79 with reasons; set to an unreachable server it **fails 80 and skips none**, on purpose ·
 > **Coverage:** **83.9 % line / 77.6 % branch** over `src/` and `plugins/`, measured
@@ -1155,8 +1155,26 @@ exists only in a closing summary is one nobody reads.
       one-click `Durable` produces a flow refused at start-up, which is the fix that
       silences the rule rather than the one that is correct. The reference sample fires it
       and keeps `Ephemeral` behind a stated-reason pragma
-- [ ] **WP-61** `ReplayDeterminismTest` and its corpus. Risk **R2**'s actual mitigation,
-      currently cited in `05 §11` as though it existed
+- [x] **WP-61** `ReplayDeterminismTest` and its corpus — **shipped 2026-07-31.** Risk
+      **R2**'s actual mitigation, which `05 §11` had cited as though it existed. Nine flow
+      shapes, each run twice: once against the world, once against the journal the first run
+      wrote, on a clock **100 days** away so an unreplayed value cannot be mistaken for a
+      replayed one. Two observation channels — every action the flow took, and every journal
+      row including the whole capture — because a compensation's ambient reads are invisible
+      to the journal. **The harness is proved able to fail:** five deliberate divergences are
+      permanent tests. The `FLOWX1007` case on two real `UtcNow` reads was *deliberately not
+      built* — a coarse platform timer could make them agree and the gate would go green for
+      the wrong reason.
+      **`Parallel` is pinned, not bought.** A per-branch context is a `FlowEngine` change, so
+      instead a rendezvous makes the interleaving reproducible every run: branch 2's row
+      carries both ids and branch 1's carries none, and a second test measures the cost — the
+      robbed branch mints a fresh id on replay. **An overlapping fork does not replay; a
+      non-overlapping one replays exactly**, and that is the honest extent of the claim. Both
+      tests go red the day the per-branch context lands.
+      One runtime change: `FlowExecutionContext.ReplayNondeterminism`, the **read half** of a
+      capture that was written and never read. The engine still cannot call it — the loop
+      skips a committed step rather than re-running it — so replay is driven from outside the
+      loop, which is WP-64
 - [ ] **WP-62** QR2 — 10 000 flows, `SIGKILL` at every step boundary, zero duplicate
       non-idempotent effects, zero lost instances, resume p99 ≤ 45 s. P2's Done-when
 
