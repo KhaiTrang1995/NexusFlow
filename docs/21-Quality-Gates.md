@@ -91,12 +91,28 @@ downstream test result uninteresting.
 | `RuntimeDoesNotReferenceAnyPlugin` | adding a transport never means editing the runtime (quality goal Q6) |
 | `NoCyclicDependencies` | no dependency cycle between any two assemblies or namespaces |
 | `EveryCapabilityDeclaresAuthorization` | every `ICapability<,>` that ships carries `[Capability]` naming a stance (principle P11) |
+| `NoReflectionOnHotPath` | no `System.Reflection`, `Activator` or runtime binder in Abstractions, Core or Runtime — IL scan (principle P4) |
+| `RuntimeHasNoMutableStatics` | every static field in `FlowX.Runtime` is `readonly` or `const` — IL scan (principle P7) |
+| `FlowsAreTransportFree` | nothing in a flow's transitive closure names a transport or a plugin namespace (principle P3) |
+| `CapabilitiesDoNotCallCapabilities` | no capability reaches another, from a dependency or from a method body (wider than FLOWX1004) |
+| `EveryPublicContractIsVersioned` | every flow, capability, event, manifest and shipped package carries a SemVer version (constraint C7) |
+| `ManifestIsComplete` | every declared flow and capability appears in the emitted manifest, and every step names one it describes (quality goal Q3) |
 | `PublicCapabilitiesAreReviewed` | every `Authorization.Public` carries an `[ApprovedBy]`, and no approval outlives the stance it approved |
 | `NoPermissiveDefaults` | nothing on the contract surface reaches a permissive stance by being left alone |
 | `SuppressionsAreAccountable` | every suppression names a registered, unexpired `FLOWX-DEBT` id (§6.1) |
 | `EveryDiagnosticIsHelpful` | every `FLOWX####` has a message, a fix and a help URI |
 | `ManifestContainsNoSecrets` | the emitted manifest is structure, never values |
 | `EveryShippedProjectIsAotAnalyzed` | no project silences the trim/AOT analyzer (constraint C2) |
+
+`NoReflectionOnHotPath`, `RuntimeHasNoMutableStatics`, `FlowsAreTransportFree`,
+`CapabilitiesDoNotCallCapabilities`, `EveryPublicContractIsVersioned` and
+`ManifestIsComplete` inspect the built assemblies rather than the source, because
+[P4](03-Design-Principles.md#p4--compile-time-everything) and
+[P7](03-Design-Principles.md#p7--cloud-native) state them that way and because reflection or
+a transport reference can arrive through a generator, an extension method or an `async`
+state machine — none of which a source scan sees. There is one exemption, `MemberInfo.Name`:
+`typeof(T).Name` is how the runtime names the contract a step failed to produce, and it
+discovers nothing. Everything that looks a member up is still caught.
 
 `ManifestContainsNoSecrets` matches the **shape** of a secret — PEM blocks, JWTs,
 `Password=` assignments, credentials embedded in a URL, provider key prefixes — across the
@@ -107,11 +123,11 @@ argument is settled by deleting the word from the list.
 
 ### 2.4 Gates named here but not yet enforced
 
-Two rules named in the OWASP mapping below and in [15-Security §10](15-Security.md) have
-no fitness function, because the code they would govern does not exist yet. They are
-recorded here rather than left as an empty checkbox: an unticked box reads as "not got
-round to it", and the difference between *unwritten* and *not yet writable* is the
-difference between a backlog item and a false claim of coverage.
+Three rules named elsewhere in the documentation have no fitness function, because the
+code they would govern does not exist yet. They are recorded here rather than left as an
+empty checkbox: an unticked box reads as "not got round to it", and the difference between
+*unwritten* and *not yet writable* is the difference between a backlog item and a false
+claim of coverage.
 
 **A fitness function asserting a property of code that has not been written is not a gate.
 It is decoration — and worse than nothing, because it stops the next reviewer looking.**
@@ -120,9 +136,10 @@ It is decoration — and worse than nothing, because it stops the next reviewer 
 |---|---|---|
 | `CrossTenantAccessIsDenied` | **P4** — no policy executes at runtime, so no stage exists that could return `Forbidden`; **P2** — no journal, so there is no audit event to assert. `TenantId` is resolved from claims and carried on the invocation, and nothing consumes it. "Across every trigger kind" additionally needs **P3**: HTTP is the only transport. | That tenant resolution reads validated claims and nothing else. Covered behaviourally by `HttpTriggerReaderTests` — which is the `TenantComesFromClaimsOnly` control the A07 row cites, under a different name, for the one transport that exists. |
 | `RedactionCannotBeBypassed` | **P3** and **P5** — the rule is that no path reaches logs, traces, journal or replay output un-redacted, and none of those four sinks exists. Exactly one sink can serialise a contract value today: the RFC 7807 body, redacted by `ProblemDetailsMapper` and covered by `ProblemDetailsMapperTests`. Redaction is *not* applied by a generated serialiser; see the remarks on `SensitiveAttribute`. | That the compiler records `[Sensitive]` members in the manifest and emits them onto the flow — `ManifestWriterTests`, `PlaceOrderEndpointTests`. That is provenance, not an un-bypassable control. |
+| `PluginsPassConformance` | **The conformance suite does not exist.** [05-Architecture §11](05-Architecture.md#11-risks-and-technical-debt) names publishing one as the mitigation for both R3 and R8, and it has not been written. There is also one plugin — `FlowX.Http` — so "every plugin agrees on the minimum semantics" has one data point and no comparison. | That the one transport that exists normalises HTTP into a `TriggerEnvelope` and maps every `ErrorCategory` to its documented status. `FlowX.Http.Tests` covers it. Writing the named gate against a single plugin would restate those tests under a name claiming ecosystem coverage. |
 
-Both are exit criteria of their phases in [20-Roadmap](20-Roadmap.md). Neither should be
-written before then, and neither should be cited as present until it is.
+All three are exit criteria of their phases in [20-Roadmap](20-Roadmap.md). None should be
+written before then, and none should be cited as present until it is.
 
 ---
 

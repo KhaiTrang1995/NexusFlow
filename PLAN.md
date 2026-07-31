@@ -55,11 +55,25 @@ flowchart TD
     WP13["WP-13 · Diagnostics<br/>FLOWX1014 · FLOWX1018"]
     WP14["WP-14 · B12<br/>build overhead"]
 
-    WP15["WP-15 · Branching DSL<br/>When · Switch · Parallel"]
+    WP15["WP-15 · DSL<br/>When · Otherwise"]
+    WP20["WP-20 · DSL<br/>Switch · Case · Default"]
+    WP24["WP-24 · DSL<br/>Parallel · FLOWX1013"]
+    WP29["WP-29 · DSL<br/>ForEach"]
+    WP33["WP-33 · DSL<br/>SubFlow · FLOWX1021"]
     WP16["WP-16 · Step binding<br/>FLOWX1020"]
     WP17["WP-17 · flowx diff<br/>breaking-change gate"]
     WP18["WP-18 · Scale<br/>200 flows"]
     WP19["WP-19 · Code fixes<br/>IDE quick actions"]
+    WP21["WP-21 · FLOWX1011<br/>predicate purity"]
+    WP25["WP-25 · FLOWX1011<br/>every context delegate"]
+    WP22["WP-22 · Manifest<br/>triggers · errors"]
+    WP26["WP-26 · FLOWX1025<br/>unreadable trigger"]
+    WP23["WP-23 · Scale<br/>methodology · linearity"]
+    WP27["WP-27 · FLOWX1020<br/>bind cost −89 %"]
+    WP28["WP-28 · Bisect<br/>4.9× regression"]
+    WP31["WP-31 · Cost gate<br/>relative · blocking"]
+    WP30["WP-30 · Fitness<br/>security gates"]
+    WP32["WP-32 · ADR-0014<br/>catalogue vs budget"]
 
     WP0 --> WP1 --> WP2 --> WP3
     WP2 --> WP4
@@ -73,26 +87,62 @@ flowchart TD
     WP5 --> WP13
     WP5 --> WP14
 
-    WP5 --> WP15
-    WP5 --> WP16
+    WP5 --> WP15 --> WP20 --> WP24 --> WP29 --> WP33
+    WP5 --> WP16 --> WP27
     WP9 --> WP17
-    WP6 --> WP17
-    WP14 --> WP18
+    WP6 --> WP17 --> WP22 --> WP26
+    WP14 --> WP18 --> WP23 --> WP28 --> WP31
     WP13 --> WP19
+    WP15 --> WP21 --> WP25
+    WP22 --> WP32
+    WP1 --> WP30
 
     style WP3 fill:#fff3cd,stroke:#856404
     style WP11 fill:#f8d7da,stroke:#721c24
     style WP1 fill:#d4edda,stroke:#155724
     style WP15 fill:#cfe2ff,stroke:#084298
+    style WP20 fill:#cfe2ff,stroke:#084298
+    style WP24 fill:#cfe2ff,stroke:#084298
+    style WP29 fill:#cfe2ff,stroke:#084298
+    style WP33 fill:#e2e3e5,stroke:#41464b,stroke-dasharray: 4 3
     style WP16 fill:#cfe2ff,stroke:#084298
     style WP17 fill:#cfe2ff,stroke:#084298
     style WP18 fill:#cfe2ff,stroke:#084298
     style WP19 fill:#cfe2ff,stroke:#084298
+    style WP21 fill:#cfe2ff,stroke:#084298
+    style WP22 fill:#cfe2ff,stroke:#084298
+    style WP23 fill:#cfe2ff,stroke:#084298
+    style WP25 fill:#cfe2ff,stroke:#084298
+    style WP26 fill:#cfe2ff,stroke:#084298
+    style WP27 fill:#cfe2ff,stroke:#084298
+    style WP28 fill:#cfe2ff,stroke:#084298
+    style WP30 fill:#cfe2ff,stroke:#084298
+    style WP31 fill:#cfe2ff,stroke:#084298
+    style WP32 fill:#cfe2ff,stroke:#084298
 ```
 
-WP-0 through WP-14 are P0 (complete); WP-15 onward are **P1**, shown in blue.
-WP-16, WP-17 and WP-18 have disjoint dependencies and no shared files, so they
-run concurrently; WP-15 touches the whole stack and does not.
+WP-0 through WP-14 are P0 (complete); WP-15 onward are **P1**, in blue. **WP-33 is
+dashed because it is the only one not yet merged** — it is the last item in P1's
+full-DSL Must.
+
+**This diagram stopped at WP-19 for most of P1 and was wrong the whole time.** It is
+recorded here rather than quietly corrected, because the failure is the same one the
+phase keeps finding elsewhere: a document that describes the plan as it was conceived
+rather than as it is executed stops being read, and then stops being maintained. P1
+grew from five packages to nineteen — the extra fourteen were not scope creep but work
+each package *surfaced*, and a sequencing diagram that cannot show that is not a plan.
+
+**The DSL chain is strictly sequential** (WP-15 → 20 → 24 → 29 → 33): every shape
+touches the builder, the model, the analyzer, the emitter, `StepGraph` and the engine,
+so no two can be built concurrently without fighting over the same six files. Everything
+else in P1 ran in parallel batches of four, chosen for disjoint file ownership.
+
+**Three chains exist because one package kept exposing the next.** WP-18 measured the
+scale criterion and got a number its own noise swallowed; WP-23 rebuilt the methodology;
+WP-28 bisected the 4.9× regression WP-23's numbers exposed; WP-31 built the gate that
+would have caught it on the commit that caused it. Similarly WP-21 raised `FLOWX1011`
+for `When` only, and WP-25 existed because WP-20 immediately added a second construct
+under the identical rule.
 
 **WP-3 is scheduled before the engine on purpose.** A performance budget that
 becomes measurable only after the thing it constrains is built is a budget that

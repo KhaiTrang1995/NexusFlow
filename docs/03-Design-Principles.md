@@ -45,9 +45,13 @@ mechanism.
 **Consequence.** Changing HTTP → Kafka → cron is an attribute change. Business
 tests never mention transport.
 
-**Enforced by.** `TriggerIsolationRule`: no type in a flow's transitive closure
+**Enforced by.** `FlowsAreTransportFree`: no type in a flow's transitive closure
 may reference `FlowX.Http`, `FlowX.Kafka`, `Microsoft.AspNetCore.*`,
-`Confluent.*`, or any plugin assembly. Analyzer `FLOWX1003`.
+`Confluent.*`, or any plugin assembly — an IL walk over the flow and everything
+it reaches, including the generated half. Analyzer `FLOWX1003` covers the
+narrower case of a capability holding a transport dependency. *This paragraph
+named `TriggerIsolationRule`, which never existed under that or any name until
+WP-35.*
 
 ---
 
@@ -65,8 +69,11 @@ deliberate non-goal of v1. When that need is real it will be served by a
 contract — never by degrading the compiled path. See
 [ADR-0002](adr/ADR-0002-compile-time-orchestration.md).
 
-**Enforced by.** `NoReflectionRule` architecture test scanning IL for
-`System.Reflection` usage in `FlowX.Runtime`; `PublishAot=true` smoke test in CI.
+**Enforced by.** `NoReflectionOnHotPath`, an architecture test scanning IL for
+`System.Reflection`, `System.Runtime.Loader`, `Activator`, `AppDomain` and the C#
+runtime binder across `FlowX.Abstractions`, `FlowX.Core` and `FlowX.Runtime`;
+`PublishAot=true` smoke test in CI. *This paragraph named `NoReflectionRule`,
+which never existed under that or any name until WP-35.*
 
 ---
 
@@ -108,9 +115,12 @@ durable state lives in pluggable stores.
 **Consequence.** Scale-out is a replica count. Rolling updates never lose
 in-flight flows because a flow's state is journaled, not in-memory.
 
-**Enforced by.** `StatelessRuntimeRule`: no mutable static state in
-`FlowX.Runtime` (IL scan for mutable statics); chaos test kills a node mid-flow
-and asserts completion on a survivor.
+**Enforced by.** `RuntimeHasNoMutableStatics`: every static field in
+`FlowX.Runtime` is `readonly` or `const`, by IL scan. *This paragraph named
+`StatelessRuntimeRule`, which never existed under that or any name until WP-35.*
+The chaos test it also claims — kill a node mid-flow, assert completion on a
+survivor — **does not exist and cannot yet**: there is no journal and no second
+node. It is an exit criterion of P2 in [20-Roadmap](20-Roadmap.md).
 
 ---
 
