@@ -31,18 +31,23 @@
 > same reason it is worth naming here: a suite written against one test double is
 > a suite that has encoded it.
 >
-> There are **two plugins**. `plugins/FlowX.Http` extends FlowX by referencing
+> There are **three plugins**. `plugins/FlowX.Http` extends FlowX by referencing
 > `FlowX.Abstractions` and mapping ASP.NET Core onto `TriggerEnvelope` — the
 > pattern this document describes, without the interface that would formalise it.
 > `plugins/FlowX.Postgres` (WP-53) implements `IFlowJournal`, `ILeaseStore` and
 > `IRecoveryIndex` against `FlowX.Abstractions` and nothing else, and passes the
 > conformance suite unmodified from a different assembly.
 >
-> *This box said "one plugin" until 2026-07-31.* **The claim it was supporting
-> survives the correction:** there is still **one implementation per
-> abstraction**, so "no abstraction ships with fewer than two real
-> implementations" is as untested as it was — and `FlowX.Http` is still the only
-> *transport* plugin, which is the data point `PluginsPassConformance` needs.
+> `plugins/FlowX.Redis` (WP-54) implements `ILeaseStore` and passes
+> `LeaseStoreConformance` **unmodified**, inherited across an assembly boundary
+> ([ADR-0019](adr/ADR-0019-redis-lease-store.md)).
+>
+> *This box said "one plugin", then "two", and said the supporting claim survived
+> because there was still one implementation per abstraction.* **That is no longer
+> true of `ILeaseStore`**, which now has two — and the second one proved the suite
+> travels rather than describing the first. Every other contract still has one, and
+> `FlowX.Http` is still the only *transport* plugin, which is the data point
+> `PluginsPassConformance` actually needs.
 >
 > **`FlowX.Conformance.Tests` is three of [§4](#4-compatibility-policy)'s seven
 > rows and nothing else.**
@@ -128,7 +133,7 @@ flowchart TB
 | `ITriggerSource` | how flows are activated | Http, Grpc, GraphQL, Kafka, RabbitMq, AzureServiceBus, Mqtt, Sqs, Cron, FileWatcher, SignalR, Agent |
 | `IEventPublisher` | where events go | **declared at WP-56; none of Kafka, RabbitMq, ServiceBus, EventHubs, Sns exists** |
 | `IFlowJournal` | durable state | PostgreSql, SqlServer, Redis, Cosmos |
-| `ILeaseStore` | ownership | Redis, PostgreSql, etcd |
+| `ILeaseStore` | ownership | **PostgreSql (WP-53) and Redis (WP-54) both ship**; etcd does not |
 | `IIdempotencyStore` | dedup | Redis, PostgreSql, in-memory |
 | `IPolicyHandler` | new cross-cutting rules | all built-ins |
 | `IPayloadSerializer` | wire and journal format | SystemTextJson (default), MessagePack, Protobuf |
