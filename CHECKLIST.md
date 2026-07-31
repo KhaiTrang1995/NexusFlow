@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 918/918 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 971/971 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -259,8 +259,8 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       branch stack and **both directions allocate 0 B** in Release. The manifest
       deliberately does **not** carry the predicate's source text: it would put business
       thresholds into a file whose rule is structure-only. `Parallel` followed at
-      **WP-24**; `ForEach` and `SubFlow` remain open — this box does not tick until they
-      land
+      **WP-24** and `ForEach` at **WP-29**; **`SubFlow` alone remains open** — this box
+      does not tick until it lands
 - [x] **WP-20** `Switch` / `Case` / `Default` — a value branch through builder, model,
       analysis, emission, graph and engine. One `StepKind.Switch` carrying a target per
       case plus a default, and a `Jump` closing each case block, in the *same flat step
@@ -299,6 +299,26 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       dictionary operation. The lock stays — concurrent `Dictionary` mutation is unsafe by
       contract, and a race this hard to provoke reaches production instead of CI — but it
       is currently guarded by reasoning, not by a test that can fail
+- [x] **WP-29** `ForEach` — a bounded body **re-entered per element**, the first shape
+      where one range of the flat array executes more than once. The body appears once and
+      the engine re-enters the span `[index+1, Target)`, so the plan, the manifest and the
+      diagram stay independent of data size. **The per-iteration item is not in the state
+      bag**: `IterationScope<TItem>` wraps the enclosing context and shadows `TryGet<T>`
+      when `T` is the element type, via `Unsafe.As` so a struct element is not boxed per
+      read; writes fall through, and scopes chain so nested loops each resolve their own
+      element. **32 B per element and nothing per step** — asserted as a ceiling *and* as
+      an exact tracks-elements-not-steps test. `CompensationStack`'s duplicate check moved
+      from index to `(index, scope)`: keying on index alone threw on the second element,
+      which would have made the documented per-line compensation example impossible to
+      write. `MaxDegreeOfParallelism > 1` reuses **all** of `Parallel`'s machinery and adds
+      only a sliding window; the bound is clamped against a constant rather than
+      `ProcessorCount`, so a plan does not depend on the machine that built it.
+      **The new cost gate fired on this merge** at +2.20 % against its +2.0 % threshold,
+      with a 0.01 % spread — real signal. Re-recorded deliberately: `IStepDispatcher`
+      gained two required members, so every flow emits two throwing stubs for iteration it
+      does not use, exactly as it already does for `Evaluate` and `Select`. That is the
+      gate working — a cost increase arriving as a reviewable diff instead of unseen.
+      **Worth watching:** this is the fifth required member on that interface
 - [ ] **A test that can actually fail on the parallel context race.** Needs deterministic
       interleaving, not more iterations. Until then the lock above rests on the language
       contract alone

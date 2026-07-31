@@ -448,7 +448,7 @@ maintainability and scale, not features.
 
 | Roadmap item | Where it stands |
 |---|---|
-| Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **WP-15**, **WP-20** and **WP-24**, part done — `When`/`Otherwise`, `Switch`/`Case`/`Default` and `Parallel`/`Branch` ship end to end; `ForEach` and `SubFlow` remain |
+| Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **WP-15**, **WP-20**, **WP-24** and **WP-29** — four of five ship end to end. **`SubFlow` alone remains**, and with it `FLOWX1021` (sub-flow cycles), which nothing can raise until something can declare one |
 | Contract-compatibility checking | **WP-16**, done — as `FLOWX1020`, *step binding* |
 | Diagnostics FLOWX1001–1023 with help URIs | **Partly done, and this row previously overstated it.** Raised today: `1001`–`1005`, `1010`, `1011`, `1014`, `1015`, `1017`, `1018`, `1020`, `1023`, `1024`. **Still reserved and raised by nothing:** `1006`–`1009`, `1012`, `1016`, `1019`, `1021`, `1022`. Most await machinery that does not exist — `1021` needs `SubFlow`, `1007`–`1009` and `1012` need durability — so the honest status is *blocked*, not *done*. **WP-21** closed `1011` and **WP-24** closed `1013`, the latter by shipping the `Parallel` it was blocked on |
 | Manifest completeness | **WP-22**, done — `triggers` and per-capability `errors` were declared in the schema and emitted by nothing |
