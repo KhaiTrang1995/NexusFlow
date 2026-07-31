@@ -63,6 +63,37 @@
   </PropertyGroup>
 
   <!--
+    Analyzers behind the build gates in docs/21-Quality-Gates.md §2.1 and §2.2.
+    Both are development dependencies: PrivateAssets="all" keeps them out of the
+    generated nuspec, so nothing a consumer restores changes. They contribute no
+    runtime assembly and are invisible to the trim and AOT analyzers (constraint
+    C2) for the same reason — an analyzer runs in the compiler, not in the app.
+
+    They are declared here rather than per project on purpose. A gate that only
+    some projects opt into is a gate with holes in it, and adding a project would
+    silently create one. FlowX.Abstractions is included and stays compliant with
+    AbstractionsHasNoDependencies: that rule reads PackageReference items out of
+    the .csproj, and its intent — "a dependency here is inherited by everyone" —
+    is untouched, because PrivateAssets="all" means nobody inherits this.
+
+    Pinned exactly. An analyzer that floats can change what compiles between two
+    checkouts of the same commit, which is the one thing Deterministic=true above
+    exists to prevent.
+  -->
+  <ItemGroup>
+    <PackageReference Include="SonarAnalyzer.CSharp" Version="10.31.0.145097" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers" Version="17.14.15" PrivateAssets="all" />
+
+    <!--
+      Sonar reads rule thresholds only from an AdditionalFile named exactly
+      SonarLint.xml; .editorconfig carries severities and silently ignores
+      thresholds. One file at the root, linked into every project, so the
+      numbers §2.1 commits to are stated once.
+    -->
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)SonarLint.xml" Link="SonarLint.xml" Visible="false" />
+  </ItemGroup>
+
+  <!--
     Package consumers get this by importing the analyzer package's props. Repository
     projects reference FlowX.Compiler as a ProjectReference, which does not import it,
     so the same file is imported here — one definition, not a copy that can drift.
