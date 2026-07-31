@@ -60,11 +60,12 @@
 
 These gate everything below them. None is code work.
 
-- [ ] **B-1 · Commit the three infographic PNGs** to `docs/assets/` using the exact
-      filenames in [the asset manifest](docs/assets/README.md).
-      *Blocks:* CI `docs` job (README currently references three missing files).
-      *Owner:* repository owner. *Why not done:* the images exist only in a chat
-      transcript; they cannot be written to disk from here.
+*B-1 — the three missing infographic PNGs — was **removed from this list on 2026-07-31 at
+the repository owner's direction**. It is recorded here rather than deleted because the
+condition it described has not changed: `docs/assets/` still holds no images, the four
+Markdown references to them are still broken, and the CI `docs` job still fails on them.
+What changed is that it is no longer tracked as a blocker.*
+
 - [x] **B-2 · ~~Run `dotnet build FlowX.slnx` once.~~ RESOLVED.**
       SDK 10.0.110 installed from the Ubuntu archive (`dot.net` and
       `builds.dotnet.microsoft.com` are proxy-blocked; `packages.microsoft.com`
@@ -106,11 +107,12 @@ These gate everything below them. None is code work.
 - [x] `docs/benchmarks/README.md` — WP-3 baseline results and gate policy
 - [x] `docs/benchmarks/P0.md` — the kill-criterion report. **PASS**, argued on shared
       hardware: a 29× margin against a 2.6× worst-observed noise factor
-- [~] Internal Markdown links resolve — **4 broken, all of them B-1**: three
+- [~] Internal Markdown links resolve — **4 broken, all of them missing infographics**: three
       image paths referenced from `README.md` and `docs/05-Architecture.md`.
       Every non-image link resolves. The `docs` job is red until the PNGs land,
       which is the intended forcing function, not an oversight.
-- [ ] All Mermaid diagrams parse (the `docs` job cannot reach this step while B-1 is open)
+- [ ] All Mermaid diagrams parse (the `docs` job cannot reach this step while the
+      infographic links are broken)
 
 ---
 

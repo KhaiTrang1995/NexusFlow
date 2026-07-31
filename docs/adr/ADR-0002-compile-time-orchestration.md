@@ -40,9 +40,11 @@
 > is measured by a job that cannot fail a pull request. The gate that does block —
 > `generator-cost` — is *relative*: bytes allocated against a committed baseline, which
 > answers "did this change make it worse", not "is the build inside the budget". **Which
-> record gives way is the repository owner's decision**
-> ([PLAN open item 6](../../PLAN.md#9-open-items-blocking-the-plan)); recording the
-> disagreement is what this note does instead of picking a side.
+> record gives way is the repository owner's decision**, and on 2026-07-31 that owner
+> **removed it from [PLAN §9](../../PLAN.md#9-open-items-blocking-the-plan)'s open items** —
+> a decision to leave the choice unmade rather than an oversight. So the disagreement stands
+> and is no longer queued for resolution: this note records it because a conflict nobody is
+> tracking is worse than one nobody has settled.
 
 ## Context
 
