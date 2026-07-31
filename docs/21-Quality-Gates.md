@@ -257,18 +257,27 @@ deprecated by Sonar** in favour of `S3776`, which measures the same property
 without counting a flat dispatch as complexity. Keeping both means paying the
 same debt twice against two numbers that disagree about what complexity is.
 
-#### Open findings: real defects this change did not fix
+#### Open findings: closed
 
-Three rules found genuine problems in files outside this change's scope. They are
-switched off so the build stays green — **not** because the findings are wrong.
-Each `.editorconfig` entry says so at the site, and deleting one turns the build
-red until the listed lines are fixed, which is the intended behaviour.
+Three rules found genuine problems in files outside the scope of the change that
+introduced them. **All three are now fixed, and every suppression has been deleted, so
+each rule guards its own fix.** The block is kept rather than removed, because "a gate
+was switched off and later switched back on" is the part a reader needs to be able to
+check.
 
-| Rule | Sites | The defect |
+| Rule | Was | Now |
 |---|---|---|
-| `S8949` | `CapabilityThrowAnalyzer.cs:121,141`, `DeadlineCoherenceAnalyzer.cs:107`, `StepBindingAnalyzer.cs:142` | Roslyn semantic-model calls that do not forward `context.CancellationToken`. Same defect class as `CA2016`, which §2.2 promotes to an error. An analyzer that ignores the compiler's cancellation keeps working after the IDE has moved on — on every keystroke. |
-| `S2365` | `FlowModel.cs:167,175` | `ComposedFlows` and `ReferencedCapabilities` are properties that run a LINQ pipeline and allocate a `List` on **every read**, and the emitter reads them more than once per flow. They should be methods, or computed once. |
-| `S6966` / `VSTHRD103` | `FlowEngine.cs:636,836,876`, `samples/ecommerce/Program.cs:43` | `CancellationTokenSource.Cancel()` where `CancelAsync()` exists. `Cancel()` runs every registered callback synchronously on the calling thread — in the parallel-merge path, that is the engine's own thread. Two independent analyzers flagged the same three lines. |
+| `S8949` | Four Roslyn semantic-model calls not forwarding `context.CancellationToken` — the class `CA2016` is promoted to an error for, and a real cost in an editor | **Fixed** (WP-46). Token threaded; suppression deleted; rule live at default severity |
+| `S2365` | `FlowModel.ComposedFlows` and `ReferencedCapabilities` allocated a `List` on every read while the emitter read each three times per flow | **Fixed** (WP-46). Computed once in the constructor — not cached lazily, because an incremental generator caches the model and hands it across threads. Suppression deleted |
+| `S6966` / `VSTHRD103` | Three `Cancel()` calls in the engine where `CancelAsync()` exists, running callbacks synchronously on the engine's own thread | **Fixed** (WP-45), both rules re-enabled. Each site was checked against the fork's drain guarantee before the swap, not changed mechanically |
+
+**One entry bundled two unrelated defects**, and only surfaced when the fix did not turn
+the build green: the row cited `samples/ecommerce/Program.cs:43` alongside the three
+engine lines, but that site is `app.Run()`, not a `Cancel()` call — `S6966` wants
+`await app.RunAsync()`. It remains suppressed, scoped to that one file, on the grounds
+that blocking the main thread until shutdown is what a host entry point does and
+`app.Run()` is the shape every template teaches. A one-line change to `RunAsync` would
+remove both the finding and the suppression.
 
 #### Rules switched off because they are wrong about this codebase
 
