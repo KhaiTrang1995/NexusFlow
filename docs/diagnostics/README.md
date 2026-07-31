@@ -200,6 +200,7 @@ did about it is on [the page](FLOWX1012.md#the-reference-sample-fires-this-rule)
 | [FLOWX1027](FLOWX1027.md) | Step is unreachable after `Fail` | A plan, a manifest and a diagram listing work the flow can never do |
 | [FLOWX1029](FLOWX1029.md) | Step input mapping produces the wrong contract | A `CS1503` inside generated source, about a call the developer cannot see |
 | [FLOWX1028](FLOWX1028.md) | Execution profile is declared but not honoured by the runtime | **A payment saga declaring `Durable` and losing its instance on the next deploy** |
+| [FLOWX1030](FLOWX1030.md) | Authorisation stance names no permission or policy | **A capability published as permission-protected that names no permission, and a `flowx diff` rule with nothing to compare when the grant moves** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -270,7 +271,16 @@ mode this paragraph exists to prevent, arriving from the one direction it did no
 Reading "the next free id" is not enough when someone else is reading it too. Claim the id
 in this file *first*, in its own commit, before writing the rule.
 
-The next is `FLOWX1030`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1030` is claimed** — *authorisation stance names no permission or policy*:
+`Authorization = Authorization.Permission` or `= Authorization.Policy` declared with no
+`Permission = "…"` or `Policy = "…"` beside it. It is none of the reservations and it is
+not `FLOWX1010`: that rule asks whether a stance was declared at all, and this one
+presupposes that it was. [FLOWX1010's page](FLOWX1010.md) already described the gap — its
+quick action withholds `Permission` and `Policy` on the grounds that "nothing rejects
+`Authorization.Permission` with no `Permission = "…"` alongside it" — and this is the rule
+that stops that sentence being true.
+
+The next is `FLOWX1031`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

@@ -15,6 +15,6 @@
   "capabilities": [
     { "id": "order.validate", "version": "1.0.0", "input": "A", "output": "B", "authorization": {"mode":"Authenticated"}, "idempotent": true, "sideEffects": [] },
     { "id": "inventory.reserve", "version": "1.0.0", "input": "A", "output": "B", "authorization": {"mode":"Authenticated"}, "idempotent": true, "sideEffects": ["inventory-ledger"] },
-    { "id": "payment.capture", "version": "2.1.0", "input": "A", "output": "B", "authorization": {"mode":"Permission"}, "idempotent": false, "sideEffects": ["payment-gateway"] }
+    { "id": "payment.capture", "version": "2.1.0", "input": "A", "output": "B", "authorization": {"mode":"Permission","value":"payment.write"}, "idempotent": false, "sideEffects": ["payment-gateway"] }
   ]
 }

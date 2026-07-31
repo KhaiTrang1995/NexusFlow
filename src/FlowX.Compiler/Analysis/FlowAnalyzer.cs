@@ -1236,6 +1236,18 @@ public static class FlowAnalyzer
                 info.Id));
         }
 
+        // FLOWX1030 — and no unnamed permission. Reported here rather than beside
+        // FLOWX1010's condition because it presupposes FLOWX1010 passed: an undeclared
+        // stance reads as Public, which names nothing and is supposed to.
+        else if (NamesNothing(info))
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.AuthorizationStanceNamesNothing,
+                link.TypeArguments[0].GetLocation(),
+                info.Id,
+                info.AuthorizationMode));
+        }
+
         var mapping = ReadInputMapping(link, semanticModel, info, diagnostics);
 
         steps.Add(StepModel.Capability(
@@ -1247,6 +1259,7 @@ public static class FlowAnalyzer
             info.SideEffects,
             FormatLocation(link.CallLocation),
             info.AuthorizationMode,
+            info.AuthorizationValue,
             info.InputTypeName,
             info.OutputTypeName,
             mapping?.Text,
@@ -1479,9 +1492,23 @@ public static class FlowAnalyzer
             info.SideEffects,
             FormatLocation(link.CallLocation),
             info.AuthorizationMode,
+            info.AuthorizationValue,
             info.InputTypeName,
             info.OutputTypeName));
     }
+
+    /// <summary>
+    /// Whether a declared stance demands a name and was given none — FLOWX1030.
+    /// </summary>
+    /// <remarks>
+    /// <c>Public</c>, <c>Authenticated</c> and <c>Internal</c> are complete in themselves.
+    /// <c>Permission</c> and <c>Policy</c> are not: each is a claim that some named grant
+    /// is required, and without the name the manifest publishes an authorisation stance
+    /// nothing can be checked against.
+    /// </remarks>
+    private static bool NamesNothing(CapabilityInfo info) =>
+        info.AuthorizationValue is null
+        && info.AuthorizationMode is "Permission" or "Policy";
 
     private static void AttachPolicy(
         ChainLink link,

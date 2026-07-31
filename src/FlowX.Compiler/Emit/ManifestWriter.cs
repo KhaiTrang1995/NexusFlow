@@ -712,6 +712,21 @@ public static class ManifestWriter
         writer.PropertyName("authorization");
         writer.OpenObject();
         writer.Property("mode", step.AuthorizationMode ?? "Public");
+
+        // `value` is the name the stance checks against, and its field name and shape are
+        // the schema's, not this writer's — `capability.authorization.value`, a string.
+        // Omitted rather than emitted empty, because the schema makes it optional and
+        // three of the five modes name nothing: an empty string would read as "a
+        // permission whose name is blank" instead of "this stance needs no name".
+        //
+        // Until this line existed, FLOWX-DIFF-015's second half — "the named permission
+        // changed" — compared null against null on every manifest FlowX produced and
+        // could not fire. The compiler had the value the whole time and dropped it here.
+        if (step.AuthorizationValue is { Length: > 0 } value)
+        {
+            writer.Property("value", value);
+        }
+
         writer.CloseObject();
 
         writer.Property("idempotent", step.IsIdempotent);

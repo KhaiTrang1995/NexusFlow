@@ -120,7 +120,7 @@ below is what is true today.
 | 2 | Returns `Result<TOut>`; expected failures are values | the interface signature + `FLOWX1016` | **enforced.** `ExecuteAsync` returns `ValueTask<Result<TOut>>`, so the shape is not optional; `FLOWX1016` (Warning, and an error here under `TreatWarningsAsErrors`) catches the way round it — throwing an outcome a caller could reasonably handle |
 | 3 | Never invokes another capability | `FLOWX1004` + `CapabilitiesDoNotCallCapabilities` | **enforced** |
 | 4 | Never references a transport or plugin assembly | `FLOWX1003` + `FlowsAreTransportFree` | **enforced** |
-| 5 | Declares an authorisation stance | `FLOWX1010` + `EveryCapabilityDeclaresAuthorization` | **enforced** |
+| 5 | Declares an authorisation stance | `FLOWX1010` + [`FLOWX1030`](diagnostics/FLOWX1030.md) + `EveryCapabilityDeclaresAuthorization` | **enforced**, and since `FLOWX1030` a `Permission` or `Policy` stance must also carry the name it demands — a stance that names nothing is declared but not checkable |
 | 6 | Stateless: no mutable instance or static fields | [`FLOWX1009`](diagnostics/FLOWX1009.md) | **enforced since WP-58** — Warning, and Error where the compilation shows the type on a durable flow's replay path. *This cell read "**not enforced.** `FLOWX1009` does not exist".* `RuntimeHasNoMutableStatics` still covers only `FlowX.Runtime`; this rule is what covers application capabilities |
 | 7 | Time/ID/randomness only via `ctx` | [`FLOWX1007`](diagnostics/FLOWX1007.md) + [`FLOWX1008`](diagnostics/FLOWX1008.md) | **enforced since WP-58**, at the same severities. *This cell read "**not enforced** … nothing stops a capability calling `DateTime.UtcNow` instead".* `CapabilityContext` offers `UtcNow`, `NewId()` and `Random`; reaching past them is now reported |
 | 8 | Contract types are immutable records, serialisable by a generated STJ context | — | **not enforced.** `FLOWX1006` does not exist — the last of the four ids this table named for nothing. **WP-59** |
@@ -286,10 +286,16 @@ public enum Authorization
 ```
 
 - A capability with **no** stance fails the build (`FLOWX1010`).
+- `Permission` or `Policy` with **no name** fails the build too
+  ([`FLOWX1030`](diagnostics/FLOWX1030.md)). Each is a claim that a named grant is
+  required, and without the name the manifest publishes a stance nothing can be checked
+  against — which also left `flowx diff`'s `FLOWX-DIFF-015` with no value to compare when
+  the grant moved.
 - `Internal` capabilities are unreachable from any trigger — the Trigger Engine
   rejects them at admission and the compiler removes them from the agent tool
   surface.
-- The manifest lists every capability's stance, so "who can capture a payment?"
+- The manifest lists every capability's stance **and the permission or policy it names**
+  (`authorization.mode` and `authorization.value`), so "who can capture a payment?"
   is a query, not an investigation (QR9).
 
 ---

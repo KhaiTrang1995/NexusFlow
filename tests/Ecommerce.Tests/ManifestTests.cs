@@ -89,6 +89,20 @@ public sealed class ManifestTests
         capabilities["payment.capture"].GetProperty("authorization").GetProperty("mode")
             .GetString().ShouldBe("Permission");
 
+        // And the permission it names. `CapturePayment` has declared
+        // Permission = "payment.write" since the sample was written; the manifest
+        // published {"mode": "Permission"} and dropped it, so `flowx diff`'s
+        // FLOWX-DIFF-015 — "authorisation tightened, *or the named permission changed*" —
+        // compared null against null here and could not fire. A reader of this document
+        // could not tell "this capability requires no named grant" from "the compiler
+        // never carried the one it declares".
+        capabilities["payment.capture"].GetProperty("authorization").GetProperty("value")
+            .GetString().ShouldBe("payment.write");
+
+        // A stance that names nothing publishes no value, rather than an empty one.
+        capabilities["inventory.reserve"].GetProperty("authorization")
+            .TryGetProperty("value", out _).ShouldBeFalse();
+
         // The compensation is a capability in its own right. It used to appear only as a
         // name on the step it undoes, so its stance and side effects reached nothing —
         // and `flowx diff` could not see a breaking change to one.

@@ -29,10 +29,11 @@ prevent — and it additionally requires an `[ApprovedBy]` that no tool can auth
 your behalf.
 
 `Permission` and `Policy` are absent for a different reason: each needs a name that
-nothing in the source implies. Nothing rejects `Authorization.Permission` with no
-`Permission = "…"` alongside it, so emitting the stance alone would produce a
-declaration that compiles, reads as enforced, and reaches the manifest as a claim about
-access control that nothing backs. Write those two by hand.
+nothing in the source implies, and emitting the stance alone would produce a declaration
+that reads as enforced while naming nothing to enforce. This page used to add that nothing
+rejected such a declaration. [FLOWX1030](FLOWX1030.md) now does — so a quick action
+offering these two would be trading one error for another. Write them by hand, with their
+names.
 
 There is no **Fix All** for this diagnostic. Answering a security question once and
 applying the answer solution-wide is the permissive default wearing a different hat.

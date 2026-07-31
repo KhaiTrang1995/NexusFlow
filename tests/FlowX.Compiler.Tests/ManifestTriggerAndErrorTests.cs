@@ -7,16 +7,18 @@ using Xunit;
 namespace FlowX.Compiler.Tests;
 
 /// <summary>
-/// The two manifest fields the schema declared and nothing produced: a flow's
-/// <c>triggers</c> and a capability's <c>errors</c>.
+/// The manifest fields the schema declared and nothing produced: a flow's
+/// <c>triggers</c>, a capability's <c>errors</c>, and its
+/// <c>authorization.value</c>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// End to end through a real compilation, because neither can be tested any other way.
-/// A trigger is an attribute on the flow's class, and an error catalogue is read by
-/// following expressions of type <c>Error</c> back to the literals that produced them —
-/// both are questions about symbols, and a model built by hand would only prove that the
-/// writer renders what it is given.
+/// End to end through a real compilation, because none of them can be tested any other
+/// way. A trigger is an attribute on the flow's class, an error catalogue is read by
+/// following expressions of type <c>Error</c> back to the literals that produced them,
+/// and the named permission is a property of the <c>[Capability]</c> attribute — all
+/// questions about symbols, and a model built by hand would only prove that the writer
+/// renders what it is given.
 /// </para>
 /// <para>
 /// The negative cases matter more than the positive ones here. A field that is emitted
@@ -383,6 +385,105 @@ public sealed class ManifestTriggerAndErrorTests
         Flow(manifest).TryGetProperty("errors", out _).ShouldBeFalse(
             "A union short by one capability's codes reads exactly like a complete one, and " +
             "an OpenAPI document generated from it would omit responses the endpoint returns.");
+    }
+
+    // ------------------------------------------------------ authorisation value
+
+    private static string FlowOver(string capability) => capability + "\n\n" + """
+        [Flow("order.place")]
+        public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+        {
+            protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                .Step<Guarded>()
+                .Return(ctx => new OrderResult("id"));
+        }
+        """;
+
+    private static string Guarded(string attribute) => FlowOver($$"""
+        {{attribute}}
+        public sealed class Guarded : ICapability<PlaceOrder, OrderResult>
+        {
+            public ValueTask<Result<OrderResult>> ExecuteAsync(PlaceOrder input, CapabilityContext ctx, CancellationToken ct)
+                => ValueTask.FromResult(Result.Ok(new OrderResult(input.Sku)));
+        }
+        """);
+
+    /// <summary>
+    /// The permission the stance names reaches the manifest.
+    /// </summary>
+    /// <remarks>
+    /// <c>FLOWX-DIFF-015</c> is <em>"authorisation tightened, or the named permission
+    /// changed"</em>, and its second half compared <c>authorization.value</c> on both
+    /// sides while nothing wrote that field. On every manifest FlowX produced, that
+    /// comparison was null against null: half of a Breaking rule that could not fire. The
+    /// value was on the attribute the whole time and was dropped between the reader and
+    /// the writer.
+    /// </remarks>
+    [Fact]
+    public void ThePermissionAStanceNamesReachesTheManifest()
+    {
+        using var manifest = ManifestOf(Guarded(
+            """[Capability("payment.capture", Version = "2.1.0", Authorization = Authorization.Permission, Permission = "payment.write")]"""));
+
+        var authorization = Capability(manifest, "payment.capture").GetProperty("authorization");
+
+        authorization.GetProperty("mode").GetString().ShouldBe("Permission");
+        authorization.GetProperty("value").GetString().ShouldBe("payment.write");
+    }
+
+    [Fact]
+    public void ThePolicyAStanceNamesReachesTheSameField()
+    {
+        // One field for both, because a capability has one stance. The schema declares
+        // `value`, not `permission` and `policy`, and the mode says which it came from.
+        using var manifest = ManifestOf(Guarded(
+            """[Capability("payment.capture", Version = "2.1.0", Authorization = Authorization.Policy, Policy = "eu-residents-only")]"""));
+
+        var authorization = Capability(manifest, "payment.capture").GetProperty("authorization");
+
+        authorization.GetProperty("mode").GetString().ShouldBe("Policy");
+        authorization.GetProperty("value").GetString().ShouldBe("eu-residents-only");
+    }
+
+    /// <summary>
+    /// A stance that needs no name publishes no value, rather than an empty one.
+    /// </summary>
+    /// <remarks>
+    /// The distinction the schema's optional field exists for: an empty string reads as
+    /// "a permission whose name is blank", and absence reads as "this stance names
+    /// nothing" — which is the truth for <c>Public</c>, <c>Authenticated</c> and
+    /// <c>Internal</c>.
+    /// </remarks>
+    [Fact]
+    public void AStanceThatNamesNothingPublishesNoValueAtAll()
+    {
+        using var manifest = ManifestOf(Guarded(
+            """[Capability("payment.capture", Version = "2.1.0", Authorization = Authorization.Internal)]"""));
+
+        var authorization = Capability(manifest, "payment.capture").GetProperty("authorization");
+
+        authorization.GetProperty("mode").GetString().ShouldBe("Internal");
+        authorization.TryGetProperty("value", out _).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A name declared beside a stance that does not read it is not published.
+    /// </summary>
+    /// <remarks>
+    /// <c>Permission = "payment.write"</c> under <c>Authorization.Internal</c> names
+    /// nothing the stance consults. Publishing it would put a string in
+    /// <c>authorization.value</c> that no principal is ever checked against, and
+    /// <c>FLOWX-DIFF-015</c> would then report a Breaking change to a grant that was never
+    /// required — the over-reporting that gets a gate routed around.
+    /// </remarks>
+    [Fact]
+    public void ANameDeclaredBesideAStanceThatDoesNotUseItIsNotPublished()
+    {
+        using var manifest = ManifestOf(Guarded(
+            """[Capability("payment.capture", Version = "2.1.0", Authorization = Authorization.Internal, Permission = "payment.write")]"""));
+
+        Capability(manifest, "payment.capture").GetProperty("authorization")
+            .TryGetProperty("value", out _).ShouldBeFalse();
     }
 
     // ------------------------------------------------------------- determinism

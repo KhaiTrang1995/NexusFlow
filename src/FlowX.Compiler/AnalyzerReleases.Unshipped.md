@@ -37,3 +37,4 @@ FLOWX1025 | FlowX | Warning | Trigger attribute declares no [TriggerKind]; raise
 FLOWX1027 | FlowX | Warning | Step is unreachable after Fail. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1027.md)
 FLOWX1029 | FlowX | Error | Step input mapping produces the wrong contract. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1029.md)
 FLOWX1028 | FlowX | Warning | Execution profile is declared but not honoured by the runtime; narrowed to Streaming when WP-52 made the runtime journal a Durable flow, and deleted when P7 lands the stream engine. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1028.md)
+FLOWX1030 | FlowX | Error | Authorisation stance names no permission or policy. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1030.md)

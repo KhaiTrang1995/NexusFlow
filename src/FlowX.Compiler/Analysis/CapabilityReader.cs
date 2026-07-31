@@ -15,6 +15,7 @@ public sealed class CapabilityInfo
         string[] sideEffects,
         bool declaresAuthorization,
         string authorizationMode,
+        string? authorizationValue,
         string inputTypeName,
         string outputTypeName)
     {
@@ -25,6 +26,7 @@ public sealed class CapabilityInfo
         SideEffects = sideEffects;
         DeclaresAuthorization = declaresAuthorization;
         AuthorizationMode = authorizationMode;
+        AuthorizationValue = authorizationValue;
         InputTypeName = inputTypeName;
         OutputTypeName = outputTypeName;
     }
@@ -49,6 +51,28 @@ public sealed class CapabilityInfo
 
     /// <summary>The declared stance: Public, Authenticated, Permission, Policy or Internal.</summary>
     public string AuthorizationMode { get; }
+
+    /// <summary>
+    /// The permission or policy the stance names, or <c>null</c> when the stance names
+    /// nothing — either because the mode takes no name, or because none was declared
+    /// (FLOWX1030).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Read from whichever of <c>Permission</c> or <c>Policy</c> the mode actually uses,
+    /// so a name declared beside a mode that does not take one is not carried. The two
+    /// properties are separate on the attribute for readability at the declaration site,
+    /// and there is exactly one stance, so downstream sees one value rather than a pair
+    /// it would have to re-resolve against the mode — the manifest field
+    /// <c>authorization.value</c> is likewise one field for both.
+    /// </para>
+    /// <para>
+    /// <strong>This is the value <c>FLOWX-DIFF-015</c> compares.</strong> Its rule is
+    /// "authorisation tightened, <em>or the named permission changed</em>", and the second
+    /// half could not fire on any manifest FlowX produced while nothing carried this.
+    /// </para>
+    /// </remarks>
+    public string? AuthorizationValue { get; }
 
     /// <summary>The <c>TIn</c> of <c>ICapability&lt;TIn, TOut&gt;</c>. Required by the manifest schema.</summary>
     public string InputTypeName { get; }
@@ -98,6 +122,8 @@ public static class CapabilityReader
         var sideEffects = new List<string>();
         var declaresAuthorization = false;
         var authorizationMode = "Public";
+        string? permission = null;
+        string? policy = null;
 
         foreach (var named in attribute.NamedArguments)
         {
@@ -114,6 +140,17 @@ public static class CapabilityReader
                 case "Authorization":
                     declaresAuthorization = true;
                     authorizationMode = AuthorizationName(named.Value.Value);
+                    break;
+
+                // Collected rather than resolved here: named arguments arrive in source
+                // order, so `Permission = "x", Authorization = ...` would resolve against
+                // a mode not yet read. The pairing happens once the loop is done.
+                case "Permission":
+                    permission = named.Value.Value as string;
+                    break;
+
+                case "Policy":
+                    policy = named.Value.Value as string;
                     break;
 
                 case "SideEffects":
@@ -135,8 +172,29 @@ public static class CapabilityReader
             sideEffects.ToArray(),
             declaresAuthorization,
             authorizationMode,
+            AuthorizationValueOf(authorizationMode, permission, policy),
             contract.Input,
             contract.Output);
+    }
+
+    /// <summary>The name the stance uses, or <c>null</c> when it uses none.</summary>
+    /// <remarks>
+    /// Only the property the mode actually reads is carried. <c>Permission = "x"</c>
+    /// declared beside <c>Authorization.Public</c> names nothing the stance consults, and
+    /// publishing it would put a string in <c>authorization.value</c> that no principal
+    /// is ever checked against — a claim about access control with nothing behind it,
+    /// which is what <c>FLOWX1010</c> exists to prevent one level up.
+    /// </remarks>
+    private static string? AuthorizationValueOf(string mode, string? permission, string? policy)
+    {
+        var value = mode switch
+        {
+            "Permission" => permission,
+            "Policy" => policy,
+            _ => null,
+        };
+
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
     /// <summary>Maps the enum's underlying value back to its name.</summary>
