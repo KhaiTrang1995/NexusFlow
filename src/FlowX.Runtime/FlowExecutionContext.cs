@@ -161,6 +161,18 @@ public sealed class FlowExecutionContext : FlowContext
     /// </remarks>
     private IStepDispatcher? _dispatcher;
 
+    /// <summary>
+    /// The plan this context is executing, recorded for the reason
+    /// <see cref="_dispatcher"/> is.
+    /// </summary>
+    /// <remarks>
+    /// A sub-flow that succeeded is unwound long after the composition returned, through the
+    /// child's own dispatcher and against the child's own context. What the unwind also needs
+    /// by then is the child's <em>plan</em> — to know whether any of its compensations declare
+    /// a policy at all — and this context is the only thing that still has it.
+    /// </remarks>
+    private ExecutionPlan? _plan;
+
     /// <summary>How many sub-flow boundaries lie between this execution and the outermost one.</summary>
     private int _depth;
 
@@ -434,6 +446,8 @@ public sealed class FlowExecutionContext : FlowContext
         _dispatcher = dispatcher;
         _depth = depth;
         _guarded = plan.HasParallel;
+        _plan = plan;
+        Run = null;
 
         // The runtime reading ExecutionProfile, in one line. Everything a durable execution
         // costs hangs off this field, and everything an ephemeral one does not pay is the
@@ -458,6 +472,20 @@ public sealed class FlowExecutionContext : FlowContext
 
     /// <summary>What is executing this flow, for a sub-flow's deferred unwind.</summary>
     internal IStepDispatcher? Dispatcher => _dispatcher;
+
+    /// <summary>The plan this context is executing, for a sub-flow's deferred unwind.</summary>
+    internal ExecutionPlan? Plan => _plan;
+
+    /// <summary>
+    /// The journaled instance this execution's compensation rows belong to, or <c>null</c> for
+    /// an ephemeral execution.
+    /// </summary>
+    /// <remarks>
+    /// Set by the engine immediately after the instance is opened, and read only on the
+    /// failure path. A deferred sub-flow unwind writes rows against the <em>child's</em>
+    /// instance, which is the one its step indices mean something in.
+    /// </remarks>
+    internal DurableExecution? Run { get; set; }
 
     /// <summary>Child contexts still rented on this execution's behalf.</summary>
     internal List<FlowExecutionContext> RetainedSubFlows => _retainedSubFlows;
@@ -513,19 +541,19 @@ public sealed class FlowExecutionContext : FlowContext
     /// undone before the other was never expressing concurrency in the first place.
     /// </para>
     /// </remarks>
-    internal void RecordCompleted(StepNode step, FlowContext? scope = null)
+    internal void RecordCompleted(StepNode step, FlowContext? scope = null, StepScope journalScope = default)
     {
         if (_guarded)
         {
             lock (_state)
             {
-                _compensations.RecordCompleted(step, scope);
+                _compensations.RecordCompleted(step, scope, journalScope);
             }
 
             return;
         }
 
-        _compensations.RecordCompleted(step, scope);
+        _compensations.RecordCompleted(step, scope, journalScope);
     }
 
     /// <summary>
@@ -630,6 +658,8 @@ public sealed class FlowExecutionContext : FlowContext
         _seedRecorded = false;
         _error = null;
         _dispatcher = null;
+        _plan = null;
+        Run = null;
         _depth = 0;
     }
 }

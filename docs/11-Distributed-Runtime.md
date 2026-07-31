@@ -520,6 +520,15 @@ visible rather than pretending otherwise; the operator runbook is
 `flowx replay --instance <id> --from <step>` after the downstream fault is fixed —
 a command the CLI does not have yet.
 
+*It is also the one row below the first two that is now reachable rather than
+designed.* Since **WP-57** a compensation is retried under its own declared
+policy set, every attempt gets a journal row, exhaustion moves the instance to
+`CompensationFailed`, and `ICompensationAlertSink` is raised once with the flow,
+the instance, the step, the compensating capability, the attempt count and the
+last error — which is exactly what the runbook needs. What the row still promises
+and nothing delivers is the metric and the dead-letter record
+([12 §3](12-Observability.md)) and the `flowx replay` command itself.
+
 ---
 
 ## 9. Explicit non-goals

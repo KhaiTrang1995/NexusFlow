@@ -173,6 +173,31 @@ public sealed record StepNode
     /// <summary>Policies wrapping this step, in execution order.</summary>
     public PolicyChain Policies { get; private init; } = PolicyChain.Empty;
 
+    /// <summary>
+    /// Policies wrapping this step's <em>compensation</em>, in execution order.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="Policies"/> because it wraps a different capability and is
+    /// checked against a different idempotency declaration: <c>payment.capture</c> is
+    /// legitimately not idempotent while <c>payment.refund</c> is, and one chain could not
+    /// say both. <c>docs/06-Execution-Engine.md §7</c> rule 2 — "each compensation carries its
+    /// own policy chain" — is this property.
+    /// </remarks>
+    public PolicyChain CompensationPolicies { get; private init; } = PolicyChain.Empty;
+
+    /// <summary>
+    /// The compensation's retry, resolved out of <see cref="CompensationPolicies"/> when the
+    /// plan was built.
+    /// </summary>
+    /// <remarks>
+    /// Resolved here rather than at the point of use for the reason
+    /// <see cref="ExecutionPlan.CompensableStepIndices"/> is precomputed: it is read on the
+    /// failure path, where an incident is already in progress and walking an array of policy
+    /// descriptors would add latency at exactly the wrong moment. It is also what keeps the
+    /// success path free — the loop that runs the flow never touches it.
+    /// </remarks>
+    public CompensationPolicy CompensationRetry { get; private init; } = CompensationPolicy.None;
+
     /// <summary>The event published by an <see cref="StepKind.Emit"/> step.</summary>
     public string? EventType { get; private init; }
 
@@ -333,12 +358,21 @@ public sealed record StepNode
     /// <param name="capability">The capability to invoke.</param>
     /// <param name="compensation">The business inverse, if this step is compensable.</param>
     /// <param name="policies">Policies wrapping the step.</param>
-    /// <exception cref="InvalidFlowPlanException">The compensation is the capability itself.</exception>
+    /// <param name="compensationPolicies">
+    /// Policies wrapping the step's compensation. Build it against
+    /// <paramref name="compensation"/> — <see cref="PolicyChain.Create"/> checks a retry
+    /// against the capability it is handed, and the capability being retried here is the undo.
+    /// </param>
+    /// <exception cref="InvalidFlowPlanException">
+    /// The compensation is the capability itself, or a compensation policy is declared on a
+    /// step that has no compensation.
+    /// </exception>
     public static StepNode ForCapability(
         int index,
         CapabilityDescriptor capability,
         CapabilityDescriptor? compensation = null,
-        PolicyChain? policies = null)
+        PolicyChain? policies = null,
+        PolicyChain? compensationPolicies = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(index);
         ArgumentNullException.ThrowIfNull(capability);
@@ -350,11 +384,23 @@ public sealed record StepNode
                 "compensation must undo the step, not repeat it.");
         }
 
+        var undoChain = compensationPolicies ?? PolicyChain.Empty;
+
+        if (compensation is null && !undoChain.IsEmpty)
+        {
+            throw new InvalidFlowPlanException(
+                $"Step {index} declares a compensation policy set and no compensation. A " +
+                "policy chain that wraps nothing is a promise the unwind cannot keep, and it " +
+                "would read as though the step were recoverable when nothing would ever run.");
+        }
+
         return new StepNode(index, StepKind.Capability)
         {
             Capability = capability,
             Compensation = compensation,
             Policies = policies ?? PolicyChain.Empty,
+            CompensationPolicies = undoChain,
+            CompensationRetry = CompensationPolicy.From(undoChain),
         };
     }
 

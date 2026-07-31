@@ -85,6 +85,7 @@ public sealed class FlowEngine
 
     private readonly IClock _clock;
     private readonly ContextPool _contexts;
+    private readonly ICompensationAlertSink? _alerts;
     private readonly object _detachedSync = new();
 
     private TaskCompletionSource? _detachedIdle;
@@ -96,13 +97,23 @@ public sealed class FlowEngine
     /// and so a durable replay can drive journaled time through the same path.
     /// </param>
     /// <param name="maxPooledContexts">How many contexts to retain between executions.</param>
-    public FlowEngine(IClock clock, int maxPooledContexts = DefaultMaxPooledContexts)
+    /// <param name="alerts">
+    /// Where a compensation that has exhausted its policy is reported, or <c>null</c> to
+    /// report it nowhere. Optional because the one terminal state it describes is also
+    /// recorded on the instance row, so a deployment with no alerting is degraded rather than
+    /// blind.
+    /// </param>
+    public FlowEngine(
+        IClock clock,
+        int maxPooledContexts = DefaultMaxPooledContexts,
+        ICompensationAlertSink? alerts = null)
     {
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxPooledContexts);
 
         _clock = clock;
         _contexts = new ContextPool(maxPooledContexts);
+        _alerts = alerts;
     }
 
     /// <summary>Executes a plan to completion, to first failure, or to its deadline.</summary>
@@ -370,6 +381,11 @@ public sealed class FlowEngine
         {
             return FlowExecutionResult.Rejected(refusal);
         }
+
+        // Recorded on the context so the unwind can find it without a sixth parameter on
+        // every method in the loop. Null for an ephemeral execution, which is the same
+        // always-false branch the journaling sites already make.
+        context.Run = cursor.Run;
 
         // Only steps that both completed and declared a compensation go on the stack,
         // so the unwind never has to filter. The stack belongs to the pooled context,
@@ -806,12 +822,23 @@ public sealed class FlowEngine
                 // Except a sub-flow's, which cannot be rebuilt from here: the parent records
                 // the composition as one entry bound to the *child's* context, and that
                 // context died with the node that ran it. Rebuilding the child's stack from
-                // the child's own instance rows is WP-57's package, and it is named rather
-                // than quietly approximated — a compensation stack that is silently short is
-                // the failure a saga exists to prevent.
-                if (compensations is not null && step.Kind != StepKind.SubFlow)
+                // the child's own instance rows needs a "which instances are under this
+                // parent" query that IFlowJournal deliberately does not answer — it is a
+                // recovery scan's, which is why IRecoveryIndex was split out — so WP-57 left
+                // it standing rather than widening a contract every store implements. It is
+                // named rather than quietly approximated: a compensation stack that is
+                // silently short is the failure a saga exists to prevent.
+                //
+                // Except, too, a step whose undo has already committed. That is rule 4 of
+                // 06 §7 read from the other end: a crash during compensation resumes
+                // compensation, so a step the dead node finished undoing is not put back on
+                // the stack for the new one to undo again.
+                if (compensations is not null &&
+                    step.Kind != StepKind.SubFlow &&
+                    !cursor.Run!.Compensated(cursor.Scope, i))
                 {
-                    context.RecordCompleted(step, ReferenceEquals(scope, context) ? null : scope);
+                    context.RecordCompleted(
+                        step, ReferenceEquals(scope, context) ? null : scope, cursor.Scope);
                 }
 
                 i++;
@@ -965,8 +992,11 @@ public sealed class FlowEngine
                 //
                 // The scope goes on the stack with the step, and is null everywhere except
                 // inside an iteration — that is what lets the undo of "the line this step
-                // reserved" find the right line once the loop is over.
-                context.RecordCompleted(step, ReferenceEquals(scope, context) ? null : scope);
+                // reserved" find the right line once the loop is over. The journal's spelling
+                // of the same iteration goes with it, so the row the undo writes lands under
+                // the element it undid rather than colliding with the first one's.
+                context.RecordCompleted(
+                    step, ReferenceEquals(scope, context) ? null : scope, cursor.Scope);
             }
 
             i++;
@@ -1731,6 +1761,10 @@ public sealed class FlowEngine
                 _contexts.Return(child);
                 return new RangeOutcome(opened, 0);
             }
+
+            // The child's own instance, so the child's own unwind writes its compensation
+            // rows against the instance its step indices mean something in.
+            child.Run = childCursor.Run;
         }
 
         if (step.Mode == SubFlowMode.Detached)
@@ -1766,8 +1800,9 @@ public sealed class FlowEngine
                 var failed = FlowErrors.SubFlowFailed(
                     plan.Flow.Id, step.Index, source.Plan.Flow.Id, outcome.Failure);
 
-                // The journal's own refusal is discarded here, and only here. The flow is
-                // ending either way, and the child's error is the reason an operator needs;
+                // The journal's own refusal is discarded here, as it is on a compensation
+                // row and for the same reason. The flow is ending either way, and the
+                // child's error is the reason an operator needs;
                 // replacing "the payment was declined" with "your fencing token is stale"
                 // would hide the business fact behind the ownership one.
                 _ = await RecordCompositionAsync(
@@ -1792,9 +1827,17 @@ public sealed class FlowEngine
             // the undo binds to what the child's steps produced.
             if (childCompensations is { IsEmpty: false } && compensations is not null)
             {
-                context.RecordCompleted(step, child);
+                context.RecordCompleted(step, child, cursor.Scope);
                 context.RetainSubFlow(child);
                 retained = true;
+
+                // The child's instance has just been sealed Completed, and a journal refuses
+                // a write to a finished instance — correctly, because "finished" is what the
+                // row says. So a deferred unwind of this child records no compensation rows,
+                // and it drops the session rather than issuing writes it knows will be
+                // refused. Stated here because it is the one place 06 §7's rule 4 is still
+                // only half true: the child's undo runs, and nothing writes down that it did.
+                child.Run = null;
             }
 
             return new RangeOutcome(null, outcome.Completed);
@@ -1913,6 +1956,8 @@ public sealed class FlowEngine
     /// </remarks>
     private void Detach(SubFlowSource source, FlowExecutionContext child, JournalCursor cursor)
     {
+        child.Run = cursor.Run;
+
         lock (_detachedSync)
         {
             _detachedInFlight++;
@@ -2116,6 +2161,15 @@ public sealed class FlowEngine
     /// clean up after itself, and a token cancelled mid-unwind would leave the
     /// dangling state the unwind exists to prevent.
     /// </para>
+    /// <para>
+    /// <strong>The plan and the instance come off the context rather than down the call
+    /// chain.</strong> This method is reached from four places — the end of a flow, a child
+    /// that failed, a detached child, and a parent unwinding a child that had already
+    /// succeeded — and the last of those happens long after the composition returned, with
+    /// nothing but the child's context left to say which plan and which instance its steps
+    /// belonged to. Threading two more parameters through would have made three of the four
+    /// call sites carry values only the fourth could not supply.
+    /// </para>
     /// </remarks>
     private async ValueTask<CompensationOutcome> CompensateAsync(
         CompensationStack compensations,
@@ -2127,6 +2181,11 @@ public sealed class FlowEngine
             return CompensationOutcome.NotRequired;
         }
 
+        // The same bargain HasParallel strikes. A flow whose undos declare no policy takes
+        // exactly the path it always did: one dispatch per entry, no clock read, no retry
+        // bookkeeping — one predictable, always-false comparison for a feature it does not use.
+        var retrying = context.Plan?.HasCompensationPolicies ?? false;
+        var run = context.Run;
         var allSucceeded = true;
 
         foreach (var entry in compensations.Unwind())
@@ -2142,26 +2201,248 @@ public sealed class FlowEngine
                 continue;
             }
 
-            try
-            {
-                // Under the scope the step completed in, which is the flow's own context
-                // everywhere except inside a `ForEach` — there it is the iteration's, so
-                // `ReleaseLine` undoes the line `ReserveLine` reserved rather than
-                // whichever line the loop happened to end on.
-                var outcome = await dispatcher
-                    .CompensateAsync(entry.Index, entry.Scope ?? context, CancellationToken.None)
-                    .ConfigureAwait(false);
+            var failure = await UndoAsync(entry, dispatcher, context, run, retrying).ConfigureAwait(false);
 
-                allSucceeded &= outcome.IsSuccess;
-            }
-#pragma warning disable CA1031 // Same reasoning as the step loop: a throwing compensation is a
-            catch (Exception)  //   defect, and one broken undo must not abandon the others.
-            {
-                allSucceeded = false;
-            }
-#pragma warning restore CA1031
+            allSucceeded &= failure is null;
         }
 
         return allSucceeded ? CompensationOutcome.Succeeded : CompensationOutcome.PartiallyFailed;
+    }
+
+    /// <summary>
+    /// Runs one step's compensation under its own policy, journals every attempt, and alerts
+    /// when it gives up.
+    /// </summary>
+    /// <param name="entry">The completed step whose inverse is pending.</param>
+    /// <param name="dispatcher">The dispatcher whose indices this entry's are.</param>
+    /// <param name="context">The execution the undo runs against.</param>
+    /// <param name="run">The instance to record attempts on, or <c>null</c> when ephemeral.</param>
+    /// <param name="retrying">Whether this plan declares any compensation policy at all.</param>
+    /// <returns>The last failure, or <c>null</c> when the undo worked.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the whole of the policy engine that P2 ships, and it is one policy at
+    /// one stage.</strong> A compensation retry is declared at
+    /// <see cref="PolicyStage.Consistency"/>, which is where ADR-0011's fixed order puts
+    /// compensation; the unwind is that stage's obligation discharged later, and the retry is
+    /// a parameter of it. Nothing at stages 1–6 executes here or anywhere else, so no policy
+    /// runs out of order — executing only the last stage cannot skip an earlier one. That is
+    /// what makes the slice safe to ship before the engine that runs the other fifteen
+    /// policies, and it is why <see cref="PolicyChain"/> remains the only thing in the system
+    /// that decides what runs before what.
+    /// </para>
+    /// <para>
+    /// <strong>The first attempt is not bounded by the deadline; the retries are.</strong>
+    /// <c>docs/10-Policy-Framework.md §5</c> says a retry never outlives the deadline, and the
+    /// planned backoff is subtracted before the next attempt is armed. It says nothing about
+    /// the undo itself, and it should not: a flow that failed <em>because</em> it ran out of
+    /// budget is exactly the flow whose effects most need reversing, and skipping the unwind
+    /// to respect a deadline that has already passed would leave the dangling state the saga
+    /// exists to prevent.
+    /// </para>
+    /// <para>
+    /// <strong>The commit is outside the catch.</strong> A store that is unreachable throws,
+    /// and <see cref="IFlowJournal"/> draws that line on purpose: it is not this flow's
+    /// failure and must not be recorded as one. Letting it propagate leaves the instance
+    /// mid-unwind with its committed prefix intact, which is the state a resumed instance
+    /// reads to work out which undos are still owed.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<Error?> UndoAsync(
+        CompensationEntry entry,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        DurableExecution? run,
+        bool retrying)
+    {
+        var policy = retrying ? entry.Step.CompensationRetry : CompensationPolicy.None;
+        var attempt = 0;
+        Error? failure;
+
+        while (true)
+        {
+            attempt++;
+
+            // Only read when there is a row to put it on, exactly as the forward path does.
+            var startedAt = run is null ? default : _clock.UtcNow;
+
+            failure = await DispatchUndoAsync(entry, dispatcher, context).ConfigureAwait(false);
+
+            if (run is not null)
+            {
+                await CommitCompensationAsync(entry, context, run, attempt, failure, startedAt)
+                    .ConfigureAwait(false);
+            }
+
+            if (failure is null)
+            {
+                return null;
+            }
+
+            if (!policy.AllowsAnotherAttempt(failure, attempt))
+            {
+                break;
+            }
+
+            // Full jitter needs a draw, and this is the only randomness the engine has. It is
+            // deliberately not ctx.Random: that one is seeded, journaled and replayed because
+            // a step's *decisions* have to be reproducible, and how long a failed undo waited
+            // is not a decision — recording it would put a number in the replay envelope that
+            // no replay could act on.
+            var delay = policy.DelayBefore(attempt, Random.Shared.NextDouble());
+
+            if (_clock.UtcNow + delay >= context.Deadline)
+            {
+                break;
+            }
+
+            await _clock.DelayAsync(delay, CancellationToken.None).ConfigureAwait(false);
+        }
+
+        Alert(entry, context, run, attempt, failure);
+
+        return failure;
+    }
+
+    /// <summary>Dispatches one attempt at an undo, converting a throw into an error.</summary>
+    /// <remarks>
+    /// The scope is the one the step completed in — the flow's own context everywhere except
+    /// inside a <c>ForEach</c>, where it is the iteration's, so <c>ReleaseLine</c> undoes the
+    /// line <c>ReserveLine</c> reserved rather than whichever line the loop happened to end on.
+    /// <para>
+    /// A throwing compensation used to be counted as a failure and otherwise discarded. It is
+    /// converted into an <see cref="Error"/> now because there is something to do with one: a
+    /// policy has to decide whether it is worth another attempt, and an alert has to name what
+    /// went wrong. <see cref="ErrorCategory.Internal"/> is what a defect is, and it is
+    /// retryable — a capability that throws on one call and works on the next is a
+    /// dependency's flakiness surfacing as an exception rather than as a result.
+    /// </para>
+    /// </remarks>
+    private static async ValueTask<Error?> DispatchUndoAsync(
+        CompensationEntry entry,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context)
+    {
+        try
+        {
+            var outcome = await dispatcher
+                .CompensateAsync(entry.Index, entry.Scope ?? context, CancellationToken.None)
+                .ConfigureAwait(false);
+
+            return outcome.Error;
+        }
+#pragma warning disable CA1031 // Same reasoning as the step loop: a throwing compensation is a
+        catch (Exception exception)  //   defect, and one broken undo must not abandon the others.
+        {
+            return FlowErrors.Unhandled(entry.Step.Compensation?.Id ?? context.CapabilityId, exception);
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>Appends one row saying what an undo attempt did.</summary>
+    /// <remarks>
+    /// <para>
+    /// <c>docs/06-Execution-Engine.md §7</c> rule 4, which said of itself that it was not
+    /// implemented: "the journal records what ran forward; it says nothing about what has been
+    /// undone". This is what it now says instead — one row per attempt, carrying the
+    /// <em>compensating</em> capability's id so an undo is never mistaken for the step it
+    /// reverses, and <see cref="JournalOutcome.Compensated"/> when it worked.
+    /// </para>
+    /// <para>
+    /// <strong>The attempt number is offset past the forward rows rather than counted from
+    /// one.</strong> The key is <c>(instance, scope, step, attempt)</c> and an append-only
+    /// table cannot overwrite, so a compensation row keyed at attempt 1 would collide with the
+    /// forward row that put the step on the stack in the first place.
+    /// <see cref="DurableExecution.NextAttempt"/> is one past everything the committed history
+    /// holds for this key, and the undo's own attempt is added to that — which is unique for a
+    /// fresh instance, for a resumed one that skipped the step, and for a resumed one that
+    /// re-ran it, without this node having to remember a number that dies with it.
+    /// </para>
+    /// <para>
+    /// <strong>The instance is moved to <see cref="FlowInstanceState.Compensating"/> by the
+    /// same write.</strong> An operator watching a saga unwind should not have to infer it
+    /// from the absence of new step rows, and the state is a column a store already keeps.
+    /// </para>
+    /// <para>
+    /// <strong>The journal's refusal is discarded, and this is the second place that is
+    /// true.</strong> The undo has already run: its effect is real whether or not the row
+    /// lands. Turning a fenced-out write into a compensation failure would report an undo that
+    /// worked as one that did not, and would replace a business fact with an ownership one —
+    /// the same trade <c>RecordCompositionAsync</c> makes and for the same reason.
+    /// </para>
+    /// </remarks>
+    private async ValueTask CommitCompensationAsync(
+        CompensationEntry entry,
+        FlowExecutionContext context,
+        DurableExecution run,
+        int attempt,
+        Error? failure,
+        DateTimeOffset startedAt)
+    {
+        var commit = new StepCommit
+        {
+            Key = new StepKey(
+                run.InstanceId,
+                entry.JournalScope,
+                entry.Index,
+                run.NextAttempt(entry.JournalScope, entry.Index) + attempt),
+            Token = run.Token,
+            CapabilityId = entry.Step.Compensation?.Id ?? string.Empty,
+            CapabilityVersion = entry.Step.Compensation?.Version ?? context.FlowVersion,
+            Outcome = failure is null ? JournalOutcome.Compensated : JournalOutcome.Failure,
+            State = FlowInstanceState.Compensating,
+            Duration = _clock.UtcNow - startedAt,
+            ResumeHint = entry.Index,
+        };
+
+        _ = await run.Journal.CommitAsync(commit, CancellationToken.None).ConfigureAwait(false);
+    }
+
+    /// <summary>Reports one compensation that has been given up on.</summary>
+    /// <remarks>
+    /// <para>
+    /// The observable half of <c>docs/11-Distributed-Runtime.md §8</c>'s last row — the one
+    /// case with no automatic resolution. It is raised once per exhausted compensation rather
+    /// than once per flow, because the runbook is per step:
+    /// <c>flowx replay --instance &lt;id&gt; --from &lt;step&gt;</c>.
+    /// </para>
+    /// <para>
+    /// A sink that throws is swallowed. It is somebody else's code, called on the failure path
+    /// of a flow that is unwinding, and a broken pager must not leak the inventory reservation
+    /// the engine was in the middle of releasing.
+    /// </para>
+    /// </remarks>
+    private void Alert(
+        CompensationEntry entry,
+        FlowExecutionContext context,
+        DurableExecution? run,
+        int attempts,
+        Error failure)
+    {
+        if (_alerts is null)
+        {
+            return;
+        }
+
+        var alert = new CompensationAlert(
+            context.FlowId,
+            context.FlowVersion,
+            run?.InstanceId,
+            entry.Index,
+            entry.Step.Compensation?.Id ?? string.Empty,
+            context.CorrelationId,
+            context.TenantId,
+            attempts,
+            failure);
+
+        try
+        {
+            _alerts.CompensationExhausted(in alert);
+        }
+#pragma warning disable CA1031 // An alert sink is third-party code, called on the failure path
+        catch (Exception)      //   of a flow that is already unwinding. One broken pager must
+        {                      //   not leak the reservation the engine was releasing, and
+        }                      //   there is nowhere better than here to report a failure to
+#pragma warning restore CA1031 //   report a failure.
     }
 }

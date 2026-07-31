@@ -277,8 +277,21 @@ public sealed class DurableSeamTests
 
         var rows = await RowsAsync(journal, instanceId);
 
-        rows.Select(static row => row.Key.StepId).ShouldBe([0, 1, 2]);
+        rows.Select(static row => row.Key.StepId).ShouldBe([0, 1, 2, 1],
+            "Steps 0 and 1 succeeded, step 2 was declined — and then step 1's compensation " +
+            "ran and got a row of its own. Until WP-57 the fourth row was not there and the " +
+            "journal said nothing about what had been undone, which is what made a crash " +
+            "mid-unwind lose it.");
+
         rows[2].Outcome.ShouldBe(JournalOutcome.Failure);
+
+        rows[3].Outcome.ShouldBe(JournalOutcome.Compensated);
+        rows[3].CapabilityId.ShouldBe("inventory.release",
+            "The row names what ran, so an undo is never mistaken for the step it reverses.");
+
+        rows[3].Key.Attempt.ShouldBeGreaterThan(rows[1].Key.Attempt,
+            "The key is (instance, scope, step, attempt) and the table is append-only, so the " +
+            "compensation row has to sit past the forward row that put the step on the stack.");
     }
 
     /// <summary>

@@ -164,6 +164,49 @@ public sealed class EngineAllocationTests
     }
 
     /// <summary>
+    /// A flow whose undo carries a retry policy pays nothing for it while it is succeeding.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The regression this forbids is the obvious way to build WP-57: resolving the
+    /// compensation's policy chain, or building a retry state object, somewhere the forward
+    /// loop can reach. The policy is resolved once when the plan is built and hangs off
+    /// <see cref="StepNode"/>; the loop that runs the flow never looks at it, and the flag
+    /// that says the flow has one is precomputed exactly the way
+    /// <see cref="ExecutionPlan.HasParallel"/> is.
+    /// </para>
+    /// <para><strong>Measured: 0 B, Release, .NET 10, x64.</strong></para>
+    /// </remarks>
+    [Fact]
+    public void ACompensationPolicyCostsTheSuccessPathNothing()
+    {
+        RequireOptimisedBuild();
+
+        var engine = new FlowEngine(new FakeClock(T0));
+
+        var allocated = MeasureSteadyState(engine, RetryingSaga(), new NullDispatcher());
+
+        allocated.ShouldBe(0,
+            $"Measured {allocated} B for a four-step saga whose first undo declares a retry. " +
+            "A policy nobody has needed yet is a field on a node the loop does not read.");
+    }
+
+    /// <summary>The four-step saga, with a compensation retry declared on step 1's undo.</summary>
+    private static ExecutionPlan RetryingSaga() => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.place", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForCapability(0, Plans.Validate),
+            StepNode.ForCapability(
+                1,
+                Plans.Reserve,
+                Plans.Release,
+                compensationPolicies: PolicyChain.Create(
+                    PolicySet.Named("undo").CompensationRetry(3), Plans.Release)),
+            StepNode.ForCapability(2, Plans.Capture, Plans.Refund),
+            StepNode.ForEmit(3, "order.placed"),
+        ]));
+
+    /// <summary>
     /// Budget B2 has to survive branching, or the DSL's most-used shape quietly buys
     /// back the allocation the engine was built to avoid.
     /// </summary>
