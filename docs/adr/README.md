@@ -22,6 +22,7 @@ and the condition under which it must be revisited.
 | [0014](ADR-0014-derived-error-catalogue-vs-build-budget.md) | Keep the derived error catalogue; re-express the build-overhead budget | **Proposed** | four conditions, and **two are no longer open** ([§10](ADR-0014-derived-error-catalogue-vs-build-budget.md#10-which-of-the-four-revisit-triggers-have-fired)): the inner loop pays full derivation cost per edit — **FIRED**; the withheld rate exceeds 20 % — **crossed at 42 %**, on evidence its own author calls inadmissible. Still open: a real project measures the derivation at > 2× its recorded cost, or P8 approaches the manifest v1.0 freeze |
 | [0015](ADR-0015-journal-schema-and-durable-execution.md) | Journal the step boundary, keyed on `(instance, scope, step, attempt)`; resume through the same step loop | Accepted (amended by 0016) | the derived resume position breaches B8 on a long `ForEach` or a deep `SubFlow` tree, or journal payloads outgrow the generated STJ context |
 | [0016](ADR-0016-postgres-journal-adapter.md) | Journal payloads are `json`, not `jsonb`; a lease carries no foreign key to the instance it precedes | Accepted | a payload needs indexing inside the journal — at which point this and 0008 re-open together |
+| [0017](ADR-0017-manifest-v1-freeze-criteria.md) | Eight checkable criteria that must hold before the manifest schema is frozen at v1.0 (amends 0005) | **Number claimed; the record lands in the next commit** | — |
 
 ## Writing an ADR
 
