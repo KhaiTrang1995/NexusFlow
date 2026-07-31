@@ -8,10 +8,10 @@
 > **This document describes the intended experience, not the current one.**
 > `dotnet new flowx` now exists and §1 is verified end to end, but the template is
 > installed from this repository rather than from NuGet, and it scaffolds no
-> tests. `flowx dev` is not a CLI verb — the CLI has three, `graph`, `manifest`
-> and `diff` ([22-CLI](22-CLI.md)). Studio does not exist in any form (**P8**),
-> and neither does the startup banner, which would need telemetry that is not
-> emitted (**P5**).
+> tests. `flowx dev` is not a CLI verb — the CLI has four: `graph`, `manifest`,
+> `diff` and `verify --cost` ([22-CLI](22-CLI.md)). Studio does not exist in any
+> form (**P8**), and neither does the startup banner, which would need telemetry
+> that is not emitted (**P5**).
 >
 > Two rows of §2's package table name projects that are not in the solution:
 > **`FlowX.Sdk`** (the metapackage a new user is told to reference) and

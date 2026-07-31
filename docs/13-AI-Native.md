@@ -19,7 +19,7 @@
 > `flowx graph`. There is no OpenAPI or AsyncAPI generation, no alert or
 > dashboard generation, no test scaffolding, no impact analysis, no knowledge
 > graph and no MCP tool surface. `flowx query` and `flowx ai …` are not CLI
-> verbs; the CLI has three ([22-CLI](22-CLI.md)). `AgentTriggerAttribute` is
+> verbs; the CLI has four ([22-CLI](22-CLI.md)). `AgentTriggerAttribute` is
 > declared in `FlowX.Abstractions` and is read by the compiler into the manifest,
 > and nothing serves it — no agent can invoke anything.
 >
