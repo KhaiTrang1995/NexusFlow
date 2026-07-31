@@ -116,6 +116,15 @@ public class EngineBenchmarks
         public bool Evaluate(int stepIndex, FlowContext ctx)
             => throw new NotSupportedException("This double runs plans with no branch step.");
 
+        /// <inheritdoc />
+        /// <remarks>This double declares no iteration, so the engine never asks it for one.</remarks>
+        public IterationSource BeginIteration(int stepIndex, FlowContext ctx) =>
+            throw new NotSupportedException("This dispatcher has no iteration to begin.");
+
+        /// <inheritdoc />
+        public FlowContext EnterIteration(int stepIndex, in IterationSource source, int iteration, FlowContext ctx) =>
+            throw new NotSupportedException("This dispatcher has no iteration to enter.");
+
         public int Select(int stepIndex, FlowContext ctx)
             => throw new NotSupportedException("This double runs plans with no switch step.");
     }

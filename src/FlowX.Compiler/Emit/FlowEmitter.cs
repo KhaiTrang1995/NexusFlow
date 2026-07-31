@@ -100,6 +100,7 @@ public static class FlowEmitter
         writer.Line();
         EmitConditions(writer, flow);
         EmitSelectors(writer, flow);
+        EmitIterations(writer, flow);
         EmitPlan(writer, flow);
         writer.Line();
         EmitProjection(writer, flow);
@@ -274,6 +275,60 @@ public static class FlowEmitter
         .OrderBy(s => s.Index)
         .ToList();
 
+    /// <summary>The flow's iterations, ascending by flat index.</summary>
+    private static System.Collections.Generic.List<StepModel> Iterations(FlowModel flow) => flow.AllSteps
+        .Where(s => s.Kind == StepKindModel.ForEach)
+        .OrderBy(s => s.Index)
+        .ToList();
+
+    /// <summary>
+    /// Emits one <c>static readonly</c> delegate per <c>.ForEach(...)</c> collection
+    /// selector.
+    /// </summary>
+    /// <remarks>
+    /// A field, for the reason the predicates and the switch selectors are: it is built
+    /// once at type initialisation rather than once per execution. It matters slightly less
+    /// here — a loop is already allowed to allocate — but a delegate per loop per execution
+    /// would be an allocation that scales with traffic to save nothing, and the emitted
+    /// shape being the same as the other two is worth more than the byte.
+    /// <para>
+    /// Typed at <c>IReadOnlyList&lt;TItem&gt;</c>, not <c>IEnumerable&lt;TItem&gt;</c>: the
+    /// engine reads the count once, before the first element, and that count is what bounds
+    /// the loop. A sequence with no count could iterate forever inside a step loop that has
+    /// no iteration cap by design.
+    /// </para>
+    /// </remarks>
+    private static void EmitIterations(SourceWriter writer, FlowModel flow)
+    {
+        var iterations = Iterations(flow);
+
+        if (iterations.Count == 0)
+        {
+            return;
+        }
+
+        writer.Line("/// <summary>Iteration selectors, built once at type initialisation.</summary>");
+        writer.Line("/// <remarks>");
+        writer.Line("/// Each is your <c>.ForEach(...)</c> expression, copied verbatim. They obey the same");
+        writer.Line("/// determinism rule as a condition — context, flow input and prior step results");
+        writer.Line("/// only — so that a replay walks the collection it walked before.");
+        writer.Line("/// </remarks>");
+        writer.Line("private static class Iterations");
+        writer.OpenBrace();
+
+        foreach (var step in iterations)
+        {
+            EmitLineDirective(writer, step.SelectorLocation);
+            writer.Line(
+                "public static readonly Func<FlowContext, System.Collections.Generic.IReadOnlyList<" +
+                step.ItemTypeName + ">> Step" + step.Index + " = " + step.Selector + ";");
+            EmitLineDirectiveEnd(writer, step.SelectorLocation);
+        }
+
+        writer.CloseBrace();
+        writer.Line();
+    }
+
     private static void EmitDescriptors(SourceWriter writer, FlowModel flow)
     {
         writer.Line("/// <summary>Capability descriptors, built once at type initialisation.</summary>");
@@ -387,6 +442,14 @@ public static class FlowEmitter
 
                     break;
 
+                case StepKindModel.ForEach:
+                    // `foreach · body…`, and that is the whole layout: one block, starting
+                    // at the very next index, with nothing after it to skip. The body
+                    // appears once however many elements the collection turns out to hold.
+                    writer.Line("        " + ForEachNodeExpression(step) + ",");
+                    EmitStepNodes(writer, step.Body);
+                    break;
+
                 default:
                     writer.Line("        " + StepNodeExpression(step) + ",");
                     break;
@@ -425,6 +488,20 @@ public static class FlowEmitter
         return "StepNode.ForParallel(" + step.Index + ", new[] { " + targets + " }, joinTarget: " +
                step.JoinIndex + ", merge: " + step.MergeExpression + ")";
     }
+
+    /// <summary>
+    /// Emits the loop node, with the author's <c>options:</c> expression copied verbatim.
+    /// </summary>
+    /// <remarks>
+    /// Verbatim rather than reconstructed from the values, for the reason
+    /// <see cref="ParallelNodeExpression"/> copies the merge: an author may write
+    /// <c>new ForEachOptions { MaxDegreeOfParallelism = Concurrency }</c>, and a generator
+    /// that rebuilt the object literal would disagree with the source for every expression
+    /// it could not fold. The runtime clamps the bound; the generator does not evaluate it.
+    /// </remarks>
+    private static string ForEachNodeExpression(StepModel step) =>
+        "StepNode.ForEach(" + step.Index + ", joinTarget: " + step.JoinIndex +
+        ", options: " + step.OptionsExpression + ")";
 
     private static string StepNodeExpression(StepModel step)
     {
@@ -478,7 +555,128 @@ public static class FlowEmitter
         EmitDispatcherEvaluate(writer, flow);
         writer.Line();
         EmitDispatcherSelect(writer, flow);
+        writer.Line();
+        EmitDispatcherIteration(writer, flow);
 
+        writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// Emits <c>BeginIteration</c> and <c>EnterIteration</c>: the collection each loop
+    /// walks, and the element each pass over its body is for.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The pair is the whole of what the engine cannot do for itself. It has no idea what a
+    /// <c>ValidatedOrder.Lines</c> is, so it asks for a count and an opaque handle, then
+    /// hands the handle back once per element and gets a context in return. Everything typed
+    /// happens here, in generated code, which is the same division that keeps capabilities
+    /// reflection-free.
+    /// </para>
+    /// <para>
+    /// <c>EnterIteration</c> is one indexed read and one small object. It is deliberately
+    /// not a <c>foreach</c> over the collection: the concurrent path runs several elements
+    /// at once and would have to share a single enumerator, which no
+    /// <c>IEnumerator&lt;T&gt;</c> supports.
+    /// </para>
+    /// </remarks>
+    private static void EmitDispatcherIteration(SourceWriter writer, FlowModel flow)
+    {
+        var iterations = Iterations(flow);
+
+        writer.Line("/// <inheritdoc />");
+        writer.Line("public IterationSource BeginIteration(int stepIndex, FlowContext ctx)");
+        writer.OpenBrace();
+
+        if (iterations.Count == 0)
+        {
+            writer.Line("throw new ArgumentOutOfRangeException(");
+            writer.Line("    nameof(stepIndex),");
+            writer.Line("    stepIndex,");
+            writer.Line("    \"This flow declares no iteration, so the engine never asks it for a \" +");
+            writer.Line("    \"collection. Reaching this means the plan and this dispatcher came from \" +");
+            writer.Line("    \"different builds.\");");
+            writer.CloseBrace();
+            writer.Line();
+            EmitDispatcherEnterIteration(writer, iterations);
+            return;
+        }
+
+        writer.Line("switch (stepIndex)");
+        writer.OpenBrace();
+
+        foreach (var step in iterations)
+        {
+            writer.Line("case " + step.Index + ":");
+            writer.OpenBrace();
+            writer.Line("var items = Iterations.Step" + step.Index + "(ctx);");
+            writer.Line("return new IterationSource(items, items.Count);");
+            writer.CloseBrace();
+        }
+
+        EmitIterationDefaultCase(writer);
+
+        writer.CloseBrace();
+        writer.CloseBrace();
+        writer.Line();
+
+        EmitDispatcherEnterIteration(writer, iterations);
+    }
+
+    private static void EmitDispatcherEnterIteration(
+        SourceWriter writer, System.Collections.Generic.List<StepModel> iterations)
+    {
+        writer.Line("/// <inheritdoc />");
+        writer.Line(
+            "public FlowContext EnterIteration(int stepIndex, in IterationSource source, " +
+            "int iteration, FlowContext ctx)");
+        writer.OpenBrace();
+
+        if (iterations.Count == 0)
+        {
+            writer.Line("throw new ArgumentOutOfRangeException(");
+            writer.Line("    nameof(stepIndex),");
+            writer.Line("    stepIndex,");
+            writer.Line("    \"This flow declares no iteration, so the engine never asks it for an \" +");
+            writer.Line("    \"element. Reaching this means the plan and this dispatcher came from \" +");
+            writer.Line("    \"different builds.\");");
+            writer.CloseBrace();
+            return;
+        }
+
+        writer.Line("switch (stepIndex)");
+        writer.OpenBrace();
+
+        foreach (var step in iterations)
+        {
+            writer.Line("case " + step.Index + ":");
+            writer.OpenBrace();
+            writer.Line(
+                "var items = (System.Collections.Generic.IReadOnlyList<" + step.ItemTypeName +
+                ">)source.Items!;");
+            writer.Line();
+            writer.Line("// The element shadows the flow's state bag on its own type, for");
+            writer.Line("// exactly this pass over the body. Writes still go to the bag.");
+            writer.Line("return IterationScope.For(ctx, items[iteration]);");
+            writer.CloseBrace();
+        }
+
+        EmitIterationDefaultCase(writer);
+
+        writer.CloseBrace();
+        writer.CloseBrace();
+    }
+
+    private static void EmitIterationDefaultCase(SourceWriter writer)
+    {
+        writer.Line("default:");
+        writer.OpenBrace();
+        writer.Line("throw new ArgumentOutOfRangeException(");
+        writer.Line("    nameof(stepIndex),");
+        writer.Line("    stepIndex,");
+        writer.Line("    \"Step index does not name an iteration in the compiled plan. The plan \" +");
+        writer.Line("    \"and this dispatcher are generated together, so this means they came \" +");
+        writer.Line("    \"from different builds.\");");
         writer.CloseBrace();
     }
 
@@ -516,12 +714,14 @@ public static class FlowEmitter
         writer.Line("switch (stepIndex)");
         writer.OpenBrace();
 
-        // Conditions, switches and forks have no case: the engine reaches a condition
-        // through Evaluate and a switch through Select, and it handles a fork entirely
-        // itself — the branches' own steps get cases, the fork node does not. A case here
-        // would be dead code in the file the header promises is readable.
+        // Conditions, switches, forks and loops have no case: the engine reaches a
+        // condition through Evaluate, a switch through Select and a loop through
+        // BeginIteration, and it handles a fork and a loop entirely itself — the blocks'
+        // own steps get cases, the branching node does not. A case here would be dead code
+        // in the file the header promises is readable.
         foreach (var step in flow.AllSteps
-            .Where(s => s.Kind is not (StepKindModel.Condition or StepKindModel.Switch or StepKindModel.Parallel))
+            .Where(s => s.Kind is not (StepKindModel.Condition or StepKindModel.Switch
+                or StepKindModel.Parallel or StepKindModel.ForEach))
             .OrderBy(s => s.Index))
         {
             writer.Line("case " + step.Index + ":");

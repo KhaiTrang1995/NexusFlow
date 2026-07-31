@@ -18,9 +18,17 @@ namespace FlowX;
 /// of the step. See <see cref="StepNode.BranchTargets"/> for what the layout still buys.
 /// </para>
 /// <para>
-/// The remaining branching kinds — for-each, sub-flow — arrive with the DSL surface that
-/// can express them. Adding them here first would be speculative: shapes nothing can
-/// construct and no test can exercise.
+/// <see cref="ForEach"/> is the first kind whose block runs <em>more than once</em>. It
+/// keeps the flat layout — the body is the contiguous span between the node and its join
+/// — and the engine runs that one span once per element. Nothing in the array is
+/// duplicated and no target points backwards, so the termination proof is unchanged; what
+/// changes is that the number of times a step runs is no longer bounded by the array's
+/// length. See <see cref="ForEach"/> for what bounds it instead.
+/// </para>
+/// <para>
+/// The remaining branching kind — sub-flow — arrives with the DSL surface that can express
+/// it. Adding it here first would be speculative: a shape nothing can construct and no
+/// test can exercise.
 /// </para>
 /// </remarks>
 public enum StepKind
@@ -68,6 +76,19 @@ public enum StepKind
     /// the graph validation and the manifest's <c>branches</c> array unchanged.
     /// </remarks>
     Parallel = 6,
+
+    /// <summary>
+    /// Runs the span between this node and <see cref="StepNode.Target"/> once per element
+    /// of a collection, with at most
+    /// <see cref="StepNode.MaxDegreeOfParallelism"/> iterations in flight.
+    /// </summary>
+    /// <remarks>
+    /// The one kind whose block runs repeatedly. A <see cref="Parallel"/> runs each of its
+    /// blocks once; this runs its single block <em>n</em> times, where <em>n</em> comes
+    /// from the collection rather than from the plan. The layout is otherwise a fork with
+    /// exactly one branch, which is why the engine reuses the same range machinery.
+    /// </remarks>
+    ForEach = 7,
 }
 
 /// <summary>
@@ -188,6 +209,32 @@ public sealed record StepNode
     /// predicate and a case value may not.
     /// </remarks>
     public MergeStrategy Merge { get; private init; }
+
+    /// <summary>
+    /// How many iterations of a <see cref="StepKind.ForEach"/> may be in flight at once.
+    /// <c>1</c> for every other kind, and unread there.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Already capped: the factory clamps the author's number to
+    /// <see cref="MaxIterationConcurrency"/>, so the plan carries the bound the engine will
+    /// actually honour rather than the wish the author expressed. Reading it back therefore
+    /// tells the truth, which a number clamped later at the point of use would not.
+    /// </para>
+    /// <para>
+    /// Structure, not a value — it says how the flow is shaped and nothing about the data
+    /// flowing through it. It stays out of the manifest all the same, because the published
+    /// schema has no field for it and inventing one to carry a tuning number is not worth a
+    /// schema change.
+    /// </para>
+    /// </remarks>
+    public int MaxDegreeOfParallelism { get; private init; } = 1;
+
+    /// <summary>
+    /// Whether a <see cref="StepKind.ForEach"/> runs its remaining elements after one of
+    /// them fails. <c>false</c> for every other kind, and unread there.
+    /// </summary>
+    public bool ContinueOnError { get; private init; }
 
     /// <summary>True when this step declared a compensation.</summary>
     public bool IsCompensable => Compensation is not null;
@@ -427,6 +474,90 @@ public sealed record StepNode
     }
 
     /// <summary>
+    /// The most iterations the runtime will ever run at once, whatever an author asks for.
+    /// </summary>
+    /// <remarks>
+    /// <c>08-Flow-Definition.md</c> §3.4 says a <c>ForEach</c> is "bounded by construction:
+    /// <c>MaxDegreeOfParallelism</c> is required and capped by the runtime". This is that
+    /// cap, and it is a constant rather than something derived from
+    /// <c>Environment.ProcessorCount</c> on purpose: a plan whose shape depended on the
+    /// machine that built it would compile to different graphs on a laptop and in CI, and
+    /// the manifest would stop being reproducible.
+    /// </remarks>
+    public const int MaxIterationConcurrency = 64;
+
+    /// <summary>Creates a bounded iteration over a collection.</summary>
+    /// <param name="index">Position in the graph.</param>
+    /// <param name="joinTarget">
+    /// Where control continues once every element has been processed: the first step after
+    /// the body. Must be at least two past this node, so the body is non-empty.
+    /// </param>
+    /// <param name="options">
+    /// The author's <c>ForEachOptions</c>. Its concurrency is clamped to
+    /// <see cref="MaxIterationConcurrency"/>.
+    /// </param>
+    /// <exception cref="InvalidFlowPlanException">The body is empty.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>The body has no target of its own.</strong> It is the span
+    /// <c>[index + 1, joinTarget)</c> — a fork's branch range, with the start implied
+    /// rather than stored, because there is only ever one block and it is always laid out
+    /// immediately after the node. Storing a number the layout already fixes would be a
+    /// second copy of a fact, and a chance for the two to disagree about which steps the
+    /// loop runs.
+    /// </para>
+    /// <para>
+    /// <strong>An empty body is refused, for the reason an empty parallel branch is.</strong>
+    /// A loop that runs nothing per element still evaluates its selector and still costs an
+    /// iteration each time; it is a statement about the flow that the flow does not make.
+    /// The generator lays such a declaration out as nothing at all, so this rejects a
+    /// layout bug rather than something an author can write.
+    /// </para>
+    /// <para>
+    /// <strong>Termination.</strong> Every other kind is proved to terminate by the
+    /// forward-target rule alone, because a step then runs at most once. That is no longer
+    /// true here: the body's span is re-entered per element. What replaces it is that the
+    /// element count is read once, from a materialised <c>IReadOnlyList</c>, before the
+    /// first iteration — so the loop is bounded by a number fixed before it starts, and
+    /// each individual pass over the body still terminates for exactly the old reason.
+    /// </para>
+    /// </remarks>
+    public static StepNode ForEach(int index, int joinTarget, ForEachOptions options)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (joinTarget <= index + 1)
+        {
+            throw new InvalidFlowPlanException(
+                $"Step {index} is an iteration joining at step {joinTarget}, which leaves it " +
+                "no body. A loop that runs no steps per element still evaluates its " +
+                "selector and still costs an iteration each time, so it claims the flow " +
+                "does something it does not.");
+        }
+
+        if (options.MaxDegreeOfParallelism < 1)
+        {
+            throw new InvalidFlowPlanException(
+                $"Step {index} is an iteration with a maximum degree of parallelism of " +
+                $"{options.MaxDegreeOfParallelism}. The bound is required precisely so that " +
+                "it is a number somebody chose; zero is not a choice, it is a loop that " +
+                "never runs anything.");
+        }
+
+        return new StepNode(index, StepKind.ForEach)
+        {
+            Target = RequireForwardTarget(index, joinTarget, "iteration join"),
+
+            // Clamped, not rejected. An author asking for a thousand concurrent
+            // reservations has asked for something reasonable that this runtime will not
+            // do; failing the build over it would be refusing to run a correct flow.
+            MaxDegreeOfParallelism = Math.Min(options.MaxDegreeOfParallelism, MaxIterationConcurrency),
+            ContinueOnError = options.ContinueOnError,
+        };
+    }
+
+    /// <summary>
     /// Rejects a target that does not point forward.
     /// </summary>
     /// <remarks>
@@ -461,6 +592,9 @@ public sealed record StepNode
         StepKind.Jump => $"[{Index}] jump {Target}",
         StepKind.Switch => $"[{Index}] switch {string.Join(", ", CaseTargets)}, else {Target}",
         StepKind.Parallel => $"[{Index}] parallel {string.Join(", ", BranchTargets)} ({Merge}), join {Target}",
+        StepKind.ForEach =>
+            $"[{Index}] foreach {Index + 1}..{Target} (max {MaxDegreeOfParallelism}" +
+            (ContinueOnError ? ", continue on error)" : ")"),
         _ => $"[{Index}] {Kind}",
     };
 }

@@ -79,4 +79,93 @@ public sealed class CompensationStackTests
         // The same step completing twice means the engine's loop is broken. Failing
         // loudly beats compensating it twice.
     }
+
+    [Fact]
+    public void TheSameStepMayCompleteOncePerIterationScope()
+    {
+        // The identity is the pair, not the index. A step inside a `ForEach` body
+        // legitimately completes once per element, and keying on the index alone made the
+        // second element throw — which is how this check would have stopped a documented
+        // shape from working at all.
+        var stack = new CompensationStack();
+        var step = Compensable(0, Fixtures.ReserveInventory, Fixtures.ReleaseInventory);
+
+        stack.RecordCompleted(step, new Scope());
+        stack.RecordCompleted(step, new Scope());
+        stack.RecordCompleted(step, new Scope());
+
+        stack.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public void UnwindingHandsBackTheScopeEachStepCompletedIn()
+    {
+        // Which is what makes an undo inside a loop bind to the element its own pass
+        // processed, rather than to whatever the last pass left behind.
+        var stack = new CompensationStack();
+        var step = Compensable(0, Fixtures.ReserveInventory, Fixtures.ReleaseInventory);
+
+        var first = new Scope();
+        var second = new Scope();
+
+        stack.RecordCompleted(step, first);
+        stack.RecordCompleted(step, second);
+
+        stack.Unwind().Select(static e => e.Scope).ShouldBe([second, first]);
+    }
+
+    [Fact]
+    public void AStepOutsideAnIterationRecordsNoScopeAtAll()
+    {
+        var stack = new CompensationStack();
+
+        stack.RecordCompleted(Compensable(0, Fixtures.ReserveInventory, Fixtures.ReleaseInventory));
+
+        stack.Unwind().Single().Scope.ShouldBeNull(
+            "Everything outside a loop runs under the flow's own context, and recording a " +
+            "reference to it on every entry would be a field that is always the same.");
+    }
+
+    /// <summary>A stand-in for an iteration's view of the context: identity is all that matters here.</summary>
+    private sealed class Scope : FlowContext
+    {
+        public override string CorrelationId => string.Empty;
+
+        public override string? FlowInstanceId => null;
+
+        public override string CapabilityId => string.Empty;
+
+        public override string? TenantId => null;
+
+        public override string IdempotencyKey => string.Empty;
+
+        public override DateTimeOffset Deadline => default;
+
+        public override DateTimeOffset UtcNow => default;
+
+        public override Random Random => Random.Shared;
+
+        public override string FlowId => string.Empty;
+
+        public override string FlowVersion => string.Empty;
+
+        public override System.Security.Claims.ClaimsPrincipal? Principal => null;
+
+        public override TriggerEnvelope Trigger => default;
+
+        public override Error? Error => null;
+
+        public override Guid NewId() => Guid.Empty;
+
+        public override T Get<T>() => throw new NotSupportedException();
+
+        public override bool TryGet<T>(
+            [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out T value)
+        {
+            value = default;
+            return false;
+        }
+
+        public override void Set<T>(T value) => throw new NotSupportedException();
+    }
 }

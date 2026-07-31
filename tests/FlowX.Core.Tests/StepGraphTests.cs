@@ -462,6 +462,156 @@ public sealed class StepGraphTests
         forking.HasParallel.ShouldBeTrue();
     }
 
+    // --------------------------------------------------------------------------- ForEach
+
+    private static ForEachOptions Bounded(int max = 1, bool continueOnError = false) => new()
+    {
+        MaxDegreeOfParallelism = max,
+        ContinueOnError = continueOnError,
+    };
+
+    private static ExecutionPlan LoopPlan(StepNode loop) => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.loop", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(1)),
+        StepGraph.Create([loop, Step(1, Fixtures.ReserveInventory)]));
+
+    [Fact]
+    public void AForEachCarriesItsJoinAndItsBoundsAndNothingElse()
+    {
+        var loop = StepNode.ForEach(1, joinTarget: 4, Bounded(4, continueOnError: true));
+
+        loop.Kind.ShouldBe(StepKind.ForEach);
+        loop.Target.ShouldBe(4);
+        loop.MaxDegreeOfParallelism.ShouldBe(4);
+        loop.ContinueOnError.ShouldBeTrue();
+
+        loop.BranchTargets.ShouldBeEmpty(
+            "The body has no target of its own: it is the span from the node to the join, " +
+            "and storing where it starts would be a second copy of a fact the layout " +
+            "already fixes.");
+        loop.CaseTargets.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AnOrdinaryStepIsBoundedAtOneSoNothingElsePaysForConcurrency()
+        => Step(0, Fixtures.ValidateOrder).MaxDegreeOfParallelism.ShouldBe(1);
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(0)]
+    public void RejectsAForEachWithNoBody(int joinOffset)
+        // A loop that runs nothing per element still evaluates its selector and still
+        // costs an iteration each time. The generator lays such a declaration out as
+        // nothing at all, so this rejects a layout bug rather than something an author
+        // can write.
+        => Should.Throw<InvalidFlowPlanException>(
+            () => StepNode.ForEach(2, joinTarget: 2 + joinOffset, Bounded()));
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-4)]
+    public void RejectsANonPositiveConcurrencyBound(int max)
+        => Should.Throw<InvalidFlowPlanException>(
+            () => StepNode.ForEach(0, joinTarget: 2, Bounded(max)));
+
+    [Fact]
+    public void TheConcurrencyBoundIsCappedByTheRuntimeRatherThanRefused()
+    {
+        // "Bounded by construction: MaxDegreeOfParallelism is required and capped by the
+        // runtime" — 08-Flow-Definition.md §3.4. An author asking for a thousand concurrent
+        // reservations has asked for something reasonable that this runtime will not do,
+        // and failing the build over it would be refusing to run a correct flow. The plan
+        // therefore carries the bound that will actually be honoured, so reading it back
+        // tells the truth.
+        StepNode.ForEach(0, joinTarget: 2, Bounded(1000))
+            .MaxDegreeOfParallelism.ShouldBe(StepNode.MaxIterationConcurrency);
+    }
+
+    [Fact]
+    public void TheCapIsAConstantRatherThanAPropertyOfTheBuildMachine()
+        // Derived from Environment.ProcessorCount it would compile to a different graph on
+        // a laptop and in CI, and the manifest would stop being reproducible.
+        => StepNode.MaxIterationConcurrency.ShouldBe(64);
+
+    [Fact]
+    public void AcceptsTheFullForEachLayout()
+    {
+        // 0 validate · 1 foreach(body 2..4, join 4) · 2 reserve · 3 capture · 4 validate.
+        // No closing jump: the body's end is the join, and the engine re-enters the span
+        // rather than falling out of it.
+        var graph = StepGraph.Create([
+            Step(0, Fixtures.ValidateOrder),
+            StepNode.ForEach(1, joinTarget: 4, Bounded(2)),
+            Step(2, Fixtures.ReserveInventory, Fixtures.ReleaseInventory),
+            Step(3, Fixtures.CapturePayment),
+            Step(4, Fixtures.ValidateOrder),
+        ]);
+
+        graph.Count.ShouldBe(5);
+        graph[1].Target.ShouldBe(4);
+    }
+
+    [Fact]
+    public void AForEachMayJoinOnePastTheLastStepBecauseThatEndsTheFlow()
+    {
+        var graph = StepGraph.Create([
+            StepNode.ForEach(0, joinTarget: 2, Bounded()),
+            Step(1, Fixtures.ReserveInventory),
+        ]);
+
+        graph[0].Target.ShouldBe(graph.Count);
+    }
+
+    [Fact]
+    public void RejectsAForEachJoinPastTheEndOfTheGraph()
+        // Only the graph knows how long it is, so this cannot be caught in the factory —
+        // and left unchecked it is an IndexOutOfRangeException thrown from the middle of a
+        // flow, after some of its elements have already been processed.
+        => Should.Throw<InvalidFlowPlanException>(() => StepGraph.Create([
+            StepNode.ForEach(0, joinTarget: 5, Bounded()),
+            Step(1, Fixtures.ReserveInventory),
+        ]));
+
+    [Fact]
+    public void EveryPassOverAForEachBodyStillTerminatesForTheOldReason()
+    {
+        // The forward-target rule proves each pass terminates; it does not prove the loop
+        // over passes does, because the body is deliberately re-entered. What bounds that
+        // is the element count, read once before the first pass — see IterationSource.
+        var graph = StepGraph.Create([
+            StepNode.ForEach(0, joinTarget: 4, Bounded()),
+            StepNode.ForBranch(1, falseTarget: 3),
+            Step(2, Fixtures.ReserveInventory),
+            Step(3, Fixtures.CapturePayment),
+            Step(4, Fixtures.ValidateOrder),
+        ]);
+
+        foreach (var step in graph.Steps)
+        {
+            if (step.Target is { } target)
+            {
+                target.ShouldBeGreaterThan(step.Index);
+                target.ShouldBeLessThanOrEqualTo(graph.Count);
+            }
+        }
+    }
+
+    [Fact]
+    public void AForEachDescribesItselfWithItsBodyAndItsBound()
+        => StepNode.ForEach(1, joinTarget: 4, Bounded(4, continueOnError: true))
+            .ToString()
+            .ShouldBe("[1] foreach 2..4 (max 4, continue on error)");
+
+    [Fact]
+    public void APlanKnowsWhetherAnIterationCanBeReachedByTwoThreads()
+    {
+        // The question is not "does the flow loop" but "can two threads reach the context".
+        // A loop that runs one element at a time cannot, so it keeps the unguarded fast
+        // path exactly as a conditional does — which is what keeps budget B2 a hard zero
+        // for everything that does not actually fork.
+        LoopPlan(StepNode.ForEach(0, joinTarget: 2, Bounded())).HasParallel.ShouldBeFalse();
+        LoopPlan(StepNode.ForEach(0, joinTarget: 2, Bounded(2))).HasParallel.ShouldBeTrue();
+    }
+
     [Fact]
     public void TheGraphIsImmutableOnceBuilt()
     {

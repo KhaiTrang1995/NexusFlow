@@ -203,8 +203,56 @@ flow.ForEach(ctx => ctx.Get<ValidatedOrder>().Lines,
 ```
 
 Bounded by construction: `MaxDegreeOfParallelism` is required and capped by the
-runtime. In `Durable` flows each iteration commits its own journal entry, so a
-crash resumes mid-collection rather than restarting it.
+runtime — at 64, a constant rather than something derived from the build machine, so
+identical source compiles to an identical graph everywhere. A bound of zero is a build
+failure rather than a loop that never runs; a bound of a thousand is clamped rather than
+refused, because asking for it is reasonable and refusing to run a correct flow is not.
+
+`ForEach` compiles into the same flat step array as everything else — one `ForEach` node
+carrying its join, and the body laid out immediately after it. **The body appears once,
+however many elements the collection holds**, and the engine re-enters that span per
+element. So the plan, the manifest and a rendered diagram are all independent of the size
+of the data: a flow that reserves one line and one that reserves a thousand compile to the
+same graph. What it costs is a pass over the body's step loop per element, which is the
+price of not unrolling something the compiler cannot count.
+
+The selector is typed `IReadOnlyList<TItem>` rather than `IEnumerable<TItem>` on purpose.
+It is evaluated **exactly once**, before the first element, and the count it reports is
+what bounds the loop — every other shape terminates because targets only ever point
+forward, and this is the one that needs a second reason.
+
+**The current element is scoped to its iteration.** It is not written into the flow's state
+bag: that bag is keyed by type, so every element would take the same slot — a race above a
+bound of one, and a leftover visible to every step after the loop even at one. Each pass
+instead runs under a view of the context in which the element resolves by its own type, and
+reads fall through to the flow for everything else. Writes do not: what a body step
+*returns* is a value the flow produced, and goes in the shared bag. The consequence is worth
+knowing before raising the bound above one — two elements writing the same output type
+still race, and the winner is whichever finished last. That is the same modelling question
+[`FLOWX1013`](diagnostics/FLOWX1013.md) asks of a `Parallel`'s branches; the runtime
+guarantees only that the failure mode is a wrong value and never a corrupted dictionary.
+
+Compensation is per element and unwinds in **strict reverse**. Each completed step is
+recorded with the scope it completed in, so `ReleaseLine` undoes the line its own
+`ReserveLine` reserved rather than whichever line the loop ended on. With
+`ContinueOnError = false` — the default — the first failing element stops the iteration and
+fails the flow with that element's own error; the elements that already succeeded are not
+undone by the loop, they are undone by the flow's own unwind, in order, along with
+everything before it. With `ContinueOnError = true` every element runs, the flow continues,
+and the step after the loop reads `ctx.Get<ForEachOutcome>()` to decide what a partial
+success means — the same bargain `MergeStrategy.AllSettled` offers a fork. A selector that
+*throws* is not covered by `ContinueOnError`: a collection that was never read is not
+something to continue past.
+
+A loop allocates, roughly **32 bytes per element** — one scope object, and nothing per step
+of the body. The zero-allocation budget covers the linear, conditional and switch paths and
+deliberately does not cover this one, exactly as it does not cover a fork.
+
+> **Not yet true: the journal entry.** "In `Durable` flows each iteration commits its own
+> journal entry, so a crash resumes mid-collection rather than restarting it" describes P2.
+> There is no journal yet, so today a crash restarts the flow. The shape is the one that
+> makes it possible — each element is a bounded range with a scope of its own — but nothing
+> persists it.
 
 ### 3.5 Waiting
 

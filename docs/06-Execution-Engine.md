@@ -428,9 +428,15 @@ The runtime's half of that bargain is narrower than the compiler's, and the diff
 matters. `FlowExecutionContext` holds a plain `Dictionary<Type, object>`; it is pooled, and
 a `ConcurrentDictionary` would have cost every linear flow an allocation per write to solve
 a problem only forks have. So the state bag and the compensation stack are **guarded by a
-lock, and only when the compiled plan contains a fork** — `ExecutionPlan.HasParallel`, a
+lock, and only when more than one thread can reach them** — `ExecutionPlan.HasParallel`, a
 fact precomputed at type initialisation. A flow that never forks takes one always-false
 branch and costs exactly what it did before.
+
+A `ForEach` whose `MaxDegreeOfParallelism` is above one counts as forking, for the obvious
+reason and by exactly the same mechanism: it reuses the fork's linked token source, its
+`WhenAny` drain and this lock, rather than growing a second answer to the same problem. A
+loop bounded at one does not, and keeps the unguarded path — so the question the flag
+answers is not "does the flow branch" but "can two threads reach the context".
 
 That makes concurrent writes *safe*: the dictionary cannot be corrupted and a torn read is
 impossible. It does not make them *meaningful*. Two branches writing the same contract type

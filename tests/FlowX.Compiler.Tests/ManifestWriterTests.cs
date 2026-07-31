@@ -131,7 +131,12 @@ public sealed class ManifestWriterTests
     public void ContainsStructureButNoValues()
     {
         var manifest = ManifestWriter.Write(
-            "Sample.App", "1.0.0", [Models.PlaceOrder()], null, [Models.Triggers()], Models.ErrorCatalogues());
+            "Sample.App",
+            "1.0.0",
+            [Models.PlaceOrder(), Models.Conditional(), Models.Switching(), Models.Parallel(), Models.Iterating()],
+            null,
+            [Models.Triggers()],
+            Models.ErrorCatalogues());
 
         foreach (var forbidden in new[]
         {
@@ -142,6 +147,68 @@ public sealed class ManifestWriterTests
             manifest.ToUpperInvariant().Contains(forbidden.ToUpperInvariant(), StringComparison.Ordinal)
                 .ShouldBeFalse($"The manifest contains '{forbidden}'. It describes structure, never values.");
         }
+
+        // Every branching shape is in the document above, because each one carries
+        // something the manifest has to refuse: a predicate, a selector and its case
+        // values, a merge argument, a collection selector and a concurrency bound. A guard
+        // that saw only the linear flow would pass against a writer that published them all.
+        foreach (var expression in new[]
+        {
+            "ctx =>", "RiskScore", "Channel.Retail", "MergeStrategy",
+            "ValidatedOrder", "MaxDegreeOfParallelism", "ContinueOnError",
+        })
+        {
+            manifest.Contains(expression, StringComparison.Ordinal).ShouldBeFalse(
+                $"The manifest contains '{expression}'. A predicate, a case value, a merge " +
+                "argument, an iterated collection and an iteration's bound are all things " +
+                "the author wrote about their own data or their own tuning; the manifest " +
+                "publishes that the flow branches and iterates, never on what.");
+        }
+    }
+
+    /// <summary>
+    /// A loop publishes its body as the same <c>branches</c> array every other shape uses.
+    /// </summary>
+    /// <remarks>
+    /// One entry, because a loop has one block. How many times it runs is data, and the
+    /// manifest carries none — so <c>kind</c> saying <c>ForEach</c> is the whole of what
+    /// distinguishes it from a step that runs once.
+    /// </remarks>
+    [Fact]
+    public void AnIterationPublishesItsBodyAndNothingAboutTheCollection()
+    {
+        using var document = Parse(Write(Models.Iterating()));
+
+        var loop = document.RootElement.GetProperty("flows")[0].GetProperty("steps")[1];
+
+        loop.GetProperty("kind").GetString().ShouldBe("ForEach");
+        loop.GetProperty("id").GetInt32().ShouldBe(1);
+        loop.GetProperty("branches").GetArrayLength().ShouldBe(1);
+        loop.GetProperty("branches")[0].GetArrayLength().ShouldBe(2);
+        loop.GetProperty("branches")[0][0].GetProperty("capability").GetString()
+            .ShouldBe("inventory.reserve@1.0.0");
+        loop.GetProperty("branches")[0][0].GetProperty("compensation").GetString()
+            .ShouldBe("inventory.release@1.0.0",
+                "A per-element compensation is published exactly as any other is: the loop " +
+                "changes how often it runs, not what it is.");
+
+        loop.TryGetProperty("merge", out _).ShouldBeFalse(
+            "A loop has nothing to merge, and borrowing the fork's field would invite a " +
+            "consumer to read a join rule that does not exist.");
+    }
+
+    [Fact]
+    public void ACapabilityInvokedOnlyInsideALoopStillReachesTheCapabilityList()
+    {
+        // The failure this forbids is silent: a capability the manifest does not list is
+        // invisible to `flowx diff`, to generated OpenAPI and to anything auditing what an
+        // application can do.
+        using var document = Parse(Write(Models.Iterating()));
+
+        document.RootElement.GetProperty("capabilities")
+            .EnumerateArray()
+            .Select(c => c.GetProperty("id").GetString())
+            .ShouldContain("payment.capture");
     }
 
     // ------------------------------------------------------------------ triggers

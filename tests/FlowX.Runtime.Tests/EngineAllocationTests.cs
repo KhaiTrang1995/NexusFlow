@@ -318,6 +318,93 @@ public sealed class EngineAllocationTests
     }
 
     /// <summary>
+    /// A loop allocates, and this records how much rather than asserting a zero that
+    /// cannot be honoured.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Budget B2 is unchanged and still a hard zero</strong> — for the linear,
+    /// conditional and switch paths, which is what it has always covered and what the
+    /// theories above assert. A <c>ForEach</c> is doing something none of those do: it runs
+    /// its body once per element, and each pass needs the element to be visible to the
+    /// steps in it under its own type. There is no arrangement of that which costs nothing,
+    /// because the shared state bag is keyed by type and would give every pass the same
+    /// slot — which is a race above a concurrency of one and a leftover at one.
+    /// </para>
+    /// <para>
+    /// <strong>The measured figures, Release, .NET 10, x64.</strong> A sequential loop over
+    /// three elements with a one-step body: <strong>96 B</strong>, which is
+    /// <strong>32 B per element</strong> — one <c>IterationScope&lt;T&gt;</c>, and nothing
+    /// else: an object header and the two references it holds, the enclosing context and
+    /// the element. The same loop over six elements: <strong>192 B</strong>. Nothing at all
+    /// is charged per step of the body, which is the property the companion test pins.
+    /// </para>
+    /// <para>
+    /// The ceiling is deliberately close to the figure, so that a change which starts
+    /// allocating per <em>step</em> rather than per element trips it. Written down here
+    /// rather than only implied by the assertion so a future reader can tell whether a
+    /// change moved it and by how much.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AForEachAllocatesAndTheAmountIsRecorded()
+    {
+        RequireOptimisedBuild();
+
+        var engine = new FlowEngine(new FakeClock(T0));
+
+        var allocated = MeasureSteadyState(
+            engine, Plans.ForEachWithOneStepBody(), new NullDispatcher { Elements = ThreeElements });
+
+        allocated.ShouldBeGreaterThan(0,
+            "A zero here would mean the elements did not get their own scope — which is " +
+            "a correctness problem wearing a budget's clothes, because every pass would " +
+            "then read the same slot.");
+
+        allocated.ShouldBeLessThan(256,
+            $"Measured {allocated} B for a three-element loop with a one-step body. A loop " +
+            "is allowed to allocate per element; it is not allowed to allocate per step. " +
+            "If this ceiling is hit, something started allocating inside the body's step loop.");
+    }
+
+    /// <summary>
+    /// The steady-state cost of a loop must track the elements, not the body.
+    /// </summary>
+    /// <remarks>
+    /// The measurement that actually protects the shape. An absolute ceiling would still
+    /// pass if each body step allocated a few bytes; comparing three elements over a
+    /// one-step body against three elements over a two-step body catches that, because a
+    /// per-step component would show up as a difference the per-element component cannot
+    /// explain. The second comparison is the other axis: twice the elements really does
+    /// cost about twice as much, because a scope per element is what a loop buys.
+    /// </remarks>
+    [Fact]
+    public void TheCostOfALoopTracksItsElementsRatherThanItsSteps()
+    {
+        RequireOptimisedBuild();
+
+        var engine = new FlowEngine(new FakeClock(T0));
+
+        var oneStepBody = MeasureSteadyState(
+            engine, Plans.ForEachWithOneStepBody(), new NullDispatcher { Elements = ThreeElements });
+
+        var twoStepBody = MeasureSteadyState(
+            engine, Plans.ForEach(), new NullDispatcher { Elements = ThreeElements });
+
+        var twiceTheElements = MeasureSteadyState(
+            engine, Plans.ForEachWithOneStepBody(), new NullDispatcher { Elements = SixElements });
+
+        twoStepBody.ShouldBe(oneStepBody,
+            $"Doubling the work per element changed the cost from {oneStepBody} B to " +
+            $"{twoStepBody} B. A loop pays for elements, not for the steps inside them.");
+
+        twiceTheElements.ShouldBe(oneStepBody * 2,
+            $"Six elements cost {twiceTheElements} B against {oneStepBody} B for three. " +
+            "The cost is one scope per element; anything else means a fixed cost crept in " +
+            "or a per-element one grew.");
+    }
+
+    /// <summary>
     /// The guarded state bag must not cost a flow that never forks anything at all.
     /// </summary>
     /// <remarks>
@@ -363,6 +450,15 @@ public sealed class EngineAllocationTests
 
         public bool Evaluate(int stepIndex, FlowContext ctx) => true;
 
+        /// <inheritdoc />
+        /// <remarks>This double declares no iteration, so the engine never asks it for one.</remarks>
+        public IterationSource BeginIteration(int stepIndex, FlowContext ctx) =>
+            throw new NotSupportedException("This dispatcher has no iteration to begin.");
+
+        /// <inheritdoc />
+        public FlowContext EnterIteration(int stepIndex, in IterationSource source, int iteration, FlowContext ctx) =>
+            throw new NotSupportedException("This dispatcher has no iteration to enter.");
+
         public int Select(int stepIndex, FlowContext ctx) => -1;
     }
 
@@ -390,5 +486,23 @@ public sealed class EngineAllocationTests
         public bool Evaluate(int stepIndex, FlowContext ctx) => PredicateAnswer;
 
         public int Select(int stepIndex, FlowContext ctx) => CaseAnswer;
+
+        /// <summary>
+        /// What every iteration walks. A pre-built array of pre-boxed elements, so what the
+        /// measurement sees is the engine's per-element cost and not the test's own litter.
+        /// </summary>
+        public object[] Elements { get; init; } = ThreeElements;
+
+        public IterationSource BeginIteration(int stepIndex, FlowContext ctx) =>
+            new(Elements, Elements.Length);
+
+        public FlowContext EnterIteration(
+            int stepIndex, in IterationSource source, int iteration, FlowContext ctx) =>
+            IterationScope.For(ctx, ((IReadOnlyList<object>)source.Items!)[iteration]);
     }
+
+    private static readonly object[] ThreeElements = [new object(), new object(), new object()];
+
+    private static readonly object[] SixElements =
+        [new object(), new object(), new object(), new object(), new object(), new object()];
 }

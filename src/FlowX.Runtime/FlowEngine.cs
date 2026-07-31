@@ -202,7 +202,7 @@ public sealed class FlowEngine
         var compensations = plan.HasCompensation ? context.Compensations : null;
 
         var outcome = await RunRangeAsync(
-            plan, dispatcher, context, compensations, 0, plan.Graph.Count, ct).ConfigureAwait(false);
+            plan, dispatcher, context, context, compensations, 0, plan.Graph.Count, ct).ConfigureAwait(false);
 
         if (outcome.Failure is null)
         {
@@ -251,11 +251,21 @@ public sealed class FlowEngine
     /// several threads. Everything else survives: no branch stack, no nested plan objects,
     /// no per-step recursion, and a linear or conditional flow never leaves this method.
     /// </para>
+    /// <para>
+    /// <strong><paramref name="scope"/> is what the dispatcher sees;
+    /// <paramref name="context"/> is what the engine keeps its books in.</strong> They are
+    /// the same object everywhere except inside a <c>ForEach</c> body, where the scope is
+    /// the iteration's view — the element, shadowing the shared state bag on its own type.
+    /// The split is deliberate: the deadline, the compensation stack and the running-step
+    /// identity belong to the flow and must not fork per element, while what a step
+    /// <em>reads</em> must.
+    /// </para>
     /// </remarks>
     private static async ValueTask<RangeOutcome> RunRangeAsync(
         ExecutionPlan plan,
         IStepDispatcher dispatcher,
         FlowExecutionContext context,
+        FlowContext scope,
         CompensationStack? compensations,
         int from,
         int end,
@@ -296,7 +306,7 @@ public sealed class FlowEngine
 
                 try
                 {
-                    taken = dispatcher.Evaluate(i, context);
+                    taken = dispatcher.Evaluate(i, scope);
                 }
 #pragma warning disable CA1031 // Same reasoning as the capability call below, plus one
                 catch (Exception exception) //   more: a predicate escaping here would skip
@@ -319,7 +329,7 @@ public sealed class FlowEngine
 
                 try
                 {
-                    arm = dispatcher.Select(i, context);
+                    arm = dispatcher.Select(i, scope);
                 }
 #pragma warning disable CA1031 // Same reasoning as the predicate above: a selector that
                 catch (Exception exception) //   escapes here would skip the compensation
@@ -342,7 +352,7 @@ public sealed class FlowEngine
             if (step.Kind == StepKind.Parallel)
             {
                 var forked = await RunParallelAsync(
-                    plan, dispatcher, context, compensations, step, ct).ConfigureAwait(false);
+                    plan, dispatcher, context, scope, compensations, step, ct).ConfigureAwait(false);
 
                 // Counted whether or not the merge held: those steps really ran, and a
                 // caller reading CompletedSteps to decide what was touched needs the
@@ -352,6 +362,26 @@ public sealed class FlowEngine
                 if (forked.Failure is not null)
                 {
                     failure = forked.Failure;
+                    break;
+                }
+
+                i = step.Target!.Value;
+                continue;
+            }
+
+            if (step.Kind == StepKind.ForEach)
+            {
+                var iterated = await RunForEachAsync(
+                    plan, dispatcher, context, scope, compensations, step, ct).ConfigureAwait(false);
+
+                // Counted for the same reason a fork's are: those steps really ran, and a
+                // loop that stopped at the third of ten elements has still done the work
+                // of the first two.
+                completed += iterated.Completed;
+
+                if (iterated.Failure is not null)
+                {
+                    failure = iterated.Failure;
                     break;
                 }
 
@@ -374,7 +404,7 @@ public sealed class FlowEngine
 
             try
             {
-                outcome = await dispatcher.ExecuteAsync(i, context, ct).ConfigureAwait(false);
+                outcome = await dispatcher.ExecuteAsync(i, scope, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -406,7 +436,11 @@ public sealed class FlowEngine
                 // Through the context, not the stack directly: two branches can complete a
                 // compensable step at the same instant, and the context is what serialises
                 // the push. A lost push is an undo that never runs.
-                context.RecordCompleted(step);
+                //
+                // The scope goes on the stack with the step, and is null everywhere except
+                // inside an iteration — that is what lets the undo of "the line this step
+                // reserved" find the right line once the loop is over.
+                context.RecordCompleted(step, ReferenceEquals(scope, context) ? null : scope);
             }
 
             i++;
@@ -449,6 +483,7 @@ public sealed class FlowEngine
         ExecutionPlan plan,
         IStepDispatcher dispatcher,
         FlowExecutionContext context,
+        FlowContext scope,
         CompensationStack? compensations,
         StepNode step,
         CancellationToken ct)
@@ -482,7 +517,7 @@ public sealed class FlowEngine
             var branchEnd = b + 1 < targets.Length ? targets[b + 1] : join;
 
             started[b] = RunRangeAsync(
-                plan, dispatcher, context, compensations, targets[b], branchEnd, branchToken).AsTask();
+                plan, dispatcher, context, scope, compensations, targets[b], branchEnd, branchToken).AsTask();
 
             pending.Add(started[b]);
         }
@@ -521,6 +556,282 @@ public sealed class FlowEngine
         }
 
         return new RangeOutcome(Verdict(plan, step, merge, errors, succeeded, firstFailure, context), completed);
+    }
+
+    /// <summary>
+    /// Runs the body of a <see cref="StepKind.ForEach"/> once per element.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The body is one range, run <em>n</em> times.</strong> Everything else in the
+    /// DSL executes each index at most once; this does not, and that is the single fact
+    /// worth being clear about. It costs a pass over the same span per element — so a
+    /// ten-line order runs the body's step loop ten times, with ten sets of dispatcher
+    /// calls — and it buys the flat array staying flat: no unrolled copy of the body per
+    /// element, no separate sub-plan, nothing in the graph that depends on the size of the
+    /// data. The manifest of a flow that reserves one line and one that reserves a thousand
+    /// is the same document.
+    /// </para>
+    /// <para>
+    /// <strong>The element count is read once, before the first pass.</strong> That is what
+    /// bounds the loop, and it is why the DSL types the selector as
+    /// <c>IReadOnlyList&lt;TItem&gt;</c>: the forward-target rule proves each pass
+    /// terminates, and a count fixed in advance proves the loop over passes does.
+    /// </para>
+    /// <para>
+    /// <strong>Two paths, and the second is <c>Parallel</c>'s.</strong> A bound of one runs
+    /// the elements in order on the calling thread, allocating nothing beyond one scope per
+    /// element and never touching a task. Above one, this is a fork with a sliding window:
+    /// the same linked <see cref="CancellationTokenSource"/>, the same
+    /// <see cref="Task.WhenAny(IEnumerable{Task})"/> drain, the same rule that every started
+    /// iteration is awaited before the method returns — because the context is pooled, and
+    /// an iteration still writing to it after the engine has moved on would eventually write
+    /// into the next flow's context.
+    /// </para>
+    /// </remarks>
+    private static async ValueTask<RangeOutcome> RunForEachAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        FlowContext scope,
+        CompensationStack? compensations,
+        StepNode step,
+        CancellationToken ct)
+    {
+        IterationSource source;
+
+        try
+        {
+            source = dispatcher.BeginIteration(step.Index, scope);
+        }
+#pragma warning disable CA1031 // Same reasoning as the predicate and the switch selector:
+        catch (Exception exception) //   a selector escaping here would skip the compensation
+        {                           //   the already-completed steps need.
+            return new RangeOutcome(FlowErrors.IterationFailed(plan.Flow.Id, step.Index, exception), 0);
+        }
+#pragma warning restore CA1031
+
+        // An empty collection is not a failure and not a special case worth a diagnostic:
+        // a loop over nothing does nothing, exactly as a `When` nobody took does.
+        if (source.Count == 0)
+        {
+            return default;
+        }
+
+        var body = step.Index + 1;
+        var join = step.Target!.Value;
+
+        return step.MaxDegreeOfParallelism == 1
+            ? await RunIterationsInOrderAsync(
+                plan, dispatcher, context, scope, compensations, step, source, body, join, ct)
+                .ConfigureAwait(false)
+            : await RunIterationsConcurrentlyAsync(
+                plan, dispatcher, context, scope, compensations, step, source, body, join, ct)
+                .ConfigureAwait(false);
+    }
+
+    /// <summary>Runs the elements one at a time, in order.</summary>
+    /// <remarks>
+    /// No task, no token source, no drain list — a sequential loop is a sequential loop,
+    /// and wrapping it in the concurrent path's machinery to save a method would charge
+    /// every ordinary <c>ForEach</c> for concurrency it explicitly did not ask for.
+    /// </remarks>
+    private static async ValueTask<RangeOutcome> RunIterationsInOrderAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        FlowContext scope,
+        CompensationStack? compensations,
+        StepNode step,
+        IterationSource source,
+        int body,
+        int join,
+        CancellationToken ct)
+    {
+        var errors = step.ContinueOnError ? new Error?[source.Count] : null;
+        var completed = 0;
+        Error? firstFailure = null;
+        Error? fatal = null;
+
+        for (var element = 0; element < source.Count; element++)
+        {
+            FlowContext iteration;
+
+            try
+            {
+                iteration = dispatcher.EnterIteration(step.Index, in source, element, scope);
+            }
+#pragma warning disable CA1031 // Reading one element out of a list the selector already
+            catch (Exception exception) //   produced should not throw; if it does, the
+            {                           //   already-completed elements still need unwinding.
+                fatal = FlowErrors.IterationFailed(plan.Flow.Id, step.Index, exception);
+                break;
+            }
+#pragma warning restore CA1031
+
+            var outcome = await RunRangeAsync(
+                plan, dispatcher, context, iteration, compensations, body, join, ct).ConfigureAwait(false);
+
+            completed += outcome.Completed;
+
+            if (outcome.Failure is null)
+            {
+                continue;
+            }
+
+            firstFailure ??= outcome.Failure;
+
+            if (errors is null)
+            {
+                // ContinueOnError = false, which is the documented default: the first
+                // failing element stops the iteration. The elements that already ran are
+                // not undone here — they are on the compensation stack, and the flow's
+                // own unwind takes them in strict reverse along with everything before
+                // the loop. Compensating them here would undo half a saga twice.
+                break;
+            }
+
+            errors[element] = outcome.Failure;
+        }
+
+        return new RangeOutcome(IterationVerdict(step, errors, firstFailure, fatal, context), completed);
+    }
+
+    /// <summary>Runs the elements with a sliding window of at most <c>MaxDegreeOfParallelism</c>.</summary>
+    /// <remarks>
+    /// A window rather than a task per element: a thousand-line order must not start a
+    /// thousand reservations, which is the whole reason the bound is required rather than
+    /// optional. Every started iteration is drained before this returns, cancelled or not,
+    /// for the reason given on <see cref="RunParallelAsync"/> — the context is pooled.
+    /// </remarks>
+    private static async ValueTask<RangeOutcome> RunIterationsConcurrentlyAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        FlowContext scope,
+        CompensationStack? compensations,
+        StepNode step,
+        IterationSource source,
+        int body,
+        int join,
+        CancellationToken ct)
+    {
+        // ContinueOnError cancels nothing, so it needs no source at all — the same shape
+        // AllSettled uses. The other case links to the caller's token so cancellation
+        // still reaches the elements in flight.
+        using var cancellation = step.ContinueOnError
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        var iterationToken = cancellation?.Token ?? ct;
+        var window = Math.Min(step.MaxDegreeOfParallelism, source.Count);
+
+        var pending = new List<Task<RangeOutcome>>(window);
+        var elements = new List<int>(window);
+
+        var errors = step.ContinueOnError ? new Error?[source.Count] : null;
+        var next = 0;
+        var completed = 0;
+        var stopped = false;
+        Error? firstFailure = null;
+        Error? fatal = null;
+
+        while (next < source.Count || pending.Count > 0)
+        {
+            while (!stopped && next < source.Count && pending.Count < window)
+            {
+                FlowContext iteration;
+
+                try
+                {
+                    iteration = dispatcher.EnterIteration(step.Index, in source, next, scope);
+                }
+#pragma warning disable CA1031 // As in the sequential path, and with the same consequence:
+                catch (Exception exception) //   whatever is already in flight still has to
+                {                           //   be drained before this returns.
+                    fatal = FlowErrors.IterationFailed(plan.Flow.Id, step.Index, exception);
+                    stopped = true;
+                    cancellation?.Cancel();
+                    break;
+                }
+#pragma warning restore CA1031
+
+                pending.Add(RunRangeAsync(
+                    plan, dispatcher, context, iteration, compensations, body, join, iterationToken).AsTask());
+
+                elements.Add(next);
+                next++;
+            }
+
+            if (pending.Count == 0)
+            {
+                break;
+            }
+
+            var finished = await Task.WhenAny(pending).ConfigureAwait(false);
+            var slot = pending.IndexOf(finished);
+            var element = elements[slot];
+
+            pending.RemoveAt(slot);
+            elements.RemoveAt(slot);
+
+            var outcome = Observe(finished, plan.Flow.Id);
+
+            completed += outcome.Completed;
+
+            if (outcome.Failure is null)
+            {
+                continue;
+            }
+
+            firstFailure ??= outcome.Failure;
+
+            if (errors is null)
+            {
+                // Stopping does not end the loop: the iterations already in flight still
+                // have to be drained. It only stops the window from starting more.
+                stopped = true;
+                cancellation?.Cancel();
+                continue;
+            }
+
+            errors[element] = outcome.Failure;
+        }
+
+        return new RangeOutcome(IterationVerdict(step, errors, firstFailure, fatal, context), completed);
+    }
+
+    /// <summary>Turns the element outcomes into the loop's own outcome.</summary>
+    /// <remarks>
+    /// <para>
+    /// With <c>ContinueOnError = false</c> the loop reports the failing element's own
+    /// error, because there is one failure and it is the reason — the same choice
+    /// <c>AllMustSucceed</c> makes. With <c>ContinueOnError = true</c> it reports success
+    /// and publishes a <see cref="ForEachOutcome"/>, because the author has said that a
+    /// failed element is a result rather than an end, and the step after the loop is the
+    /// only thing entitled to decide what a partial success means.
+    /// </para>
+    /// <para>
+    /// <paramref name="fatal"/> outranks both. <c>ContinueOnError</c> is a statement about
+    /// elements failing, not about the loop itself being unable to produce one; a flow that
+    /// swallowed a selector that threw would carry on over a collection it never read.
+    /// </para>
+    /// </remarks>
+    private static Error? IterationVerdict(
+        StepNode step,
+        Error?[]? errors,
+        Error? firstFailure,
+        Error? fatal,
+        FlowExecutionContext context)
+    {
+        if (errors is null)
+        {
+            return fatal ?? firstFailure;
+        }
+
+        context.Set(new ForEachOutcome(step.Index, errors));
+
+        return fatal;
     }
 
     /// <summary>Reads a finished branch, converting a fault into an error rather than rethrowing.</summary>
@@ -634,14 +945,18 @@ public sealed class FlowEngine
 
         var allSucceeded = true;
 
-        foreach (var step in compensations.Unwind())
+        foreach (var entry in compensations.Unwind())
         {
-            _ = context.EnterStep(step);
+            _ = context.EnterStep(entry.Step);
 
             try
             {
+                // Under the scope the step completed in, which is the flow's own context
+                // everywhere except inside a `ForEach` — there it is the iteration's, so
+                // `ReleaseLine` undoes the line `ReserveLine` reserved rather than
+                // whichever line the loop happened to end on.
                 var outcome = await dispatcher
-                    .CompensateAsync(step.Index, context, CancellationToken.None)
+                    .CompensateAsync(entry.Index, entry.Scope ?? context, CancellationToken.None)
                     .ConfigureAwait(false);
 
                 allSucceeded &= outcome.IsSuccess;

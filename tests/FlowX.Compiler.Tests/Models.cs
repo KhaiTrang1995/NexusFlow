@@ -151,6 +151,38 @@ internal static class Models
             StepModel.Emit(5, "order.screened"),
         ]);
 
+    /// <summary>
+    /// A loop: <c>validate · foreach(reserve · capture) · emit</c>.
+    /// </summary>
+    /// <remarks>
+    /// The indices are the flat ones the analyzer assigns — 0 validate, 1 foreach,
+    /// 2 reserve, 3 capture, 4 emit. There is no jump and no per-block target: the body is
+    /// the span between the loop and its join, and it appears once however many elements
+    /// the collection turns out to hold.
+    /// </remarks>
+    public static FlowModel Iterating() => new(
+        flowId: "order.reserve",
+        version: "1.0.0",
+        profile: "Ephemeral",
+        deadline: null,
+        containingNamespace: "Sample.Flows",
+        typeName: "ReserveOrderFlow",
+        inputTypeName: "Sample.Contracts.PlaceOrder",
+        outputTypeName: "Sample.Contracts.OrderPlacedResult",
+        steps:
+        [
+            Validate(0),
+            StepModel.ForEach(
+                1,
+                "ctx => ctx.Get<ValidatedOrder>().Lines",
+                "Sample.Contracts.OrderLine",
+                [Reserve(2), Capture(3)],
+                "new ForEachOptions { MaxDegreeOfParallelism = 4, ContinueOnError = false }",
+                selectorLocation: "/src/Flows/Reserve.cs:13",
+                location: "/src/Flows/Reserve.cs:12"),
+            StepModel.Emit(4, "order.reserved"),
+        ]);
+
     /// <summary>Every trigger kind the abstraction ships, declared on <c>order.place</c>.</summary>
     public static FlowTriggersModel Triggers() => new(
         "order.place",

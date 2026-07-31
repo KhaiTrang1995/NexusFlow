@@ -1231,4 +1231,203 @@ public sealed class FlowPlanGeneratorTests
             }
             """)).ShouldBeEmpty();
     }
+
+    // -------------------------------------------------------------------------- ForEach
+
+    /// <summary>
+    /// The types the documented iteration example needs: something to split an order into
+    /// lines, and a capability that takes one line.
+    /// </summary>
+    /// <remarks>
+    /// Declared alongside the flow rather than in the shared preamble, so every other test
+    /// in this file keeps compiling exactly the source it compiled before.
+    /// </remarks>
+    private const string Lines = """
+        public sealed record OrderLine(string Sku);
+        public sealed record LineBatch(System.Collections.Generic.IReadOnlyList<OrderLine> Lines);
+
+        [Capability("order.split", Version = "1.0.0", Authorization = Authorization.Internal, Idempotent = true)]
+        public sealed class SplitOrder : ICapability<PlaceOrder, LineBatch>
+        {
+            public ValueTask<Result<LineBatch>> ExecuteAsync(PlaceOrder input, CapabilityContext ctx, CancellationToken ct)
+                => ValueTask.FromResult(Result.Ok(new LineBatch(new[] { new OrderLine(input.Sku) })));
+        }
+
+        [Capability("inventory.reserve_line", Version = "1.0.0",
+            Authorization = Authorization.Internal, Idempotent = true,
+            SideEffects = new[] { "inventory-ledger" })]
+        public sealed class ReserveLine : ICapability<OrderLine, Reservation>
+        {
+            public ValueTask<Result<Reservation>> ExecuteAsync(OrderLine input, CapabilityContext ctx, CancellationToken ct)
+                => ValueTask.FromResult(Result.Ok(new Reservation(input.Sku)));
+        }
+
+        [Capability("inventory.release_line", Version = "1.0.0",
+            Authorization = Authorization.Internal, Idempotent = true)]
+        public sealed class ReleaseLine : ICapability<OrderLine, Reservation>
+        {
+            public ValueTask<Result<Reservation>> ExecuteAsync(OrderLine input, CapabilityContext ctx, CancellationToken ct)
+                => ValueTask.FromResult(Result.Ok(new Reservation(input.Sku)));
+        }
+
+
+        """;
+
+    /// <summary>The example from <c>08-Flow-Definition.md</c> §3.4, spelled against these types.</summary>
+    private const string IteratingFlow = Lines + """
+        [Flow("order.place")]
+        public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+        {
+            protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                .Step<SplitOrder>()
+                .ForEach(ctx => ctx.Get<LineBatch>().Lines,
+                        line => line.Step<ReserveLine>().CompensateWith<ReleaseLine>(),
+                    options: new ForEachOptions { MaxDegreeOfParallelism = 4, ContinueOnError = false })
+                .Step<CapturePayment>()
+                .Return(ctx => new OrderResult("id"));
+        }
+        """;
+
+    [Fact]
+    public void TheGeneratedCodeForAForEachCompiles()
+    {
+        // The claim only a real compilation can settle. The options argument and the
+        // collection selector are both the author's own expressions pasted into the
+        // generated file, so they have to resolve there — and the emitted scope has to
+        // type-check against an element type the engine never sees.
+        GeneratorHarness.GeneratedCompileErrorsIn(WithFlow(IteratingFlow)).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AForEachIsALoopNodeFollowedByItsBodyOnce()
+    {
+        var run = GeneratorHarness.Run(WithFlow(IteratingFlow));
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+
+        // 0 split · 1 foreach(body 2..3, join 3) · 2 reserve line · 3 capture.
+        run.Plan.ShouldContainText(
+            "StepNode.ForEach(1, joinTarget: 3, options: new ForEachOptions " +
+            "{ MaxDegreeOfParallelism = 4, ContinueOnError = false })",
+            "The options are copied verbatim, so a bound written as a constant on the flow " +
+            "keeps working. The runtime clamps it; the generator does not evaluate it.");
+
+        run.Plan.ShouldContainText(
+            "StepNode.ForCapability(2, Descriptors.Step2, Descriptors.Step2Compensation)",
+            "The body is laid out once, immediately after the loop, and its compensation " +
+            "reaches the plan exactly as any other step's does.");
+        run.Plan.ShouldContainText("StepNode.ForCapability(3, Descriptors.Step3)",
+            "and the step after the loop is at the join.");
+    }
+
+    [Fact]
+    public void TheCollectionSelectorIsEmittedAsAStaticFieldTypedAtItsElement()
+    {
+        var run = GeneratorHarness.Run(WithFlow(IteratingFlow));
+
+        run.Plan.ShouldContainText(
+            "public static readonly Func<FlowContext, System.Collections.Generic.IReadOnlyList" +
+            "<Sample.OrderLine>> Step1 = ctx => ctx.Get<LineBatch>().Lines;",
+            "A list rather than a sequence: the engine reads the count once, before the " +
+            "first element, and that count is what bounds the loop.");
+
+        run.Plan.ShouldContainText("return IterationScope.For(ctx, items[iteration]);",
+            "The dispatcher builds the scope, because only it knows the element type.");
+    }
+
+    [Fact]
+    public void TheManifestPublishesTheIterationsShapeAndNeitherItsCollectionNorItsBound()
+    {
+        var run = GeneratorHarness.Run(WithFlow(IteratingFlow));
+
+        var json = run.ManifestJson.ShouldNotBeNull();
+
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+
+        var node = document.RootElement.GetProperty("flows")[0].GetProperty("steps")[1];
+
+        node.GetProperty("kind").GetString().ShouldBe("ForEach");
+        node.GetProperty("branches").GetArrayLength().ShouldBe(1);
+        node.GetProperty("branches")[0][0].GetProperty("capability").GetString()
+            .ShouldBe("inventory.reserve_line@1.0.0");
+        node.GetProperty("branches")[0][0].GetProperty("compensation").GetString()
+            .ShouldBe("inventory.release_line@1.0.0");
+
+        json.Contains("ctx =>", StringComparison.Ordinal).ShouldBeFalse(
+            "Which collection is iterated is a statement about the author's data. The type " +
+            "`LineBatch` does appear, as the contract `order.split` returns — naming a " +
+            "contract is what the manifest is for; publishing the expression that reaches " +
+            "into one is not.");
+        json.Contains("MaxDegreeOfParallelism", StringComparison.Ordinal).ShouldBeFalse(
+            "And the bound is a tuning number the committed schema has no field for.");
+    }
+
+    [Fact]
+    public void AForEachInsideAConditionalIsNumberedInTheSameFlatSpace()
+    {
+        // Nesting is where a layout bug hides. The loop's body indices come from the same
+        // shared counter the enclosing `then` block uses, so an off-by-one shows up as a
+        // gap or a duplicate and StepGraph rejects it at type initialisation — which is a
+        // run-time failure, not a build one, unless something compiles it first.
+        var source = WithFlow(Lines + """
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<SplitOrder>()
+                    .When(ctx => ctx.Get<LineBatch>().Lines.Count > 1, many => many
+                        .ForEach(ctx => ctx.Get<LineBatch>().Lines,
+                                line => line.Step<ReserveLine>(),
+                            options: new ForEachOptions { MaxDegreeOfParallelism = 2 }))
+                    .Otherwise(one => one.Step<CapturePayment>())
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """);
+
+        GeneratorHarness.GeneratedCompileErrorsIn(source).ShouldBeEmpty();
+
+        var run = GeneratorHarness.Run(source);
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+
+        // 0 split · 1 branch(else 5) · 2 foreach(body 3..4, join 4) · 3 reserve line ·
+        // 4 jump 6 · 5 capture.
+        run.Plan.ShouldContainText("StepNode.ForBranch(1, 5)", run.Describe());
+        run.Plan.ShouldContainText("StepNode.ForEach(2, joinTarget: 4, options:",
+            "The loop's own index comes from the same shared counter the `then` block uses.");
+        run.Plan.ShouldContainText("StepNode.ForJump(4, 6)",
+            "The loop's join is 4, which is where the `then` block's closing jump lives.");
+        run.Plan.ShouldContainText("StepNode.ForCapability(5, Descriptors.Step5)",
+            "and the `Otherwise` block starts one past that jump.");
+    }
+
+    [Fact]
+    public void AForEachWhoseBodyDeclaresNothingIsNotLaidOutAtAll()
+    {
+        // The same treatment a Switch with no Case and a one-branch Parallel get: a shape
+        // the flow does not really have is not published as one. A loop node with an empty
+        // body would also leave a gap in the index space, which StepGraph rejects at type
+        // initialisation — a run-time failure for a build-time mistake.
+        var source = WithFlow(Lines + """
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<SplitOrder>()
+                    .ForEach(ctx => ctx.Get<LineBatch>().Lines,
+                            line => { },
+                        options: new ForEachOptions { MaxDegreeOfParallelism = 2 })
+                    .Step<CapturePayment>()
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """);
+
+        GeneratorHarness.GeneratedCompileErrorsIn(source).ShouldBeEmpty();
+
+        var run = GeneratorHarness.Run(source);
+
+        run.Plan.Contains("StepNode.ForEach", StringComparison.Ordinal).ShouldBeFalse();
+        run.Plan.ShouldContainText("StepNode.ForCapability(1, Descriptors.Step1)",
+            "The step after the absent loop takes the index the loop would have had.");
+    }
 }

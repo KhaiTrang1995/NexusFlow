@@ -395,7 +395,13 @@ public sealed class FlowEmitterTests
 
                 """.ReplaceLineEndings("\n"));
 
-        Section(source, "            /// <inheritdoc />\n            public int Select(", "        }\n    }\n}")
+        // Ends at the member that follows `Select`, not at the file's closing braces: the
+        // dispatcher grew a `BeginIteration` when `ForEach` landed, and an end marker of
+        // "three closing braces" would silently have swallowed it into the pinned text.
+        Section(
+            source,
+            "            /// <inheritdoc />\n            public int Select(",
+            "            /// <inheritdoc />\n            public IterationSource BeginIteration(")
             .ShouldBe(
                 """
                             /// <inheritdoc />
@@ -435,6 +441,7 @@ public sealed class FlowEmitterTests
                                     }
                                 }
                             }
+
 
                 """.ReplaceLineEndings("\n"));
     }

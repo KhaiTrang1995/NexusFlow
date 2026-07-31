@@ -4,9 +4,8 @@ namespace FlowX.Compiler.Model;
 
 /// <summary>What one call in a <c>Define</c> chain declared.</summary>
 /// <remarks>
-/// The remaining branching kinds — for-each, sub-flow — arrive with the DSL surface that
-/// can express them. Modelling them now would be shapes nothing can produce and no test
-/// can exercise.
+/// The remaining branching kind — sub-flow — arrives with the DSL surface that can express
+/// it. Modelling it now would be a shape nothing can produce and no test can exercise.
 /// </remarks>
 public enum StepKindModel
 {
@@ -27,6 +26,9 @@ public enum StepKindModel
 
     /// <summary><c>.Parallel(p =&gt; p.Branch...(), merge)</c>.</summary>
     Parallel = 5,
+
+    /// <summary><c>.ForEach(selector, body, options)</c>.</summary>
+    ForEach = 6,
 }
 
 /// <summary>One branch of a <c>Parallel</c>: a block of steps that runs concurrently with its siblings.</summary>
@@ -303,6 +305,41 @@ public sealed record StepModel
     /// </remarks>
     public string? MergeKindName { get; private init; }
 
+    /// <summary>Steps declared in a <c>ForEach</c> body, in declaration order. Empty for every other kind.</summary>
+    /// <remarks>
+    /// A single block, unlike <see cref="Branches"/> and <see cref="Cases"/>, because a
+    /// loop has exactly one body — and it is laid out immediately after the loop's own
+    /// node, so it needs no stored target either. What makes it different from every other
+    /// block in this model is that the engine runs it more than once.
+    /// </remarks>
+    public IReadOnlyList<StepModel> Body { get; private init; } = System.Array.Empty<StepModel>();
+
+    /// <summary>
+    /// Fully-qualified type of the element a <c>ForEach</c> iterates.
+    /// </summary>
+    /// <remarks>
+    /// Needed for the same reason <see cref="SelectorTypeName"/> is: the emitted selector
+    /// is a <c>static readonly Func&lt;FlowContext, IReadOnlyList&lt;T&gt;&gt;</c> field and
+    /// a field needs a type. It is also what the generated dispatcher casts the engine's
+    /// opaque collection handle back to, which is the one place the element type is needed
+    /// at run time.
+    /// </remarks>
+    public string? ItemTypeName { get; private init; }
+
+    /// <summary>
+    /// The <c>options:</c> argument's source text, copied verbatim, or <c>null</c> for
+    /// every other kind.
+    /// </summary>
+    /// <remarks>
+    /// Verbatim for the reason <see cref="MergeExpression"/> is: an author may write
+    /// <c>ForEachOptions.Default</c> or a set built from a constant on the flow, and
+    /// reconstructing an arbitrary C# expression means re-rendering every form the language
+    /// has and being wrong on the first one nobody thought of. It reaches the generated plan
+    /// and nothing else — in particular the concurrency bound never reaches the manifest,
+    /// which publishes structure and has no field for a tuning number.
+    /// </remarks>
+    public string? OptionsExpression { get; private init; }
+
     /// <summary>Steps declared in the <c>then</c> block, in declaration order.</summary>
     public IReadOnlyList<StepModel> Then { get; private init; } = System.Array.Empty<StepModel>();
 
@@ -347,6 +384,7 @@ public sealed record StepModel
     /// </remarks>
     public int NextIndex =>
         Kind is StepKindModel.Condition or StepKindModel.Switch or StepKindModel.Parallel
+            or StepKindModel.ForEach
             ? JoinIndex
             : Index + 1;
 
@@ -412,6 +450,14 @@ public sealed record StepModel
                     {
                         yield return step;
                     }
+                }
+            }
+
+            foreach (var nested in Body)
+            {
+                foreach (var step in nested.SelfAndNested)
+                {
+                    yield return step;
                 }
             }
         }
@@ -680,6 +726,58 @@ public sealed record StepModel
             MergeExpression = mergeExpression,
             MergeKindName = mergeKindName,
             JoinIndex = join,
+            Location = location,
+        };
+    }
+
+    /// <summary>Models a <c>.ForEach(selector, body, options)</c> and lays its body out in the flat index space.</summary>
+    /// <param name="index">Flat index of the loop itself.</param>
+    /// <param name="selector">The collection selector's source text, copied verbatim.</param>
+    /// <param name="itemTypeName">Fully-qualified type of the element it yields.</param>
+    /// <param name="body">The body's steps, already carrying their flat indices. Must be non-empty.</param>
+    /// <param name="optionsExpression">The <c>options:</c> argument's source text, copied verbatim.</param>
+    /// <param name="selectorLocation"><c>file:line</c> of the selector expression.</param>
+    /// <param name="location"><c>file:line</c> of the <c>.ForEach</c> call.</param>
+    /// <remarks>
+    /// <para>
+    /// The layout is <c>foreach · body…</c> — the simplest of the four branching shapes,
+    /// because there is one block, it starts at the very next index, and there is nothing
+    /// after it to skip. So there is no closing jump, no per-block target and no default:
+    /// the only number is the join, and it is derived here from the body rather than
+    /// passed in, for the reason given on <see cref="Condition"/>.
+    /// </para>
+    /// <para>
+    /// <strong>What is not in the layout is the interesting part.</strong> The body appears
+    /// once in the step array however many elements the collection holds, because the
+    /// engine re-runs the same span rather than the generator unrolling it. That is what
+    /// keeps the compiled plan, the manifest and a rendered diagram independent of the size
+    /// of the data — a flow that reserves one line and one that reserves a thousand compile
+    /// to the same graph.
+    /// </para>
+    /// <para>
+    /// An empty body is not laid out and not modelled — <c>FlowAnalyzer</c> drops it before
+    /// it gets here, and <c>StepNode.ForEach</c> rejects the layout it would produce.
+    /// </para>
+    /// </remarks>
+    public static StepModel ForEach(
+        int index,
+        string selector,
+        string itemTypeName,
+        IReadOnlyList<StepModel> body,
+        string optionsExpression,
+        string? selectorLocation = null,
+        string? location = null)
+    {
+        var steps = body ?? (IReadOnlyList<StepModel>)System.Array.Empty<StepModel>();
+
+        return new StepModel(index, StepKindModel.ForEach)
+        {
+            Selector = selector,
+            SelectorLocation = selectorLocation,
+            ItemTypeName = itemTypeName,
+            Body = steps,
+            OptionsExpression = optionsExpression,
+            JoinIndex = steps.Count == 0 ? index + 1 : steps[steps.Count - 1].NextIndex,
             Location = location,
         };
     }

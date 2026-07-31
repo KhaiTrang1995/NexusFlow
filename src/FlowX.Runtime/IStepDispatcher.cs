@@ -131,4 +131,61 @@ public interface IStepDispatcher
     /// </para>
     /// </remarks>
     int Select(int stepIndex, FlowContext ctx);
+
+    /// <summary>
+    /// Evaluates the collection selector of the <see cref="StepKind.ForEach"/> step at
+    /// <paramref name="stepIndex"/>, once, and reports how many elements it produced.
+    /// </summary>
+    /// <param name="stepIndex">
+    /// Position in the plan's step graph. Always an iteration — the engine calls this for
+    /// no other kind.
+    /// </param>
+    /// <param name="ctx">
+    /// The context the loop itself runs under. Inside a nested loop that is the enclosing
+    /// iteration's scope, which is what lets an inner <c>ForEach</c> select over the outer
+    /// element.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Once, before the first iteration, and never again.</strong> The count is
+    /// what bounds the loop, so re-reading it mid-flight would mean a collection that grows
+    /// under the engine could iterate forever — inside a step loop that has no iteration cap
+    /// by design. It is also the same determinism rule every other delegate obeys: a
+    /// selector may read only the context, the flow input and prior step results
+    /// (FLOWX1011), so a durable replay walks the collection it walked before.
+    /// </para>
+    /// <para>
+    /// Synchronous and cancellation-free for the reasons given on <see cref="Evaluate"/>.
+    /// </para>
+    /// </remarks>
+    IterationSource BeginIteration(int stepIndex, FlowContext ctx);
+
+    /// <summary>
+    /// Produces the context one iteration's body runs under: the loop's own context, plus
+    /// the element at <paramref name="iteration"/>.
+    /// </summary>
+    /// <param name="stepIndex">Position in the plan's step graph. Always an iteration.</param>
+    /// <param name="source">What <see cref="BeginIteration"/> returned for this step.</param>
+    /// <param name="iteration">Zero-based position in the collection.</param>
+    /// <param name="ctx">The context the loop itself runs under.</param>
+    /// <returns>
+    /// A view of <paramref name="ctx"/> in which the element resolves by its own type.
+    /// Build it with <see cref="IterationScope.For{TItem}"/>.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>The dispatcher builds the scope, not the engine</strong>, for the same
+    /// reason it holds every other typed thing: only the generated code knows what a
+    /// <c>TItem</c> is, and an engine that had to know would need either reflection or a
+    /// boxed element. This is the one call that turns an opaque
+    /// <see cref="IterationSource"/> back into a typed element, and it is a single indexed
+    /// read.
+    /// </para>
+    /// <para>
+    /// Called once per element, on the thread that is about to run that element's body —
+    /// so with a concurrency bound above one, several scopes exist at the same time and
+    /// each iteration sees only its own.
+    /// </para>
+    /// </remarks>
+    FlowContext EnterIteration(int stepIndex, in IterationSource source, int iteration, FlowContext ctx);
 }
