@@ -40,6 +40,15 @@ namespace FlowX.Compiler.Analysis;
 /// exists rather than a second method name beside the first.
 /// </para>
 /// <para>
+/// <strong>A delegate is listed the day the DSL accepts it, not the day something runs
+/// it.</strong> A rule that waits for the emitter arrives after the code it was meant to
+/// stop, and checking a lambda that nothing yet executes costs nothing and is already
+/// correct on the day something does. <c>ForEach</c>, <c>SubFlow</c> and the mapping of
+/// <c>Step&lt;TCapability, TStepIn&gt;(map)</c> were each listed here before
+/// <see cref="FlowAnalyzer"/> modelled them; all three are now modelled and compiled, and
+/// all three are enforced by the same rows, unchanged.
+/// </para>
+/// <para>
 /// <strong>What "may read the context" means here.</strong> Everything reachable from
 /// the delegate's own parameter — the <c>FlowContext&lt;TIn&gt;</c> — is permitted,
 /// including <c>ctx.UtcNow</c>, <c>ctx.NewId()</c> and <c>ctx.Random</c>. That is not a
@@ -100,16 +109,6 @@ namespace FlowX.Compiler.Analysis;
 /// <item>
 /// A delegate that is a method group, or a variable holding a <c>Func&lt;,&gt;</c>, has
 /// no lambda body at the call site and is skipped entirely.
-/// </item>
-/// <item>
-/// <strong>One of the covered delegates is still not executed.</strong>
-/// <c>Step&lt;TCapability, TStepIn&gt;(map)</c> is on the builder and is not modelled by
-/// <see cref="FlowAnalyzer"/>, so its delegate does not run today. It is checked anyway: a
-/// rule that waits for the emitter is a rule that arrives after the code it was meant to
-/// stop, and checking a lambda that is ignored costs nothing and is correct the day it is
-/// not — which is what happened to <c>ForEach</c> and then to <c>SubFlow</c>. Both were
-/// listed here before anything ran them, and both are enforced unchanged now that the loop
-/// and the composition compile.
 /// </item>
 /// <item>
 /// A <c>static readonly</c> field is treated as constant. It is only shallowly so: a
