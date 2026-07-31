@@ -182,6 +182,45 @@ public sealed record StepModel
     public string? CapabilityOutput { get; private init; }
 
     /// <summary>
+    /// Source text of the <c>.Step&lt;TCapability, TStepIn&gt;(map)</c> mapping, copied
+    /// verbatim, or <c>null</c> when the step binds its input from the state bag.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Verbatim for the reason the predicate, the selector and the sub-flow mapping are —
+    /// see <see cref="Predicate"/>. It reaches the generated dispatcher and nothing else;
+    /// in particular it never reaches the manifest, whose rule is structure only, never
+    /// values.
+    /// </para>
+    /// <para>
+    /// <strong>Its presence is what makes the step's input a local rather than a bag
+    /// entry.</strong> A mapping exists precisely because the bag holds no
+    /// <c>TStepIn</c>, so the emitted call passes the mapping's result straight to the
+    /// capability and writes nothing back. Two mapped steps of the same type in one flow
+    /// therefore cannot collide: each has its own delegate and its own local.
+    /// </para>
+    /// </remarks>
+    public string? StepInputMap { get; private init; }
+
+    /// <summary><c>file:line</c> of the mapping expression, for its <c>#line</c> directive.</summary>
+    public string? StepInputMapLocation { get; private init; }
+
+    /// <summary>
+    /// Fully-qualified type the mapping produces — the <c>TStepIn</c> C# inferred.
+    /// </summary>
+    /// <remarks>
+    /// Needed for the same reason <see cref="SelectorTypeName"/> is: the emitted mapping
+    /// is a <c>static readonly Func&lt;FlowContext&lt;TIn&gt;, TStepIn&gt;</c> field and a
+    /// field needs a type. Kept separate from <see cref="CapabilityInput"/> even though
+    /// FLOWX1029 requires one to be assignable to the other, because the two are different
+    /// facts: what the author's lambda returns, and what the capability declares.
+    /// </remarks>
+    public string? StepInputTypeName { get; private init; }
+
+    /// <summary>True when the step supplies its own input from a mapping.</summary>
+    public bool HasInputMapping => StepInputMap != null;
+
+    /// <summary>
     /// The compensation declared by <c>.CompensateWith&lt;T&gt;()</c>, or <c>null</c>.
     /// </summary>
     /// <remarks>
@@ -545,7 +584,30 @@ public sealed record StepModel
         }
     }
 
-    /// <summary>Models a <c>.Step&lt;TCapability&gt;()</c> call.</summary>
+    /// <summary>Models a <c>.Step&lt;TCapability&gt;()</c> call, or the mapped overload.</summary>
+    /// <param name="index">Flat index of the step.</param>
+    /// <param name="capabilityTypeName">Fully-qualified capability type.</param>
+    /// <param name="capabilityId">Business identity from <c>[Capability]</c>.</param>
+    /// <param name="capabilityVersion">Contract version from <c>[Capability]</c>.</param>
+    /// <param name="isIdempotent">Whether the capability declared itself idempotent.</param>
+    /// <param name="sideEffects">Declared side effects, in declaration order.</param>
+    /// <param name="location"><c>file:line</c> of the <c>.Step</c> call.</param>
+    /// <param name="authorizationMode">The capability's declared authorisation stance.</param>
+    /// <param name="capabilityInput">The capability's input contract, fully qualified.</param>
+    /// <param name="capabilityOutput">The capability's output contract, fully qualified.</param>
+    /// <param name="stepInputMap">
+    /// The mapping's source text for <c>.Step&lt;TCapability, TStepIn&gt;(map)</c>, copied
+    /// verbatim, or <c>null</c> for the one-type-argument overload that binds from the bag.
+    /// </param>
+    /// <param name="stepInputTypeName">Fully-qualified type the mapping produces.</param>
+    /// <param name="stepInputMapLocation"><c>file:line</c> of the mapping expression.</param>
+    /// <remarks>
+    /// One factory for both overloads rather than two, because they produce the same
+    /// <em>kind</em> of step: the capability, the descriptor, the compensation and the
+    /// manifest entry are identical, and only where the input comes from differs. A second
+    /// factory would have meant every reader of a capability step asking which one it came
+    /// from.
+    /// </remarks>
     public static StepModel Capability(
         int index,
         string capabilityTypeName,
@@ -556,7 +618,10 @@ public sealed record StepModel
         string? location = null,
         string? authorizationMode = null,
         string? capabilityInput = null,
-        string? capabilityOutput = null)
+        string? capabilityOutput = null,
+        string? stepInputMap = null,
+        string? stepInputTypeName = null,
+        string? stepInputMapLocation = null)
     {
         return new StepModel(index, StepKindModel.Capability)
         {
@@ -569,6 +634,9 @@ public sealed record StepModel
             AuthorizationMode = authorizationMode,
             CapabilityInput = capabilityInput,
             CapabilityOutput = capabilityOutput,
+            StepInputMap = stepInputMap,
+            StepInputTypeName = stepInputTypeName,
+            StepInputMapLocation = stepInputMapLocation,
         };
     }
 

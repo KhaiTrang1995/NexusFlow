@@ -86,7 +86,30 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           if [ -z "$SONAR_TOKEN" ]; then
-            echo "::notice::SONAR_TOKEN not configured — see CHECKLIST.md item WP-0."
+            # A gate that no-ops in silence is indistinguishable from one that passed.
+            # This job deliberately stays green (see the comment on `if:` above), so the
+            # only thing that can carry the difference is an annotation loud enough to
+            # read and a summary that says which rows were not evaluated. `::notice::`
+            # was not that: it renders as an informational line most reviewers scroll
+            # past, under a job whose green tick reads as "quality gate passed".
+            echo "::warning title=Sonar quality gate did NOT run::SONAR_TOKEN is not configured, so the three merge gates in docs/21-Quality-Gates.md §2.1 that depend on it — critical issues, duplicated lines on new code, and security hotspots reviewed — were not evaluated for this change. A green tick on this job means the gate was skipped, not that it passed. See CHECKLIST.md item WP-0."
+            {
+              echo "### Sonar quality gate: SKIPPED"
+              echo
+              echo '`SONAR_TOKEN` is not configured on this repository, so the scanner never ran.'
+              echo
+              echo 'These merge gates were **not** evaluated:'
+              echo
+              echo '| Gate (docs/21-Quality-Gates.md §2.1) | Threshold | Evaluated |'
+              echo '|---|---|---|'
+              echo '| Critical issues | 0 | no |'
+              echo '| Duplicated lines on new code | ≤ 3 % | no |'
+              echo '| Security hotspots reviewed | 100 % | no |'
+              echo
+              echo 'The build-class Sonar rules are unaffected: they run from the'
+              echo '`SonarAnalyzer.CSharp` package at compile time and need no token,'
+              echo 'so they have already gated this change in every other job.'
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           dotnet tool install --global dotnet-sonarscanner

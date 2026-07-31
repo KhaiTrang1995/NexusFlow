@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 1111/1111 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 1145/1145 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -44,7 +44,7 @@ These gate everything below them. None is code work.
 
 - [x] 20 specification documents, `docs/01` – `docs/20`
 - [x] 13 ADRs with trade-offs stated (ADR-0013 added by the first compilation)
-- [x] `docs/diagnostics/` — 21 pages plus an index, one per raised diagnostic; every help
+- [x] `docs/diagnostics/` — 23 pages plus an index, one per raised diagnostic; every help
       URI resolves, asserted by test
 - [x] `docs/benchmarks/` — baseline, gate policy, and the honest caveats
 - [x] 9 sample application specifications
@@ -82,7 +82,31 @@ These gate everything below them. None is code work.
 - [x] `.github/dependabot.yml` — NuGet + Actions, grouped
 - [x] `.github/pull_request_template.md` carrying the Definition of Done
 - [ ] Each gate class verified by a deliberate violation on a throwaway branch
-- [ ] `SONAR_TOKEN` repository secret configured (the `sonar` job no-ops without it)
+- [~] `SONAR_TOKEN` repository secret configured — still unset, but the no-op is now
+      **loud**: the job emits a `::warning::` and a step-summary table naming the rows it
+      did not evaluate. It still exits 0, because failing would punish fork contributors
+      for a secret they cannot have — but a green tick can no longer be read as a pass
+- [x] **SonarQube rules actually run** (WP-44). `SonarAnalyzer.CSharp` is referenced
+      `PrivateAssets="all"`, and the default profile — 329 of 471 rules — gates every
+      compile, with `S2245`, `S4507` and `VSTHRD002` as errors, each proved to bite.
+      **The document was wrong about itself**: `S3776`, `S1541`, `S138` and `S107` ship
+      `IsEnabledByDefault=false`, so referencing the package leaves them silent — and a
+      build with the package installed and those rules off looks exactly like one that
+      passes them. Named explicitly they produce **54 findings**, `FlowEngine.RunRangeAsync`
+      failing all four; they are `none` with counts and reasons, thresholds pinned in
+      `SonarLint.xml` because `.editorconfig` silently ignores them
+- [ ] **Three real defects Sonar found in files WP-44 did not own.** Four analyzer
+      semantic-model calls drop `context.CancellationToken` (the class `CA2016` is promoted
+      to error for); `FlowModel.ComposedFlows` and `ReferencedCapabilities` allocate a
+      `List` per read while the emitter reads them repeatedly; and three `Cancel()` calls
+      should be `CancelAsync()` — flagged independently by two analyzers on the same lines
+- [ ] **Two gates in this repository contradict each other.** `S3267` would rewrite the
+      engine's loops into LINQ, which breaks budget B2 — `EngineAllocationTests` is the
+      arbiter and the rule is off. Worth knowing that the quality bar and the performance
+      bar disagree, rather than discovering it at the next upgrade
+- [ ] **`FlowExecutionContext.Random` documents a journaled seed it cannot produce.** It is
+      built as `new Random()`, whose seed nothing can read back, so the replay guarantee the
+      remarks describe cannot hold. Found incidentally while reading an `S2245` finding
 
 ---
 
@@ -518,10 +542,21 @@ which is the exact failure mode P1 exists to remove:
       shipped a rule that does nothing anywhere. Scope is decided by proof; impure
       statics are a list; nothing is interprocedural, and the page says so. Scope was
       `When` only until WP-25 widened it to every context delegate — see below
-- [ ] **`.Step<TCapability, TStepIn>(map)` is parsed and then ignored** by `FlowAnalyzer`
+- [x] **`.Step<TCapability, TStepIn>(map)` is parsed and then ignored** by `FlowAnalyzer`
       and `FlowEmitter`. It is on the builder surface and `FLOWX1020` recommends it as
       the fix for a binding failure, so a user following the diagnostic reaches an
-      overload that silently does nothing. Worse than not existing
+      overload that silently does nothing. Worse than not existing.
+      Closed by WP-41. The mapping is modelled, emitted as a cached static
+      `Func<FlowContext<TIn>, TStepIn>` and called at the step; its result is the step's
+      input and is **not** written into the state bag — the bag is keyed on `typeof(T)`
+      and a mapping exists precisely because nothing put a `TStepIn` there, so storing one
+      would invent a producer `FLOWX1020` cannot see and would make two mapped steps of
+      the same contract overwrite each other. A compensation on a mapped step re-runs the
+      mapping, which is sound because it is pure by `FLOWX1011` and is the same guarantee
+      an unmapped compensation has. 0 B on the mapped path. `FLOWX1020`'s silence on this
+      overload is now justified rather than self-defeating, and `FLOWX1028` was added
+      because C# constrains `TStepIn` to nothing — a mapping the capability cannot accept
+      used to be a `CS1503` inside generated source
 - [x] **Triggers and capability `errors` are in the manifest schema and never emitted.**
       Closed by WP-22. Both are emitted, under a **three-state rule**: a resolved
       catalogue, a resolved-and-empty one (`[]` — "declares no errors"), or **withheld
@@ -575,7 +610,18 @@ which is the exact failure mode P1 exists to remove:
       risk R2. A `Durable` flow runs the ephemeral path; the profile affects only a plan
       validation and a manifest field. So R2 is not *mitigated* — it is **unreachable**, and
       it goes live the moment P2 lands. This also explains why several determinism
-      diagnostics are blocked on severity rather than analysis
+      diagnostics are blocked on severity rather than analysis.
+      **Still open, and deliberately: WP-42 made it loud, not fixed.** Durability is a
+      phase, not a package. What shipped is `FLOWX1028` — a warning on any flow declaring a
+      profile the runtime does not implement — so the platform no longer accepts a
+      declaration it does not honour in silence. Warning rather than error because the only
+      repair for an error is `Profile = Ephemeral`, which deletes the design decision P2
+      must find, and because `FLOWX1017` is an error on the opposite condition: two errors
+      would leave a suspending flow with no profile it could legally declare. The manifest
+      still publishes `"profile": "Durable"`, which is the declaration faithfully recorded;
+      the untruth was the silence around it, not the field. `RuntimeDoesNotReadTheExecutionProfile`
+      in `FlowX.Architecture.Tests` fails on the day the runtime reads a profile, so the
+      scaffold gets taken down rather than left to rot. This box is ticked by P2
 - [ ] **The cost gate measured a subject that did not compile** — the probe parsed a project
       with `ImplicitUsings=enable` without supplying them, so `ValueTask` and friends never
       bound. Harmless for relative comparisons of syntax-matching code, which is why it still

@@ -232,6 +232,53 @@ public sealed class EngineAllocationTests
     }
 
     /// <summary>
+    /// A step whose input comes from <c>.Step&lt;TCapability, TStepIn&gt;(map)</c> costs
+    /// the same as one that binds from the state bag: nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The shape under test is the emitted one, reproduced by hand.</strong> The
+    /// generator writes the mapping into a
+    /// <c>static readonly Func&lt;FlowContext&lt;TIn&gt;, TStepIn&gt;</c> field and calls it
+    /// as <c>StepInputs.StepN(Typed(ctx))</c>, and <see cref="MappingDispatcher"/> is that,
+    /// line for line. The generator's own output is asserted as text in
+    /// <c>StepInputMappingTests</c>; what cannot be asserted there is what the shape costs
+    /// when it runs, and budget B2 is a hard zero for the linear path a mapped step sits on.
+    /// </para>
+    /// <para>
+    /// Two things have to be free for this to hold, and both are structural. The delegate is
+    /// a field built once at type initialisation, so invoking it allocates nothing; and
+    /// <c>FlowContext&lt;TIn&gt;</c> is a <c>readonly struct</c> over one reference, so
+    /// producing the typed view the mapping is written against allocates nothing either. A
+    /// lambda built at the call site would have cost a delegate per step per execution, and
+    /// a <c>FlowContext&lt;TIn&gt;</c> that was still a class could not have existed at all.
+    /// </para>
+    /// <para>
+    /// <strong>Measured: 0 B, Release, .NET 10, x64</strong>, over the same four-step saga
+    /// the first assertion in this class uses. What the mapping's <em>body</em> allocates is
+    /// the author's own — <c>ctx =&gt; new CaptureRequest(…)</c> allocates a
+    /// <c>CaptureRequest</c>, exactly as the capability it feeds would have needed one
+    /// built somewhere — so the mapping here returns a pre-built value and what is measured
+    /// is the plumbing.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AMappedStepInputAllocatesNothing()
+    {
+        RequireOptimisedBuild();
+
+        var engine = new FlowEngine(new FakeClock(T0));
+
+        var allocated = MeasureSteadyState(engine, Plans.FourStepSaga(), new MappingDispatcher());
+
+        allocated.ShouldBe(0,
+            $"Measured {allocated} B. An explicit input mapping is a cached static delegate " +
+            "invoked through a readonly-struct view of the context, so it costs a call and " +
+            "a register. If it costs bytes, either the delegate stopped being a field or " +
+            "FlowContext<TIn> stopped being a struct.");
+    }
+
+    /// <summary>
     /// A fork allocates, and this records how much rather than asserting a zero that
     /// cannot be honoured.
     /// </summary>
@@ -627,6 +674,61 @@ public sealed class EngineAllocationTests
         public FlowContext EnterIteration(
             int stepIndex, in IterationSource source, int iteration, FlowContext ctx) =>
             IterationScope.For(ctx, ((IReadOnlyList<object>)source.Items!)[iteration]);
+    }
+
+    /// <summary>
+    /// A dispatcher shaped exactly like the one the generator emits for
+    /// <c>.Step&lt;TCapability, TStepIn&gt;(map)</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two things are copied deliberately from <c>FlowEmitter</c> and would make this
+    /// measurement meaningless if they drifted: the mapping is a <c>static readonly</c>
+    /// field rather than a lambda written at the call site, and the argument it is invoked
+    /// with is <c>new FlowContext&lt;TIn&gt;(ctx)</c> — the emitted <c>Typed(ctx)</c>
+    /// helper, inlined here because a private helper on a test double would be one
+    /// indirection the JIT has to see through before the measurement means anything.
+    /// </para>
+    /// <para>
+    /// The mapping returns a pre-built value. What an author's own lambda allocates is
+    /// theirs; what this measures is whether reaching it costs anything.
+    /// </para>
+    /// </remarks>
+    private sealed class MappingDispatcher : IStepDispatcher
+    {
+        private static readonly object Mapped = new();
+
+        private static readonly Func<FlowContext<object>, object> Map = _ => Mapped;
+
+        public ValueTask<StepOutcome> ExecuteAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+        {
+            // The emitted shape: the mapping's result is an argument to the capability.
+            // Handed to a method the JIT cannot see into, so the call survives to be
+            // measured rather than being folded away as dead.
+            Consume(Map(new FlowContext<object>(ctx)));
+
+            return ValueTask.FromResult(StepOutcome.Success);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void Consume(object input) => _ = input;
+
+        public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+            => ValueTask.FromResult(StepOutcome.Success);
+
+        public bool Evaluate(int stepIndex, FlowContext ctx) => true;
+
+        public int Select(int stepIndex, FlowContext ctx) => -1;
+
+        /// <inheritdoc />
+        /// <remarks>This double declares no iteration, so the engine never asks it for one.</remarks>
+        public IterationSource BeginIteration(int stepIndex, FlowContext ctx) =>
+            throw new NotSupportedException("This dispatcher has no iteration to begin.");
+
+        /// <inheritdoc />
+        public FlowContext EnterIteration(
+            int stepIndex, in IterationSource source, int iteration, FlowContext ctx) =>
+            throw new NotSupportedException("This dispatcher has no iteration to enter.");
     }
 
     private static readonly object[] ThreeElements = [new object(), new object(), new object()];

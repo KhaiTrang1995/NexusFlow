@@ -40,13 +40,14 @@ The message names the construct it found — "the `Switch` selector in flow 'X'�
 `Return` projection in flow 'X'…" — because a reader pointed at the wrong noun goes looking
 for a `When` that is not there, and then stops believing the diagnostic.
 
-> **One of these is checked before it is executed.** `Step<TCapability, TStepIn>(map)` is
-> on the builder and is not yet modelled by `FlowAnalyzer`, so its delegate does not run
-> today. It is checked anyway. A rule that waits for the emitter arrives after the code it
-> was meant to stop, and checking a lambda that is currently ignored costs nothing and is
-> correct the day it is not — which is what happened twice: the `ForEach` selector and then
-> the `SubFlow` mapping were both listed here before anything ran them, and both are
-> enforced unchanged now that the loop and the composition compile.
+> **Every one of these is now executed.** `Step<TCapability, TStepIn>(map)` was the last
+> that was not: it was on the builder and walked by the chain walker, and neither modelled
+> nor emitted, so its delegate never ran. It was checked anyway, and it is enforced
+> unchanged now that the mapping compiles into a cached static delegate the dispatcher
+> calls at the step. A rule that waits for the emitter arrives after the code it was meant
+> to stop — which is why the table is written against the builder surface rather than
+> against what the generator currently understands. The same thing happened twice before,
+> to the `ForEach` selector and to the `SubFlow` mapping.
 
 **What the context is allowed to give you.** Everything reachable from the delegate's own
 parameter is permitted — including `ctx.UtcNow`, `ctx.NewId()` and `ctx.Random`. That is
