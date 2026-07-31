@@ -41,6 +41,12 @@ flow.Step<ValidateOrder>()
     ctx.Input.PaymentMethod))
 ```
 
+The mapping runs at the step and its result *is* the step's input. It is not written back
+into the state bag — the bag is keyed on `typeof(T)` and a mapping exists precisely because
+nothing put a `CaptureRequest` there — so a mapped step supplies only itself, and two
+mapped steps of the same contract in one flow do not interfere. A mapping whose result the
+capability cannot accept is [FLOWX1029](FLOWX1029.md).
+
 ## What it detects
 
 `StepBindingAnalyzer` walks the `Define` chain in declaration order, seeding
@@ -54,8 +60,13 @@ Deliberate limits, so the rule does not fire on a valid flow:
   dispatcher hands it the input of the step it undoes, which is the value it has to
   reverse. Its declared input never reaches a `ctx.Get`. For the same reason it produces
   nothing — it runs only on the failure path, after which no later step runs.
-- **A mapped step is not checked.** `.Step<TCapability, TStepIn>(ctx => …)` supplies its
-  own input from a lambda. It still counts as a producer.
+- **A mapped step is not checked as a consumer.** `.Step<TCapability, TStepIn>(ctx => …)`
+  supplies its own input from a lambda that the dispatcher runs at the step, so its
+  declared input never reaches a `ctx.Get` and there is nothing for this rule to be missing.
+  It still counts as a producer, because its output goes into the bag exactly as any other
+  step's does. This silence is only defensible while the overload really works — for the
+  release in which the mapping was walked and then ignored, this rule was suppressing
+  itself for a remedy that did nothing.
 - **The walk stops at the first construct it cannot linearise** — `When`, `Parallel`,
   `ForEach`, `SubFlow`, or a DSL method added after this rule. Steps before it are still
   checked; everything after is abandoned, because a branch may have produced the very

@@ -602,7 +602,13 @@ agree.*
 > mitigated**, which is a different and less comforting statement.
 > `FlowX.Runtime` never reads `ExecutionProfile`: a flow declared `Durable` runs
 > on the identical ephemeral path, so nothing replays and a determinism leak has
-> nowhere to diverge. R2 becomes live the moment the P2 journal lands, and the
+> nowhere to diverge. **That unreachability is now stated to the author rather
+> than only recorded here:** [`FLOWX1028`](diagnostics/FLOWX1028.md) warns on every
+> flow declaring a profile the runtime does not implement, so nobody declares
+> `Durable` and infers from the silence that R2 is being managed for them. It does
+> not mitigate R2 — nothing here does — it removes the false comfort, and it is
+> deleted when the journal makes the declaration true.
+> R2 becomes live the moment the P2 journal lands, and the
 > analyzers must land with it, not after it — which is why
 > [20-Roadmap §3](20-Roadmap.md#3-increment-detail) lists them in P2's **Must**
 > and [§6](20-Roadmap.md#6-standing-risk-review) makes any replay divergence a

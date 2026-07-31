@@ -156,6 +156,34 @@ public static class CapabilityReader
         _ => "Public",
     };
 
+    /// <summary>
+    /// The <c>TIn</c> of the type's <c>ICapability&lt;TIn, TOut&gt;</c> as a symbol, or
+    /// <c>null</c> when it implements none.
+    /// </summary>
+    /// <remarks>
+    /// The symbol rather than the display string <see cref="CapabilityInfo.InputTypeName"/>
+    /// already carries, because FLOWX1029 asks a question about <em>conversions</em> —
+    /// whether a mapping's result can be passed where this is declared — and that is a
+    /// question only the compilation can answer. Comparing names would guess.
+    /// </remarks>
+    public static ITypeSymbol? InputContract(ITypeSymbol? type)
+    {
+        if (type is null)
+        {
+            return null;
+        }
+
+        foreach (var contract in type.AllInterfaces)
+        {
+            if (contract.MetadataName == "ICapability`2" && contract.TypeArguments.Length == 2)
+            {
+                return contract.TypeArguments[0];
+            }
+        }
+
+        return null;
+    }
+
     private static (string Input, string Output) FindCapabilityContract(ITypeSymbol type)
     {
         foreach (var contract in type.AllInterfaces)

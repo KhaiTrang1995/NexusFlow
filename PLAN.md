@@ -561,6 +561,7 @@ Newly surfaced by this package, and open:
   rule at run time that no analyzer enforces at build time. **Closed by WP-21.**
 - **The `.Step<TCapability, TStepIn>(map)` overload is not honoured** by `FlowAnalyzer`
   or `FlowEmitter` — it parses and is then ignored, which is worse than not existing.
+  **Closed by WP-41.**
 - **Triggers and capability `errors` are in the manifest schema but never emitted.**
 
 ### WP-20 — `Switch` / `Case` / `Default`
