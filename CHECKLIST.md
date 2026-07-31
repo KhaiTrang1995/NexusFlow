@@ -4,16 +4,29 @@
 > "where is this project actually at?" — the [plan](PLAN.md) says what to build,
 > this says what is built.
 >
-> **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
-> **Commit:** see `git log`
+> **Last updated:** 2026-07-31 · **Phase:** **P0 complete · P1 closed with one accepted
+> exception → P2 not started** · **Commit:** see `git log`
 >
 > **Build:** 0 warnings, 0 errors · **Tests:** 1145/1145 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
 >
+> ### ⚠ P1 closed over an unmet exit criterion, on purpose
+>
+> **Build overhead at 200 flows is +67.1 %** [+61.9, +73.6] against a **≤ 8 %** exit
+> criterion — failed by 59 points. The repository owner set performance aside and closed
+> the phase on 2026-07-31; the criterion is carried into P2 as a **named, accepted
+> exception**. Its box below stays `[~]`, not `[x]`, and the reason it is stated up here
+> rather than only at line 500 is that a phase closed over a failing criterion a reader
+> has to go looking for is the exact drift this project spent P1 removing. Detail and the
+> open decision: [PLAN §4](PLAN.md#4-p1--compiler-hardening).
+>
 > Legend: `[x]` done and verified · `[~]` partial — shipped but incomplete, blocked, or
 > failing its own criterion, with the gap named on the line · `[ ]` not started
+>
+> **`[~]` is not a softer `[x]`.** Nothing in this file is ticked because a phase closed;
+> the P1 exception is the reason the legend exists.
 
 ---
 
@@ -43,14 +56,17 @@ These gate everything below them. None is code work.
 ## 1. Documentation
 
 - [x] 20 specification documents, `docs/01` – `docs/20`
-- [x] 13 ADRs with trade-offs stated (ADR-0013 added by the first compilation)
+- [x] 15 ADRs with trade-offs stated (ADR-0013 added by the first compilation; ADR-0014
+      and [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md) are
+      **Proposed** — the build-overhead question P1 closed over, and P2's journal design)
 - [x] `docs/diagnostics/` — 23 pages plus an index, one per raised diagnostic; every help
       URI resolves, asserted by test
 - [x] `docs/benchmarks/` — baseline, gate policy, and the honest caveats
 - [x] 9 sample application specifications
 - [x] `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE` (Apache-2.0)
 - [x] `docs/21-Quality-Gates.md` — SonarQube thresholds, OWASP mapping, debt policy
-- [x] `PLAN.md` — WP-0…WP-12 with mechanically checkable exit criteria
+- [x] `PLAN.md` — every work package from WP-0 to WP-76 with a mechanically checkable
+      exit criterion: P0 and P1 as executed, P2 in full, P3 lighter and said to be lighter
 - [x] `CHECKLIST.md` — this file
 - [x] README references the platform infographics
 - [x] `docs/DEBT.md` — debt register (1 open entry: DEBT-0001; format + budget defined)
@@ -324,7 +340,11 @@ immutable, and rejects every invariant violation under test.
       [docs/benchmarks/P0.md](docs/benchmarks/P0.md)
 - [~] **WP-12a** `[Sensitive]` — read by the compiler, recorded in the manifest, and
       **redacted from Problem Details bodies**. The exit criterion named three sinks;
-      only that one exists in this release. Logs, traces and the journal re-open it in P3
+      only that one exists in this release. **The phase names here were wrong and are
+      corrected:** the journal is a sink and arrives in **P2**; logs, traces and replay
+      output arrive with observability in **P5**, not P3. So P2 creates a sink for
+      sensitive values three phases before `RedactionCannotBeBypassed` can be written —
+      WP-52 owns not journaling a marked member in the clear
 - [x] **WP-12** `FlowX.Testing` — `TestCapabilityContext` and `TestFlowContext`; the
       sample's capability tests lost 27 lines of hand-written stub
 - [x] **WP-13** Diagnostics that were documented and never raised. **All four now fire**
@@ -339,10 +359,25 @@ item outstanding and needs a CI run.
 
 ---
 
-## 5c. P1 · Compiler hardening — in progress
+## 5c. P1 · Compiler hardening — **closed 2026-07-31, one criterion unmet**
 
 Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages in
-[PLAN.md §4](PLAN.md).
+[PLAN.md §4](PLAN.md#4-p1--compiler-hardening).
+
+**The three exit criteria, each re-run rather than remembered:**
+
+| Criterion | Verdict |
+|---|---|
+| 200-flow solution builds with ≤ 8 % overhead | **FAIL at +67.1 %** [+61.9, +73.6]; 50 flows +46.5 %. **Accepted as an exception; the phase closed over it.** `FlowPlanGenerator` is 90.5 % of the marginal cost and would need an ~8× cut. [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) is the open decision and is still **Proposed** |
+| every diagnostic passes `EveryDiagnosticIsHelpful` | **PASS** — `FlowX.Compiler.Tests.CompilerFitnessTests.EveryDiagnosticIsHelpful`, green in this working tree |
+| emitted code is breakpoint-able | **PASS** — `FlowPlanGeneratorTests.EachStepGetsItsOwnLineDirective` plus five further line-directive tests across the emitter, `Fail` and step-input mapping, all green |
+
+**Carried into P2, in three named piles** — five reserved diagnostics (`FLOWX1006`,
+`FLOWX1007`–`FLOWX1009`, `FLOWX1012`, four of them blocked on *severity* and not on
+analysis), three blocked fitness functions (`CrossTenantAccessIsDenied`,
+`RedactionCannotBeBypassed`, `PluginsPassConformance`), and the build-overhead exception.
+`dotnet new flowx`, unshipped since P0, is carried for the second time. See
+[§5d](#5d-p2--durable-execution--not-started) and [PLAN §5](PLAN.md#5-p2--durable-execution).
 
 - [x] **WP-15** The branching DSL — **`When` / `Otherwise` done** through builder, model,
       analysis, emission, graph and engine. A conditional compiles into the *same flat
@@ -537,7 +572,13 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       Honest about attribution: 50 flows reproduces the previous figure to **0.1 points**
       across a dozen merged changes, so the saving and the features cancelled; the 200-flow
       improvement was **not bisected**, and the earlier runs were on a 2.80 GHz CPU where
-      this container reports 2.10
+      this container reports 2.10.
+      **Box stays `[~]`, and it stays `[~]` permanently.** The phase closed over this on
+      2026-07-31 by decision, not by measurement changing. Ticking it because P1 is closed
+      would make this file say the budget is met, which is the one thing it must not say.
+      Risk **R1's trigger has fired and its named action — freeze features, invest in the
+      generator's model layer — was not taken**; what was done instead is WP-31's relative
+      gate, which stops it worsening and does not close it
 - [x] **WP-19** IDE code fixes — `FLOWX1001`, `FLOWX1010`, `FLOWX1017`, in a separate
       `FlowX.Compiler.CodeFixes` assembly so the analyzer never drags Workspaces into a
       consumer's build. `FLOWX1010` deliberately withholds `Public`
@@ -638,7 +679,14 @@ which is the exact failure mode P1 exists to remove:
       still publishes `"profile": "Durable"`, which is the declaration faithfully recorded;
       the untruth was the silence around it, not the field. `RuntimeDoesNotReadTheExecutionProfile`
       in `FlowX.Architecture.Tests` fails on the day the runtime reads a profile, so the
-      scaffold gets taken down rather than left to rot. This box is ticked by P2
+      scaffold gets taken down rather than left to rot. This box is ticked by P2 —
+      specifically by **WP-52**, whose design is
+      [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md) and whose exit
+      criterion is that every row of that record's take-down table is discharged in the same
+      package: the fitness test **deleted** rather than skipped, `FLOWX1028` narrowed to
+      `Streaming`, and the warning boxes in `06 §4`, `06 §5`, `11`, ADR-0003 and ADR-0006
+      corrected. The same package unblocks four of the five reserved diagnostics, which is
+      an argument for landing the seam early in P2 rather than after the store adapters
 - [ ] **The cost gate measured a subject that did not compile** — the probe parsed a project
       with `ImplicitUsings=enable` without supplying them, so `ValueTask` and friends never
       bound. Harmless for relative comparisons of syntax-matching code, which is why it still
@@ -743,6 +791,60 @@ Three more surfaced while getting the suite green:
 
 ---
 
+## 5d. P2 · Durable execution — **not started**
+
+Work packages in [PLAN.md §5](PLAN.md#5-p2--durable-execution); the design they are held
+to is [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md), still
+**Proposed**. Nothing below is in progress. It is listed now because P1 handed each item
+over with a named blocker, and an inventory that exists only in a closing summary is one
+nobody reads.
+
+**Roadmap Must:**
+
+- [ ] **WP-50** B7, B8 and the QR2 chaos rig — **before** the journal. `JournalBenchmarks`
+      does not exist and neither does a chaos rig; both are named in P2's Must as outcomes
+      and by nothing as tooling. This is B12's lesson applied on time rather than late
+- [ ] **WP-51** `IFlowJournal`, `ILeaseStore` and the shared conformance suite ADR-0006
+      promises and nothing implements
+- [ ] **WP-52** The seam — **`FlowX.Runtime` reads `ExecutionProfile`**. Trips
+      `RuntimeDoesNotReadTheExecutionProfile`, which is written to fail here and names its
+      own take-down list. B2 must still measure **0 B** on the ephemeral path afterwards,
+      and a `[Sensitive]` member must reach the journal **redacted** — the journal is a new
+      sink and `RedactionCannotBeBypassed` cannot be written until P5
+- [ ] **WP-53** Postgres journal + lease adapter; B7 and B8 reported with an explicit verdict
+- [ ] **WP-54** Redis lease store — concurrent with WP-53, same suite unmodified
+- [ ] **WP-55** Resume: lease acquisition, recovery scan, re-entry into the same step loop
+- [ ] **WP-56** Transactional outbox and publisher. Retires **`FLOWX1024`**, the warning
+      that says `.Emit<T>()` publishes nothing
+- [ ] **WP-57** Compensation with its own policies. **Has a dependency the roadmap does not
+      show:** no policy executes at run time; the policy engine is P4
+- [ ] **WP-58** `FLOWX1007`–`FLOWX1009`, with the determinism severity stance re-decided
+      **as a set**, `FLOWX1011`'s deliberate deviation included
+- [ ] **WP-59** `FLOWX1006` and the generated STJ payload context
+- [ ] **WP-60** `FLOWX1012` — the check was always easy; its *fix* becomes true at WP-52
+- [ ] **WP-61** `ReplayDeterminismTest` and its corpus. Risk **R2**'s actual mitigation,
+      currently cited in `05 §11` as though it existed
+- [ ] **WP-62** QR2 — 10 000 flows, `SIGKILL` at every step boundary, zero duplicate
+      non-idempotent effects, zero lost instances, resume p99 ≤ 45 s. P2's Done-when
+
+**Roadmap Should:**
+
+- [ ] **WP-63** `AwaitSignal`, `Delay`, timers. Un-blocks `SubFlowMode.AwaitCompletion`
+      and makes `FLOWX1017`'s existing code fix buy something
+- [ ] **WP-64** `flowx replay --mode inspect`. Its exit criterion collides with the green
+      fitness function `CliDependsOnNothingButTheManifest`, which is stated in the plan
+      rather than left to be discovered by whoever writes it
+
+**Fitness functions P2 changes, and one it does not:**
+
+- [ ] `RuntimeDoesNotReadTheExecutionProfile` — **deleted** at WP-52, not skipped
+- [ ] `ReplayDeterminismTest` — created at WP-61
+- [ ] `CrossTenantAccessIsDenied` — loses **half** its blocker (the missing journal) and
+      stays blocked on P4's policy execution. It does not become green in P2, and the row
+      in §4 must keep saying so
+
+---
+
 ## 6. Quality gates · current state
 
 | Gate | Target | Now | Source |
@@ -763,11 +865,23 @@ Three more surfaced while getting the suite green:
 | B1 flow overhead | ≤ 5 µs | **172.3 ns** ✅ | WP-11, real engine, 30 iterations |
 | B2 allocations per step | 0 B | **0 B** ✅ | gated as a unit test — **Release only**, see below |
 | B3 capability dispatch | ≤ 150 ns | **21.9 ns** ✅ | shared hardware, advisory |
-| B12 build overhead | ≤ 8 % | **+0.4 %** ✅ | WP-14, like-for-like sample build |
+| B12 build overhead · **1 flow** | ≤ 8 % | **+0.4 %** ✅ | WP-14, like-for-like sample build |
+| B12 build overhead · **200 flows** — P1's exit criterion | ≤ 8 % | **+67.1 %** ❌ | WP-43. **Accepted exception; P1 closed over it.** 50 flows: +46.5 %. Growth linear, R² 0.994 |
+| Generator cost regression (relative, blocking) | ≤ +2 % | **green** ✅ | WP-31, deterministic allocation proxy. Prints `ABSOLUTE CRITERION — FAIL` on every run, so a pass here is not a met budget |
+| B7 durable step commit | ≤ 15 ms p99 @ 5 000/s | **no harness** | P2 · WP-50 |
+| B8 journal rehydration | ≤ 8 ms p99 | **no harness** | P2 · WP-50 |
+| QR2 chaos: 10 000 flows, `SIGKILL` | 0 duplicate effects, 0 lost | **no rig** | P2 · WP-50 builds it, WP-62 runs it |
 
 Nothing in the "Now" column is green by assertion — every ✅ was produced by a
 command in this working tree. Every "not measured" is equally honest: the gate
-exists and the mechanism to run it has not been run here.
+exists and the mechanism to run it has not been run here. **"No harness" is a third
+state and the worst of them**: the budget is stated, nothing can run, and P2's WP-50
+exists to make sure that state does not survive into the phase that depends on it, the
+way it survived into P1.
+
+**The two B12 rows are one budget at two scales, and splitting them is the point.** A
+single row reading +0.4 % ✅ was true of a one-flow sample and hid a criterion failing by
+59 points on the solution shape the budget was actually written for.
 
 **B2 is measured in Release only.** The C# compiler emits async state machines as
 classes in Debug and structs in Release, so a Debug run charges the engine ~376 B of
