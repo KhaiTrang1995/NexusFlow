@@ -573,8 +573,17 @@ engine takes the identity from the step node it is executing — but a log line 
 capability does. Per-branch identity needs a per-branch context, which is a larger change
 than this shape.
 
-In `Durable` flows, each branch commits its own journal entry; the merge point is a single
-checkpoint.
+In `Durable` flows, each branch's steps commit their own journal rows. *This sentence went
+on to say "the merge point is a single checkpoint", and there is no such checkpoint:
+neither the fork nor the join writes a row of its own — `FlowEngine` runs the branches and
+jumps to the join index.* Nothing is lost by that, and it is the design rather than an
+omission: the branches share the fork's cursor, their spans are disjoint, so
+`(scope, step_id)` stays unique without a per-branch scope and the frontier reconstructs
+"branch A done, branch B stopped at step 12" purely from which rows exist. A merge
+checkpoint would be a second place the same fact is written, and the stored copy would be
+the one nothing checks — the same argument
+[ADR-0015 commitment 2](adr/ADR-0015-journal-schema-and-durable-execution.md) makes for
+deriving the resume position instead of remembering it.
 
 ---
 
