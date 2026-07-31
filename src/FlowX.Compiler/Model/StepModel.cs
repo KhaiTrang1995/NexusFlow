@@ -3,10 +3,6 @@ using System.Collections.Generic;
 namespace FlowX.Compiler.Model;
 
 /// <summary>What one call in a <c>Define</c> chain declared.</summary>
-/// <remarks>
-/// The remaining branching kind — sub-flow — arrives with the DSL surface that can express
-/// it. Modelling it now would be a shape nothing can produce and no test can exercise.
-/// </remarks>
 public enum StepKindModel
 {
     /// <summary><c>.Step&lt;TCapability&gt;()</c></summary>
@@ -29,6 +25,15 @@ public enum StepKindModel
 
     /// <summary><c>.ForEach(selector, body, options)</c>.</summary>
     ForEach = 6,
+
+    /// <summary><c>.SubFlow&lt;TFlow, TSubIn&gt;(map, mode)</c>.</summary>
+    /// <remarks>
+    /// The one kind with no nested block of its own. A conditional, a switch, a fork and a
+    /// loop all carry their steps; this carries a <em>name</em> — the child's flow id — and
+    /// the child's steps are modelled by the child's own <c>FlowModel</c>, compiled
+    /// separately and possibly in another assembly.
+    /// </remarks>
+    SubFlow = 7,
 }
 
 /// <summary>One branch of a <c>Parallel</c>: a block of steps that runs concurrently with its siblings.</summary>
@@ -339,6 +344,51 @@ public sealed record StepModel
     /// which publishes structure and has no field for a tuning number.
     /// </remarks>
     public string? OptionsExpression { get; private init; }
+
+    /// <summary>
+    /// Business identity of the flow a <see cref="StepKindModel.SubFlow"/> composes, read
+    /// from the child's <c>[Flow]</c> attribute. <c>null</c> for every other kind.
+    /// </summary>
+    /// <remarks>
+    /// The id rather than the CLR type, because this is what reaches the manifest and a
+    /// rendered diagram: a reader comparing two versions of an application cares that
+    /// <c>order.place</c> composes <c>order.fulfil</c>, not what the classes are called.
+    /// <see cref="SubFlowTypeName"/> carries the type for the generated code, which needs
+    /// something it can name.
+    /// </remarks>
+    public string? SubFlowId { get; private init; }
+
+    /// <summary>Fully-qualified type of the composed flow, for the generated dispatcher.</summary>
+    public string? SubFlowTypeName { get; private init; }
+
+    /// <summary>Fully-qualified input contract of the composed flow.</summary>
+    /// <remarks>
+    /// Needed for the same reason <see cref="SelectorTypeName"/> is: the emitted mapping is
+    /// a <c>static readonly Func&lt;FlowContext, TSubIn&gt;</c> field and a field needs a
+    /// type. It is also what the generated <c>EnterSubFlow</c> casts the engine's opaque
+    /// input handle back to.
+    /// </remarks>
+    public string? SubFlowInputTypeName { get; private init; }
+
+    /// <summary>
+    /// Which <c>SubFlowMode</c> the call names — <c>Inline</c> or <c>Detached</c>.
+    /// </summary>
+    /// <remarks>
+    /// A name rather than the expression, unlike <see cref="MergeExpression"/> and
+    /// <see cref="OptionsExpression"/>, and the asymmetry is deliberate. Those two carry
+    /// arbitrary numbers an author may compute; this is a two-member choice that changes
+    /// the flow's <em>semantics</em> — whether the parent waits, whether the child's failure
+    /// is the parent's, whether the deadline is shared. A mode the compiler could not read
+    /// would be a mode the manifest could not publish and FLOWX1022 could not check, so an
+    /// unreadable one is refused rather than copied through.
+    /// </remarks>
+    public string? SubFlowMode { get; private init; }
+
+    /// <summary>Source text of the <c>.SubFlow(...)</c> input mapping, copied verbatim.</summary>
+    public string? SubFlowMap { get; private init; }
+
+    /// <summary><c>file:line</c> of the mapping expression, for its <c>#line</c> directive.</summary>
+    public string? SubFlowMapLocation { get; private init; }
 
     /// <summary>Steps declared in the <c>then</c> block, in declaration order.</summary>
     public IReadOnlyList<StepModel> Then { get; private init; } = System.Array.Empty<StepModel>();
@@ -778,6 +828,52 @@ public sealed record StepModel
             Body = steps,
             OptionsExpression = optionsExpression,
             JoinIndex = steps.Count == 0 ? index + 1 : steps[steps.Count - 1].NextIndex,
+            Location = location,
+        };
+    }
+
+    /// <summary>Models a <c>.SubFlow&lt;TFlow, TSubIn&gt;(map, mode)</c> call.</summary>
+    /// <param name="index">Flat index of the composition itself.</param>
+    /// <param name="subFlowId">The child's business identity, from its <c>[Flow]</c> attribute.</param>
+    /// <param name="subFlowTypeName">Fully-qualified type of the child flow.</param>
+    /// <param name="subFlowInputTypeName">Fully-qualified input contract of the child.</param>
+    /// <param name="map">The input mapping's source text, copied verbatim.</param>
+    /// <param name="mode"><c>Inline</c> or <c>Detached</c>.</param>
+    /// <param name="mapLocation"><c>file:line</c> of the mapping expression.</param>
+    /// <param name="location"><c>file:line</c> of the <c>.SubFlow</c> call.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>There is no layout.</strong> Every other composite factory here derives
+    /// targets, jumps and a join from blocks it was handed; this one has no blocks. A
+    /// sub-flow occupies exactly one index and the steps it runs are in another
+    /// <c>FlowModel</c> — which is why it is also the only kind whose
+    /// <see cref="NextIndex"/> is the plain <c>Index + 1</c> that a capability step uses.
+    /// </para>
+    /// <para>
+    /// The consequence worth stating: a flow that composes a hundred-step child produces a
+    /// manifest the size of the flow the author wrote, and <c>flowx diff</c> sees a change
+    /// to the child as a change to the child. Splicing would have made every parent's
+    /// document grow with every child's, and every child's edit a diff in every parent.
+    /// </para>
+    /// </remarks>
+    public static StepModel SubFlow(
+        int index,
+        string subFlowId,
+        string subFlowTypeName,
+        string subFlowInputTypeName,
+        string map,
+        string mode,
+        string? mapLocation = null,
+        string? location = null)
+    {
+        return new StepModel(index, StepKindModel.SubFlow)
+        {
+            SubFlowId = subFlowId,
+            SubFlowTypeName = subFlowTypeName,
+            SubFlowInputTypeName = subFlowInputTypeName,
+            SubFlowMap = map,
+            SubFlowMode = mode,
+            SubFlowMapLocation = mapLocation,
             Location = location,
         };
     }

@@ -102,12 +102,14 @@ namespace FlowX.Compiler.Analysis;
 /// no lambda body at the call site and is skipped entirely.
 /// </item>
 /// <item>
-/// <strong>Some of what it now checks is not yet executed.</strong>
-/// <c>Step&lt;TCapability, TStepIn&gt;(map)</c>, <c>ForEach</c> and <c>SubFlow</c> are on
-/// the builder and are not modelled by <see cref="FlowAnalyzer"/>, so their delegates do
-/// not run today. They are checked anyway: a rule that waits for the emitter is a rule
-/// that arrives after the code it was meant to stop, and checking a lambda that is
-/// ignored costs nothing and is correct the day it is not.
+/// <strong>One of the covered delegates is still not executed.</strong>
+/// <c>Step&lt;TCapability, TStepIn&gt;(map)</c> is on the builder and is not modelled by
+/// <see cref="FlowAnalyzer"/>, so its delegate does not run today. It is checked anyway: a
+/// rule that waits for the emitter is a rule that arrives after the code it was meant to
+/// stop, and checking a lambda that is ignored costs nothing and is correct the day it is
+/// not — which is what happened to <c>ForEach</c> and then to <c>SubFlow</c>. Both were
+/// listed here before anything ran them, and both are enforced unchanged now that the loop
+/// and the composition compile.
 /// </item>
 /// <item>
 /// A <c>static readonly</c> field is treated as constant. It is only shallowly so: a

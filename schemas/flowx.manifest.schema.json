@@ -285,6 +285,17 @@
         "event": {
           "type": "string"
         },
+        "flow": {
+          "description": "SubFlow steps only: the business identity of the composed flow, matching that flow's own entry. Structure, not a value — it is what makes a set of flow documents a graph a reviewer or an agent can walk. The child's steps are deliberately not inlined; they belong to the child's entry, so one edit to a shared flow is one diff.",
+          "type": "string"
+        },
+        "mode": {
+          "description": "SubFlow steps only: how the child relates to the parent. Inline shares the parent's correlation and remaining budget, and its failure is the parent's; Detached has its own deadline and lifecycle. AwaitCompletion is absent because it is refused at build time (FLOWX1026) until a journal exists to suspend into.",
+          "enum": [
+            "Inline",
+            "Detached"
+          ]
+        },
         "policies": {
           "type": "array",
           "items": {

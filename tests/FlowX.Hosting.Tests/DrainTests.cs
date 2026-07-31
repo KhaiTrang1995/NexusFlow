@@ -219,6 +219,98 @@ public sealed class DrainTests
         await drain;
     }
 
+    /// <summary>
+    /// A drain waits for detached sub-flows, which the host's own counter cannot see.
+    /// </summary>
+    /// <remarks>
+    /// The hole this closes is specific and would have been silent. A
+    /// <c>.SubFlow&lt;T&gt;(Detached)</c> child is started from <em>inside</em> a step, so
+    /// it never passed through <c>TryEnter</c> and never appears in <see cref="FlowHost.InFlight"/>.
+    /// Before this, <c>DrainAsync</c> would see its counter reach zero, report "everything
+    /// finished", and the kill that follows a successful drain would land on a
+    /// fire-and-forget saga halfway through reserving inventory — with nothing compensated.
+    /// </remarks>
+    [Fact]
+    public async Task ADrainWaitsForDetachedSubFlowsTheHostNeverCounted()
+    {
+        var engine = new FlowEngine(new FixedClock());
+
+        var host = new FlowHost(
+            engine,
+            new FlowXOptions
+            {
+                ApplicationName = "Sample.App",
+                ShutdownDrainTimeout = TimeSpan.FromSeconds(5),
+            });
+
+        var child = new GatedDispatcher();
+        var parent = new DetachingDispatcher(child);
+
+        var result = await host.RunAsync(
+            Plans.Composing(), parent, Plans.Invocation, TestContext.Current.CancellationToken);
+
+        result.IsSuccess.ShouldBeTrue();
+
+        await child.WaitUntilEntered(TestContext.Current.CancellationToken);
+
+        host.InFlight.ShouldBe(0,
+            "The parent finished, and the host never knew about the child.");
+        engine.DetachedInFlight.ShouldBe(1,
+            "But the engine did, which is the whole point.");
+
+        var drain = host.DrainAsync(TestContext.Current.CancellationToken);
+
+        drain.IsCompleted.ShouldBeFalse(
+            "A drain that returned here would be reporting that a running saga had finished.");
+
+        child.Release();
+
+        (await drain).ShouldBeTrue();
+        engine.DetachedInFlight.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ADrainWithNothingDetachedIsUnchanged()
+    {
+        // The path every flow that composes nothing takes: no detached children, so the
+        // wait is a counter read and returns immediately.
+        var (host, dispatcher) = NewHost();
+        dispatcher.Release();
+
+        await host.RunAsync(
+            Plans.TwoStep(), dispatcher, Plans.Invocation, TestContext.Current.CancellationToken);
+
+        (await host.DrainAsync(TestContext.Current.CancellationToken)).ShouldBeTrue();
+    }
+
+    /// <summary>A dispatcher whose step 0 composes a child, detached.</summary>
+    private sealed class DetachingDispatcher(IStepDispatcher child) : IStepDispatcher
+    {
+        public ValueTask<StepOutcome> ExecuteAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+            => ValueTask.FromResult(StepOutcome.Success);
+
+        public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+            => ValueTask.FromResult(StepOutcome.Success);
+
+        public bool Evaluate(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no branch step.");
+
+        public int Select(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no switch step.");
+
+        public IterationSource BeginIteration(int stepIndex, FlowContext ctx) =>
+            throw new NotSupportedException("This dispatcher has no iteration to begin.");
+
+        public FlowContext EnterIteration(int stepIndex, in IterationSource source, int iteration, FlowContext ctx) =>
+            throw new NotSupportedException("This dispatcher has no iteration to enter.");
+
+        public SubFlowSource BeginSubFlow(int stepIndex, FlowContext ctx) =>
+            new(Plans.TwoStep(), child, "input");
+
+        public void EnterSubFlow(int stepIndex, in SubFlowSource source, FlowContext child) =>
+            child.Set((string)source.Input!);
+    }
+
     [Fact]
     public void RejectsNullDependencies()
     {
@@ -282,6 +374,14 @@ internal static class Plans
         FlowDescriptor.Create("order.place", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromMinutes(5)),
         StepGraph.Create([
             StepNode.ForCapability(0, Validate),
+            StepNode.ForCapability(1, Validate),
+        ]));
+
+    /// <summary>A flow whose first step composes another, detached: <c>0 subflow · 1 validate</c>.</summary>
+    public static ExecutionPlan Composing() => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.notify", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromMinutes(5)),
+        StepGraph.Create([
+            StepNode.ForSubFlow(0, "order.place", SubFlowMode.Detached),
             StepNode.ForCapability(1, Validate),
         ]));
 

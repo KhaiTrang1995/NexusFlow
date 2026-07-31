@@ -52,13 +52,43 @@ namespace FlowX.Runtime;
 /// and conflating the two would put a timer allocation on every execution to solve a
 /// problem most flows do not have.
 /// </para>
+/// <para>
+/// <strong>A sub-flow is where "one array is one execution" stops being true, and it is
+/// worth saying exactly what breaks.</strong> The flat array survives intact: a
+/// <see cref="StepKind.SubFlow"/> occupies one index, carries no target, and moves nothing
+/// around it — the graph validation, the termination proof for <em>this</em> graph and the
+/// manifest are all unchanged. What no longer holds is that the array in front of the loop
+/// contains every step that runs. The child has its own <see cref="ExecutionPlan"/>, its own
+/// dispatcher, its own context and its own compensation stack, and this engine recurses into
+/// a second, independent execution to run it. The alternative — splicing the child's steps
+/// into the parent's array at compile time — was rejected because it would make the parent's
+/// manifest claim the child's capabilities as its own, discard the child's deadline and
+/// profile, and be impossible the moment the child lives in another assembly.
+/// </para>
 /// </remarks>
 public sealed class FlowEngine
 {
     private const int DefaultMaxPooledContexts = 128;
 
+    /// <summary>
+    /// How many sub-flow boundaries deep the runtime will follow a composition.
+    /// </summary>
+    /// <remarks>
+    /// The run-time half of the DAG guarantee. <c>FLOWX1021</c> refuses a cycle at build
+    /// time and does so soundly for every edge it can see, but it can only see the flows
+    /// whose <c>Define</c> bodies are in the compilation — a cycle closed through a
+    /// referenced assembly is invisible to it. Without a cap that is unbounded recursion:
+    /// a stack overflow, which takes the process down rather than failing one flow. Thirty-two
+    /// is far past anything a person composes on purpose and far short of the stack.
+    /// </remarks>
+    public const int MaxSubFlowDepth = 32;
+
     private readonly IClock _clock;
     private readonly ContextPool _contexts;
+    private readonly object _detachedSync = new();
+
+    private TaskCompletionSource? _detachedIdle;
+    private int _detachedInFlight;
 
     /// <summary>Creates an engine.</summary>
     /// <param name="clock">
@@ -93,7 +123,7 @@ public sealed class FlowEngine
 
         try
         {
-            context.Initialise(plan, invocation, _clock);
+            context.Initialise(plan, invocation, _clock, dispatcher);
             return await RunAsync(plan, dispatcher, context, ct).ConfigureAwait(false);
         }
         finally
@@ -128,7 +158,7 @@ public sealed class FlowEngine
 
         try
         {
-            context.Initialise(plan, invocation, _clock);
+            context.Initialise(plan, invocation, _clock, dispatcher);
             context.Set(input);
 
             return await RunAsync(plan, dispatcher, context, ct).ConfigureAwait(false);
@@ -175,7 +205,7 @@ public sealed class FlowEngine
 
         try
         {
-            context.Initialise(plan, invocation, _clock);
+            context.Initialise(plan, invocation, _clock, dispatcher);
             context.Set(input);
 
             var outcome = await RunAsync(plan, dispatcher, context, ct).ConfigureAwait(false);
@@ -190,7 +220,7 @@ public sealed class FlowEngine
         }
     }
 
-    private static async ValueTask<FlowExecutionResult> RunAsync(
+    private async ValueTask<FlowExecutionResult> RunAsync(
         ExecutionPlan plan,
         IStepDispatcher dispatcher,
         FlowExecutionContext context,
@@ -204,8 +234,37 @@ public sealed class FlowEngine
         var outcome = await RunRangeAsync(
             plan, dispatcher, context, context, compensations, 0, plan.Graph.Count, ct).ConfigureAwait(false);
 
+        return await CompleteAsync(plan, dispatcher, context, compensations, outcome).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Turns a finished range into the flow's result: compensating on failure, and
+    /// releasing whatever a successful sub-flow left rented.
+    /// </summary>
+    /// <remarks>
+    /// Split out of <see cref="RunAsync"/> because a detached sub-flow needs exactly the
+    /// same ending — it fails, compensates and cleans up on its own — and having two copies
+    /// of "what the end of a flow means" is how the second one drifts.
+    /// </remarks>
+    private async ValueTask<FlowExecutionResult> CompleteAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        CompensationStack? compensations,
+        RangeOutcome outcome)
+    {
         if (outcome.Failure is null)
         {
+            // A sub-flow that succeeded with compensations pending is still holding a
+            // pooled context, because the parent might yet have to undo it. The parent did
+            // not, so give them back. Gated on the plan so a flow that composes nothing
+            // does not pay an iterator for the possibility that another flow does — which
+            // is what keeps budget B2 a hard zero where it always was.
+            if (plan.HasSubFlow)
+            {
+                ReleaseRetainedSubFlows(context);
+            }
+
             return new FlowExecutionResult(null, outcome.Completed, CompensationOutcome.NotRequired);
         }
 
@@ -261,7 +320,7 @@ public sealed class FlowEngine
     /// <em>reads</em> must.
     /// </para>
     /// </remarks>
-    private static async ValueTask<RangeOutcome> RunRangeAsync(
+    private async ValueTask<RangeOutcome> RunRangeAsync(
         ExecutionPlan plan,
         IStepDispatcher dispatcher,
         FlowExecutionContext context,
@@ -389,6 +448,29 @@ public sealed class FlowEngine
                 continue;
             }
 
+            if (step.Kind == StepKind.SubFlow)
+            {
+                // No target: a sub-flow occupies exactly one index, so control resumes at
+                // the next one exactly as it would after a capability.
+                var composed = await RunSubFlowAsync(
+                    plan, dispatcher, context, scope, compensations, step, ct).ConfigureAwait(false);
+
+                // The child's steps count towards the parent's total. They really ran, and
+                // a caller reading CompletedSteps to decide what was touched needs work the
+                // composition did to be in the number — the whole point of composing is
+                // that the child's effects are the flow's effects.
+                completed += composed.Completed;
+
+                if (composed.Failure is not null)
+                {
+                    failure = composed.Failure;
+                    break;
+                }
+
+                i++;
+                continue;
+            }
+
             // The identity is taken from the return value rather than read back off the
             // context. Inside a fork a sibling overwrites the field between the throw and
             // the catch, and an error naming the wrong capability is worse than none.
@@ -479,7 +561,7 @@ public sealed class FlowEngine
     /// nothing is still running when the unwind starts.
     /// </para>
     /// </remarks>
-    private static async ValueTask<RangeOutcome> RunParallelAsync(
+    private async ValueTask<RangeOutcome> RunParallelAsync(
         ExecutionPlan plan,
         IStepDispatcher dispatcher,
         FlowExecutionContext context,
@@ -589,7 +671,7 @@ public sealed class FlowEngine
     /// into the next flow's context.
     /// </para>
     /// </remarks>
-    private static async ValueTask<RangeOutcome> RunForEachAsync(
+    private async ValueTask<RangeOutcome> RunForEachAsync(
         ExecutionPlan plan,
         IStepDispatcher dispatcher,
         FlowExecutionContext context,
@@ -636,7 +718,7 @@ public sealed class FlowEngine
     /// and wrapping it in the concurrent path's machinery to save a method would charge
     /// every ordinary <c>ForEach</c> for concurrency it explicitly did not ask for.
     /// </remarks>
-    private static async ValueTask<RangeOutcome> RunIterationsInOrderAsync(
+    private async ValueTask<RangeOutcome> RunIterationsInOrderAsync(
         ExecutionPlan plan,
         IStepDispatcher dispatcher,
         FlowExecutionContext context,
@@ -704,7 +786,7 @@ public sealed class FlowEngine
     /// optional. Every started iteration is drained before this returns, cancelled or not,
     /// for the reason given on <see cref="RunParallelAsync"/> — the context is pooled.
     /// </remarks>
-    private static async ValueTask<RangeOutcome> RunIterationsConcurrentlyAsync(
+    private async ValueTask<RangeOutcome> RunIterationsConcurrentlyAsync(
         ExecutionPlan plan,
         IStepDispatcher dispatcher,
         FlowExecutionContext context,
@@ -919,6 +1001,347 @@ public sealed class FlowEngine
     }
 
     /// <summary>
+    /// Runs the flow a <see cref="StepKind.SubFlow"/> step composes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The engine owns the child's lifecycle; the dispatcher owns its types.</strong>
+    /// <see cref="IStepDispatcher.BeginSubFlow"/> answers the one question only generated
+    /// code can — which plan, which dispatcher, which input — and everything after that is
+    /// the same work this engine does for a top-level flow, done once here instead of once
+    /// per composing flow in emitted source.
+    /// </para>
+    /// <para>
+    /// <strong>The mapping runs first, on this thread, against the parent's scope.</strong>
+    /// That ordering is what makes a detached child safe: the input has already been taken
+    /// out of the parent's pooled context by the time anything is started, so nothing the
+    /// child holds can still point at a context that will be reset and handed to another
+    /// tenant's flow.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<RangeOutcome> RunSubFlowAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        FlowContext scope,
+        CompensationStack? compensations,
+        StepNode step,
+        CancellationToken ct)
+    {
+        if (context.Depth >= MaxSubFlowDepth)
+        {
+            return new RangeOutcome(
+                FlowErrors.SubFlowTooDeep(plan.Flow.Id, step.SubFlowId!, MaxSubFlowDepth), 0);
+        }
+
+        SubFlowSource source;
+
+        try
+        {
+            source = dispatcher.BeginSubFlow(step.Index, scope);
+        }
+#pragma warning disable CA1031 // Same reasoning as the predicate and the selectors: a
+        catch (Exception exception) //   mapping escaping here would skip the compensation
+        {                           //   the already-completed steps need.
+            return new RangeOutcome(
+                FlowErrors.SubFlowMappingFailed(plan.Flow.Id, step.Index, exception), 0);
+        }
+#pragma warning restore CA1031
+
+        var child = _contexts.Rent();
+        var retained = false;
+
+        try
+        {
+            // Correlation, tenant and idempotency key are the parent's for an inline child:
+            // it is one operation, so it is one trace and one deduplication identity. A
+            // detached child keeps the correlation — identity, not lifetime — and drops the
+            // deadline, which is what "its own lifecycle" means.
+            //
+            // The deadline passed for an inline child is the parent's *absolute* instant,
+            // and Initialise takes the smaller of that and the child's own declared budget.
+            // So composition can only ever shorten: a child cannot buy itself time its
+            // parent does not have, and a parent cannot buy the child more than its own
+            // author allowed.
+            child.Initialise(
+                source.Plan,
+                new FlowInvocation(
+                    context.CorrelationId,
+                    context.IdempotencyKey,
+                    context.TenantId,
+                    step.Mode == SubFlowMode.Detached ? null : context.Deadline),
+                _clock,
+                source.Dispatcher,
+                context.Depth + 1);
+
+            // The parent's dispatcher, not the child's: the cast back to TSubIn belongs to
+            // the `.SubFlow<TFlow, TSubIn>(...)` call site, which is in the parent.
+            dispatcher.EnterSubFlow(step.Index, in source, child);
+        }
+#pragma warning disable CA1031 // A generated cast that fails means the plan and this
+        catch (Exception exception)  //   dispatcher came from different builds; the parent's
+        {                            //   completed steps still need unwinding either way.
+            _contexts.Return(child);
+            return new RangeOutcome(
+                FlowErrors.SubFlowMappingFailed(plan.Flow.Id, step.Index, exception), 0);
+        }
+#pragma warning restore CA1031
+
+        if (step.Mode == SubFlowMode.Detached)
+        {
+            Detach(source, child);
+            return default;
+        }
+
+        try
+        {
+            var childCompensations = source.Plan.HasCompensation ? child.Compensations : null;
+
+            var outcome = await RunRangeAsync(
+                source.Plan, source.Dispatcher, child, child, childCompensations,
+                0, source.Plan.Graph.Count, ct).ConfigureAwait(false);
+
+            if (outcome.Failure is not null)
+            {
+                // The child unwinds itself, here, before the parent hears about it. Its
+                // steps are its own and its dispatcher is the only thing that can undo
+                // them; handing the parent a half-finished saga to think about would mean
+                // the child's failure left the child's own effects standing.
+                child.SetError(outcome.Failure);
+
+                if (childCompensations is not null)
+                {
+                    await CompensateAsync(childCompensations, source.Dispatcher, child)
+                        .ConfigureAwait(false);
+                }
+
+                return new RangeOutcome(
+                    FlowErrors.SubFlowFailed(plan.Flow.Id, step.Index, source.Plan.Flow.Id, outcome.Failure),
+                    outcome.Completed);
+            }
+
+            // The child succeeded and left work behind that the *parent* may still have to
+            // undo. See the class remarks on why that is the right answer and what it
+            // costs: the child's context stays rented until the parent finishes, because
+            // the undo binds to what the child's steps produced.
+            if (childCompensations is { IsEmpty: false } && compensations is not null)
+            {
+                context.RecordCompleted(step, child);
+                context.RetainSubFlow(child);
+                retained = true;
+            }
+
+            return new RangeOutcome(null, outcome.Completed);
+        }
+        finally
+        {
+            if (!retained)
+            {
+                _contexts.Return(child);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Starts a detached child and stops caring about its result.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Untracked would have been wrong.</strong> <c>FlowHost</c> counts the flows it
+    /// starts and <c>DrainAsync</c> waits for that count to reach zero; a child started from
+    /// inside the engine is not one of them, so without a counter here a drain would report
+    /// "everything finished" while a fire-and-forget saga was halfway through reserving
+    /// inventory — and the SIGKILL that follows would leave it reserved. The counter lives
+    /// on the engine rather than on the host because the engine is the only thing that knows
+    /// a detached child exists.
+    /// </para>
+    /// <para>
+    /// <see cref="CancellationToken.None"/> on purpose. A child whose whole point is to
+    /// outlive its parent must not be cancelled when the parent's token is.
+    /// </para>
+    /// </remarks>
+    private void Detach(SubFlowSource source, FlowExecutionContext child)
+    {
+        lock (_detachedSync)
+        {
+            _detachedInFlight++;
+        }
+
+        _ = RunDetachedAsync(source, child);
+    }
+
+    private async Task RunDetachedAsync(SubFlowSource source, FlowExecutionContext child)
+    {
+        try
+        {
+            var compensations = source.Plan.HasCompensation ? child.Compensations : null;
+
+            var outcome = await RunRangeAsync(
+                source.Plan, source.Dispatcher, child, child, compensations,
+                0, source.Plan.Graph.Count, CancellationToken.None).ConfigureAwait(false);
+
+            // The result is deliberately discarded — that is what fire-and-forget means —
+            // but the *ending* is not: a detached child that failed still compensates its
+            // own completed steps, exactly as it would if a trigger had started it.
+            _ = await CompleteAsync(source.Plan, source.Dispatcher, child, compensations, outcome)
+                .ConfigureAwait(false);
+        }
+#pragma warning disable CA1031 // Nothing awaits this task, so an escaping exception would be
+        catch (Exception)      //   an unobserved TaskException — a process-level event in some
+        {                      //   hosts, and one nobody can attribute to a flow.
+        }
+#pragma warning restore CA1031
+        finally
+        {
+            _contexts.Return(child);
+
+            lock (_detachedSync)
+            {
+                _detachedInFlight--;
+
+                if (_detachedInFlight == 0)
+                {
+                    _detachedIdle?.TrySetResult();
+                }
+            }
+        }
+    }
+
+    /// <summary>How many detached sub-flows this engine has started and not yet finished.</summary>
+    public int DetachedInFlight
+    {
+        get
+        {
+            lock (_detachedSync)
+            {
+                return _detachedInFlight;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Waits for every detached sub-flow to finish, up to <paramref name="timeout"/>.
+    /// </summary>
+    /// <param name="timeout">How long to wait before giving up.</param>
+    /// <param name="ct">Cancels the wait, not the children.</param>
+    /// <returns><c>true</c> when nothing detached is still running.</returns>
+    /// <remarks>
+    /// Exists so <c>FlowHost.DrainAsync</c> can keep its promise. A detached child is not
+    /// one of the host's in-flight flows — it was started from inside a step — so without
+    /// this the host would drain the flows it knows about and report success while a saga
+    /// nobody is counting is still mid-way through its effects.
+    /// </remarks>
+    public async ValueTask<bool> WaitForDetachedAsync(TimeSpan timeout, CancellationToken ct = default)
+    {
+        Task idle;
+
+        lock (_detachedSync)
+        {
+            if (_detachedInFlight == 0)
+            {
+                return true;
+            }
+
+            _detachedIdle ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            idle = _detachedIdle.Task;
+        }
+
+        try
+        {
+            await idle.WaitAsync(timeout, ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Gives back the pooled contexts of sub-flows that succeeded and were never undone.
+    /// </summary>
+    /// <remarks>
+    /// The mirror of the retention in <see cref="RunSubFlowAsync"/>. Recursive, because a
+    /// child that itself composed a flow is holding a grandchild the same way — and a
+    /// context that is never returned is not a correctness bug (the pool simply builds a new
+    /// one) but it is a pool that stops pooling, which is how the allocation budget goes
+    /// quietly from zero to per-execution.
+    /// </remarks>
+    private void ReleaseRetainedSubFlows(FlowExecutionContext context)
+    {
+        var retained = context.RetainedSubFlows;
+
+        // Indexed, not enumerated. This runs on the *success* path of every flow that
+        // composes another, and `foreach` over a List<T> is fine but walking the
+        // compensation stack instead — which is where these children can also be found —
+        // costs one iterator per nesting level per execution. That was measured at 96 B for
+        // a single composition, on the path budget B2 is about.
+        for (var i = 0; i < retained.Count; i++)
+        {
+            var child = retained[i];
+
+            ReleaseRetainedSubFlows(child);
+            _contexts.Return(child);
+        }
+
+        retained.Clear();
+    }
+
+    /// <summary>
+    /// Unwinds a sub-flow that succeeded and whose parent then failed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the answer to "must a successful child compensate when its parent
+    /// later fails".</strong> Yes. A saga's guarantee is that when the operation fails,
+    /// everything it completed is undone in strict reverse — and composing steps into a
+    /// sub-flow must not weaken that, or <c>FLOWX1005</c>'s advice to "extract the shared
+    /// steps into a sub-flow" would be advice to silently lose compensation.
+    /// </para>
+    /// <para>
+    /// <strong>Strict reverse survives the boundary, at the granularity that matters.</strong>
+    /// The parent records the sub-flow as one entry, in its own stack, in the position the
+    /// composition occupied. So for a parent that completed <c>A</c>, then a child that
+    /// completed <c>X</c> and <c>Y</c>, then <c>B</c>, the unwind is <c>B, Y, X, A</c> —
+    /// which is exactly what it would have been had the child's steps been written inline.
+    /// The child's own stack supplies the inner order and the parent's supplies the outer;
+    /// neither has to know about the other.
+    /// </para>
+    /// <para>
+    /// The undo is dispatched through the <em>child's</em> dispatcher, against the
+    /// <em>child's</em> context. Both are load-bearing: the indices on that stack are the
+    /// child's step indices, which mean something entirely different in the parent's
+    /// dispatcher, and the compensation binds to what the child's steps produced, which
+    /// only the child's context holds.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<bool> CompensateSubFlowAsync(CompensationEntry entry)
+    {
+        if (entry.Scope is not FlowExecutionContext child || child.Dispatcher is null)
+        {
+            // Unreachable: the entry is only pushed with a child context that was
+            // initialised with its dispatcher. Reported as a failed compensation rather
+            // than ignored, because silently skipping an undo is the one outcome a saga
+            // must never produce.
+            return false;
+        }
+
+        try
+        {
+            return await CompensateAsync(child.Compensations, child.Dispatcher, child)
+                .ConfigureAwait(false) != CompensationOutcome.PartiallyFailed;
+        }
+        finally
+        {
+            _contexts.Return(child);
+        }
+    }
+
+    /// <summary>
     /// Unwinds the completed compensable steps, newest first, and keeps going when one
     /// of them fails.
     /// </summary>
@@ -933,7 +1356,7 @@ public sealed class FlowEngine
     /// dangling state the unwind exists to prevent.
     /// </para>
     /// </remarks>
-    private static async ValueTask<CompensationOutcome> CompensateAsync(
+    private async ValueTask<CompensationOutcome> CompensateAsync(
         CompensationStack compensations,
         IStepDispatcher dispatcher,
         FlowExecutionContext context)
@@ -948,6 +1371,15 @@ public sealed class FlowEngine
         foreach (var entry in compensations.Unwind())
         {
             _ = context.EnterStep(entry.Step);
+
+            if (entry.Step.Kind == StepKind.SubFlow)
+            {
+                // Not this dispatcher's business: the indices on the child's stack are the
+                // child's, and handing them here would compensate whatever this flow
+                // happens to have at index 2.
+                allSucceeded &= await CompensateSubFlowAsync(entry).ConfigureAwait(false);
+                continue;
+            }
 
             try
             {

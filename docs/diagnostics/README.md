@@ -38,6 +38,8 @@ ephemeral one is not replayed at all.
 | [FLOWX1017](FLOWX1017.md) | AwaitSignal requires the Durable profile | A waiting flow vanishing with its node |
 | [FLOWX1018](FLOWX1018.md) | Cache requires no side effects | Reporting a write that never happened |
 | [FLOWX1020](FLOWX1020.md) | Step consumes a contract no earlier step produces | A flow that throws on its first request |
+| [FLOWX1021](FLOWX1021.md) | Sub-flow composition forms a cycle | **A stack overflow, or a deadline breach several flows from its cause** |
+| [FLOWX1026](FLOWX1026.md) | Sub-flow cannot be composed | A composition silently missing from the plan, the manifest and the diagram |
 | [FLOWX1023](FLOWX1023.md) | Flow declares no steps | A flow that silently does nothing |
 | [FLOWX1024](FLOWX1024.md) | Emit step is recorded but not published | A consumer waiting for an event the manifest promised |
 | [FLOWX1025](FLOWX1025.md) | Trigger attribute cannot be read by the compiler | A trigger missing from the manifest, and `flowx diff` unable to tell |
@@ -65,17 +67,19 @@ only once the compiler actually reports them — a documented diagnostic that no
 raises is a promise the compiler is not keeping. Reserved for later phases:
 `FLOWX1006` (state must be serialisable), `FLOWX1007`–`FLOWX1009` (determinism in
 durable flows), `FLOWX1012` (compensable-and-ephemeral),
-`FLOWX1016` (expected failures are values), `FLOWX1019` (deadline coherence),
-`FLOWX1021` (sub-flow cycles) and `FLOWX1022` (contract compatibility **across
-versions** — the analyzer counterpart of `flowx diff`, distinct from `FLOWX1020`,
-which checks one flow's steps against each other).
+`FLOWX1016` (expected failures are values), `FLOWX1019` (deadline coherence) and
+`FLOWX1022` (contract compatibility **across versions** — the analyzer counterpart
+of `flowx diff`, distinct from `FLOWX1020`, which checks one flow's steps against
+each other). `FLOWX1021` left this list when sub-flows landed.
 
 **A new rule takes the next id above the catalogue, never a reserved one.** Each
 reservation above already has a meaning written down in at least one other document,
 and reusing one would leave two rules describing themselves with the same number —
 a mistake this project has already made once, when a check was built as `FLOWX1022`
-while three documents described it as `FLOWX1020`. `FLOWX1025` was the first id
-neither raised nor reserved; the next is `FLOWX1026`. The range is `FLOWX1001`–`FLOWX1099`.
+while three documents described it as `FLOWX1020`. `FLOWX1026` took the next free id
+for exactly that reason: `FLOWX1022` is spoken for, and "sub-flow cannot be
+composed" is not contract compatibility. The next is `FLOWX1027`. The range is
+`FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

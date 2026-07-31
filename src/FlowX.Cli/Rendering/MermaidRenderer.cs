@@ -237,6 +237,18 @@ public static class MermaidRenderer
             return "for each";
         }
 
+        if (step.Kind == "SubFlow")
+        {
+            // The child's *id*, which is the whole point: a reader can follow it to the
+            // subgraph for that flow, in the same diagram when both were rendered. The mode
+            // is on the label because it is the one thing about a composition worth reading
+            // at a glance — it says whether the parent waits and whether the child's
+            // failure is the parent's.
+            var composed = string.IsNullOrEmpty(step.Flow) ? "sub-flow" : step.Flow!;
+
+            return string.IsNullOrEmpty(step.Mode) ? composed : composed + " · " + step.Mode;
+        }
+
         if (step.Kind is "Condition" or "Switch")
         {
             // Not the predicate, and not the selector or the case values: the manifest's
@@ -283,6 +295,12 @@ public static class MermaidRenderer
         // A subroutine box, which is Mermaid's shape for "this runs a block". A loop is
         // not a decision either, and it is not a fork: exactly one block, run repeatedly.
         "ForEach" => $"[[{Quote(label)}]]",
+        // A doubled-border rectangle. Not the subroutine box a ForEach uses, even though
+        // "this runs a block" is nearly right: a loop's block is drawn on this diagram and
+        // a sub-flow's is not — its steps belong to another flow's subgraph. A distinct
+        // shape is what stops a reader looking for edges out of it that were never going
+        // to be there.
+        "SubFlow" => $"[({Quote(label)})]",
         _ => $"[{Quote(label)}]",
     };
 

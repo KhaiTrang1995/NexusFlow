@@ -522,6 +522,63 @@ public sealed class FlowEmitterTests
     }
 
     /// <summary>
+    /// A composition emits one node, one cached mapping and one injected dispatcher.
+    /// </summary>
+    /// <remarks>
+    /// The whole of what a sub-flow costs the emitted file, and the absence is the claim:
+    /// no descriptor, because the child's capabilities are the child's; no case in
+    /// <c>ExecuteAsync</c>, because the engine handles the composition itself; no block,
+    /// because there is none to lay out.
+    /// </remarks>
+    [Fact]
+    public void ACompositionEmitsOneNodeAndNothingOfTheChildsOwn()
+    {
+        var source = FlowEmitter.Emit(Models.Composing());
+
+        source.ShouldContainText(
+            "StepNode.ForSubFlow(1, \"order.fulfil\", SubFlowMode.Inline)",
+            "One node carrying the child's identity and the mode.");
+
+        source.ShouldContainText(
+            "public static readonly Func<FlowContext, Sample.Contracts.FulfilOrder> Step1 = " +
+            "ctx => new FulfilOrder(ctx.Get<OrderId>());",
+            "The mapping is a cached static typed at the child's input, copied verbatim.");
+
+        source.ShouldContainText(
+            "Sample.Flows.FulfilOrderFlow.Dispatcher fulfilOrderFlowDispatcher",
+            "The child's dispatcher is a constructor parameter, so the container supplies " +
+            "it and this flow never learns the child's capabilities.");
+
+        source.ShouldNotContainText(
+            "Descriptors.Step1",
+            "A composition invokes no capability of its own, so it has no descriptor.");
+    }
+
+    [Fact]
+    public void TwoCompositionsGetTwoDistinctDispatcherFields()
+    {
+        // Every child's dispatcher is called `Dispatcher`, so a field name derived the way
+        // a capability's is would give both compositions the same one — and the second
+        // assignment would silently win.
+        var model = new FlowModel(
+            "order.place", "1.0.0", "Ephemeral", null, "Sample.Flows", "PlaceOrderFlow",
+            "Sample.Contracts.PlaceOrder", "Sample.Contracts.OrderPlacedResult",
+            [
+                StepModel.SubFlow(
+                    0, "order.fulfil", "Sample.Flows.FulfilOrderFlow",
+                    "Sample.Contracts.FulfilOrder", "ctx => new FulfilOrder()", "Inline"),
+                StepModel.SubFlow(
+                    1, "partner.notify", "Sample.Flows.NotifyPartnerFlow",
+                    "Sample.Contracts.PartnerNotice", "ctx => new PartnerNotice()", "Detached"),
+            ]);
+
+        var source = FlowEmitter.Emit(model);
+
+        source.ShouldContainText("_fulfilOrderFlowDispatcher", "Named from the flow…");
+        source.ShouldContainText("_notifyPartnerFlowDispatcher", "…and so is the second.");
+    }
+
+    /// <summary>
     /// The only test here that runs a compiler: emitted text must actually parse.
     /// </summary>
     /// <remarks>
@@ -553,5 +610,6 @@ public sealed class FlowEmitterTests
         { "minimal", Models.Minimal() },
         { "conditional", Models.Conditional() },
         { "switching", Models.Switching() },
+        { "composing", Models.Composing() },
     };
 }

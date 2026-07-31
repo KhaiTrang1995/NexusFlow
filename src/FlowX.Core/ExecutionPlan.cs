@@ -26,13 +26,15 @@ public sealed class ExecutionPlan
         StepGraph graph,
         ImmutableArray<int> compensableStepIndices,
         ImmutableArray<string> sideEffects,
-        bool hasParallel)
+        bool hasParallel,
+        bool hasSubFlow)
     {
         Flow = flow;
         Graph = graph;
         CompensableStepIndices = compensableStepIndices;
         SideEffects = sideEffects;
         HasParallel = hasParallel;
+        HasSubFlow = hasSubFlow;
     }
 
     /// <summary>The flow this plan executes.</summary>
@@ -82,6 +84,21 @@ public sealed class ExecutionPlan
     /// </remarks>
     public bool HasParallel { get; }
 
+    /// <summary>True when any step composes another flow.</summary>
+    /// <remarks>
+    /// <para>
+    /// Precomputed for the same reason <see cref="HasParallel"/> is, and read on the
+    /// <em>success</em> path, which is the unusual part. A synchronous sub-flow that
+    /// completed with compensations pending keeps its context rented until the parent
+    /// finishes — the parent may still have to undo it — so a flow that composes another
+    /// has one thing to do at the end that no other flow does: give those contexts back to
+    /// the pool. Walking the compensation stack to find them costs an iterator, and a flow
+    /// with no sub-flow must not pay it. That is what this flag buys, and it is why budget
+    /// B2 stays a hard zero for the shapes that have always had it.
+    /// </para>
+    /// </remarks>
+    public bool HasSubFlow { get; }
+
     /// <summary>Builds a validated plan.</summary>
     /// <param name="flow">The flow's identity and profile.</param>
     /// <param name="graph">Its compiled step sequence.</param>
@@ -98,6 +115,7 @@ public sealed class ExecutionPlan
         var compensable = ImmutableArray.CreateBuilder<int>();
         var effects = new SortedSet<string>(StringComparer.Ordinal);
         var parallel = false;
+        var subFlow = false;
 
         foreach (var step in graph.Steps)
         {
@@ -109,11 +127,17 @@ public sealed class ExecutionPlan
             parallel |= step.Kind == StepKind.Parallel ||
                         (step.Kind == StepKind.ForEach && step.MaxDegreeOfParallelism > 1);
 
+            // A detached sub-flow counts too. It never touches this flow's context — it
+            // gets its own — so it deliberately does *not* set `parallel`; but it is still
+            // a composition, and the flag is read to decide whether the end of the flow has
+            // sub-flow bookkeeping to do.
+            subFlow |= step.Kind == StepKind.SubFlow;
+
             AddEffects(effects, step.Capability);
             AddEffects(effects, step.Compensation);
         }
 
-        return new ExecutionPlan(flow, graph, compensable.ToImmutable(), [.. effects], parallel);
+        return new ExecutionPlan(flow, graph, compensable.ToImmutable(), [.. effects], parallel, subFlow);
     }
 
     private static void AddEffects(SortedSet<string> effects, CapabilityDescriptor? capability)

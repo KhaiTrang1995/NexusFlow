@@ -111,15 +111,35 @@ public readonly struct MergeStrategy : IEquatable<MergeStrategy>
 }
 
 /// <summary>How a sub-flow relates to its parent.</summary>
+/// <remarks>
+/// <para>
+/// <strong>Two of the three are implemented.</strong> <see cref="AwaitCompletion"/> is
+/// refused at build time by <c>FLOWX1026</c> — it needs a durable suspension point, and
+/// there is no journal to suspend into. The member stays in the enum because the id is a
+/// forever commitment (constraint C7) and because deleting it would turn a documented
+/// mode into a spelling mistake; a diagnostic that names the reason is more use than a
+/// missing member.
+/// </para>
+/// </remarks>
 public enum SubFlowMode
 {
-    /// <summary>Runs inline, sharing the parent's deadline and correlation. Child failure fails the parent.</summary>
+    /// <summary>
+    /// Runs inline, sharing the parent's correlation, tenant and remaining budget. Child
+    /// failure fails the parent, and work the child completed is undone when the
+    /// <em>parent</em> later fails.
+    /// </summary>
     Inline = 0,
 
-    /// <summary>Fire-and-forget with its own deadline and lifecycle.</summary>
+    /// <summary>
+    /// Fire-and-forget: the child gets its own context, its own deadline and its own
+    /// lifecycle, and the parent does not wait for it or hear about its failure.
+    /// </summary>
     Detached = 1,
 
-    /// <summary>The parent suspends until the child completes. Durable flows only.</summary>
+    /// <summary>
+    /// The parent suspends until the child completes. Durable flows only, and refused by
+    /// <c>FLOWX1026</c> until the journal exists.
+    /// </summary>
     AwaitCompletion = 2,
 }
 
@@ -177,10 +197,30 @@ public interface IFlowBuilder<TIn, TOut>
         Action<IFlowBuilder<TIn, TOut>> body,
         ForEachOptions options);
 
-    /// <summary>Composes another flow. Sub-flow cycles are a build error (FLOWX1021) — the graph is always a DAG.</summary>
+    /// <summary>
+    /// Composes another flow. Sub-flow cycles are a build error (FLOWX1021) — the graph is
+    /// always a DAG.
+    /// </summary>
+    /// <typeparam name="TFlow">
+    /// The flow to run. Constrained to <see cref="Flow"/> so that composing something that
+    /// is not a flow — a capability, a contract — is an ordinary C# error on the author's
+    /// own line rather than a missing member in generated code.
+    /// </typeparam>
+    /// <typeparam name="TSubIn">The child's input contract, inferred from <paramref name="map"/>.</typeparam>
+    /// <param name="map">
+    /// Builds the child's input from the parent's context. Obeys the same determinism rule
+    /// as a <c>When</c> predicate — context, flow input and prior step results only
+    /// (FLOWX1011) — and is evaluated on the parent's thread, before the child starts, so
+    /// the child never holds a reference to the parent's pooled context.
+    /// </param>
+    /// <param name="mode">
+    /// How the child relates to the parent. <see cref="SubFlowMode.AwaitCompletion"/> is
+    /// refused by FLOWX1026 in this release.
+    /// </param>
     IFlowBuilder<TIn, TOut> SubFlow<TFlow, TSubIn>(
         Func<FlowContext<TIn>, TSubIn> map,
-        SubFlowMode mode = SubFlowMode.Inline);
+        SubFlowMode mode = SubFlowMode.Inline)
+        where TFlow : Flow;
 
     /// <summary>Publishes a domain event. Transactional-outbox based in durable flows: never lost, never published before the step is durable.</summary>
     IFlowBuilder<TIn, TOut> Emit<TEvent>(Func<FlowContext<TIn>, TEvent> map);

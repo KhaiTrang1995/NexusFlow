@@ -286,10 +286,10 @@ immutable, and rejects every invariant violation under test.
 
 - [x] **WP-3** `FlowX.Benchmarks` — B1–B3 measurable, baseline committed
 - [x] **WP-4** `FlowX.Runtime` — step loop, pooled contexts, deadline handling, 0 B
-- [~] **WP-5** `FlowX.Compiler` — `FlowPlanGenerator`, model layer separate from emission.
+- [x] **WP-5** `FlowX.Compiler` — `FlowPlanGenerator`, model layer separate from emission.
       Diagnostics all raised (WP-13), B12 measured and passing (WP-14).
-      *Remaining:* the branching DSL — `ForEach` / `SubFlow`. `When`, `Switch` and
-      `Parallel` ship (WP-15, WP-20, WP-24)
+      The branching DSL is complete: `When`, `Switch`, `Parallel`, `ForEach` and
+      `SubFlow` all ship (WP-15, WP-20, WP-24, WP-29, WP-33)
 - [x] **WP-6** Manifest emission, deterministic and schema-valid
 - [x] **WP-7** `FlowX.Hosting` — DI, startup validation, graceful drain, health probe
 - [~] **WP-8** `plugins/FlowX.Http` — endpoint, request binding, RFC 7807.
@@ -320,14 +320,14 @@ item outstanding and needs a CI run.
 Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages in
 [PLAN.md §4](PLAN.md).
 
-- [~] **WP-15** The branching DSL — **`When` / `Otherwise` done** through builder, model,
+- [x] **WP-15** The branching DSL — **`When` / `Otherwise` done** through builder, model,
       analysis, emission, graph and engine. A conditional compiles into the *same flat
       step array* as a linear flow, as a `Branch` plus a `Jump`, so the engine gained no
       branch stack and **both directions allocate 0 B** in Release. The manifest
       deliberately does **not** carry the predicate's source text: it would put business
       thresholds into a file whose rule is structure-only. `Parallel` followed at
-      **WP-24** and `ForEach` at **WP-29**; **`SubFlow` alone remains open** — this box
-      does not tick until it lands
+      **WP-24**, `ForEach` at **WP-29** and `SubFlow` at **WP-33**, which closes the
+      shape
 - [x] **WP-20** `Switch` / `Case` / `Default` — a value branch through builder, model,
       analysis, emission, graph and engine. One `StepKind.Switch` carrying a target per
       case plus a default, and a `Jump` closing each case block, in the *same flat step
@@ -386,6 +386,46 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       does not use, exactly as it already does for `Evaluate` and `Select`. That is the
       gate working — a cost increase arriving as a reviewable diff instead of unseen.
       **Worth watching:** this is the fifth required member on that interface
+- [x] **WP-33** `SubFlow` — composition, and the shape where **one array stops describing
+      one execution**. The flat array itself survives untouched: a `StepKind.SubFlow`
+      occupies one index, carries no target and moves nothing around it, so the graph
+      validation and the termination proof for the parent are unchanged. What no longer
+      holds is that the array in front of the loop contains every step that runs — the
+      child has its own plan, dispatcher, pooled context and compensation stack, and the
+      engine recurses into a second, independent execution. Splicing the child's steps in
+      at compile time was rejected: it would make the parent's manifest claim the child's
+      capabilities, discard the child's deadline and profile, and be impossible across an
+      assembly boundary.
+      **Two modes of three ship.** `Inline` and `Detached` are real; **`AwaitCompletion`
+      is refused under every profile by `FLOWX1026`** — it needs a durable suspension
+      point and there is no journal, and unlike `AwaitSignal` it has no honest degenerate
+      form (running it inline changes the parent's deadline and failure semantics;
+      skipping it drops business logic). It is also unrepresentable in `StepNode`.
+      **Compensation crosses the boundary upwards.** A child that succeeded is undone when
+      the *parent* later fails — anything else would mean `FLOWX1005`'s own advice, to
+      extract shared steps into a sub-flow, silently weakened the saga. Strict reverse
+      survives: the parent records the composition as **one entry** in its own stack, so
+      `A · child(X, Y) · B` unwinds `B, Y, X, A`, exactly as the steps would have inline.
+      The child's context stays rented until the parent finishes, because the undo binds
+      to what the child's steps produced.
+      **`Detached` is drained.** It starts inside a step, so `FlowHost` never counted it;
+      `DrainAsync` now waits on the engine's detached count as well, because a drain that
+      reported success while a fire-and-forget saga was reserving inventory would leave it
+      reserved. The child never touches the parent's pooled context — the mapping runs on
+      the parent's thread *before* the child starts — so the cross-tenant hazard is
+      structural rather than guarded.
+      **0 B, and that is not "sub-flows are free".** Every part was made pooled or a
+      struct on purpose; the first version walked the compensation stack to find retained
+      children and cost **96 B per nesting level on the success path**, which is why the
+      context now owns the list.
+      **`FLOWX1021`** proves the DAG for every edge in one compilation and **cannot see
+      across an assembly boundary** — its page says so, and `FlowEngine.MaxSubFlowDepth`
+      bounds at run time what it cannot bound at build time.
+      **Stated limit:** the child's result does not reach the parent's context. Both ways
+      to pass it up were refused for reasons written down in `08 §3.7`
+- [ ] **A test that can actually fail on the parallel context race.** Needs deterministic
+      interleaving, not more iterations. Until then the lock above rests on the language
+      contract alone
 - [x] **A test that can actually fail on the parallel context race.** Closed by WP-34, and
       the diagnosis is the useful part: the window was not narrow, it did not exist. The old
       test wrote three keys through one reused engine, so from the second execution every

@@ -119,6 +119,23 @@ public sealed class ManifestSchemaTests
     public void AFlowWithAParallelValidates()
         => ShouldValidate(ManifestWriter.Write("Sample.App", "1.0.0", [Models.Parallel()]));
 
+    /// <summary>
+    /// A composition reaches the manifest as the schema describes it: a step of kind
+    /// <c>SubFlow</c> naming the child by id and saying how it relates to the parent.
+    /// </summary>
+    /// <remarks>
+    /// <c>flow</c> and <c>mode</c> are fields this work package added to the committed
+    /// contract, so this is the test that says the addition is real rather than something
+    /// the writer emits into a document nobody validates. The step object is
+    /// <c>additionalProperties: false</c>, so before the schema change this document was
+    /// invalid — which is the right way round.
+    /// </remarks>
+    [Theory]
+    [InlineData("Inline")]
+    [InlineData("Detached")]
+    public void AFlowThatComposesAnotherValidates(string mode)
+        => ShouldValidate(ManifestWriter.Write("Sample.App", "1.0.0", [Models.Composing(mode)]));
+
     [Fact]
     public void ADurableFlowWithASuspensionPointValidates()
     {

@@ -133,7 +133,10 @@ public sealed class ManifestWriterTests
         var manifest = ManifestWriter.Write(
             "Sample.App",
             "1.0.0",
-            [Models.PlaceOrder(), Models.Conditional(), Models.Switching(), Models.Parallel(), Models.Iterating()],
+            [
+                Models.PlaceOrder(), Models.Conditional(), Models.Switching(),
+                Models.Parallel(), Models.Iterating(), Models.Composing(),
+            ],
             null,
             [Models.Triggers()],
             Models.ErrorCatalogues());
@@ -148,21 +151,24 @@ public sealed class ManifestWriterTests
                 .ShouldBeFalse($"The manifest contains '{forbidden}'. It describes structure, never values.");
         }
 
-        // Every branching shape is in the document above, because each one carries
+        // Every composite shape is in the document above, because each one carries
         // something the manifest has to refuse: a predicate, a selector and its case
-        // values, a merge argument, a collection selector and a concurrency bound. A guard
-        // that saw only the linear flow would pass against a writer that published them all.
+        // values, a merge argument, a collection selector and a concurrency bound, and a
+        // sub-flow's input mapping. A guard that saw only the linear flow would pass
+        // against a writer that published them all.
         foreach (var expression in new[]
         {
             "ctx =>", "RiskScore", "Channel.Retail", "MergeStrategy",
             "ValidatedOrder", "MaxDegreeOfParallelism", "ContinueOnError",
+            "OrderId", "FulfilOrderFlow",
         })
         {
             manifest.Contains(expression, StringComparison.Ordinal).ShouldBeFalse(
                 $"The manifest contains '{expression}'. A predicate, a case value, a merge " +
-                "argument, an iterated collection and an iteration's bound are all things " +
-                "the author wrote about their own data or their own tuning; the manifest " +
-                "publishes that the flow branches and iterates, never on what.");
+                "argument, an iterated collection, an iteration's bound and a sub-flow's " +
+                "input mapping are all things the author wrote about their own data, their " +
+                "own tuning or their own class names; the manifest publishes that the flow " +
+                "branches, iterates and composes, never on what.");
         }
     }
 
@@ -195,6 +201,72 @@ public sealed class ManifestWriterTests
         loop.TryGetProperty("merge", out _).ShouldBeFalse(
             "A loop has nothing to merge, and borrowing the fork's field would invite a " +
             "consumer to read a join rule that does not exist.");
+    }
+
+    /// <summary>
+    /// A composition publishes the child's identity and how it relates to the parent, and
+    /// nothing else.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// No <c>branches</c>, unlike every other composite shape. The child's steps are in the
+    /// child's own entry, which is where a change to them belongs: inlining them would make
+    /// the parent's document grow with the child's and turn one edit to a shared flow into
+    /// a diff in every flow that composes it.
+    /// </para>
+    /// <para>
+    /// No <c>capability</c> either. A composition invokes a flow, and the child's
+    /// capabilities are the child's — a parent claiming them would misreport who does what,
+    /// which is exactly what a reviewer reads this document to find out.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ACompositionPublishesTheChildsIdentityAndTheModeAndNothingElse()
+    {
+        using var document = Parse(Write(Models.Composing()));
+
+        var composition = document.RootElement.GetProperty("flows")[0].GetProperty("steps")[1];
+
+        composition.GetProperty("kind").GetString().ShouldBe("SubFlow");
+        composition.GetProperty("id").GetInt32().ShouldBe(1);
+        composition.GetProperty("flow").GetString().ShouldBe("order.fulfil");
+        composition.GetProperty("mode").GetString().ShouldBe("Inline");
+
+        composition.TryGetProperty("branches", out _).ShouldBeFalse(
+            "The child's steps belong to the child's entry.");
+        composition.TryGetProperty("capability", out _).ShouldBeFalse(
+            "A composition invokes a flow, not a capability.");
+        composition.TryGetProperty("merge", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ADetachedCompositionSaysSo()
+    {
+        // The mode changes what the flow *means* — whether the parent waits, whether the
+        // child's failure is the parent's, whose deadline applies — so a reader who cannot
+        // see it cannot review the composition at all.
+        using var document = Parse(Write(Models.Composing("Detached")));
+
+        document.RootElement.GetProperty("flows")[0].GetProperty("steps")[1]
+            .GetProperty("mode").GetString().ShouldBe("Detached");
+    }
+
+    [Fact]
+    public void AComposedFlowsCapabilitiesDoNotReachTheParentsCatalogue()
+    {
+        // The mirror of ACapabilityInvokedOnlyInsideABranchStillReachesTheCapabilityList,
+        // and the opposite answer for a reason: a branch's steps are this flow's, and a
+        // child's are not. `flowx diff` reads this list to decide what a change to a
+        // capability affects; a parent that claimed its child's would report an impact it
+        // does not have.
+        using var document = Parse(Write(Models.Composing()));
+
+        var ids = document.RootElement.GetProperty("capabilities")
+            .EnumerateArray()
+            .Select(c => c.GetProperty("id").GetString())
+            .ToArray();
+
+        ids.ShouldBe(["order.validate", "payment.capture"]);
     }
 
     [Fact]

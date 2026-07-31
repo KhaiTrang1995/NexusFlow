@@ -23,6 +23,8 @@ FLOWX1015 | FlowX | Error | Capability implements more than one contract. [Docum
 FLOWX1017 | FlowX | Error | AwaitSignal requires the Durable profile. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1017.md)
 FLOWX1018 | FlowX | Error | Cache requires a capability with no side effects. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1018.md)
 FLOWX1020 | FlowX | Error | Step consumes a contract no earlier step produces. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1020.md)
+FLOWX1021 | FlowX | Error | Sub-flow composition forms a cycle. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1021.md)
+FLOWX1026 | FlowX | Error | Sub-flow cannot be composed. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1026.md)
 FLOWX1023 | FlowX | Error | Flow declares no steps. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1023.md)
 FLOWX1024 | FlowX | Warning | Emit step is recorded but not published. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1024.md)
 FLOWX1025 | FlowX | Warning | Trigger attribute cannot be read by the compiler. [Documentation](https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1025.md)

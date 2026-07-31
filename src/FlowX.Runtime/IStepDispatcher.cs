@@ -188,4 +188,75 @@ public interface IStepDispatcher
     /// </para>
     /// </remarks>
     FlowContext EnterIteration(int stepIndex, in IterationSource source, int iteration, FlowContext ctx);
+
+    /// <summary>
+    /// Names the child a <see cref="StepKind.SubFlow"/> step composes, and evaluates its
+    /// input mapping.
+    /// </summary>
+    /// <param name="stepIndex">
+    /// Position in the plan's step graph. Always a sub-flow — the engine calls this for no
+    /// other kind.
+    /// </param>
+    /// <param name="ctx">
+    /// The context the composing step runs under. Inside a <c>ForEach</c> body that is the
+    /// iteration's scope, which is what lets a sub-flow be composed per element.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Returns the child's plan and dispatcher rather than running them.</strong>
+    /// Renting the child's context, deriving its deadline from the parent's, running its
+    /// graph and unwinding its compensation are all the engine's job, and they are the same
+    /// job for every flow; a dispatcher that ran the child itself would reimplement them
+    /// once per composing flow, in generated code, where a mistake is hardest to see.
+    /// </para>
+    /// <para>
+    /// Synchronous, for the reasons given on <see cref="Evaluate"/>. The mapping obeys the
+    /// same determinism rule as a predicate — context, flow input and prior step results
+    /// only (FLOWX1011) — so a durable replay composes the child it composed before, with
+    /// the input it had before.
+    /// </para>
+    /// </remarks>
+    /// <remarks>
+    /// <para>
+    /// <strong>Defaulted to a throw, unlike every other member here, and the reason is
+    /// worth stating.</strong> The engine calls this only for a
+    /// <see cref="StepKind.SubFlow"/> node, so a dispatcher for a flow that composes
+    /// nothing can never receive it — and the generated dispatcher for such a flow emits
+    /// exactly this throw, word for word. Making it required would therefore have meant
+    /// every hand-written and third-party dispatcher copying eight lines of unreachable
+    /// code to satisfy the compiler. The generator always emits both members explicitly, so
+    /// nothing that ships depends on the default.
+    /// </para>
+    /// </remarks>
+    SubFlowSource BeginSubFlow(int stepIndex, FlowContext ctx) =>
+        throw new ArgumentOutOfRangeException(
+            nameof(stepIndex),
+            stepIndex,
+            "This flow composes no sub-flow, so the engine never asks it to compose one. " +
+            "Reaching this means the plan and this dispatcher came from different builds.");
+
+    /// <summary>
+    /// Seeds the child's input into the child's own context, under its own type.
+    /// </summary>
+    /// <param name="stepIndex">Position in the plan's step graph. Always a sub-flow.</param>
+    /// <param name="source">What <see cref="BeginSubFlow"/> returned for this step.</param>
+    /// <param name="child">
+    /// The child's freshly initialised context. Not the parent's — the two never meet,
+    /// which is what makes a detached child safe against a pooled context being reused.
+    /// </param>
+    /// <remarks>
+    /// The mirror of <see cref="EnterIteration"/>: the one call that turns an opaque
+    /// <see cref="SubFlowSource.Input"/> back into a typed value, in the only code that
+    /// knows the type. It is a cast and a <c>ctx.Set</c>.
+    /// <para>
+    /// Defaulted to a throw for the reason given on <see cref="BeginSubFlow"/>: the engine
+    /// cannot reach it without having reached that one first.
+    /// </para>
+    /// </remarks>
+    void EnterSubFlow(int stepIndex, in SubFlowSource source, FlowContext child) =>
+        throw new ArgumentOutOfRangeException(
+            nameof(stepIndex),
+            stepIndex,
+            "This flow composes no sub-flow, so the engine never asks it to seed one. " +
+            "Reaching this means the plan and this dispatcher came from different builds.");
 }
