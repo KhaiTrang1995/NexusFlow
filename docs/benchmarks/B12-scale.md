@@ -67,6 +67,21 @@
 > **This document's criterion is unchanged and still failing**, and the new gate reprints
 > it on every run so that a green relative gate cannot be read as a budget that is met.
 
+> [!IMPORTANT]
+> **§5.4 is the current measurement, and it supersedes every figure above it.** The
+> criterion at 200 flows is **+67.1 %**, 95 % CI **[+61.9, +73.6]**, against a **+8 %**
+> budget. **FAIL.** A/A noise floor 10.6 %, within-arm IQR 7.3 % and 7.5 %, load average
+> 1.87 / 2.88 / 3.76 — the quietest run in this document's history.
+>
+> **At 50 flows it is +46.5 % [+42.4, +51.0], against §5.2's +46.6 % [+42.8, +51.3].**
+> Everything that landed between those two runs — WP-37's rewrite of the error-catalogue
+> reader, `Switch`, `Parallel`, `ForEach`, `SubFlow`, `Fail`, the `FlowContext<TIn>` view
+> and five new analyzers — **nets to no change the harness can see.** The savings and the
+> features cancelled.
+>
+> **The split is now `FlowPlanGenerator` 90.5 %.** `StepBindingAnalyzer`, which §5 recorded
+> at 37 %, is **1.2 %**, and the three analyzers above it are all new. Full table in §5.4.
+
 ---
 
 ## 1. What this measures, and why it is a separate document
@@ -781,6 +796,176 @@ automatically on every pull request, for the generator. It does not cover
 `StepBindingAnalyzer` or the other analyzers, which is the part of that consequence still
 carried by a human.
 
+### 5.4 WP-43 — the criterion re-measured, and a split with a different shape
+
+Recorded **2026-07-31**, same container, **different hardware** — see below. §5.1 through
+§5.3 were taken across two days during which the generator tripled, was bisected and was
+gated. Since the last end-to-end number was recorded, WP-28 removed a duplicated semantic
+bind, **WP-37 rewrote the error-catalogue reader outright**, WP-27's analyzer cut landed,
+and `Switch`, `Parallel`, `ForEach`, `SubFlow`, `Fail`, the `FlowContext<TIn>` view and
+five new analyzers all shipped. Nobody knew the current figure, and
+[ADR-0014](../adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) was quoting numbers
+taken before two of the three optimisations.
+
+#### The criterion
+
+```bash
+./scripts/measure-scale-overhead.sh --rounds 12 --sizes 50,200
+```
+
+```
+ flows       with    without   overhead             95 % CI   A/A scatter
+    50     3986 ms     2758 ms     +46.5 %      [+42.4, +51.0]        14.3 %
+   200    11980 ms     7236 ms     +67.1 %      [+61.9, +73.6]        10.6 %
+
+VERDICT: FAIL — 95 % CI [+61.9, +73.6] % lies above the 8 % budget
+```
+
+| Flows | with-arm IQR | without-arm IQR | FlowX's cost | Per flow |
+|---:|---:|---:|---:|---:|
+| 50 | 8.3 % | 10.5 % | +1 296 ms (CI [+1 138, +1 401]) | 25.91 ms |
+| 200 | 7.3 % | 7.5 % | **+4 821 ms** (CI [+4 482, +5 199]) | **24.11 ms** |
+
+Growth `flows^0.95`, 95 % CI [0.87, 1.06]; affine fit **121 ms fixed + 23.50 ms per flow**,
+R² 1.000. **Still linear, still no meaningful fixed term** — §4's finding survives four more
+working packages and a change of machine, which is the one piece of good news here.
+
+**The criterion is failed by 59 points.** It is not close. Nothing in this section should be
+read as progress towards +8 %.
+
+#### The machine, and why this run is worth more than its predecessors
+
+| Run | Load: min / median / max | Within-arm IQR at 200 | Verdict |
+|---|---|---:|---|
+| First attempt, 12 rounds | 6.81 / **15.52** / 38.96 | 44.8 % / 57.5 % | **INCONCLUSIVE** — over the 25 % limit |
+| Cross-check, 8 rounds, server off | 7.31 / **17.13** / 37.08 | 6.6 % / 6.0 % *(CPU)* | **FAIL** at +23.4 % CPU [+15.2, +24.9] |
+| **Recorded, 12 rounds** | 1.87 / **2.88** / 3.76 | **7.3 % / 7.5 %** | **FAIL** at +67.1 % |
+
+Three other agents were building in sibling worktrees for most of this session, and the
+first attempt is what that costs: a 4× swing between identical 200-flow builds (7 144 ms to
+29 088 ms) and an A/A control reporting **±77 %** of apparent overhead where the true
+difference is zero. **The harness refused, which is the correct output and is why it has an
+exit code for it.** The recorded run was taken after those agents went idle.
+
+The middle row is §4's load-robust configuration, run while the machine was still loud. Its
+wall-clock half was inconclusive and its CPU half was not: **CPU time is the instrument that
+survives a contended box**, with 6 % IQRs against wall clock's 45–58 % in the same
+conditions. It may report a fail and the harness will not let it report a pass; it reported
+a fail. Its per-flow cost — **22.95 ms per flow** from the affine fit — agrees with the
+quiet run's 23.50 to within 2.4 %, which is the strongest cross-check in this document.
+
+**The hardware is not the hardware §3 to §5.3 were taken on.** `/proc/cpuinfo` reads
+`Intel(R) Xeon(R) Processor @ 2.10GHz`; every earlier section in this document was taken at
+**2.80 GHz**. Ratios are comparatively portable because both arms move together; absolute
+milliseconds are not. **Any comparison below between a figure recorded here and one recorded
+earlier is a comparison of ratios, and where a per-flow millisecond figure is compared the
+change of machine is named.**
+
+#### What moved, and what cannot be attributed
+
+| | Recorded in | Then | Now | |
+|---|---|---:|---:|---|
+| 50 flows | §5.2, post-WP-28 | +46.6 % [+42.8, +51.3] | **+46.5 % [+42.4, +51.0]** | unchanged |
+| 200 flows | §5.1, pre-WP-28 | +77.1 % [+72.0, +80.6] | **+67.1 % [+61.9, +73.6]** | −10 points |
+
+**The 50-flow row is the finding.** It reproduces §5.2 to **0.1 points** — on different
+hardware, four working packages later. Between those two runs the error-catalogue reader was
+rewritten from scratch (WP-37), five analyzers were added, and four of the five DSL shapes
+landed. **The net effect on the criterion is zero to the resolution of this harness.** Read
+plainly: WP-37's saving is real and is roughly the size of what the new features cost, and
+the two cancelled. B13 §6.5 measures WP-37 alone at **−5.7 %** of total generator
+allocation at 50 flows, which is the right order of magnitude for a cancellation of this
+kind and is the only figure here anyone should quote for that change on its own.
+
+**The 200-flow row spans WP-28 as well**, so its 10 points are consistent with WP-28's
+documented 20 % cut of the reader plus WP-37, less what the features added. **That is a
+consistency argument, not an attribution. This package did not bisect**, and the two runs
+being compared were taken on different CPUs, so a per-commit reading of those 10 points is
+not available from this evidence. §5.2's method — generate the subject once, probe each
+commit — is what would produce one.
+
+**Neither row is progress towards the budget.** −10 points against a 59-point miss does not
+change what has to happen, and §5.2's conclusion stands unaltered: the remaining cost is
+what the derived `errors` catalogue costs, and the decision in front of P1 is a product
+decision rather than a profiling one.
+
+#### The split, re-measured
+
+The §5 command at 25 and 200 flows, three builds each, medians, load 1.46 to 1.94.
+
+| Component | ms per flow | Share | §5 recorded |
+|---|---:|---:|---|
+| **`FlowPlanGenerator`** | **23.25** | **90.5 %** | 8.07 ms, 62 % |
+| `PredicatePurityAnalyzer` (FLOWX1011) | 0.90 | 3.5 % | not yet present |
+| `DeadlineCoherenceAnalyzer` (FLOWX1019) | 0.70 | 2.7 % | not yet present |
+| `CapabilityThrowAnalyzer` (FLOWX1016) | 0.46 | 1.8 % | not yet present |
+| `StepBindingAnalyzer` (FLOWX1020) | 0.30 | 1.2 % | 4.77 ms, **37 %** |
+| `CapabilityAnalyzer` (FLOWX1003/4) | 0.06 | 0.2 % | 0.15 ms, 1 % |
+| `SubFlowCycleAnalyzer` (FLOWX1021) | 0.02 | 0.1 % | not yet present |
+| `ParallelSlotAnalyzer` (FLOWX1013) | 0.01 | < 0.1 % | not yet present |
+| `TriggerDeclarationAnalyzer` (FLOWX1025) | ~0 | ~0 % | not yet present |
+| **Total** | **25.70** | | |
+
+**25.70 ms per flow against the wall clock's 23.50.** §5 recorded a 16 % gap between these
+two instruments and explained it by concurrency; the gap is now 9 %. Two instruments that
+count overlapping work differently agreeing this closely is the reason to believe either.
+
+Three things follow, and the first is the only one that is firm.
+
+**`FlowPlanGenerator` is now 90.5 % of the marginal cost, and every route to the budget runs
+through it.** This is not a close call and does not depend on the arithmetic below it: in
+all six builds, at both sizes, the generator was 74–82 % of FlowX's *total* execution time
+before any marginal is taken. §5.1's 97.6 % was measured when three of these analyzers did
+not exist; the generator's share has fallen slightly because analyzers were added, not
+because the generator got cheaper.
+
+**`StepBindingAnalyzer` is no longer the second component, and WP-27 is why.** §5 put it at
+37 % of the marginal cost and 4.77 ms per flow; it is now 1.2 % and 0.30 ms per flow, on a
+machine 25 % slower in nominal clock. That is WP-27's 89 % cut showing up end to end in the
+split, four working packages after it landed — and it remains, as §5.1 said at the time,
+invisible in the criterion, because 4 ms per flow off a 26 ms bill does not move a 59-point
+miss.
+
+**The analyzers that replaced it at the top are new, and their individual figures are soft.**
+`PredicatePurityAnalyzer`, `DeadlineCoherenceAnalyzer` and `CapabilityThrowAnalyzer` are
+collectively **8 %** of the marginal cost. Their per-component build-to-build spread is
+comparable to the marginal being extracted from it — `DeadlineCoherenceAnalyzer` read 0.156,
+0.192 and 0.487 s across three builds at 200 flows — so **their ordering among themselves is
+not established here** and should not be quoted as a ranking. The 8 % total is safe; the
+2.7-versus-3.5 is not. Separating them needs the per-phase instrumentation §5.1 used on
+`StepBindingAnalyzer`, not `/reportanalyzer`.
+
+#### Does the wall-clock harness measure a subject that binds?
+
+`scripts/generator-cost-probe/Program.cs` was, until `31e876f`, building its own
+`CSharpCompilation` out of parsed syntax trees and never supplying the global usings that
+`<ImplicitUsings>enable</ImplicitUsings>` produces, so the subject it measured did not bind
+and anything in the generator that resolves a signature walked away early. **This harness
+does not have that defect, and the reason is structural rather than lucky.**
+
+It does not construct a compilation. It runs `dotnet build` on a real project, so the SDK
+generates `GlobalUsings.g.cs` from that same property and passes it to `csc` like any other
+source file. On top of that it cannot silently proceed on an unbindable subject, because
+three checks run before any round is timed and each of them fails on one:
+
+1. the untimed setup build must succeed, or the run aborts with exit 3;
+2. the generated file count must be **exactly `flows + 1`** — one plan per flow plus the
+   manifest — and a flow that failed to analyse emits nothing;
+3. both arms must produce a **byte-identical-sized assembly**, which a control arm compiling
+   fewer generated sources cannot.
+
+All three passed at both sizes in all three runs of this section: **51 files and a 1 358 848
+byte assembly at 50 flows, 201 files and 5 551 104 bytes at 200.** Check (2) is the one that
+would have caught the probe's defect, and it is the check the probe had no equivalent of.
+
+**The two instruments do not disagree.** Run on the same tree in the same session, the
+relative gate reports the generator within **+0.20 %** of its committed baseline — unchanged
+— and this harness reports the 50-flow criterion within **0.1 points** of §5.2 — unchanged.
+They agree, by different means, that nothing since WP-28 has moved the generator's cost. The
+probe's *elapsed* column disagreed with itself by **51.5 %** and **56.0 %** between its own
+repeats in that same run, which is §5.3's argument for gating allocations rather than time,
+restated by accident.
+
 ---
 
 ## 6. What this does not claim
@@ -901,6 +1086,16 @@ leaves that phase with no gate at all unless something else is enforceable in th
 **What is no longer true is the implication that nothing could be blocking until the budget
 is met.** Something could, and now is.
 
+**§5.4 discharges the third consequence for the second time, and narrows the first to one
+component.** Re-measuring the split found what it was written to find: `StepBindingAnalyzer`
+has fallen from 37 % to 1.2 % and three analyzers that did not exist when §5 was written now
+sit above it. Consequence (1) is now a single item with no ambiguity about which — the
+generator is **90.5 %** of the marginal cost, and the other eight components together are
+9.5 %, so **optimising all of them perfectly would leave the criterion failing by 54
+points.** §5.4 also confirms the criterion is unchanged since §5.2 at 50 flows, which means
+`scale-overhead` stays advisory on the same reasoning as before: it has not recorded a pass,
+and the condition for removing `continue-on-error` is unmet.
+
 ---
 
 ## 9. History: the provisional +23 %, and why it is superseded rather than deleted
@@ -945,8 +1140,8 @@ The superseded run's own numbers remain in this document's history in git, and i
 # it took closer to an hour under the contention §3 describes.
 ./scripts/measure-scale-overhead.sh --rounds 15 --sizes 1,25,50,100,200
 
-# The criterion alone, faster.
-./scripts/measure-scale-overhead.sh --rounds 10 --sizes 200
+# The criterion alone, faster. This is what section 5.4 ran.
+./scripts/measure-scale-overhead.sh --rounds 12 --sizes 50,200
 
 # The RELATIVE gate (section 5.3). About a minute, and it is the one that runs on every
 # pull request. It does not measure the criterion above and does not claim to.
@@ -961,6 +1156,10 @@ The superseded run's own numbers remain in this document's history in git, and i
 # is distorted by the cold Roslyn start it forces on both arms, so it may report a fail
 # but the harness will not let it report a pass. Its per-size cost in milliseconds is
 # correct, because a constant in both arms cancels in the difference.
+#
+# Section 5.4 adds a second use for it: when the machine is loud — three concurrent builds
+# elsewhere on the box will do it — wall clock returns INCONCLUSIVE and this still answers,
+# because CPU time holds a 6 % IQR where wall clock spreads to 58 % in the same rounds.
 ./scripts/measure-scale-overhead.sh --no-compiler-server --rounds 8 --sizes 25,50,100,200
 
 # Where the cost goes (§5). Run this before quoting the split — §5.1 is the record of
