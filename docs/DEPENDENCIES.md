@@ -237,7 +237,9 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `Newtonsoft.Json` | `MIT` | nuspec | — |
 | `Npgsql` | `PostgreSQL` | nuspec | — |
 | `Perfolizer` | `MIT` | nuspec | — |
+| `RESPite` | `MIT` | nuspec | — |
 | `Shouldly` | `BSD-3-Clause` | nuspec | — |
+| `StackExchange.Redis` | `MIT` | nuspec | — |
 | `SonarAnalyzer.CSharp` | `SONAR-SOURCE-AVAILABLE-1.0` | read | `licenses/LICENSE.txt` |
 | `System.Buffers` | `MIT` | read | `LICENSE.TXT` |
 | `System.CodeDom` | `MIT` | nuspec | — |
@@ -249,6 +251,7 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `System.Composition.Runtime` | `MIT` | nuspec | — |
 | `System.Composition.TypedParts` | `MIT` | nuspec | — |
 | `System.Diagnostics.EventLog` | `MIT` | nuspec | — |
+| `System.IO.Hashing` | `MIT` | nuspec | — |
 | `System.IO.Pipelines` | `MIT` | nuspec | — |
 | `System.Management` | `MIT` | nuspec | — |
 | `System.Memory` | `MIT` | read | `LICENSE.TXT` |
