@@ -15,6 +15,20 @@
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <IncludeBuildOutput>false</IncludeBuildOutput>
 
+    <!--
+      No symbols package, and this is not a style preference. Directory.Build.props sets
+      IncludeSymbols repo-wide, which is right for every library that ships a lib/ folder.
+      This project ships only an analyzer asset, so the .snupkg it would produce has no
+      content at all, and pack fails it with NU5017 — after writing the .nupkg correctly,
+      so the failure looks like a packaging bug rather than an empty-symbols one.
+
+      It went unnoticed because nothing in this repository ran `dotnet pack` until a
+      template needed a local feed to reference the platform the way a real consumer does.
+      A build that cannot produce its own packages is a build nobody would discover was
+      broken until the first release.
+    -->
+    <IncludeSymbols>false</IncludeSymbols>
+
     <Description>
       FlowX IDE quick actions: code fixes for the mechanically repairable FLOWX diagnostics.
     </Description>
