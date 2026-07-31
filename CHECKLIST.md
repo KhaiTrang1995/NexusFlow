@@ -270,8 +270,17 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       now concrete: a 3× regression merged across four packages in silence. The job cannot
       just be made blocking while the criterion fails, so this wants a *relative* gate
       against the committed figure instead of an absolute one against the budget.
-      **Being bisected (WP-28); suspects are WP-20, WP-22, WP-24 and a sort-key fix, and
-      every previous guess at a hot spot in this project has been wrong**
+      **Bisected at WP-28 to one commit:** `c7ae70a`, WP-22's error-catalogue emission,
+      **5.60 → 27.28 ms/flow (×4.9)**. `Switch`, `Parallel` and the sort-key fix cost
+      nothing detectable; `FLOWX1011` never appeared in the generator's number, being an
+      analyzer. Stubbing the catalogue read returns `dev` to 7.36 — the control. Of the
+      reader's cost, **91 % was `GetTypeInfo`**, and **half of those binds were a duplicate
+      question** asked once in a `DescendantNodes` predicate and again in the `Where` after
+      it. Fixed: **25.4 → 20.4 ms/flow**, faster in 6 of 6 paired rounds, manifest
+      byte-identical. **The remaining ~80 % is what the feature costs** — deriving `errors`
+      from code binds every capability body, so generator cost now tracks how much
+      capability *implementation* exists rather than how many flows do. Whether that
+      catalogue is worth two thirds of the compile-time budget is a product decision
 - [ ] **WP-27** cut `StepBindingAnalyzer` 89 % — 4.70 → 0.53 ms per flow — by binding a
       step's type argument outside the `Define` body. 96 % of its cost was one
       `GetSymbolInfo` call: a node inside a statement cannot be bound without binding the

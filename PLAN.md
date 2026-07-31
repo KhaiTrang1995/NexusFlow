@@ -678,13 +678,30 @@ needs a profiler.
 > most likely a *relative* gate against the committed figure rather than an absolute one
 > against the budget.
 >
-> The suspects are the packages merged since: **WP-20** (`Switch`), **WP-22** (trigger and
-> error-catalogue emission — `ErrorCatalogueReader` follows every `Error`-typed expression
-> in ~262 capability types back to its literal code), **WP-24** (`Parallel`), and a
-> manifest sort-key fix. **WP-21** is an analyzer and should not appear in a generator
-> number at all; if it does, that is itself informative. **Not yet bisected** — that is
-> WP-28, in progress. Every previous guess about a hot spot in this project has been
-> wrong, so this list is suspects, not a finding.
+> **Bisected at WP-28. One commit, not a spread:** `c7ae70a`, WP-22's trigger and
+> error-catalogue emission, took the generator from **5.60 → 27.28 ms/flow (×4.9)**.
+> `Switch`, `Parallel` and the sort-key fix cost nothing detectable, and `FLOWX1011` never
+> appeared in the generator's number at all, being an analyzer. Stubbing the catalogue read
+> on current `dev` returns it to **7.36** — the control that closes the argument.
+>
+> **The mechanism was not the obvious one.** Of the reader's 1 229 ms at 50 flows, **1 118
+> is `SemanticModel.GetTypeInfo`** across 39 964 calls; `GetSymbolInfo` is 13 ms. Asking an
+> `InvocationExpression` its type costs 0.17 ms because it resolves the overload, and 4 268
+> of those account for 64 % of the bill — while only **4 % of the 55 790 nodes visited are
+> `Error`-typed at all**. `Roots` asked the same question about the same node twice, once in
+> the `DescendantNodes` predicate and again in the `Where` after it: 20 762 of the 39 964
+> binds were that duplicate. Fixed — **25.4 → 20.4 ms/flow, faster in 6 of 6 paired
+> rounds**, with the sample's manifest byte-identical to the committed baseline.
+>
+> **The remaining ~80 % is what the feature costs, and that is now a product question.**
+> Deriving `errors` from code means binding every capability body, so generator cost tracks
+> **how much capability implementation exists**, not how many flows do — 262 capability
+> types at ~3 ms each, on bodies the synthetic project keeps deliberately minimal, so a
+> real project pays more. Three larger cuts were considered and refused: skipping binds in
+> type-only syntactic positions (fails silently if the position list is wrong), caching a
+> factory's catalogue across capabilities (staleness), and making `errors` opt-in (changes
+> emission). The open question is whether an enumerated failure catalogue is worth roughly
+> two thirds of the compile-time budget — not another profiling pass.
 
 **The harness can now decline to answer.** Exit **2 = INCONCLUSIVE**, returned when the
 within-arm spread is too wide for a verdict to mean anything. It fired on WP-23's own
