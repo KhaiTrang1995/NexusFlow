@@ -30,6 +30,18 @@ and fail — `INCONCLUSIVE`, exit code 2 — returned when the within-arm spread
 control run in the same rounds, or the confidence interval says this machine cannot resolve
 the question. It fired on the first attempt at the verdict above, and that is the feature.
 
+Most of that generator cost buys one manifest field, and
+[**B13-error-catalogue-resolution.md**](B13-error-catalogue-resolution.md) asks how often
+that field can be produced at all. Against a corpus of 38 capabilities the reader publishes
+a catalogue for 61 % and withholds for 39 % — a number that document spends a section
+explaining is a property of the corpus rather than of any real codebase. The two findings
+that do not depend on the sample are that **four of the published catalogues are wrong**, in
+a design whose stated property is that they cannot be, and that the project layout
+[07-Capability-Model §4](../07-Capability-Model.md) prescribes produces no catalogue at all.
+It is the evidence half of
+[ADR-0014](../adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) §6, and it decides
+nothing.
+
 **None of that caught a 4.9× generator regression, and §5.1 is why.** A gate against a
 budget you are already failing reads the same before a regression as after it.
 [**generator-cost-gate.md**](generator-cost-gate.md) records the *relative* gate that
