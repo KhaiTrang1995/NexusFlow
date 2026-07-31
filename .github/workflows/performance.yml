@@ -102,6 +102,169 @@ jobs:
           set -o pipefail
           ./scripts/measure-build-overhead.sh 7 | tee -a "$GITHUB_STEP_SUMMARY"
 
+  generator-cost:
+    name: Generator cost vs the committed baseline
+    runs-on: ubuntu-latest
+    # BLOCKING, and it is the only gate on compile-time cost that can be.
+    #
+    # WHY THIS EXISTS. docs/benchmarks/B12-scale.md §5.2 bisects a commit that took
+    # FlowPlanGenerator from 5.60 to 27.28 ms per flow — 4.9× — and merged unnoticed
+    # along with three further working packages. The only gate on compile-time cost at
+    # the time was `scale-overhead` below: absolute, against a +8 % budget the project
+    # was already failing by a wide margin, and therefore advisory. An absolute gate you
+    # are already failing says exactly as much about a 4.9× regression as it does about
+    # a no-op commit, which is nothing.
+    #
+    # WHAT IT MEASURES. Bytes allocated by one run of FlowPlanGenerator over a synthetic
+    # project, compared against docs/benchmarks/generator-cost-baseline.json. Not wall
+    # clock: measured over twelve independent runs on a 4-core container at load averages
+    # from 5.8 to 21.1, the gated figure moved by 0.069 % while wall clock over the same
+    # runs moved by 123 %. That is why this job can be blocking on a hosted runner and
+    # `scale-overhead` cannot.
+    #
+    # It is the split scripts/check-benchmark-budgets.py already makes at run time —
+    # allocations are exact and gateable on shared hardware, timings are not — applied to
+    # compile time. The threshold is +2 %, 29× the worst deviation ever observed of the
+    # statistic it gates, and 1/50 of the +101 % the bisected commit produces.
+    #
+    # WHAT IT DOES NOT SAY. That the build is fast enough. It is not: P1's exit criterion
+    # is a wall-clock question, `scale-overhead` is the instrument for it, and it fails.
+    # The checker reprints that criterion on every run, including passing ones.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Measure, then gate against the committed baseline
+        # Exit codes are the gate, and each of the four means something different:
+        #
+        #   0  PASS          the generator costs what the baseline says.
+        #   1  FAIL          it costs more, or the subject/toolchain moved and the
+        #                    committed number no longer describes anything. Blocking.
+        #   2  INCONCLUSIVE  the run could not judge. NOT blocking — but not silent
+        #                    either; see below.
+        #   3  broken        a flow failed to analyse, or a build failed. Blocking,
+        #                    because that is a defect and not a measurement.
+        #
+        # INCONCLUSIVE is handled differently here than in `scale-overhead`, because it
+        # means something different. There, exit 2 means the runner was too busy to
+        # separate signal from scheduling noise — the weather, and failing a pull request
+        # for the weather is what that job's comment refuses to do. Here the measurement
+        # does not care how busy the runner is, so exit 2 means the same generator gave
+        # different answers about the same sources: a broken instrument, not a busy one.
+        # The right response to a broken instrument is to try it again and then say
+        # loudly that the gate did not run — so this retries once, and on a second
+        # INCONCLUSIVE raises a warning annotation that a reviewer sees on the pull
+        # request while leaving the merge unblocked. A gate that cannot judge must not
+        # pass quietly, and must not fail for something no author did.
+        run: |
+          set -o pipefail
+
+          # `|| return` on the first line, not a bare sequence: a measurement that exits
+          # non-zero has not written a usable samples file, and running the checker over a
+          # stale one from the previous attempt would turn a broken run into a verdict.
+          measure_and_check() {
+            ./scripts/measure-generator-cost.py --json generator-cost.json \
+              | tee -a "$GITHUB_STEP_SUMMARY" || return $?
+            ./scripts/check-generator-cost.py generator-cost.json \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+
+          set +e
+          measure_and_check
+          rc=$?
+          if [ "$rc" -eq 2 ]; then
+            echo "::notice::Generator cost measurement was inconclusive. Retrying once."
+            measure_and_check
+            rc=$?
+          fi
+          set -e
+
+          case "$rc" in
+            0) ;;
+            2) echo "::warning::The generator-cost gate did not run: the probe gave "\
+                    "inconsistent byte counts for identical sources, twice. This is not a "\
+                    "regression and it is not a pass. Investigate the probe before trusting "\
+                    "the next green run." ;;
+            *) exit "$rc" ;;
+          esac
+
+      - name: Publish a candidate baseline
+        # Not applied — offered. The committed baseline is recorded on a container, and
+        # nothing yet establishes that a hosted runner produces byte-identical counts;
+        # docs/benchmarks/generator-cost-gate.md is explicit that this is the design's
+        # one unverified assumption. If a runner ever disagrees by more than the
+        # threshold, the fix is to re-record the baseline where the gate runs, not to
+        # widen the threshold until the disagreement fits. This artifact is that
+        # re-recording, ready to download and commit.
+        if: always()
+        run: |
+          cp docs/benchmarks/generator-cost-baseline.json generator-cost-baseline.candidate.json
+          if [ -f generator-cost.json ]; then
+            ./scripts/check-generator-cost.py generator-cost.json \
+              --baseline generator-cost-baseline.candidate.json --record || true
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: generator-cost
+          path: |
+            generator-cost.json
+            generator-cost-baseline.candidate.json
+
+  generator-cost-self-test:
+    name: The generator-cost gate can fail
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: A regression under the threshold must fail the gate
+        # A gate nobody has seen fail is an assumption, not a gate — the same argument
+        # `gate-self-test` below makes for the allocation budgets. This one takes the
+        # committed baseline, fabricates a measurement 2.5 % above it, and asserts the
+        # checker rejects it. 2.5 % rather than 100 % on purpose: a self-test that only
+        # proves a doubling is caught proves nothing about where the threshold actually
+        # sits.
+        run: |
+          python3 - <<'PY'
+          import json
+          baseline = json.load(open('docs/benchmarks/generator-cost-baseline.json'))
+          sizes = []
+          for flows, entry in baseline['sizes'].items():
+              sizes.append({
+                  'flows': int(flows),
+                  'allocated_bytes': int(entry['allocatedBytes'] * 1.025),
+                  'allocated_bytes_per_flow': 0,
+                  'spread_percent': 0.01,
+                  'elapsed_ms': 0,
+                  'elapsed_spread_percent': 0,
+                  'generated_trees': entry['generatedTrees'],
+                  'generated_chars': entry['generatedChars'],
+                  'diagnostics': entry['diagnostics'],
+                  'sources_sha256': entry['sourcesSha256'],
+              })
+          recorded = baseline['recordedOn']
+          json.dump({
+              'meta': {
+                  'environment': {
+                      'roslyn_product_version': recorded['roslyn'],
+                      'roslyn_assembly_version': recorded['roslynAssemblyVersion'],
+                      'framework': recorded['framework'],
+                      'server_gc': False,
+                  },
+              },
+              'sizes': sizes,
+          }, open('/tmp/injected.json', 'w'))
+          PY
+
+          if python3 scripts/check-generator-cost.py /tmp/injected.json; then
+            echo "::error::The gate accepted an injected 2.5 % generator cost regression."
+            exit 1
+          fi
+          echo "Gate correctly rejected the injected regression."
+
   scale-overhead:
     name: P1 scale — 200-flow build overhead
     runs-on: ubuntu-latest
@@ -117,6 +280,15 @@ jobs:
     # machine was too noisy to tell the two apart, pipefail is set below, and the step
     # is shown as failed either way. Only the job's effect on the pull request is
     # suppressed.
+    #
+    # WHAT CHANGED, AND WHAT DID NOT. `generator-cost` above is now blocking, and it is
+    # a *relative* gate: it fails a pull request that makes the generator more expensive
+    # than the committed figure, whatever the absolute overhead happens to be. That is
+    # the gate the regression bisected in B12-scale.md §5.2 needed and did not have.
+    # It does not discharge this job. A relative gate cannot answer "is the build fast
+    # enough", only "did this change make it worse", and P1's exit criterion is the
+    # first question. This job stays, still measures wall clock, and stays advisory
+    # until it can pass.
     #
     # Remove this line the moment B12-scale.md records a PASS — not an INCONCLUSIVE.
     # A gate left advisory after it can pass is a gate nobody reads; a gate made

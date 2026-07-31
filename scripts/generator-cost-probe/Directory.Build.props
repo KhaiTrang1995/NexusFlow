@@ -1,0 +1,15 @@
+<Project>
+
+  <!--
+    Intentionally empty, and it stops MSBuild's walk up to the repository root — the same
+    device scripts/generate-scale-project.py uses, for the same reason.
+
+    The repository's Directory.Build.props turns warnings into errors, enables the trim
+    and AOT analysers and forces documentation comments. None of that belongs on a
+    measurement host, and more importantly: a change to the repository's build settings
+    must not be able to change what this probe reports. The number is committed as a
+    baseline and compared against later runs, so anything that can move it silently is a
+    defect in the harness.
+  -->
+
+</Project>

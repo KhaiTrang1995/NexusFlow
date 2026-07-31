@@ -50,6 +50,23 @@
 > the feature costs. **The criterion is not closer**: 50 flows measures +46.6 %
 > [+42.8, +51.3] against a +8 % budget.
 
+> [!IMPORTANT]
+> **§5.3 answers the question §5.2 leaves behind — why nothing stopped it — and closes it
+> with a blocking gate.** The reason a 4.9× regression merged in silence is not that the CI
+> job was advisory. It is that the job was **absolute**: it compared the build against a
+> +8 % budget the project was already failing by ten points, so it said the same thing
+> before the regression as after it.
+>
+> [**generator-cost-gate.md**](generator-cost-gate.md) records the replacement — a
+> *relative* gate against a committed baseline, blocking on every pull request, which fails
+> `c7ae70a` at **+102 %** against a **+2 %** threshold. It does not gate wall clock,
+> because wall clock cannot do this: twelve identical runs of the same tree disagreed with
+> each other by **+139 %** while the real 4.9× regression showed as **+77 %**. It gates
+> bytes allocated by the generator, which over those same twelve runs moved by **0.069 %**.
+>
+> **This document's criterion is unchanged and still failing**, and the new gate reprints
+> it on every run so that a green relative gate cannot be read as a budget that is met.
+
 ---
 
 ## 1. What this measures, and why it is a separate document
@@ -679,6 +696,91 @@ profiling one. It is whether a manifest that enumerates every capability's failu
 worth roughly two thirds of FlowX's compile-time budget — and if it is, whether §8's
 consequences should be rewritten around a budget that was set before that feature existed.
 
+### 5.3 WP-31 — why nothing caught it, and the gate that now does
+
+Recorded **2026-07-31**, same container. §5.2 found what the regression was. This is the
+answer to a different question it raises and does not ask: **four working packages went by
+and CI said nothing.** Full record in
+[**generator-cost-gate.md**](generator-cost-gate.md); this is the summary and the part
+that revises §8.
+
+**The diagnosis is not "the job was advisory".** That was the first answer and it is wrong.
+`scale-overhead` is advisory, but its exit code is real, its output is in the log, and its
+step is shown as failed. Somebody reading it would have seen the same thing before
+`c7ae70a` and after it: **FAIL, over budget.** The job compares the build against +8 % and
+the build was at +18 % before the regression and +77 % after it. **A gate that is already
+red carries no information about the commit under test.** Making it blocking would not have
+helped either; it would have blocked every pull request in P1 equally, including the ones
+that made things better.
+
+**What was missing was a relative gate** — one that asks *did this commit make it worse
+than the figure we last agreed on*, which has an answer on every commit whatever the
+absolute number is. Two gates in this repository already work that way and say so in their
+comments: the benchmark baseline, and the ecommerce manifest baseline. This is the third.
+
+**It cannot be built on wall clock, and that is a measurement rather than an opinion.**
+Twelve independent runs of an in-process probe on an *unchanged* tree — no MSBuild, no
+restore, no compiler server, on a container at load 5.8 to 21.1:
+
+| | 25 flows | 50 flows |
+|---|---:|---:|
+| Elapsed ms, worst disagreement between two identical runs | **+139 %** | **+166 %** |
+| Elapsed ms, what `1687072` → `c7ae70a` actually produces | +77 % | +39 % |
+| **Bytes allocated, worst disagreement between two identical runs** | **0.014 %** | **0.071 %** |
+| **Bytes allocated, what `1687072` → `c7ae70a` produces** | **+102.1 %** | **+103.6 %** |
+
+**The timing rows are the finding.** A threshold wide enough not to fire on an unchanged
+tree is two to four times too wide to fire on the incident, with every source of noise a CI
+runner adds already removed. No number of rounds fixes a signal smaller than the noise;
+this harness already spends fifteen sandwiched rounds and an A/A control to reach a 3.9–8.7 %
+floor, and that is still the wrong order of magnitude for a per-commit gate.
+
+**So the gate counts allocations instead**, which is the split
+[README.md §5](README.md#5-gate-design--and-a-claim-wp-3-got-wrong) already argues for at
+run time — allocations are exact on shared hardware, timings are not — applied to compile
+time. It is close to a direct measure of the thing §5.2 identified: the generator's cost is
+semantic-model queries, answering one binds a statement, and binding allocates.
+
+**The bisect replays through it, and reads better in two places.**
+
+| Commit | §5.2, ms per flow | Bytes per flow | × vs `1687072` |
+|---|---:|---:|---:|
+| `a75c1f0` | 7.04 | 346 323 | 1.000× |
+| `1687072` | 5.60 | 346 319 | 1.000× |
+| **`c7ae70a`** | **27.28** | **710 013** | **2.050×** |
+| `2d108c7` | 27.52 | 710 029 | 2.050× |
+| `eb19b31` | 25.84 | 710 058 | 2.050× |
+| `4acbb04` | 26.16 | 713 000 | 2.059× |
+| `e7042c3` | 26.00 | 713 787 | 2.061× |
+| `ae35cd8` | 22.92 | 713 789 | 2.061× |
+
+Flat, one step at `c7ae70a`, flat again — §5.2's structure exactly. The two places it reads
+better are both places §5.2 was careful to claim nothing:
+
+* **The first two rows differ by 26 % there and by nothing here.** `1687072..a75c1f0` is
+  four documentation and CI commits with **no change to `src/FlowX.Compiler` at all**, so
+  the true difference is zero. §5.2 correctly declined to interpret 5.60 against 7.04,
+  writing that nothing inside a ±15 % band is readable. This instrument reads them as equal
+  to one part in 87 000.
+* **"Cost nothing detectable" becomes a number.** `Switch`/`Case` costs **+0.41 %** and
+  `Parallel`/FLOWX1013 costs **+0.11 %** — the same conclusion, stated sharply. That those
+  are what real feature work in this generator costs is also the argument for where the
+  threshold sits: **+2 %** is fifty times below the regression and five times above the
+  dearest feature in the window.
+
+**What it does not do.** It is a proxy: 2.05× in bytes where the clock says 4.87×, because
+part of `c7ae70a`'s time is repeated binds that hit Roslyn's caches and allocate little. It
+does not run MSBuild, the analyzers, or a real build, so it cannot see a regression that
+lives in any of those. And **it says nothing whatever about the +8 % criterion**, which is
+still measured by this document's harness in wall clock and is still failing.
+
+**§8's third consequence — "re-measure the split whenever the criterion is quoted" — is
+now partly mechanical.** It was written after §5.1 found a tripled generator by hand, and
+its cost was six builds and somebody remembering. The relative gate is that check run
+automatically on every pull request, for the generator. It does not cover
+`StepBindingAnalyzer` or the other analyzers, which is the part of that consequence still
+carried by a human.
+
 ---
 
 ## 6. What this does not claim
@@ -785,6 +887,20 @@ that happens keep exit code 2 non-blocking: `INCONCLUSIVE` means the runner coul
 resolve the question, and failing a pull request for that fails it for the weather. The
 workflow comment spells out the exact blocking form.
 
+**§5.3 adds a second job next to it, `generator-cost`, and that one is blocking.** The two
+are not alternatives and neither substitutes for the other:
+
+| Job | Asks | Metric | Class |
+|---|---|---|---|
+| `generator-cost` | did *this commit* make the generator dearer than the committed figure | bytes allocated | **blocking** |
+| `scale-overhead` | is the build within the +8 % budget | wall clock, end to end | advisory, until it can pass |
+
+The reasoning above for keeping `scale-overhead` advisory is unchanged and is *why* the
+relative gate had to exist: a criterion that cannot be enforced for the length of a phase
+leaves that phase with no gate at all unless something else is enforceable in the meantime.
+**What is no longer true is the implication that nothing could be blocking until the budget
+is met.** Something could, and now is.
+
 ---
 
 ## 9. History: the provisional +23 %, and why it is superseded rather than deleted
@@ -831,6 +947,11 @@ The superseded run's own numbers remain in this document's history in git, and i
 
 # The criterion alone, faster.
 ./scripts/measure-scale-overhead.sh --rounds 10 --sizes 200
+
+# The RELATIVE gate (section 5.3). About a minute, and it is the one that runs on every
+# pull request. It does not measure the criterion above and does not claim to.
+./scripts/measure-generator-cost.py --json /tmp/cost.json
+./scripts/check-generator-cost.py /tmp/cost.json
 
 # Keep the raw per-build samples, and re-read the statistics without re-measuring.
 ./scripts/measure-scale-overhead.sh --rounds 15 --json /tmp/scale.json
