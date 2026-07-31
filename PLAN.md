@@ -1828,16 +1828,27 @@ while [CHECKLIST §1](CHECKLIST.md) ticked *"every work package from WP-0 to WP-
 mechanically checkable exit criterion"*.
 
 It matters more than an unnumbered verb usually would, because
-[ADR-0003](docs/adr/ADR-0003-execution-profiles.md) leans on it **twice**: it is the standing
-mitigation for *"a wrong profile is a real bug class"*, and it is why `FLOWX1012`'s second
-blocker is described as gone. An ADR's live mitigation being invisible to the plan is the
-same class of gap as a work package with no exit criterion — the plan cannot tell you
-whether the thing an ADR depends on still works.
+[ADR-0003](docs/adr/ADR-0003-execution-profiles.md) leans on it as the standing mitigation
+for *"a wrong profile is a real bug class"*. An ADR's live mitigation being invisible to the
+plan is the same class of gap as a work package with no exit criterion — the plan cannot
+tell you whether the thing an ADR depends on still works.
 
-It reads only the manifest, so it does not disturb `CliDependsOnNothingButTheManifest`, and
-it flags exactly the accident `FLOWX1012` would catch at build time — from the manifest
-rather than the source, and after the build rather than during it. **It does not retire
-`FLOWX1012`** (WP-60): a post-build report and a build error are different products.
+It reads only the manifest, so it does not disturb `CliDependsOnNothingButTheManifest`.
+
+> **What this section claimed on 2026-07-31 and what WP-60 found by reading the check.**
+> It said the verb *"flags exactly the accident `FLOWX1012` would catch at build time"*, and
+> ADR-0003 said the same. **Both were wrong, and the two rules are disjoint rather than
+> overlapping.** `ProfileCostCheck` selects flows whose manifest profile is `Durable` and
+> reports those with no compensation, no signal and no timer. **A compensable `Ephemeral`
+> flow is never in the set it examines.** The verb catches the *expensive* half of a wrong
+> profile — durability bought for nothing — and until WP-60 the *lossy* half had no check
+> anywhere, at build time or after it.
+>
+> They are complementary: one is a judgement about intent across a whole manifest that no
+> analyzer can make, the other a property of one source file that no manifest records.
+> Neither retires the other. This is a small error with a specific shape worth naming — a
+> mitigation was recorded as covering a gap because both concerned "the wrong profile", and
+> nobody opened the file to check which half.
 
 ### The counterexample register [ADR-0011](docs/adr/ADR-0011-fixed-policy-stage-order.md) requires — **does not exist**
 

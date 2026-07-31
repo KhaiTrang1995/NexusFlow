@@ -131,6 +131,9 @@ ignore the output.
 | `FLOWX-DIFF-004` | `Durable` profile withdrawn | instances stop surviving a process kill and in-flight work is lost — with no signature change to catch it |
 | `FLOWX-DIFF-005` | trigger removed | a route stops answering, or a consumer group stops draining a topic producers keep filling |
 | `FLOWX-DIFF-006` | member no longer `sensitive` | a value that was redacted now reaches logs, traces and the journal, for the whole retention window |
+| `FLOWX-DIFF-007` | idempotency key became required | requests without the key are rejected at admission, before the flow exists — every caller that does not send one starts failing |
+| `FLOWX-DIFF-008` | idempotency key no longer required | deduplication is withdrawn: a caller's retry after a timeout executes the flow a second time instead of returning the recorded result. **Nothing fails; the work simply happens twice**, which is why this direction is breaking too |
+| `FLOWX-DIFF-009` | agent confirmation weakened | a model that had to ask a human before invoking this flow now invokes it, and nothing else in the build notices |
 | `FLOWX-DIFF-010` | capability removed | flows pinned to that major no longer resolve |
 | `FLOWX-DIFF-011` | capability input contract changed within a major | within a major the contract is frozen; nobody can detect this from the version |
 | `FLOWX-DIFF-012` | capability output contract changed within a major | as above |
@@ -154,6 +157,7 @@ ignore the output.
 | `FLOWX-DIFF-105` | `idempotent: false → true` |
 | `FLOWX-DIFF-106` | side effect removed |
 | `FLOWX-DIFF-107` | member marked `sensitive` |
+| `FLOWX-DIFF-108` | agent confirmation strengthened — a human is asked in more cases than before |
 
 ### 3.3 Neutral — reported, never gated
 
@@ -164,6 +168,27 @@ ignore the output.
 | `FLOWX-DIFF-202` | execution profile changed other than losing `Durable` | cost and delivery semantics change; the contract does not |
 | `FLOWX-DIFF-203` | deadline changed | an operational budget tuned against production latency, not a promise — though shortening one can turn slow-but-successful executions into timeouts |
 | `FLOWX-DIFF-204` | deprecation notice added or removed | nothing breaks today; it is the signal to start migrating |
+| `FLOWX-DIFF-205` | schedule time zone changed | the schedule fires at a different wall-clock time, and its DST behaviour changes with it — operationally significant, contractually nothing |
+| `FLOWX-DIFF-019` | **one side's error catalogue is withheld, so the two were not compared** | the compiler could not resolve a catalogue, which is a fact about the *build* and not about the contract. It sits out of numeric order because it belongs to the 01x error-catalogue family and to this severity |
+
+**`FLOWX-DIFF-019` exists because its absence was worse than a false negative.**
+`ManifestDocument.Errors` used to default to an empty list, which collapsed *"the compiler
+withheld this catalogue"* into *"this capability declares no errors"* — so a build that
+merely stopped resolving a catalogue reported every code as removed, `FLOWX-DIFF-017`,
+**Breaking**, in a gate that blocks merges. The fix was to make withheld nullable and skip
+the comparison; this code is what stops the skip being indistinguishable from "no changes".
+
+*It shipped emitting this code and documenting it nowhere, and it was not alone.* Until
+2026-07-31 **six** of the codes `flowx diff` emits had no row in this document:
+`FLOWX-DIFF-007`, `008`, `009` (all **Breaking**), `108`, `205` and `019`. Three of them
+block a merge. A reader who hit one in CI output had no page to look it up in — the state
+`docs/diagnostics/README.md` forbids for the `FLOWX1xxx` family, never checked for this one
+because the two families are governed by different files and only one of them had a rule.
+
+**`ManifestDiffCodesAreDocumented` now closes the set in both directions**, so a code that
+is emitted and unlisted fails the build, and so does a row here describing a code nothing
+emits. It was written after the gap was found by hand, which is the wrong order and is
+recorded as such.
 
 ---
 
