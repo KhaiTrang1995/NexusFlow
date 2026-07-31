@@ -64,7 +64,7 @@ by modifying something that runs.
 | `FlowX.Compiler` | analyzers + generators (analyzer asset, not a runtime dependency) | via Sdk |
 | `FlowX.Runtime` | engines | via Sdk |
 | `FlowX.Runtime.Durable` | journal, leases, replay | apps with durable flows |
-| `FlowX.Testing` | context doubles today; `FlowTestHost`, virtual time and assertions in P1–P4 | test projects |
+| `FlowX.Testing` | context doubles + `FlowTestHost` (substitution); virtual time and durable replay in P2–P4 | test projects |
 | `FlowX.Http` / `.Kafka` / `.Cron` / … | trigger + publisher plugins | as needed |
 | `FlowX.Cli` | dotnet tool | developer machines, CI |
 
@@ -167,13 +167,12 @@ test — a diagnostic that fails to explain itself fails the build (P12).
 
 ## 6. Testing kit
 
-> **What exists today is item 1.** `FlowX.Testing` ships two context doubles —
-> `TestCapabilityContext` and `TestFlowContext` — and nothing else. Items 2–4 need the
-> flow test host, virtual time and the durable journal, which arrive with P1–P4. The
-> rest of this section describes the intended kit; it is not a description of the
-> current package.
+> **[23-Testing-Strategy](23-Testing-Strategy.md) is the full account of testing.** This
+> section is the SDK's view of it: what the package contains and what a call site looks
+> like. Items 1 and 2 below ship; items 3 and 4 need the durable journal and an
+> integration harness and do not exist.
 
-### What ships now
+### 1 — a capability, as a plain class
 
 ```csharp
 // A capability is a class with a method. Test it as one.
@@ -210,44 +209,56 @@ abstract with nine members, so the first thing every consumer wrote was the same
 thirty-line stub — the reference sample's own tests carried one. Ceremony that every
 user pays is a platform defect, not a user problem.
 
-### Intended kit
+### 2 — a flow, with capabilities substituted
+
+`FlowTestHost` runs the compiled flow in the test process: the real engine, the real
+generated plan, the real pooled context and compensation stack, with the capabilities the
+test names replaced by delegates.
 
 ```csharp
-// 1 — capability: a pure function. No host, no DI, no infrastructure.
-var result = await new ReserveInventory(fakeStore)
-    .ExecuteAsync(new ReserveRequest("SKU-1", 2), new TestCapabilityContext(), default);
-
-// 2 — flow: real orchestration, substituted capabilities.
-var host = FlowTestHost.For<PlaceOrderFlow>()
-    .Substitute<CapturePayment>(_ => Result.Fail<Capture>(PaymentErrors.Declined("insufficient_funds")))
-    .WithVirtualTime()
+var host = FlowTestHost
+    .For(PlaceOrderFlow.Plan, new PlaceOrderFlow.Dispatcher(capture, release, reserve, validate))
+    .Substitute("payment.capture", OrderErrors.PaymentDeclined("insufficient funds"))
     .Build();
 
-var outcome = await host.RunAsync(AnOrder());
+var run = await host.RunAsync(new PlaceOrder("SKU-1", 4, "tok"), ct);
 
-outcome.Should().HaveFailedWith("payment.declined");
-outcome.Should().HaveCompensated<ReleaseInventory>();
-outcome.Trace.Should().HaveExecutedInOrder(
-    "order.validate", "inventory.reserve", "payment.capture", "inventory.release");
-
-// 3 — durable semantics: crash and resume, deterministically.
-var durable = FlowTestHost.For<PlaceOrderFlow>().WithJournal(InMemoryJournal.Create()).Build();
-await durable.RunUntilStep(2);
-await durable.SimulateNodeCrash();
-var resumed = await durable.ResumeOnNewNode();
-resumed.Should().HaveCompleted();
-resumed.Should().NotHaveReexecuted("inventory.reserve");   // the property that matters
-
-// 4 — trigger: end to end through the real transport.
-await using var it = await IntegrationTestHost.CreateAsync(c => c.UseKafka().UsePostgresJournal());
-await it.Kafka.PublishAsync("orders.requested", AnOrder());
-await it.WaitForFlow("order.place").ToComplete(TimeSpan.FromSeconds(10));
+run.Error!.Code.ShouldBe("payment.declined");
+run.Compensation.ShouldBe(CompensationOutcome.Succeeded);
+run.Trace.Executed.ShouldBe(["order.validate", "inventory.reserve", "payment.capture"]);
+run.Trace.Compensated.ShouldBe(["inventory.release"]);
 ```
 
-`WithVirtualTime()` is what makes resilience testing practical: retries,
-timeouts, breaker windows and multi-day durable timers all execute instantly and
-deterministically. Tests that sleep are the reason resilience is usually
-untested; FlowX removes the excuse.
+> **This block used to read `FlowTestHost.For<PlaceOrderFlow>()`, with
+> `.Substitute<CapturePayment>(…)`, `.WithVirtualTime()` and `HaveCompensated<T>()`
+> assertions.** None of that was written, and two of the three could not be: the
+> generated `Dispatcher` takes its capabilities as concrete sealed types, so
+> `For<TFlow>()` needs reflection over generated members and a container to construct
+> them — the first breaks constraint C2 and the second is a mock framework. Substitution
+> is keyed by capability id, which is what the plan and the manifest are keyed by. See
+> [23 §4](23-Testing-Strategy.md#4-flowtesthost-in-detail).
+
+### 3 and 4 — durable semantics and triggers, neither of which exists
+
+```csharp
+// 3 — crash and resume, deterministically. NOT SHIPPED: needs the journal (P2).
+var durable = FlowTestHost.For(…).WithJournal(InMemoryJournal.Create()).Build();
+await durable.RunUntilStep(2);
+await durable.SimulateNodeCrash();
+
+// 4 — end to end through the real transport. NOT SHIPPED: no integration harness.
+await using var it = await IntegrationTestHost.CreateAsync(c => c.UseKafka().UsePostgresJournal());
+await it.Kafka.PublishAsync("orders.requested", AnOrder());
+```
+
+`WithJournal`, `RunUntilStep`, `SimulateNodeCrash`, `ResumeOnNewNode` and
+`IntegrationTestHost` are all unwritten. So is `WithVirtualTime()`, and it is worth being
+exact about why: it accelerates retries, timeouts and breaker windows, and **none of those
+executes** — a step's policy chain reaches the plan and the runtime never reads it
+([10, header](10-Policy-Framework.md)). `FlowTestClock` ships instead: a clock a test
+advances by hand, which covers the deadline, the one time-dependent behaviour that does
+run. Tests that sleep are still the reason resilience is usually untested; the excuse is
+removed for the part that exists.
 
 ---
 

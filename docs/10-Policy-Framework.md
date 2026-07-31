@@ -307,6 +307,14 @@ public async Task PaymentGateway_policy_opens_breaker_after_sustained_failures()
 instant. Resilience tests that sleep in real time are why nobody writes
 resilience tests; FlowX removes the excuse.
 
+> **`FlowTestHost` now exists and the block above is still not runnable.** It runs a
+> flow with capabilities substituted — see [23 §4](23-Testing-Strategy.md#4-flowtesthost-in-detail)
+> for the shape, which is `For(plan, dispatcher)` and substitution by capability id, not
+> `For<TFlow>()`. What it does not have is `WithVirtualTime()`, `host.Policy<T>(…)` or
+> `host.Metrics`, and none of the three can be built before the Policy Engine is: there is
+> no breaker to open and no retry counter to read. This block stays as the specification
+> the P4 host is built to.
+
 ---
 
 ## 11. Anti-patterns

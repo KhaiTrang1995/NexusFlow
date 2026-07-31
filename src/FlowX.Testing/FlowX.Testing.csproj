@@ -2,22 +2,38 @@
 
   <PropertyGroup>
     <Description>
-      Test doubles for FlowX contracts: a CapabilityContext and a FlowContext with
-      fixed, overridable values, so testing a capability costs one expression.
+      The FlowX testing kit: context doubles for testing a capability as a plain class,
+      and FlowTestHost, which runs a compiled flow in-process with its capabilities
+      substituted, so control flow, compensation and output can be asserted directly.
     </Description>
-    <PackageTags>flowx;testing;test-double</PackageTags>
+    <PackageTags>flowx;testing;test-double;test-host</PackageTags>
     <!-- Public surface, so it is documented like any other shipped package. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>
     <!--
-      Abstractions only, and deliberately: a test double for the contract surface must
-      not drag the runtime into a user's test project. If this ever needs FlowX.Runtime,
-      the thing being built is an integration harness, not a test double, and belongs
-      somewhere else.
+      This used to be Abstractions only, over a comment saying that anything needing
+      FlowX.Runtime was an integration harness and belonged elsewhere. FlowTestHost
+      (WP-49) is the case that comment did not anticipate and the reference is
+      deliberate.
+
+      The distinction the old comment was reaching for is real, and it is not
+      "which assemblies are referenced" — it is what the thing under test is. This
+      package runs the REAL engine over the REAL compiled plan in the test process:
+      no server, no container, no transport, no journal, no network. That is a unit
+      test of a flow, and a flow's unit is its control flow, which only the engine
+      can produce. An integration harness — a real transport, Testcontainers, a
+      journal — remains out of scope and out of this package (docs/23 §6).
+
+      There is nothing to drag in that a consumer does not already have: a project
+      testing its own flows references the application, and the application
+      references FlowX.Runtime. Layering still points inward, and the fitness
+      function in FlowX.Architecture.Tests names the new bound.
     -->
     <ProjectReference Include="../FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../FlowX.Runtime/FlowX.Runtime.csproj" />
   </ItemGroup>
 
 </Project>
