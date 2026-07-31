@@ -36,6 +36,20 @@
 > and the fact that two of their three components still reproduce is what makes the third's
 > change readable at all.
 
+> [!IMPORTANT]
+> **§5.2 answers §5.1's closing question by bisect.** The generator's growth is **one
+> commit** — `c7ae70a`, WP-22's capability error catalogues — which takes it from 5.60 to
+> **27.28 ms per flow**, 4.9×. `Switch`/`Case`, `Parallel`/FLOWX1013 and the manifest
+> sort-key fix cost nothing detectable; FLOWX1011 is an analyzer and never appeared here.
+> Stubbing out the catalogue read returns the generator to 7.36 ms per flow, which is the
+> control that closes it.
+>
+> **It is not a defect.** 93 % of the reader is `SemanticModel.GetTypeInfo`, asked of every
+> expression in every capability body, because deriving `errors` from the code means binding
+> the code. §5.2 removed a duplicated bind worth **20 %** and argues that the rest is what
+> the feature costs. **The criterion is not closer**: 50 flows measures +46.6 %
+> [+42.8, +51.3] against a +8 % budget.
+
 ---
 
 ## 1. What this measures, and why it is a separate document
@@ -482,6 +496,189 @@ terms. It is not worth reporting as progress against the +8 % budget.
 generator, and the first question for it is not "how do we make it faster" but **"what made
 it 3.6× slower, and was that intended?"**
 
+### 5.2 WP-28 — the bisect, and the answer to §5.1's question
+
+Recorded **2026-07-31**, same container. §5.1 ended by asking what made the generator 3.6×
+dearer and whether it was intended. **One commit did, and it was intended — it is what the
+`errors` catalogue costs.**
+
+#### The method
+
+`git log a75c1f0..dev --first-parent` is thirteen commits: seven merges carrying code
+(WP-20 through WP-26), five documentation commits, and one analyzer performance change.
+Every merge was probed, then the winning merge was opened and its two underlying commits
+probed individually. A linear scan rather than a binary search: eight probes cost about ten
+minutes, and a scan gives the per-commit contribution a bisect throws away.
+
+**The probe is Roslyn's own `FlowPlanGenerator` execution time**, from §5's `/reportanalyzer`
+command, at 25 and 50 flows, three builds per size, medians, marginal cost taken across the
+pair. Not the harness: a full harness run per bisect step is half an hour, and a 3× effect
+does not need that resolution. `scripts/generate-scale-project.py` is byte-identical across
+the whole range, so every probe compiles the *same* synthetic project and only the compiler
+under it changes.
+
+**The probe was validated against the harness at both endpoints**, which is the check that
+makes it usable. Eight rounds at 50 flows, wall clock, on a machine at load average 2.7–4.2:
+
+| Tree | Harness, FlowX's total cost | Probe, `FlowPlanGenerator` alone |
+|---|---:|---:|
+| `a75c1f0` (§3's tree) | **+12.03 ms per flow**, +17.5 % [+11.7, +25.8] | 7.04 ms per flow |
+| `dev` | **+33.26 ms per flow**, +52.9 % [+49.8, +55.9] | 22.9–25.4 ms per flow |
+
+The harness's baseline row reproduces §3's 50-flow record (+13.1 % there, +17.5 % here,
+overlapping intervals). The probe sits about 25 % below the harness at both ends, which is
+expected — it times one component and the harness prices the whole of FlowX — and it tracks
+the ratio, which is all a bisect needs.
+
+#### The per-commit numbers
+
+Marginal `FlowPlanGenerator` cost, 25 → 50 flows, median of three builds per size, with the
+1-minute load average observed across each probe:
+
+| Commit | | ms per flow | load |
+|---|---|---:|---|
+| `a75c1f0` | §3 and §5's tree | 7.04 | 1.9–2.4 |
+| `1687072` | WP-22's merge base | 5.60 | 2.1–2.6 |
+| **`c7ae70a`** | **WP-22 — triggers and capability error catalogues** | **27.28** | 2.3–2.6 |
+| `2d108c7` | WP-22 merged, with the manifest sort-key fix | 27.52 | 3.5–4.2 |
+| `eb19b31` | WP-21 merged — FLOWX1011 predicate purity | 25.84 | 3.1–4.1 |
+| `4acbb04` | WP-20 merged — `Switch` / `Case` / `Default` | 26.16 | 2.3–2.9 |
+| `e7042c3` | WP-24 merged — `Parallel` and FLOWX1013 | 26.00 | 1.6–2.2 |
+| `ae35cd8` | `dev` | 22.92 | 2.2–2.5 |
+| — | `dev`, with the catalogue read stubbed out | **7.36** | 2.5–3.0 |
+
+**It is one commit, not a spread.** `c7ae70a` takes the generator from 5.60 to 27.28 ms per
+flow — **+21.7, or 4.9×** — and nothing after it moves. The 22.9 to 27.5 range across the
+post-WP-22 rows is session-to-session drift on this machine, not a trend: `dev` itself
+measured 22.92 in one session and 25.4 in another, so nothing inside a ±15 % band is
+readable, and every one of those rows is inside it.
+
+**Three of the four suspects are exonerated by measurement.** `Switch`/`Case`,
+`Parallel`/FLOWX1013 and the manifest sort-key fix each cost nothing detectable in the
+generator. FLOWX1011 is an analyzer and, as expected, does not appear in the generator's
+number at all — §5.1 already prices it at 0.03 ms per flow.
+
+**And the last row is the control that closes it.** Stubbing `ErrorCatalogueReader.Read` to
+return `null` — nothing else changed — returns the generator to **7.36 ms per flow**, the
+pre-WP-22 figure to within the probe's noise. The regression is not merely correlated with
+the error catalogue; it *is* the error catalogue.
+
+#### The mechanism, instrumented rather than reasoned about
+
+`ErrorCatalogueReader` was instrumented with counters around each phase and one build taken
+at 50 flows — 262 capability types, which is what the synthetic project has:
+
+| | calls | ms |
+|---|---:|---:|
+| `ErrorCatalogueReader.Read` | 262 | **1 229** |
+| — `Compilation.GetSemanticModel` | 524 | 2 |
+| — `Roots` (the walk) | 524 | 1 196 |
+| — — `SemanticModel.GetTypeInfo` | 39 964 | **1 118** |
+| — — `SemanticModel.GetSymbolInfo` | 1 572 | 13 |
+
+Against a generator total of ~2 500 ms for that build. **The reader is half the generator,
+and 93 % of the reader is one call.** `GetSymbolInfo` costs 13 ms for the same reason
+§5.1's analyzer's later `.Step<T>()` lookups were free: by the time it is asked, the type
+query has already bound everything it needs.
+
+`Roots` walks every node of the capability's class declaration and asks each expression its
+type, because an expression's type is the only thing that identifies a failure path.
+55 790 nodes are visited to find **1 572** that are `Error`-typed — a hit rate of 4 %. Split
+by syntax kind, the bill is not spread evenly:
+
+| Node kind | `GetTypeInfo` calls | ms | of which `Error`-typed |
+|---|---:|---:|---:|
+| `InvocationExpression` | 4 268 | **717.6** | 1 048 |
+| `IdentifierName` | 21 868 | 200.8 | 524 |
+| `SimpleMemberAccessExpression` | 5 916 | 115.9 | 0 |
+| `GenericName` | 1 796 | 63.1 | 0 |
+| everything else (11 kinds) | 6 116 | 20.5 | 0 |
+
+**64 % of the cost is asking an invocation its type**, at 0.17 ms each, because answering
+that means resolving the overload and inferring its type arguments. There are about eight
+invocations in a capability body — `ArgumentNullException.ThrowIfNull`, `ValueTask.FromResult`,
+`Result.Fail<T>`, the store call, `ConfigureAwait`, the error factory — and every one of
+them is bound to discover that six of them are not errors.
+
+**This is not a bug, and there is no cheap way out of it.** The manifest's `errors` is
+derived from the code rather than from a second hand-maintained declaration, which is the
+right call and is argued at length in `c7ae70a`'s message. Deriving it means reading every
+capability in the compilation, and reading it means binding it. **The generator's cost is
+now a function of how much capability *implementation* exists, not of how many flows there
+are** — 262 capability types at ~3 ms each, which the 50-flow project happens to express as
+~22 ms per flow. The synthetic project's capability bodies are deliberately minimal
+(`generate-scale-project.py` explains why); a real capability with real business logic in it
+costs more, not less.
+
+#### What was fixed, and what was left alone
+
+One thing in that walk was waste rather than cost. `Roots` was spelled
+
+```csharp
+scope.DescendantNodes(node => !IsErrorExpression(node, model))
+     .OfType<ExpressionSyntax>()
+     .Where(node => IsErrorExpression(node, model))
+```
+
+which asks the same question about the same node twice — once to decide whether to descend
+into it, once to decide whether to keep it. **20 762 of the 39 964 binds above are that
+duplicate.** It is replaced by an explicit stack walk that visits the same nodes in the same
+document order, yields the same list, and asks once.
+
+Measured by alternating the two compiler builds against the same project — A/B/A/B, six
+rounds, so drift across the run shows as scatter rather than as a difference between arms:
+
+| | 25 flows | 50 flows | marginal |
+|---|---:|---:|---:|
+| before | 2.034 s | 2.670 s | **25.4 ms per flow** |
+| after | 2.002 s | 2.511 s | **20.4 ms per flow** |
+
+**A 20 % cut**, and the optimised build was faster in all six paired rounds at 50 flows.
+All 905 tests pass unmodified and the build stays at 0 warnings; among those tests is the
+ecommerce manifest baseline gate, so the document this reader produces is byte-identical.
+**No emission behaviour changed.**
+
+End to end it is at the edge of what the harness can see. Three 8-round runs at 50 flows,
+back to back, the unchanged side bracketed:
+
+| Run | Order | with | without | overhead | 95 % CI | A/A scatter | per flow |
+|---|---|---:|---:|---:|---|---:|---:|
+| before | 1st | 4 852 ms | 3 158 ms | +52.9 % | [+49.8, +55.9] | 6.1 % | +33.26 ms |
+| **after** | 2nd | 4 806 ms | 3 248 ms | **+46.6 %** | [+42.8, +51.3] | 6.6 % | **+30.86 ms** |
+| before | 3rd | 4 910 ms | 3 328 ms | +49.6 % | [+43.3, +54.4] | 8.4 % | +32.73 ms |
+
+The two identical runs differ by 0.53 ms per flow and the change moves it by 2.14 — four
+times the drift, in the right direction, with intervals that still overlap. **Believe the
+paired A/B's 20 %, and read this table as consistent with it rather than as independent
+confirmation of it.**
+
+**Three larger cuts were considered and not made**, because each trades a fact for speed:
+
+* **Skip binding in syntactic type-only positions** (base lists, attribute arguments). Worth
+  perhaps 6 %, and the reasoning is delicate in the direction that fails silently: a
+  parameter default of `default` on an `Error`-typed parameter *is* an `Error`-typed
+  expression that the reader currently finds and correctly refuses to understand. Get the
+  list of positions wrong and the catalogue starts claiming to be complete when it is not,
+  which is the one failure mode the whole design of this reader exists to prevent.
+* **Cache a factory's catalogue across capabilities.** The 262 capabilities here follow into
+  the same two factory methods 262 times. A cache keyed on the compilation would fix that
+  and is exactly the "caching something that can go stale" a generator must not do.
+* **Make `errors` opt-in.** This would work and it changes what the generator emits, which
+  makes it a product decision about ADR-0007's promise, not a performance fix.
+
+#### Where the budget stands after this
+
+At 50 flows on this machine, `dev` costs **+33.26 ms per flow** end to end and the fixed
+tree **+30.86 ms**, against `a75c1f0`'s **+12.03 ms**. The criterion is **FAIL** either way:
++46.6 % [+42.8, +51.3] at 50 flows against a +8 % budget.
+
+**P1's criterion is not closer.** A 20 % cut against a 4.9× regression leaves the generator
+about 2.8× its pre-WP-22 cost, and that remainder is what the `errors` catalogue costs
+rather than something left to optimise. The decision in front of P1 is therefore not a
+profiling one. It is whether a manifest that enumerates every capability's failure modes is
+worth roughly two thirds of FlowX's compile-time budget — and if it is, whether §8's
+consequences should be rewritten around a budget that was set before that feature existed.
+
 ---
 
 ## 6. What this does not claim
@@ -658,6 +855,18 @@ dotnet build /tmp/scale-200/ScaleSynthetic.csproj -c Release --no-incremental \
 # before-and-after, as §5.1's control arm — 2 841 ms faster than §3's for no reason but a
 # quieter machine — demonstrates.
 ./scripts/measure-scale-overhead.sh --rounds 12 --sizes 200 --json /tmp/after.json
+
+# Bisecting the generator across a range of commits (§5.2). The generated project is the
+# subject and must not move with the commit under test, so generate it ONCE, from a fixed
+# checkout, and point it at the worktree the commits are checked out in. Then per commit:
+# build the four projects the synthetic one consumes, and read the generator's own time.
+# Three builds per size, median, marginal across 25 -> 50. Validate the probe against the
+# harness at both ends of the range before trusting a single step of it.
+./scripts/generate-scale-project.py --flows 25 --out /tmp/scale-25 --repo /path/to/worktree
+./scripts/generate-scale-project.py --flows 50 --out /tmp/scale-50 --repo /path/to/worktree
+dotnet build /tmp/scale-50/ScaleSynthetic.csproj -c Release --no-restore --no-dependencies \
+  --no-incremental /p:ReportAnalyzer=true /p:UseSharedCompilation=false -v d \
+  | grep -A20 'Total generator'
 ```
 
 Exit codes: **0** PASS, **1** FAIL, **2** INCONCLUSIVE, **3** the measurement itself broke.
