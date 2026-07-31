@@ -155,26 +155,16 @@ dotnet_diagnostic.S6618.severity = none   # string.Create over FormattableString
 dotnet_diagnostic.S4136.severity = none   # method overloads must be adjacent
 
 # --- OPEN FINDINGS: real defects, silenced only because this change cannot fix them
-# These three rules found genuine problems in files outside this change's scope.
-# They are off so the build stays green, NOT because the findings are wrong.
+# The rule below found a genuine problem in files outside this change's scope.
+# It is off so the build stays green, NOT because the finding is wrong.
 # Do not delete these lines as cleanup — deleting one turns the build red until
 # the sites below are fixed, which is the intended behaviour once they are.
 # Tracked in docs/21-Quality-Gates.md §2.6.
-
-# S8949 — four Roslyn semantic-model calls do not forward context.CancellationToken:
-#   FlowX.Compiler/Analysis/CapabilityThrowAnalyzer.cs:121,141
-#   FlowX.Compiler/Analysis/DeadlineCoherenceAnalyzer.cs:107
-#   FlowX.Compiler/Analysis/StepBindingAnalyzer.cs:142
-# This is the same defect class as CA2016, which §2.2 promotes to an error. An
-# analyzer that ignores the compiler's cancellation keeps working after the IDE
-# has moved on, on every keystroke.
-dotnet_diagnostic.S8949.severity = none
-
-# S2365 — FlowModel.ComposedFlows and FlowModel.ReferencedCapabilities are
-# properties that run a LINQ pipeline and allocate a List on every read
-# (FlowX.Compiler/Model/FlowModel.cs:167,175). The emitter reads them more than
-# once per flow. They should be methods, or computed once and stored.
-dotnet_diagnostic.S2365.severity = none
+#
+# S8949 (semantic-model calls dropping context.CancellationToken) and S2365
+# (FlowModel.ComposedFlows / .ReferencedCapabilities allocating a List per read)
+# were listed here. Both are fixed, so both entries are gone and the two rules
+# now run at their default severity and guard the fix.
 
 # S6966 — CancellationTokenSource.Cancel() where CancelAsync() is available
 # (FlowX.Runtime/FlowEngine.cs:636,836,876 and samples/ecommerce/Program.cs:43).

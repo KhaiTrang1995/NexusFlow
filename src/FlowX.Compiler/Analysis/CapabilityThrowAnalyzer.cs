@@ -118,7 +118,7 @@ public sealed class CapabilityThrowAnalyzer : DiagnosticAnalyzer
     {
         if (context.Node is not MethodDeclarationSyntax declaration ||
             declaration.Identifier.ValueText != ExecuteMethodName ||
-            context.SemanticModel.GetDeclaredSymbol(declaration) is not IMethodSymbol method ||
+            context.SemanticModel.GetDeclaredSymbol(declaration, context.CancellationToken) is not IMethodSymbol method ||
             !IsCapabilityExecute(method))
         {
             return;
@@ -138,7 +138,7 @@ public sealed class CapabilityThrowAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            var thrown = context.SemanticModel.GetTypeInfo(creation).Type;
+            var thrown = context.SemanticModel.GetTypeInfo(creation, context.CancellationToken).Type;
 
             if (thrown is null || thrown.TypeKind == TypeKind.Error || IsDefectSignal(thrown))
             {

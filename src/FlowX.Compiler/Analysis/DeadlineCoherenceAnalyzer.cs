@@ -104,7 +104,7 @@ public sealed class DeadlineCoherenceAnalyzer : DiagnosticAnalyzer
     private static void Analyze(SyntaxNodeAnalysisContext context)
     {
         if (context.Node is not ClassDeclarationSyntax declaration ||
-            context.SemanticModel.GetDeclaredSymbol(declaration) is not INamedTypeSymbol flowType ||
+            context.SemanticModel.GetDeclaredSymbol(declaration, context.CancellationToken) is not INamedTypeSymbol flowType ||
             !CarriesAttribute(flowType, FlowAttributeMetadataName))
         {
             return;
