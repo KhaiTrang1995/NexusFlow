@@ -284,6 +284,7 @@ Each engine is independently testable and has exactly one reason to change.
 ```
 src/
 ├── FlowX.Abstractions/           # ICapability, IFlow, attributes, Result<T>, contracts
+│   ├── Durability/               # IFlowJournal, ILeaseStore, FencingToken, record shapes
 │   └── (zero package references)
 ├── FlowX.Core/                   # StepGraph, FlowContext, PolicyModel, Error taxonomy
 ├── FlowX.Compiler/
@@ -292,9 +293,9 @@ src/
 │   └── Model/                    # compile-time graph, symbol resolution
 ├── FlowX.Runtime/
 │   ├── Trigger/  Flow/  Policy/  Capability/  Event/  Scheduler/  Stream/  Observability/
-├── FlowX.Runtime.Durable/
-│   ├── Journal/                  # IFlowJournal + Postgres, Redis adapters
-│   ├── Leasing/                  # ILeaseStore, renewal, fencing tokens
+├── FlowX.Runtime.Durable/        # planned — does not exist yet
+│   ├── Journal/                  # Postgres, Redis adapters — the *implementations*
+│   ├── Leasing/                  # renewal, fencing-token issue — the *implementations*
 │   └── Replay/                   # deterministic re-execution
 ├── FlowX.Hosting/                # AddFlowX(), options, health checks, graceful drain
 ├── FlowX.Cli/                    # new · graph · diff · verify · replay · bench
@@ -308,6 +309,21 @@ tests/
 ├── FlowX.Conformance.Tests/      # the suite every plugin must pass
 └── FlowX.Benchmarks/             # CI-gated budgets from docs/14-Performance.md
 ```
+
+> [!IMPORTANT]
+> **This tree put `IFlowJournal` and `ILeaseStore` in `FlowX.Runtime.Durable`, and that
+> was wrong — not merely out of date.** It contradicted
+> [ADR-0009](adr/ADR-0009-plugin-contracts.md): a plugin may reference
+> `FlowX.Abstractions` and nothing else, so a store author who can only see
+> `FlowX.Abstractions` could not have implemented a contract declared one layer up.
+> Either the contracts move down or the plugin rule is a fiction. The contracts shipped
+> in `FlowX.Abstractions/Durability/` (WP-51) and the tree above now says so.
+> `FlowX.Runtime.Durable` keeps what it was always for — the adapters — and **does not
+> exist yet**; the layering rule carries a row for it as a forward declaration, described
+> in [§12](#12-architecture-fitness-functions).
+>
+> `tests/FlowX.Conformance.Tests` exists and is a **test project, not a package**. It is
+> deliberately not packable until a second store exists to be held to it.
 
 Where do I add a use case? `src/<App>.Application/<FlowName>/` — one folder
 containing the flow, its capabilities, its contracts and its tests. Nothing else.
@@ -579,12 +595,12 @@ agree.*
 |---|---|---|---|---|---|
 | R1 | **Source-generator complexity becomes the platform's own legacy** — generators are hard to debug and slow builds | High | High | Generators emit *readable* C# to `obj/generated`; snapshot tests on every emitted file; build-time budget gate (≤ 8 %); generator logic kept in a pure, unit-testable model layer separate from Roslyn plumbing | Compiler team |
 | R2 | **Determinism leaks in durable flows** — a capability uses `DateTime.UtcNow`, `Guid.NewGuid()` or ambient statics, so replay diverges | High | High | **None of the three mitigations exists — see below.** Planned: analyzers `FLOWX1007/1008/1009` as **errors** in durable flows; replay conformance test asserting byte-identical outputs; journal records all non-deterministic values on first use | Runtime team |
-| R3 | **Abstraction leak under real transports** — a universal trigger model cannot express Kafka rebalance, HTTP streaming, MQTT QoS | Medium | High | **Untested: there is one transport.** Planned escape hatch: `ITriggerSource` exposes transport-specific options *outside* the flow — *the interface is not declared anywhere in `src/`* — plus a conformance suite defining the minimum semantics, which does not exist. What holds today: documented non-goals per transport ([09 §12](09-Trigger-Model.md#12-known-limits-of-the-abstraction)). The risk cannot be evaluated until P3 adds a second transport | Plugin team |
+| R3 | **Abstraction leak under real transports** — a universal trigger model cannot express Kafka rebalance, HTTP streaming, MQTT QoS | Medium | High | **Untested: there is one transport.** Planned escape hatch: `ITriggerSource` exposes transport-specific options *outside* the flow — *the interface is not declared anywhere in `src/`* — plus a conformance suite defining the minimum semantics. A conformance *project* now exists (WP-51), but it holds `JournalConformance` and `LeaseStoreConformance` and no trigger suite, so this mitigation is untouched. What holds today: documented non-goals per transport ([09 §12](09-Trigger-Model.md#12-known-limits-of-the-abstraction)). The risk cannot be evaluated until P3 adds a second transport | Plugin team |
 | R4 | **Adoption cliff** — teams must rewrite to gain value | High | Medium | Incremental adoption path: FlowX hosts inside existing ASP.NET Core apps; a capability can wrap an existing service; `MediatR` bridge plugin for step-by-step migration | DevRel |
 | R5 | **Journal becomes the bottleneck** at high durable throughput | High | Medium | Batched group-commit writes; per-partition journals; `Ephemeral` remains the default so durability is opt-in; benchmark gate QR2 | Runtime team |
 | R6 | **Fixed policy stage order is too rigid** for a legitimate case | Medium | Medium | Documented escape: a capability may declare `PolicyStage.Custom` handlers within its own stage; revisit ADR-0011 after 3 real counterexamples | Architecture |
 | R7 | **Manifest drift between build and deploy** (config changes behaviour) | Medium | Low | Configuration is structurally forbidden from changing the graph; control plane records the deployed manifest hash; `flowx verify --runtime` compares | Platform |
-| R8 | **Ecosystem thinness** — a platform is only as good as its plugins | High | Medium | Ship 8 first-party plugins at v1; publish the conformance suite as a NuGet package so third parties can self-certify | DevRel |
+| R8 | **Ecosystem thinness** — a platform is only as good as its plugins | High | Medium | Ship 8 first-party plugins at v1; publish the conformance suite as a NuGet package so third parties can self-certify. **Begun, and not yet a mitigation:** two of the six suites are written and the project is deliberately **not packable** until a second store exists to be held to it, so there is nothing published and nothing outside this repository can self-certify against anything | DevRel |
 
 > [!IMPORTANT]
 > **R2's mitigation column was audited in P1 and none of it is built.** A risk
@@ -596,7 +612,7 @@ agree.*
 > |---|---|---|
 > | Analyzers `FLOWX1007/1008/1009` as errors in durable flows | **does not exist** | none of the three is a descriptor `FlowXDiagnostics` declares. The catalogue is deliberately built to hold only ids something reports, so their absence is not an oversight in the compiler — it is the compiler declining to promise them, and [the diagnostics index](diagnostics/README.md) records what each reservation is blocked on |
 > | Replay conformance test asserting byte-identical outputs | **does not exist** | no test in the solution named `ReplayDeterminismTest` or anything like it; no test replays anything |
-> | Journal records non-deterministic values on first use | **does not exist** | there is no journal type in the solution. `ADR-0006` is the only place the word appears outside prose |
+> | Journal records non-deterministic values on first use | **does not exist** | *This row said "there is no journal type in the solution". That is no longer true and the verdict is unchanged.* WP-51 added `IFlowJournal` and `NondeterminismCapture` to `FlowX.Abstractions/Durability/`, and `JournalConformance` pins what a store must do with a captured value. **Nothing writes one.** There is no implementation outside the in-memory reference in `tests/FlowX.Conformance.Tests`, no store has ever run against a real database, and no execution path reaches a journal at all — so no non-deterministic value has ever been recorded on first use or on any use |
 >
 > The audit also found the risk is **currently unreachable rather than
 > mitigated**, which is a different and less comforting statement.
@@ -648,7 +664,7 @@ reader who saw the name stopped looking for the rule.
 | `EveryCapabilityDeclaresAuthorization` | P11 | a capability lacks an authorisation stance | `SecurityFitnessTests` |
 | `EveryPublicContractIsVersioned` | C7 | a flow, capability, event, manifest or shipped package carries a version that is not SemVer | `PublishedContractTests` |
 | `ManifestIsComplete` | Q3 | a declared flow or capability is missing from the manifest, or a step names one the manifest never describes | `PublishedContractTests` |
-| `PluginsPassConformance` | Q6 | a plugin fails the shared conformance suite | **not written — see below** |
+| `PluginsPassConformance` | Q6 | a plugin fails the shared conformance suite | **not written — see below.** A conformance project now exists; it has no trigger suite |
 | `SuppressionsAreAccountable` | §6.1 | a suppression cites no registered, unexpired `FLOWX-DEBT` id | `DebtAccountabilityTests` |
 | `EveryDiagnosticIsHelpful` | P12 | a `FLOWX*` diagnostic lacks title, fix, or help URI | `FlowX.Compiler.Tests` |
 | *(job, not a test)* | Q1, Q7 | > 5 % regression against `baseline.json` — B1, B3 and B12 in isolation | *Benchmark budgets* job, `performance.yml` |
@@ -686,15 +702,32 @@ every one of them because nothing publishes it.
 `tests/FlowX.Architecture.Tests/PublishedContractTests.cs`. That comment now carries the
 same correction, so the two no longer disagree.*
 
-**`PluginsPassConformance` is blocked, not overlooked.** There is no conformance suite to
-run — [R3](#11-risks-and-technical-debt) and
-[R8](#11-risks-and-technical-debt) both name publishing one as the mitigation, and neither
-has happened — and there is one plugin, `FlowX.Http`, so "every plugin agrees on the
-minimum semantics" has nothing to compare. Writing it against the single transport that
+**`PluginsPassConformance` is blocked, not overlooked, and the reason has narrowed.** This
+paragraph used to say "there is no conformance suite to run", and that is no longer true:
+WP-51 added `tests/FlowX.Conformance.Tests` with `JournalConformance` and
+`LeaseStoreConformance`. What it does *not* contain is a suite for the extension point this
+gate is about — there is no `TriggerSourceConformance`, and `ITriggerSource` is still not
+declared in `src/` — so [R3](#11-risks-and-technical-debt) and
+[R8](#11-risks-and-technical-debt), which both name publishing one as the mitigation, are
+still unmet. Two further things keep the gate honest rather than merely unwritten: the
+conformance project is **not packable**, so no third party can run it, and there is one
+plugin, `FlowX.Http`, so "every plugin agrees on the minimum semantics" has nothing to
+compare. Writing it against the single transport that
 exists would produce a test that restates `FlowX.Http.Tests` under a name claiming
 ecosystem coverage. Recorded in
 [21-Quality-Gates §2.4](21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced) with
 what it is waiting for.
+
+**`LayersPointInward` names one project that does not exist, on purpose.** Its subject list
+is maintained by hand and includes `FlowX.Runtime.Durable`, which is planned (§5.3) and
+unbuilt; `RuntimeDoesNotReferenceAnyPlugin` allows the same name for the same reason. The
+row is inert — the theory returns early when the project is absent — so it asserts nothing
+today and starts asserting the moment the project appears, which is the point of writing
+the rule before the code. What it is **not** is coverage: a reader who sees the name must
+not infer the project exists. `EverySourceProjectIsCoveredByTheLayeringRule` checks that
+every project under `src/` is named by the list; it deliberately does not check the reverse,
+because a row naming nothing cannot hide a project — a mistyped row leaves the real project
+uncovered and that test catches it.
 
 The enforced set, in full, is [CHECKLIST §4](../CHECKLIST.md).
 

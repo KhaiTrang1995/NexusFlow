@@ -36,16 +36,41 @@ Extension points are chosen deliberately, not sprinkled: each one is a
 compatibility obligation held forever.
 
 > [!IMPORTANT]
-> **One half of this decision is enforced; the other is unwritten.** The
-> dependency rule holds by gate: `AbstractionsHasNoDependencies` fails the build
-> if `FlowX.Abstractions` gains any package or project reference, and
-> `RuntimeDoesNotReferenceAnyPlugin` holds the opposite direction. The
-> **conformance suite does not exist** — there is no `FlowX.Conformance.Tests`
-> project or package — and there is one plugin, `plugins/FlowX.Http`, so the rule
-> that "no abstraction ships with fewer than two real implementations" has not
-> been tested against anything. Publishing the suite is a **P3** deliverable and
-> the named mitigation for risks R3 and R8 in
+> **One half of this decision is enforced; the other has a shape and no substance.**
+> The dependency rule holds by gate: `AbstractionsHasNoDependencies` fails the
+> build if `FlowX.Abstractions` gains any package or project reference, and
+> `RuntimeDoesNotReferenceAnyPlugin` holds the opposite direction.
+>
+> **This box said the conformance suite does not exist. That is now wrong, and
+> the correction is smaller than it looks.** WP-51 added
+> `tests/FlowX.Conformance.Tests`, holding `JournalConformance` and
+> `LeaseStoreConformance` — the suites for two of the extension points in
+> [17 §2](../17-Plugin-System.md#2-extension-contracts) and the first place this
+> ADR's "semantic contract" is written down as executable assertions rather than
+> as an intention. The mechanism works and is proved to: a store claims
+> conformance by deriving and supplying itself, and
+> `TheSuiteRejectsAStoreThatIsWrongTests` runs deliberately broken stores through
+> it and asserts each is caught by the assertion whose name says why.
+>
+> **Nothing real has met it.** Four of the six suites are unwritten, including
+> `TriggerSourceConformance` — the one the surviving `plugins/FlowX.Http` would
+> take. The project is a test project and is **deliberately not packable**, so
+> the "third parties self-certify by running `dotnet test`" clause of this
+> decision remains unavailable to any third party. The only implementation held
+> to the suite is an in-memory reference in the same project; no store has ever
+> run against a real database. `PluginsPassConformance` is still blocked
+> ([21 §2.4](../21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced)),
+> and there is still one plugin, so the rule that "no abstraction ships with
+> fewer than two real implementations" has been tested against nothing.
+> Publishing a trigger suite is a **P3** deliverable and the named mitigation for
+> risks R3 and R8 in
 > [05 §11](../05-Architecture.md#11-risks-and-technical-debt).
+>
+> **Where the contracts live is settled by this ADR and was got wrong in the
+> documents.** `docs/05 §5.3` used to place `IFlowJournal` and `ILeaseStore` in
+> `FlowX.Runtime.Durable`, which a plugin referencing only `FlowX.Abstractions`
+> could not have implemented. They shipped in `FlowX.Abstractions/Durability/`;
+> the source tree has been corrected.
 
 ## Consequences
 
@@ -55,8 +80,9 @@ compatibility obligation held forever.
   *Unproven: `FlowX.Http` is the only plugin, and the trigger extension point it
   would implement (`ITriggerSource`) is not declared.*
 - Third parties can self-certify by running `dotnet test`; no gatekeeping
-  committee, and the standard is machine-checkable. *There is nothing to run
-  yet.*
+  committee, and the standard is machine-checkable. *Not yet available to a third
+  party: the two suites that exist live in a test project that is not packable, so
+  there is nothing to reference and nothing for an outside store to derive from.*
 - Runtime internals stay refactorable, because nothing outside depends on them.
 - Consumers do not inherit a plugin's dependency tree through abstractions.
 - Behavioural drift is caught: the conformance suite is versioned alongside the

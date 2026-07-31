@@ -56,8 +56,17 @@ virtual time — [§5](#5-what-is-deliberately-not-here) says why for each.
 | Conformance | trigger → flow → journal | Testcontainers | — | ~2 % |
 
 The bottom two rows are supported today. The top two are not, and are not claimed to be:
-there is no journal to conform against and no integration harness in this package
-([§5](#5-what-is-deliberately-not-here)).
+there is no integration harness in this package
+([§5](#5-what-is-deliberately-not-here)), and nothing runs the `trigger → flow → journal`
+path the conformance row names.
+
+*This paragraph used to say "there is no journal to conform against", and that half is now
+wrong.* `tests/FlowX.Conformance.Tests` (WP-51) defines what an `IFlowJournal` and an
+`ILeaseStore` must do, and a store either passes it or fails it. What does not exist is
+anything for this pyramid's conformance row to run against: no store outside the in-memory
+reference sitting beside the suite, no Testcontainers, and no execution path that reaches a
+journal at all — `FlowX.Runtime` does not read `ExecutionProfile`. Defined and unreachable
+is a different state from absent, and the row stays unsupported either way.
 
 ### 3.1 Unit — a capability is a class with a method
 
