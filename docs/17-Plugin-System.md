@@ -22,7 +22,8 @@
 > `TriggerEnvelope` — the pattern this document describes, without the interface
 > that would formalise it.
 >
-> **`FlowX.Conformance.Tests` is two of §5's six rows and nothing else.**
+> **`FlowX.Conformance.Tests` is two of [§4](#4-compatibility-policy)'s six rows
+> and nothing else.**
 > `tests/FlowX.Conformance.Tests` holds `JournalConformance` and
 > `LeaseStoreConformance`; a store claims conformance by deriving from them and
 > supplying itself. `TriggerSourceConformance`, `PublisherConformance`,
@@ -186,7 +187,10 @@ disagreement about the contract, not a local fix, which is the property that mak
 
 A third party runs `dotnet test` against the suite and publishes the result — the
 same badge first-party plugins carry. No certification committee, no gatekeeping;
-a machine-checkable standard.
+a machine-checkable standard. **Not yet available:** the project is a test project
+and is deliberately not packable until a second store exists to be held to it, so
+there is currently nothing for an outside store to reference or derive from. See
+the box at the top of this document.
 
 ---
 

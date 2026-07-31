@@ -5,9 +5,9 @@
 > this says what is built.
 >
 > **Last updated:** 2026-07-31 · **Phase:** **P0 complete · P1 closed with one accepted
-> exception → P2 not started** · **Commit:** see `git log`
+> exception → P2 started at WP-51, out of order** · **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 1244/1244 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 1289/1289 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -276,9 +276,14 @@ it, because a gate nobody has seen fail is a gate nobody has tested.
       manifest its build emitted, every step's capability and compensation has a full entry
       rather than a mention, and every emitted event is in the event catalogue. *Proved by*
       adding an `order.archive` capability no flow uses
-- [ ] `PluginsPassConformance` — **blocked, not overlooked.** There is no conformance
-      suite; [05-Architecture §11](docs/05-Architecture.md) names publishing one as the
-      mitigation for R3 and R8 and it has not been written. There is also one plugin, so
+- [ ] `PluginsPassConformance` — **blocked, not overlooked, and the reason has narrowed.**
+      This line said there is no conformance suite. There is one now,
+      `tests/FlowX.Conformance.Tests` (WP-51), and it holds `JournalConformance` and
+      `LeaseStoreConformance` — **not** the `TriggerSourceConformance` this gate would run,
+      and `ITriggerSource` is still undeclared. The project is not packable, so nothing
+      outside this repository can run it, and nothing has ever run against a real database.
+      [05-Architecture §11](docs/05-Architecture.md) names publishing a suite as the
+      mitigation for R3 and R8 and that has not happened. There is also one plugin, so
       "every plugin agrees" has one data point.
       [21-Quality-Gates §2.4](docs/21-Quality-Gates.md)
 
@@ -385,11 +390,21 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
 | every diagnostic passes `EveryDiagnosticIsHelpful` | **PASS** — `FlowX.Compiler.Tests.CompilerFitnessTests.EveryDiagnosticIsHelpful`, green in this working tree |
 | emitted code is breakpoint-able | **PASS** — `FlowPlanGeneratorTests.EachStepGetsItsOwnLineDirective` plus five further line-directive tests across the emitter, `Fail` and step-input mapping, all green |
 
+**`FlowTestHost` shipped at WP-49**, closing P0's other unshipped *Should* after three
+documents had described a host that ran flows while `FlowX.Testing` contained only context
+doubles. It runs the real engine over the real compiled plan in-process, with capabilities
+substituted by capability id. `For<TFlow>()` is deliberately **not** offered: discovering
+the generated dispatcher needs reflection over generated members, which constraint C2
+forbids, so the documented shape was corrected rather than faked. `AwaitSignal` and
+`AwaitCompletion` are unhandled, because both need a journal.
+
 **Carried into P2, in three named piles** — five reserved diagnostics (`FLOWX1006`,
 `FLOWX1007`–`FLOWX1009`, `FLOWX1012`, four of them blocked on *severity* and not on
 analysis), three blocked fitness functions (`CrossTenantAccessIsDenied`,
 `RedactionCannotBeBypassed`, `PluginsPassConformance`), and the build-overhead exception.
-`dotnet new flowx`, unshipped since P0, is carried for the second time. See
+`dotnet new flowx`, unshipped since P0 and carried twice, **is being attempted in the
+current round** — until it lands, `docs/19-SDK.md` and `docs/03 §12` still describe a
+command that does not run. See
 [§5d](#5d-p2--durable-execution--not-started) and [PLAN §5](PLAN.md#5-p2--durable-execution).
 
 - [x] **WP-15** The branching DSL — **`When` / `Otherwise` done** through builder, model,
@@ -707,6 +722,41 @@ which is the exact failure mode P1 exists to remove:
       and the baseline re-recorded. **Left open as a reminder**: a benchmark's subject needs
       a gate of its own, and this one had none
 
+**What building `dotnet new flowx` found out about the platform.** A template is the
+first thing a new user runs, so it is also the cheapest test of our own ergonomics.
+Eleven findings; these are the ones that are ours to fix:
+
+- [x] **The repository could not produce its own packages.** `dotnet pack` failed on both
+      analyzer projects with `NU5017` — `IncludeSymbols` is set repo-wide, those two ship
+      only an analyzer asset, so the symbols package has no content and pack exits 1
+      *after* writing the `.nupkg` correctly. Nothing here ran `pack` until a template
+      needed a local feed, so it would have gone undiscovered until the first release.
+      Fixed; the solution now packs nine packages, exit 0
+- [ ] **`Program.cs` restates the flow — the highest-value missing piece.** `AddFlowX`
+      registers no transport and generates no endpoint, so a generated project
+      hand-writes the method and route `[HttpTrigger]` already declares, plus `Plan`,
+      `Dispatcher`, `Projection`, `SensitiveMembers` and two `JsonTypeInfo`s. Ten lines
+      every consumer writes identically for every flow, and the one place a generated
+      project can silently drift from its own flow. `19-SDK §6`'s own standard is that
+      ceremony every user pays is a platform defect
+- [ ] **`FLOWX1028`'s Warning is defeated by warnings-as-errors.** Its page argues at
+      length that an Error would be *actively harmful* — and this repository mandates
+      `TreatWarningsAsErrors`, so any consumer at the platform's own bar who declares
+      `Durable` gets a hard error anyway. Same shape for `FLOWX1024`. Either they become
+      `Info` or the platform publishes a `WarningsNotAsErrors` recommendation
+- [ ] **`EmitCompilerGeneratedFiles` is documented as on by default and is not.** It is on
+      only via this repo's `Directory.Build.props`, so a consumer writing their own
+      `.csproj` silently loses the ADR-0002 / risk-R1 mitigation. It belongs in
+      `FlowX.Compiler.props`, which every package consumer imports
+- [ ] **`FLOWX1010` fires second and in the wrong file.** Omitting `Authorization`
+      produces `CS9035` first, with no help link; `FLOWX1010` then fires at the *flow's*
+      `.Step<T>()` type argument rather than at the `[Capability]` attribute, so its
+      documented quick action is offered somewhere other than the edit it describes
+- [ ] **No fitness function sees `templates/`.** `SourceSurvey.ShippingTrees` covers
+      `src`, `plugins` and `samples`. The stated reason for including samples — a
+      permissive declaration there is one people copy — applies harder to a template,
+      which is copied by definition
+
 **Gaps WP-20 and WP-22 surfaced in turn.** Same class again — declared, documented or
 reachable, and enforced or honoured by nothing:
 
@@ -744,9 +794,21 @@ reachable, and enforced or honoured by nothing:
       which `flowx diff` cannot tell apart from a flow that declares no trigger, so the
       gate that calls a removed trigger breaking lost its input without saying so. Closed
       by `FLOWX1025` (WP-26), a warning: the manifest still refuses to guess, and the
-      refusal is now audible. **What remains open is the cause** — the abstractions give a
+      refusal is now audible. ~~**What remains open is the cause** — the abstractions give a
       plugin author no way to declare a kind the compiler can read, so the only fix
-      offered is "use a built-in attribute instead"
+      offered is "use a built-in attribute instead"~~ **The cause is now closed.**
+      `[TriggerKind(TriggerKind.Bus)]` carries the kind as an enum constructor argument,
+      which survives to metadata where an overridden property does not, and `TriggerReader`
+      walks the base chain because Roslyn does not honour `Inherited = true` for
+      `ISymbol.GetAttributes`. Severity follows who can apply the fix: Error when the
+      attribute is declared in the compilation being built, Warning when it arrives as a
+      reference. Pulled forward from P3's WP-70 because it is an abstraction change and
+      three plugins were about to be written against the old shape.
+      **One hole is stated rather than buried:** for an attribute arriving from metadata,
+      nothing checks that the marker and the `Kind` property agree — reading `Kind` means
+      running a getter, and a generator does not run what it compiles.
+      *The rest of WP-70 — `TriggerSourceConformance`, `ITriggerSource`, the published
+      package — has not shipped, and `PluginsPassConformance` is still blocked (§4).*
 - [x] **Nothing in the repository had ever compiled generator output.** The generator
       harness discarded the updated compilation, so every test asserted against *parsed*
       text — which catches a syntax error but not an unresolved name, a wrong delegate
@@ -804,21 +866,45 @@ Three more surfaced while getting the suite green:
 
 ---
 
-## 5d. P2 · Durable execution — **not started**
+## 5d. P2 · Durable execution — **started; one package landed, out of order**
 
 Work packages in [PLAN.md §5](PLAN.md#5-p2--durable-execution); the design they are held
 to is [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md), still
-**Proposed**. Nothing below is in progress. It is listed now because P1 handed each item
-over with a named blocker, and an inventory that exists only in a closing summary is one
-nobody reads.
+**Proposed**. It is listed in full because P1 handed each item over with a named blocker,
+and an inventory that exists only in a closing summary is one nobody reads.
+
+> **ADR-0015 stays Proposed, and that is the right answer rather than a slip.** Its own
+> condition for becoming Accepted is that the conformance suite hold an *implementation* to
+> the schema. The suite exists and holds an **in-memory reference** — a dictionary that
+> satisfies the assertions. That proves the schema is expressible; it says nothing about
+> transaction boundaries, indexes or expand/contract migration, and no store has ever run
+> against a real database. It is re-decided at WP-53, against Postgres.
 
 **Roadmap Must:**
 
 - [ ] **WP-50** B7, B8 and the QR2 chaos rig — **before** the journal. `JournalBenchmarks`
       does not exist and neither does a chaos rig; both are named in P2's Must as outcomes
-      and by nothing as tooling. This is B12's lesson applied on time rather than late
-- [ ] **WP-51** `IFlowJournal`, `ILeaseStore` and the shared conformance suite ADR-0006
-      promises and nothing implements
+      and by nothing as tooling. This is B12's lesson applied on time rather than late.
+      **It was not applied on time.** WP-51 landed first, so the baseline WP-53 is to be
+      judged against still does not exist and will be written by someone who already knows
+      what the journal looks like. It must land before **WP-53**, which is a weaker claim
+      than the plan made. *(The attribution-guard and DAST repairs were credited to WP-50
+      in `docs/21`; they were not this package's work and the credit is withdrawn.)*
+- [x] **WP-51** `IFlowJournal`, `ILeaseStore` and the shared conformance suite ADR-0006
+      promises. **Shipped, with two deviations from its own row, both recorded rather than
+      absorbed.** The contracts are in `src/FlowX.Abstractions/Durability/` — where
+      ADR-0009 requires them, and not where `docs/05 §5.3` drew them; that document has
+      been corrected. `FenceAsync` was added to `IFlowJournal` to close a gap ADR-0015
+      left: the ADR never says *when* the fence rises, and a journal that learned tokens
+      only from writes accepts a stale token during the window between acquisition and the
+      new owner's first commit. Pinned by
+      `JournalConformance.TheFenceRisesOnAcquisitionNotOnTheFirstWrite`; the ADR should be
+      amended when next opened.
+      **The suite is two of six and is not packable.** `TriggerSourceConformance`,
+      `PublisherConformance`, `SerializerConformance` and `PolicyHandlerConformance` are
+      unwritten. The shape exists and is proved to reject a wrong store by name
+      (`TheSuiteRejectsAStoreThatIsWrongTests`); nothing real has met it. It packs at
+      WP-53/WP-54, when a second and third store exist to push back on it
 - [ ] **WP-52** The seam — **`FlowX.Runtime` reads `ExecutionProfile`**. Trips
       `RuntimeDoesNotReadTheExecutionProfile`, which is written to fail here and names its
       own take-down list. B2 must still measure **0 B** on the ephemeral path afterwards,

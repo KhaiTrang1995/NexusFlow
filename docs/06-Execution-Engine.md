@@ -247,7 +247,10 @@ requires to be byte-identical. The full list, and what the rule provably cannot 
 byte-identical step inputs and identical control flow.
 
 > **Nothing verifies it, and nothing can yet.** `ReplayDeterminismTest` does not
-> exist. There is no journal type in the solution, so there is no corpus to
+> exist. *This box said there is no journal type in the solution; WP-51 declared
+> `IFlowJournal`, and the conclusion is unchanged* — nothing implements it beyond
+> an in-memory reference in `tests/FlowX.Conformance.Tests`, and no code path
+> writes to it, so there is no corpus to
 > journal and nothing to replay from. The contract above is a *specification for
 > P2*, not a property under test — and it is cited as an existing mitigation in
 > [risk R2](05-Architecture.md#11-risks-and-technical-debt), which is corrected

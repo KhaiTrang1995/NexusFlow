@@ -38,10 +38,39 @@ public sealed class DependencyRuleTests
     /// Nothing in <c>src/</c> may reference a plugin, and no lower layer may reference
     /// a higher one.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>One row names a project that does not exist, and it is kept deliberately.</strong>
+    /// <c>FlowX.Runtime.Durable</c> is planned (docs/05-Architecture.md §5.3) and unbuilt;
+    /// <see cref="RuntimeDoesNotReferenceAnyPlugin"/> already allows the same name for the
+    /// same reason. The row is inert — the theory returns early when the project is absent
+    /// — so today it asserts nothing, and it begins asserting on the commit that adds the
+    /// project rather than on some later commit where somebody remembers to widen the list.
+    /// That is the whole point of writing these rules before the code they govern, stated
+    /// at the top of this file.
+    /// </para>
+    /// <para>
+    /// The cost is that a reader can mistake a row for evidence the project exists, which
+    /// is the same failure the "Lives in" column of docs/05 §12 was rewritten to remove.
+    /// Hence this comment, and hence the row is the only forward declaration here: one is
+    /// a decision, a habit of them is a wish list.
+    /// </para>
+    /// <para>
+    /// <see cref="EverySourceProjectIsCoveredByTheLayeringRule"/> does not object to it,
+    /// and that is the behaviour wanted rather than a hole. It checks one direction — every
+    /// project under <c>src/</c> is named here — because that is the direction in which
+    /// something can be missed silently. A row naming nothing cannot hide a project; a
+    /// <em>mistyped</em> row cannot either, because the real project then goes unnamed and
+    /// that test fails. What the one-way check does not catch is a row left behind after a
+    /// project is deleted, which is a stale comment rather than a lost gate.
+    /// </para>
+    /// </remarks>
     [Theory]
     [InlineData("FlowX.Abstractions", new string[0])]
     [InlineData("FlowX.Core", new[] { "FlowX.Abstractions" })]
     [InlineData("FlowX.Runtime", new[] { "FlowX.Abstractions", "FlowX.Core" })]
+    // Forward declaration: FlowX.Runtime.Durable does not exist yet. See the remarks above
+    // before adding a second row like this one.
     [InlineData("FlowX.Runtime.Durable", new[] { "FlowX.Abstractions", "FlowX.Core", "FlowX.Runtime" })]
     [InlineData("FlowX.Hosting", new[] { "FlowX.Abstractions", "FlowX.Core", "FlowX.Runtime" })]
     // FlowX.Testing gained Core and Runtime with FlowTestHost (WP-49), which runs the

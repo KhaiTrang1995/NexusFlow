@@ -153,7 +153,7 @@ A vision that cannot fail is marketing. FlowX succeeds only if:
 > AOT job proves the binary links and serves a request, and does not measure
 > 200 ms. V1 is a review, V2 needs a second transport (P3) and a sample that is
 > currently one `README.md`, V7's gate is `ManifestIsComplete` — *not
-> `flowx verify --complete`, which is not a CLI verb; the CLI has three, see
+> `flowx verify --complete`, which is not a CLI verb. `verify --cost` is; the CLI has four, see
 > [22-CLI](22-CLI.md)* — and even that does not check the "policies and events"
 > half of the criterion. V8 has not been run.
 >
