@@ -28,6 +28,7 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
         Options = options;
         Journal = new PostgresFlowJournal(dataSource);
         Leases = new PostgresLeaseStore(dataSource);
+        RecoveryIndex = new PostgresRecoveryIndex(dataSource);
         Retention = new PostgresRetention(dataSource);
         Migrator = new PostgresMigrator(dataSource, options);
     }
@@ -43,6 +44,9 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
 
     /// <summary>The lease store under test.</summary>
     public PostgresLeaseStore Leases { get; }
+
+    /// <summary>The recovery scan's query, under test.</summary>
+    public PostgresRecoveryIndex RecoveryIndex { get; }
 
     /// <summary>The retention sweeper under test.</summary>
     public PostgresRetention Retention { get; }

@@ -10,10 +10,32 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.3" />
     <PackageReference Include="Shouldly" Version="4.3.0" />
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <!--
+      The container implementation, not just its abstractions: the registration test builds a
+      provider and asks which service types AddFlowXPostgres actually produced. Asserting on
+      the ServiceDescriptor list instead would assert on what was written down rather than on
+      what a host resolves. Pinned, like every other dependency here.
+    -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+
+    <!--
+      The host, so that "a Postgres-backed node recovers an abandoned instance" is asserted
+      as a host recovering an instance rather than as a query returning a row. The adapter
+      itself still depends on nothing but FlowX.Abstractions — this reference belongs to the
+      test project, not to the package, and RuntimeDoesNotReferenceAnyPlugin is untouched
+      because the arrow points from a test at the runtime.
+
+      It is worth the reference specifically because every piece of this was already correct
+      in isolation. The journal passed JournalConformance, the lease store passed
+      LeaseStoreConformance, FlowRecoveryScan passed its own tests against an in-memory
+      double, and a Postgres host still swept for nothing at all, silently, because the
+      interface that joins them is resolved as an optional service.
+    -->
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
     <!--
       The conformance suite is referenced, not copied. ADR-0009 makes it the semantic
       contract for every store, and docs/17-Plugin-System.md §5 says a third party claims

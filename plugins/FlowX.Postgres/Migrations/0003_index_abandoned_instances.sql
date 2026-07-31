@@ -1,0 +1,38 @@
+-- Expand: index the recovery scan's query the way the scan actually asks it —
+-- oldest unfinished instance first, bounded by a page.
+--
+-- 0002 added flow_instance_recovery_idx on (state, updated_at) for "the recovery scan WP-55
+-- adds", and it does answer half the question: it finds the unfinished rows that are older
+-- than a lease TTL. What it cannot do is hand them back in staleness order. With `state` as
+-- the leading key an index scan yields rows grouped by state, so `ORDER BY updated_at` has
+-- no ordering to inherit and PostgreSQL falls back to reading every candidate and top-N
+-- sorting it. Measured on 200 000 rows against PostgreSQL 16, that is a parallel sequential
+-- scan touching 1 748 buffers for a page of 64; with the index below it is an ordered index
+-- scan touching 4.
+--
+-- The ordering is not a nicety. IRecoveryIndex.ListAbandonedAsync's remarks make it the
+-- anti-starvation property: ordered by staleness, an instance that no deployed node can
+-- finish does not hold the head of the page, because everything behind it is stale too and
+-- everything that is resumed has its row touched and moves to the back.
+--
+-- The predicate is the three states the query names and not the four that are non-terminal.
+-- `Suspended` is unfinished but unowned — it is waiting for a signal, a timer or a child
+-- flow — so nothing died holding it, and PostgresRecoveryIndex says the same in the same
+-- words. A partial index is only usable when the planner can prove the query's predicate
+-- implies the index's, so these two lists are one decision written twice; the plan
+-- assertion in RecoveryIndexTests is what keeps them in step.
+--
+-- Expand/contract (docs/11-Distributed-Runtime.md §7.4). Every statement here is additive.
+-- A pod running the previous release keeps reading and writing flow_instance without knowing
+-- this index exists — an index changes no row and no column, so there is nothing for an
+-- older reader to fail on. flow_instance_recovery_idx is left exactly where 0002 put it:
+-- superseded is not the same as unused, and removing it belongs to a later release, after
+-- one that ships without anything planning against it.
+--
+-- One operational note, the same one 0002 carries by implication: this builds the index in
+-- the migrator's transaction, which holds a lock excluding writers on flow_instance for the
+-- duration. On a table with a large backlog that is a pause in step commits, and it is the
+-- reason a migration is a deployment step rather than a side effect of a container starting.
+
+CREATE INDEX flow_instance_abandoned_idx ON flow_instance (updated_at)
+    WHERE state IN ('Pending', 'Running', 'Compensating');

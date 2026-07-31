@@ -18,13 +18,23 @@ namespace FlowX.Postgres;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers <see cref="IFlowJournal"/> and <see cref="ILeaseStore"/> over one data source.
+    /// Registers <see cref="IFlowJournal"/>, <see cref="ILeaseStore"/> and
+    /// <see cref="IRecoveryIndex"/> over one data source.
     /// </summary>
     /// <param name="services">The container being built.</param>
     /// <param name="connectionString">How to reach PostgreSQL.</param>
     /// <param name="options">Where the tables live. Defaults to the <c>flowx</c> schema.</param>
     /// <returns>The same collection, for chaining.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
+    /// <remarks>
+    /// <strong>The three registrations are three service types, not one store registered
+    /// three times.</strong> <c>FlowXServiceCollectionExtensions</c> matches on the service
+    /// type and resolves <see cref="IRecoveryIndex"/> as optional, so a store that is not
+    /// registered under it produces a host that runs durable flows and never sweeps — which
+    /// is a supported configuration and, before this, the only one PostgreSQL offered.
+    /// <see cref="PostgresJournalOptions.RegisterRecoveryIndex"/> is where a deployment
+    /// chooses that deliberately.
+    /// </remarks>
     public static IServiceCollection AddFlowXPostgres(
         this IServiceCollection services,
         string connectionString,
@@ -41,6 +51,13 @@ public static class ServiceCollectionExtensions
             provider => new PostgresFlowJournal(provider.GetRequiredService<NpgsqlDataSource>()));
         services.AddSingleton<ILeaseStore>(
             provider => new PostgresLeaseStore(provider.GetRequiredService<NpgsqlDataSource>()));
+
+        if (settings.RegisterRecoveryIndex)
+        {
+            services.AddSingleton<IRecoveryIndex>(
+                provider => new PostgresRecoveryIndex(provider.GetRequiredService<NpgsqlDataSource>()));
+        }
+
         services.AddSingleton(
             provider => new PostgresRetention(provider.GetRequiredService<NpgsqlDataSource>()));
         services.AddSingleton(provider => new PostgresMigrator(
