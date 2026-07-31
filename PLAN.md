@@ -718,7 +718,7 @@ maintainability and scale, not features.
 |---|---|
 | Full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` | **Done** — WP-15, WP-20, WP-24, WP-29, WP-33. All five ship end to end, with `FLOWX1013` and `FLOWX1021` raised. One documented mode does not: `SubFlow(AwaitCompletion)` is refused by `FLOWX1026`, because it needs a durable suspension point and P2 has not built one |
 | Contract-compatibility checking | **WP-16**, done — as `FLOWX1020`, *step binding* |
-| Diagnostics FLOWX1001–1023 with help URIs | **Nearly done, and this row has twice overstated it — first as *all raised*, then with a stale list.** Raised today: `1001`–`1005`, `1010`, `1011`, `1013`, `1014`, `1015`, `1016`, `1017`, `1018`, `1019`, `1020`, `1021`, `1023`, `1024`, `1025`, `1026`. **Reserved and raised by nothing: `1006`, `1007`–`1009`, `1012`, `1022`** — each blocked on something named, not merely undone. `1007`–`1009` are blocked on *severity*, not analysis: ADR-0003 makes them Info under `Ephemeral`, the only profile that runs, so they would ship doing nothing anywhere. **`1012` is implementable today and was deliberately not raised**: it would fire on every compensable flow including the sample, and its only available fix — `Profile = Durable` — changes nothing while there is no journal. A rule whose fix is a lie is worse than an unraised id. `1006` needs a serialiser P2 chooses; `1022` needs two manifests and is `flowx diff`'s job |
+| Diagnostics FLOWX1001–1023 with help URIs | **Nearly done, and this row has twice overstated it — first as *all raised*, then with a stale list.** Raised today: `1001`–`1005`, `1010`, `1011`, `1013`, `1014`, `1015`, `1016`, `1017`, `1018`, `1019`, `1020`, `1021`, `1023`, `1024`, `1025`, `1026`. **Reserved and raised by nothing: `1006`, `1007`–`1009`, `1012`, `1022`** — each blocked on something named, not merely undone. `1007`–`1009` were blocked on *severity*, not analysis: ADR-0003 makes them Info under `Ephemeral`, which was the only profile that ran, so they would have shipped doing nothing anywhere. **`1012` is implementable today and was deliberately not raised**: it would fire on every compensable flow including the sample, and its only available fix — `Profile = Durable` — changed nothing while there was no journal. *Both blockers were discharged by WP-52 on 2026-07-31; all four remain unwritten (WP-58, WP-60).* A rule whose fix is a lie is worse than an unraised id. `1006` needs a serialiser P2 chooses; `1022` needs two manifests and is `flowx diff`'s job |
 | Manifest completeness | **WP-22**, done — `triggers` and per-capability `errors` were declared in the schema and emitted by nothing |
 | Generator snapshot tests | **Done** at WP-5 and extended since |
 | Readable emitted code | **Done** — on disk under `obj/generated`, with per-step `#line` directives (fixed at WP-10) |
@@ -1265,7 +1265,10 @@ non-idempotent effects, zero lost instances, resume p99 ≤ 45 s.
 phase and still **Proposed**: it journals the step boundary on
 `(instance, scope, step, attempt)` and resumes through the *same* step loop rather than a
 second engine. It also carries the take-down list — what gets deleted the day the runtime
-reads `ExecutionProfile`, which is WP-52.
+reads `ExecutionProfile`, which was WP-52 and has happened. *The ADR stays Proposed on
+purpose: the only implementation holding it up is an in-memory reference, which has no
+transaction, no unique constraint and no migration to disagree with it. It is re-decided at
+**WP-53**, against Postgres.*
 
 Two things shape the ordering and are argued in [§2](#2-sequencing) rather than here: the
 **budgets come before the journal** (B12's lesson, learned the expensive way), and the
@@ -1364,14 +1367,45 @@ disagree with it.
 
 ### WP-52 — The seam: the runtime reads `ExecutionProfile`
 
+**Shipped 2026-07-31.** *(The heading keeps its wording because three documents link to
+its anchor.)*
+
 | | |
 |---|---|
 | **Goal** | A `Durable` flow journals its step boundaries; an `Ephemeral` flow is byte-for-byte the execution it is today |
-| **Why** | The keystone. `FlowX.Runtime` never reads `ExecutionProfile`, so a `Durable` flow runs the ephemeral path — no journal, no lease, no resume — and a process kill loses it. That is why risk R2 is *unreachable* rather than mitigated, and why four diagnostics are blocked on severity. This package is the one the whole phase is named for |
+| **Why** | The keystone. `FlowX.Runtime` never read `ExecutionProfile`, so a `Durable` flow ran the ephemeral path — no journal, no lease, no resume — and a process kill lost it. That is why risk R2 was *unreachable* rather than mitigated, and why four diagnostics were blocked on severity. This package is the one the whole phase is named for |
 | **Tests first** | `EngineAllocationTests` re-run unchanged — B2 must still be **0 B** for linear, conditional and switch flows, because a durable seam that charges the ephemeral path is a second engine wearing one engine's name; a journaled run whose committed rows reconstruct the execution exactly; `ExecutionProfileHonestyTests` observed **failing**, which is the signal to delete it |
 | **Deliverable** | The step-boundary commit gated on a plan-level flag (the `ExecutionPlan.HasParallel` precedent), the `scope` key threaded from `IterationScope`, the derived resume cursor, the child-instance row for `SubFlow`, the journaled seed that makes `FlowExecutionContext.Random`'s own remarks true, and **redaction of `[Sensitive]` members from journal payloads** |
 | **Exit** | Every row of [ADR-0015's take-down table](docs/adr/ADR-0015-journal-schema-and-durable-execution.md#what-lands-with-this-and-what-is-deleted) is discharged in this package's own commits: `ExecutionProfileHonestyTests` **deleted** rather than skipped, `FLOWX1028` narrowed to `Streaming`, the four warning boxes corrected. B2 = 0 B, measured. A flow whose input carries a `[Sensitive]` member journals it redacted, proven by a test that reads the row back |
 | **Depends on** | WP-51 |
+
+> **Shipped 2026-07-31, and here is what it did not buy.** The runtime reads the profile.
+> A `Durable` flow commits one row per `(instance, scope, step, attempt)` — a failed attempt
+> included — captures `ctx.UtcNow`, the ids `ctx.NewId()` minted and `Random`'s seed per
+> step, gives a composed sub-flow its own instance row, and **resumes** by replaying its
+> committed rows into the same `ExecuteAsync`. B2 is still 0 B on the ephemeral path;
+> `Durable` costs 192 B per step, recorded as a ceiling. `ExecutionProfileHonestyTests` is
+> deleted, `FLOWX1028` is narrowed to `Streaming`, and the take-down list is worked row by
+> row in **WP-54**'s commits.
+>
+> **Lease acquisition, the recovery scan, Postgres, Redis, the outbox and `AwaitSignal` are
+> not built.** The only `IFlowJournal` in the repository is the in-memory reference in
+> `tests/FlowX.Conformance.Tests`. Nothing has run against a store, so nothing here should
+> be read as durability working end to end — a killed node is still lost, because nothing
+> looks for it. A `Durable` flow started with **no** journal is now refused
+> (`flow.durability_not_configured`), which until **WP-55** means a durable flow is rejected
+> at its first invocation unless its caller constructs the session itself.
+>
+> **Three things the package found and recorded rather than absorbed.** ADR-0015 said the
+> journal must record the branch a `Switch` took and gave it no field to do so — resolved in
+> favour of the Decision, by replaying pure predicates against the restored bag, and
+> [amended](docs/adr/ADR-0015-journal-schema-and-durable-execution.md#amendments-the-first-implementation-forced-wp-52).
+> Non-determinism attribution inside a `Parallel` is **best-effort**: one pooled context is
+> shared by the branches, so a sibling's id can land on the wrong row — harmless while
+> nothing replays a capture, and **WP-61** needs a per-branch context before it is not. And a
+> skipped sub-flow's compensations are **not** rebuilt on resume, because the parent's entry
+> binds to the child's context and that died with the node — **WP-57**'s package, named
+> rather than approximated.
 
 **The take-down is part of the deliverable, not follow-up.** `FLOWX1028` and its fitness
 test are scaffolding for a gap; a scaffold nobody removes when it stops being true is
@@ -1445,7 +1479,7 @@ the one honest signal in the area into an ignored one.
 | | |
 |---|---|
 | **Goal** | The determinism rules that are blocked on severity ship, and the whole stance is re-decided once |
-| **Why** | The analysis exists. `PredicatePurityAnalyzer` already proves scope from `DeclaringSyntaxReferences` and carries the known-impure catalogue; WP-25 rebuilt it around a table of constructs so a new subject is a row. What blocked these three is that ADR-0003 makes them Info under `Ephemeral`, the only profile that ran — so they would have shipped doing nothing anywhere. WP-52 removes that |
+| **Why** | The analysis exists. `PredicatePurityAnalyzer` already proves scope from `DeclaringSyntaxReferences` and carries the known-impure catalogue; WP-25 rebuilt it around a table of constructs so a new subject is a row. What blocked these three is that ADR-0003 makes them Info under `Ephemeral`, the only profile that ran — so they would have shipped doing nothing anywhere. **WP-52 removed that, on 2026-07-31 — these three are now unblocked and unwritten** |
 | **Tests first** | Both directions per rule, over capability bodies as well as flow delegates; the severity asserted per profile |
 | **Deliverable** | The analyzer extension, three diagnostic pages, and the amendment to [06 §5](docs/06-Execution-Engine.md#5-the-determinism-boundary) — which asks for the stance to be revisited **as a set**, including `FLOWX1011`'s deliberate Warning deviation |
 | **Exit** | `06 §5`'s table has no **no — P2** rows left except `FLOWX1006`; `FLOWX1011`'s deviation is either retired or re-argued in the same commit |
@@ -1456,7 +1490,7 @@ the one honest signal in the area into an ignored one.
 | | |
 |---|---|
 | **Goal** | Anything the journal must serialise is provably serialisable at build time |
-| **Why** | `FLOWX1006` is reserved against a generated `System.Text.Json` context that nothing generates; `IPayloadSerializer` does not exist and `ctx.State` is serialised nowhere, so there is no membership the rule could check. The journal is what creates the membership |
+| **Why** | `FLOWX1006` is reserved against a generated `System.Text.Json` context that nothing generates, so there is no membership the rule could check. WP-52 built the *hole* it fits: a payload reaches the journal only through `JournalPayload.Of<T>`, which demands a `JsonTypeInfo<T>` only generated code can name — so the membership is already a compile-time requirement, and no generator satisfies it yet. The shipped dispatchers describe no payloads at all |
 | **Tests first** | A state-bag member outside the generated context fails the build; one inside it is silent; a round trip through the journal preserves it |
 | **Deliverable** | The generated STJ context [ADR-0008](docs/adr/ADR-0008-serialization-and-schema.md) chose, the payload writer, and `FLOWX1006` |
 | **Exit** | A `Durable` flow whose state bag holds a non-serialisable type fails to build, naming the member |
@@ -1467,7 +1501,7 @@ the one honest signal in the area into an ignored one.
 | | |
 |---|---|
 | **Goal** | A compensable flow declaring `Ephemeral` is told what it is giving up |
-| **Why** | The check is one predicate — `.CompensateWith` under `Profile = Ephemeral` — and it was **deliberately not raised** in P1 because its only fix, `Profile = Durable`, changed nothing while there was no journal. A rule whose fix is a lie is worse than an unraised id. WP-52 makes the fix true |
+| **Why** | The check is one predicate — `.CompensateWith` under `Profile = Ephemeral` — and it was **deliberately not raised** in P1 because its only fix, `Profile = Durable`, changed nothing while there was no journal. A rule whose fix is a lie is worse than an unraised id. **WP-52 made the fix true, on 2026-07-31.** Its message must not overstate what `Durable` currently buys: a host with no journal wired refuses the flow (WP-55), and a resumed parent does not rebuild a skipped sub-flow's compensations (WP-57) |
 | **Tests first** | Both directions; and the reference sample built with the rule on, because it will fire there |
 | **Deliverable** | The analyzer, its page, and a decision — recorded — about what `samples/ecommerce` declares |
 | **Exit** | The rule fires on a compensable ephemeral flow and its suggested fix produces a flow that is actually crash-safe |

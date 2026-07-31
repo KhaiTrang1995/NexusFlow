@@ -327,7 +327,9 @@ flow.Step<ValidateOrder>()
 | `SubFlow<T>(AwaitCompletion)` | parent suspends until child completes (durable only) | no — [`FLOWX1026`](diagnostics/FLOWX1026.md) |
 
 `AwaitCompletion` is refused at build time under **every** profile. It needs a durable
-suspension point and there is no journal to suspend into, and unlike `AwaitSignal` — which
+**suspension point**, and there is none: WP-52 gave the runtime a journal, but a durable
+flow still runs to completion inside one invocation — suspension is WP-63. And unlike
+`AwaitSignal` — which
 degenerates honestly into a step that completes — a sub-flow has no truthful degenerate
 form: running it inline instead would change the parent's deadline and failure semantics,
 and skipping it would drop business logic. [`FLOWX1026`](diagnostics/FLOWX1026.md) says so

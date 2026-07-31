@@ -256,7 +256,11 @@ tests/FlowX.Benchmarks/
 do the budgets they were supposed to measure: there is no
 `PolicyChainBenchmarks` (B4) because no policy executes at run time, no
 `TelemetryBenchmarks` (B5, B6) because nothing emits telemetry, no
-`JournalBenchmarks` (B7, B8) because there is no journal, no
+`JournalBenchmarks` (B7, B8) — *this said "because there is no journal", which stopped
+being true at WP-52 (2026-07-31): the runtime commits a step boundary and the cost of one
+was recorded as an allocation ceiling, not a latency. B7 and B8 are still unmeasured, and
+the package that was to build the harness **before** the journal (WP-50) has not started,
+so this is now the last entry on the list rather than the first* — no
 `EndToEndHttpBenchmarks` (B9), no `StartupBenchmarks` (B10, B11) and no
 `StreamingBenchmarks` (B13). `EphemeralDispatchBenchmarks` was never the name;
 the file that measures B1/B2 is `EngineBenchmarks.cs`, and `Budgets.cs` carries
@@ -266,7 +270,8 @@ makes them real.
 
 **So B4–B11 and B13 have no gate.** They are budgets stated in advance, which is
 [rule zero](#1-rule-zero--budget-measure-optimise) working as intended, and they
-become measurable with P2 (B7, B8), P3 (B9), P4 (B4), P5 (B5, B6), P7 (B13) and
+become measurable with P2 (B7, B8 — the step-commit path exists since WP-52; the harness
+and a real store do not), P3 (B9), P4 (B4), P5 (B5, B6), P7 (B13) and
 the AOT publish job (B10, B11). The five rows in
 [21 §7](21-Quality-Gates.md#7-performance-gates) that name them as gated are
 naming a schedule, not a running check.

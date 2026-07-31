@@ -9,7 +9,9 @@
 > exists: `TenantId` is read from validated claims at the HTTP boundary
 > (`HttpTriggerReader`) and carried on `TriggerHeaders` and the flow context.
 > **Nothing consumes it.** There is no admission control, no quota, no rate
-> limit, no journal to partition, no cache to key, no telemetry to label and no
+> limit, no journal *store* to partition — WP-52 journals step boundaries in process and
+> stamps `tenant_id` on the instance row, and no store persists it — no cache to key, no
+> telemetry to label and no
 > residency binding — so every isolation level in §2 is currently the same level,
 > and it is "none enforced by the platform".
 >

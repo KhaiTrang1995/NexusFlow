@@ -64,9 +64,12 @@ path the conformance row names.
 wrong.* `tests/FlowX.Conformance.Tests` (WP-51) defines what an `IFlowJournal` and an
 `ILeaseStore` must do, and a store either passes it or fails it. What does not exist is
 anything for this pyramid's conformance row to run against: no store outside the in-memory
-reference sitting beside the suite, no Testcontainers, and no execution path that reaches a
-journal at all — `FlowX.Runtime` does not read `ExecutionProfile`. Defined and unreachable
-is a different state from absent, and the row stays unsupported either way.
+reference sitting beside the suite, and no Testcontainers. *A second half of this paragraph
+also expired, at WP-52 (2026-07-31): there **is** now an execution path that reaches a
+journal — `FlowX.Runtime` reads `ExecutionProfile` and a `Durable` flow commits a step
+boundary.* `trigger → flow → journal` still cannot run end to end, because the trigger end
+has one transport and the journal end has no store. Defined and unreachable is a different
+state from absent, and the row stays unsupported either way.
 
 ### 3.1 Unit — a capability is a class with a method
 

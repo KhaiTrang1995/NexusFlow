@@ -373,9 +373,9 @@ construction.
 **[23-Testing-Strategy](23-Testing-Strategy.md) is the full account**, including which
 levels the kit supports and which it does not. In short: the top two rows are supported;
 the bottom two are not. *This sentence gave the reason as "there is no journal to conform
-against". WP-51 defines one, and the conclusion is unchanged: there is no store
-implementation, no Testcontainers harness and no execution path that reaches a journal, so
-the bottom two rows still have nothing to run.*
+against". WP-51 defined one and WP-52 made the runtime write to it, and the conclusion is
+unchanged: there is no store implementation and no Testcontainers harness, so the bottom
+two rows still have nothing to run.*
 
 > **This paragraph said `FlowTestHost` does not exist, and for two phases it was
 > right.** It shipped in WP-49, and the shape changed on contact with what the

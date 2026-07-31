@@ -11,7 +11,7 @@ composition cannot become a step, and here is why.*
 | Cause | Why |
 |---|---|
 | The target carries no `[Flow]` attribute | Nothing generates a plan for it, so there is no compiled flow to run |
-| `SubFlowMode.AwaitCompletion` | It suspends the parent, and there is no journal to suspend into |
+| `SubFlowMode.AwaitCompletion` | It suspends the parent, and there is no suspension point to suspend into. *This cell said "no journal"; WP-52 built one, and a durable flow still runs to completion inside a single invocation — WP-63 is what adds suspension* |
 | A mode the compiler cannot read | The mode decides the flow's semantics; it may not be guessed |
 
 **An error rather than a warning, and that is the point.** All three would otherwise be
