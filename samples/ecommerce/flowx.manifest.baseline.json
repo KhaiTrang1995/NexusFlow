@@ -118,7 +118,8 @@
       "input": "Ecommerce.Reservation",
       "output": "Ecommerce.Payment",
       "authorization": {
-        "mode": "Permission"
+        "mode": "Permission",
+        "value": "payment.write"
       },
       "idempotent": false,
       "sideEffects": [

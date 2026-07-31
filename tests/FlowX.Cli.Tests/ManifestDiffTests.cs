@@ -574,9 +574,60 @@ public sealed class ManifestDiffTests
     {
         var report = Diff(candidate => Cap(candidate, "payment.capture").Authorization!.Value = "payment:write");
 
-        Fired(report, "FLOWX-DIFF-015").Summary.ShouldContain("payment:write");
+        var finding = Fired(report, "FLOWX-DIFF-015");
+
+        // Both names, not just the new one. A finding that says only where the grant
+        // landed leaves the reader unable to tell a rename from a widening without
+        // fetching the baseline themselves.
+        finding.Summary.ShouldContain("payment:capture");
+        finding.Summary.ShouldContain("payment:write");
+        finding.Severity.ShouldBe(DiffSeverity.Breaking);
         // The mode alone would say nothing changed, and the set of principals that passes
         // the check just moved.
+    }
+
+    /// <summary>
+    /// The baseline names a permission, so the pair above and below is not vacuous.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the guard the value half never had. <c>ManifestWriter</c> emitted only
+    /// <c>mode</c> inside <c>authorization</c>, so on every manifest FlowX produced this
+    /// comparison was <c>null</c> against <c>null</c>: the "stays silent" test passed
+    /// because there was nothing to compare, and the "fires" test only ever exercised
+    /// <c>null</c> → a name. Half of a Breaking rule was structurally dead and both
+    /// directions were green.
+    /// </para>
+    /// <para>
+    /// Asserted on the fixture rather than trusted, because the fixture is the only thing
+    /// standing between those two tests and passing for the wrong reason again.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheBaselineCarriesANamedPermissionForBothDirectionsToBeAbout()
+    {
+        Cap(Parse(), "payment.capture").Authorization!.Value.ShouldBe("payment:capture");
+        Cap(Parse(), "order.read").Authorization!.Value.ShouldBe("order:read");
+    }
+
+    /// <summary>
+    /// Dropping the name while keeping the stance is breaking, and is not a relaxation.
+    /// </summary>
+    /// <remarks>
+    /// The capability still declares <c>Permission</c>, so <c>Reach</c> has not moved and
+    /// FLOWX-DIFF-014 has nothing to say. What changed is that the manifest no longer
+    /// names anything to check — the stance a consumer reads as enforced now identifies
+    /// no grant. Since FLOWX1030 this cannot be produced from source, but a diff is run
+    /// against a baseline built before that rule existed, and against manifests this
+    /// compiler did not write.
+    /// </remarks>
+    [Fact]
+    public void DroppingTheNamedPermissionWhileKeepingTheStanceIsBreaking()
+    {
+        var report = Diff(candidate => Cap(candidate, "payment.capture").Authorization!.Value = null);
+
+        Fired(report, "FLOWX-DIFF-015").Summary.ShouldContain("payment:capture");
+        NotFired(report, "FLOWX-DIFF-014");
     }
 
     [Fact]
@@ -585,6 +636,57 @@ public sealed class ManifestDiffTests
         var report = Diff(candidate => Cap(candidate, "payment.capture").Output = "Ordering.CaptureV2");
 
         NotFired(report, "FLOWX-DIFF-014");
+        NotFired(report, "FLOWX-DIFF-015");
+    }
+
+    /// <summary>
+    /// An unchanged <em>named</em> permission is not reported, on a capability whose
+    /// entry is otherwise rewritten.
+    /// </summary>
+    /// <remarks>
+    /// The silent half of the value rule, made non-vacuous: both sides carry the same
+    /// non-null name, and the finding that does fire is about the side effect rather than
+    /// about authorisation. A value comparison that reported on any touched capability
+    /// would be a gate people route around.
+    /// </remarks>
+    [Fact]
+    public void ANamedPermissionThatDidNotMoveIsNotReportedWhenTheEntryChangesAroundIt()
+    {
+        var report = Diff(candidate =>
+        {
+            var capability = Cap(candidate, "payment.capture");
+
+            capability.Authorization!.Value.ShouldBe("payment:capture");
+            capability.SideEffects.Add("payment-ledger");
+        });
+
+        Fired(report, "FLOWX-DIFF-016");
+        NotFired(report, "FLOWX-DIFF-015");
+        NotFired(report, "FLOWX-DIFF-014");
+    }
+
+    /// <summary>
+    /// A move between stances is one finding, not two.
+    /// </summary>
+    /// <remarks>
+    /// <c>Permission "payment:capture"</c> to <c>Authenticated</c> changes the mode and
+    /// drops the name at once, and both halves of FLOWX-DIFF-015 have something to say
+    /// about it. It is one event, and the mode is the one that explains it — a second
+    /// finding about the vanished name would read as a second regression to triage.
+    /// </remarks>
+    [Fact]
+    public void AStanceChangeThatAlsoDropsTheNameIsReportedOnce()
+    {
+        var report = Diff(candidate =>
+        {
+            var authorization = Cap(candidate, "payment.capture").Authorization!;
+
+            authorization.Mode = "Authenticated";
+            authorization.Value = null;
+        });
+
+        // Fired() asserts exactly one finding under the code.
+        Fired(report, "FLOWX-DIFF-014").Summary.ShouldContain("Authenticated");
         NotFired(report, "FLOWX-DIFF-015");
     }
 

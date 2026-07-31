@@ -175,6 +175,19 @@ public sealed record StepModel
     /// <summary>The capability's declared authorisation stance. Reaches the manifest.</summary>
     public string? AuthorizationMode { get; private init; }
 
+    /// <summary>
+    /// The permission or policy the stance names, or <c>null</c> when it names none.
+    /// Reaches the manifest as <c>authorization.value</c>.
+    /// </summary>
+    /// <remarks>
+    /// One field for both, because a capability has one stance and the mode already says
+    /// which of <c>Permission</c> or <c>Policy</c> it was read from. It travels beside
+    /// <see cref="AuthorizationMode"/> because <c>FLOWX-DIFF-015</c> compares the pair:
+    /// the mode alone catches a move between stances, and the value is what catches a
+    /// capability that stayed on <c>Permission</c> while the permission it demands moved.
+    /// </remarks>
+    public string? AuthorizationValue { get; private init; }
+
     /// <summary>The capability's input contract, fully qualified. Required by the manifest schema.</summary>
     public string? CapabilityInput { get; private init; }
 
@@ -593,6 +606,9 @@ public sealed record StepModel
     /// <param name="sideEffects">Declared side effects, in declaration order.</param>
     /// <param name="location"><c>file:line</c> of the <c>.Step</c> call.</param>
     /// <param name="authorizationMode">The capability's declared authorisation stance.</param>
+    /// <param name="authorizationValue">
+    /// The permission or policy that stance names, or <c>null</c> when it names none.
+    /// </param>
     /// <param name="capabilityInput">The capability's input contract, fully qualified.</param>
     /// <param name="capabilityOutput">The capability's output contract, fully qualified.</param>
     /// <param name="stepInputMap">
@@ -617,6 +633,7 @@ public sealed record StepModel
         string[]? sideEffects = null,
         string? location = null,
         string? authorizationMode = null,
+        string? authorizationValue = null,
         string? capabilityInput = null,
         string? capabilityOutput = null,
         string? stepInputMap = null,
@@ -632,6 +649,7 @@ public sealed record StepModel
             SideEffects = sideEffects ?? System.Array.Empty<string>(),
             Location = location,
             AuthorizationMode = authorizationMode,
+            AuthorizationValue = authorizationValue,
             CapabilityInput = capabilityInput,
             CapabilityOutput = capabilityOutput,
             StepInputMap = stepInputMap,

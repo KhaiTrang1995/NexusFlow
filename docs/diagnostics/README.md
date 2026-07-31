@@ -200,6 +200,7 @@ did about it is on [the page](FLOWX1012.md#the-reference-sample-fires-this-rule)
 | [FLOWX1027](FLOWX1027.md) | Step is unreachable after `Fail` | A plan, a manifest and a diagram listing work the flow can never do |
 | [FLOWX1029](FLOWX1029.md) | Step input mapping produces the wrong contract | A `CS1503` inside generated source, about a call the developer cannot see |
 | [FLOWX1028](FLOWX1028.md) | Execution profile is declared but not honoured by the runtime | **A payment saga declaring `Durable` and losing its instance on the next deploy** |
+| [FLOWX1030](FLOWX1030.md) | Authorisation stance names no permission or policy | **A capability published as permission-protected that names no permission, and a `flowx diff` rule with nothing to compare when the grant moves** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved

@@ -64,13 +64,19 @@ expensive tomorrow**.
 
 ### What is wrong with the schema right now
 
-Thirteen fields the committed schema declares are written by **nothing** — fourteen counting
-`extensions`, which is the consumer's to write and is listed here because
+Thirteen fields the committed schema declares were written by **nothing** — fourteen
+counting `extensions`, which is the consumer's to write and is listed here because
 [F6](#f6--the-escape-hatch-is-exercised-before-it-is-needed) turns on it. This was derived by
 walking every `properties` block in `schemas/flowx.manifest.schema.json` against every name
 `src/FlowX.Compiler/Emit/ManifestWriter.cs` writes, then confirmed against
 `samples/ecommerce/flowx.manifest.baseline.json` — which is the only manifest in the
 repository produced by a real compilation.
+
+**One has since closed, leaving twelve.** `capability.authorization.value` is now written,
+for the reason [F5](#f5--flowx-diff-can-see-every-field-the-freeze-makes-permanent) gives:
+it was not merely unwritten, it was the half of a Breaking rule that could not fire. The
+row below is struck rather than deleted, because this list is the record of what the
+criterion was written from and a reader comparing the two should see which one moved.
 
 | Field | The fact exists in | Cost to close |
 |---|---|---|
@@ -78,7 +84,7 @@ repository produced by a real compilation.
 | `flow.owner`, `capability.owner` | nothing — there is no owner attribute | a DSL addition |
 | `capability.source` | the symbol's location; the flow's `source` is already emitted from it | small |
 | `capability.deprecated` | nothing declares deprecation | a DSL addition; `FLOWX-DIFF-204` already classifies the change |
-| `capability.authorization.value` | `CapabilityAttribute.Permission` / `.Policy` | **small, and see [F5](#f5--flowx-diff-can-see-every-field-the-freeze-makes-permanent)** |
+| ~~`capability.authorization.value`~~ | `CapabilityAttribute.Permission` / `.Policy` | **closed** — read by `CapabilityReader`, carried on `StepModel`, written by `ManifestWriter`. `FLOWX1030` now refuses the stance that would leave it empty |
 | `capability.authorization.approvedBy` | `[ApprovedBy]`, read from source by `PublicCapabilitiesAreReviewed` | small |
 | `typeRef.schema`, top-level `schemas` | nothing generates JSON Schema for contracts | large; it is what OpenAPI, AsyncAPI and MCP descriptors are generated from |
 | `event.partitionKey` | nothing declares one | a DSL addition |
@@ -86,11 +92,16 @@ repository produced by a real compilation.
 | `event.consumedBy` | nothing — there is no subscriber concept | needs a transport and a registry |
 | top-level `extensions` | by design nobody's but the consumer's | see [F6](#f6--the-escape-hatch-is-exercised-before-it-is-needed) |
 
-`samples/ecommerce` is the sharpest illustration: `payment.capture` declares
-`Authorization.Permission`, and its manifest entry is `{"mode": "Permission"}` with **no
-permission name** — while [13-AI-Native §3](../13-AI-Native.md#3-the-manifest-schema)'s
-worked example shows `"value": "payment:capture"`, and the Guarantees list under it claims
-*"every node carries `source` (file:line) and `owner`"*. No capability entry carries either.
+`samples/ecommerce` was the sharpest illustration: `payment.capture` declares
+`Authorization.Permission, Permission = "payment.write"` and its manifest entry was
+`{"mode": "Permission"}` with **no permission name** — while
+[13-AI-Native §3](../13-AI-Native.md#3-the-manifest-schema)'s worked example shows
+`"value": "payment:capture"`. Note where the loss was: the sample declared the permission
+all along, and the compiler dropped it between `CapabilityReader` and `ManifestWriter`. The
+baseline now carries `"value": "payment.write"`.
+
+The Guarantees list under that same worked example still claims *"every node carries
+`source` (file:line) and `owner`"*, and no capability entry carries either.
 
 *None of this is a defect in `ManifestWriter`. A field with no producer is what
 [WP-22](../../PLAN.md#4-p1--compiler-hardening) closed for `triggers` and per-capability
@@ -211,18 +222,37 @@ to it under a `FLOWX-DIFF-nnn` rule, or the field is listed in
 A frozen field whose change nobody can see is a contract with no enforcement, and `flowx diff`
 is the only enforcement ADR-0005 claims.
 
-**The defect this criterion is written from runs the other way, and it is live.**
+**The defect this criterion was written from ran the other way, and it is now fixed.**
 `FLOWX-DIFF-015` — **Breaking**, *"authorisation tightened, or the named permission changed"*
-— compares `authorization.value` on both sides. `ManifestWriter` never writes that field, so
-that half of a Breaking rule **cannot fire on any manifest FlowX produces**. It is the mirror
-image of the six undocumented codes `DiffCodeDocumentationTests` was written for, and neither
-that test nor `ManifestSchemaTests` can see it: one knows codes and documentation, the other
-knows schema and instance. Nothing today knows fields and rules.
+— compares `authorization.value` on both sides. `ManifestWriter` never wrote that field, so
+that half of a Breaking rule **could not fire on any manifest FlowX produced**. It was the
+mirror image of the six undocumented codes `DiffCodeDocumentationTests` was written for, and
+neither that test nor `ManifestSchemaTests` could see it: one knows codes and documentation,
+the other knows schema and instance. Nothing yet knows fields and rules.
+
+The value is now carried — `CapabilityReader` reads `Permission` / `Policy`, `StepModel`
+carries it beside `AuthorizationMode`, `ManifestWriter` writes `authorization.value` — and
+the first thing that happened when it landed was the sample's own gate failing:
+
+```text
+BREAKING (1)
+  FLOWX-DIFF-015  capability payment.capture@2
+      authorization value changed: (none) -> payment.write
+```
+
+`FLOWX1030` closes the other end, refusing at compile time the `Permission` or `Policy`
+stance that names nothing — because a rule that compares a field is worth only as much as
+the field's being populated, and a stance with no name has no value to move.
+
+**What that fix does not do is meet this criterion.** One counterexample is closed; the
+instrument that would find the second still does not exist, and the argument for it is
+unchanged. Note how this one was found — while writing the criterion, by reading the rule
+and the writer side by side. That is not a method that scales to a frozen schema.
 
 **Checked by:** extending `DiffCodeDocumentationTests` — or a sibling in the same project — to
 a field↔rule map asserted in both directions.
 
-**Today:** unmet, with one known counterexample and no instrument that would find a second.
+**Today:** unmet. The one known counterexample is closed; no instrument would find a second.
 
 ### F6 — The escape hatch is exercised before it is needed
 
@@ -333,9 +363,12 @@ criterion. The list is only useful if the next freeze — the schema will have a
 - **Thirteen unproduced fields became a list with costs beside them**, most of them small, and
   four of them (`capability.source`, `authorization.value`, `authorization.approvedBy`,
   `event.producedBy`) facts the compiler already has and does not write down.
+  `authorization.value` has since been written and struck from the list, leaving twelve.
 - **One live defect surfaced from asking the question**: a Breaking `flowx diff` rule that
-  cannot fire because the field it compares is never emitted. It was found by writing F5, not
-  by a test, which is F5's own argument for existing.
+  could not fire because the field it compares was never emitted. It was found by writing F5,
+  not by a test, which is F5's own argument for existing — and it is now fixed, along with
+  `FLOWX1030` to stop the field being emitted empty. F5 itself remains unmet: the
+  counterexample is closed, the instrument that would find the next one is not written.
 - **P8's first Must acquires an entry gate** instead of being the phase where the freeze
   happens because the phase started.
 
