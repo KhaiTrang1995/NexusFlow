@@ -40,4 +40,9 @@ app.MapFlow(
     requireIdempotencyKey: true,
     sensitiveMembers: PlaceOrderFlow.SensitiveMembers);
 
-app.Run();
+// `await RunAsync()` rather than `Run()`. Identical behaviour — top-level statements compile
+// to an async entry point, so the process still blocks here until shutdown — and it is the
+// form that stays correct if a reader lifts the line into a method of their own. The
+// `ConfigureAwait(false)` is what CA2007 asks for repository-wide; nothing runs after this
+// await, so it changes nothing at this call site beyond satisfying the rule.
+await app.RunAsync().ConfigureAwait(false);

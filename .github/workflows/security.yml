@@ -112,12 +112,19 @@ jobs:
 
       - name: Skip until a sample exists
         id: guard
+        # This condition was `-f samples/ecommerce/Directory.Build.props || -d
+        # samples/ecommerce/src`. Neither path has ever existed, and neither was ever
+        # going to: the sample is a flat project directory with its own csproj, not a
+        # nested source tree with its own props file. So the guard evaluated false on
+        # every scheduled run, printed "not runnable yet (WP-10)" long after WP-10
+        # landed, and the whole job skipped while docs/21 §4 listed DAST as running
+        # nightly. It tested for the wrong thing rather than for a sample that runs.
         run: |
-          if [ -f samples/ecommerce/Directory.Build.props ] || [ -d samples/ecommerce/src ]; then
+          if [ -f samples/ecommerce/Ecommerce.csproj ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "samples/ecommerce is not runnable yet (WP-10). DAST is scheduled, not skipped permanently."
+            echo "::warning title=DAST did not run::samples/ecommerce/Ecommerce.csproj is missing, so there was nothing to scan."
           fi
 
       - uses: actions/setup-dotnet@v4
