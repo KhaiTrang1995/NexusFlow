@@ -182,9 +182,33 @@ catch (Exception error) when (error is IOException
     return Fail($"Could not load FlowPlanGenerator from {compiler}: {error.Message}");
 }
 
+// The subject's csproj sets <ImplicitUsings>enable</ImplicitUsings>, and its sources rely
+// on it — a flow file declares `using FlowX;` and nothing else, so ValueTask, Task and
+// CancellationToken arrive from the SDK's generated global usings. Parsing the files
+// without them produced a compilation that did not bind those types.
+//
+// That was not harmless. The gate still worked as a relative comparison, because the same
+// broken subject was measured on both sides — which is why it caught the 4.9x regression at
+// +102 %. But a generator or analyzer that resolves a signature (rather than pattern-matching
+// syntax) walks away early on an unbindable one, so its real cost was invisible here. The
+// error-catalogue reader, rewritten to root at ICapability<,>.ExecuteAsync, reported -40 %
+// against this baseline: not a saving, a refusal.
+//
+// Supplied explicitly rather than through parse options, because the SDK writes them into a
+// generated file the probe never sees.
+const string ImplicitUsings = """
+    global using global::System;
+    global using global::System.Collections.Generic;
+    global using global::System.IO;
+    global using global::System.Linq;
+    global using global::System.Net.Http;
+    global using global::System.Threading;
+    global using global::System.Threading.Tasks;
+    """;
+
 CSharpCompilation NewCompilation() => CSharpCompilation.Create(
     "ScaleSynthetic",
-    trees,
+    [.. trees, CSharpSyntaxTree.ParseText(ImplicitUsings, path: "/src/ImplicitUsings.g.cs")],
     metadata,
     new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
