@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
@@ -126,10 +127,22 @@ internal static class GeneratorHarness
     /// construction. Naming the files is what makes the other case reachable.
     /// </remarks>
     public static CSharpCompilation CompilationOf(params (string Path, string Source)[] files) =>
+        CompilationOf("FlowX.GeneratorTests", [], files);
+
+    /// <summary>Builds a named compilation from several files, plus extra references.</summary>
+    /// <remarks>
+    /// The extra references exist for the one question that cannot be asked inside a single
+    /// compilation: what the reader does when a symbol's declaration is in another
+    /// assembly. Nothing else needs them.
+    /// </remarks>
+    public static CSharpCompilation CompilationOf(
+        string assemblyName,
+        IEnumerable<MetadataReference> extraReferences,
+        params (string Path, string Source)[] files) =>
         CSharpCompilation.Create(
-            "FlowX.GeneratorTests",
+            assemblyName,
             files.Select(static f => CSharpSyntaxTree.ParseText(f.Source, path: f.Path)),
-            References,
+            References.Concat(extraReferences),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
 
     /// <summary>Replaces one file's contents, keeping every other tree identical.</summary>
