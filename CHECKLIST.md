@@ -330,10 +330,15 @@ it, because a gate nobody has seen fail is a gate nobody has tested.
       `tests/FlowX.Conformance.Tests` (WP-51), and it holds `JournalConformance` and
       `LeaseStoreConformance` — **not** the `TriggerSourceConformance` this gate would run,
       and `ITriggerSource` is still undeclared. The project is not packable, so nothing
-      outside this repository can run it, and nothing has ever run against a real database.
+      outside this repository can run it. *This entry also said "nothing has ever run
+      against a real database" and "there is one plugin". Both expired at WP-53:
+      `plugins/FlowX.Postgres` runs both suites unmodified from another assembly against
+      PostgreSQL 16.13, and there are two plugins.* **What has not changed is the claim
+      that matters here:** there is still **one implementation per abstraction**, so
+      "every plugin agrees" still has one data point — the second store is WP-54, and the
+      suite this gate would actually run does not exist.
       [05-Architecture §11](docs/05-Architecture.md) names publishing a suite as the
-      mitigation for R3 and R8 and that has not happened. There is also one plugin, so
-      "every plugin agrees" has one data point.
+      mitigation for R3 and R8 and that has not happened.
       [21-Quality-Gates §2.4](docs/21-Quality-Gates.md)
 
 `ManifestIsComplete` does **not** check policies, although the §12 row is written as
@@ -1230,7 +1235,7 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | **0009** plugin contracts | Accepted | reviewed "each phase gate" — **no record of a review at P1's gate** | Its warning box is **false since WP-53**: still says "no store has ever run against a real database". This is the record a plugin author reads |
 | **0011** policy stage order | Accepted | needs three counterexamples collected — **nothing collects them**, so it cannot be revisited | the counterexample register does not exist |
 | **0013** DSL vocabulary | Accepted | **has no `Revisit when`** | violates the index's own rule |
-| **0014** catalogue vs budget | **Proposed** | **two of four FIRED** — withheld 42 % vs 20 %; inner loop pays full derivation per edit | headlines **+77.1 %** and says 200 flows "has not been re-measured" — [B12 §8](docs/benchmarks/B12-scale.md) records +67.1 %. **The record carrying the project's biggest open decision is ten points stale** |
+| **0014** catalogue vs budget | **Proposed** | **one of four FIRED** — the inner loop pays full derivation per edit, by construction. A second is **crossed, not fired**: withheld 42 % vs a 20 % trigger, on a corpus [B13 §2](docs/benchmarks/B13-error-catalogue-resolution.md) argues is inadmissible. *This cell said "two of four" and overstated it* | **corrected 2026-07-31.** The record headlined **+77.1 %** and claimed 200 flows had not been re-measured; [ADR-0014 §10](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) now states +67.1 % and which triggers fired |
 | 0015 journal schema | Accepted | cannot fire — keyed on B8, no harness | tracked well |
 | **0016** Postgres adapter | Accepted | not fired | **has no `Negative` section.** Its WP-56 purge-guard note and its Oracle `Root`-scope portability rule are in neither planning file |
 

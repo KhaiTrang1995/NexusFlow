@@ -52,18 +52,41 @@ compatibility obligation held forever.
 > `TheSuiteRejectsAStoreThatIsWrongTests` runs deliberately broken stores through
 > it and asserts each is caught by the assertion whose name says why.
 >
-> **Nothing real has met it.** Four of the six suites are unwritten, including
-> `TriggerSourceConformance` — the one the surviving `plugins/FlowX.Http` would
-> take. The project is a test project and is **deliberately not packable**, so
-> the "third parties self-certify by running `dotnet test`" clause of this
-> decision remains unavailable to any third party. The only implementation held
-> to the suite is an in-memory reference in the same project; no store has ever
-> run against a real database. `PluginsPassConformance` is still blocked
-> ([21 §2.4](../21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced)),
-> and there is still one plugin, so the rule that "no abstraction ships with
-> fewer than two real implementations" has been tested against nothing.
-> Publishing a trigger suite is a **P3** deliverable and the named mitigation for
-> risks R3 and R8 in
+> **Something real has met it, and three clauses of this box expired at WP-53 saying
+> otherwise.** *It read: "the only implementation held to the suite is an in-memory
+> reference in the same project", "no store has ever run against a real database", and
+> "there is still one plugin".* `plugins/FlowX.Postgres` is a second plugin, it depends on
+> `FlowX.Abstractions` and nothing else, and it runs `JournalConformance` and
+> `LeaseStoreConformance` **unmodified, from a different assembly**, against **PostgreSQL
+> 16.13** — 45 conformance assertions green. That is precisely the arrangement
+> [17 §5](../17-Plugin-System.md) describes for a third party claiming conformance,
+> performed for the first time, and it is the first evidence that this decision's central
+> mechanism works on something other than the reference implementation.
+> The suite also *disagreed* with a real store where a document was wrong: three clauses of
+> [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md) did not survive it, recorded
+> in [ADR-0016](ADR-0016-postgres-journal-adapter.md). **A conformance suite that has never
+> failed a real implementation has not been tested either**, which is why that matters as
+> much as the passes.
+>
+> **What has not changed is most of it, and none of it is bookkeeping.** Four of the six
+> suites are unwritten, including `TriggerSourceConformance` — the one `plugins/FlowX.Http`
+> would take — and `ITriggerSource` is still undeclared, so the transport plugin extends
+> FlowX without the interface that would formalise it. A third durability contract has since
+> shipped with no suite at all: `IRecoveryIndex` has two implementations that agree on which
+> states count as abandoned by reading two comments and no assertion, which ADR-0016 names
+> rather than closes. The project is a test project and is **deliberately not packable**, so
+> the "third parties self-certify by running `dotnet test`" clause of this decision remains
+> unavailable to any third party — the cross-assembly proof above was performed *inside this
+> repository*, which is a different thing from publishing.
+> `PluginsPassConformance` is still blocked
+> ([21 §2.4](../21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced)); what narrowed
+> is the reason, from "there is no suite" to "there is no trigger suite", and a gate does not
+> move because its excuse improved. **Two plugins are not two implementations of one
+> abstraction.** `IFlowJournal` and `ILeaseStore` have one shipped implementation each beside
+> an in-memory reference in a test project, so the rule that "no abstraction ships with fewer
+> than two real implementations" is still tested against nothing, and one store is one data
+> point about a suite that could have encoded it — Redis is **WP-54**. Publishing a trigger
+> suite is a **P3** deliverable and the named mitigation for risks R3 and R8 in
 > [05 §11](../05-Architecture.md#11-risks-and-technical-debt).
 >
 > **Where the contracts live is settled by this ADR and was got wrong in the
@@ -77,12 +100,20 @@ compatibility obligation held forever.
 **Positive**
 - First-party plugins are the proof that the extension points are sufficient —
   if Kafka needs an internal API, that is a design bug we discover ourselves.
-  *Unproven: `FlowX.Http` is the only plugin, and the trigger extension point it
-  would implement (`ITriggerSource`) is not declared.*
+  *This read "Unproven: `FlowX.Http` is the only plugin". It is still the only **transport**
+  plugin and `ITriggerSource` is still undeclared, so the half of the claim this bullet was
+  written about is untested. The other half was tested at WP-53 and behaved as predicted:
+  `plugins/FlowX.Postgres` needed nothing outside `FlowX.Abstractions`, and building it
+  found three schema clauses wrong and one shipped extension point that no production
+  implementation registered — defects discovered by us, in the shape this bullet says they
+  arrive ([ADR-0016](ADR-0016-postgres-journal-adapter.md)).*
 - Third parties can self-certify by running `dotnet test`; no gatekeeping
   committee, and the standard is machine-checkable. *Not yet available to a third
   party: the two suites that exist live in a test project that is not packable, so
-  there is nothing to reference and nothing for an outside store to derive from.*
+  there is nothing to reference and nothing for an outside store to derive from.
+  What is no longer unproven is the derivation itself — a store in another assembly
+  inherited both suites without an edit — so what WP-70 is missing is the package, not the
+  mechanism.*
 - Runtime internals stay refactorable, because nothing outside depends on them.
 - Consumers do not inherit a plugin's dependency tree through abstractions.
 - Behavioural drift is caught: the conformance suite is versioned alongside the

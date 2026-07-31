@@ -12,15 +12,26 @@
 > `src/FlowX.Abstractions` or anywhere else. A plugin author cannot compile
 > against them today.
 >
-> **Two do.** `IFlowJournal` and `ILeaseStore` were declared at WP-51, in
+> **Three do.** `IFlowJournal` and `ILeaseStore` were declared at WP-51 in
 > `src/FlowX.Abstractions/Durability/`, with the conformance suites described
-> below. Nothing implements them outside a test, and `FlowX.Runtime` does not
-> call them: the seam that makes a `Durable` flow use them is WP-52.
+> below; `IRecoveryIndex` joined them and is the one durability contract with
+> **no suite at all**. *This paragraph said "two do", that nothing implements
+> them outside a test, and that `FlowX.Runtime` does not call them. All three
+> expired: WP-52 made the runtime call them, and WP-53 implements all three in
+> `plugins/FlowX.Postgres`.*
 >
-> There is **one plugin**, `plugins/FlowX.Http`, and it extends FlowX by
-> referencing `FlowX.Abstractions` and mapping ASP.NET Core onto
-> `TriggerEnvelope` — the pattern this document describes, without the interface
-> that would formalise it.
+> There are **two plugins**. `plugins/FlowX.Http` extends FlowX by referencing
+> `FlowX.Abstractions` and mapping ASP.NET Core onto `TriggerEnvelope` — the
+> pattern this document describes, without the interface that would formalise it.
+> `plugins/FlowX.Postgres` (WP-53) implements `IFlowJournal`, `ILeaseStore` and
+> `IRecoveryIndex` against `FlowX.Abstractions` and nothing else, and passes the
+> conformance suite unmodified from a different assembly.
+>
+> *This box said "one plugin" until 2026-07-31.* **The claim it was supporting
+> survives the correction:** there is still **one implementation per
+> abstraction**, so "no abstraction ships with fewer than two real
+> implementations" is as untested as it was — and `FlowX.Http` is still the only
+> *transport* plugin, which is the data point `PluginsPassConformance` needs.
 >
 > **`FlowX.Conformance.Tests` is two of [§4](#4-compatibility-policy)'s six rows
 > and nothing else.**
