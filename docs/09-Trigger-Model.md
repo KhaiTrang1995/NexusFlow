@@ -332,8 +332,9 @@ Every trigger plugin must pass `FlowX.Conformance.Tests`:
 > [!IMPORTANT]
 > **This box said `FlowX.Conformance.Tests` does not exist. That is now wrong,
 > and what replaces it is narrower than it sounds.** `tests/FlowX.Conformance.Tests`
-> exists (WP-51) and holds two suites — `JournalConformance` and
-> `LeaseStoreConformance` — neither of which is a trigger suite. **None of the
+> exists (WP-51) and holds three suites — `JournalConformance`,
+> `LeaseStoreConformance` and `RecoveryIndexConformance` — **none** of which is a
+> trigger suite. **None of the
 > seven tests above has been written**, `TriggerSourceConformance` does not
 > exist, and the interfaces they would test against — `ITriggerSource`,
 > `ITriggerSink` — are still not declared anywhere in `src/`. The two signatures

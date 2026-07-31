@@ -44,7 +44,7 @@ compatibility obligation held forever.
 > **This box said the conformance suite does not exist. That is now wrong, and
 > the correction is smaller than it looks.** WP-51 added
 > `tests/FlowX.Conformance.Tests`, holding `JournalConformance` and
-> `LeaseStoreConformance` — the suites for two of the extension points in
+> `LeaseStoreConformance` and `RecoveryIndexConformance` — the suites for three of the extension points in
 > [17 §2](../17-Plugin-System.md#2-extension-contracts) and the first place this
 > ADR's "semantic contract" is written down as executable assertions rather than
 > as an intention. The mechanism works and is proved to: a store claims
@@ -109,7 +109,7 @@ compatibility obligation held forever.
   arrive ([ADR-0016](ADR-0016-postgres-journal-adapter.md)).*
 - Third parties can self-certify by running `dotnet test`; no gatekeeping
   committee, and the standard is machine-checkable. *Not yet available to a third
-  party: the two suites that exist live in a test project that is not packable, so
+  party: the three suites that exist live in a test project that is not packable, so
   there is nothing to reference and nothing for an outside store to derive from.
   What is no longer unproven is the derivation itself — a store in another assembly
   inherited both suites without an edit — so what WP-70 is missing is the package, not the
