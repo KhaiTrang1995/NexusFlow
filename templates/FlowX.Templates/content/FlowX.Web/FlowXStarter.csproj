@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>FlowXStarter</RootNamespace>
+
+    <!--
+      A warning nobody fixes is a warning that hides the next one. This is the bar the
+      platform holds itself to, and the bar a FlowX diagnostic assumes when it chooses
+      to be a warning rather than an error.
+    -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!--
+      FlowX generates its plan and dispatcher instead of reflecting over your types, so
+      the application can be published ahead of time. Leaving this on from the first
+      build is what keeps it true: the AOT and trim analyzers run on every compile, and
+      report the reflection you were about to add while it is still one line.
+    -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!--
+      The generated plan lands under obj/generated as ordinary C# with line directives
+      back to your Define method. Set a breakpoint on a step and it stops in your file.
+    -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/obj/generated</CompilerGeneratedFilesOutputPath>
+
+    <!-- One place to change when the platform moves. -->
+    <FlowXVersion>0.1.0</FlowXVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Contracts: ICapability, Flow<,>, Result<T>, the attributes. -->
+    <PackageReference Include="FlowX.Abstractions" Version="$(FlowXVersion)" />
+
+    <!-- AddFlowX and the health check. Brings FlowX.Core and FlowX.Runtime with it. -->
+    <PackageReference Include="FlowX.Hosting" Version="$(FlowXVersion)" />
+
+    <!-- MapFlow: the HTTP transport. Swap or add transports here, not in the flow. -->
+    <PackageReference Include="FlowX.Http" Version="$(FlowXVersion)" />
+
+    <!--
+      The compiler is an ANALYZER, not a library: it runs inside this build, reads your
+      Define method and emits the plan, the dispatcher and the manifest. PrivateAssets
+      keeps it out of anything that references this project, and out of what you ship.
+      The code fixes are the same asset kind and only ever run in an editor.
+    -->
+    <PackageReference Include="FlowX.Compiler" Version="$(FlowXVersion)" PrivateAssets="all" />
+    <PackageReference Include="FlowX.Compiler.CodeFixes" Version="$(FlowXVersion)" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

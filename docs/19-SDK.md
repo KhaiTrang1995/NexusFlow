@@ -5,53 +5,71 @@
 > **Answers:** what does using FlowX actually feel like, minute to minute?
 
 > [!WARNING]
-> **This document describes the intended experience, not the current one.** None
-> of the commands in §1 works: there is no `FlowX.Templates` package and no
-> `dotnet new flowx` template, and `flowx dev` is not a CLI verb — the CLI has
-> four: `graph`, `manifest`, `diff` and `verify --cost` ([22-CLI](22-CLI.md)). Studio does not
-> exist in any form (**P8**), and neither does the startup banner, which would
-> need telemetry that is not emitted (**P5**).
+> **This document describes the intended experience, not the current one.**
+> `dotnet new flowx` now exists and §1 is verified end to end, but the template is
+> installed from this repository rather than from NuGet, and it scaffolds no
+> tests. `flowx dev` is not a CLI verb — the CLI has four: `graph`, `manifest`,
+> `diff` and `verify --cost` ([22-CLI](22-CLI.md)). Studio does not exist in any
+> form (**P8**), and neither does the startup banner, which would need telemetry
+> that is not emitted (**P5**).
 >
 > Two rows of §2's package table name projects that are not in the solution:
 > **`FlowX.Sdk`** (the metapackage a new user is told to reference) and
 > **`FlowX.Runtime.Durable`** (**P2**). `src/` contains `FlowX.Abstractions`,
 > `FlowX.Core`, `FlowX.Compiler`, `FlowX.Compiler.CodeFixes`, `FlowX.Runtime`,
-> `FlowX.Hosting`, `FlowX.Testing` and `FlowX.Cli`, plus `plugins/FlowX.Http`.
-> Nothing has been published to NuGet.
+> `FlowX.Hosting`, `FlowX.Testing` and `FlowX.Cli`, plus `plugins/FlowX.Http` and
+> `templates/FlowX.Templates`. **Nothing has been published to NuGet**, which is
+> the one thing standing between §1 and the two-command version of itself.
 >
 > `AddFlowX(...)` in §3 is real and validates its options at start-up. The
 > `.UseHttp()` / `.UseKafka(...)` chain on it is not: `AddFlowX` takes an
 > `Action<FlowXOptions>` and there are no transport registration methods, so
-> `samples/ecommerce` maps its endpoint by hand.
->
-> The honest current first five minutes: reference the projects, write a flow and
-> its capabilities, `dotnet run`, and map the endpoint yourself.
+> `samples/ecommerce` and the generated project both map their endpoint by hand.
 
 ---
 
 ## 1. First five minutes
 
 ```bash
-dotnet new install FlowX.Templates
-dotnet new flowx --name Ordering
+templates/local-feed.sh                       # pre-release only — see below
+dotnet new install templates/FlowX.Templates
+
+dotnet new flowx -o Ordering
 cd Ordering
-flowx dev up          # Postgres + Redpanda + OTel + Studio, one command
 dotnet run
 ```
 
-```
-FlowX 1.0.0 · Ordering v1.0.0 · role=all
-  Flows        3   (2 ephemeral, 1 durable)
-  Capabilities 7
-  Triggers     5   (3 http, 1 kafka, 1 cron)
-  Manifest     .artifacts/flowx.manifest.json
-  Studio       http://localhost:5055/flowx
-  Ready in 148 ms
+```bash
+curl -X POST http://localhost:5000/api/v1/tickets \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: ticket-1' \
+  -d '{"subject":"Printer on fire","reporter":"ops","contactPhone":"+44 7700 900000"}'
 ```
 
-The scaffold is one working vertical slice — a flow, its capabilities, its
-contracts and its tests — not an empty folder tree. New engineers learn the model
-by modifying something that runs.
+```json
+{ "ticketId": "ticket-1", "subject": "Printer on fire" }
+```
+
+The scaffold is one working vertical slice — a flow, two capabilities, their
+contracts, the composition root and one HTTP endpoint — not an empty folder tree.
+New engineers learn the model by modifying something that runs. It carries no
+tests, which is the one place this section still promises more than it delivers:
+a scaffolded test project has to pick a test framework on the reader's behalf,
+and [23-Testing-Strategy](23-Testing-Strategy.md) teaches the same thing without
+that cost.
+
+The generated `.csproj` is the shape that will ship: four `PackageReference`s and
+the compiler as an analyzer asset. **The first line above is the entire
+pre-release gap** — nothing is on NuGet, so `templates/local-feed.sh` packs the
+platform into `.artifacts/local-feed` and registers it as a source. The day the
+packages publish, that line and that script are deleted and the template itself
+does not change. `templates/verify.sh` is the acceptance test for all of it, and
+[templates/README.md](../templates/README.md) is the reference.
+
+There are no template options. `--profile durable` would generate a project that
+does not build: `FLOWX1028` is deliberately a *warning*, and the generated project
+sets `TreatWarningsAsErrors`, which is this repository's own bar. `--transport`
+would have one value.
 
 ---
 
@@ -67,9 +85,16 @@ by modifying something that runs.
 | `FlowX.Testing` | context doubles + `FlowTestHost` (substitution); virtual time and durable replay in P2–P4 | test projects |
 | `FlowX.Http` / `.Kafka` / `.Cron` / … | trigger + publisher plugins | as needed |
 | `FlowX.Cli` | dotnet tool | developer machines, CI |
+| `FlowX.Templates` | `dotnet new flowx` | developer machines |
 
 Deliberately small. A new user references `FlowX.Sdk` plus the transports they
 use, and nothing else.
+
+Until `FlowX.Sdk` exists, the template references its three parts by hand —
+`FlowX.Abstractions`, `FlowX.Hosting` and `FlowX.Compiler` — plus `FlowX.Http`
+and `FlowX.Compiler.CodeFixes`. Five lines where the table promises two. That is
+the metapackage's whole justification, visible in the one file a new user reads
+first.
 
 ---
 
@@ -270,13 +295,22 @@ removed for the part that exists.
 | Flow graph in a tool window | FlowX extension (VS, Rider, VS Code) reading the manifest |
 | Navigate step → capability | generated code with `SourceLink` |
 | CodeLens: "used by 3 flows" | manifest-backed |
-| Debug generated code | `EmitCompilerGeneratedFiles` on by default |
-| Snippets: `flowcap`, `flowflow`, `flowtest` | template package |
+| Debug generated code | `EmitCompilerGeneratedFiles`, set by the template |
+| Snippets: `flowcap`, `flowflow`, `flowtest` | template package — **not written** |
 | Live topology in the editor | Studio embedded view |
 
 Debuggability of generated code is a deliberate mitigation for risk R1
 ([05 §11](05-Architecture.md#11-risks-and-technical-debt)): the generated plan is
 ordinary, readable, breakpoint-able C# on disk — not an opaque build artifact.
+
+Two corrections to the table. **`EmitCompilerGeneratedFiles` is not on by
+default** — it is off in the SDK, on in this repository's `Directory.Build.props`,
+and set explicitly by the generated project, so a consumer who writes their own
+`.csproj` loses the mitigation silently. It belongs in
+`src/FlowX.Compiler/build/FlowX.Compiler.props`, which every package consumer
+imports, and the same file's `CompilerVisibleProperty Include="ProjectDir"` is now
+redundant: the .NET 10 SDK declares it. And the template pack ships **no
+snippets** — the row describes work nobody has done.
 
 ---
 

@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A template pack: it carries files, not code. It is deliberately NOT in FlowX.slnx.
+
+    Two reasons. Its `content/` holds a complete .csproj and five .cs files that are
+    template input, not repository source — in the solution they would be swept into the
+    default Compile glob and into every fitness function that walks a project. And it has
+    nothing to build, so a solution build would spend time proving that.
+
+    Pack it on its own:  dotnet pack templates/FlowX.Templates -c Release
+    Or install the folder directly, which is what templates/verify.sh does:
+                         dotnet new install templates/FlowX.Templates/content/FlowX.Web
+  -->
+
+  <PropertyGroup>
+    <PackageType>Template</PackageType>
+    <PackageId>FlowX.Templates</PackageId>
+    <Title>FlowX project templates</Title>
+    <Description>Templates for FlowX: dotnet new flowx scaffolds one flow, its capabilities, its contracts and the HTTP endpoint that runs them.</Description>
+    <PackageTags>flowx;dotnet-new;templates;orchestration</PackageTags>
+
+    <IncludeContentInPack>true</IncludeContentInPack>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <NoDefaultExcludes>true</NoDefaultExcludes>
+
+    <!--
+      There is no source here, so the default globs must be off: with them on, the
+      template's own .cs files would be compiled as part of this project.
+    -->
+    <EnableDefaultItems>false</EnableDefaultItems>
+
+    <!-- No assembly, so no symbols; Directory.Build.props turns them on repository-wide. -->
+    <IncludeSymbols>false</IncludeSymbols>
+
+    <!-- NU5128: no lib/ folder, which is correct for a template pack. -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      PackagePath is spelled out rather than left to ContentTargetFolders: that property
+      prefixes `content/` to a path that already starts with `content/`, and the pack
+      lands under content/content/. It still installs — `dotnet new install` looks for
+      .template.config anywhere in the package — which is exactly why it is worth being
+      explicit instead of finding out later.
+    -->
+    <Content Include="content/**/*"
+             Exclude="content/**/bin/**;content/**/obj/**"
+             PackagePath="content/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>
