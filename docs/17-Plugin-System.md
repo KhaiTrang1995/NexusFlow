@@ -22,7 +22,7 @@
 >
 > **`IEventPublisher` was on the undeclared list until WP-56 and is now in
 > `src/FlowX.Abstractions/Events/`**
-> ([ADR-0017](adr/ADR-0017-outbox-publication-and-ordering.md)). It is the first
+> ([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)). It is the first
 > contract here declared with **nothing implementing it**:
 > `PostgresOutboxPublisher` consumes it, and no plugin produces one. There is no
 > Kafka, RabbitMQ, Service Bus, Event Hubs or SNS plugin, and the only

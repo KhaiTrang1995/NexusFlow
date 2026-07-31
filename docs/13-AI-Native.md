@@ -26,6 +26,16 @@
 > Everything past §2 is **P8**, gated behind the manifest v1.0 freeze. The point
 > of writing it now is that each consumer is a constraint on what the manifest
 > must contain, and adding a field after the freeze is expensive.
+>
+> *This paragraph used the freeze as a date and never said when it falls, and so did every
+> other document that named it.*
+> [**ADR-0018**](adr/ADR-0017-manifest-v1-freeze-criteria.md) *now states the eight
+> conditions, none of which holds today. Two bear directly on §3 below: thirteen fields
+> the committed schema declares are written by nothing — including the top-level `schemas`
+> map that every contract-shaped consumer in §4 would be generated from — and
+> `event.schemaVersion` is emitted as the literal* `"1.0.0"` *for every event. The Guarantees
+> list under §3 also claims "every node carries `source` and `owner`": no capability entry
+> carries either.*
 
 ---
 

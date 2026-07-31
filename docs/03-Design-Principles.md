@@ -202,7 +202,7 @@ loud — [`FLOWX1024`](diagnostics/FLOWX1024.md) is raised on every `Emit` step 
 that narrower reason, and `samples/ecommerce` suppresses it under a dated debt
 entry rather than hiding it. And **no broker plugin exists**: `IEventPublisher` is
 a declared contract with a recording test double behind it and nothing else
-([ADR-0017](adr/ADR-0017-outbox-publication-and-ordering.md)).*
+([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)).*
 
 ---
 

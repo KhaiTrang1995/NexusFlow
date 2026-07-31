@@ -606,6 +606,118 @@ public sealed class FlowPlanGeneratorTests
 
         run.Ids.ShouldContain("FLOWX1010",
             "Deny-by-default is structural. A capability without a stance must not build.");
+
+        run.Ids.ShouldNotContain("FLOWX1030",
+            "An undeclared stance reads as Public, which names nothing and is meant to. " +
+            "Two findings for one omission would send the author to the wrong fix.");
+    }
+
+    /// <summary>
+    /// FLOWX1030 — a stance that demands a named grant and names none.
+    /// </summary>
+    /// <remarks>
+    /// FLOWX1010's rule one level down, and an error on FLOWX1010's argument. The
+    /// declaration compiles, reads as enforced, and publishes
+    /// <c>{"mode": "Permission"}</c> — a claim that some grant is required, naming none.
+    /// It is also what left <c>FLOWX-DIFF-015</c>'s "the named permission changed" half
+    /// with nothing to compare: a stance with no name has no value to move.
+    /// </remarks>
+    [Theory]
+    [InlineData("Permission")]
+    [InlineData("Policy")]
+    public void ReportsFLOWX1030WhenAStanceDemandsANameAndHasNone(string mode)
+    {
+        var run = GeneratorHarness.Run(WithFlow($$"""
+            [Capability("audit.write", Version = "1.0.0", Idempotent = true,
+                Authorization = Authorization.{{mode}})]
+            public sealed class WriteAudit : ICapability<PlaceOrder, OrderResult>
+            {
+                public ValueTask<Result<OrderResult>> ExecuteAsync(PlaceOrder input, CapabilityContext ctx, CancellationToken ct)
+                    => ValueTask.FromResult(Result.Ok(new OrderResult("x")));
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<WriteAudit>()
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1030", run.Describe());
+
+        // The message names the property to add, which differs by mode. One hard-coded
+        // noun would send half the readers to the wrong one.
+        run.Describe().ShouldContain(
+            $"Capability 'audit.write' declares Authorization.{mode} but no {mode} name");
+    }
+
+    /// <summary>
+    /// The half that matters more: FLOWX1030 stays silent on every valid stance.
+    /// </summary>
+    /// <remarks>
+    /// Three of the five modes are complete in themselves, and a rule that reported them
+    /// would make the security set the first thing a team suppressed. The named cases are
+    /// included so the rule is shown to be about the missing name and not about the mode.
+    /// </remarks>
+    [Theory]
+    [InlineData("Authorization.Public")]
+    [InlineData("Authorization.Authenticated")]
+    [InlineData("Authorization.Internal")]
+    [InlineData("""Authorization.Permission, Permission = "audit.write" """)]
+    [InlineData("""Authorization.Policy, Policy = "audit-writers" """)]
+    public void DoesNotReportFLOWX1030OnAStanceThatIsCompleteInItself(string stance)
+    {
+        var run = GeneratorHarness.Run(WithFlow($$"""
+            [Capability("audit.write", Version = "1.0.0", Idempotent = true,
+                Authorization = {{stance}})]
+            public sealed class WriteAudit : ICapability<PlaceOrder, OrderResult>
+            {
+                public ValueTask<Result<OrderResult>> ExecuteAsync(PlaceOrder input, CapabilityContext ctx, CancellationToken ct)
+                    => ValueTask.FromResult(Result.Ok(new OrderResult("x")));
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<WriteAudit>()
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldNotContain("FLOWX1030", run.Describe());
+    }
+
+    /// <summary>A name that is only whitespace is no name.</summary>
+    /// <remarks>
+    /// <c>Permission = ""</c> would otherwise satisfy the rule while publishing
+    /// <c>"value": ""</c> — a permission whose name is blank, which is exactly the
+    /// unenforceable stance the rule exists to refuse, wearing a value.
+    /// </remarks>
+    [Fact]
+    public void ReportsFLOWX1030WhenTheNameIsBlank()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Capability("audit.write", Version = "1.0.0", Idempotent = true,
+                Authorization = Authorization.Permission, Permission = "   ")]
+            public sealed class WriteAudit : ICapability<PlaceOrder, OrderResult>
+            {
+                public ValueTask<Result<OrderResult>> ExecuteAsync(PlaceOrder input, CapabilityContext ctx, CancellationToken ct)
+                    => ValueTask.FromResult(Result.Ok(new OrderResult("x")));
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<WriteAudit>()
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1030", run.Describe());
     }
 
     [Fact]

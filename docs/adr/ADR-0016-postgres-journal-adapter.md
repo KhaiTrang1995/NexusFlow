@@ -190,7 +190,7 @@ the purge needs a guard against removing a pending event. This is a note for WP-
 defect in it.
 
 > **WP-56 landed the publisher and the guard with it**
-> ([ADR-0017](ADR-0017-outbox-publication-and-ordering.md), decision 5). Both purges carry a
+> ([ADR-0018](ADR-0018-outbox-publication-and-ordering.md), decision 5). Both purges carry a
 > `NOT EXISTS` over unpublished events, unscoped by any window, and
 > `RetentionSweep.HeldForPendingEvents` counts what they withheld — because the guard's own
 > failure mode, a deployment that stages events and never publishes them, is otherwise

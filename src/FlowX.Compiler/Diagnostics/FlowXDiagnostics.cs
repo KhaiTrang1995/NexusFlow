@@ -174,6 +174,43 @@ public static class FlowXDiagnostics
         "There is no permissive default. Declare Authorization explicitly — including " +
         "Authorization.Public, which is a reviewable statement rather than an omission.");
 
+    /// <summary>FLOWX1030 — a Permission or Policy stance names no permission or policy.</summary>
+    /// <remarks>
+    /// <para>
+    /// <c>FLOWX1010</c>'s rule one level down. That rule refuses a capability with no
+    /// stance because an omission is not a decision; this one refuses a stance that
+    /// decides nothing checkable. <c>Authorization.Permission</c> with no
+    /// <c>Permission = "…"</c> compiles, reads as enforced, and reaches
+    /// <c>flowx.manifest.json</c> as <c>{"mode": "Permission"}</c> — a published claim
+    /// that some grant is required, naming none. A reviewer sees the capability
+    /// protected; an agent's tool descriptor says the same; nothing can act on either.
+    /// </para>
+    /// <para>
+    /// <strong>An error, on FLOWX1010's argument rather than a new one.</strong> The
+    /// remedy is one string the author owns and nobody else can supply — the whole reason
+    /// FLOWX1010's quick action offers <c>Authenticated</c> and <c>Internal</c> and
+    /// withholds these two. A warning would be a rule nobody has to obey guarding the
+    /// thing this catalogue treats as least negotiable, and
+    /// <c>SafetyDiagnosticsAreErrorsRatherThanWarnings</c> holds the line for the rest of
+    /// the security set.
+    /// </para>
+    /// <para>
+    /// <c>{1}</c> is the mode, and it names the property to add: <c>Permission</c> wants
+    /// <c>Permission = "…"</c> and <c>Policy</c> wants <c>Policy = "…"</c>. A message
+    /// hard-coding one would send half the readers to the wrong property.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor AuthorizationStanceNamesNothing = Create(
+        "FLOWX1030",
+        "Authorisation stance names no permission or policy",
+        "Capability '{0}' declares Authorization.{1} but no {1} name",
+        "Authorization.Permission and Authorization.Policy each claim that a named grant " +
+        "is required, so each needs the name: add Permission = \"…\" or Policy = \"…\" to " +
+        "the [Capability] attribute. Without it the manifest publishes an authorisation " +
+        "stance that nothing can be checked against, and `flowx diff` has no value to " +
+        "compare when the grant later moves. If no named grant is actually required, the " +
+        "honest stance is Authenticated or Internal — both are complete in themselves.");
+
     /// <summary>
     /// FLOWX1011 — a flow condition, selector or projection reads something outside the
     /// flow's state.
@@ -711,6 +748,7 @@ public static class FlowXDiagnostics
         IdentityIsTakenAmbiently,
         MutableStateIsHeld,
         CapabilityMissingAuthorization,
+        AuthorizationStanceNamesNothing,
         PredicateMustBePure,
         CompensationIsNotDurable,
         ParallelBranchesMustWriteDisjointSlots,

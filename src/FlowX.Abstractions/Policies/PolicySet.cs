@@ -166,6 +166,68 @@ public sealed class PolicySet
     /// <summary>Writes an immutable audit record. Runs after the step succeeded.</summary>
     public PolicySet Audit(string category, params string[] redact)
         => Add(nameof(Audit), PolicyStage.Consistency, ("category", category), ("redact", redact));
+
+    /// <summary>
+    /// Retries a failing <em>compensation</em>. <strong>Requires the compensating capability
+    /// to declare <c>Idempotent = true</c></strong>, for the reason <see cref="Retry"/> does.
+    /// </summary>
+    /// <param name="attempts">How many times the undo may be dispatched, including the first.</param>
+    /// <param name="backoff">The wait between attempts. Full-jitter exponential by default.</param>
+    /// <param name="retryOn">
+    /// Which error categories are worth another attempt. Defaults to the three
+    /// <c>docs/10-Policy-Framework.md §5</c> calls retryable — a broker that is busy is worth
+    /// asking again, a ledger that says the request was invalid is not.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong><see cref="PolicyStage.Consistency"/>, and not
+    /// <see cref="PolicyStage.Resilience"/>.</strong> Stage 7 is where the fixed order puts
+    /// compensation registration, and the unwind is that same stage's obligation discharged
+    /// later; the retry is a parameter of it. Declaring it at stage 4 would make it a wrapper
+    /// around a <em>forward</em> step, and running a stage-4 policy without stages 1–3 is
+    /// exactly the class of ordering bug ADR-0011 exists to make unexpressible.
+    /// </para>
+    /// <para>
+    /// Distinct from <see cref="Retry"/> rather than a reuse of it, because the two wrap
+    /// different capabilities and are checked against different idempotency declarations: a
+    /// non-idempotent <c>payment.capture</c> may legitimately carry an idempotent
+    /// <c>payment.refund</c>, and a single kind could not express that.
+    /// </para>
+    /// </remarks>
+    public PolicySet CompensationRetry(int attempts, Backoff? backoff = null, ErrorCategory[]? retryOn = null)
+        => Add(
+            nameof(CompensationRetry),
+            PolicyStage.Consistency,
+            ("attempts", attempts),
+            ("backoff", backoff ?? Backoff.ExponentialJitter()),
+            ("retryOn", retryOn ?? DefaultCompensationRetryOn));
+
+    /// <summary>
+    /// The categories a compensation is retried on unless the author says otherwise.
+    /// </summary>
+    /// <remarks>
+    /// One more than <see cref="Retry"/>'s default. <c>docs/06-Execution-Engine.md §7</c>
+    /// rule 2 makes compensation retry deliberately more aggressive than forward retry, and a
+    /// <see cref="ErrorCategory.Conflict"/> from an undo — the ledger is mid-way through
+    /// another write against the same row — is the case where insisting is right and giving
+    /// up leaves two systems disagreeing.
+    /// </remarks>
+    private static readonly ErrorCategory[] DefaultCompensationRetryOn =
+        [ErrorCategory.Conflict, ErrorCategory.Unavailable, ErrorCategory.Internal];
+
+    /// <summary>
+    /// The documented default compensation policy set: five attempts, full-jitter exponential
+    /// backoff.
+    /// </summary>
+    /// <remarks>
+    /// <c>docs/06-Execution-Engine.md §7</c> rule 2 — "compensation retry is more aggressive
+    /// than forward retry by default (5 attempts vs 3)". Offered as a named set rather than
+    /// applied implicitly to every compensable step: a policy takes effect because it was
+    /// declared, and a runtime that retried undeclared policies would be the policy engine
+    /// arriving early and unannounced.
+    /// </remarks>
+    public static PolicySet CompensationDefault { get; } =
+        Named("compensation-default").CompensationRetry(attempts: 5);
 }
 
 /// <summary>Cache key scoping. Tenant is the default because cross-tenant leakage is unacceptable.</summary>

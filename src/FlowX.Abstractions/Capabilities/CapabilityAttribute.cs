@@ -26,10 +26,27 @@ public sealed class CapabilityAttribute(string id) : Attribute
     /// <summary>Who may invoke it. Mandatory — omitting it fails the build (FLOWX1010).</summary>
     public required Authorization Authorization { get; init; }
 
-    /// <summary>Permission name when <see cref="Authorization"/> is <see cref="FlowX.Authorization.Permission"/>.</summary>
+    /// <summary>
+    /// Permission name when <see cref="Authorization"/> is
+    /// <see cref="FlowX.Authorization.Permission"/>. Mandatory there — omitting it fails
+    /// the build (FLOWX1030).
+    /// </summary>
+    /// <remarks>
+    /// Reaches <c>flowx.manifest.json</c> as <c>authorization.value</c>, which is what
+    /// <c>flowx diff</c>'s <c>FLOWX-DIFF-015</c> compares: changing this name is a
+    /// breaking change even though no signature moves, because callers holding the
+    /// previous grant are now denied. A name declared beside a stance that does not read
+    /// it — <c>Permission</c> under <see cref="FlowX.Authorization.Public"/>, say — is
+    /// not published, because it names nothing the stance consults.
+    /// </remarks>
     public string? Permission { get; init; }
 
-    /// <summary>Policy name when <see cref="Authorization"/> is <see cref="FlowX.Authorization.Policy"/>.</summary>
+    /// <summary>
+    /// Policy name when <see cref="Authorization"/> is
+    /// <see cref="FlowX.Authorization.Policy"/>. Mandatory there — omitting it fails the
+    /// build (FLOWX1030).
+    /// </summary>
+    /// <remarks>Published and compared exactly as <see cref="Permission"/> is.</remarks>
     public string? Policy { get; init; }
 
     /// <summary>

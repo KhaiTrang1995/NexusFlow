@@ -245,7 +245,7 @@ which discarding an unsent event becomes correct. `RetentionSweep.HeldForPending
 reports how many instances a sweep withheld, because the guard's own failure mode is a
 deployment that stages events and publishes none: it keeps every one of those instances
 for ever, and that number is where an operator sees it happening rather than inferring it
-from disk. See [ADR-0017](adr/ADR-0017-outbox-publication-and-ordering.md), decision 5.
+from disk. See [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md), decision 5.
 
 Archival to cold storage is a plugin (`IJournalArchiver`), because the retention
 requirement is regulatory and differs per organisation. *That interface does not
@@ -373,7 +373,7 @@ every incident review template:
 
 > **Built at WP-56, and one link short of reaching a flow.** `PostgresOutboxPublisher`
 > implements the sequence below against `outbox_event`, and
-> [ADR-0017](adr/ADR-0017-outbox-publication-and-ordering.md) records what it decided.
+> [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md) records what it decided.
 > **`.Emit<T>()` still does not reach it**: `FlowEngine.CommitStepAsync` never populates
 > `StepCommit.Outbox`, so an emitted event stages no row and the publisher drains an empty
 > table. That is what [`FLOWX1024`](diagnostics/FLOWX1024.md) now reports, and it is the
@@ -568,6 +568,15 @@ The last row is the only case with no automatic resolution. FlowX makes it
 visible rather than pretending otherwise; the operator runbook is
 `flowx replay --instance <id> --from <step>` after the downstream fault is fixed —
 a command the CLI does not have yet.
+
+*It is also the one row below the first two that is now reachable rather than
+designed.* Since **WP-57** a compensation is retried under its own declared
+policy set, every attempt gets a journal row, exhaustion moves the instance to
+`CompensationFailed`, and `ICompensationAlertSink` is raised once with the flow,
+the instance, the step, the compensating capability, the attempt count and the
+last error — which is exactly what the runbook needs. What the row still promises
+and nothing delivers is the metric and the dead-letter record
+([12 §3](12-Observability.md)) and the `flowx replay` command itself.
 
 ---
 

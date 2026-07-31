@@ -320,7 +320,7 @@ Engine. At-least-once, never lost, never published before the step is durable.
 > above describes rows a host currently has to stage itself. That is what
 > [`FLOWX1024`](diagnostics/FLOWX1024.md) reports on every `Emit` step, and it is the
 > only remaining link. There is also no broker plugin: `IEventPublisher` is declared
-> and unimplemented ([ADR-0017](adr/ADR-0017-outbox-publication-and-ordering.md)).
+> and unimplemented ([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)).
 
 ### 3.7 Sub-flows
 

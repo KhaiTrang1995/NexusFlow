@@ -222,6 +222,33 @@ internal sealed class RecordingDispatcher : IStepDispatcher
         return this;
     }
 
+    /// <summary>
+    /// Makes the first <paramref name="attempts"/> attempts at step <paramref name="index"/>'s
+    /// compensation fail, and every one after that succeed.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="FailCompensationAt"/> is not enough once an undo can be retried: "the
+    /// broker was down and then came back" is the ordinary transient case, and a double that
+    /// can only fail for ever cannot express it.
+    /// </remarks>
+    public RecordingDispatcher FailCompensationForAttempts(int index, int attempts, Error error)
+    {
+        _compensationBudget[index] = attempts;
+        _compensationFailures[index] = error;
+        return this;
+    }
+
+    /// <summary>Reads something off the context while each compensation is running.</summary>
+    /// <remarks>
+    /// The compensation's counterpart of <see cref="Observe"/>, and needed for the same
+    /// reason: the context is pooled, so a question about what an undo could see has to be
+    /// asked while the undo is running.
+    /// </remarks>
+    public Action<FlowContext>? OnCompensate { get; set; }
+
+    private readonly Dictionary<int, int> _compensationBudget = [];
+    private readonly Dictionary<int, int> _compensationAttempts = [];
+
     /// <summary>Makes the branch at <paramref name="index"/> answer <paramref name="answer"/>.</summary>
     /// <remarks>An unlisted branch answers <c>true</c>, so a test states only what it cares about.</remarks>
     public RecordingDispatcher AnswerAt(int index, bool answer)
@@ -349,14 +376,30 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     /// <inheritdoc />
     public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
     {
+        int attempt;
+
         lock (_recording)
         {
             Compensated.Add(stepIndex);
             Trace.Add(Name + ".undo." + stepIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
             CompensationScopes.Add(ctx);
+
+            attempt = _compensationAttempts.TryGetValue(stepIndex, out var seen) ? seen + 1 : 1;
+            _compensationAttempts[stepIndex] = attempt;
+
+            OnCompensate?.Invoke(ctx);
         }
 
-        return _compensationFailures.TryGetValue(stepIndex, out var error)
+        if (!_compensationFailures.TryGetValue(stepIndex, out var error))
+        {
+            return ValueTask.FromResult(StepOutcome.Success);
+        }
+
+        // An unlisted budget means "fail for ever", which is what FailCompensationAt has
+        // always meant and what several existing tests rely on.
+        var budget = _compensationBudget.TryGetValue(stepIndex, out var allowed) ? allowed : int.MaxValue;
+
+        return attempt <= budget
             ? ValueTask.FromResult(StepOutcome.Failed(error))
             : ValueTask.FromResult(StepOutcome.Success);
     }
@@ -526,6 +569,25 @@ internal sealed class FakeClock(DateTimeOffset start) : IClock
 
     /// <summary>Moves the clock forward.</summary>
     public void Advance(TimeSpan by) => UtcNow += by;
+
+    /// <summary>Every wait the runtime asked for, in the order it asked.</summary>
+    public List<TimeSpan> Delays { get; } = [];
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Recorded and simulated rather than served, which is the whole reason
+    /// <see cref="IClock"/> exists: a suite that actually slept through a compensation
+    /// backoff would spend seconds proving something the clock can state exactly. Completing
+    /// synchronously also keeps the engine synchronous, which is what the allocation budget
+    /// is measured against.
+    /// </remarks>
+    public ValueTask DelayAsync(TimeSpan delay, CancellationToken cancellationToken = default)
+    {
+        Delays.Add(delay);
+        UtcNow += delay;
+
+        return ValueTask.CompletedTask;
+    }
 }
 
 /// <summary>Plans the engine tests execute.</summary>

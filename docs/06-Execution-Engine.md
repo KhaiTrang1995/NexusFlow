@@ -403,11 +403,25 @@ Rules:
 1. Compensation runs in **strict reverse order** of *successfully completed*
    steps only. A failed step is never compensated (it did not take effect — or if
    it did, that step is not idempotent and that is a capability bug).
-2. Each compensation carries its **own** policy chain. Compensation retry is
-   more aggressive than forward retry by default (5 attempts vs 3).
+2. Each compensation carries its **own** policy chain — `StepNode.CompensationPolicies`,
+   resolved against the *compensating* capability, so `FLOWX1014`'s idempotency
+   rule is checked against the thing that would actually be run twice.
+   Compensation retry is more aggressive than forward retry by default
+   (5 attempts vs 3): `PolicySet.CompensationDefault`. **Since WP-57 the runtime
+   executes it** — the only policy it executes anywhere, at the `Consistency`
+   stage ([10 §2](10-Policy-Framework.md#2-fixed-stage-order--the-core-decision)).
+   A policy applies because it was declared: an undo with no declared chain is
+   still attempted exactly once.
 3. Compensation is **best-effort but loud**: exhaustion produces
    `flowx_flow_compensation_failed_total`, a dead-letter record, and a documented
-   operator recovery path.
+   operator recovery path. *Half of this is now true.* WP-57 ships
+   `ICompensationAlertSink`, raised exactly once per exhausted compensation and
+   carrying the flow, the instance, the step, the compensating capability, the
+   attempt count and the last error — everything
+   `flowx replay --instance <id> --from <step>` needs. The **metric and the
+   dead-letter record are not built**: FlowX ships no metrics infrastructure yet,
+   and the sink is the seam the observability package attaches to rather than a
+   counter invented inside the engine.
 4. Compensation is itself journaled, so a crash during compensation resumes
    compensation — never re-runs forward steps.
 5. `Ephemeral` flows may declare compensation, but the guarantee is weaker: a
@@ -420,13 +434,18 @@ Rules:
    on the default profile as well as on a declared `Ephemeral` one, which is the
    whole reason it is not an error; its page carries that argument and the
    reference sample's answer to it. Rules 1–3 above are implemented and covered by
-   `CompensationStackTests` and `FlowEngineTests`; **rule 4 is not.** *The reason
-   given was "nothing is journaled", and that stopped being true at WP-52 — but the
-   part that matters here never was: `CompensateAsync` writes no journal row.
-   Forward steps are journaled and a store persists them; the unwind is not, so a
-   crash during compensation still loses it* rather than resuming where it stopped.
-   The journal records what *ran forward*; it says nothing about what has been
-   undone.
+   `CompensationStackTests`, `FlowEngineTests` and `CompensationPolicyTests`.
+   **Rule 4 is implemented for a flow's own steps and still open across a
+   composition.** Since WP-57 `CompensateAsync` commits one row per undo attempt —
+   `JournalOutcome.Compensated` when it worked, `Failure` when it did not, keyed
+   past the forward row it reverses, carrying the *compensating* capability's id
+   and moving the instance to `Compensating` — and a resumed instance does not
+   repeat an undo whose row already committed. Two gaps remain, both named rather
+   than papered over: an undo whose row never landed re-runs, which is the same
+   honest limit [ADR-0006](adr/ADR-0006-journal-and-leases.md) states for a
+   forward effect that landed before its commit; and a **composed child that
+   already succeeded** records nothing, because its instance was sealed
+   `Completed` and a journal correctly refuses a write to a finished instance.
 
 ---
 

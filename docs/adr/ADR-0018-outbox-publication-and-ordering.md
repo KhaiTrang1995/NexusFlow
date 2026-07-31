@@ -1,4 +1,4 @@
-# ADR-0017: Declare `IEventPublisher`; offer per-key ordering and no global order
+# ADR-0018: Declare `IEventPublisher`; offer per-key ordering and no global order
 
 **Status:** Accepted
 **Date:** 2026-07-31
