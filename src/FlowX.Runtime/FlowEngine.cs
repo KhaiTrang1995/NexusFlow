@@ -110,11 +110,62 @@ public sealed class FlowEngine
     /// <param name="dispatcher">Invokes the capability behind each step index.</param>
     /// <param name="invocation">Correlation, tenant and the caller's remaining budget.</param>
     /// <param name="ct">The caller's cancellation token.</param>
-    public async ValueTask<FlowExecutionResult> ExecuteAsync(
+    public ValueTask<FlowExecutionResult> ExecuteAsync(
         ExecutionPlan plan,
         IStepDispatcher dispatcher,
         FlowInvocation invocation,
+        CancellationToken ct = default) =>
+        RentAndRunAsync(plan, dispatcher, invocation, durable: null, ct);
+
+    /// <summary>
+    /// Executes a plan whose flow declares <see cref="ExecutionProfile.Durable"/>, journaling
+    /// every step boundary under <paramref name="durable"/>'s fencing token.
+    /// </summary>
+    /// <param name="plan">The compiled flow.</param>
+    /// <param name="dispatcher">Invokes the capability behind each step index.</param>
+    /// <param name="invocation">Correlation, tenant and the caller's remaining budget.</param>
+    /// <param name="durable">
+    /// The instance, its journal and its token — and, when the instance is being picked up
+    /// again, the committed history the loop derives its cursor from.
+    /// </param>
+    /// <param name="ct">The caller's cancellation token.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The same loop, not a second one.</strong> This overload differs from its
+    /// sibling in exactly one thing: it supplies a journal. Compensation ordering, deadline
+    /// handling, <c>ForEach</c> scoping, fork draining and sub-flow recursion are the code
+    /// the ephemeral tests pin, unchanged — which is ADR-0015's central decision and the
+    /// reason a second engine was rejected. A resumed instance re-enters here too; there is
+    /// no recovery entry point to drift.
+    /// </para>
+    /// <para>
+    /// A flow that does not declare <c>Durable</c> is refused here rather than journaled
+    /// anyway: the profile is the declaration, and a journal written for a flow that did not
+    /// ask for one is a cost nobody signed up for.
+    /// </para>
+    /// </remarks>
+    public ValueTask<FlowExecutionResult> ExecuteAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowInvocation invocation,
+        DurableExecution durable,
         CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(durable);
+
+        return RentAndRunAsync(plan, dispatcher, invocation, durable, ct);
+    }
+
+    /// <summary>
+    /// Rents a context, runs the plan through it, and gives it back — the one place the
+    /// pooling contract is honoured, whether or not there is a journal.
+    /// </summary>
+    private async ValueTask<FlowExecutionResult> RentAndRunAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowInvocation invocation,
+        DurableExecution? durable,
+        CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(dispatcher);
@@ -124,7 +175,7 @@ public sealed class FlowEngine
         try
         {
             context.Initialise(plan, invocation, _clock, dispatcher);
-            return await RunAsync(plan, dispatcher, context, ct).ConfigureAwait(false);
+            return await RunAsync(plan, dispatcher, context, durable, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -142,12 +193,53 @@ public sealed class FlowEngine
     /// <c>ctx.Get&lt;PlaceOrder&gt;()</c> for the first step and
     /// <c>ctx.Get&lt;ValidatedOrder&gt;()</c> for the second.
     /// </remarks>
-    public async ValueTask<FlowExecutionResult> ExecuteAsync<TIn>(
+    public ValueTask<FlowExecutionResult> ExecuteAsync<TIn>(
         ExecutionPlan plan,
         IStepDispatcher dispatcher,
         FlowInvocation invocation,
         TIn input,
         CancellationToken ct = default)
+        where TIn : notnull =>
+        RentAndRunAsync(plan, dispatcher, invocation, input, durable: null, ct);
+
+    /// <summary>
+    /// Executes a durable plan, seeding the flow's input so steps can bind to it by type.
+    /// </summary>
+    /// <typeparam name="TIn">The flow's input contract.</typeparam>
+    /// <param name="plan">The compiled flow.</param>
+    /// <param name="dispatcher">Invokes the capability behind each step index.</param>
+    /// <param name="invocation">Correlation, tenant and the caller's remaining budget.</param>
+    /// <param name="input">The flow's input, seeded into the context under its own type.</param>
+    /// <param name="durable">The instance, its journal and its token.</param>
+    /// <param name="ct">The caller's cancellation token.</param>
+    /// <remarks>
+    /// On a resumed instance the input is seeded first and the journaled state bag is
+    /// restored over it, so a value a step produced wins over the trigger's copy of it. The
+    /// input is seeded at all because a resumed flow's remaining steps may still bind to it,
+    /// and the trigger is the only thing that has it.
+    /// </remarks>
+    public ValueTask<FlowExecutionResult> ExecuteAsync<TIn>(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowInvocation invocation,
+        TIn input,
+        DurableExecution durable,
+        CancellationToken ct = default)
+        where TIn : notnull
+    {
+        ArgumentNullException.ThrowIfNull(durable);
+
+        return RentAndRunAsync(plan, dispatcher, invocation, input, durable, ct);
+    }
+
+    /// <inheritdoc cref="RentAndRunAsync(ExecutionPlan, IStepDispatcher, FlowInvocation, DurableExecution?, CancellationToken)" />
+    private async ValueTask<FlowExecutionResult> RentAndRunAsync<TIn>(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowInvocation invocation,
+        TIn input,
+        DurableExecution? durable,
+        CancellationToken ct)
         where TIn : notnull
     {
         ArgumentNullException.ThrowIfNull(plan);
@@ -161,7 +253,7 @@ public sealed class FlowEngine
             context.Initialise(plan, invocation, _clock, dispatcher);
             context.Set(input);
 
-            return await RunAsync(plan, dispatcher, context, ct).ConfigureAwait(false);
+            return await RunAsync(plan, dispatcher, context, durable, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -187,13 +279,58 @@ public sealed class FlowEngine
     /// context would read another flow's data — this is the only place the output can be
     /// taken safely.
     /// </remarks>
-    public async ValueTask<FlowExecutionResult<TOut>> ExecuteAsync<TIn, TOut>(
+    public ValueTask<FlowExecutionResult<TOut>> ExecuteAsync<TIn, TOut>(
         ExecutionPlan plan,
         IStepDispatcher dispatcher,
         FlowInvocation invocation,
         TIn input,
         Func<FlowContext, TOut> projection,
         CancellationToken ct = default)
+        where TIn : notnull =>
+        RentAndRunAsync(plan, dispatcher, invocation, input, projection, durable: null, ct);
+
+    /// <summary>
+    /// Executes a durable plan and projects its declared output from the finished context.
+    /// </summary>
+    /// <typeparam name="TIn">The flow's input contract.</typeparam>
+    /// <typeparam name="TOut">The flow's declared output contract.</typeparam>
+    /// <param name="plan">The compiled flow.</param>
+    /// <param name="dispatcher">Invokes the capability behind each step index.</param>
+    /// <param name="invocation">Correlation, tenant and the caller's remaining budget.</param>
+    /// <param name="input">The flow's input, seeded into the context under its own type.</param>
+    /// <param name="projection">The generated <c>.Return(...)</c> clause.</param>
+    /// <param name="durable">The instance, its journal and its token.</param>
+    /// <param name="ct">The caller's cancellation token.</param>
+    /// <remarks>
+    /// The projection runs inside the rental for the reason it always did — the context is
+    /// pooled and reset the moment this returns — and it runs after the instance has been
+    /// closed in the journal, so a projection cannot observe an instance the store refused
+    /// to finish.
+    /// </remarks>
+    public ValueTask<FlowExecutionResult<TOut>> ExecuteAsync<TIn, TOut>(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowInvocation invocation,
+        TIn input,
+        Func<FlowContext, TOut> projection,
+        DurableExecution durable,
+        CancellationToken ct = default)
+        where TIn : notnull
+    {
+        ArgumentNullException.ThrowIfNull(durable);
+
+        return RentAndRunAsync(plan, dispatcher, invocation, input, projection, durable, ct);
+    }
+
+    /// <inheritdoc cref="RentAndRunAsync(ExecutionPlan, IStepDispatcher, FlowInvocation, DurableExecution?, CancellationToken)" />
+    private async ValueTask<FlowExecutionResult<TOut>> RentAndRunAsync<TIn, TOut>(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowInvocation invocation,
+        TIn input,
+        Func<FlowContext, TOut> projection,
+        DurableExecution? durable,
+        CancellationToken ct)
         where TIn : notnull
     {
         ArgumentNullException.ThrowIfNull(plan);
@@ -208,7 +345,7 @@ public sealed class FlowEngine
             context.Initialise(plan, invocation, _clock, dispatcher);
             context.Set(input);
 
-            var outcome = await RunAsync(plan, dispatcher, context, ct).ConfigureAwait(false);
+            var outcome = await RunAsync(plan, dispatcher, context, durable, ct).ConfigureAwait(false);
 
             return outcome.IsSuccess
                 ? new FlowExecutionResult<TOut>(outcome, projection(context))
@@ -224,17 +361,194 @@ public sealed class FlowEngine
         ExecutionPlan plan,
         IStepDispatcher dispatcher,
         FlowExecutionContext context,
+        DurableExecution? durable,
         CancellationToken ct)
     {
+        var cursor = OpenJournal(plan, dispatcher, context, durable, out var refusal);
+
+        if (refusal is not null)
+        {
+            return FlowExecutionResult.Rejected(refusal);
+        }
+
         // Only steps that both completed and declared a compensation go on the stack,
         // so the unwind never has to filter. The stack belongs to the pooled context,
         // so a saga costs no more per execution than a query does.
         var compensations = plan.HasCompensation ? context.Compensations : null;
 
         var outcome = await RunRangeAsync(
-            plan, dispatcher, context, context, compensations, 0, plan.Graph.Count, ct).ConfigureAwait(false);
+            plan, dispatcher, context, context, compensations, 0, plan.Graph.Count, cursor, ct)
+            .ConfigureAwait(false);
 
-        return await CompleteAsync(plan, dispatcher, context, compensations, outcome).ConfigureAwait(false);
+        var result = await CompleteAsync(plan, dispatcher, context, compensations, outcome).ConfigureAwait(false);
+
+        return cursor.IsJournaled
+            ? await SealAsync(cursor, result, ct).ConfigureAwait(false)
+            : result;
+    }
+
+    /// <summary>
+    /// Decides whether this execution journals, and rehydrates a resumed one before the loop
+    /// starts.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is where the runtime reads <see cref="ExecutionProfile"/>, and both
+    /// mismatches are refused rather than papered over.</strong> A <c>Durable</c> flow with
+    /// no journal would be the exact defect <c>FLOWX1028</c> existed to describe — a
+    /// declaration that buys nothing and says nothing — so it is refused with an error naming
+    /// what is missing, on the first invocation rather than on the first crash. An
+    /// <c>Ephemeral</c> flow handed a journal is refused too: journaling a flow that did not
+    /// ask for it charges it for a guarantee its author declined.
+    /// </para>
+    /// <para>
+    /// Rehydration is a dispatcher call because the state bag holds contract types and the
+    /// engine holds none. It happens once, before the first step, and only when the instance
+    /// actually committed a snapshot.
+    /// </para>
+    /// </remarks>
+    private static JournalCursor OpenJournal(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        DurableExecution? durable,
+        out Error? refusal)
+    {
+        refusal = null;
+
+        if (plan.Flow.Profile != ExecutionProfile.Durable)
+        {
+            if (durable is not null)
+            {
+                refusal = FlowErrors.ProfileIsNotDurable(plan.Flow.Id, plan.Flow.Profile);
+            }
+
+            return default;
+        }
+
+        if (durable is null)
+        {
+            refusal = FlowErrors.DurabilityNotConfigured(plan.Flow.Id);
+            return default;
+        }
+
+        if (durable.Frontier?.Instance.StateBagJson is { } snapshot)
+        {
+            try
+            {
+                dispatcher.RestoreState(context, snapshot);
+            }
+#pragma warning disable CA1031 // Same reasoning as every other generated-code call site: a
+            catch (Exception exception) //   dispatcher that cannot read back what it wrote is
+            {                           //   a defect, and resuming with an empty bag would run
+                refusal = FlowErrors    //   the rest of the flow against values no step made.
+                    .StateRestoreFailed(plan.Flow.Id, durable.InstanceId, exception);
+                return default;
+            }
+#pragma warning restore CA1031
+        }
+
+        return new JournalCursor(durable, StepScope.Root);
+    }
+
+    /// <summary>Moves the instance to its terminal state once the loop and the unwind are done.</summary>
+    /// <remarks>
+    /// <para>
+    /// A refusal here becomes the flow's error even when every step succeeded. Being fenced
+    /// out at the last moment means another node owns this instance and will finish it; a
+    /// success reported to the caller would be this node claiming an outcome it no longer
+    /// controls.
+    /// </para>
+    /// </remarks>
+    private static async ValueTask<FlowExecutionResult> SealAsync(
+        JournalCursor cursor,
+        FlowExecutionResult result,
+        CancellationToken ct)
+    {
+        var refusal = await CloseInstanceAsync(cursor, TerminalState(result), ct).ConfigureAwait(false);
+
+        return refusal is null
+            ? result
+            : new FlowExecutionResult(refusal, result.CompletedSteps, result.Compensation);
+    }
+
+    /// <summary>Moves one instance — root, composed or detached — to a terminal state.</summary>
+    /// <remarks>
+    /// The state bag is deliberately <see cref="JournalPayload.Empty"/>: the last committed
+    /// step already carried the snapshot, and re-serialising the bag at the end would make
+    /// the final row disagree with the step that produced it whenever compensation has run.
+    /// </remarks>
+    private static async ValueTask<Error?> CloseInstanceAsync(
+        JournalCursor cursor,
+        FlowInstanceState state,
+        CancellationToken ct)
+    {
+        var run = cursor.Run!;
+
+        var closed = await run.Journal
+            .CompleteAsync(run.InstanceId, run.Token, state, JournalPayload.Empty, ct)
+            .ConfigureAwait(false);
+
+        return closed.IsSuccess ? null : closed.Error;
+    }
+
+    /// <summary>Which terminal state a finished execution leaves on the instance row.</summary>
+    /// <remarks>
+    /// <c>CompensationFailed</c> outranks the rest: it is the one terminal state with no
+    /// automatic resolution — two systems now disagree about the same business fact — and
+    /// recording it as a plain failure would hide the one outcome an operator has to be told
+    /// about.
+    /// </remarks>
+    private static FlowInstanceState TerminalState(FlowExecutionResult result) => result switch
+    {
+        { Compensation: CompensationOutcome.PartiallyFailed } => FlowInstanceState.CompensationFailed,
+        { IsSuccess: true } => FlowInstanceState.Completed,
+        { Error.Code: FlowErrors.DeadlineExceededCode } => FlowInstanceState.TimedOut,
+        _ => FlowInstanceState.Failed,
+    };
+
+    /// <summary>
+    /// Where in a journaled instance the loop currently is: which instance, and which
+    /// iteration of which loop.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>One parameter instead of two, and a <c>default</c> that means "ephemeral".</strong>
+    /// Every method in the step loop has to carry both, and an ephemeral execution passes a
+    /// pair of null references — no allocation, no branch beyond the one null check the
+    /// journaling sites already make. That is the same shape <c>ExecutionPlan.HasParallel</c>
+    /// uses to keep a linear flow from paying for a fork.
+    /// </para>
+    /// <para>
+    /// <see cref="Scope"/> is <see cref="StepScope"/> — the type <c>ForEach</c>'s journal key
+    /// already needed — and not a second notion of iteration invented for the engine. It is
+    /// rendered text so that a store persists one column and an operator can read where a
+    /// step ran without joining anything.
+    /// </para>
+    /// </remarks>
+    private readonly struct JournalCursor(DurableExecution? run, StepScope scope)
+    {
+        /// <summary>The instance being journaled, or <c>null</c> for an ephemeral execution.</summary>
+        public DurableExecution? Run { get; } = run;
+
+        /// <summary>Which iteration of which loop the steps under this cursor run in.</summary>
+        public StepScope Scope { get; } = scope;
+
+        /// <summary>Whether anything under this cursor is written down.</summary>
+        public bool IsJournaled => Run is not null;
+
+        /// <summary>The cursor one element of a loop entered from here runs under.</summary>
+        /// <remarks>
+        /// The scope path is only built when there is a journal to write it to, so an
+        /// ephemeral <c>ForEach</c> does not pay a string per element for a column nobody
+        /// reads.
+        /// </remarks>
+        public JournalCursor Element(int index) =>
+            Run is null ? default : new JournalCursor(Run, Scope.Element(index));
+
+        /// <summary>The cursor a composed child instance runs under.</summary>
+        public JournalCursor Child(Guid childInstanceId) =>
+            Run is null ? default : new JournalCursor(Run.ForChild(childInstanceId), StepScope.Root);
     }
 
     /// <summary>
@@ -319,6 +633,15 @@ public sealed class FlowEngine
     /// identity belong to the flow and must not fork per element, while what a step
     /// <em>reads</em> must.
     /// </para>
+    /// <para>
+    /// <strong><paramref name="cursor"/> is the durable seam, and it is one parameter
+    /// deep.</strong> When it carries a journal, every capability step in this range commits
+    /// a row before control moves on, and a step whose row is already committed is skipped
+    /// rather than re-run — which is the whole of resumption. When it does not, every branch
+    /// that reads it is false and the range is byte-for-byte the execution it always was.
+    /// There is no second version of this method for durable flows, because two loops
+    /// diverge and the ephemeral one gets the features first.
+    /// </para>
     /// </remarks>
     private async ValueTask<RangeOutcome> RunRangeAsync(
         ExecutionPlan plan,
@@ -328,6 +651,7 @@ public sealed class FlowEngine
         CompensationStack? compensations,
         int from,
         int end,
+        JournalCursor cursor,
         CancellationToken ct)
     {
         var steps = plan.Graph.Steps;
@@ -408,10 +732,42 @@ public sealed class FlowEngine
                 continue;
             }
 
+            // Resumption, and the whole of it. A row for this (scope, step) is already
+            // committed, so the step has already happened: its effects are done and the row
+            // is the truth about this instance. Re-running it is the one thing resumption
+            // exists to avoid.
+            //
+            // Placed here rather than beside the capability call so that a composed sub-flow
+            // is skipped too — a child instance that completed must not be composed a second
+            // time. A fork or a loop never has a row of its own, so this scan never matches
+            // one and their bodies are asked the same question one level down.
+            //
+            // The books the loop keeps are kept anyway: the step counts as work this instance
+            // has done, and a compensable one goes back on the unwind stack, because a
+            // resumed flow that later fails must undo what the node before it did.
+            if (cursor.IsJournaled && cursor.Run!.Completed(cursor.Scope, i) is not null)
+            {
+                completed++;
+
+                // Except a sub-flow's, which cannot be rebuilt from here: the parent records
+                // the composition as one entry bound to the *child's* context, and that
+                // context died with the node that ran it. Rebuilding the child's stack from
+                // the child's own instance rows is WP-57's package, and it is named rather
+                // than quietly approximated — a compensation stack that is silently short is
+                // the failure a saga exists to prevent.
+                if (compensations is not null && step.Kind != StepKind.SubFlow)
+                {
+                    context.RecordCompleted(step, ReferenceEquals(scope, context) ? null : scope);
+                }
+
+                i++;
+                continue;
+            }
+
             if (step.Kind == StepKind.Parallel)
             {
                 var forked = await RunParallelAsync(
-                    plan, dispatcher, context, scope, compensations, step, ct).ConfigureAwait(false);
+                    plan, dispatcher, context, scope, compensations, step, cursor, ct).ConfigureAwait(false);
 
                 // Counted whether or not the merge held: those steps really ran, and a
                 // caller reading CompletedSteps to decide what was touched needs the
@@ -431,7 +787,7 @@ public sealed class FlowEngine
             if (step.Kind == StepKind.ForEach)
             {
                 var iterated = await RunForEachAsync(
-                    plan, dispatcher, context, scope, compensations, step, ct).ConfigureAwait(false);
+                    plan, dispatcher, context, scope, compensations, step, cursor, ct).ConfigureAwait(false);
 
                 // Counted for the same reason a fork's are: those steps really ran, and a
                 // loop that stopped at the third of ten elements has still done the work
@@ -453,7 +809,7 @@ public sealed class FlowEngine
                 // No target: a sub-flow occupies exactly one index, so control resumes at
                 // the next one exactly as it would after a capability.
                 var composed = await RunSubFlowAsync(
-                    plan, dispatcher, context, scope, compensations, step, ct).ConfigureAwait(false);
+                    plan, dispatcher, context, scope, compensations, step, cursor, ct).ConfigureAwait(false);
 
                 // The child's steps count towards the parent's total. They really ran, and
                 // a caller reading CompletedSteps to decide what was touched needs work the
@@ -482,7 +838,12 @@ public sealed class FlowEngine
                 break;
             }
 
+            // Only read when there is a row to put it on. An ephemeral step does not pay a
+            // clock read to measure a duration nobody records.
+            var startedAt = cursor.IsJournaled ? _clock.UtcNow : default;
+
             StepOutcome outcome;
+            Error? thrown = null;
 
             try
             {
@@ -493,21 +854,50 @@ public sealed class FlowEngine
                 // Caller-initiated, or a sibling branch's failure cancelling this one, and
                 // not this step's fault — but the work already done still has to be
                 // undone, so this joins the failure path rather than propagating.
+                //
+                // Deliberately not journaled: the token that would guard the write is the
+                // one this node may be losing, and a store call on a cancelled path is the
+                // least likely of all writes to succeed. The attempt simply has no row, which
+                // is what makes it re-runnable on resume.
                 failure = FlowErrors.Cancelled(plan.Flow.Id);
                 break;
             }
 #pragma warning disable CA1031 // A capability that throws is a defect; the engine converts
             catch (Exception exception)  //   it into an error rather than letting it kill the
             {                            //   trigger's consumer loop. This is the one place a
-                failure = FlowErrors     //   general catch is correct, and it re-reports rather
-                    .Unhandled(capabilityId, exception); // than swallowing.
-                break;
+                outcome = StepOutcome.Success;  //   general catch is correct, and it re-reports
+                thrown = FlowErrors             //   rather than swallowing.
+                    .Unhandled(capabilityId, exception);
             }
 #pragma warning restore CA1031
 
-            if (!outcome.IsSuccess)
+            var stepFailure = thrown ?? outcome.Error;
+
+            // One commit per (instance, scope, step, attempt), before control moves on — the
+            // whole of ADR-0015's decision, in one place. A failed attempt is recorded too:
+            // the attempt history is what makes the replay contract provable rather than
+            // asserted, and an effect that happened before the failure is exactly what a
+            // resumed instance must not repeat blindly.
+            if (cursor.IsJournaled)
             {
-                failure = outcome.Error;
+                var refusal = await CommitStepAsync(
+                    plan, dispatcher, context, scope, cursor, step, stepFailure, startedAt,
+                    capabilityVersion: null, ct)
+                    .ConfigureAwait(false);
+
+                if (refusal is not null)
+                {
+                    // Fenced out, duplicated, or written to a finished instance. Every one of
+                    // those means this node is no longer the writer, so it stops rather than
+                    // carrying on with work nobody will accept.
+                    failure = refusal;
+                    break;
+                }
+            }
+
+            if (stepFailure is not null)
+            {
+                failure = stepFailure;
                 break;
             }
 
@@ -530,6 +920,114 @@ public sealed class FlowEngine
 
         return new RangeOutcome(failure, completed);
     }
+
+    /// <summary>
+    /// Appends one step boundary: the row, the state-bag snapshot and what the step read
+    /// that it could not have computed, under the lease's fencing token.
+    /// </summary>
+    /// <param name="plan">The flow being journaled.</param>
+    /// <param name="dispatcher">Asked to describe the step, because it is what knows types.</param>
+    /// <param name="context">The execution whose non-determinism capture is taken here.</param>
+    /// <param name="scope">The view the step ran under, so what is described is what it saw.</param>
+    /// <param name="cursor">Which instance, and which iteration of which loop.</param>
+    /// <param name="step">The node that just finished.</param>
+    /// <param name="failure">The step's error, or <c>null</c> when it succeeded.</param>
+    /// <param name="startedAt">When the attempt began, for the recorded duration.</param>
+    /// <param name="capabilityVersion">
+    /// The resolved version to record. Supplied by the caller only for a sub-flow, where the
+    /// meaningful version is the child flow's rather than a capability's.
+    /// </param>
+    /// <param name="ct">Cancels the store call.</param>
+    /// <returns>
+    /// <c>null</c> when the row is committed, or the journal's refusal — which ends the flow,
+    /// because every refusal means this node is no longer the writer of this instance.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>The key is <c>(instance, scope, step, attempt)</c>, and every part of it is
+    /// load-bearing.</strong> <c>scope</c> is there because a <c>ForEach</c> re-enters one
+    /// range of the flat step array once per element, so a 500-element loop writes step 7
+    /// five hundred times and an append-only table cannot overwrite a row. <c>attempt</c> is
+    /// there because a retry writes a new row rather than replacing the failed one, so the
+    /// history survives. The compensation stack met the first problem first and answered it
+    /// the same way; the journal is not allowed to be less precise than the stack that has to
+    /// undo it.
+    /// </para>
+    /// <para>
+    /// <strong>A failed attempt carries no result payload.</strong> An <c>Error</c> is not in
+    /// any generated JSON context — <see cref="JournalPayload.Of{T}"/> requires one, on
+    /// purpose — so the row records the outcome, the capability and the timing, and the
+    /// error itself reaches the caller and the trace. Journaling errors as payloads is
+    /// WP-59's contract question, not something to settle with a reflecting serialiser here.
+    /// </para>
+    /// <para>
+    /// The attempt number is derived from the committed history rather than counted in
+    /// memory, for the same reason the resume position is: a number this node is holding is
+    /// exactly what is lost when this node is.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<Error?> CommitStepAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        FlowContext scope,
+        JournalCursor cursor,
+        StepNode step,
+        Error? failure,
+        DateTimeOffset startedAt,
+        string? capabilityVersion,
+        CancellationToken ct)
+    {
+        var run = cursor.Run!;
+        var entry = StepJournalEntry.Nothing;
+
+        if (failure is null)
+        {
+            try
+            {
+                entry = dispatcher.DescribeStep(step.Index, scope);
+            }
+#pragma warning disable CA1031 // A describe that throws is a defect in generated code, and
+            catch (Exception exception) //   it must not escape into the caller's consumer
+            {                           //   loop — the completed steps still need unwinding.
+                return FlowErrors.JournalPayloadFailed(plan.Flow.Id, step.Index, exception);
+            }
+#pragma warning restore CA1031
+        }
+
+        var commit = new StepCommit
+        {
+            Key = new StepKey(
+                run.InstanceId, cursor.Scope, step.Index, run.NextAttempt(cursor.Scope, step.Index)),
+            Token = run.Token,
+            CapabilityId = JournalIdentity(step),
+            CapabilityVersion = capabilityVersion ?? step.Capability?.Version ?? plan.Flow.Version,
+            Outcome = failure is null ? JournalOutcome.Success : JournalOutcome.Failure,
+            Result = entry.Result,
+            StateBag = entry.StateBag,
+            Nondeterminism = context.TakeNondeterminism(),
+            Duration = _clock.UtcNow - startedAt,
+
+            // Denormalised, and never read back. A scalar cursor cannot describe a
+            // half-completed fork, so the resume position is derived from the rows above;
+            // this survives because "roughly where is this stuck instance" is a real question
+            // an operator asks of a table.
+            ResumeHint = step.Index,
+        };
+
+        var committed = await run.Journal.CommitAsync(commit, ct).ConfigureAwait(false);
+
+        return committed.IsSuccess ? null : committed.Error;
+    }
+
+    /// <summary>What the journal records a step as having invoked.</summary>
+    /// <remarks>
+    /// The same expression <see cref="FlowExecutionContext.EnterStep"/> uses, so a row's
+    /// <c>capability_id</c> and the identity a failure is reported against can never disagree
+    /// about the same step.
+    /// </remarks>
+    private static string JournalIdentity(StepNode step) =>
+        step.Capability?.Id ?? step.EventType ?? step.SignalType ?? step.SubFlowId ?? string.Empty;
 
     /// <summary>
     /// Runs every branch of a fork and applies its merge strategy.
@@ -568,6 +1066,7 @@ public sealed class FlowEngine
         FlowContext scope,
         CompensationStack? compensations,
         StepNode step,
+        JournalCursor cursor,
         CancellationToken ct)
     {
         var targets = step.BranchTargets;
@@ -598,8 +1097,14 @@ public sealed class FlowEngine
             // non-empty, so this arithmetic cannot produce an overlap.
             var branchEnd = b + 1 < targets.Length ? targets[b + 1] : join;
 
+            // The branches share the fork's cursor unchanged. A fork does not re-enter a
+            // range — its spans are disjoint and each index appears once — so (scope, step)
+            // stays unique without a per-branch scope, and the frontier can describe "branch
+            // A done, branch B stopped at step 12" purely from which rows exist. That is
+            // exactly why the resume position is derived rather than remembered.
             started[b] = RunRangeAsync(
-                plan, dispatcher, context, scope, compensations, targets[b], branchEnd, branchToken).AsTask();
+                plan, dispatcher, context, scope, compensations, targets[b], branchEnd, cursor, branchToken)
+                .AsTask();
 
             pending.Add(started[b]);
         }
@@ -678,6 +1183,7 @@ public sealed class FlowEngine
         FlowContext scope,
         CompensationStack? compensations,
         StepNode step,
+        JournalCursor cursor,
         CancellationToken ct)
     {
         IterationSource source;
@@ -705,10 +1211,10 @@ public sealed class FlowEngine
 
         return step.MaxDegreeOfParallelism == 1
             ? await RunIterationsInOrderAsync(
-                plan, dispatcher, context, scope, compensations, step, source, body, join, ct)
+                plan, dispatcher, context, scope, compensations, step, source, body, join, cursor, ct)
                 .ConfigureAwait(false)
             : await RunIterationsConcurrentlyAsync(
-                plan, dispatcher, context, scope, compensations, step, source, body, join, ct)
+                plan, dispatcher, context, scope, compensations, step, source, body, join, cursor, ct)
                 .ConfigureAwait(false);
     }
 
@@ -728,6 +1234,7 @@ public sealed class FlowEngine
         IterationSource source,
         int body,
         int join,
+        JournalCursor cursor,
         CancellationToken ct)
     {
         var errors = step.ContinueOnError ? new Error?[source.Count] : null;
@@ -751,8 +1258,13 @@ public sealed class FlowEngine
             }
 #pragma warning restore CA1031
 
+            // The element index becomes the journal scope, and it is the same
+            // IterationScope the body already runs under seen from the key's side — not a
+            // second notion of "which iteration". Nested loops chain, so a body two levels
+            // down commits under `7/2`.
             var outcome = await RunRangeAsync(
-                plan, dispatcher, context, iteration, compensations, body, join, ct).ConfigureAwait(false);
+                plan, dispatcher, context, iteration, compensations, body, join,
+                cursor.Element(element), ct).ConfigureAwait(false);
 
             completed += outcome.Completed;
 
@@ -796,6 +1308,7 @@ public sealed class FlowEngine
         IterationSource source,
         int body,
         int join,
+        JournalCursor cursor,
         CancellationToken ct)
     {
         // ContinueOnError cancels nothing, so it needs no source at all — the same shape
@@ -839,7 +1352,8 @@ public sealed class FlowEngine
 #pragma warning restore CA1031
 
                 pending.Add(RunRangeAsync(
-                    plan, dispatcher, context, iteration, compensations, body, join, iterationToken).AsTask());
+                    plan, dispatcher, context, iteration, compensations, body, join,
+                    cursor.Element(next), iterationToken).AsTask());
 
                 elements.Add(next);
                 next++;
@@ -1066,6 +1580,7 @@ public sealed class FlowEngine
         FlowContext scope,
         CompensationStack? compensations,
         StepNode step,
+        JournalCursor cursor,
         CancellationToken ct)
     {
         if (context.Depth >= MaxSubFlowDepth)
@@ -1087,6 +1602,18 @@ public sealed class FlowEngine
                 FlowErrors.SubFlowMappingFailed(plan.Flow.Id, step.Index, exception), 0);
         }
 #pragma warning restore CA1031
+
+        // The child's own declaration governs the child, exactly as ADR-0003 says: an
+        // ephemeral child composed by a durable parent is not journaled, and a durable child
+        // is — as its own instance. A durable child under a parent that has no journal is
+        // refused rather than run ephemerally, which is the same refusal the top of the
+        // engine makes and for the same reason.
+        var childIsDurable = source.Plan.Flow.Profile == ExecutionProfile.Durable;
+
+        if (childIsDurable && !cursor.IsJournaled)
+        {
+            return new RangeOutcome(FlowErrors.DurabilityNotConfigured(source.Plan.Flow.Id), 0);
+        }
 
         var child = _contexts.Rent();
         var retained = false;
@@ -1127,11 +1654,29 @@ public sealed class FlowEngine
         }
 #pragma warning restore CA1031
 
+        var childCursor = default(JournalCursor);
+
+        if (childIsDurable)
+        {
+            childCursor = cursor.Child(Guid.NewGuid());
+
+            var opened = await OpenChildInstanceAsync(source, context, cursor, childCursor, step, ct)
+                .ConfigureAwait(false);
+
+            if (opened is not null)
+            {
+                _contexts.Return(child);
+                return new RangeOutcome(opened, 0);
+            }
+        }
+
         if (step.Mode == SubFlowMode.Detached)
         {
-            Detach(source, child);
+            Detach(source, child, childCursor);
             return default;
         }
+
+        var startedAt = cursor.IsJournaled ? _clock.UtcNow : default;
 
         try
         {
@@ -1139,7 +1684,7 @@ public sealed class FlowEngine
 
             var outcome = await RunRangeAsync(
                 source.Plan, source.Dispatcher, child, child, childCompensations,
-                0, source.Plan.Graph.Count, ct).ConfigureAwait(false);
+                0, source.Plan.Graph.Count, childCursor, ct).ConfigureAwait(false);
 
             if (outcome.Failure is not null)
             {
@@ -1155,9 +1700,27 @@ public sealed class FlowEngine
                         .ConfigureAwait(false);
                 }
 
-                return new RangeOutcome(
-                    FlowErrors.SubFlowFailed(plan.Flow.Id, step.Index, source.Plan.Flow.Id, outcome.Failure),
-                    outcome.Completed);
+                var failed = FlowErrors.SubFlowFailed(
+                    plan.Flow.Id, step.Index, source.Plan.Flow.Id, outcome.Failure);
+
+                // The journal's own refusal is discarded here, and only here. The flow is
+                // ending either way, and the child's error is the reason an operator needs;
+                // replacing "the payment was declined" with "your fencing token is stale"
+                // would hide the business fact behind the ownership one.
+                _ = await RecordCompositionAsync(
+                    plan, dispatcher, context, scope, cursor, childCursor, step, source, failed, startedAt, ct)
+                    .ConfigureAwait(false);
+
+                return new RangeOutcome(failed, outcome.Completed);
+            }
+
+            var refusal = await RecordCompositionAsync(
+                plan, dispatcher, context, scope, cursor, childCursor, step, source, null, startedAt, ct)
+                .ConfigureAwait(false);
+
+            if (refusal is not null)
+            {
+                return new RangeOutcome(refusal, outcome.Completed);
             }
 
             // The child succeeded and left work behind that the *parent* may still have to
@@ -1183,6 +1746,91 @@ public sealed class FlowEngine
     }
 
     /// <summary>
+    /// Opens the <c>flow_instance</c> row a composed durable child gets of its own.
+    /// </summary>
+    /// <remarks>
+    /// ADR-0015's third schema commitment, executed. The row carries
+    /// <c>parent_instance_id</c> and the parent's <c>(scope, step_id)</c>, and the child's
+    /// steps are not spliced into the parent's history — which is what keeps the parent's
+    /// manifest from claiming the child's capabilities, keeps the child's own deadline and
+    /// profile, and gives a detached child, which outlives the step that started it,
+    /// somewhere to live.
+    /// </remarks>
+    private static async ValueTask<Error?> OpenChildInstanceAsync(
+        SubFlowSource source,
+        FlowExecutionContext context,
+        JournalCursor parent,
+        JournalCursor child,
+        StepNode step,
+        CancellationToken ct)
+    {
+        var run = child.Run!;
+
+        var start = new FlowInstanceStart
+        {
+            InstanceId = run.InstanceId,
+            FlowId = source.Plan.Flow.Id,
+            FlowVersion = source.Plan.Flow.Version,
+            Token = run.Token,
+            TenantId = context.TenantId,
+
+            // Identity, not lifetime. A detached child keeps the correlation so one operation
+            // is still one trace, and drops the deadline, which is what "its own lifecycle"
+            // means — so the deadline is the child's own from here.
+            CorrelationId = context.CorrelationId,
+            ParentInstanceId = parent.Run!.InstanceId,
+            ParentScope = parent.Scope,
+            ParentStepId = step.Index,
+        };
+
+        var started = await run.Journal.StartAsync(start, ct).ConfigureAwait(false);
+
+        return started.IsSuccess ? null : started.Error;
+    }
+
+    /// <summary>
+    /// Closes a composed child's instance and appends the parent's row for the composition.
+    /// </summary>
+    /// <remarks>
+    /// Both, in that order, because the parent's row is what a resume reads to decide the
+    /// composition is done. Writing the parent's row first would let a crash in between leave
+    /// a parent that believes the child finished and a child row that says it is still
+    /// running — the one ordering that produces an instance nobody will ever pick up.
+    /// </remarks>
+    private async ValueTask<Error?> RecordCompositionAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        FlowContext scope,
+        JournalCursor cursor,
+        JournalCursor childCursor,
+        StepNode step,
+        SubFlowSource source,
+        Error? failure,
+        DateTimeOffset startedAt,
+        CancellationToken ct)
+    {
+        if (childCursor.IsJournaled)
+        {
+            var closed = await CloseInstanceAsync(
+                childCursor,
+                failure is null ? FlowInstanceState.Completed : FlowInstanceState.Failed,
+                ct).ConfigureAwait(false);
+
+            if (closed is not null)
+            {
+                return closed;
+            }
+        }
+
+        return cursor.IsJournaled
+            ? await CommitStepAsync(
+                plan, dispatcher, context, scope, cursor, step, failure, startedAt,
+                source.Plan.Flow.Version, ct).ConfigureAwait(false)
+            : null;
+    }
+
+    /// <summary>
     /// Starts a detached child and stops caring about its result.
     /// </summary>
     /// <remarks>
@@ -1200,17 +1848,17 @@ public sealed class FlowEngine
     /// outlive its parent must not be cancelled when the parent's token is.
     /// </para>
     /// </remarks>
-    private void Detach(SubFlowSource source, FlowExecutionContext child)
+    private void Detach(SubFlowSource source, FlowExecutionContext child, JournalCursor cursor)
     {
         lock (_detachedSync)
         {
             _detachedInFlight++;
         }
 
-        _ = RunDetachedAsync(source, child);
+        _ = RunDetachedAsync(source, child, cursor);
     }
 
-    private async Task RunDetachedAsync(SubFlowSource source, FlowExecutionContext child)
+    private async Task RunDetachedAsync(SubFlowSource source, FlowExecutionContext child, JournalCursor cursor)
     {
         try
         {
@@ -1218,13 +1866,23 @@ public sealed class FlowEngine
 
             var outcome = await RunRangeAsync(
                 source.Plan, source.Dispatcher, child, child, compensations,
-                0, source.Plan.Graph.Count, CancellationToken.None).ConfigureAwait(false);
+                0, source.Plan.Graph.Count, cursor, CancellationToken.None).ConfigureAwait(false);
 
             // The result is deliberately discarded — that is what fire-and-forget means —
             // but the *ending* is not: a detached child that failed still compensates its
             // own completed steps, exactly as it would if a trigger had started it.
-            _ = await CompleteAsync(source.Plan, source.Dispatcher, child, compensations, outcome)
+            var result = await CompleteAsync(source.Plan, source.Dispatcher, child, compensations, outcome)
                 .ConfigureAwait(false);
+
+            // Its instance row is closed for the same reason. A detached child outlives the
+            // step that started it, so nothing else is left to say what became of it — and an
+            // instance stuck at Running forever is exactly what a recovery scan picks up and
+            // tries to finish.
+            if (cursor.IsJournaled)
+            {
+                _ = await CloseInstanceAsync(cursor, TerminalState(result), CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
         }
 #pragma warning disable CA1031 // Nothing awaits this task, so an escaping exception would be
         catch (Exception)      //   an unobserved TaskException — a process-level event in some

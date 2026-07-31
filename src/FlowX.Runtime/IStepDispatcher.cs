@@ -266,4 +266,84 @@ public interface IStepDispatcher
             stepIndex,
             "This flow composes no sub-flow, so the engine never asks it to seed one. " +
             "Reaching this means the plan and this dispatcher came from different builds.");
+
+    /// <summary>
+    /// Describes the step that just completed for the journal: what it produced, and the
+    /// flow's state bag as it now stands.
+    /// </summary>
+    /// <param name="stepIndex">Position in the plan's step graph.</param>
+    /// <param name="ctx">
+    /// The scope the step ran under — the iteration's view inside a <c>ForEach</c> body, so
+    /// that what is described is what the step actually saw.
+    /// </param>
+    /// <returns>
+    /// The payloads to commit, or <see cref="StepJournalEntry.Nothing"/> when there is
+    /// nothing to record.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Called only for a <c>Durable</c> flow, at the step boundary, before the
+    /// commit.</strong> An <c>Ephemeral</c> flow never reaches it — the engine does not ask,
+    /// so budget B2's hard zero is untouched by the existence of a journal.
+    /// </para>
+    /// <para>
+    /// <strong>Here rather than on the engine, for the reason nothing else typed is on the
+    /// engine either.</strong> <see cref="JournalPayload.Of{T}"/> requires the generated
+    /// <c>JsonTypeInfo&lt;T&gt;</c> — there is no overload that reflects over a type — and
+    /// only generated code can name one. That requirement is what makes membership of the
+    /// generated JSON context a compile error rather than a convention (ADR-0008,
+    /// ADR-0015 commitment 5) and what keeps the write path trim- and NativeAOT-safe.
+    /// </para>
+    /// <para>
+    /// <strong>The payloads must carry the flow's <c>SensitiveMembers</c>.</strong> The
+    /// generator already emits that array onto every flow's partial class, so nothing new has
+    /// to be discovered to keep a marked member out of a table retained for months — only
+    /// remembered. <see cref="JournalPayload"/> is shaped so that a store cannot get at the
+    /// value any other way.
+    /// </para>
+    /// <para>
+    /// Defaulted to <see cref="StepJournalEntry.Nothing"/> rather than to a throw, unlike
+    /// <see cref="BeginSubFlow"/>. A dispatcher that describes nothing produces a journal
+    /// with the step boundaries and without the payloads, which is a truthful, resumable
+    /// record — the generated payload writer and <c>FLOWX1006</c> are WP-59's, and a default
+    /// that threw would make every hand-written dispatcher unusable under a profile it is
+    /// entitled to run.
+    /// </para>
+    /// </remarks>
+    StepJournalEntry DescribeStep(int stepIndex, FlowContext ctx) => StepJournalEntry.Nothing;
+
+    /// <summary>
+    /// Rehydrates a resumed flow's state bag from the snapshot the journal committed.
+    /// </summary>
+    /// <param name="ctx">The freshly rented context the resumed loop will run under.</param>
+    /// <param name="stateBagJson">
+    /// The last committed state bag, exactly as it was stored — sensitive members already
+    /// redacted, because there is no read path that could put them back.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// The mirror of <see cref="DescribeStep"/>, and the only call that turns stored JSON
+    /// back into the typed values the steps after the frontier bind to. The engine cannot do
+    /// it for the same reason it cannot write it.
+    /// </para>
+    /// <para>
+    /// Called once, before the first step of a resumed execution, and only when the instance
+    /// actually recorded a state bag. A resumed flow whose journal carries no snapshot — a
+    /// dispatcher that describes nothing — re-enters with an empty bag rather than reaching
+    /// this method.
+    /// </para>
+    /// <para>
+    /// Defaulted to a throw, like <see cref="BeginSubFlow"/> and for the same kind of reason:
+    /// a dispatcher that never described a state bag can never be asked to restore one, so
+    /// nothing that ships depends on the default — and a dispatcher that <em>did</em> write
+    /// one and cannot read it back must fail loudly rather than resume a flow with an empty
+    /// bag, which would rerun the rest of it against values no step produced.
+    /// </para>
+    /// </remarks>
+    void RestoreState(FlowContext ctx, string stateBagJson) =>
+        throw new NotSupportedException(
+            "This dispatcher journals no state bag, so the engine never asks it to restore " +
+            "one. Reaching this means a state bag was committed by a dispatcher that cannot " +
+            "read it back — resuming would run the rest of the flow against values no step " +
+            "produced.");
 }
