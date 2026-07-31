@@ -5,15 +5,28 @@ namespace FlowX;
 /// compiler; the flow body cannot observe them, which is what makes quality goal Q4
 /// (transport portability) hold.
 /// </summary>
+/// <remarks>
+/// A subclass must carry <see cref="TriggerKindAttribute"/> as well as overriding
+/// <see cref="Kind"/>. The override is what the runtime reads; the marker is the same
+/// fact expressed as attribute data, which is the only form the compiler can read out of
+/// a referenced assembly. A subclass without the marker still runs, but publishes no
+/// trigger in <c>flowx.manifest.json</c> — <c>FLOWX1025</c> reports that.
+/// </remarks>
 public abstract class TriggerAttribute : Attribute
 {
     /// <summary>The transport family this trigger belongs to.</summary>
+    /// <remarks>
+    /// Read at run time. The compiler cannot read it — a property getter is code, not
+    /// data — so the same fact must be restated as <see cref="TriggerKindAttribute"/> on
+    /// the same class, and the two must agree.
+    /// </remarks>
     public abstract TriggerKind Kind { get; }
 }
 
 /// <summary>Exposes a flow as an HTTP endpoint. Generates the route, binder, OpenAPI operation and RFC 7807 mapping.</summary>
 /// <param name="method">HTTP method, e.g. <c>POST</c>.</param>
 /// <param name="route">Route template, e.g. <c>/api/v1/orders</c>.</param>
+[TriggerKind(TriggerKind.Http)]
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
 public sealed class HttpTriggerAttribute(string method, string route) : TriggerAttribute
 {
@@ -35,6 +48,7 @@ public sealed class HttpTriggerAttribute(string method, string route) : TriggerA
 
 /// <summary>Consumes a Kafka topic. Offsets are committed after flow completion.</summary>
 /// <param name="topic">Topic name.</param>
+[TriggerKind(TriggerKind.Bus)]
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
 public sealed class KafkaTriggerAttribute(string topic) : TriggerAttribute
 {
@@ -85,6 +99,7 @@ public enum MissedFirePolicy
 
 /// <summary>Runs a flow on a cron schedule. The scheduler is leader-elected, so a schedule never double-fires.</summary>
 /// <param name="cron">Standard five-field cron expression.</param>
+[TriggerKind(TriggerKind.Schedule)]
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
 public sealed class CronTriggerAttribute(string cron) : TriggerAttribute
 {
@@ -112,6 +127,7 @@ public sealed class CronTriggerAttribute(string cron) : TriggerAttribute
 
 /// <summary>Consumes a continuous stream with windowing and checkpointing.</summary>
 /// <param name="source">Stream source, e.g. a topic name.</param>
+[TriggerKind(TriggerKind.Stream)]
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
 public sealed class StreamTriggerAttribute(string source) : TriggerAttribute
 {
@@ -156,6 +172,7 @@ public enum ConfirmationMode
 /// agent surface is exactly the flow surface — an agent cannot reach anything a human
 /// could not (docs/15-Security.md §7).
 /// </summary>
+[TriggerKind(TriggerKind.Agent)]
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
 public sealed class AgentTriggerAttribute : TriggerAttribute
 {
