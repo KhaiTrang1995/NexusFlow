@@ -674,9 +674,9 @@ needs a profiler.
 > **This slipped in because the scale job is advisory.** That was the right call while the
 > measurement could not separate signal from load — but the cost of it is now visible: a
 > 3× regression merged across four packages and nothing said a word. The job cannot simply
-> be made blocking while the criterion is failing, so the gap needs a different answer,
-> most likely a *relative* gate against the committed figure rather than an absolute one
-> against the budget.
+> be made blocking while the criterion is failing, so the gap needed a different answer:
+> a *relative* gate against the committed figure rather than an absolute one against the
+> budget. **Built at WP-31, and it would have caught this — see below.**
 >
 > **Bisected at WP-28. One commit, not a spread:** `c7ae70a`, WP-22's trigger and
 > error-catalogue emission, took the generator from **5.60 → 27.28 ms/flow (×4.9)**.
@@ -812,6 +812,77 @@ against predicate text — structure only, never values.
 it cannot be read from metadata for a type the abstractions do not ship. Declining to
 invent it is right; doing so *silently* is not, and that gap is recorded in
 [CHECKLIST §5c](CHECKLIST.md).
+
+### WP-30 — The fitness functions that were listed and did not exist
+
+| | |
+|---|---|
+| **Goal** | Every architecture gate the docs claim either runs, or is named as blocked |
+| **Why** | `CHECKLIST` §4 listed 23 fitness functions; six existed nowhere, and **four of those are security gates** cited in the OWASP mapping and in `15-Security §10`. A control that is claimed and absent is worse than one never claimed: the claim is what stops anyone looking |
+| **Deliverable** | The implementable ones, each proven able to fail; the blocked ones named with what blocks them |
+| **Exit** | No gate in the list is both claimed and absent |
+| **Status** | **Done.** Five implemented, two deliberately absent. |
+
+**`ManifestContainsNoSecrets` could never have passed against real output.** The assertion
+carrying that name forbids *words*, including `token` — and the manifest `samples/ecommerce`
+actually emits contains `PaymentToken`, the name of a `[Sensitive]` member the manifest is
+*supposed* to record. Pointing that list at real output fails on correct code, so it stayed
+green only by running over a hand-built model. This is a sharper variant of the defect this
+phase keeps finding: not a gate that is missing, but **a gate whose design guarantees it can
+never be aimed at the thing it claims to guard**. Replaced with one that matches the *shape*
+of a credential over every emitted manifest, asserts it found at least one so it cannot pass
+by scanning nothing, and **masks what it finds** — a scanner that prints the credential into
+the CI log has moved the leak, not caught it.
+
+**Two OWASP rows were false as written.** A01 claimed `Authorization.Internal` is unreachable
+from an external trigger; nothing in the runtime, the host or any plugin reads the stance —
+it reaches the manifest and stops. A02 claimed `[Sensitive]` redaction is applied by the
+*generated* serialiser so no path reaches logs, traces, journal or replay un-redacted;
+redaction is not generated and three of those four sinks do not exist.
+
+**`CrossTenantAccessIsDenied` and `RedactionCannotBeBypassed` are absent, not skipped.** They
+need P4's policy stages and P2/P5's journal and sinks. A test named after a gate is itself a
+claim of coverage.
+
+### WP-31 — A gate that catches a regression while the budget is failing
+
+| | |
+|---|---|
+| **Goal** | A cost regression fails the build that caused it, even though the absolute budget is already red |
+| **Why** | The 4.9× regression above merged in silence precisely because the only cost gate was absolute, against a criterion already failing. An absolute gate you are failing catches nothing |
+| **Deliverable** | A relative gate on a deterministic proxy, a committed baseline, and a self-test |
+| **Exit** | The gate fails on the commit that caused the incident and passes on every no-op |
+| **Status** | **Done.** Blocking. Validated against `c7ae70a`: **FAIL at +102 %**, fifty times the threshold, on the commit that did it. |
+
+**Wall clock cannot do this, and the counterfactual is the most useful result.** Gating the
+same in-process probe on *elapsed time* — MSBuild, restore and the compiler server already
+removed — a no-op commit produces a false signal of up to **+166 %**, while the real 4.9×
+regression produces **+39 % to +77 %**. A timing threshold wide enough not to fire on nothing
+is two to four times too wide to fire on the incident. No number of rounds fixes a signal
+smaller than its noise.
+
+So the gated quantity is **bytes allocated by one `RunGeneratorsAndUpdateCompilation` call**.
+That is close to a direct measure of what WP-28 found: the generator's cost *is* semantic-model
+queries, answering one binds a statement, and binding allocates. It follows the precedent
+`check-benchmark-budgets.py` already argues — allocations are exact on shared hardware,
+timings are not.
+
+**Threshold +2 %, chosen from measurement.** Twelve A/A runs under load 5.8–21.1: the gated
+statistic's full range was **0.014 %** at 25 flows and **0.071 %** at 50. That is 29× headroom
+over the worst deviation, and 5× the dearest *real* feature in the same window — `Switch`/`Case`
+cost +0.41 %, `Parallel` +0.11 %. Confirmed in review under **load average 38.6**, where the
+metric moved **+0.01 %**; the conditions that make wall clock useless move this by one part in
+ten thousand.
+
+**A passing relative gate is not a met budget, and the tool says so out loud.** The absolute
+criterion is reprinted as `ABSOLUTE CRITERION — FAIL` on every run, passing ones included.
+`scale-overhead` stays advisory, with its comment now explaining why this does not discharge it.
+
+**Stated limits, not buried:** bytes are a proxy and not a conversion (2.05× here where
+`/reportanalyzer` says 4.87×, so +2 % of bytes is not +2 % of milliseconds); the probe runs
+neither MSBuild nor the analyzers and cannot see regressions there; and cross-machine
+reproducibility is the one untested assumption, since Roslyn sizes some pools from
+`ProcessorCount`.
 
 ---
 

@@ -329,8 +329,9 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       what makes the third reading believable. **It slipped in because the scale job is
       advisory** — correct while the measurement could not beat the noise, but the cost is
       now concrete: a 3× regression merged across four packages in silence. The job cannot
-      just be made blocking while the criterion fails, so this wants a *relative* gate
-      against the committed figure instead of an absolute one against the budget.
+      just be made blocking while the criterion fails, so this wanted a *relative* gate
+      against the committed figure instead of an absolute one against the budget —
+      **built at WP-31, and it catches this one at fifty times its threshold**.
       **Bisected at WP-28 to one commit:** `c7ae70a`, WP-22's error-catalogue emission,
       **5.60 → 27.28 ms/flow (×4.9)**. `Switch`, `Parallel` and the sort-key fix cost
       nothing detectable; `FLOWX1011` never appeared in the generator's number, being an
@@ -342,6 +343,17 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       from code binds every capability body, so generator cost now tracks how much
       capability *implementation* exists rather than how many flows do. Whether that
       catalogue is worth two thirds of the compile-time budget is a product decision
+- [x] **WP-31** A **relative** cost gate, blocking, on a **deterministic proxy** — bytes
+      allocated by one `RunGeneratorsAndUpdateCompilation` call, against a committed
+      baseline, threshold **+2 %**. **Validated against `c7ae70a`: FAIL at +102 %**, fifty
+      times the threshold, on the commit that caused the incident. **Wall clock provably
+      cannot do this**: gating the same probe on elapsed time, a no-op commit produces a
+      false signal of up to **+166 %** while the real 4.9× regression produces **+39 – 77 %**
+      — a threshold wide enough not to fire on nothing is 2–4× too wide to fire on the
+      incident, and more rounds cannot fix a signal smaller than its noise. Confirmed in
+      review under **load average 38.6**, where the gated metric moved **+0.01 %**. The
+      absolute criterion is reprinted as `ABSOLUTE CRITERION — FAIL` on every run, passing
+      ones included, so a green relative gate cannot be read as a met budget
 - [ ] **WP-27** cut `StepBindingAnalyzer` 89 % — 4.70 → 0.53 ms per flow — by binding a
       step's type argument outside the `Define` body. 96 % of its cost was one
       `GetSymbolInfo` call: a node inside a statement cannot be bound without binding the
