@@ -45,7 +45,7 @@ The mapping runs at the step and its result *is* the step's input. It is not wri
 into the state bag — the bag is keyed on `typeof(T)` and a mapping exists precisely because
 nothing put a `CaptureRequest` there — so a mapped step supplies only itself, and two
 mapped steps of the same contract in one flow do not interfere. A mapping whose result the
-capability cannot accept is [FLOWX1028](FLOWX1028.md).
+capability cannot accept is [FLOWX1029](FLOWX1029.md).
 
 ## What it detects
 

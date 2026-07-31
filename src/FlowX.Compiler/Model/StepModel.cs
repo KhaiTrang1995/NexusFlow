@@ -212,7 +212,7 @@ public sealed record StepModel
     /// Needed for the same reason <see cref="SelectorTypeName"/> is: the emitted mapping
     /// is a <c>static readonly Func&lt;FlowContext&lt;TIn&gt;, TStepIn&gt;</c> field and a
     /// field needs a type. Kept separate from <see cref="CapabilityInput"/> even though
-    /// FLOWX1028 requires one to be assignable to the other, because the two are different
+    /// FLOWX1029 requires one to be assignable to the other, because the two are different
     /// facts: what the author's lambda returns, and what the capability declares.
     /// </remarks>
     public string? StepInputTypeName { get; private init; }

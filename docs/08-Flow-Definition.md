@@ -102,7 +102,7 @@ Two consequences worth stating:
   compensation has, which reads the bag at unwind time rather than at the step.
 - **`TStepIn` must be the capability's declared input**, or something implicitly
   convertible to it. C# infers it from the lambda and constrains it to nothing, so
-  [FLOWX1028](diagnostics/FLOWX1028.md) checks it — otherwise a mismatch would arrive as
+  [FLOWX1029](diagnostics/FLOWX1029.md) checks it — otherwise a mismatch would arrive as
   a `CS1503` inside generated source.
 
 The mapping costs nothing to reach: a cached static delegate invoked through

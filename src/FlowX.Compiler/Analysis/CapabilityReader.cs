@@ -162,7 +162,7 @@ public static class CapabilityReader
     /// </summary>
     /// <remarks>
     /// The symbol rather than the display string <see cref="CapabilityInfo.InputTypeName"/>
-    /// already carries, because FLOWX1028 asks a question about <em>conversions</em> —
+    /// already carries, because FLOWX1029 asks a question about <em>conversions</em> —
     /// whether a mapping's result can be passed where this is declared — and that is a
     /// question only the compilation can answer. Comparing names would guess.
     /// </remarks>

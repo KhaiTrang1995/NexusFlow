@@ -308,7 +308,7 @@ public sealed class StepInputMappingTests
             "code, not published structure.");
         manifest.ShouldContainText("\"input\": \"Sample.CaptureRequest\"",
             "The mapped contract does reach the manifest — as the capability's declared " +
-            "input, which is the only type involved. FLOWX1028 is what makes those two " +
+            "input, which is the only type involved. FLOWX1029 is what makes those two " +
             "the same type, so there is no second one to publish.");
         manifest.ShouldNotContainText("ctx =>",
             "Structure only, never values. A type is structure; a lambda's source text " +
@@ -317,7 +317,7 @@ public sealed class StepInputMappingTests
             "The mapping's body must not reach a document that is safe to publish.");
     }
 
-    // ------------------------------------------------------------------------ FLOWX1028
+    // ------------------------------------------------------------------------ FLOWX1029
 
     [Fact]
     public void AMappingProducingAContractTheCapabilityCannotAcceptIsRefused()
@@ -333,7 +333,7 @@ public sealed class StepInputMappingTests
             }
             """));
 
-        run.Ids.ShouldContain("FLOWX1028", run.Describe());
+        run.Ids.ShouldContain("FLOWX1029", run.Describe());
         var message = run.Describe();
 
         message.ShouldContainText("payment.capture", "The message names the step.");
@@ -345,7 +345,7 @@ public sealed class StepInputMappingTests
     public void ARefusedMappingDoesNotAlsoEmitADispatcherThatCannotCompile()
     {
         // The point of reporting it at all. C# constrains TStepIn to nothing, so without
-        // FLOWX1028 the mistake reaches the author as a CS1503 inside generated source —
+        // FLOWX1029 the mistake reaches the author as a CS1503 inside generated source —
         // which is the failure mode ctx.Input had, and the reason this harness compiles
         // what the generator wrote rather than merely parsing it.
         var source = WithFlow("""
@@ -398,7 +398,7 @@ public sealed class StepInputMappingTests
             }
             """;
 
-        GeneratorHarness.Run(source).Ids.ShouldNotContain("FLOWX1028");
+        GeneratorHarness.Run(source).Ids.ShouldNotContain("FLOWX1029");
         GeneratorHarness.GeneratedCompileErrorsIn(source).ShouldBeEmpty();
     }
 

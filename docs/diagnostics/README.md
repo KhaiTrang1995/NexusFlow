@@ -11,11 +11,14 @@ from at run time, or expensive enough that discovering it in production is the w
 place. A warning is a rule nobody has to obey; if a rule is worth having, it stops
 the build.
 
-Four entries below are not errors, and each says why on its own page.
+Five entries below are not errors, and each says why on its own page.
 [FLOWX1024](FLOWX1024.md) and [FLOWX1025](FLOWX1025.md) report gaps between the
 manifest and what the build can actually deliver, rather than mistakes in the source
 — and `FLOWX1025` is additionally about an attribute the developer usually does not
-own, which an error would make unusable. [FLOWX1027](FLOWX1027.md) reports code that
+own, which an error would make unusable. [FLOWX1028](FLOWX1028.md) is the same shape
+taken to its limit — the declared execution profile is one the runtime does not
+implement at all — and an error there would be actively harmful, because its only
+repair is to delete the declaration P2 will need to find. [FLOWX1027](FLOWX1027.md) reports code that
 has no effect rather than code that is wrong, which is exactly what C#'s own
 `CS0162` is and exactly the severity C# gives it. [FLOWX1011](FLOWX1011.md) is an error in `Durable`
 flows and a warning in `Ephemeral` ones, which is the asymmetry
@@ -48,7 +51,8 @@ ephemeral one is not replayed at all.
 | [FLOWX1024](FLOWX1024.md) | Emit step is recorded but not published | A consumer waiting for an event the manifest promised |
 | [FLOWX1025](FLOWX1025.md) | Trigger attribute cannot be read by the compiler | A trigger missing from the manifest, and `flowx diff` unable to tell |
 | [FLOWX1027](FLOWX1027.md) | Step is unreachable after `Fail` | A plan, a manifest and a diagram listing work the flow can never do |
-| [FLOWX1028](FLOWX1028.md) | Step input mapping produces the wrong contract | A `CS1503` inside generated source, about a call the developer cannot see |
+| [FLOWX1029](FLOWX1029.md) | Step input mapping produces the wrong contract | A `CS1503` inside generated source, about a call the developer cannot see |
+| [FLOWX1028](FLOWX1028.md) | Execution profile is declared but not honoured by the runtime | **A payment saga declaring `Durable` and losing its instance on the next deploy** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -91,7 +95,7 @@ quietly become "forgotten":
 |---|---|
 | `FLOWX1006` | The generated `System.Text.Json` context [ADR-0008](../adr/ADR-0008-serialization-and-schema.md) chose. Nothing generates one, `IPayloadSerializer` does not exist, and `ctx.State` is serialised nowhere — so there is no membership the rule could check a contract against. Checking "is this type serialisable in principle" instead would be a different, weaker rule under a number already spoken for |
 | `FLOWX1007`–`FLOWX1009` | Not the analysis — `PredicatePurityAnalyzer` already performs it for flow delegates, and extending it to capability bodies is mechanical. The severity: [ADR-0003](../adr/ADR-0003-execution-profiles.md) makes these errors in `Durable` and informational in `Ephemeral`, the runtime executes only `Ephemeral`, and an Info diagnostic never reaches a build log. They would ship doing nothing anywhere. [06 §5](../06-Execution-Engine.md#5-the-determinism-boundary) says the stance is to be revisited **as a set** once the journal exists, and not one row at a time |
-| `FLOWX1012` | Its remedy. The check itself is easy — `.CompensateWith` under `Profile = Ephemeral` — and it would fire on every compensable flow in this release, including the reference sample. But the fix it would recommend, `Profile = Durable`, changes nothing: there is no journal, and the engine runs every profile in memory. It would silence the warning while leaving compensation exactly as best-effort as before, which is worse than not raising it |
+| `FLOWX1012` | Its remedy. The check itself is easy — `.CompensateWith` under `Profile = Ephemeral` — and it would fire on every compensable flow in this release, including the reference sample. But the fix it would recommend, `Profile = Durable`, changes nothing: there is no journal, and the engine runs every profile in memory. It would silence the warning while leaving compensation exactly as best-effort as before, which is worse than not raising it. The reason it cannot be raised is now itself reported, by [`FLOWX1028`](FLOWX1028.md): a compensable flow that *does* declare `Durable` is told the profile buys nothing yet, which is the honest half of `FLOWX1012` that can ship today. The other half — the ephemeral flow that should have declared `Durable` — still waits on a remedy |
 | `FLOWX1022` | `flowx diff`'s question, asked of two manifests. An analyzer sees one compilation and cannot see the previous version's contracts at all |
 
 **A new rule takes the next id above the catalogue, never a reserved one.** Each
@@ -101,8 +105,17 @@ a mistake this project has already made once, when a check was built as `FLOWX10
 while three documents described it as `FLOWX1020`. `FLOWX1026` took the next free id
 for exactly that reason: `FLOWX1022` is spoken for, and "sub-flow cannot be
 composed" is not contract compatibility. `FLOWX1027` took the one after it, for the
-same reason, and `FLOWX1028` the one after that. The next is `FLOWX1029`. The range is
-`FLOWX1001`–`FLOWX1099`.
+same reason. `FLOWX1028` is the clearest case yet for the rule: "the runtime does not
+honour this profile" is not any of `FLOWX1006`–`1009` or `FLOWX1012`, all of which are
+*about* profiles and all of which are spoken for. `FLOWX1029` followed it.
+
+**Two rules were authored against `FLOWX1028` at the same time**, in separate branches,
+and the collision was caught at merge rather than by either author — which is the failure
+mode this paragraph exists to prevent, arriving from the one direction it did not cover.
+Reading "the next free id" is not enough when someone else is reading it too. Claim the id
+in this file *first*, in its own commit, before writing the rule.
+
+The next is `FLOWX1030`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

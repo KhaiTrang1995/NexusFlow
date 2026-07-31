@@ -232,7 +232,7 @@ public static class FlowEmitter
     /// </para>
     /// <para>
     /// Typed at the <c>TStepIn</c> C# inferred rather than at the capability's declared
-    /// input, so the field's type is the one the author's lambda actually returns. FLOWX1028
+    /// input, so the field's type is the one the author's lambda actually returns. FLOWX1029
     /// has already refused the case where the two are unrelated, which is what makes passing
     /// the first where the second is declared compile.
     /// </para>

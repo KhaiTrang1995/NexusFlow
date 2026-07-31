@@ -1276,7 +1276,7 @@ public static class FlowAnalyzer
     /// compiler's would not compile.
     /// </para>
     /// <para>
-    /// FLOWX1028 is reported here rather than in a <c>DiagnosticAnalyzer</c> because the
+    /// FLOWX1029 is reported here rather than in a <c>DiagnosticAnalyzer</c> because the
     /// answer is already in hand: the capability's contract has just been read for the
     /// step, and asking the same question again in the editor would mean resolving it
     /// twice. It is an error and it suppresses the mapping, so a flow that cannot compile
@@ -1313,7 +1313,7 @@ public static class FlowAnalyzer
 
         var mapped = method.TypeArguments[1];
 
-        // FLOWX1028 — the mapping's result is handed straight to the capability, and C#
+        // FLOWX1029 — the mapping's result is handed straight to the capability, and C#
         // constrains TStepIn to nothing, so this is the only place the mismatch can be
         // caught before it becomes a CS1503 inside generated code.
         if (!IsAcceptedBy(semanticModel, mapped, method.TypeArguments[0]))

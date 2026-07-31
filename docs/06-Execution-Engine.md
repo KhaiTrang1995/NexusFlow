@@ -184,6 +184,13 @@ flowchart TD
 > the middle column currently buys nothing while implying a guarantee. See
 > [§5](#5-the-determinism-boundary) for what that means for replay, and
 > [20-Roadmap](20-Roadmap.md) for the phases.
+>
+> **The compiler says so too.** Declaring anything other than `Ephemeral` is
+> reported as [`FLOWX1028`](diagnostics/FLOWX1028.md), so choosing the middle
+> column and being told nothing is no longer possible. It is a *warning* rather
+> than an error on purpose: the declaration is what P2 has to find and honour, and
+> an error would push every author to delete it to buy back a build. The rule is
+> scaffolding for this warning box and is deleted when the box is.
 
 ---
 
