@@ -84,9 +84,14 @@ These gate everything below them. None is code work.
 ## 1. Documentation
 
 - [x] 20 specification documents, `docs/01` – `docs/20`
-- [x] 15 ADRs with trade-offs stated (ADR-0013 added by the first compilation; ADR-0014
-      and [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md) are
-      **Proposed** — the build-overhead question P1 closed over, and P2's journal design)
+- [~] **16 ADRs** with trade-offs stated. *This line said "15 ADRs … ADR-0014 and ADR-0015
+      are **Proposed**" and was wrong twice: ADR-0016 was uncounted, and ADR-0015 became
+      **Accepted** at WP-53 — which this file records correctly 800 lines further down. A
+      count and a status, both wrong, both ticked `[x]`.* **[ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)
+      is the only one still Proposed**, and it is `[~]` rather than `[x]` because three of
+      the sixteen do not meet the [index's own template rule](docs/adr/README.md):
+      **ADR-0013** has no `Revisit when`, **ADR-0016** has no `Negative` section, and
+      **ADR-0014** has no `Context` heading. See [PLAN open item 11](PLAN.md#9-open-items-blocking-the-plan)
 - [x] `docs/diagnostics/` — 23 pages plus an index, one per raised diagnostic; every help
       URI resolves, asserted by test
 - [x] `docs/benchmarks/` — baseline, gate policy, and the honest caveats
@@ -1140,6 +1145,34 @@ adjacent to it shipped early and is recorded here rather than left to be redisco
 
 ---
 
+## 5f. The vision's success criteria · current state
+
+[PLAN §1.1](PLAN.md#11-what-this-plan-is-held-to) carries the static mapping — which package
+or phase each criterion is owed to. This carries the state. **P9 closes when all eight are
+met *and gated in CI*** ([20-Roadmap](docs/20-Roadmap.md)), so "satisfied" and "closed" are
+different columns on purpose.
+
+*Neither this file nor the plan mentioned `V1`–`V8` before 2026-07-31. The criteria that
+define whether the project succeeded were tracked nowhere in the two documents that track
+everything else.*
+
+| # | Criterion | Satisfied? | Gated by a check that can fail? |
+|---|---|---|---|
+| **V1** | ≤ 3 files, ≤ 60 lines for a 4-step flow | **yes** | **no** — a review. Endpoint generation cut the sample from 12 lines to 2 and no assertion noticed the number move |
+| **V2** | HTTP → Kafka, zero logic edits | **no** — one transport | no — WP-71 writes the assertion |
+| **V3** | p99 ≤ 5 µs, ≤ 1 alloc/step | **yes** — 172.3 ns / 0 B | **yes.** The only one of the eight |
+| **V4** | durable checkpoint p99 ≤ 15 ms @ 5 000 flows/s | **unknown** — a journal exists since WP-53; nothing times it | no — WP-50 |
+| **V5** | cold start ≤ 200 ms, NativeAOT | **unknown** — the binary links and serves; nothing times it | no — P9 |
+| **V6** | build overhead ≤ 8 % | **no** — +67.1 % | **no, and deliberately.** The job that measures it is advisory by an ADR-0014 commitment; the blocking gate is relative |
+| **V7** | 100 % of flows, capabilities, **policies and events** in the manifest | **partly** — flows and capabilities yes; policies and events neither exist nor are checked | partly — `ManifestIsComplete` covers the half that exists |
+| **V8** | mid-level engineer ships a flow in ≤ 2 h, n ≥ 10 | **not run** | no — P9 |
+
+**One of eight is gated.** Three more are satisfied or partly satisfied and enforced by
+nothing, which is the state that decays silently — V1 already moved without anything
+noticing.
+
+---
+
 ## 6. Quality gates · current state
 
 | Gate | Target | Now | Source |
@@ -1166,6 +1199,55 @@ adjacent to it shipped early and is recorded here rather than left to be redisco
 | B7 durable step commit | ≤ 15 ms p99 @ 5 000/s | **no harness** | P2 · WP-50 |
 | B8 journal rehydration | ≤ 8 ms p99 | **no harness** | P2 · WP-50 |
 | QR2 chaos: 10 000 flows, `SIGKILL` | 0 duplicate effects, 0 lost | **no rig** | P2 · WP-50 builds it, WP-62 runs it |
+
+### The architecture's quality goals — [05 §1.2](docs/05-Architecture.md#12-quality-goals-measurable--arc42-12)
+
+The gates above are mechanisms. These are the eight things the mechanisms exist to protect,
+and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architecture-defining*:
+05 §1.2 requires an ADR wherever a design choice trades one away.
+
+| # | Quality goal | Enforced by |
+|---|---|---|
+| **Q1** | predictable low latency | `EngineAllocationTests` (hard zero) + B1/B2. **The only quality goal whose gate has ever failed a build** |
+| **Q2** | durable correctness | conformance suite vs real Postgres, lease, recovery scan. **The measure — p99 ≤ 15 ms — is unmeasured, and the *scenario* has never happened:** nothing has killed a process |
+| **Q3** | static knowability | `ManifestIsComplete`, `flowx diff`, the error catalogue. Same half-gap as V7 — policies and events are unchecked |
+| **Q4** | transport portability | **nothing.** One transport |
+| **Q5** | operational uniformity | **nothing.** No `ActivitySource`, no `Meter`, no exporter (P5) |
+| **Q6** | extensibility | `RuntimeDoesNotReferenceAnyPlugin` ✅; `PluginsPassConformance` **blocked**. `plugins/FlowX.Postgres` is the first outside implementation to push back on a contract |
+| **Q7** | startup and footprint | **nothing.** Same gap as V5 |
+| **Q8** | multi-tenant isolation | **nothing.** `CrossTenantAccessIsDenied` blocked on P4 and P3 |
+
+### ADR inventory — 16 records, and which carry undischarged obligations
+
+| ADR | Status | Revisit trigger | Obligation this file or the plan is missing |
+|---|---|---|---|
+| 0001 primitives · 0004 triggers · 0010 C# DSL · 0012 licence | Accepted | not fired | **0012:** the licence scan it calls for — [open item 9](PLAN.md#9-open-items-blocking-the-plan) |
+| **0002** compile-time orchestration | Accepted | **FIRED** — "build overhead > 8 % sustained"; measured +67.1 % | The record does not say so. Its mitigation list, called *"all mandatory"*, includes a ≤ 8 % gate that ADR-0014 has since made advisory — **two ADRs disagree on whether the gate binds** |
+| 0003 execution profiles | Accepted | not fired | `flowx verify --cost` is load-bearing in this ADR twice and **appears in neither planning file** |
+| 0005 manifest · 0007 `Result` | Accepted | not fired | **0007:** `Result.Try` is named in the ADR and does not exist |
+| 0006 journal + leases | Accepted | not fired | ceiling still a literature figure — tracked |
+| **0008** serialization | Accepted | **cannot fire** — keyed on B7, which has no harness | Its warning box is **false since WP-53**: says "no journal to serialise into". `schemaVersion` and `IPayloadSerializer` are in neither planning file |
+| **0009** plugin contracts | Accepted | reviewed "each phase gate" — **no record of a review at P1's gate** | Its warning box is **false since WP-53**: still says "no store has ever run against a real database". This is the record a plugin author reads |
+| **0011** policy stage order | Accepted | needs three counterexamples collected — **nothing collects them**, so it cannot be revisited | the counterexample register does not exist |
+| **0013** DSL vocabulary | Accepted | **has no `Revisit when`** | violates the index's own rule |
+| **0014** catalogue vs budget | **Proposed** | **two of four FIRED** — withheld 42 % vs 20 %; inner loop pays full derivation per edit | headlines **+77.1 %** and says 200 flows "has not been re-measured" — [B12 §8](docs/benchmarks/B12-scale.md) records +67.1 %. **The record carrying the project's biggest open decision is ten points stale** |
+| 0015 journal schema | Accepted | cannot fire — keyed on B8, no harness | tracked well |
+| **0016** Postgres adapter | Accepted | not fired | **has no `Negative` section.** Its WP-56 purge-guard note and its Oracle `Root`-scope portability rule are in neither planning file |
+
+---
+
+### The constraints — [05 §2](docs/05-Architecture.md#2-constraints)
+
+| # | Constraint | Enforced by |
+|---|---|---|
+| **C1** .NET 10+/C# 14 | the SDK pin | ✅ |
+| **C2** NativeAOT | AOT job + `IsAotCompatible` analyzers | ✅ **the only constraint with a failing gate** |
+| **C3** hosts in ASP.NET Core | nothing explicit — held by construction | — |
+| **C4** no 2-phase commit | nothing — held by design; the outbox that makes it correct is WP-56 | — |
+| **C5** OpenTelemetry only | vacuous: nothing emits telemetry (P5) | — |
+| **C6** Apache-2.0, no copyleft | **nothing.** `DependencyLicencesAreCompatible` specified in [15 §10](docs/15-Security.md) and ADR-0012, never written; no workflow scans licences; `Npgsql` arrived unvetted at WP-53 | ❌ [open item 9](PLAN.md#9-open-items-blocking-the-plan) |
+| **C7** SemVer + 2-minor deprecation | `flowx diff` catches breaking changes; **nothing tracks the deprecation window** | partly |
+| **C8** documentation-first | convention. Held well; no gate | — |
 
 Nothing in the "Now" column is green by assertion — every ✅ was produced by a
 command in this working tree. Every "not measured" is equally honest: the gate
