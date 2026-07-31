@@ -771,6 +771,35 @@ public static class ManifestDiff
     private static void CompareErrors(
         List<DiffFinding> findings, string subject, ManifestCapability before, ManifestCapability after)
     {
+        // Either side withheld: the compiler could not resolve the catalogue, which is a
+        // statement about the *build*, not about the contract. Comparing a withheld
+        // catalogue against a resolved one reports every code as removed — a false
+        // breaking change, emitted by a gate that blocks merges. Say nothing instead.
+        // FLOWX-DIFF-019 records that the comparison was skipped, so the silence is
+        // visible rather than indistinguishable from "no changes".
+        if (before.Errors is null || after.Errors is null)
+        {
+            if (before.Errors is not null || after.Errors is not null)
+            {
+                findings.Add(new DiffFinding
+                {
+                    Code = "FLOWX-DIFF-019",
+                    Severity = DiffSeverity.Neutral,
+                    Subject = subject,
+                    Summary = after.Errors is null
+                        ? "error catalogue became unreadable — not compared"
+                        : "error catalogue became readable — not compared",
+                    Consequence =
+                        "The compiler could not resolve one side's error catalogue, so this " +
+                        "comparison proves nothing either way. Errors are derived from source; " +
+                        "a factory moved into a referenced assembly is enough to withhold one. " +
+                        "Nothing is asserted about whether the codes actually changed.",
+                });
+            }
+
+            return;
+        }
+
         var wasDeclared = Catalogue(before);
         var isDeclared = Catalogue(after);
 
@@ -827,7 +856,7 @@ public static class ManifestDiff
     {
         var catalogue = new Dictionary<string, string?>(StringComparer.Ordinal);
 
-        foreach (var error in capability.Errors.Where(e => !string.IsNullOrEmpty(e.Code)))
+        foreach (var error in (capability.Errors ?? []).Where(e => !string.IsNullOrEmpty(e.Code)))
         {
             catalogue[error.Code!] = error.Category;
         }
