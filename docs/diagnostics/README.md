@@ -270,7 +270,16 @@ mode this paragraph exists to prevent, arriving from the one direction it did no
 Reading "the next free id" is not enough when someone else is reading it too. Claim the id
 in this file *first*, in its own commit, before writing the rule.
 
-The next is `FLOWX1030`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1030` is claimed** — *authorisation stance names no permission or policy*:
+`Authorization = Authorization.Permission` or `= Authorization.Policy` declared with no
+`Permission = "…"` or `Policy = "…"` beside it. It is none of the reservations and it is
+not `FLOWX1010`: that rule asks whether a stance was declared at all, and this one
+presupposes that it was. [FLOWX1010's page](FLOWX1010.md) already described the gap — its
+quick action withholds `Permission` and `Policy` on the grounds that "nothing rejects
+`Authorization.Permission` with no `Permission = "…"` alongside it" — and this is the rule
+that stops that sentence being true.
+
+The next is `FLOWX1031`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 
