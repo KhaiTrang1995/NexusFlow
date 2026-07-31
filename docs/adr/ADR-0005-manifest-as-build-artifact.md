@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-07-30
 **Deciders:** Platform architecture
+**Amended by:** [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md)
 
 ## Context
 
@@ -62,6 +63,13 @@ claim: it does not yet cover policies or events, for the reasons in
 - **The manifest schema is a public contract we must version and support
   forever.** Consumers pin a major version; an `extensions` field absorbs custom
   metadata so we are not pressured into breaking changes for one-off needs.
+  *This record says the schema is versioned and never says when the version stops moving.
+  `ManifestWriter.SchemaVersion` is `0.1.0`, three other documents treat "the manifest v1.0
+  freeze" as a date, and none of them — including this one — stated what has to be true for
+  it. [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md) writes those criteria, and one of
+  them is that `extensions` actually works: nothing writes it, nothing reads it and no test
+  exercises it, so the clause above is the mitigation this trade-off was accepted on and it
+  is currently untested.*
 - **Build output grows** and must be published with the artifact; the manifest is
   meaningless if it is not shipped alongside what it describes.
 - **Disclosure surface.** A manifest describes the application's operations. It
@@ -73,3 +81,8 @@ claim: it does not yet cover policies or events, for the reasons in
 
 **Revisit when:** never expected — this decision is foundational. If it is
 reopened, the platform's AI-native and knowability claims must be withdrawn with it.
+
+*[ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md) amends this record without reopening it.
+It decides **when the schema stops being changeable**, which is a different question from
+whether the artifact exists, and it carries a Revisit-when clause that has to move as
+producers land — which is why it is a separate record rather than a section here.*
