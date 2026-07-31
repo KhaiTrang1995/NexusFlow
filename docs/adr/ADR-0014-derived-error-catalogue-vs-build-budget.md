@@ -574,8 +574,10 @@ which is the whole function of a Revisit-when clause.
 evidence that cannot be admitted; one unmeasurable as written; one keyed to a deadline nobody
 can date. **A record in that state has to be decided on its argument rather than on its
 conditions**, and §4's decision is still where it was written — with the repository owner,
-and unmade, through a whole delivery phase
-([PLAN open item 6](../../PLAN.md#9-open-items-blocking-the-plan)).
+and unmade, through a whole delivery phase — and on 2026-07-31 it was **removed from
+[PLAN §9](../../PLAN.md#9-open-items-blocking-the-plan)'s open items**, which converts
+"not yet decided" into "deliberately left open". This record stays **Proposed** on that
+basis rather than by neglect.
 [ADR-0002](ADR-0002-compile-time-orchestration.md)'s build-overhead trigger has fired
 independently of all four and points here for the resolution, so this is now the record two
 decisions are waiting on.
