@@ -1,3 +1,4 @@
+using System.Linq;
 using Shouldly;
 using Xunit;
 
@@ -82,6 +83,83 @@ public sealed class TriggerAttributeTests
         envelope.Headers.TenantId.ShouldBe("acme");
         envelope.Headers.IdempotencyKey.ShouldBeNull();
         envelope.Body.Length.ShouldBe(3);
+    }
+
+    // ----------------------------------------------------- the two sources of truth
+
+    /// <summary>
+    /// Every trigger attribute FlowX ships declares <c>[TriggerKind]</c>, and it agrees
+    /// with the <c>Kind</c> property.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The kind is stated twice by design: <c>Kind =&gt;</c> is a property the runtime
+    /// reads, and <c>[TriggerKind]</c> is the same fact as attribute data, which is the only
+    /// form the compiler can read out of a referenced assembly. Two statements of one fact
+    /// can disagree, and a disagreement here is silent and expensive — the flow would run on
+    /// one transport family and be published in <c>flowx.manifest.json</c> as another, with
+    /// nothing failing.
+    /// </para>
+    /// <para>
+    /// <strong>What this fitness function can and cannot cover.</strong> It holds for the
+    /// attributes FlowX ships, because they are in this assembly and their getters can be
+    /// run. It cannot hold for a plugin's attribute, and nothing can: reading
+    /// <c>Kind</c> means running a property getter, and a source generator does not run the
+    /// code it compiles. A plugin that marks itself <c>Bus</c> and returns <c>Stream</c> is
+    /// undetectable at compile time and is the documented cost of the design.
+    /// </para>
+    /// <para>
+    /// Discovered by reflection rather than listed, so a sixth attribute is covered on the
+    /// day it is added rather than on the day someone remembers to add it here.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryShippedTriggerAttributeDeclaresTheKindItsPropertyReturns()
+    {
+        var shipped = typeof(TriggerAttribute).Assembly.GetTypes()
+            .Where(static t => t is { IsAbstract: false, IsPublic: true } && typeof(TriggerAttribute).IsAssignableFrom(t))
+            .OrderBy(static t => t.FullName, StringComparer.Ordinal)
+            .ToArray();
+
+        shipped.ShouldNotBeEmpty("Reflection found no trigger attributes, so this asserts nothing.");
+
+        foreach (var type in shipped)
+        {
+            var marker = (TriggerKindAttribute?)Attribute.GetCustomAttribute(type, typeof(TriggerKindAttribute));
+
+            marker.ShouldNotBeNull(
+                $"{type.Name} declares no [TriggerKind], so the compiler cannot read its " +
+                "family and a flow declaring it would publish no trigger at all.");
+
+            var instance = (TriggerAttribute)Activator.CreateInstance(type, DefaultArgumentsFor(type))!;
+
+            marker!.Kind.ShouldBe(
+                instance.Kind,
+                $"{type.Name} declares [TriggerKind({marker.Kind})] but its Kind property " +
+                $"returns {instance.Kind}. The runtime reads the property and the manifest " +
+                "publishes the marker, so the flow would run as one family and be published " +
+                "as another.");
+        }
+    }
+
+    /// <summary>
+    /// The smallest argument list that constructs the attribute, so its getter can be run.
+    /// </summary>
+    /// <remarks>
+    /// The values are irrelevant — <c>Kind</c> is a constant expression on every one of
+    /// these — so this passes <c>null</c> for a reference type and a zeroed value for
+    /// anything else. Required members are a compile-time rule and reflection does not
+    /// enforce them, which is what lets <c>AgentTriggerAttribute</c> be constructed here
+    /// without a <c>Description</c>.
+    /// </remarks>
+    private static object?[] DefaultArgumentsFor(Type type)
+    {
+        var constructor = type.GetConstructors()
+            .OrderBy(static c => c.GetParameters().Length)
+            .First();
+
+        return [.. constructor.GetParameters().Select(static p =>
+            p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null)];
     }
 }
 
