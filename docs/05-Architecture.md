@@ -587,40 +587,59 @@ round-trip in Studio (read-only visualisation first).
 
 ## 12. Architecture fitness functions
 
-Every rule above exists as an executable test in
-`tests/FlowX.Architecture.Tests`. These are written **before** the code they
-govern.
+Every rule above is an executable gate. Most are tests in
+`tests/FlowX.Architecture.Tests`; two are CI jobs, because what they assert is a
+build, not an assertion about one. **The "Lives in" column is the point of this
+table** — it used to name fourteen tests of which seven existed nowhere, and a
+reader who saw the name stopped looking for the rule.
 
-| Test | Rule enforced | Fails when |
-|---|---|---|
-| `AbstractionsHasNoDependencies` | §5.1 | `FlowX.Abstractions` gains any package reference |
-| `LayersPointInward` | §5.1 | `Core` references `Runtime`; `Runtime` references a plugin |
-| `NoCyclicDependencies` | P4 | any project or namespace cycle appears |
-| `NoReflectionOnHotPath` | P4 | `System.Reflection` used in `FlowX.Runtime` |
-| `RuntimeHasNoMutableStatics` | P7 | a mutable static field appears in `FlowX.Runtime` |
-| `FlowsAreTransportFree` | P3 | a flow's closure references a transport assembly |
-| `CapabilitiesDoNotCallCapabilities` | §2 | `ICapability` implementation depends on another |
-| `EveryCapabilityDeclaresAuthorization` | P11 | a capability lacks an authorisation stance |
-| `EveryPublicContractIsVersioned` | C7 | a public contract lacks SemVer metadata |
-| `ManifestIsComplete` | Q3 | a flow/capability/policy/event is missing from the manifest |
-| `PluginsPassConformance` | Q6 | a plugin fails the shared conformance suite |
-| `EveryDiagnosticIsHelpful` | P12 | a `FLOWX*` diagnostic lacks title, fix, or help URI |
-| `BenchmarkBudgetsHold` | Q1, Q7 | > 5 % regression, or any allocation in `EphemeralDispatch` |
-| `AotPublishSucceeds` | C2 | `PublishAot=true` fails or emits trim warnings |
+| Test | Rule enforced | Fails when | Lives in |
+|---|---|---|---|
+| `AbstractionsHasNoDependencies` | §5.1 | `FlowX.Abstractions` gains any package reference | `DependencyRuleTests` |
+| `LayersPointInward` | §5.1 | `Core` references `Runtime`; `Runtime` references a plugin | `DependencyRuleTests` |
+| `NoCyclicDependencies` | P4 | any project or namespace cycle appears | `DependencyRuleTests` |
+| `NoReflectionOnHotPath` | P4 | `System.Reflection`, `Activator` or the runtime binder is used in `FlowX.Abstractions`, `FlowX.Core` or `FlowX.Runtime` | `RuntimeIsolationTests` |
+| `RuntimeHasNoMutableStatics` | P7 | a static field in `FlowX.Runtime` is neither `readonly` nor `const` | `RuntimeIsolationTests` |
+| `FlowsAreTransportFree` | P3 | a flow's closure — including the generated half — reaches a transport or a plugin namespace | `TransportIsolationTests` |
+| `CapabilitiesDoNotCallCapabilities` | §2 | an `ICapability` implementation reaches another one, from a dependency **or** a method body | `TransportIsolationTests` |
+| `EveryCapabilityDeclaresAuthorization` | P11 | a capability lacks an authorisation stance | `SecurityFitnessTests` |
+| `EveryPublicContractIsVersioned` | C7 | a flow, capability, event, manifest or shipped package carries a version that is not SemVer | `PublishedContractTests` |
+| `ManifestIsComplete` | Q3 | a declared flow or capability is missing from the manifest, or a step names one the manifest never describes | `PublishedContractTests` |
+| `PluginsPassConformance` | Q6 | a plugin fails the shared conformance suite | **not written — see below** |
+| `SuppressionsAreAccountable` | §6.1 | a suppression cites no registered, unexpired `FLOWX-DEBT` id | `DebtAccountabilityTests` |
+| `EveryDiagnosticIsHelpful` | P12 | a `FLOWX*` diagnostic lacks title, fix, or help URI | `FlowX.Compiler.Tests` |
+| `BenchmarkBudgetsHold` | Q1, Q7 | > 5 % regression, or any allocation in `EphemeralDispatch` | *Benchmark budgets* job, `performance.yml` |
+| `AotPublishSucceeds` | C2 | `PublishAot=true` fails or emits trim warnings | *NativeAOT smoke test* job, `ci.yml` |
 
 CI runs these on every pull request. A red fitness function is a build failure,
 not a discussion.
 
-**Not all of them exist yet, and this table has been read as though they did.** Implemented
-under these names: `AbstractionsHasNoDependencies`, `LayersPointInward`,
-`NoCyclicDependencies`, `EveryCapabilityDeclaresAuthorization` (WP-30),
-`EveryDiagnosticIsHelpful`. Implemented under a different name: `BenchmarkBudgetsHold` is
-the *Benchmark budgets* job in `performance.yml`, and `AotPublishSucceeds` is the *NativeAOT
-smoke test* job in `ci.yml`. Not implemented anywhere: `NoReflectionOnHotPath`,
-`RuntimeHasNoMutableStatics`, `FlowsAreTransportFree`, `CapabilitiesDoNotCallCapabilities`,
-`EveryPublicContractIsVersioned`, `ManifestIsComplete`, `PluginsPassConformance`. The
-enforced set is [CHECKLIST §4](../CHECKLIST.md); the reasoning about gates that cannot yet
-be written is [21-Quality-Gates §2.4](21-Quality-Gates.md).
+**`NoReflectionOnHotPath` and `RuntimeHasNoMutableStatics` read IL**, because
+[P4](03-Design-Principles.md#p4--compile-time-everything) and
+[P7](03-Design-Principles.md#p7--cloud-native) say so and because the failure they exist to
+catch arrives through a generator or an extension method, not through a `using` directive.
+The one exemption is `MemberInfo.Name`: `typeof(T).Name` compiles to a call on a
+`System.Reflection` type, it is how the runtime says *which* contract a step failed to
+produce, and it discovers nothing. Everything that looks a member up is still caught.
+
+**`ManifestIsComplete` does not check policies, and the row above is written as though it
+did.** Nothing declares a policy: `PolicySet` exists as a contract, no attribute applies one
+to a step, and the generator emits no `policies` section. Asserting a property of code that
+has not been written is what
+[21-Quality-Gates §2.4](21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced)
+refuses to do. It becomes checkable with P4.
+
+**`PluginsPassConformance` is blocked, not overlooked.** There is no conformance suite to
+run — [R3](#11-risks-and-technical-debt) and
+[R8](#11-risks-and-technical-debt) both name publishing one as the mitigation, and neither
+has happened — and there is one plugin, `FlowX.Http`, so "every plugin agrees on the
+minimum semantics" has nothing to compare. Writing it against the single transport that
+exists would produce a test that restates `FlowX.Http.Tests` under a name claiming
+ecosystem coverage. Recorded in
+[21-Quality-Gates §2.4](21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced) with
+what it is waiting for.
+
+The enforced set, in full, is [CHECKLIST §4](../CHECKLIST.md).
 
 ---
 

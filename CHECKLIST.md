@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 971/971 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 993/993 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -76,7 +76,9 @@ These gate everything below them. None is code work.
 - [x] `ci.yml` — attribution guard (rejects bot authorship)
 - [x] `security.yml` — CodeQL, Semgrep, Gitleaks, SCA, Checkov
 - [x] `security.yml` — OWASP ZAP nightly DAST (guarded until `samples/ecommerce` runs)
-- [x] `quality.yml` — coverage thresholds, Sonar gate, Stryker mutation, debt policy
+- [x] `quality.yml` — coverage thresholds, Sonar gate, Stryker mutation, unaccountable-TODO
+      rule. The suppression rule is `SuppressionsAreAccountable` in the fitness functions,
+      and only there (WP-35)
 - [x] `.github/dependabot.yml` — NuGet + Actions, grouped
 - [x] `.github/pull_request_template.md` carrying the Definition of Done
 - [ ] Each gate class verified by a deliberate violation on a throwaway branch
@@ -104,12 +106,18 @@ surface and by reading the repository's own source.
 
 ---
 
-## 4. WP-1 · Architecture fitness functions — **23 enforced, 2 blocked and named**
+## 4. WP-1 · Architecture fitness functions — **29 enforced, 3 blocked and named**
 
 The heading here used to read *30/30 green* with seven boxes below it empty, and the line
 above §4 spoke of *29 fitness tests*. Neither number was reachable from the list. What
 follows is the list as it is — including five functions that were already running and had
 never been written down.
+
+[05-Architecture §12](docs/05-Architecture.md) names fourteen gates; **seven of them
+existed nowhere** when WP-30 audited this section, and two more existed under other names.
+WP-35 closed six of the seven and named the last as blocked. The §12 table now carries a
+*Lives in* column, so a name with nothing behind it is visible in the table itself rather
+than only in a footnote.
 
 ### Structure
 
@@ -149,9 +157,15 @@ that is claimed and absent is worse than one never claimed: the claim is what st
 anyone looking.
 
 - [x] `SuppressionsAreAccountable` — every suppression carries a `FLOWX-DEBT` marker whose
-      id has a row in `docs/DEBT.md`, unexpired and at most six months out. A shell version
-      already ran in `quality.yml`; this one fails on `dotnet test`, before the commit, and
-      additionally checks the id is registered and that the marker is *near* the suppression
+      id has a row in `docs/DEBT.md`, unexpired and at most six months out, with the marker
+      within six lines of the suppression. **Now the only implementation** (WP-35): the
+      shell copy in `quality.yml` asked whether the *file* contained a marker anywhere, so
+      one accountable suppression licensed every unaccountable one below it, and it never
+      checked the id was registered. Demonstrated on a file the shell step exited 0 on and
+      this one reports by line. Deleted rather than repaired — two implementations of one
+      rule disagree eventually, and the weaker one is what a developer meets first. The
+      fitness function's trees gained `scripts/`, which the shell walk covered and the
+      named trees did not
 - [x] `ManifestContainsNoSecrets` — pattern scan over the manifests the build **actually
       emitted**, matching the shape of a secret rather than the word. See the note below
 - [x] `EveryCapabilityDeclaresAuthorization` — every `ICapability<,>` under `src/`,
@@ -175,7 +189,60 @@ anyone looking.
       already covers it. Logs, traces, the journal and replay output — the four sinks the
       rule is about — do not exist. Needs P3 and P5. Same section
 
-Written alongside the above so the family cannot pass by finding nothing:
+### Runtime, transport and published contract · WP-35
+
+The six of §12's seven absent gates that were writable. Each was proved able to fail by
+introducing the violation it targets and observing red; the violation used is named beside
+it, because a gate nobody has seen fail is a gate nobody has tested.
+
+- [x] `NoReflectionOnHotPath` — IL scan of `FlowX.Abstractions`, `FlowX.Core` and
+      `FlowX.Runtime` for `System.Reflection`, `System.Runtime.Loader`, `Activator`,
+      `AppDomain` and the C# runtime binder. IL rather than source because
+      [P4](docs/03-Design-Principles.md) says so and because
+      `x.GetType().GetMethod(…)` needs no `using` to compile. One exemption,
+      `MemberInfo.Name`: `typeof(T).Name` is how the runtime names the contract a step
+      failed to produce, it discovers nothing, and a namespace-only rule would report
+      every diagnostic message in the engine. *Proved by* `typeof(ContextPool).Assembly`
+      in `ContextPool`
+- [x] `RuntimeHasNoMutableStatics` — every static field in `FlowX.Runtime` is `readonly`
+      or `const`. Compiler-generated fields — lambda caches, async state machines — are
+      exempt, because a rule whose only fix is to stop using `async` is not a rule.
+      *Proved by* a `private static int _rentCount` incremented in `ContextPool.Rent`
+- [x] `FlowsAreTransportFree` — the transitive closure of every `Flow<,>` in a shipping
+      assembly, through the types that assembly declares, reaches no transport namespace
+      and no plugin. Includes the generated half of the flow and the state machines the
+      compiler nested inside it. *Proved by* an `HttpContext` parameter on `PlaceOrderFlow`
+- [x] `CapabilitiesDoNotCallCapabilities` — wider than FLOWX1004, which reads declared
+      dependencies. This reads method bodies, so a capability that constructs and awaits
+      another inside `ExecuteAsync` is caught. *Proved by* `ValidateOrder` awaiting
+      `new ReleaseInventory(store)` — which the analyzer passes
+- [x] `EveryPublicContractIsVersioned` — every flow, capability, event, emitted manifest
+      and packable assembly carries a SemVer 2.0 version. *Proved by* `payment.capture`
+      declaring `Version = "2.1"`
+- [x] `ManifestIsComplete` — every flow and capability an assembly declares appears in the
+      manifest its build emitted, every step's capability and compensation has a full entry
+      rather than a mention, and every emitted event is in the event catalogue. *Proved by*
+      adding an `order.archive` capability no flow uses
+- [ ] `PluginsPassConformance` — **blocked, not overlooked.** There is no conformance
+      suite; [05-Architecture §11](docs/05-Architecture.md) names publishing one as the
+      mitigation for R3 and R8 and it has not been written. There is also one plugin, so
+      "every plugin agrees" has one data point.
+      [21-Quality-Gates §2.4](docs/21-Quality-Gates.md)
+
+`ManifestIsComplete` does **not** check policies, although the §12 row is written as
+though it did: nothing declares a policy, so there is nothing to be missing. Recorded in
+§2.4 rather than written as an assertion that cannot fail.
+
+Written alongside the above so none of them can pass by finding nothing:
+`TheReflectionScanFindsReflectionWhereItIsExpected`,
+`TheClosureWalkFindsATransportWhenThereIsOne`, `TheCapabilityScanFindsTheShippedCapabilities`,
+`TheManifestReaderFindsTheSamplesManifest`. Two more keep copied definitions honest:
+`TheTransportListMatchesTheAnalyzers` and `TheVersionPatternMatchesTheRuntimes` compare this
+project's copy of the transport list and the SemVer pattern against the analyzer and
+`FlowX.Core` that define them — neither can be referenced from here, so equality is
+asserted rather than assumed.
+
+Written alongside the security family so it cannot pass by finding nothing:
 `TheCapabilitySurveyFindsTheShippedCapabilities`,
 `EveryDeclaredStanceIsAKnownAuthorizationMember`,
 `ApprovalsDoNotOutliveTheStanceTheyApproved`, `EveryScopeEnumDefaultsToTenant`,
@@ -359,6 +426,18 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
 - [ ] **A test that can actually fail on the parallel context race.** Needs deterministic
       interleaving, not more iterations. Until then the lock above rests on the language
       contract alone
+- [x] **A test that can actually fail on the parallel context race.** Closed by WP-34, and
+      the diagnosis is the useful part: the window was not narrow, it did not exist. The old
+      test wrote three keys through one reused engine, so from the second execution every
+      `Set` was an *overwrite* — assigning an already-allocated slot cannot move an entry,
+      relink a bucket or grow an array. Adding more keys did not help either, because the
+      pooled `Dictionary` keeps its buckets across `Reset` (`Clear` does not release
+      capacity), so those became overwrites after iteration 0. That is why the earlier
+      twelve-extra-keys stress attempt also passed unguarded. Now: every branch **inserts**
+      unseen keys, a fresh engine per iteration keeps them inserts, and branches rendezvous
+      at a **spin** gate — a `Barrier` wakes participants microseconds apart, long enough
+      for one branch to finish its whole loop first. Verified by mutation in review:
+      **fails 4 of 4 unguarded, passes guarded**
 - [x] **WP-16** Step binding — **`FLOWX1020`** raised by `StepBindingAnalyzer`. A flow
       whose steps cannot pass values to each other now fails the build. Numbered 1020,
       not 1022: `08-Flow-Definition.md` and both `Get<T>` implementations already
@@ -449,6 +528,26 @@ which is the exact failure mode P1 exists to remove:
       entirely** when it could not be resolved. A catalogue short by one entry reads
       exactly like a complete one, so an unresolvable case has to be visibly absent
       rather than quietly approximated
+- [ ] **⚠ The three-state rule has a fourth state nobody designed: positively wrong.**
+      Found by WP-36. The rule above assumes the reader either resolves a catalogue or
+      knows it could not. There is a third outcome: **it finds nothing, finds nothing it
+      *could not* follow, and publishes `errors: []`** — which the schema defines as the
+      positive claim *"this capability returns no declared error"*. It happens whenever a
+      failure stays inside `Result<T>` for its whole journey and never takes the shape of
+      an `Error`, and it is reachable through the **first-party**
+      `Result.Fail<T>(code, message, category)` overload — whose sibling
+      `Fail<T>(Error)` resolves correctly. Same intent, one publishes the truth and the
+      other a confident falsehood. Also hit by a one-line capability delegating to a
+      service that returns `Result<T>`, which is a very common shape. **`flowx diff`
+      treats the field as authoritative**, so a wrong catalogue is worse than a slow
+      build — and it contradicts ADR-0014's stated premise that a *derived* list cannot
+      be wrong where a declared one can. Fixing it moves the measured corpus from 39 % to
+      47 % withheld: **correctness costs coverage, and someone has to choose**
+- [ ] **`07-Capability-Model` §4 prescribes a layout the reader cannot follow.** It
+      mandates the static error class in the same breath as putting contracts in a
+      dedicated assembly — across an assembly boundary, which is exactly where the scan
+      stops. A team following the documentation exactly gets **no catalogue at all**.
+      `samples/ecommerce` misses this only because it is a single project
 
 **Gaps WP-20 and WP-22 surfaced in turn.** Same class again — declared, documented or
 reachable, and enforced or honoured by nothing:
@@ -550,13 +649,13 @@ Three more surfaced while getting the suite green:
 | Branch coverage | ≥ 75 % | **87.0 %** ✅ | verified locally |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
-| Fitness functions | all green | **36/36** ✅ | plus compiler and code-fix fitness tests |
+| Fitness functions | all green | **58/58** ✅ | `dotnet test tests/FlowX.Architecture.Tests -c Release`, plus compiler and code-fix fitness tests |
 | NativeAOT publish | links **and runs** | **✅** | 11 MB binary served a real order |
 | Concurrent cross-tenant leak | none | **none** ✅ | 64 concurrent flows, 0 overlaps |
 | SAST findings | 0 | **wired, unrun** — needs a CI run | WP-0 |
 | DAST findings | 0 | **wired, unrun** — the sample now exists; needs a CI run | WP-0 |
 | Vulnerable dependencies | 0 | **0 by construction** — zero dependencies | WP-1 |
-| Open debt entries | ≤ 20 | **1** — [DEBT-0001](docs/DEBT.md) | enforced by `quality.yml` |
+| Open debt entries | ≤ 20 | **1** — [DEBT-0001](docs/DEBT.md) | enforced by `SuppressionsAreAccountable` |
 | B1 flow overhead | ≤ 5 µs | **172.3 ns** ✅ | WP-11, real engine, 30 iterations |
 | B2 allocations per step | 0 B | **0 B** ✅ | gated as a unit test — **Release only**, see below |
 | B3 capability dispatch | ≤ 150 ns | **21.9 ns** ✅ | shared hardware, advisory |

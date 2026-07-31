@@ -18,6 +18,22 @@
 
   <ItemGroup>
     <!--
+      Corpus/ is subject matter, not code. ErrorCatalogueCorpusTests parses it into
+      compilations of its own and hands those to ErrorCatalogueReader, so it must not be
+      compiled into this assembly: half of it deliberately does not resolve, one file
+      belongs in a different assembly, and every specimen carries a [Capability] that
+      would otherwise join the test assembly's own surface.
+
+      Kept as .cs rather than as .txt on purpose. The corpus is the argument — a reader is
+      meant to open these files and disagree with them — and that is much easier when an
+      editor still treats them as C#.
+    -->
+    <Compile Remove="Corpus/**/*.cs" />
+    <None Include="Corpus/**/*.cs" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
       A plain reference, not an analyzer reference: these tests exercise the model and
       emitter as ordinary classes. Testing a generator only through the compiler is how
       generator test suites become slow and untrustworthy — the pure layers are tested
