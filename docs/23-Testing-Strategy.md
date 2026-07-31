@@ -62,14 +62,24 @@ path the conformance row names.
 
 *This paragraph used to say "there is no journal to conform against", and that half is now
 wrong.* `tests/FlowX.Conformance.Tests` (WP-51) defines what an `IFlowJournal` and an
-`ILeaseStore` must do, and a store either passes it or fails it. What does not exist is
-anything for this pyramid's conformance row to run against: no store outside the in-memory
-reference sitting beside the suite, and no Testcontainers. *A second half of this paragraph
-also expired, at WP-52 (2026-07-31): there **is** now an execution path that reaches a
-journal — `FlowX.Runtime` reads `ExecutionProfile` and a `Durable` flow commits a step
-boundary.* `trigger → flow → journal` still cannot run end to end, because the trigger end
-has one transport and the journal end has no store. Defined and unreachable is a different
-state from absent, and the row stays unsupported either way.
+`ILeaseStore` must do, and a store either passes it or fails it. *A second half expired at
+WP-52 (2026-07-31): there **is** now an execution path that reaches a journal —
+`FlowX.Runtime` reads `ExecutionProfile` and a `Durable` flow commits a step boundary. A
+third expired at WP-53: "no store outside the in-memory reference sitting beside the suite"
+is false. `plugins/FlowX.Postgres` passes the suite unmodified, from a different assembly,
+against a real PostgreSQL — which is the arrangement
+[17 §5](17-Plugin-System.md) describes for a third party claiming conformance, run for the
+first time.*
+
+**Two things this row needs are still missing, and only one of them is a store.** There is
+no Testcontainers anywhere in the repository — the Postgres suite is driven by
+`FLOWX_POSTGRES_CONNECTION` and skips loudly without it, which is a deliberate choice and
+not an equivalent one, because a developer with no server runs a subset and CI has to be
+configured rather than self-provisioning. And `trigger → flow → journal` still has no test
+that drives it end to end: since endpoint generation, a `Durable` flow **is** reachable over
+HTTP through `FlowHost`, so the path is no longer blocked — nothing walks it. That is a
+narrower gap than this paragraph has described at any point, and the row stays unsupported
+until something walks it.
 
 ### 3.1 Unit — a capability is a class with a method
 

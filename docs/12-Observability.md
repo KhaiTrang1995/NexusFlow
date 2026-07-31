@@ -7,8 +7,11 @@
 > **FlowX emits nothing today.** There is no `ActivitySource`, no `Meter`, no
 > `ILogger` and no exporter anywhere under `src/` — not one span, metric or log
 > record in this document is produced by any code path. `flowx replay` is not a
-> CLI verb ([22-CLI](22-CLI.md) has three: `graph`, `manifest`, `diff`), and the
-> journal every replay mode reads from does not exist.
+> CLI verb ([22-CLI](22-CLI.md) has four: `graph`, `manifest`, `diff` and
+> `verify`). *This box also said "the journal every replay mode reads from does
+> not exist"; since WP-53 it does — `plugins/FlowX.Postgres` stores one row per
+> step boundary with its non-determinism capture, which is precisely what a
+> replay reads. The missing thing is the verb, not the data.*
 >
 > This document is therefore a **frozen schema, not a description**. That is
 > deliberate and it is why it is written in the present tense elsewhere: the

@@ -32,12 +32,22 @@
 > [09 §11](09-Trigger-Model.md#11-writing-a-trigger-plugin) is still a statement
 > about tests nobody can run.
 >
-> **It is not published, and it has never met a database.** The project is not
-> packable, so "a third party runs `dotnet test` against the suite" describes
-> P3's WP-70 rather than anything anyone can do today; the two suites that exist
-> have been run against one in-memory reference implementation and against
-> deliberately broken stores that they reject by name. Publishing is the named
-> mitigation for risks R3 and R8 in
+> **It is not published.** The project is not packable, so "a third party runs
+> `dotnet test` against the suite" describes P3's WP-70 rather than anything
+> anyone can do today.
+>
+> *This box also said the suite "has never met a database", and that it had run
+> only against an in-memory reference. Both expired at WP-53 (2026-07-31):*
+> `plugins/FlowX.Postgres` inherits both suites **unmodified, from a different
+> assembly** — the exact arrangement §5 describes — and passes them against a
+> real PostgreSQL 16.13. It found three clauses of
+> [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md) wrong, which
+> is the strongest evidence available that the suite is worth publishing: a
+> conformance suite that cannot fail a real implementation has not been tested
+> either. What is still unproved is the *second* implementation — one store is
+> one data point, and a suite written against one store is a suite that has
+> encoded it. That is WP-54. Publishing is the named mitigation for risks R3 and
+> R8 in
 > [05 §11](05-Architecture.md#11-risks-and-technical-debt);
 > `PluginsPassConformance` stays blocked in
 > [21 §2.4](21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced),
