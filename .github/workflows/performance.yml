@@ -16,7 +16,14 @@ env:
 
 jobs:
   allocations:
-    name: Allocation budgets (B2, B6)
+    # This job was named "Allocation budgets (B2, B6)" and asserts only B2.
+    # B6 is "telemetry with no listener costs 0 ns / 0 B per step", and nothing
+    # under src/ constructs an ActivitySource, a Meter or an ILogger — there is no
+    # telemetry to be zero-cost about. Naming B6 here made an unmeasured budget
+    # look gated on every pull request. It becomes measurable with P5; see
+    # docs/14-Performance.md section 8, which lists B6 among the budgets with no
+    # harness, and docs/12-Observability.md for what has to exist first.
+    name: Allocation budget (B2)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

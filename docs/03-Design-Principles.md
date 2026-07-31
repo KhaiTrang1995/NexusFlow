@@ -3,7 +3,10 @@
 > **Status:** Accepted · **Audience:** contributors, architects
 >
 > A principle without an enforcement mechanism is a slogan. Every principle below
-> names the artifact that makes it true and the gate that keeps it true.
+> names the artifact that makes it true and the gate that keeps it true — **or
+> says plainly that there is no gate yet, and which phase brings one.** P9 and
+> P10 are in the second group today, and the *Enforced by* clauses of most of the
+> rest carry a correction. See [the rule about rules](#the-rule-about-rules).
 
 ---
 
@@ -100,14 +103,30 @@ implementation and gated in CI.
 user payloads. Contexts are pooled. Step state is a struct. Spans are only
 created when a listener is attached.
 
-**Enforced by.** `FlowX.Benchmarks` with BenchmarkDotNet; CI fails on > 5 %
-regression against the recorded baseline (`scripts/check-benchmark-budgets.py`),
-and `EngineAllocationTests` fails the build on any non-zero allocation on the
-linear, conditional and switch paths. *There is no benchmark called
+**Enforced by.** `FlowX.Benchmarks` with BenchmarkDotNet;
+`EngineAllocationTests` and `AllocationBudgetTests` fail the build on any
+non-zero allocation on the linear, conditional and switch paths, and
+`scripts/check-benchmark-budgets.py` fails CI when a p95 exceeds a ceiling
+documented in [14-Performance](14-Performance.md). *There is no benchmark called
 `EphemeralDispatch`; the allocation assertion is a test, not a benchmark, which
 is why it can fail a build at all.* Budgets in
 [14-Performance](14-Performance.md) — where **B12 is currently failing** and
 B4–B11 and B13 have no harness yet.
+
+*This paragraph also said **"CI fails on > 5 % regression against the recorded
+baseline"**, and it does not. `check-benchmark-budgets.py` splits its checks in
+two and says so in its own header: **blocking** on allocation counts and budget
+ceilings, **advisory** on absolute and ratio drift against
+`docs/benchmarks/baseline.json`. WP-3 asserted that ratios within a single run
+are machine-independent and therefore tightly gateable; two runs of the identical
+commit in the identical container then disagreed by up to 63 % on ratio and 159 %
+on absolute time, because the ratio's denominator sits at ~10 ns, on the noise
+floor. The claim was withdrawn, and the evidence that withdrew it is kept
+([benchmarks §5](benchmarks/README.md)). Drift becomes a gate — the script's
+`--strict` — once the baseline is re-recorded on dedicated hardware (**WP-11**).
+What still catches a real regression is the ceiling, and its honest limit is
+worth stating: a four-step flow measured at ~170 ns against a 5 000 ns budget
+fails loudly on an order of magnitude and would not notice a 2×.*
 
 ---
 
@@ -277,14 +296,35 @@ promised commands that ships (`flowx dev`, `flowx new` do not — see
 Principles that never conflict are not principles. These are the real tensions
 and their standing resolutions.
 
-| Tension | Resolution | Rationale |
-|---|---|---|
-| **P4 compile-time** vs **P11 dynamic policy** | Policy *composition* is compile-time; policy *parameters* (limits, timeouts) are runtime-configurable | Shape is static, magnitude is operational |
-| **P5 performance** vs **P10 observability** | Telemetry is compile-time-inlined and listener-gated; zero cost when no exporter is attached | Pay only when observed |
-| **P2 capability-first** vs **KISS** | A capability is justified by a business name. Pure functions with no policy, no telemetry need and no reuse stay private methods | Avoid ceremony inflation |
-| **DRY** vs **P3 trigger-agnostic** | Shared logic is promoted to a capability, never to a "shared base flow" | Inheritance between flows is banned (`FLOWX1005`) |
-| **P7 cloud-native** vs **P5 performance** | Two execution profiles: `Ephemeral` (no journal) and `Durable` (journaled). The flow author chooses per flow | Not every flow needs to survive a crash |
-| **P6 AI-native** vs **P11 secure-by-default** | The manifest contains structure, never secrets or data. Manifest emission is scanned for secret patterns in CI (`ManifestContainsNoSecrets`) | Structure is public; data is not |
+| Tension | Resolution | Rationale | True today |
+|---|---|---|---|
+| **P4 compile-time** vs **P11 dynamic policy** | Policy *composition* is compile-time; policy *parameters* (limits, timeouts) are runtime-configurable | Shape is static, magnitude is operational | **no** — composition only |
+| **P5 performance** vs **P10 observability** | Telemetry is compile-time-inlined and listener-gated; zero cost when no exporter is attached | Pay only when observed | **no** — no telemetry exists |
+| **P2 capability-first** vs **KISS** | A capability is justified by a business name. Pure functions with no policy, no telemetry need and no reuse stay private methods | Avoid ceremony inflation | yes, as guidance |
+| **DRY** vs **P3 trigger-agnostic** | Shared logic is promoted to a capability, never to a "shared base flow" | Inheritance between flows is banned (`FLOWX1005`) | yes — `FLOWX1005` ships |
+| **P7 cloud-native** vs **P5 performance** | Two execution profiles: `Ephemeral` (no journal) and `Durable` (journaled). The flow author chooses per flow | Not every flow needs to survive a crash | **no** — the choice exists, the journal does not |
+| **P6 AI-native** vs **P11 secure-by-default** | The manifest contains structure, never secrets or data. Manifest emission is scanned for secret patterns in CI (`ManifestContainsNoSecrets`) | Structure is public; data is not | yes |
+
+**Three of these resolutions were written in the present tense about mechanisms
+that do not exist**, which is the same defect as an `Enforced by` clause naming a
+test that was never written — a reader takes the tension as settled and stops
+looking. They are standing resolutions, and the fourth column says which are also
+descriptions of the code.
+
+- **Policy parameters are not runtime-configurable, because no policy runs.**
+  `.WithPolicy(...)` composes at compile time and reaches the manifest; there is
+  no policy engine in `FlowX.Runtime` at all, so there is no magnitude to
+  configure. **P4** ([10-Policy-Framework](10-Policy-Framework.md)).
+- **Telemetry is not listener-gated, because there are no listeners and nothing
+  to gate.** Nothing under `src/` constructs an `ActivitySource`, a `Meter` or an
+  `ILogger`. "Zero cost when unobserved" is budget **B6** in
+  [14 §1.1](14-Performance.md#11-platform-budgets-overhead-attributable-to-flowx-excluding-user-code-and-io),
+  and it has no harness — the workflow job that used to name B6 asserts only B2.
+  **P5**, as P10 above already states.
+- **`Durable` is not journaled.** The profile is a declaration the compiler
+  validates and the manifest records; `FlowX.Runtime` never reads it, so a
+  `Durable` flow executes the `Ephemeral` path with no checkpoint and no resume.
+  **P2**, as P10 above already states.
 
 ---
 
@@ -297,10 +337,20 @@ and their standing resolutions.
 
 The qualifier is not a softening. The unqualified version was the rule, and it
 was false in both directions: rules were stated with no gate behind them, and
-gates were named that had never been written. Six of the twelve principles above
-carried an **Enforced by** clause naming something that does not exist. A reader
-who saw a test name stopped looking for the rule, which is precisely the failure
-the sentence was written to prevent.
+gates were named that had never been written.
+
+**This paragraph said "six of the twelve principles". Counted from the
+corrections now standing above, it is ten.** P1 named `FlowNamingRule`, P2
+`CapabilityContractRule`, P3 `TriggerIsolationRule`, P4 `NoReflectionRule`, P5 a
+benchmark called `EphemeralDispatch` *and* a 5 % regression gate that is
+advisory, P6 the command `flowx verify --complete`, P7 `StatelessRuntimeRule` and
+a chaos test, P9 `BackpressureConformanceTest`, P10 `TelemetryConformanceTest`
+and `ReplayDeterminismTest`, and P12 `DiagnosticQualityTest`. Only P8 and P11
+were sound as written. Three of the six tension resolutions were in the same
+state. Undercounting the problem is the same class of error as the problem: a
+reader who sees "six" assumes the other six were checked. A reader who saw a test
+name stopped looking for the rule, which is precisely the failure the sentence
+was written to prevent.
 
 A rule that only lives in a document is a rule that is already being violated
 somewhere. A rule that names a test which does not exist is worse: it is a

@@ -33,12 +33,22 @@ the question. It fired on the first attempt at the verdict above, and that is th
 Most of that generator cost buys one manifest field, and
 [**B13-error-catalogue-resolution.md**](B13-error-catalogue-resolution.md) asks how often
 that field can be produced at all. Against a corpus of 38 capabilities the reader publishes
-a catalogue for 61 % and withholds for 39 % — a number that document spends a section
-explaining is a property of the corpus rather than of any real codebase. The two findings
-that do not depend on the sample are that **four of the published catalogues are wrong**, in
-a design whose stated property is that they cannot be, and that the project layout
-[07-Capability-Model §4](../07-Capability-Model.md) prescribes produces no catalogue at all.
-It is the evidence half of
+a catalogue for 58 % and withholds for **42 %** — a number that document spends a section
+explaining is a property of the corpus rather than of any real codebase. Of the 38, **55 %
+get a catalogue that is both published and correct** and 3 % a correct empty one.
+
+*This paragraph read "61 % / 39 %" and said that **four of the published catalogues are
+wrong**, in a design whose stated property is that they cannot be. That was true when B13
+was first recorded and is not true now: **WP-37 fixed both directions of the reader, and the
+corpus reports zero wrong catalogues** — 0 %, against 17 % of published catalogues before.
+Correctness cost less coverage than B13 predicted (it forecast 47 % withheld and got 42 %),
+because two of the three under-reporting cases turned into correct catalogues rather than
+withholds. The figures above are B13 §3 as restated.*
+
+The finding that does not depend on the sample and did survive WP-37: the project layout
+[07-Capability-Model §4](../07-Capability-Model.md) prescribes — contracts and their static
+error class in a separate assembly — produces **no catalogue at all**, because the reader
+needs a syntax body it cannot get from a referenced assembly. It is the evidence half of
 [ADR-0014](../adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) §6, and it decides
 nothing.
 

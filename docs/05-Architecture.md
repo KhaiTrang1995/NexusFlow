@@ -652,7 +652,7 @@ reader who saw the name stopped looking for the rule.
 | `SuppressionsAreAccountable` | §6.1 | a suppression cites no registered, unexpired `FLOWX-DEBT` id | `DebtAccountabilityTests` |
 | `EveryDiagnosticIsHelpful` | P12 | a `FLOWX*` diagnostic lacks title, fix, or help URI | `FlowX.Compiler.Tests` |
 | *(job, not a test)* | Q1, Q7 | > 5 % regression against `baseline.json` — B1, B3 and B12 in isolation | *Benchmark budgets* job, `performance.yml` |
-| `AllocationBudgetTests`, `EngineAllocationTests` | Q7 | any allocation on the linear, conditional or switch path | *Allocation budgets* job, `performance.yml` |
+| `AllocationBudgetTests`, `EngineAllocationTests` | Q7 | any allocation on the linear, conditional or switch path | *Allocation budget (B2)* job, `performance.yml` |
 | *(job, not a test)* | C2 | `PublishAot=true` fails, emits trim warnings, or the published binary does not serve a request | *NativeAOT smoke test* job, `ci.yml` |
 
 CI runs these on every pull request. A red fitness function is a build failure,
@@ -682,9 +682,9 @@ vacuously today. It becomes meaningful with P4. The same is true of `events`: `.
 reaches the plan and the manifest, and [`FLOWX1024`](diagnostics/FLOWX1024.md) is raised on
 every one of them because nothing publishes it.
 
-*The stale wording is duplicated verbatim in the `ManifestIsComplete` XML doc comment in
-`tests/FlowX.Architecture.Tests/PublishedContractTests.cs`. The document is corrected here;
-the code comment is a separate change.*
+*The stale wording was duplicated verbatim in the `ManifestIsComplete` XML doc comment in
+`tests/FlowX.Architecture.Tests/PublishedContractTests.cs`. That comment now carries the
+same correction, so the two no longer disagree.*
 
 **`PluginsPassConformance` is blocked, not overlooked.** There is no conformance suite to
 run — [R3](#11-risks-and-technical-debt) and
