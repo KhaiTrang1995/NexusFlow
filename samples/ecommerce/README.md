@@ -32,7 +32,7 @@ curl -X POST http://localhost:5000/api/v1/orders \
 | `Contracts.cs` | The records on the wire and between steps. No behaviour. |
 | `Capabilities.cs` | Four capabilities and the two ports they depend on. All the business rules. |
 | `PlaceOrderFlow.cs` | The control flow: order, compensation, the event, the answer. |
-| `Program.cs` | Composition. Registrations and one route. |
+| `Program.cs` | Composition. Registrations, and `MapFlowX()` for every declared endpoint. |
 | `Infrastructure.cs` | In-memory adapters and the JSON context. |
 
 The flow:
@@ -80,6 +80,9 @@ exactly as it would for anyone else. Its output is on disk under
 
 - `Ecommerce.PlaceOrderFlow.Flow.g.cs` — the compiled `ExecutionPlan`, the step
   dispatcher, and the output projection
+- `FlowXEndpoints.g.cs` — the route registration `app.MapFlowX()` calls, from the
+  `[HttpTrigger]` on the flow. Emitted only because this project references
+  `FlowX.Http`; a project that does not gets no such file.
 - `FlowXManifest.g.cs` — the manifest for the whole application
 
 Open the first one. Every step carries a `#line` directive back to the line of
@@ -162,6 +165,12 @@ response DTO — `PlaceOrder` and `OrderPlacedResult` go on the wire directly, a
 endpoint returns what the `.Return(...)` clause projected. There is nothing to keep in
 step.
 
+**The address is declared once.** `[HttpTrigger("POST", "/api/v1/orders", Idempotent =
+true)]` is read once, and that one reading produces both the `triggers` block of the
+manifest and the route `app.MapFlowX()` registers — `FlowXEndpoints.g.cs`, next to the
+plan under `obj/generated`. `Program.cs` names no method, no route and no contract, so
+the address the sample publishes and the address it serves cannot disagree.
+
 ---
 
 ## Rendering the graph
@@ -219,9 +228,14 @@ says so as **FLOWX1024**, and the sample suppresses it with an explicit `FLOWX-D
 marker rather than hiding it. See
 [docs/diagnostics/FLOWX1024.md](../../docs/diagnostics/FLOWX1024.md).
 
-**The endpoint is registered by hand.** `[HttpTrigger]` will generate the `MapFlow`
-call in a later phase. It is written out in `Program.cs` so the sample runs against
-what exists today.
+**Service registration is written by hand, and stays that way.** The endpoint is
+generated — `app.MapFlowX()` is the whole of it, from the `[HttpTrigger]` on the flow —
+but the five `AddSingleton` lines above it are not. The generator knows exactly which
+types the dispatcher needs, because it wrote that constructor; it does not know what
+lifetime any of them should have, and nothing in a flow declares one. A missing
+registration already fails at start-up and names the type. A generated lifetime would be
+a guess, and a captive dependency is the kind of failure that is worst in a file nobody
+wrote.
 
 **Redaction covers one sink.** `[Sensitive]` strips values from Problem Details bodies
 and nothing else — there is no logging scope, journal or replay view yet for it to strip

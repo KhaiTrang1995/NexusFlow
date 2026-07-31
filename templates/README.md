@@ -39,6 +39,11 @@ packages into `.artifacts/local-feed` and registers it as a NuGet source. When t
 packages publish, that script and this section are deleted and **the template does not
 change**.
 
+It also evicts those seven ids from the global NuGet cache before packing. The version
+never changes between runs, and NuGet caches by id and version — so without the eviction a
+second `verify.sh` restores the *first* run's assemblies and reports green against a
+generator from an earlier commit. Only the FlowX ids are removed.
+
 `templates/local-feed.sh --remove` unregisters the source and deletes the feed.
 
 ## Verifying it
@@ -47,8 +52,10 @@ change**.
 packs the feed, packs and installs the template pack, generates a project into a
 temporary directory, asserts the name substitution took, builds with
 `TreatWarningsAsErrors` and asserts zero warnings, checks what the generator emitted —
-including that the manifest's source pointers are relative rather than the build agent's
-directory layout — then runs the application and drives the endpoint: the happy path, a
+including that the generated endpoint carries the route and the idempotency rule the flow
+declared, that `Program.cs` restates neither, and that the manifest's source pointers are
+relative rather than the build agent's directory layout — then runs the application and
+drives the endpoint: the happy path, a
 repeat with the same idempotency key, a business failure arriving as RFC 7807 problem
 details, and a request with no `Idempotency-Key`. It exits with the number of failed
 checks.

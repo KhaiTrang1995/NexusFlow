@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using FlowX.Hosting;
 using FlowX.Runtime;
@@ -13,10 +14,21 @@ namespace FlowX.Http;
 /// <summary>Maps a compiled flow onto an HTTP endpoint.</summary>
 /// <remarks>
 /// <para>
-/// A hand-written registration for P0. WP-5's generator will emit these calls from
-/// <c>[HttpTrigger]</c>, at which point the route, the binder and the OpenAPI operation
-/// all come from one declaration. Writing it by hand first keeps the shape honest: if
-/// this is awkward to call, the generated version would be awkward to debug.
+/// <strong>The generator calls these; it does not replace them.</strong>
+/// <c>FlowX.Compiler</c> emits one <c>FlowX.Generated.FlowXEndpoints</c> method per
+/// <c>[HttpTrigger]</c>, and each is a call to the <see cref="JsonSerializerContext"/>
+/// overload below — so the route, the idempotency rule and the redaction list come from
+/// one declaration, while the behaviour they configure stays here, in a package with
+/// tests, rather than being re-emitted per project. Writing this by hand first is what
+/// made that possible: a registration that is awkward to call would have been a
+/// generated call that is awkward to debug.
+/// </para>
+/// <para>
+/// The hand-written overloads remain public and supported. A flow reached through a
+/// route the attribute cannot express, or served by a project that never runs the
+/// generator, is mapped by calling one of them directly — which is also what the
+/// reference sample's endpoint tests do, so the generated path and the manual one are
+/// both exercised.
 /// </para>
 /// <para>
 /// <strong>No minimal-API delegate binding, deliberately.</strong> The obvious
@@ -126,6 +138,80 @@ public static class FlowEndpointExtensions
         builder.WithMetadata(new HttpMethodMetadata([method]));
         return builder;
     }
+
+    /// <summary>
+    /// Maps a flow, taking its two <see cref="JsonTypeInfo{T}"/> out of one
+    /// source-generated <see cref="JsonSerializerContext"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the overload the endpoint generator calls.</strong> It exists so
+    /// that generated source names the serialiser once instead of reaching for two
+    /// <c>Default.&lt;Type&gt;</c> properties whose names are chosen by <em>another</em>
+    /// generator: <c>System.Text.Json</c> derives them from the type's own name, mangles
+    /// them for generics and nested types, and suffixes them on collision. Asking the
+    /// context for the metadata by <see cref="Type"/> is the documented, stable route to
+    /// the same object, and it moves the cast, the null check and the message below out
+    /// of emitted code and into a package that has tests.
+    /// </para>
+    /// <para>
+    /// Still no reflection. <c>GetTypeInfo</c> on a source-generated context is a switch
+    /// over <c>typeof</c> comparisons that the STJ generator wrote, so this resolves at
+    /// the same cost and with the same trim behaviour as naming the property would.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TRequest">The flow's input contract, read from the request body.</typeparam>
+    /// <typeparam name="TResponse">The flow's output contract, from its <c>.Return(...)</c> clause.</typeparam>
+    /// <param name="endpoints">The route builder.</param>
+    /// <param name="method">HTTP method.</param>
+    /// <param name="route">Route template.</param>
+    /// <param name="plan">The compiled plan for this flow.</param>
+    /// <param name="dispatcherFactory">Resolves the generated dispatcher from the container.</param>
+    /// <param name="projection">The generated <c>Projection</c> field on the flow's partial class.</param>
+    /// <param name="json">
+    /// A source-generated context declaring <c>[JsonSerializable]</c> for both contracts.
+    /// </param>
+    /// <param name="requireIdempotencyKey">Whether an <c>Idempotency-Key</c> header is mandatory.</param>
+    /// <param name="sensitiveMembers">The flow's generated <c>SensitiveMembers</c>.</param>
+    public static IEndpointConventionBuilder MapFlow<TRequest, TResponse>(
+        this IEndpointRouteBuilder endpoints,
+        string method,
+        string route,
+        ExecutionPlan plan,
+        Func<IServiceProvider, IStepDispatcher> dispatcherFactory,
+        Func<FlowContext, TResponse> projection,
+        JsonSerializerContext json,
+        bool requireIdempotencyKey = false,
+        IReadOnlyCollection<string>? sensitiveMembers = null)
+        where TRequest : notnull
+    {
+        ArgumentNullException.ThrowIfNull(json);
+
+        return endpoints.MapFlow(
+            method,
+            route,
+            plan,
+            dispatcherFactory,
+            projection,
+            TypeInfoFor<TRequest>(json),
+            TypeInfoFor<TResponse>(json),
+            requireIdempotencyKey,
+            sensitiveMembers);
+    }
+
+    /// <summary>Reads one contract's metadata out of a source-generated context.</summary>
+    /// <remarks>
+    /// Fails at start-up rather than on the first request, and names the attribute to
+    /// add. A contract missing from the context is a mapping that could never have
+    /// served a request, so discovering it when the route is registered — before the
+    /// process reports itself ready — is the only useful moment to say so.
+    /// </remarks>
+    private static JsonTypeInfo<T> TypeInfoFor<T>(JsonSerializerContext json) =>
+        json.GetTypeInfo(typeof(T)) as JsonTypeInfo<T>
+        ?? throw new InvalidOperationException(
+            $"{json.GetType().Name} carries no metadata for {typeof(T)}. Add " +
+            $"[JsonSerializable(typeof({typeof(T).Name}))] to it — the flow declares that " +
+            "contract on the wire, so the serialiser has to know it.");
 
     private static async Task HandleAsync<TRequest, TResponse>(
         HttpContext context,

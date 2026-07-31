@@ -1,4 +1,7 @@
+using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -35,6 +38,20 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
 {
     private const string FlowAttributeName = "FlowX.FlowAttribute";
     private const string CapabilityAttributeName = "FlowX.CapabilityAttribute";
+    private const string JsonSerializableAttributeName = "System.Text.Json.Serialization.JsonSerializableAttribute";
+    private const string JsonSerializerContextName = "System.Text.Json.Serialization.JsonSerializerContext";
+
+    /// <summary>
+    /// The one thing this generator knows about the HTTP transport: a name to look for.
+    /// </summary>
+    /// <remarks>
+    /// Not a reference. A Roslyn component links against nothing but Roslyn, and a
+    /// generator that referenced <c>FlowX.Http</c> would put a plugin underneath the
+    /// compiler — the exact inversion <c>RuntimeDoesNotReferenceAnyPlugin</c> exists to
+    /// forbid. Looking the type up in the user's compilation asks the only question that
+    /// matters, "did <em>they</em> reference it", and answers it without a dependency.
+    /// </remarks>
+    private const string HttpEndpointExtensionsName = "FlowX.Http.FlowEndpointExtensions";
 
     /// <inheritdoc />
     public void Initialize(IncrementalGeneratorInitializationContext context)
@@ -98,6 +115,242 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                 var ((((analysed, declared), catalogues), applicationName), directory) = data;
                 ProduceManifest(production, analysed, declared, catalogues, applicationName, directory);
             });
+
+        // Whether this compilation can host an HTTP endpoint at all, expressed as one
+        // bool so nothing downstream re-runs when an unrelated reference changes. The
+        // generator knows the transport only by this name: it links against no plugin
+        // and could not, being a netstandard2.0 analyzer, which is what keeps
+        // RuntimeDoesNotReferenceAnyPlugin true by construction rather than by care.
+        var httpAvailable = context.CompilationProvider.Select(
+            static (compilation, _) => compilation.GetTypeByMetadataName(HttpEndpointExtensionsName) is not null);
+
+        // The serialiser contexts declared in this compilation. Read from
+        // [JsonSerializable] rather than from the properties System.Text.Json generates
+        // from it: the attribute is the author's declaration and is readable now,
+        // whereas the properties are another generator's output and would put an
+        // ordering dependency between two generators that have none.
+        var jsonContexts = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                JsonSerializableAttributeName,
+                predicate: static (node, _) => node is ClassDeclarationSyntax,
+                transform: static (ctx, cancellationToken) => ReadJsonContext(ctx, cancellationToken))
+            .Where(static result => result is not null);
+
+        context.RegisterSourceOutput(
+            flows.Collect()
+                .Combine(triggers.Collect())
+                .Combine(jsonContexts.Collect())
+                .Combine(httpAvailable)
+                .Combine(application),
+            static (production, data) =>
+            {
+                var ((((analysed, declared), contexts), available), assembly) = data;
+                ProduceEndpoints(production, analysed, declared, contexts, available, assembly);
+            });
+    }
+
+    /// <summary>
+    /// Reads one <c>JsonSerializerContext</c> and the contracts it declares.
+    /// </summary>
+    /// <remarks>
+    /// Anything that is not a serialiser context, or that generated code in this assembly
+    /// could not name, is dropped here rather than filtered later — a context nested
+    /// inside a private type is not a candidate for anything, and letting it reach the
+    /// emitter would only give the emitter a rule to restate.
+    /// </remarks>
+    private static JsonContextModel? ReadJsonContext(
+        GeneratorAttributeSyntaxContext context, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (context.TargetSymbol is not INamedTypeSymbol symbol || !IsJsonSerializerContext(symbol) ||
+            !IsVisibleInAssembly(symbol))
+        {
+            return null;
+        }
+
+        var contracts = context.Attributes
+            .Where(static a => a.ConstructorArguments.Length > 0)
+            .Select(static a => a.ConstructorArguments[0].Value as INamedTypeSymbol)
+            .Where(static t => t is not null)
+            .Select(static t => Display(t!))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToList();
+
+        return contracts.Count == 0 ? null : new JsonContextModel(Display(symbol), contracts);
+    }
+
+    private static bool IsJsonSerializerContext(INamedTypeSymbol symbol)
+    {
+        for (var type = symbol.BaseType; type is not null; type = type.BaseType)
+        {
+            if (string.Equals(type.ToDisplayString(), JsonSerializerContextName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Whether other code in the same assembly can name this type.</summary>
+    private static bool IsVisibleInAssembly(INamedTypeSymbol symbol)
+    {
+        for (var type = symbol; type is not null; type = type.ContainingType)
+        {
+            if (type.DeclaredAccessibility is not (Accessibility.Public or Accessibility.Internal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>The fully qualified name of a symbol, in the form emitted source uses.</summary>
+    private static string Display(ISymbol symbol) => symbol
+        .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+        .Replace("global::", string.Empty);
+
+    /// <summary>
+    /// Emits one endpoint registration per <c>[HttpTrigger]</c>, or nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing at all is the common case and the important one. A project with no HTTP
+    /// transport, or with no flow that declares an address on it, gets no file — so the
+    /// cost of this feature to a Kafka-only application is zero types, zero IL and zero
+    /// build output, which is the property that lets a transport be a plugin.
+    /// </para>
+    /// <para>
+    /// A flow with an <c>[HttpTrigger]</c> but no <c>.Return(...)</c> is skipped: the
+    /// endpoint writes the flow's declared output, and a flow that declares none has no
+    /// <c>Projection</c> field to write it with.
+    /// </para>
+    /// </remarks>
+    private static void ProduceEndpoints(
+        SourceProductionContext production,
+        ImmutableArray<AnalysisResult?> results,
+        ImmutableArray<FlowTriggersModel?> triggers,
+        ImmutableArray<JsonContextModel?> jsonContexts,
+        bool httpAvailable,
+        string assemblyName)
+    {
+        if (!httpAvailable)
+        {
+            return;
+        }
+
+        var declared = triggers
+            .Where(static t => t is not null)
+            .GroupBy(static t => t!.FlowId, StringComparer.Ordinal)
+            .ToDictionary(static g => g.Key, static g => g.First()!, StringComparer.Ordinal);
+
+        var contexts = jsonContexts
+            .Where(static c => c is not null)
+            .Select(static c => c!)
+            .ToList();
+
+        var models = results
+            .Where(static r => r is { IsSuccess: true, Model: not null })
+            .Select(static r => r!.Model!)
+            .OrderBy(static m => m.FlowId, StringComparer.Ordinal)
+            .ToList();
+
+        var endpoints = new List<HttpEndpointModel>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var flow in models)
+        {
+            if (flow.ReturnProjection is null ||
+                !declared.TryGetValue(flow.FlowId, out var flowTriggers))
+            {
+                continue;
+            }
+
+            foreach (var trigger in flowTriggers.Triggers.Where(IsHttpAddress))
+            {
+                endpoints.Add(new HttpEndpointModel(
+                    flow.FlowId,
+                    flow.FullTypeName,
+                    MethodName(flow.TypeName, names),
+                    flow.InputTypeName,
+                    flow.OutputTypeName,
+                    trigger.Method!,
+                    trigger.Route!,
+                    trigger.Idempotent == true,
+                    ContextFor(contexts, flow.InputTypeName, flow.OutputTypeName)));
+            }
+        }
+
+        if (endpoints.Count > 0)
+        {
+            production.AddSource(
+                EndpointEmitter.FileName,
+                SourceText.From(EndpointEmitter.Emit(assemblyName, endpoints), Encoding.UTF8));
+        }
+    }
+
+    /// <summary>An HTTP trigger this build could read an address off.</summary>
+    /// <remarks>
+    /// A trigger whose kind is <c>Http</c> but whose arguments this compiler could not
+    /// interpret reaches the manifest as a bare kind, and it must produce no endpoint for
+    /// the same reason: a route nobody read is not a route to serve.
+    /// </remarks>
+    private static bool IsHttpAddress(TriggerModel trigger) =>
+        string.Equals(trigger.Kind, "Http", StringComparison.Ordinal) &&
+        !string.IsNullOrEmpty(trigger.Method) &&
+        !string.IsNullOrEmpty(trigger.Route);
+
+    /// <summary>
+    /// The single serialiser context declaring both contracts, or <c>null</c>.
+    /// </summary>
+    /// <remarks>
+    /// <c>null</c> for none and for several, and the two are the same answer: the
+    /// no-argument overload exists only where there is nothing to choose. Picking the
+    /// first of several would make the wire format depend on file order.
+    /// </remarks>
+    private static string? ContextFor(List<JsonContextModel> contexts, string input, string output)
+    {
+        string? found = null;
+
+        foreach (var candidate in contexts.Where(c => c.Declares(input, output)))
+        {
+            if (found is not null)
+            {
+                return null;
+            }
+
+            found = candidate.TypeName;
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// The extension method one endpoint is registered by.
+    /// </summary>
+    /// <remarks>
+    /// Named from the flow's type rather than from its id, because this is a C# member a
+    /// developer types: <c>app.MapPlaceOrderFlow()</c> reads as the flow it maps, where
+    /// <c>MapOrderPlace()</c> would need the id in front of you. Two flows of the same
+    /// type name in different namespaces, or one flow declaring two addresses, take a
+    /// numeric suffix in the order the flows were sorted by id — deterministic, and rare
+    /// enough that the alternative of mangling every name is the wrong trade.
+    /// </remarks>
+    private static string MethodName(string typeName, HashSet<string> taken)
+    {
+        var candidate = "Map" + typeName;
+        var suffix = 2;
+
+        while (!taken.Add(candidate))
+        {
+            candidate = "Map" + typeName + suffix.ToString(CultureInfo.InvariantCulture);
+            suffix++;
+        }
+
+        return candidate;
     }
 
     /// <summary>Reads the trigger attributes off one flow declaration.</summary>

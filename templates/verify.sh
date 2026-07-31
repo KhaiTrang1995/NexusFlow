@@ -114,6 +114,33 @@ generated="$WORK/Ordering/obj/generated/FlowX.Compiler/FlowX.Compiler.FlowPlanGe
   && pass "the plan and dispatcher are on disk, debuggable" \
   || fail "expected a generated flow partial under obj/generated"
 
+# The endpoint the flow declares, emitted from [HttpTrigger] rather than restated in
+# Program.cs. Two assertions, because both halves matter: the address has to reach
+# generated code, and it must NOT appear anywhere a developer writes — a project that
+# names its own route a second time is a project that can drift from it.
+endpoints="$generated/FlowXEndpoints.g.cs"
+if [[ -f "$endpoints" ]]; then
+  pass "the endpoint registration was generated"
+
+  grep -q '"/api/v1/tickets"' "$endpoints" \
+    && pass "the generated endpoint carries the route the flow declared" \
+    || fail "the generated endpoint does not carry the declared route"
+
+  grep -q 'requireIdempotencyKey: true' "$endpoints" \
+    && pass "the generated endpoint carries the declared idempotency rule" \
+    || fail "Idempotent = true did not reach the generated endpoint"
+else
+  fail "no endpoint registration was generated"
+fi
+
+if grep -qE '"(POST|GET|PUT|PATCH|DELETE)"|/api/v1/tickets' "$WORK/Ordering/Program.cs"; then
+  fail "Program.cs restates the address the flow already declares:"
+  grep -nE '"(POST|GET|PUT|PATCH|DELETE)"|/api/v1/tickets' "$WORK/Ordering/Program.cs" \
+    | sed 's/^/        /'
+else
+  pass "Program.cs names no method and no route"
+fi
+
 manifest="$generated/FlowXManifest.g.cs"
 if [[ -f "$manifest" ]]; then
   pass "the manifest was generated"
