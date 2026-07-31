@@ -15,13 +15,14 @@ namespace FlowX.Architecture.Tests;
 /// than aspirational.
 /// </para>
 /// <para>
-/// A version of this already runs as a shell step in <c>.github/workflows/quality.yml</c>.
-/// It is listed in CHECKLIST §4 as a fitness function, which it was not, and the two are
-/// not the same gate in practice: the CI step is invisible until a pull request runs, so
-/// the developer who adds an unaccountable suppression finds out last. This one fails on
-/// <c>dotnet test</c>, before the commit. It also asks a question the CI step does not —
-/// whether the id is actually registered in <c>docs/DEBT.md</c> — because a marker citing
-/// <c>DEBT-0099</c> when no such row exists is accountable to nobody.
+/// <strong>This is the only implementation of the rule.</strong> A shell copy ran as a step
+/// in <c>.github/workflows/quality.yml</c> until WP-35, and the two were not the same gate:
+/// that one asked whether the <em>file</em> contained a <c>FLOWX-DEBT</c> marker anywhere,
+/// so a single accountable suppression at the top licensed every unaccountable one below
+/// it, and it never checked that the id cited had a row in <c>docs/DEBT.md</c>. It was
+/// deleted rather than repaired. Repairing it would have left two implementations of one
+/// rule, kept in step by hand, with the weaker one being what a developer meets first —
+/// and passing the weaker one reads as compliance.
 /// </para>
 /// </remarks>
 public sealed partial class DebtAccountabilityTests
@@ -58,7 +59,11 @@ public sealed partial class DebtAccountabilityTests
         var problems = new List<string>();
         var markers = 0;
 
-        foreach (var file in SourceSurvey.SourceFiles("src", "plugins", "samples", "tests"))
+        // scripts/ is here because the deleted CI step walked the whole repository and this
+        // one names its trees. scripts/generator-cost-probe is a real C# project that is not
+        // in FlowX.slnx, and dropping the shell copy without adding it would have narrowed
+        // the rule's reach by one file while claiming to consolidate it.
+        foreach (var file in SourceSurvey.SourceFiles("src", "plugins", "samples", "tests", "scripts"))
         {
             var path = SourceSurvey.RelativePath(file);
             var lines = File.ReadAllLines(file.FullName);
@@ -147,9 +152,11 @@ public sealed partial class DebtAccountabilityTests
     /// Whether a debt marker sits on this line or in the comment block immediately above it.
     /// </summary>
     /// <remarks>
-    /// Proximity is the point. The CI step searches the whole file, which means one
-    /// accountable suppression at the top licenses every unaccountable one below it — and
-    /// in a file with a genuine debt entry, that is the file most likely to acquire more.
+    /// Proximity is the point. A search of the whole file — which is what the deleted CI
+    /// step did — means one accountable suppression at the top licenses every unaccountable
+    /// one below it, and a file with a genuine debt entry is the file most likely to acquire
+    /// more. Six lines is enough for the marker, a reason and a tracking issue above the
+    /// attribute, and not enough to reach the previous member.
     /// </remarks>
     private static bool HasMarkerNearby(string[] lines, int index)
     {
