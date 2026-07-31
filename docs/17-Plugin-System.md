@@ -1,6 +1,6 @@
 # 17 — Plugin System
 
-> **Status:** Accepted as a specification · **one extension point, two of six conformance suites** ·
+> **Status:** Accepted as a specification · **one extension point, three of seven conformance suites** ·
 > **Audience:** plugin authors, platform engineers
 > **Answers:** what can be extended, against what contract, and how is compatibility guaranteed?
 
