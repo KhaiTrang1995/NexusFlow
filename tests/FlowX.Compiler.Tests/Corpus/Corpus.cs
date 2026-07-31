@@ -31,6 +31,11 @@ public enum Expect
     /// A catalogue is published and it disagrees with <c>Truth</c> — the state
     /// ADR-0014 §8 says this field cannot reach.
     /// </summary>
+    /// <remarks>
+    /// No specimen declares this any more, and the corpus asserts that none reaches it.
+    /// The member stays because it is the classification the measurement computes, and a
+    /// vocabulary that cannot express the defect cannot report its return.
+    /// </remarks>
     FalseComplete,
 }
 

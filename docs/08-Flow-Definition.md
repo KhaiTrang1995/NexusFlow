@@ -138,11 +138,8 @@ nothing is wrong, say so:
 .Default(b => b.Fail(OrderErrors.UnsupportedChannel))
 ```
 
-> **Not yet true of `.Fail(...)`.** The builder declares it and the table in §4
-> lists it, but the compiler does not model it: a block whose only call is
-> `.Fail(...)` compiles to an *empty* block, which for a `Default` means the
-> fall-through above. Until `Fail` compiles to a step, spell an unsupported value
-> out as a capability that returns `Result.Fail(...)`.
+That arm compiles to a real step and really rejects — see [§3.8](#38-failing)
+for what `Fail` costs a flow that has already had effects.
 
 `Switch` compiles into the same flat step array as everything else — one `Switch`
 node carrying a target per case plus a default target, and a `Jump` closing each
@@ -350,6 +347,55 @@ referenced assembly cannot be followed, so `FlowEngine.MaxSubFlowDepth` bounds a
 what the analyzer cannot see at build time. The rule's page says exactly what it proves and
 what it does not.
 
+### 3.8 Failing
+
+```csharp
+flow.Step<ValidateOrder>()
+    .Step<ReserveInventory>().CompensateWith<ReleaseInventory>()
+    .Switch(ctx => ctx.Input.Channel)
+        .Case(Channel.Retail,    b => b.Step<ApplyRetailPricing>())
+        .Case(Channel.Wholesale, b => b.Step<ApplyWholesalePricing>())
+        .Default(b => b.Fail(OrderErrors.UnsupportedChannel))
+    .Step<CapturePayment>();
+```
+
+`.Fail(error)` **terminates the flow with a business error**. It is the only
+terminal step: control does not continue past it, so the flow's result is that
+error and the steps after it in the same block are unreachable — the compiler
+reports [`FLOWX1027`](diagnostics/FLOWX1027.md) and does not compile them, because
+a plan, a manifest and a diagram listing work the flow can never do are three
+contracts that lie.
+
+**The completed compensable steps unwind, exactly as they would on a capability
+failure.** A rejection is a decision rather than an accident, and it is tempting
+to read that as a clean exit with nothing to undo. It is not: by the time the
+`Default` arm above rejects the request, `inventory.reserve` has already reserved
+stock, and the reservation is just as real as it would be after a declined
+payment. A saga's guarantee is about what *happened*, not about who decided it.
+The point is sharper than an analogy — the advice while `Fail` was unimplemented
+was "spell an unsupported value out as a capability that returns
+`Result.Fail(...)`", and if `Fail` did not unwind, replacing that workaround with
+the feature it stood in for would silently weaken every saga that took it.
+
+Mechanically there is no special case at all: the generated dispatcher hands the
+engine `StepOutcome.Failed(error)` from the same call a capability's own failure
+comes back on, so the step loop cannot tell the two apart.
+
+**The error is a value, so it stays in compiled code.** The expression you write
+becomes a `static readonly Error` field on the generated partial class — built
+once, so rejecting a request allocates nothing at the moment the flow is already
+about to unwind — with a `#line` directive back to the line you wrote it on.
+`flowx.manifest.json` records `"kind": "Fail"` and nothing else: an `Error`
+carries a message, the messages in real systems interpolate order numbers and
+SKUs, and
+[a manifest is structure, never values](adr/ADR-0005-manifest-as-build-artifact.md).
+That is the same line the capability error catalogue draws when it publishes a
+code and a category and never a message; publishing the *code* here would need a
+field the committed schema's step object does not have.
+
+A rendered diagram draws a `Fail` as a double circle — a final state — with no
+edge out of it.
+
 ---
 
 ## 4. The full builder surface
@@ -370,7 +416,7 @@ what it does not.
 | `.AwaitSignal<T>(timeout).OnTimeout(b)` | external wait | Durable |
 | `.Delay(duration)` | durable timer | Durable |
 | `.Window(spec)` / `.Aggregate(...)` | stream windowing | Streaming |
-| `.Fail(error)` | terminate with a business error | all |
+| [`.Fail(error)`](#38-failing) | terminate with a business error, unwinding what completed | all |
 | `.Return(projection)` | produce the flow output | all |
 
 Deliberately **absent**: `.Do(lambda)`. Arbitrary inline code inside a flow would

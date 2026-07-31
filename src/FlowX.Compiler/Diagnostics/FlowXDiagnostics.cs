@@ -161,6 +161,45 @@ public static class FlowXDiagnostics
         "A capability has exactly one input and one output type. Split it into separate " +
         "capabilities, one per business operation.");
 
+    /// <summary>FLOWX1016 — a capability throws where it should return <c>Result.Fail</c>.</summary>
+    /// <remarks>
+    /// <para>
+    /// Rule 2 of <c>07-Capability-Model.md §3</c>, and the mitigation ADR-0007 names for
+    /// its own most-complained-about consequence. Half the rule enforces itself — the
+    /// interface returns <c>ValueTask&lt;Result&lt;TOut&gt;&gt;</c>, so a capability cannot
+    /// fail to return a <c>Result</c>. The other half, <em>expected failures are values</em>,
+    /// was checked by nothing: a <c>throw</c> compiles, the engine catches it at the
+    /// capability boundary and counts it as a defect, and the business outcome it really
+    /// described is then absent from the signature, from the manifest's error catalogue and
+    /// from the retry classification the error category drives.
+    /// </para>
+    /// <para>
+    /// A <strong>warning</strong>, and the reason is exactly what the rule cannot prove.
+    /// <em>Expected</em> is a judgement about a domain, not a property of a type: this
+    /// analyzer sees a <c>throw new</c> and decides from the exception's type alone, which
+    /// is a list and not a proof. The catalogue's bar for an error is a mistake that is
+    /// structurally impossible to recover from at run time, and this one is not — the
+    /// engine catches it. A rule that stops the build on a judgement it cannot make is a
+    /// rule that gets suppressed file-wide, and a suppressed rule protects nothing. This
+    /// repository builds with <c>TreatWarningsAsErrors</c>, so it is still a break here; a
+    /// consumer who disagrees downgrades it once in <c>.editorconfig</c> rather than with a
+    /// pragma per capability.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor ExpectedFailureIsThrown = Create(
+        "FLOWX1016",
+        "Expected failures are values, not exceptions",
+        "Capability '{0}' throws '{1}'; an outcome a caller could reasonably handle is a " +
+        "Result.Fail(Error) value, not an exception",
+        "Business outcomes — declined, out of stock, not cancellable — are values. Thrown, " +
+        "they are invisible in the signature, absent from the manifest's error catalogue, " +
+        "indistinguishable in telemetry from a genuine defect, and cost 5-20 microseconds " +
+        "each against a 5 microsecond platform budget (ADR-0007). Return " +
+        "Result.Fail(new Error(code, message, category)) instead, and keep throwing only for " +
+        "defects — a null argument, an unimplemented branch, a disposed object — which the " +
+        "engine already reports as defects rather than as outcomes.",
+        DiagnosticSeverity.Warning);
+
     /// <summary>FLOWX1017 — a suspension point in a non-durable flow.</summary>
     public static readonly DiagnosticDescriptor AwaitSignalRequiresDurable = Create(
         "FLOWX1017",
@@ -176,6 +215,41 @@ public static class FlowXDiagnostics
         "Capability '{0}' declares side effects, so a Cache policy cannot be attached",
         "A cache hit returns a success without performing the effect. Remove the Cache " +
         "policy, or split the read out into its own capability.");
+
+    /// <summary>FLOWX1019 — a flow deadline its own steps cannot fit inside.</summary>
+    /// <remarks>
+    /// <para>
+    /// The arithmetic <c>14-Performance.md §7</c> and <c>FlowDeadlineAttribute</c> both
+    /// describe: a step's <c>Timeout</c> policy bounds one attempt, a <c>Retry</c> policy
+    /// multiplies the attempts, and the flow's <c>[FlowDeadline]</c> is an absolute budget
+    /// that a retry never resets. When the attempts alone outlast the budget, the last
+    /// steps of the flow can never run — the deadline cancels them — and the failure
+    /// arrives as a timeout several steps away from the policy that caused it.
+    /// </para>
+    /// <para>
+    /// A <strong>warning</strong>, which is what both documents say and is also the right
+    /// answer: the sum is the <em>worst</em> case, not the expected one. A retry only
+    /// happens when an attempt fails, so an incoherent budget is a flow that is correct
+    /// until the day its dependency is slow — real, but not a structural impossibility,
+    /// and a deliberately pessimistic budget is a legitimate thing to declare.
+    /// </para>
+    /// <para>
+    /// <c>{3}</c> is the arithmetic written out, step by step, because the useful thing is
+    /// never that the sum is too large — it is which step's policy to change.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor DeadlineCannotFitSteps = Create(
+        "FLOWX1019",
+        "Flow deadline is shorter than the step timeouts it must contain",
+        "Flow '{0}' declares a deadline of {1}, but its steps can spend at least {2} " +
+        "before it: {3}",
+        "The flow deadline is absolute and is never reset by a retry, so a step whose " +
+        "attempts outlast it is cancelled mid-way and the steps after it never run at all. " +
+        "The number below is a floor, not an estimate: it counts only the steps whose " +
+        "timeout the compiler can read, and it ignores retry backoff, which adds more. " +
+        "Lengthen the deadline, shorten the step timeout, reduce the retry attempts, or " +
+        "split the work into a second flow with a budget of its own.",
+        DiagnosticSeverity.Warning);
 
     /// <summary>FLOWX1020 — a step consumes a type no earlier step produces.</summary>
     /// <remarks>
@@ -311,6 +385,35 @@ public static class FlowXDiagnostics
         "no longer describes how this flow is reached.",
         DiagnosticSeverity.Warning);
 
+    /// <summary>FLOWX1027 — a step declared after a <c>.Fail(...)</c>, which ends the flow.</summary>
+    /// <remarks>
+    /// <para>
+    /// A <strong>warning</strong>, and the model is C#'s own <c>CS0162</c>: the source is
+    /// not wrong, part of it simply cannot run. <c>.Fail(error)</c> is terminal — the flow
+    /// ends there with a business error and unwinds what it completed — so a step after one
+    /// in the same block is unreachable by construction rather than by circumstance.
+    /// </para>
+    /// <para>
+    /// <strong>The unreachable steps are not compiled.</strong> Laying them out would put
+    /// them in the plan, in <c>flowx.manifest.json</c> and in a rendered diagram, where a
+    /// reviewer or an agent reading the published contract would believe the flow does
+    /// work it can never do. Dropping them silently would be worse still, which is what
+    /// this diagnostic is for.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor StepIsUnreachableAfterFail = Create(
+        "FLOWX1027",
+        "Step is unreachable after Fail",
+        "Flow '{0}' declares '.{1}(...)' after a '.Fail(...)', which ends the flow, so it " +
+        "can never run and is not compiled",
+        "'.Fail(error)' terminates the flow with a business error: the engine takes the " +
+        "failure path, the completed compensable steps unwind in strict reverse, and " +
+        "control never reaches the next step in the block. Steps after one are therefore " +
+        "dropped rather than published — a manifest listing work the flow cannot do is a " +
+        "contract that lies. Move them before the '.Fail(...)', or into the branch that " +
+        "does not fail.",
+        DiagnosticSeverity.Warning);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -323,14 +426,17 @@ public static class FlowXDiagnostics
         ParallelBranchesMustWriteDisjointSlots,
         RetryRequiresIdempotency,
         CapabilityHasMultipleContracts,
+        ExpectedFailureIsThrown,
         AwaitSignalRequiresDurable,
         CacheRequiresNoSideEffects,
+        DeadlineCannotFitSteps,
         StepInputIsNeverProduced,
         SubFlowCycle,
         SubFlowCannotBeComposed,
         FlowHasNoSteps,
         EmitIsNotYetPublished,
-        TriggerCannotBeRead);
+        TriggerCannotBeRead,
+        StepIsUnreachableAfterFail);
 
     private static DiagnosticDescriptor Create(
         string id,

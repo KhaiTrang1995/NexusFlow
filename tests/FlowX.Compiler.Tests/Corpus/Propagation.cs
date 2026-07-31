@@ -1,15 +1,19 @@
 // Specimens where a failure travels through Result<T> rather than through an Error.
 //
-// The reader's premise is that "an expression's type is the only thing that identifies a
-// failure path". These are the shapes where a capability returns a declared error and no
-// expression of type Error occurs in its source — the failure is carried inside a
-// Result<T> the whole way. Three of the five are therefore not withheld: they are
-// published as `errors: []`, which the schema and ADR-0014 §3 B(1) both define as the
-// positive statement "analysed, and returns no declared error".
+// These are the shapes where a capability returns a declared error and no expression of
+// type Error occurs in its source — the failure is carried inside a Result<T> the whole
+// way. They used to be the reader's blind spot: it identified a failure path by finding an
+// expression of type Error, found none, found nothing it could not follow either, and
+// published `errors: []` — which the schema and ADR-0014 §3 B(1) both define as the
+// positive statement "analysed, and returns no declared error". Three of the five were
+// confidently wrong.
 //
-// The first of them, ResultFailFromParts, uses Result.Fail<T>(code, message, category) —
-// a first-party overload in FlowX.Abstractions whose own summary says it is "for call
-// sites that do not have a shared error factory".
+// The reader now follows the Result<T> itself, so the question it asks at each of these
+// sites is "where did this result come from" rather than "is there an Error here". Two of
+// the three resolve to a correct catalogue — the code was in the source all along, one
+// hop away — and the third, where the result comes from an injected service, is withheld.
+//
+// WP-37. See docs/benchmarks/B13-error-catalogue-resolution.md §5.1.
 
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,12 +24,14 @@ namespace Corpus.Propagation;
 /// <summary>The three-argument <c>Result.Fail</c> overload.</summary>
 [Specimen(
     "Result.Fail<T>(code, message, category) — the parts overload",
-    Expect = Expect.FalseComplete,
+    Expect = Expect.Resolved,
     Truth = ["order.rejected/Conflict"],
-    Why = "No expression here has type Error: the arguments are two strings and an enum, "
-          + "and the call's type is Result<Receipt>. The scan finds nothing, finds nothing "
-          + "it could not follow either, and publishes a complete empty catalogue for a "
-          + "capability that returns a code.")]
+    Why = "No expression here has type Error — the arguments are two strings and an enum, "
+          + "and the call's type is Result<Receipt> — which is why this used to publish a "
+          + "complete empty catalogue for a capability that returns a code. The reader now "
+          + "reads the overload, and this is the best case of the three: the code and the "
+          + "category are literals at the call site, so the answer is a correct catalogue "
+          + "rather than a withheld one.")]
 [Capability("corpus.fail_from_parts", Version = "1.0.0", Authorization = Authorization.Internal, Idempotent = true)]
 public sealed class ResultFailFromParts : ICapability<Order, Receipt>
 {
@@ -39,11 +45,14 @@ public sealed class ResultFailFromParts : ICapability<Order, Receipt>
 /// <summary>A thin capability over a domain service.</summary>
 [Specimen(
     "capability delegates wholesale to an injected service returning Result<T>",
-    Expect = Expect.FalseComplete,
+    Expect = Expect.Withheld,
     Truth = ["(whatever the service returns)"],
-    Why = "The failure never takes the shape of an Error inside this file, so there is "
-          + "nothing to follow and nothing to refuse. A capability that is one line of "
-          + "delegation — a very common shape — publishes errors: [].")]
+    Why = "The failure never takes the shape of an Error inside this file, so for as long "
+          + "as the reader looked only for Error-typed expressions there was nothing to "
+          + "follow and nothing to refuse, and a capability that is one line of delegation "
+          + "— a very common shape — published errors: []. The result itself is now the "
+          + "trail, and it leads to an interface member with no body. Withheld is the only "
+          + "true answer: which implementation is registered is not a compile-time fact.")]
 [Capability("corpus.delegating", Version = "1.0.0", Authorization = Authorization.Internal, Idempotent = true)]
 public sealed class DelegatingCapability : ICapability<Order, Receipt>
 {
@@ -60,12 +69,14 @@ public sealed class DelegatingCapability : ICapability<Order, Receipt>
 /// <summary>A guard clause that returns a failed result built elsewhere.</summary>
 [Specimen(
     "private helper returning Result<T>, not Error",
-    Expect = Expect.FalseComplete,
+    Expect = Expect.Resolved,
     Truth = ["order.invalid_quantity/Validation"],
     Why = "The helper's return type is Result<Receipt>, so the call site holds no "
-          + "Error-typed expression. The construction inside the helper is not reached "
-          + "either: Roots only walks the capability's own declaration, and the helper is "
-          + "declared on a different class.")]
+          + "Error-typed expression, and the construction inside the helper used to be "
+          + "unreachable for a second reason: the scan only walked the capability's own "
+          + "declaration and the helper is on a different class. Following the result "
+          + "answers both — the guard is an ordinary static method in this compilation, "
+          + "and one hop inside it the Error is constructed from literals.")]
 [Capability("corpus.result_helper", Version = "1.0.0", Authorization = Authorization.Internal, Idempotent = true)]
 public sealed class ResultReturningHelper : ICapability<Order, Receipt>
 {
@@ -89,10 +100,11 @@ public static class OrderGuards
     "propagating an inner Result's Error",
     Expect = Expect.Withheld,
     Truth = ["(whatever the service returns)"],
-    Why = "result.Error IS an Error-typed expression, so the reader sees the failure path "
-          + "and follows it to Result<T>.Error, declared in FlowX.Abstractions. Off the "
-          + "edge of the compilation, and refused — the correct answer, and the opposite "
-          + "of what the delegating specimen above produces for the same situation.")]
+    Why = "Two trails, both ending off the edge of the compilation: result.Error is an "
+          + "Error-typed expression that leads to Result<T>.Error in FlowX.Abstractions, "
+          + "and the awaited call leads to the service interface. Refused on either "
+          + "count. This specimen and the delegating one above are the same situation, "
+          + "and they used to produce opposite manifests; they now agree.")]
 [Capability("corpus.propagated", Version = "1.0.0", Authorization = Authorization.Internal, Idempotent = true)]
 public sealed class PropagatedError : ICapability<Order, Receipt>
 {

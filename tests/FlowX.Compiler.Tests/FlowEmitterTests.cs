@@ -167,7 +167,8 @@ public sealed class FlowEmitterTests
 
         source.ShouldContain("private static class Conditions");
         source.ShouldContain(
-            "public static readonly Func<FlowContext, bool> Step1 = ctx => ctx.Get<RiskScore>().Value > 80;");
+            "public static readonly Func<FlowContext<Sample.Contracts.PlaceOrder>, bool> Step1 = " +
+            "ctx => ctx.Get<RiskScore>().Value > 80;");
         source.ShouldContain("#line 12 \"/src/Flows/Review.cs\"");
     }
 
@@ -178,7 +179,7 @@ public sealed class FlowEmitterTests
         var evaluate = source[source.IndexOf("bool Evaluate(", StringComparison.Ordinal)..];
 
         evaluate.ShouldContain("case 1:");
-        evaluate.ShouldContain("return Conditions.Step1(ctx);");
+        evaluate.ShouldContain("return Conditions.Step1(Typed(ctx));");
     }
 
     [Fact]
@@ -264,12 +265,13 @@ public sealed class FlowEmitterTests
     {
         // Same shape and same reason as a predicate: budget B2 is a hard zero, so the
         // selector is a field initialised once. Typed at the value it produces, because a
-        // Func<FlowContext, object> would box an enum on every switch the flow takes.
+        // Func<FlowContext<TIn>, object> would box an enum on every switch the flow takes.
         var source = FlowEmitter.Emit(Models.Switching());
 
         source.ShouldContain("private static class Selectors");
         source.ShouldContain(
-            "public static readonly Func<FlowContext, Sample.Contracts.Channel> Step1 = " +
+            "public static readonly Func<FlowContext<Sample.Contracts.PlaceOrder>, " +
+            "Sample.Contracts.Channel> Step1 = " +
             "ctx => ctx.Get<ValidatedOrder>().Channel;");
         source.ShouldContain("#line 13 \"/src/Flows/Price.cs\"");
         source.ShouldContainText("#line 14 \"/src/Flows/Price.cs\"", "The case value points at its own line too.");
@@ -282,7 +284,7 @@ public sealed class FlowEmitterTests
         var select = source[source.IndexOf("int Select(", StringComparison.Ordinal)..];
 
         select.ShouldContain("case 1:");
-        select.ShouldContain("var value = Selectors.Step1(ctx);");
+        select.ShouldContain("var value = Selectors.Step1(Typed(ctx));");
 
         select.ShouldContain(
             "if (System.Collections.Generic.EqualityComparer<Sample.Contracts.Channel>.Default" +
@@ -294,7 +296,7 @@ public sealed class FlowEmitterTests
         select.ShouldContain("return 1;");
         select.ShouldContainText("return -1;", "No case matched, so the engine takes the default target.");
 
-        select.Split("Selectors.Step1(ctx)").Length.ShouldBe(2,
+        select.Split("Selectors.Step1(Typed(ctx))").Length.ShouldBe(2,
             "The selector runs once and the arms are tested against what it produced. " +
             "Reading it once per arm would be wrong for a reader and wasteful for a machine.");
     }
@@ -369,7 +371,7 @@ public sealed class FlowEmitterTests
                         private static class Selectors
                         {
                             #line 13 "/src/Flows/Price.cs"
-                            public static readonly Func<FlowContext, Sample.Contracts.Channel> Step1 = ctx => ctx.Get<ValidatedOrder>().Channel;
+                            public static readonly Func<FlowContext<Sample.Contracts.PlaceOrder>, Sample.Contracts.Channel> Step1 = ctx => ctx.Get<ValidatedOrder>().Channel;
                             #line default
                         }
 
@@ -411,7 +413,7 @@ public sealed class FlowEmitterTests
                                 {
                                     case 1:
                                     {
-                                        var value = Selectors.Step1(ctx);
+                                        var value = Selectors.Step1(Typed(ctx));
 
                                         #line 14 "/src/Flows/Price.cs"
                                         if (System.Collections.Generic.EqualityComparer<Sample.Contracts.Channel>.Default.Equals(value, Sample.Contracts.Channel.Retail))
@@ -540,7 +542,8 @@ public sealed class FlowEmitterTests
             "One node carrying the child's identity and the mode.");
 
         source.ShouldContainText(
-            "public static readonly Func<FlowContext, Sample.Contracts.FulfilOrder> Step1 = " +
+            "public static readonly Func<FlowContext<Sample.Contracts.PlaceOrder>, " +
+            "Sample.Contracts.FulfilOrder> Step1 = " +
             "ctx => new FulfilOrder(ctx.Get<OrderId>());",
             "The mapping is a cached static typed at the child's input, copied verbatim.");
 

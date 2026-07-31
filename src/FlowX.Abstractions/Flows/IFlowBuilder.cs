@@ -239,6 +239,27 @@ public interface IFlowBuilder<TIn, TOut>
     IFlowBuilder<TIn, TOut> Delay(TimeSpan duration);
 
     /// <summary>Terminates with a business error.</summary>
+    /// <param name="error">
+    /// The failure the flow ends with. Reaches the generated dispatcher as a
+    /// <c>static readonly</c> field and never the manifest — an error's <em>message</em>
+    /// interpolates business values, and a manifest publishes structure.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The only terminal step, and the completed compensable steps unwind.</strong>
+    /// A rejection is a decision rather than an accident, which makes it tempting to read
+    /// as a clean exit with nothing to undo; it is not. By the time an arm rejects a
+    /// request the flow may already have reserved stock, and the reservation is as real as
+    /// it would be after a declined payment. So the engine treats this exactly as it treats
+    /// a capability that returned <c>Result.Fail(...)</c> — which is also what
+    /// <c>08 §3.2</c> told people to write while this was unimplemented, and the two must
+    /// not come to mean different things.
+    /// </para>
+    /// <para>
+    /// Control does not continue, so steps declared after one in the same block are
+    /// unreachable: <c>FLOWX1027</c> reports them and they are not compiled.
+    /// </para>
+    /// </remarks>
     IFlowBuilder<TIn, TOut> Fail(Error error);
 
     /// <summary>Produces the flow's output. Terminates the declaration.</summary>
