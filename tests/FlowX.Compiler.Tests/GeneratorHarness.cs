@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
@@ -110,6 +111,68 @@ internal static class GeneratorHarness
             .Create(new FlowPlanGenerator())
             .RunGeneratorsAndUpdateCompilation(compilation, out _, out _);
 
+        var result = driver.GetRunResult().Results.Single();
+
+        return new GeneratorRun(
+            result.Diagnostics,
+            [.. result.GeneratedSources.Select(s => (s.HintName, s.SourceText.ToString()))]);
+    }
+
+    /// <summary>Builds a compilation from several named files.</summary>
+    /// <remarks>
+    /// <see cref="Run(string)"/> puts everything in one tree, which is the right default
+    /// for a test about one flow and cannot express the question an incremental pipeline
+    /// answers: a syntax provider caches per tree, so "the capability and the thing it
+    /// depends on are in the same file" is the case where staleness is impossible by
+    /// construction. Naming the files is what makes the other case reachable.
+    /// </remarks>
+    public static CSharpCompilation CompilationOf(params (string Path, string Source)[] files) =>
+        CompilationOf("FlowX.GeneratorTests", [], files);
+
+    /// <summary>Builds a named compilation from several files, plus extra references.</summary>
+    /// <remarks>
+    /// The extra references exist for the one question that cannot be asked inside a single
+    /// compilation: what the reader does when a symbol's declaration is in another
+    /// assembly. Nothing else needs them.
+    /// </remarks>
+    public static CSharpCompilation CompilationOf(
+        string assemblyName,
+        IEnumerable<MetadataReference> extraReferences,
+        params (string Path, string Source)[] files) =>
+        CSharpCompilation.Create(
+            assemblyName,
+            files.Select(static f => CSharpSyntaxTree.ParseText(f.Source, path: f.Path)),
+            References.Concat(extraReferences),
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+
+    /// <summary>Replaces one file's contents, keeping every other tree identical.</summary>
+    /// <remarks>
+    /// Identical by reference, not merely by text: an incremental generator's caches are
+    /// keyed on the tree object, so rebuilding every tree from source would present the
+    /// driver with an all-new compilation and guarantee a full re-run, which would make
+    /// any test written on top of it pass for the wrong reason.
+    /// </remarks>
+    public static CSharpCompilation WithFileReplaced(CSharpCompilation compilation, string path, string source)
+    {
+        var original = compilation.SyntaxTrees.Single(t => string.Equals(t.FilePath, path, StringComparison.Ordinal));
+
+        return compilation.ReplaceSyntaxTree(original, CSharpSyntaxTree.ParseText(source, path: path));
+    }
+
+    /// <summary>A generator driver that records why each step re-ran.</summary>
+    /// <remarks>
+    /// Step tracking is off by default and costs enough that Roslyn makes it opt-in. It is
+    /// what separates "the output is right" from "the output is right because everything
+    /// re-ran", and only the second answers whether the pipeline is incremental.
+    /// </remarks>
+    public static GeneratorDriver TrackingDriver() =>
+        CSharpGeneratorDriver.Create(
+            [new FlowPlanGenerator().AsSourceGenerator()],
+            driverOptions: new GeneratorDriverOptions(IncrementalGeneratorOutputKind.None, trackIncrementalGeneratorSteps: true));
+
+    /// <summary>Reads one run's outputs off a driver that has already run.</summary>
+    public static GeneratorRun ResultOf(GeneratorDriver driver)
+    {
         var result = driver.GetRunResult().Results.Single();
 
         return new GeneratorRun(

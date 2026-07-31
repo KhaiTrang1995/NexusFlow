@@ -387,5 +387,45 @@ Stated so the decision is made with the uncertainty visible, not after it.
 
 ---
 
+## 9. Evidence recorded after this ADR was proposed
+
+**Nothing above has been changed.** §4's decision and the recommendation at the top stand
+exactly as written, and re-deciding them is the owner's to do. This section exists so a
+reader of the ADR discovers the measurements rather than only the questions.
+
+WP-36 went after §6's four open items. The results are in
+[**B13 — how often the derived error catalogue can actually be read**](../benchmarks/B13-error-catalogue-resolution.md),
+which also states, at length, why its headline number is weaker than it looks.
+
+| §6 open item | What was found |
+|---|---|
+| The real withheld rate | **39 % withheld** over a corpus of 38 capabilities — but the corpus was written by the same hand that reports the rate, so it is a property of that file list and not of any codebase. B13 §2 argues that no admissible rate can be taken until FlowX has users, and §9 names a cheaper substitute that does not require them. |
+| Whether an error-factory edit invalidates a catalogue elsewhere | **It invalidates correctly**, covered by four tests. The mechanism is that `ForAttributeWithMetadataName` combines with the `CompilationProvider`, so the transform re-runs for every capability on every edit anywhere — which answers the incremental-cost item below as a by-product. |
+| Incremental and IDE builds | **The inner loop pays the full derivation cost per edit, by construction**, not a fraction of it. The revisit trigger phrased against this can be considered answered without a timing run. |
+| Whether real projects pay more | Both effects measured. One two-term model fits nine points within 1.8 %: `217 kB/flow + types × (92.7 kB + 7.7 kB per extra statement)`. They are the same order of magnitude and cancel; B13 §6.2 gives the break-even table. |
+
+**Two findings that bear on the reasoning above rather than on §6, and that the owner
+should weigh before re-affirming §4:**
+
+1. **The derived catalogue *can* be wrong.** Four of the 38 capabilities are published with
+   a catalogue that disagrees with what they return — three claiming `errors: []` for a
+   capability that returns a code, one claiming a code it cannot return. This contradicts
+   §8's first positive consequence (*"a field that cannot be wrong"*) and the premise §3 C
+   uses to reject a declared list (*"a derived one cannot"*). It is a defect in
+   `ErrorCatalogueReader`, reported and not fixed, and B13 §5 sets out both directions and
+   what fixing it would cost in coverage. It cuts against §3 B as well as §3 C.
+2. **[07-Capability-Model §4](../07-Capability-Model.md)'s prescribed layout guarantees an
+   empty result.** The block that mandates the static error class also says contracts live
+   in a dedicated assembly, and the reader cannot follow a symbol into a referenced
+   assembly. `samples/ecommerce` does not show this because it is one project. This is
+   independent of which option is chosen and should be reconciled either way — it joins §7's
+   list.
+
+B13 §8 states what this evidence would change if the owner agrees with it, as a
+recommendation.
+
+---
+
 **Back to:** [ADR index](README.md) · [B12 at scale](../benchmarks/B12-scale.md) ·
+[B13 catalogue resolution](../benchmarks/B13-error-catalogue-resolution.md) ·
 [Roadmap](../20-Roadmap.md)

@@ -29,6 +29,18 @@ shared, so the semantic model cannot amortise the second flow against the first.
 solution where 200 flows share a dozen capabilities would be cheaper to compile and is not
 what "200-flow solution" is asked to mean.
 
+Both of those last two are assumptions about what real projects look like, and ADR-0014 §6
+records that neither has been measured — they point in opposite directions and nobody knows
+which wins. Two opt-in knobs exist to find out, and they are off by default because the
+default subject is hashed into docs/benchmarks/generator-cost-baseline.json:
+
+    --capability-body-lines N   pad every capability body with N extra statements
+    --capability-pool K         declare K sets of capabilities and share them across flows
+
+With both at their defaults the emitted project is byte-identical to what this script has
+always produced. scripts/measure-catalogue-shape.py drives the grid; the results are in
+docs/benchmarks/B13-error-catalogue-resolution.md §6.
+
 The output builds two ways — with the generator, and with its previously emitted sources
 compiled as ordinary files — using the same `FlowXGeneratorDisabled` condition
 `samples/ecommerce/Ecommerce.csproj` carries. That condition is what makes a like-for-like
@@ -177,6 +189,35 @@ CSPROJ_TEMPLATE = """<Project Sdk="Microsoft.NET.Sdk">
 """
 
 
+# Optional body padding, off by default so the gated subject is unchanged. See
+# docs/benchmarks/B13-error-catalogue-resolution.md §6: ADR-0014 §6 says "real capability
+# bodies are larger, which costs more per capability" and calls it an extrapolation. These
+# are statements, not failure paths — the count of Error-typed expressions stays fixed, so
+# the knob varies body size and nothing else, which is the only way to attribute a moved
+# number to it. A real body would grow both, so this understates.
+PADDING_TEMPLATES = (
+    "var pad{n} = input.Key.Length + input.Amount + {n};",
+    "var pad{n} = pad{prev} % 2 == 0 ? pad{prev} / 2 : (pad{prev} * 3) + 1;",
+    "var pad{n} = pad{prev} > 100 ? pad{prev} - 100 : pad{prev} + {n};",
+    "var pad{n} = System.Math.Max(pad{prev}, input.Amount) - System.Math.Min(pad{prev}, {n});",
+    "var pad{n} = input.Key.Length > {n} ? pad{prev} ^ {n} : pad{prev} & {n};",
+)
+
+
+def padding(lines: int) -> str:
+    """`lines` statements of ordinary arithmetic, indented into a capability body."""
+    if lines < 1:
+        return ""
+
+    rendered = []
+
+    for n in range(lines):
+        template = PADDING_TEMPLATES[0] if n == 0 else PADDING_TEMPLATES[n % len(PADDING_TEMPLATES)]
+        rendered.append("        " + template.format(n=n, prev=max(n - 1, 0)))
+
+    return "\n" + "\n".join(rendered) + "\n"
+
+
 def capability(
     *,
     type_name: str,
@@ -188,6 +229,7 @@ def capability(
     side_effects: tuple[str, ...],
     injected: bool,
     construct: str,
+    body_lines: int = 0,
 ) -> str:
     """One capability class: attribute, contracts, and the smallest honest body."""
     attribute_lines = [
@@ -229,7 +271,7 @@ def capability(
     {{
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(ctx);
-
+{padding(body_lines)}
         var current = await _store.ReadAsync(input.Key, ct).ConfigureAwait(false);
 
         if (current < 0)
@@ -252,7 +294,7 @@ def capability(
         CancellationToken ct)
     {{
         ArgumentNullException.ThrowIfNull(input);
-
+{padding(body_lines)}
         if (input.Amount <= 0)
         {{
             return ValueTask.FromResult(Result.Fail<{output_type}>(ScaleErrors.InvalidAmount(input.Amount)));
@@ -267,8 +309,8 @@ def capability(
 {body}"""
 
 
-def flow_source(index: int) -> str:
-    """The complete source file for one synthetic flow."""
+def type_parts(index: int, body_lines: int = 0) -> list[str]:
+    """The contracts and capabilities belonging to flow shape `index`, as source lines."""
     shape = SHAPES[index % len(SHAPES)]
     prefix = f"F{index:04d}"
     identity = f"f{index:04d}"
@@ -339,6 +381,7 @@ def flow_source(index: int) -> str:
                 side_effects=side_effects,
                 injected=n % 2 == 0,
                 construct=f"new {output_type}(input.Key, input.Amount)",
+                body_lines=body_lines,
             )
         )
         parts.append("")
@@ -359,9 +402,29 @@ def flow_source(index: int) -> str:
                 side_effects=("scale-ledger",),
                 injected=True,
                 construct=f"new {undone_input}(input.Key, input.Amount)",
+                body_lines=body_lines,
             )
         )
         parts.append("")
+
+    return parts
+
+
+def flow_block(index: int, type_index: int | None = None) -> str:
+    """The flow class for `index`, over the capability types declared by `type_index`.
+
+    The two indexes are the same in the default project, where every flow owns its own
+    capabilities. They differ under --capability-pool, which is what lets flow count and
+    capability-type count move independently — the ratio ADR-0014 §6 says nobody has
+    measured.
+    """
+    type_index = index if type_index is None else type_index
+    shape = SHAPES[type_index % len(SHAPES)]
+    prefix = f"F{type_index:04d}"
+    identity = f"f{index:04d}"
+    steps = shape["steps"]
+    compensated = set(shape["compensate"])
+    stage_types = [f"{prefix}Request"] + [f"{prefix}Stage{n}" for n in range(1, steps + 1)]
 
     chain: list[str] = []
 
@@ -402,11 +465,10 @@ def flow_source(index: int) -> str:
         f"                ctx.Get<{stage_types[steps]}>().Amount));"
     )
 
-    parts.append(
-        f"""/// <summary>Synthetic flow <c>{identity}.process</c>, shape {index % len(SHAPES)}.</summary>
+    return f"""/// <summary>Synthetic flow <c>{identity}.process</c>, shape {type_index % len(SHAPES)}.</summary>
 [Flow("{identity}.process", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral, Owner = "team-{index % 8}")]
 [FlowDeadline("PT30S")]
-public sealed partial class {prefix}Flow : Flow<{prefix}Request, {prefix}Result>
+public sealed partial class F{index:04d}Flow : Flow<{prefix}Request, {prefix}Result>
 {{
     /// <inheritdoc />
     protected override void Define(IFlowBuilder<{prefix}Request, {prefix}Result> flow)
@@ -417,15 +479,32 @@ public sealed partial class {prefix}Flow : Flow<{prefix}Request, {prefix}Result>
 {chr(10).join(chain)}
     }}
 }}"""
-    )
-
-    return "\n".join(parts) + "\n"
 
 
-def generate(flows: int, out: pathlib.Path, repo: pathlib.Path) -> None:
+def flow_source(index: int, body_lines: int = 0) -> str:
+    """The complete source file for one synthetic flow that owns its capabilities."""
+    return "\n".join(type_parts(index, body_lines) + [flow_block(index)]) + "\n"
+
+
+FILE_HEADER = ["using FlowX;", "", f"namespace {NAMESPACE};", ""]
+
+
+def generate(
+    flows: int,
+    out: pathlib.Path,
+    repo: pathlib.Path,
+    body_lines: int = 0,
+    capability_pool: int = 0,
+) -> None:
     """Write the whole project, replacing anything already at `out`."""
     if flows < 1:
         raise SystemExit("--flows must be at least 1.")
+
+    if body_lines < 0:
+        raise SystemExit("--capability-body-lines cannot be negative.")
+
+    if capability_pool < 0:
+        raise SystemExit("--capability-pool cannot be negative.")
 
     for project in ("FlowX.Abstractions", "FlowX.Core", "FlowX.Runtime", "FlowX.Compiler"):
         path = repo / "src" / project / f"{project}.csproj"
@@ -456,18 +535,54 @@ def generate(flows: int, out: pathlib.Path, repo: pathlib.Path) -> None:
         encoding="utf-8",
     )
 
-    steps = 0
-    compensations = 0
+    pool = flows if capability_pool in (0, None) else min(capability_pool, flows)
 
-    for index in range(flows):
-        shape = SHAPES[index % len(SHAPES)]
-        steps += shape["steps"]
-        compensations += len(shape["compensate"])
-        (out / "Flows" / f"F{index:04d}Flow.cs").write_text(flow_source(index), encoding="utf-8")
+    if pool == flows:
+        # The default project, unchanged to the byte: one file per flow holding its own
+        # contracts, its own capabilities and its flow class. scripts/check-generator-cost.py
+        # compares a SHA of these sources against a committed baseline and refuses the
+        # comparison when it moves, so this path must stay exactly as it was.
+        steps = 0
+        compensations = 0
+
+        for index in range(flows):
+            shape = SHAPES[index % len(SHAPES)]
+            steps += shape["steps"]
+            compensations += len(shape["compensate"])
+            (out / "Flows" / f"F{index:04d}Flow.cs").write_text(
+                flow_source(index, body_lines), encoding="utf-8")
+
+        capability_types = steps + compensations
+    else:
+        # Capability reuse. `pool` distinct sets of contracts and capabilities are declared
+        # once, and every flow draws its steps from set `index % pool`. Flow count and
+        # capability-type count then move independently, which is the whole point: ADR-0014
+        # §6 records that real projects reuse capabilities, that this would give a real
+        # 200-flow solution proportionally fewer capability types than the synthetic one,
+        # and that the effect has never been measured.
+        (out / "Capabilities").mkdir(parents=True)
+
+        steps = 0
+        compensations = 0
+
+        for index in range(pool):
+            shape = SHAPES[index % len(SHAPES)]
+            steps += shape["steps"]
+            compensations += len(shape["compensate"])
+            (out / "Capabilities" / f"F{index:04d}Types.cs").write_text(
+                "\n".join(type_parts(index, body_lines)) + "\n", encoding="utf-8")
+
+        for index in range(flows):
+            (out / "Flows" / f"F{index:04d}Flow.cs").write_text(
+                "\n".join(FILE_HEADER + [flow_block(index, index % pool)]) + "\n",
+                encoding="utf-8")
+
+        capability_types = steps + compensations
 
     print(
         f"{flows} flows, {steps} capability steps, {compensations} compensations, "
-        f"{steps + compensations} capability types, in {out}"
+        f"{capability_types} capability types ({capability_types / flows:.2f} per flow), "
+        f"{body_lines} padding lines per capability body, in {out}"
     )
 
 
@@ -481,9 +596,30 @@ def main(argv: list[str]) -> int:
         default=pathlib.Path(__file__).resolve().parent.parent,
         help="FlowX repository root the project references",
     )
+    parser.add_argument(
+        "--capability-body-lines",
+        type=int,
+        default=0,
+        help="pad every capability body with this many extra statements (default 0). "
+             "Varies body size without varying the number of failure paths.",
+    )
+    parser.add_argument(
+        "--capability-pool",
+        type=int,
+        default=0,
+        help="share capability types across flows: every flow draws its steps from one of "
+             "this many declared sets (default 0, meaning one set per flow). Lowers the "
+             "capability-types-per-flow ratio without changing the flow count.",
+    )
 
     args = parser.parse_args(argv)
-    generate(args.flows, args.out.resolve(), args.repo.resolve())
+    generate(
+        args.flows,
+        args.out.resolve(),
+        args.repo.resolve(),
+        body_lines=args.capability_body_lines,
+        capability_pool=args.capability_pool,
+    )
 
     return 0
 
