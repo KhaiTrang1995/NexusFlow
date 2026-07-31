@@ -55,9 +55,13 @@ namespace FlowX.Compiler.Analysis;
 /// <list type="bullet">
 /// <item>
 /// A step written with the explicit-mapping overload,
-/// <c>.Step&lt;TCapability, TStepIn&gt;(ctx =&gt; …)</c>, supplies its own input from a
-/// lambda instead of from the bag. It is skipped as a consumer and still counted as a
-/// producer.
+/// <c>.Step&lt;TCapability, TStepIn&gt;(ctx =&gt; …)</c>, is skipped as a consumer and
+/// still counted as a producer. This is not a gap the rule tolerates, it is what the
+/// generated code does: the emitted dispatcher runs the mapping and passes its result to
+/// the capability as an argument, so the step's declared input never reaches a
+/// <c>ctx.Get</c> and its absence from the bag cannot fail anything. The step's
+/// <em>output</em> is written to the bag exactly as any other step's is, which is why it
+/// still produces.
 /// </item>
 /// <item>
 /// The chain is read up to the first call whose effect on the bag is not known —
@@ -139,7 +143,7 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
     private static void Analyze(SyntaxNodeAnalysisContext context)
     {
         if (context.Node is not ClassDeclarationSyntax declaration ||
-            context.SemanticModel.GetDeclaredSymbol(declaration) is not INamedTypeSymbol flowType ||
+            context.SemanticModel.GetDeclaredSymbol(declaration, context.CancellationToken) is not INamedTypeSymbol flowType ||
             !CarriesFlowAttribute(flowType))
         {
             return;
@@ -257,9 +261,11 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
             return false;
         }
 
-        // Only the one-argument overload binds from the bag. The two-argument form names
-        // its own input and maps it, which is the documented fix for this very diagnostic
-        // — reporting it would fire on the remedy.
+        // Only the one-argument overload binds from the bag, so only it can be reported.
+        // The two-argument form names its own input and maps it, and the generated
+        // dispatcher passes the mapping's result to the capability as an argument — the
+        // declared input never reaches a ctx.Get, so it being absent from the bag cannot
+        // fail at run time and there is nothing here to report.
         if (link.TypeArguments.Count == 1 && !available.Contains(contract.Value.Input))
         {
             context.ReportDiagnostic(Diagnostic.Create(
