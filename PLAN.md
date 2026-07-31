@@ -936,6 +936,49 @@ reproducibility is the one untested assumption, since Roslyn sizes some pools fr
 
 ---
 
+### WP-33…WP-36 — the packages P1's own findings created
+
+| | |
+|---|---|
+| **WP-34** | A test that can fail on the parallel context race. The window was not narrow — it did not exist: overwrites into an already-allocated dictionary slot cannot corrupt anything, and the pooled context keeps its buckets across `Reset`. Fixed with inserts, a fresh engine per iteration and a **spin** rendezvous. Verified by mutation: fails 4 of 4 unguarded |
+| **WP-35** | The CI suppression step **deleted, not repaired** — two implementations of one rule, on the same triggers, with the weaker one being what a developer meets first. Six of seven fitness functions `05 §12` claimed now exist; `PluginsPassConformance` is named as blocked on a conformance suite and a second plugin |
+| **WP-36** | The evidence ADR-0014 said nobody had. See below — the number is not the finding |
+
+**WP-36's measurement is honest about what it cannot settle, and that is why it is
+useful.** There is no FlowX code in the world, so the population is empty: the 39 %
+withheld rate is a property of a 38-capability corpus one person chose, not a sample of
+anything. What transfers is the **per-pattern table**, because whether
+`Result.Fail<T>(code, message, category)` resolves is a fact about the reader rather
+than about the corpus.
+
+**The serious finding is that the derived catalogue can be positively wrong.** ADR-0014
+§3 C rejects a *declared* list partly because a declared list can drift out of truth
+while a derived one cannot. That premise is false. When a failure stays inside
+`Result<T>` for its whole journey it never takes the shape of an `Error`, so the scan
+finds nothing, finds nothing it *could not* follow, and emits `errors: []` — the
+schema's positive statement that the capability returns no declared error. `flowx diff`
+treats that as authoritative. A wrong contract is worse than a slow build, and this is
+a different object from the one the ADR argues about.
+
+**Correctness costs coverage.** Fixing the under-report moves the same corpus from 39 %
+to 47 % withheld. That trade is the decision, and it is not one to make inside a
+benchmark.
+
+**Incremental invalidation is correct, and that is the cost.** The transform combines
+with the `CompilationProvider` before it runs, so it re-runs for every capability on
+every edit anywhere — Roslyn reports `Unchanged`, never `Cached`. The IDE's inner loop
+pays full derivation per keystroke, by construction. That answers ADR-0014's revisit
+trigger without a timing run.
+
+**And a measurement defect in the ADR's own proposal.** §4(1) suggests re-expressing the
+budget as *ms per capability type*. Measured, this generator reports 134 kB per
+capability type on the default project and 526 kB on a reuse-heavy one — **3.9× on the
+same compiler at the same flow count** — because dividing a per-*flow* term by a
+capability count is not a per-unit figure. The proposed replacement budget has the
+defect it exists to fix.
+
+---
+
 ## 5. Definition of Ready
 
 A work package may start only when all are true. This prevents the most common

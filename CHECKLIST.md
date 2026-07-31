@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 984/984 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 993/993 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -488,6 +488,26 @@ which is the exact failure mode P1 exists to remove:
       entirely** when it could not be resolved. A catalogue short by one entry reads
       exactly like a complete one, so an unresolvable case has to be visibly absent
       rather than quietly approximated
+- [ ] **⚠ The three-state rule has a fourth state nobody designed: positively wrong.**
+      Found by WP-36. The rule above assumes the reader either resolves a catalogue or
+      knows it could not. There is a third outcome: **it finds nothing, finds nothing it
+      *could not* follow, and publishes `errors: []`** — which the schema defines as the
+      positive claim *"this capability returns no declared error"*. It happens whenever a
+      failure stays inside `Result<T>` for its whole journey and never takes the shape of
+      an `Error`, and it is reachable through the **first-party**
+      `Result.Fail<T>(code, message, category)` overload — whose sibling
+      `Fail<T>(Error)` resolves correctly. Same intent, one publishes the truth and the
+      other a confident falsehood. Also hit by a one-line capability delegating to a
+      service that returns `Result<T>`, which is a very common shape. **`flowx diff`
+      treats the field as authoritative**, so a wrong catalogue is worse than a slow
+      build — and it contradicts ADR-0014's stated premise that a *derived* list cannot
+      be wrong where a declared one can. Fixing it moves the measured corpus from 39 % to
+      47 % withheld: **correctness costs coverage, and someone has to choose**
+- [ ] **`07-Capability-Model` §4 prescribes a layout the reader cannot follow.** It
+      mandates the static error class in the same breath as putting contracts in a
+      dedicated assembly — across an assembly boundary, which is exactly where the scan
+      stops. A team following the documentation exactly gets **no catalogue at all**.
+      `samples/ecommerce` misses this only because it is a single project
 
 **Gaps WP-20 and WP-22 surfaced in turn.** Same class again — declared, documented or
 reachable, and enforced or honoured by nothing:
