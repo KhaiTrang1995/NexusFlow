@@ -40,11 +40,13 @@ The message names the construct it found — "the `Switch` selector in flow 'X'�
 `Return` projection in flow 'X'…" — because a reader pointed at the wrong noun goes looking
 for a `When` that is not there, and then stops believing the diagnostic.
 
-> **Two of these are checked before they are executed.** `Step<TCapability, TStepIn>(map)`,
-> `ForEach` and `SubFlow` are on the builder and are not yet modelled by `FlowAnalyzer`, so
-> their delegates do not run today. They are checked anyway. A rule that waits for the
-> emitter arrives after the code it was meant to stop, and checking a lambda that is
-> currently ignored costs nothing and is correct the day it is not.
+> **Two of these are checked before they are executed.** `Step<TCapability, TStepIn>(map)`
+> and `SubFlow` are on the builder and are not yet modelled by `FlowAnalyzer`, so their
+> delegates do not run today. They are checked anyway. A rule that waits for the emitter
+> arrives after the code it was meant to stop, and checking a lambda that is currently
+> ignored costs nothing and is correct the day it is not — which is what happened to the
+> `ForEach` selector: it was listed here before anything ran it, and it is enforced
+> unchanged now that the loop compiles.
 
 **What the context is allowed to give you.** Everything reachable from the delegate's own
 parameter is permitted — including `ctx.UtcNow`, `ctx.NewId()` and `ctx.Random`. That is

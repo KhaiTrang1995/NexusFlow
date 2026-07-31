@@ -440,6 +440,64 @@ public sealed class MermaidRendererTests
             "exit of its own.");
     }
 
+    /// <summary>A flow with a <c>ForEach</c>, as the compiler publishes it.</summary>
+    /// <remarks>
+    /// One block, because a loop has one body. Neither the collection nor the concurrency
+    /// bound is in the manifest, so neither can be in the diagram.
+    /// </remarks>
+    private const string ForEachManifest = """
+        {
+          "schemaVersion": "0.1.0",
+          "application": { "name": "Sample.App", "version": "1.0.0" },
+          "flows": [
+            {
+              "id": "order.reserve", "version": "1.0.0", "profile": "Ephemeral",
+              "steps": [
+                { "id": 0, "kind": "Capability", "capability": "order.split@1.0.0" },
+                { "id": 1, "kind": "ForEach", "branches": [
+                    [ { "id": 2, "kind": "Capability", "capability": "inventory.reserve_line@1.0.0",
+                        "compensation": "inventory.release_line@1.0.0" } ]
+                  ] },
+                { "id": 3, "kind": "Capability", "capability": "order.confirm@1.0.0" }
+              ],
+              "emits": []
+            }
+          ],
+          "capabilities": []
+        }
+        """;
+
+    [Fact]
+    public void DrawsALoopAsASubroutineWithOneEdgeIntoItsBody()
+    {
+        var diagram = MermaidRenderer.Render(Parse(ForEachManifest));
+
+        // Not a diamond and not a fork's stadium: a loop makes no decision and runs no
+        // siblings. Mermaid's subroutine box is the shape for "this runs a block".
+        diagram.ShouldContain("f0s1[[\"for each\"]]");
+
+        // "each" rather than a number or a count. How many times the block runs is data,
+        // and the manifest deliberately carries none.
+        diagram.ShouldContain("f0s1 -->|each| f0s2");
+        diagram.ShouldContain("f0s2 --> f0s3");
+
+        diagram.Contains("f0s1 --> f0s3", StringComparison.Ordinal).ShouldBeTrue(
+            "A loop is its own exit, and unlike a one-branch fork that is not a quirk of " +
+            "the rule: a collection with no elements really does continue past the body " +
+            "without running it, exactly as a `When` nobody took does.");
+    }
+
+    [Fact]
+    public void APerElementCompensationIsDrawnLikeAnyOther()
+    {
+        // It runs once per element rather than once, which is a run-time fact; the edge
+        // says what undoes what, which is the declared one.
+        var diagram = MermaidRenderer.Render(Parse(ForEachManifest));
+
+        diagram.ShouldContain("f0s2c[/\"undo inventory.release_line\"/]");
+        diagram.ShouldContain("f0s2 -.-> f0s2c");
+    }
+
     [Fact]
     public void AForkWhoseMergeCouldNotBeReadIsStillDrawnAsAFork()
     {

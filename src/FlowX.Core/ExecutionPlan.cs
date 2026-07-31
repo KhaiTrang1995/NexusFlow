@@ -61,15 +61,24 @@ public sealed class ExecutionPlan
     public bool HasCompensation => !CompensableStepIndices.IsEmpty;
 
     /// <summary>
-    /// True when any step is a <see cref="StepKind.Parallel"/> fork, and therefore when
-    /// more than one thread can touch this flow's context at once.
+    /// True when more than one thread can touch this flow's context at once: the flow
+    /// contains a <see cref="StepKind.Parallel"/> fork, or a <see cref="StepKind.ForEach"/>
+    /// that may run several iterations concurrently.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Precomputed here for the same reason <see cref="CompensableStepIndices"/> is, but
     /// with a sharper consequence: it is what the runtime reads to decide whether the
     /// flow's state bag needs guarding. A flow that does not fork pays nothing for the
     /// possibility that another one does, which is what keeps budget B2 at a hard zero for
     /// the linear, conditional and switch paths.
+    /// </para>
+    /// <para>
+    /// <strong>A <c>ForEach</c> counts only when its bound is greater than one.</strong>
+    /// The question this property answers is not "does the flow loop" but "can two threads
+    /// reach the context", and a loop that runs one element at a time cannot — so a
+    /// sequential iteration keeps the unguarded fast path, exactly as a conditional does.
+    /// </para>
     /// </remarks>
     public bool HasParallel { get; }
 
@@ -97,7 +106,8 @@ public sealed class ExecutionPlan
                 compensable.Add(step.Index);
             }
 
-            parallel |= step.Kind == StepKind.Parallel;
+            parallel |= step.Kind == StepKind.Parallel ||
+                        (step.Kind == StepKind.ForEach && step.MaxDegreeOfParallelism > 1);
 
             AddEffects(effects, step.Capability);
             AddEffects(effects, step.Compensation);

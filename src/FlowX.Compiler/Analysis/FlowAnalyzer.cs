@@ -331,6 +331,13 @@ public static class FlowAnalyzer
                     AddParallelStep(link, semanticModel, diagnostics, steps, ref nextIndex);
                     break;
 
+                case "ForEach":
+                    // One call, like Parallel and unlike When and Switch: the body arrives
+                    // as a lambda argument rather than as a later link, so nothing after
+                    // this link is consumed.
+                    AddForEachStep(link, semanticModel, diagnostics, steps, ref nextIndex);
+                    break;
+
                 default:
                     // Return, and anything the DSL grows in a later phase. Skipped rather
                     // than reported — see the class remarks on why a generator must not
@@ -481,7 +488,7 @@ public static class FlowAnalyzer
             return consumed;
         }
 
-        var valueType = ResolveSwitchValueType(switchLink, semanticModel);
+        var valueType = ResolveSingleTypeArgument(switchLink, semanticModel);
 
         if (valueType is null)
         {
@@ -637,6 +644,83 @@ public static class FlowAnalyzer
             FormatLocation(link.CallLocation)));
     }
 
+    /// <summary>
+    /// Models a <c>.ForEach(selector, body, options)</c> and lays its body out in the flat
+    /// index space.
+    /// </summary>
+    /// <param name="link">The <c>.ForEach</c> call.</param>
+    /// <param name="semanticModel">Resolves the element type and the body's capabilities.</param>
+    /// <param name="diagnostics">Collects everything worth reporting.</param>
+    /// <param name="steps">The block being built.</param>
+    /// <param name="nextIndex">The shared flat index counter.</param>
+    /// <remarks>
+    /// <para>
+    /// The same trial-layout shape <see cref="AddParallelStep"/> uses, and for the same
+    /// reason: the loop occupies an index of its own, so its body has to be numbered from
+    /// one past it — and if the body turns out to be empty, that reservation is a gap, which
+    /// <c>StepGraph</c> rejects at type initialisation. Building into a scratch diagnostics
+    /// list and keeping the layout only when there is a body costs a rebuild in a case
+    /// nobody writes on purpose.
+    /// </para>
+    /// <para>
+    /// <strong>A <c>ForEach</c> with an empty body is not laid out at all</strong> — not
+    /// even as its steps, because there are none. That is the same treatment a
+    /// <c>Switch</c> with no <c>Case</c> and a <c>Parallel</c> with one branch get: a shape
+    /// the flow does not really have is not published as one.
+    /// </para>
+    /// </remarks>
+    private static void AddForEachStep(
+        ChainLink link,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        List<StepModel> steps,
+        ref int nextIndex)
+    {
+        var arguments = link.Invocation.ArgumentList.Arguments;
+
+        // `.ForEach(selector, body, options)` takes all three, so a call missing one does
+        // not compile. Reachable only from a half-typed buffer, where the C# compiler is
+        // already saying something more useful than a FlowX diagnostic would.
+        if (arguments.Count < 3)
+        {
+            return;
+        }
+
+        var itemType = ResolveSingleTypeArgument(link, semanticModel);
+
+        if (itemType is null)
+        {
+            // The emitted selector is a typed field; without the element type there is no
+            // compilable shape to emit, and guessing `object` would box every element.
+            return;
+        }
+
+        var trialDiagnostics = new List<Diagnostic>();
+        var trialCursor = nextIndex + 1;
+
+        var body = BuildBlock(
+            FlowChainWalker.WalkBlock(link, 1), semanticModel, trialDiagnostics, ref trialCursor);
+
+        if (body.Count == 0)
+        {
+            return;
+        }
+
+        var loopIndex = nextIndex;
+
+        nextIndex = trialCursor;
+        diagnostics.AddRange(trialDiagnostics);
+
+        steps.Add(StepModel.ForEach(
+            loopIndex,
+            arguments[0].Expression.ToString(),
+            itemType,
+            body,
+            arguments[2].Expression.ToString(),
+            FormatLocation(arguments[0].Expression.GetLocation()),
+            FormatLocation(link.CallLocation)));
+    }
+
     /// <summary>Builds every branch block, numbering them back to back from the cursor.</summary>
     private static List<ParallelBranchModel> BuildBranches(
         List<ChainLink> branchLinks,
@@ -778,15 +862,18 @@ public static class FlowAnalyzer
     }
 
     /// <summary>
-    /// The fully-qualified type of the value a <c>.Switch(...)</c> selects on.
+    /// The fully-qualified type C# inferred for a one-type-argument builder call: the
+    /// value a <c>.Switch(...)</c> selects on, or the element a <c>.ForEach(...)</c>
+    /// iterates.
     /// </summary>
     /// <remarks>
     /// Read from the resolved method's type argument rather than from the lambda body,
     /// because that is what C# itself inferred and therefore what every <c>.Case(...)</c>
-    /// was type-checked against. Inferring it again from the body would be a second
-    /// opinion that can disagree with the compiler's.
+    /// was type-checked against — and, for a loop, what the body's steps bind against.
+    /// Inferring it again from the body would be a second opinion that can disagree with
+    /// the compiler's.
     /// </remarks>
-    private static string? ResolveSwitchValueType(ChainLink link, SemanticModel semanticModel)
+    private static string? ResolveSingleTypeArgument(ChainLink link, SemanticModel semanticModel)
     {
         var method = semanticModel.GetSymbolInfo(link.Invocation).Symbol as IMethodSymbol;
 

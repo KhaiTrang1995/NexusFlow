@@ -41,6 +41,15 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     private readonly Dictionary<int, int> _cases = [];
     private readonly HashSet<int> _yieldingSteps = [];
 
+    // Shaped exactly like the two methods the generator emits: a delegate that knows the
+    // element type, so the engine sees only an opaque handle and a FlowContext. Writing
+    // them by hand first is what proves the contract is implementable at all.
+    private readonly Dictionary<int, IterationSource> _collections = [];
+    private readonly Dictionary<int, Func<IterationSource, int, FlowContext, FlowContext>> _scopes = [];
+
+    private readonly Dictionary<(int Index, int Visit), Error> _visitFailures = [];
+    private readonly Dictionary<int, int> _visits = [];
+
     /// <summary>Step indices executed, in the order the engine invoked them.</summary>
     public List<int> Executed { get; } = [];
 
@@ -69,6 +78,28 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     /// <summary>Set to make a switch selector throw rather than answer.</summary>
     public int? ThrowAtSwitch { get; set; }
 
+    /// <summary>Set to make a collection selector throw rather than produce a collection.</summary>
+    public int? ThrowAtIteration { get; set; }
+
+    /// <summary>Iteration indices the engine asked for a collection, in the order it asked.</summary>
+    /// <remarks>
+    /// Recorded so a test can assert the selector ran <em>once</em> for a loop of ten
+    /// elements. Running it per element would be free here and, in a durable flow, would
+    /// have to produce the same collection every time.
+    /// </remarks>
+    public List<int> Iterated { get; } = [];
+
+    /// <summary>
+    /// The contexts each compensation ran under, in unwind order.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="ContextsSeen"/> these <em>can</em> be read after the flow: inside a
+    /// loop the entry is the iteration's scope, which is not pooled and still holds its
+    /// element. That is what lets a test check that the undo of the third line undid the
+    /// third line.
+    /// </remarks>
+    public List<FlowContext> CompensationScopes { get; } = [];
+
     /// <summary>The context instances seen, for reference-identity assertions only.</summary>
     /// <remarks>
     /// Do not read values off these after the engine returns: the context is reset the
@@ -91,6 +122,21 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     public RecordingDispatcher FailAt(int index, Error error)
     {
         _failures[index] = error;
+        return this;
+    }
+
+    /// <summary>
+    /// Makes the <paramref name="visit"/>-th execution of step <paramref name="index"/>
+    /// fail, counting from one.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="FailAt"/> is not enough inside a loop: one index runs once per element,
+    /// so "fail step 3" means "fail every element". Pinning the failure to a visit is what
+    /// lets a test say that the <em>third</em> line was the one that was declined.
+    /// </remarks>
+    public RecordingDispatcher FailAtNthVisit(int index, int visit, Error error)
+    {
+        _visitFailures[(index, visit)] = error;
         return this;
     }
 
@@ -136,8 +182,27 @@ internal sealed class RecordingDispatcher : IStepDispatcher
         return this;
     }
 
+    /// <summary>Makes the iteration at <paramref name="index"/> walk <paramref name="items"/>.</summary>
+    /// <remarks>
+    /// The two delegates are the hand-written version of what the generator emits: the
+    /// collection is captured behind an <see cref="IterationSource"/> the engine treats as
+    /// opaque, and only this method — which knows <typeparamref name="TItem"/> — ever turns
+    /// it back into an element.
+    /// </remarks>
+    public RecordingDispatcher IterateOver<TItem>(int index, IReadOnlyList<TItem> items)
+    {
+        _collections[index] = new IterationSource(items, items.Count);
+        _scopes[index] = (source, element, ctx) =>
+            IterationScope.For(ctx, ((IReadOnlyList<TItem>)source.Items!)[element]);
+
+        return this;
+    }
+
     /// <summary>Highest number of steps observed running at once. 1 means nothing overlapped.</summary>
     public int PeakConcurrency { get; private set; }
+
+    /// <summary>The last <see cref="ForEachOutcome"/> any step could see, or <c>null</c>.</summary>
+    public ForEachOutcome? OutcomeAfterTheLoop { get; private set; }
 
     private int _running;
 
@@ -151,6 +216,8 @@ internal sealed class RecordingDispatcher : IStepDispatcher
             ct.ThrowIfCancellationRequested();
         }
 
+        int visit;
+
         lock (_recording)
         {
             _running++;
@@ -158,6 +225,16 @@ internal sealed class RecordingDispatcher : IStepDispatcher
             Executed.Add(stepIndex);
             ContextsSeen.Add(ctx);
             Snapshots.Add(ContextSnapshot.Of(ctx));
+
+            visit = _visits.TryGetValue(stepIndex, out var seen) ? seen + 1 : 1;
+            _visits[stepIndex] = visit;
+
+            // Captured whenever it is there, so a test can read what a loop published
+            // without the double having to know which step follows the loop.
+            if (ctx.TryGet<ForEachOutcome>(out var outcome))
+            {
+                OutcomeAfterTheLoop = outcome;
+            }
         }
 
         try
@@ -166,6 +243,11 @@ internal sealed class RecordingDispatcher : IStepDispatcher
             {
                 await Task.Yield();
                 ct.ThrowIfCancellationRequested();
+            }
+
+            if (_visitFailures.TryGetValue((stepIndex, visit), out var visitError))
+            {
+                return StepOutcome.Failed(visitError);
             }
 
             return _failures.TryGetValue(stepIndex, out var error)
@@ -187,6 +269,7 @@ internal sealed class RecordingDispatcher : IStepDispatcher
         lock (_recording)
         {
             Compensated.Add(stepIndex);
+            CompensationScopes.Add(ctx);
         }
 
         return _compensationFailures.TryGetValue(stepIndex, out var error)
@@ -229,6 +312,30 @@ internal sealed class RecordingDispatcher : IStepDispatcher
 
         return _cases.TryGetValue(stepIndex, out var arm) ? arm : -1;
     }
+
+    /// <inheritdoc />
+    public IterationSource BeginIteration(int stepIndex, FlowContext ctx)
+    {
+        lock (_recording)
+        {
+            Iterated.Add(stepIndex);
+        }
+
+        if (ThrowAtIteration == stepIndex)
+        {
+            // The realistic failure: a selector reading a value no step on the path so
+            // far produced. FlowContext.Get<T> throws exactly this.
+            throw new InvalidOperationException("The selector read a collection no step produced.");
+        }
+
+        // An unlisted iteration walks nothing, so a test that says nothing exercises the
+        // empty-collection path — which is the one most likely to be forgotten.
+        return _collections.TryGetValue(stepIndex, out var source) ? source : IterationSource.Empty;
+    }
+
+    /// <inheritdoc />
+    public FlowContext EnterIteration(int stepIndex, in IterationSource source, int iteration, FlowContext ctx) =>
+        _scopes[stepIndex](source, iteration, ctx);
 }
 
 /// <summary>
@@ -439,6 +546,76 @@ internal static class Plans
             StepNode.ForCapability(3, Capture, Refund),
             StepNode.ForCapability(4, Validate),
             StepNode.ForEmit(5, "order.enriched"),
+        ]));
+
+    /// <summary>
+    /// A loop, written out as the flat layout the compiler produces:
+    /// <c>0 validate · 1 foreach(body 2..4, join 4) · 2 reserve · 3 capture · 4 emit</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Spelled out rather than built by a helper, for the same reason
+    /// <see cref="Conditional"/>, <see cref="Switching"/> and <see cref="Parallel"/> are.
+    /// </para>
+    /// <para>
+    /// <strong>The body appears once</strong>, however many elements the collection turns
+    /// out to hold — that is the whole shape. It has no target of its own and no closing
+    /// jump: it is the span between the loop node and its join, and the engine re-enters
+    /// that span per element.
+    /// </para>
+    /// <para>
+    /// Step 2 is compensable, so an unwind can be checked to cover every element's work in
+    /// strict reverse.
+    /// </para>
+    /// </remarks>
+    public static ExecutionPlan ForEach(int maxDegreeOfParallelism = 1, bool continueOnError = false) =>
+        ExecutionPlan.Create(
+            FlowDescriptor.Create("order.reserve", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+            StepGraph.Create([
+                StepNode.ForCapability(0, Validate),
+                StepNode.ForEach(1, joinTarget: 4, new ForEachOptions
+                {
+                    MaxDegreeOfParallelism = maxDegreeOfParallelism,
+                    ContinueOnError = continueOnError,
+                }),
+                StepNode.ForCapability(2, Reserve, Release),
+                StepNode.ForCapability(3, Capture),
+                StepNode.ForEmit(4, "order.reserved"),
+            ]));
+
+    /// <summary>
+    /// A loop with a single-step body, so the per-element cost is not diluted by the work
+    /// inside it: <c>0 foreach(body 1..2, join 2) · 1 reserve · 2 emit</c>.
+    /// </summary>
+    public static ExecutionPlan ForEachWithOneStepBody(int maxDegreeOfParallelism = 1) => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.count", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForEach(0, joinTarget: 2, new ForEachOptions
+            {
+                MaxDegreeOfParallelism = maxDegreeOfParallelism,
+            }),
+            StepNode.ForCapability(1, Validate),
+            StepNode.ForEmit(2, "order.counted"),
+        ]));
+
+    /// <summary>
+    /// A loop inside a loop: <c>0 foreach(body 1..4) · 1 foreach(body 2..3) · 2 reserve ·
+    /// 3 capture · 4 emit</c>.
+    /// </summary>
+    /// <remarks>
+    /// The inner loop is an ordinary step of the outer's body, numbered from the same flat
+    /// counter, and step 3 is what follows it inside that body. Nothing about the layout is
+    /// special-cased for nesting — which is the claim worth testing, because the alternative
+    /// is a scope chain that resolves to the wrong element.
+    /// </remarks>
+    public static ExecutionPlan NestedForEach() => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.explode", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForEach(0, joinTarget: 4, new ForEachOptions { MaxDegreeOfParallelism = 1 }),
+            StepNode.ForEach(1, joinTarget: 3, new ForEachOptions { MaxDegreeOfParallelism = 1 }),
+            StepNode.ForCapability(2, Reserve),
+            StepNode.ForCapability(3, Capture),
+            StepNode.ForEmit(4, "order.exploded"),
         ]));
 
     /// <summary>Two steps, neither compensable.</summary>

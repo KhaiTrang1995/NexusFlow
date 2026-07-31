@@ -302,4 +302,33 @@ public static class FlowErrors
             .With("stepIndex", stepIndex)
             .With("exceptionType", exception.GetType().FullName);
     }
+
+    /// <summary>
+    /// A <c>ForEach</c> selector threw instead of producing a collection.
+    /// </summary>
+    /// <param name="flowId">The flow whose iteration failed.</param>
+    /// <param name="stepIndex">Index of the iteration, so the failure names one selector.</param>
+    /// <param name="exception">What the selector threw.</param>
+    /// <remarks>
+    /// Its own code rather than <see cref="SelectorFailed"/>, for the reason that one is
+    /// distinct from <see cref="PredicateFailed"/>: the three point at different lines and
+    /// at different mistakes, and "the switch selector at step 4 threw" would be actively
+    /// misleading when step 4 is a loop. Reported as <see cref="ErrorCategory.Internal"/>
+    /// on the same grounds — the selector is pure by construction, so it throwing is a
+    /// defect rather than a transient fault, and no element has run when it happens.
+    /// </remarks>
+    public static Error IterationFailed(string flowId, int stepIndex, Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        return new Error(
+            "flow.iteration_failed",
+            $"The collection selector at step {stepIndex} of flow '{flowId}' threw " +
+            $"{exception.GetType().Name}. A selector may read only the context, the flow " +
+            "input and prior step results, and must not throw.",
+            ErrorCategory.Internal)
+            .With("flowId", flowId)
+            .With("stepIndex", stepIndex)
+            .With("exceptionType", exception.GetType().FullName);
+    }
 }

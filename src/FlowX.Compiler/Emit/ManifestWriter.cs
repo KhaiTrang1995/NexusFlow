@@ -451,6 +451,12 @@ public static class ManifestWriter
             return;
         }
 
+        if (step.Kind == StepKindModel.ForEach)
+        {
+            WriteIterationBody(writer, step);
+            return;
+        }
+
         if (step.Kind != StepKindModel.Condition)
         {
             return;
@@ -540,6 +546,35 @@ public static class ManifestWriter
             WriteBranch(writer, branch.Steps);
         }
 
+        writer.CloseArray();
+    }
+
+    /// <summary>
+    /// Writes a loop's body as <c>branches</c>: one array, because a loop has one block.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same <c>branches</c> array the other three shapes use, because it means the same
+    /// thing: these steps belong to this step. What differs is how many times the block
+    /// runs, and <c>kind</c> already says <c>ForEach</c>.
+    /// </para>
+    /// <para>
+    /// <strong>Neither the collection nor the bound is published, and the two are refused
+    /// for different reasons.</strong> The selector is a business value in the sense that
+    /// matters — <c>ctx.Get&lt;ValidatedOrder&gt;().Lines</c> names the shape of somebody's
+    /// data — and the rule that makes this file safe to publish is structure only, never
+    /// values. <c>MaxDegreeOfParallelism</c> is not a value in that sense, it is a bound;
+    /// it stays out because the committed schema's step object is
+    /// <c>additionalProperties: false</c> and has no field for it, and a tuning number is
+    /// not worth changing a published contract for. A reader therefore sees that a flow
+    /// iterates and what it does per element, but not over what and not how fast.
+    /// </para>
+    /// </remarks>
+    private static void WriteIterationBody(JsonWriter writer, StepModel step)
+    {
+        writer.PropertyName("branches");
+        writer.OpenArray();
+        WriteBranch(writer, step.Body);
         writer.CloseArray();
     }
 
@@ -752,6 +787,7 @@ public static class ManifestWriter
         StepKindModel.Condition => "Condition",
         StepKindModel.Switch => "Switch",
         StepKindModel.Parallel => "Parallel",
+        StepKindModel.ForEach => "ForEach",
         _ => "Capability",
     };
 

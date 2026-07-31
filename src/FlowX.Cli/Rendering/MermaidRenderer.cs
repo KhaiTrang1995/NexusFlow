@@ -154,6 +154,13 @@ public static class MermaidRenderer
             return "branch " + branch.ToString(CultureInfo.InvariantCulture);
         }
 
+        // A loop has one block and runs it once per element. "each" is the true thing to
+        // say about the edge; how many times is data, and the manifest does not carry it.
+        if (step.Kind == "ForEach")
+        {
+            return "each";
+        }
+
         if (step.Kind != "Switch")
         {
             return branch == 0 ? "yes" : "no";
@@ -222,6 +229,14 @@ public static class MermaidRenderer
             return string.IsNullOrEmpty(step.Merge) ? "parallel" : "parallel · " + step.Merge;
         }
 
+        if (step.Kind == "ForEach")
+        {
+            // Not the collection, for the same reason a condition is not its predicate:
+            // the manifest has no field for it, and it would be business data if it did.
+            // Not the concurrency bound either — the manifest does not carry it.
+            return "for each";
+        }
+
         if (step.Kind is "Condition" or "Switch")
         {
             // Not the predicate, and not the selector or the case values: the manifest's
@@ -265,6 +280,9 @@ public static class MermaidRenderer
         // A stadium with a doubled border: a fork is not a decision, so it must not wear a
         // decision's diamond.
         "Parallel" => $"[/{Quote(label)}/]",
+        // A subroutine box, which is Mermaid's shape for "this runs a block". A loop is
+        // not a decision either, and it is not a fork: exactly one block, run repeatedly.
+        "ForEach" => $"[[{Quote(label)}]]",
         _ => $"[{Quote(label)}]",
     };
 

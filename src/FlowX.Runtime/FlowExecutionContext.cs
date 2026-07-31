@@ -218,19 +218,19 @@ public sealed class FlowExecutionContext : FlowContext
     /// undone before the other was never expressing concurrency in the first place.
     /// </para>
     /// </remarks>
-    internal void RecordCompleted(StepNode step)
+    internal void RecordCompleted(StepNode step, FlowContext? scope = null)
     {
         if (_guarded)
         {
             lock (_state)
             {
-                _compensations.RecordCompleted(step);
+                _compensations.RecordCompleted(step, scope);
             }
 
             return;
         }
 
-        _compensations.RecordCompleted(step);
+        _compensations.RecordCompleted(step, scope);
     }
 
     /// <summary>
