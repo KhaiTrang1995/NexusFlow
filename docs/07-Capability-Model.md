@@ -87,8 +87,16 @@ mis-resolved.
 | `Authorization` | `Public` \| `Authenticated` \| `Permission` \| `Policy` \| `Internal` | Policy Engine (stage 2), security audit |
 | `Idempotent` | safe to invoke twice with the same idempotency key | Policy Engine — **gates whether retry is even allowed** |
 | `SideEffects` | named external effects | impact analysis, blast-radius review, AI reasoning |
-| `Timeout` | default step budget | Policy Engine (stage 4) |
-| `Deprecated` | replacement id + removal version | `flowx diff`, compiler warning at call sites |
+| `Deprecated` | replacement id + removal version | `flowx diff` |
+
+*Two corrections to this table. `[Capability]` has **no `Timeout` member** — a
+step's budget comes from `PolicySet.Timeout(...)` and there is no platform
+default, so a step without that policy is genuinely unbounded within the flow's
+deadline (`FLOWX1019` is written against exactly that fact). And `Deprecated`
+reaches the manifest and `flowx diff`; there is no compiler warning at call
+sites. `Id`, `Version` and `Authorization` are consumed as described;
+`Idempotent` gates `FLOWX1014` at build time and nothing at run time, because no
+retry executes.*
 
 `Idempotent = false` plus a retry policy is a **compile error** (`FLOWX1014`).
 FlowX will not let you retry something that is unsafe to retry.
@@ -97,18 +105,18 @@ FlowX will not let you retry something that is unsafe to retry.
 
 ## 3. Rules
 
-**This table said "all compiler-enforced". Three of the eight are.** The
-diagnostic column named five ids the compiler has never raised — `FLOWX1006`,
-`FLOWX1007`, `FLOWX1008`, `FLOWX1009` and `FLOWX1016` are absent from
-`FlowXDiagnostics`, and `FlowXDiagnostics` is deliberately built to contain only
-descriptors something reports. A rule that names an id is the strongest claim
-this documentation set makes, and five of these were the id of nothing. The
-**Enforced by** column below is what is true today.
+**This table said "all compiler-enforced". Four of the eight are.** The
+diagnostic column named four ids the compiler has never raised — `FLOWX1006`,
+`FLOWX1007`, `FLOWX1008` and `FLOWX1009` are absent from `FlowXDiagnostics`,
+which is deliberately built to contain only descriptors something reports. A rule
+that names an id is the strongest claim this documentation set makes, and four of
+these were the id of nothing. The **Enforced by** column below is what is true
+today.
 
 | # | Rule | Enforced by | Status |
 |---|---|---|---|
 | 1 | One input type, one output type; no overloads | `FLOWX1015` | **partial** — catches a type implementing `ICapability<,>` twice; nothing catches an overload |
-| 2 | Returns `Result<TOut>`; expected failures are values | the interface signature | **enforced by the type system** — `ExecuteAsync` returns `ValueTask<Result<TOut>>`; `FLOWX1016` was never needed and does not exist |
+| 2 | Returns `Result<TOut>`; expected failures are values | the interface signature + `FLOWX1016` | **enforced.** `ExecuteAsync` returns `ValueTask<Result<TOut>>`, so the shape is not optional; `FLOWX1016` (Warning, and an error here under `TreatWarningsAsErrors`) catches the way round it — throwing an outcome a caller could reasonably handle |
 | 3 | Never invokes another capability | `FLOWX1004` + `CapabilitiesDoNotCallCapabilities` | **enforced** |
 | 4 | Never references a transport or plugin assembly | `FLOWX1003` + `FlowsAreTransportFree` | **enforced** |
 | 5 | Declares an authorisation stance | `FLOWX1010` + `EveryCapabilityDeclaresAuthorization` | **enforced** |
@@ -213,12 +221,19 @@ not a version change; changing what it accepts or returns is.
 ### Side-by-side versions
 
 ```csharp
-[Capability("payment.capture", Version = "1.4.0", Deprecated = "2026-12-31, use 2.x")]
+[Capability("payment.capture", Version = "1.4.0",
+    Authorization = Authorization.Permission, Permission = "payment:capture",
+    Deprecated = "2026-12-31, use 2.x")]
 public sealed class CapturePaymentV1 : ICapability<CaptureRequestV1, CaptureV1> { }
 
-[Capability("payment.capture", Version = "2.1.0")]
+[Capability("payment.capture", Version = "2.1.0",
+    Authorization = Authorization.Permission, Permission = "payment:capture")]
 public sealed class CapturePayment : ICapability<CaptureRequest, Capture> { }
 ```
+
+*`Authorization` was missing from both declarations here. It is a `required`
+member, so the block as printed did not compile — which is the cheapest kind of
+error to leave in a specification and the most annoying to hit.*
 
 Flows pin the major version they compiled against (`payment.capture@2`). A
 running durable instance keeps executing the version it started with, even
@@ -286,8 +301,19 @@ capability deduplicate against an external system.
 | `Idempotent = false` | **no** (`FLOWX1014`) | single attempt; failure is terminal |
 | `Idempotent = false` + `Compensable` | no retry, but compensation on later failure | saga semantics |
 
-FlowX also provides an optional platform-level dedup store for capabilities that
-cannot deduplicate downstream:
+> **The "Runtime behaviour" column is not runtime behaviour yet.** `FLOWX1014` is
+> real and fires at build time. Nothing retries: no policy executes
+> ([10](10-Policy-Framework.md), **P4**), so `Idempotent = true` plus a `Retry`
+> policy currently means one attempt, exactly like `Idempotent = false`.
+>
+> Two spellings in this section do not exist. There is no `Compensable` member on
+> `[Capability]` — compensation is declared on the *step*, with
+> `.CompensateWith<T>()`, and that does work. And there is no `Dedupe`,
+> `DedupeMode` or `DedupeWindow`; the block below would not compile.
+> `ctx.IdempotencyKey` is real and is stable across retries by construction, but
+> there is no platform-level dedup store behind it — that is `IIdempotencyStore`,
+> a **P4** extension point that is not declared
+> ([17](17-Plugin-System.md)).
 
 ```csharp
 [Capability("email.send", Idempotent = true, Dedupe = DedupeMode.Platform, DedupeWindow = "PT24H")]

@@ -235,7 +235,7 @@ determines your latency:
 | 1 | **Choose the right profile.** `Durable` on a read query costs ~1 000× the platform overhead for zero benefit. |
 | 2 | **Watch the I/O in your capabilities.** A single un-indexed query dwarfs the entire platform overhead by four orders of magnitude. |
 | 3 | **Use `Parallel` for independent steps.** Sequential steps that do not depend on each other are the most common avoidable latency in flows. |
-| 4 | **Set realistic deadlines.** A 30 s flow deadline with 2 s step timeouts and 3 retries is arithmetically incoherent. *No analyzer warns:* `FLOWX1019` does not exist, and nothing compares a flow's deadline against the policy budget beneath it. The arithmetic is yours until P4. |
+| 4 | **Set realistic deadlines.** A 30 s flow deadline with 2 s step timeouts and 3 retries is arithmetically incoherent — the analyzer warns (`FLOWX1019`). It counts only the step timeouts the compiler can read and ignores retry backoff, so its number is a floor, not an estimate. *The flow deadline itself is enforced at run time — the engine checks it at every step boundary. The step timeouts it is compared against are not: no policy executes ([10](10-Policy-Framework.md), **P4**), so a step can overrun its declared timeout and only the flow deadline stops it.* |
 | 5 | **Cache at the capability boundary**, with `Scope = Tenant`, only on side-effect-free capabilities. |
 | 6 | **Do not micro-optimise your capabilities** until a profile says so. The platform is fast so that your business code can be readable. |
 

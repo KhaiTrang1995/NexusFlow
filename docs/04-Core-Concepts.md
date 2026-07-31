@@ -214,7 +214,8 @@ Rules:
    *`FLOWX1015` catches a type implementing `ICapability<,>` twice; nothing
    catches an overload.*
 2. Returns `Result<TOut>` — expected failures are values, not exceptions.
-   *Enforced by the interface signature, not by an analyzer.*
+   **Enforced** by the interface signature, and `FLOWX1016` catches the way round
+   it (throwing an outcome a caller could handle).
 3. Never calls another capability (`FLOWX1004`). **Enforced.**
 4. Never references a transport assembly (`FLOWX1003`). **Enforced.**
 5. Declares an authorisation stance (`FLOWX1010`). **Enforced**, and the
@@ -223,10 +224,10 @@ Rules:
 6. Has a semantic version; breaking changes fail `flowx diff`. **Enforced**, by
    the same `required` member plus `EveryPublicContractIsVersioned`.
 
-This list said "all compiler-enforced". Three are, two hold structurally, and one
-is neither — see [07 §3](07-Capability-Model.md#3-rules), where the same table
-carries the full status including the determinism rules (`FLOWX1006`–`1009`)
-that do not exist yet.
+This list said "all compiler-enforced". Five of the six are, once the type system
+is counted; rule 1 is only partly. See [07 §3](07-Capability-Model.md#3-rules),
+which carries the same status for the wider rule set — including the determinism
+rules (`FLOWX1006`–`1009`), which are reserved and unraised.
 
 Full contract in [07-Capability-Model](07-Capability-Model.md).
 

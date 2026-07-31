@@ -594,7 +594,7 @@ agree.*
 >
 > | Named mitigation | State | Evidence |
 > |---|---|---|
-> | Analyzers `FLOWX1007/1008/1009` as errors in durable flows | **does not exist** | `FlowXDiagnostics` declares 18 descriptors and none of these three is among them. The catalogue is deliberately built to hold only ids something reports, so their absence is not an oversight in the compiler — it is the compiler declining to promise them |
+> | Analyzers `FLOWX1007/1008/1009` as errors in durable flows | **does not exist** | none of the three is a descriptor `FlowXDiagnostics` declares. The catalogue is deliberately built to hold only ids something reports, so their absence is not an oversight in the compiler — it is the compiler declining to promise them, and [the diagnostics index](diagnostics/README.md) records what each reservation is blocked on |
 > | Replay conformance test asserting byte-identical outputs | **does not exist** | no test in the solution named `ReplayDeterminismTest` or anything like it; no test replays anything |
 > | Journal records non-deterministic values on first use | **does not exist** | there is no journal type in the solution. `ADR-0006` is the only place the word appears outside prose |
 >

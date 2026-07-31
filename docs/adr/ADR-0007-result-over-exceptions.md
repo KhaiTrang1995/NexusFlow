@@ -62,13 +62,12 @@ transport: HTTP status, gRPC status, retryability, dead-lettering.
 
 **Negative / accepted trade-offs**
 - **It is not idiomatic .NET**, and it is the second-most-common early complaint
-  after the no-capability-calls-capability rule. Mitigated by the interface
-  signature itself — `ICapability<TIn, TOut>.ExecuteAsync` returns
-  `ValueTask<Result<TOut>>`, so there is no way to write a capability that does
-  not use the pattern. *Analyzer `FLOWX1016` was named here as the mitigation and
-  does not exist; nothing needed it. Code fixes exist for other rules, and the
-  templates that would "show the pattern immediately" do not
-  ([19-SDK](../19-SDK.md)).*
+  after the no-capability-calls-capability rule. Mitigated twice over: the
+  interface signature makes the shape non-optional —
+  `ICapability<TIn, TOut>.ExecuteAsync` returns `ValueTask<Result<TOut>>` — and
+  `FLOWX1016` catches the way round it, a capability throwing an outcome a caller
+  could reasonably handle. *The templates that would "show the pattern
+  immediately" do not exist ([19-SDK](../19-SDK.md)).*
 - **Result propagation is verbose** in capabilities with several failure modes.
   Mitigated by implicit conversion from `Error` and from `T` (so an early
   `return SomeErrors.X()` and a final `return value` both work),

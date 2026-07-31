@@ -69,11 +69,13 @@ gantt
 
 > **P1 status, stated rather than implied.** The DSL Must is met — all five
 > shapes ship. The diagnostics Must is met for every id that exists, and the
-> range in this row used to read "FLOWX1001–1023", which is not what shipped:
-> **18 diagnostics** are raised (1001–1005, 1010, 1011, 1013–1015, 1017, 1018,
-> 1020, 1021, 1023–1026), and **1006–1009, 1012, 1016, 1019 and 1022 do not
-> exist** — most of them the determinism rules, which are P2. A contiguous range
-> in a plan reads as a promise about ids nobody has allocated.
+> range in this row used to read "FLOWX1001–1023", which is not what shipped: the
+> catalogue is **1001–1005, 1010, 1011, 1013–1021 and 1023–1026**, and
+> **`FLOWX1006`–`1009`, `FLOWX1012` and `FLOWX1022` are reserved and unraised** —
+> four of them the determinism rules, which are P2. A contiguous range in a plan
+> reads as a promise about ids nobody has allocated; each reservation is now
+> listed with what blocks it in
+> [the diagnostics index](diagnostics/README.md).
 >
 > **The "Done when" is not met, and it is the one criterion that is failing on a
 > measurement rather than on an absence.** The 200-flow solution builds at
