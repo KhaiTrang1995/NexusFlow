@@ -484,7 +484,8 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
 - [ ] **⚠ REGRESSION — the generator has tripled since that measurement.**
       `FlowPlanGenerator` was 8.07 ms per flow at `a75c1f0`; it is now **≈ 29**. Measured
       twice independently — **28.7 ms/flow** at 200 flows by WP-27, **+29.70 ms/flow** at
-      50 flows in review on a quiet machine (load 2.52), verdict **FAIL at +47.8 – +55.2 %**
+      50 flows in review on a quiet machine (load 2.52), verdict **FAIL** — superseded by
+      WP-43's **+67.1 %** at 200 flows and **+46.5 %** at 50, see below
       against the +8 % budget. The other two components reproduced to within 7 %, which is
       what makes the third reading believable. **It slipped in because the scale job is
       advisory** — correct while the measurement could not beat the noise, but the cost is
@@ -521,6 +522,22 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       0.06 ms. All 800 resolved symbols identical before and after. It does **not** close
       the criterion and is not claimed to — end to end the difference sits inside the
       noise. What it buys is the IDE, where the rule re-runs per keystroke
+- [~] **WP-43** Re-measured P1's exit criterion. **FAIL at +67.1 %** [+61.9, +73.6] at 200
+      flows and **+46.5 %** at 50, against +8 %, on a quiet machine with a **10.6 % A/A
+      noise floor**. The first attempt returned **INCONCLUSIVE** under load 6.8–39, with the
+      A/A control reporting ±77 % and identical builds swinging four-fold — the exit code
+      firing legitimately, and no verdict manufactured from it.
+      **The attribution has moved decisively:** `FlowPlanGenerator` is **90.5 %** of the
+      marginal cost; `StepBindingAnalyzer`, once 37 %, is **1.2 %** — WP-27's 89 % cut is
+      visible in the split and invisible in the criterion, exactly as predicted.
+      **The number that ends the profiling conversation: optimising all eight other
+      components perfectly still leaves the criterion failing by 54 points.** Reaching +8 %
+      needs the generator at ~2.8 ms/flow against today's 23.25 — an ~8× cut, where the bulk
+      is what the derived error catalogue costs. That is ADR-0014's question.
+      Honest about attribution: 50 flows reproduces the previous figure to **0.1 points**
+      across a dozen merged changes, so the saving and the features cancelled; the 200-flow
+      improvement was **not bisected**, and the earlier runs were on a 2.80 GHz CPU where
+      this container reports 2.10
 - [x] **WP-19** IDE code fixes — `FLOWX1001`, `FLOWX1010`, `FLOWX1017`, in a separate
       `FlowX.Compiler.CodeFixes` assembly so the analyzer never drags Workspaces into a
       consumer's build. `FLOWX1010` deliberately withholds `Public`

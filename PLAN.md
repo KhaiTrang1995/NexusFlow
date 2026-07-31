@@ -510,11 +510,14 @@ maintainability and scale, not features.
 
 **Exit criteria, from the roadmap:**
 
-- a 200-flow synthetic solution builds with ≤ 8 % overhead → **WP-18** built the harness,
-  **WP-23** made it trustworthy, and it has since **regressed roughly 3×** — see the
-  regression note below. **FAILING at +18.4 %** as of `a75c1f0`, CI [+16.3, +19.9]. Growth
-  was linear (3 ms + 9.54 ms/flow, R² 0.994), so the constant is too large rather than the
-  design being wrong. P1 cannot exit on this criterion until it is met
+- a 200-flow synthetic solution builds with ≤ 8 % overhead → **FAILING at +67.1 %**
+  [+61.9, +73.6], re-measured at WP-43 on a quiet machine with a 10.6 % A/A noise floor.
+  50 flows: **+46.5 %**. Growth still linear. **Failed by 59 points — nothing about it is
+  close.** The attribution has moved decisively: `FlowPlanGenerator` is now **90.5 %** of
+  the marginal cost, where `StepBindingAnalyzer` was 37 % and is now 1.2 %. **Optimising
+  every other component perfectly leaves the criterion failing by 54 points**, so this has
+  stopped being a profiling backlog and is [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)'s
+  question — the owner's to decide
 - every diagnostic passes `EveryDiagnosticIsHelpful` → **already green**
 - emitted code is breakpoint-able → **already true**, and pinned by
   `EachStepGetsItsOwnLineDirective`
