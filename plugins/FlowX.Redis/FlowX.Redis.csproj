@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>
+      FlowX Redis lease store: time-bounded exclusive ownership of a flow instance and the
+      monotonic fencing tokens that survive both a clean release and an expiry.
+    </Description>
+    <PackageTags>flowx;redis;lease;fencing-token;durable-execution;leader-election</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Pinned exactly, like every other dependency in this repository. The client is the
+      only thing this package needs beyond the contracts: ADR-0009 says a plugin depends
+      on FlowX.Abstractions and on whatever it talks to, and nothing else.
+
+      The surface used here is the static, allocation-conscious half of the library —
+      IDatabase.ScriptEvaluateAsync with explicit RedisKey/RedisValue arrays — and no
+      part of it is reflective, which is what keeps constraint C2 satisfied without a
+      suppression.
+    -->
+    <PackageReference Include="StackExchange.Redis" Version="3.1.0" />
+    <!--
+      10.0.5 rather than the 10.0.0 the rest of the repository pins, and the difference is
+      forced rather than chosen: StackExchange.Redis 3.1.0 resolves
+      Microsoft.Extensions.Logging.Abstractions 10.0.5, which requires this package at 10.0.5
+      or above. Declaring 10.0.0 here is a package downgrade, which NU1605 makes an error.
+      Pinned to the version the graph actually resolves, so the .csproj states what is
+      restored instead of a number that is quietly overruled.
+    -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The same rule FlowX.Postgres states: a plugin depends on the runtime, the runtime
+      never depends on a plugin (RuntimeDoesNotReferenceAnyPlugin). This one depends on
+      less than that. ILeaseStore, FlowLease, FencingToken, Result and Error all live in
+      FlowX.Abstractions, so a lease store needs nothing from Core, Runtime or Hosting —
+      and nothing at all from plugins/FlowX.Postgres, which is the point of the package:
+      two adapters that share a suite and no source.
+    -->
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>
