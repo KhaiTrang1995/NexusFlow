@@ -10,7 +10,7 @@ yet (constraint C8).
 → [01 Vision](01-Vision.md) → [02 Manifesto](02-Manifesto.md) → [04 Core Concepts](04-Core-Concepts.md)
 
 **"I want to build on it"** (2 h)
-→ [04 Core Concepts](04-Core-Concepts.md) → [07 Capability Model](07-Capability-Model.md) → [08 Flow Definition](08-Flow-Definition.md) → [09 Trigger Model](09-Trigger-Model.md) → [10 Policy Framework](10-Policy-Framework.md) → [19 SDK](19-SDK.md) → [samples](../samples/README.md)
+→ [04 Core Concepts](04-Core-Concepts.md) → [07 Capability Model](07-Capability-Model.md) → [08 Flow Definition](08-Flow-Definition.md) → [09 Trigger Model](09-Trigger-Model.md) → [10 Policy Framework](10-Policy-Framework.md) → [19 SDK](19-SDK.md) → [23 Testing Strategy](23-Testing-Strategy.md) → [samples](../samples/README.md)
 
 **"I want to review the architecture"** (3 h)
 → [05 Architecture](05-Architecture.md) → [ADR index](adr/README.md) → [06 Execution Engine](06-Execution-Engine.md) → [11 Distributed Runtime](11-Distributed-Runtime.md) → [14 Performance](14-Performance.md) → [15 Security](15-Security.md)
@@ -47,6 +47,7 @@ yet (constraint C8).
 | 20 | [Roadmap](20-Roadmap.md) | Delivery |
 | 21 | [Quality Gates](21-Quality-Gates.md) | How a change is proven |
 | 22 | [CLI](22-CLI.md) | `flowx manifest`, `graph`, `diff` |
+| 23 | [Testing Strategy](23-Testing-Strategy.md) | How a FlowX application is tested, at each level |
 | — | [ADRs](adr/README.md) | Decisions |
 | — | [Diagnostics](diagnostics/README.md) | Every `FLOWX####` the compiler raises |
 | — | [Benchmarks](benchmarks/README.md) | Budgets, baselines and their reports |

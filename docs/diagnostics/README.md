@@ -14,8 +14,12 @@ the build.
 Five entries below are not errors, and each says why on its own page.
 [FLOWX1024](FLOWX1024.md) and [FLOWX1025](FLOWX1025.md) report gaps between the
 manifest and what the build can actually deliver, rather than mistakes in the source
-— and `FLOWX1025` is additionally about an attribute the developer usually does not
-own, which an error would make unusable. [FLOWX1028](FLOWX1028.md) is the same shape
+— and `FLOWX1025` is additionally about an attribute the developer sometimes does not
+own, which an error would make unusable. It follows `FLOWX1011`'s asymmetry rather
+than being lenient everywhere: an **error** when the trigger attribute is declared in
+the compilation being built, where the fix is one line the reader owns, and a
+**warning** when it arrives from a referenced package, where it is not their omission
+to fix. [FLOWX1028](FLOWX1028.md) is the same shape
 taken to its limit — the declared execution profile is one the runtime does not
 implement at all — and an error there would be actively harmful, because its only
 repair is to delete the declaration P2 will need to find. [FLOWX1027](FLOWX1027.md) reports code that
@@ -49,7 +53,7 @@ ephemeral one is not replayed at all.
 | [FLOWX1026](FLOWX1026.md) | Sub-flow cannot be composed | A composition silently missing from the plan, the manifest and the diagram |
 | [FLOWX1023](FLOWX1023.md) | Flow declares no steps | A flow that silently does nothing |
 | [FLOWX1024](FLOWX1024.md) | Emit step is recorded but not published | A consumer waiting for an event the manifest promised |
-| [FLOWX1025](FLOWX1025.md) | Trigger attribute cannot be read by the compiler | A trigger missing from the manifest, and `flowx diff` unable to tell |
+| [FLOWX1025](FLOWX1025.md) | Trigger attribute declares no `[TriggerKind]` | A trigger missing from the manifest, and `flowx diff` unable to tell |
 | [FLOWX1027](FLOWX1027.md) | Step is unreachable after `Fail` | A plan, a manifest and a diagram listing work the flow can never do |
 | [FLOWX1029](FLOWX1029.md) | Step input mapping produces the wrong contract | A `CS1503` inside generated source, about a call the developer cannot see |
 | [FLOWX1028](FLOWX1028.md) | Execution profile is declared but not honoured by the runtime | **A payment saga declaring `Durable` and losing its instance on the next deploy** |

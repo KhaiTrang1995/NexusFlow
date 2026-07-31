@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-31 · **Phase:** **P0 complete · P1 closed with one accepted
 > exception → P2 not started** · **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 1148/1148 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 1160/1160 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -97,7 +97,20 @@ These gate everything below them. None is code work.
       and only there (WP-35)
 - [x] `.github/dependabot.yml` — NuGet + Actions, grouped
 - [x] `.github/pull_request_template.md` carrying the Definition of Done
-- [ ] Each gate class verified by a deliberate violation on a throwaway branch
+- [~] Each gate class verified by a deliberate violation — **five done, two found broken**.
+      Link check (probe linking nowhere), Mermaid parse (unclosed `subgraph`; baseline
+      **70/70 diagrams parse**), trim/AOT (`Type.GetType` + `Activator.CreateInstance` →
+      `IL2057`), attribution guard (bot-authored commits in throwaway repos), and the
+      debt/TODO rule all fire on their violation and stay silent otherwise.
+      **The attribution guard had been failing on every push** — `git log --all` with
+      `fetch-depth: 0` reaches the six open `dependabot/*` branches this repo asks for in
+      its own config. Verified: 6 bot commits via `--all`, **0 from `HEAD`**. Scoped to
+      `HEAD`, which narrows blast radius and not the rule.
+      **The DAST job had never run once** — its guard tested for paths that never existed,
+      so it skipped every scheduled night while printing that it was not yet runnable.
+      Fixed, and **still never observed to pass**, which is why this box is `[~]`.
+      Needing a real CI run: Sonar, coverage, Stryker, CodeQL, Semgrep, Gitleaks, ZAP, and
+      the benchmark jobs
 - [~] `SONAR_TOKEN` repository secret configured — still unset, but the no-op is now
       **loud**: the job emits a `::warning::` and a step-summary table naming the rows it
       did not evaluate. It still exits 0, because failing would punish fork contributors

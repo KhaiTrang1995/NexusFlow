@@ -99,14 +99,23 @@ internal static class GeneratorHarness
 {
     private static readonly ImmutableArray<MetadataReference> References = BuildReferences();
 
-    public static GeneratorRun Run(string source)
-    {
-        var compilation = CSharpCompilation.Create(
-            "FlowX.GeneratorTests",
-            [CSharpSyntaxTree.ParseText(source, path: "/src/Flows/Sample.cs")],
-            References,
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+    public static GeneratorRun Run(string source) => Run(CSharpCompilation.Create(
+        "FlowX.GeneratorTests",
+        [CSharpSyntaxTree.ParseText(source, path: "/src/Flows/Sample.cs")],
+        References,
+        new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable)));
 
+    /// <summary>Runs the generator over a compilation the caller built.</summary>
+    /// <remarks>
+    /// Exists for the question a single compilation cannot ask: what the generator emits
+    /// when a symbol it reads — a trigger attribute, say — is declared in another assembly
+    /// and reaches this build only as metadata. <see cref="Run(string)"/> builds its own
+    /// compilation and so can never reference one; <see cref="CompilationOf(string, IEnumerable{MetadataReference}, ValueTuple{string, string}[])"/>
+    /// produces the input for this overload.
+    /// </remarks>
+    /// <param name="compilation">The compilation to run the generator over.</param>
+    public static GeneratorRun Run(CSharpCompilation compilation)
+    {
         var driver = CSharpGeneratorDriver
             .Create(new FlowPlanGenerator())
             .RunGeneratorsAndUpdateCompilation(compilation, out _, out _);
@@ -195,22 +204,36 @@ internal static class GeneratorHarness
     /// fails with the id it expected, whereas running the whole set would let an
     /// unrelated rule's diagnostic satisfy the assertion.
     /// </remarks>
-    public static string[] Analyze(string source, params DiagnosticAnalyzer[] analyzers)
-    {
-        var compilation = CSharpCompilation.Create(
-            "FlowX.AnalyzerTests",
-            [CSharpSyntaxTree.ParseText(source, path: "/src/Flows/Sample.cs")],
-            References,
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+    public static string[] Analyze(string source, params DiagnosticAnalyzer[] analyzers) =>
+        [.. Report(source, analyzers).Select(static d => d.Id).Distinct().OrderBy(static id => id, StringComparer.Ordinal)];
 
-        var diagnostics = compilation
+    /// <summary>Runs the given analyzers and returns the diagnostics themselves.</summary>
+    /// <remarks>
+    /// For the tests that are about a property of the report rather than its id — the
+    /// severity it was raised at, which <see cref="Analyze(string, DiagnosticAnalyzer[])"/>
+    /// discards. FLOWX1025 raises the same descriptor as an error or a warning depending on
+    /// whether the offending attribute is in source, so its id alone proves nothing about
+    /// the decision the analyzer made.
+    /// </remarks>
+    public static ImmutableArray<Diagnostic> Report(string source, params DiagnosticAnalyzer[] analyzers) =>
+        Report(
+            CSharpCompilation.Create(
+                "FlowX.AnalyzerTests",
+                [CSharpSyntaxTree.ParseText(source, path: "/src/Flows/Sample.cs")],
+                References,
+                new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable)),
+            analyzers);
+
+    /// <summary>Runs the given analyzers over a compilation the caller built.</summary>
+    /// <param name="compilation">The compilation to analyse.</param>
+    /// <param name="analyzers">The analyzers to run.</param>
+    public static ImmutableArray<Diagnostic> Report(
+        CSharpCompilation compilation, params DiagnosticAnalyzer[] analyzers) =>
+        compilation
             .WithAnalyzers([.. analyzers])
             .GetAnalyzerDiagnosticsAsync()
             .GetAwaiter()
             .GetResult();
-
-        return [.. diagnostics.Select(static d => d.Id).Distinct().OrderBy(static id => id, StringComparer.Ordinal)];
-    }
 
     /// <summary>
     /// Runs the given analyzers and returns their formatted messages, not only their ids.

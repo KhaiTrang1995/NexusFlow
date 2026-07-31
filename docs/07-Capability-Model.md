@@ -363,26 +363,28 @@ construction.
 
 ### The test pyramid FlowX expects
 
-| Level | Subject | Infrastructure | Target share |
-|---|---|---|---|
-| Unit | one capability | none | ~70 % |
-| Flow | one flow with fake capabilities | none | ~20 % |
-| Integration | capability against a real adapter | Testcontainers | ~8 % |
-| Conformance | the whole trigger→flow→journal path | Testcontainers | ~2 % |
+| Level | Subject | Infrastructure | Kit | Target share |
+|---|---|---|---|---|
+| Unit | one capability | none | `TestCapabilityContext` | ~70 % |
+| Flow | one flow with substituted capabilities | none | `FlowTestHost` | ~20 % |
+| Integration | capability against a real adapter | Testcontainers | — | ~8 % |
+| Conformance | the whole trigger→flow→journal path | Testcontainers | — | ~2 % |
 
-> **`FlowTestHost` does not exist**, and the block that used to stand here — a
-> fluent `.Substitute<T>(…)` builder with `HaveCompensated()` and
-> `NotHaveExecuted<T>()` assertions — described an API nobody has written. It was
-> a **Should** of P0 in [20-Roadmap §3](20-Roadmap.md#3-increment-detail) and P0
-> shipped without it.
->
-> `FlowX.Testing` today is two types —
-> [`TestCapabilityContext`](../src/FlowX.Testing/TestCapabilityContext.cs) and
-> [`TestFlowContext`](../src/FlowX.Testing/TestFlowContext.cs) — and neither runs
-> a flow. The flow level of the pyramid above is reachable, but by driving
-> `FlowEngine` with a substituted `IStepDispatcher`, which is what
-> `tests/FlowX.Runtime.Tests` does and is not a published testing API. Treat the
-> ~20 % row as a target the kit does not yet support.
+**[23-Testing-Strategy](23-Testing-Strategy.md) is the full account**, including which
+levels the kit supports and which it does not. In short: the top two rows are supported;
+the bottom two are not, because there is no journal to conform against.
+
+> **This paragraph said `FlowTestHost` does not exist, and for two phases it was
+> right.** It shipped in WP-49, and the shape changed on contact with what the
+> compiler emits: the host is given the flow's generated `Plan` and `Dispatcher`
+> rather than discovering them from a `TFlow` type parameter, because doing that
+> would need reflection over generated members (which constraint C2 forbids) and a
+> container to construct the dispatcher's capabilities (which is the mock framework
+> it deliberately is not). The reason is written down in
+> [23 §4.1](23-Testing-Strategy.md#41-why-the-plan-and-the-dispatcher-are-named).
+> Virtual time and the durable-replay harness the old block also promised are still
+> unbuilt, and [23 §5](23-Testing-Strategy.md#5-what-is-deliberately-not-here) says
+> why for each.
 
 ---
 

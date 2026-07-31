@@ -221,8 +221,22 @@ jobs:
 
       - name: No bot authorship in history
         # Repository owner's standing requirement: commits are authored by people.
+        #
+        # Scoped to HEAD, not `--all`. `--all` was a live failure, not a hypothetical:
+        # `fetch-depth: 0` pulls down every remote branch, including the open
+        # `dependabot/*` pull-request branches this repository asks for in
+        # .github/dependabot.yml — six of them today, each authored by `dependabot[bot]`
+        # and so each matching the pattern below. The job therefore failed on every push
+        # to dev and master for commits that are not part of this repository's history,
+        # were not written by the author of the change under test, and could not be
+        # remediated by them.
+        #
+        # This is a narrowing of blast radius, not of the rule: every commit that has
+        # ever landed is still reachable from HEAD and still audited, and a bot-authored
+        # commit inside the change under test is still caught. What is no longer audited
+        # is somebody else's unmerged branch.
         run: |
-          if git log --all --pretty=format:'%an|%ae|%cn|%ce' | grep -iE 'noreply@anthropic|\[bot\]'; then
+          if git log HEAD --pretty=format:'%an|%ae|%cn|%ce' | grep -iE 'noreply@anthropic|\[bot\]'; then
             echo "::error::A commit is authored by a bot identity."
             exit 1
           fi

@@ -115,21 +115,11 @@ public sealed class PlaceOrderEndpointTests
         response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
     }
 
-    [Fact]
-    public async Task AFailedPaymentReleasesTheReservation()
-    {
-        // The compensation path, which no happy-path run reaches: the reservation
-        // succeeds, the capture fails, and the hold must be given back. A saga that
-        // leaks inventory on a declined card is the defect this exists to catch.
-        var inventory = new CountingInventory(available: 10);
-        using var host = await StartAsync(inventory, new DecliningGateway());
-        using var client = host.GetTestClient();
-
-        var response = await PostAsync(client, "key-5", new PlaceOrder("SKU-1", 4, "tok"));
-
-        response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
-        inventory.Released.ShouldBe("key-5");
-    }
+    // AFailedPaymentReleasesTheReservation used to be here. It stood up a server, a
+    // routing table and a bespoke declining gateway to observe a property of the flow
+    // that HTTP has nothing to do with — and could still not see the ordering, because an
+    // endpoint returns one status code whether the hold was released before, after or
+    // instead of anything else. It is now PlaceOrderFlowTests, over FlowTestHost.
 
     [Fact]
     public void TheEndpointIsGivenTheFlowsSensitiveMembers()
@@ -268,8 +258,6 @@ public sealed class PlaceOrderEndpointTests
 
         public int Reserved { get; private set; }
 
-        public string? Released { get; private set; }
-
         public ValueTask<int> AvailableAsync(string sku, CancellationToken ct)
         {
             lock (_sync)
@@ -291,26 +279,14 @@ public sealed class PlaceOrderEndpointTests
             return ValueTask.CompletedTask;
         }
 
-        public ValueTask ReleaseAsync(string idempotencyKey, CancellationToken ct)
-        {
-            lock (_sync)
-            {
-                Released = idempotencyKey;
-            }
-
-            return ValueTask.CompletedTask;
-        }
+        // Nothing to record: what a release does to the ledger is asserted in
+        // PlaceOrderFlowTests, against the sample's real in-memory store.
+        public ValueTask ReleaseAsync(string idempotencyKey, CancellationToken ct) => ValueTask.CompletedTask;
     }
 
     private sealed class ApprovingGateway : IPaymentGateway
     {
         public ValueTask<string?> CaptureAsync(string reservationId, string idempotencyKey, CancellationToken ct)
             => ValueTask.FromResult<string?>("receipt-" + idempotencyKey);
-    }
-
-    private sealed class DecliningGateway : IPaymentGateway
-    {
-        public ValueTask<string?> CaptureAsync(string reservationId, string idempotencyKey, CancellationToken ct)
-            => ValueTask.FromResult<string?>(null);
     }
 }
