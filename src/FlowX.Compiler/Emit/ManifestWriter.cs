@@ -658,6 +658,11 @@ public static class ManifestWriter
             ["Bulkhead"] = "Resilience",
             ["Cache"] = "Efficiency",
             ["Audit"] = "Consistency",
+
+            // WP-57. Consistency rather than Resilience, because it wraps the step's
+            // *compensation* and Consistency is where ADR-0011 puts compensation: the unwind
+            // is that stage's obligation discharged later, and the retry is a parameter of it.
+            ["CompensationRetry"] = "Consistency",
         };
 
     /// <summary>Every policy kind this writer knows a stage for.</summary>

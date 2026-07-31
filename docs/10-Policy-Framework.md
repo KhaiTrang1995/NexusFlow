@@ -1,11 +1,11 @@
 # 10 — Policy Framework
 
-> **Status:** Accepted · **declared, not executed** · **Audience:** application engineers, SRE
+> **Status:** Accepted · **one policy executed, fifteen declared only** · **Audience:** application engineers, SRE
 > **Answers:** how are cross-cutting concerns declared, ordered and made safe?
 
 > [!IMPORTANT]
-> **A policy can be declared and published; none is applied at run time.** What
-> ships: `PolicySet` and its builder methods, `.WithPolicy(...)` on a step, a
+> **Exactly one policy is applied at run time: `CompensationRetry`, at stage 7.**
+> What ships: `PolicySet` and its builder methods, `.WithPolicy(...)` on a step, a
 > compiler that reads the set's contents well enough to raise
 > [`FLOWX1014`](diagnostics/FLOWX1014.md) (retry on a non-idempotent capability)
 > and [`FLOWX1018`](diagnostics/FLOWX1018.md) (cache on a capability with side
@@ -13,16 +13,27 @@
 > each one runs in. The safety *diagnostics* in this document are real and
 > enforced at build time.
 >
-> What does not ship: the Policy Engine. There is no policy execution in
-> `FlowX.Runtime` — no timeout is armed, no retry is attempted, no breaker opens,
-> no cache is consulted, no authorisation stance is checked at a boundary, and no
-> audit record is written. A step's policy chain is metadata the runtime never
-> reads. Nothing in this repository declares a policy either, so the emission
-> path has not run against a shipped assembly.
+> What does not ship: the Policy Engine. **On the forward path there is still no
+> policy execution at all** in `FlowX.Runtime` — no timeout is armed, no forward
+> retry is attempted, no breaker opens, no cache is consulted, no authorisation
+> stance is checked at a boundary, and no audit record is written. A step's own
+> policy chain is metadata the runtime never reads. That is **P4** in
+> [20-Roadmap](20-Roadmap.md).
 >
-> That is **P4** in [20-Roadmap](20-Roadmap.md). Read §2's stage order as the
-> contract the engine must be built to, and every claim below about behaviour at
-> run time as specification.
+> **The exception is WP-57's slice, and it is deliberately one stage wide.** A
+> step's *compensation* may declare `CompensationRetry`, and the unwind honours
+> it: attempts, full-jitter backoff, retryable categories, the same idempotency
+> key, and the flow deadline as the bound on every wait. It sits at
+> `Consistency` — stage 7, where §2 puts compensation — because executing the
+> *last* stage cannot skip an earlier one, which is the property that makes a
+> single-policy slice safe to ship before the engine that runs the other fifteen.
+> Ordering is still `PolicyChain`'s and nothing else's; nothing here introduces a
+> second way to say what runs before what.
+>
+> Read §2's stage order as the contract the engine must be built to, and every
+> claim below about behaviour at run time as specification — except §5's two
+> retry guarantees and the full-jitter default, which the compensation slice
+> honours today and `CompensationPolicyTests` pins.
 
 ---
 
@@ -94,6 +105,7 @@ ADR-0011 is scheduled for review after three documented counterexamples.
 | `Batch` | 5 | `size`, `window` | coalesces N invocations into one |
 | `Audit` | 7 | `category`, `redact` | immutable audit record |
 | `Outbox` | 7 | — | implicit on `.Emit` in durable flows |
+| `CompensationRetry` | 7 | `attempts`, `backoff`, `retryOn` | **the one policy the runtime executes.** Wraps the step's *compensation*, so it requires the **compensating** capability to declare `Idempotent = true`. Defaults: 5 attempts (more aggressive than forward retry, [06 §7](06-Execution-Engine.md#7-compensation-semantics) rule 2), full jitter, `Conflict`/`Unavailable`/`Internal` |
 
 ---
 
@@ -183,7 +195,10 @@ Two guarantees worth stating explicitly:
 - **A retry never uses a fresh idempotency key.** Attempt 2 presents the same key
   as attempt 1, which is what makes downstream deduplication work.
 - **A retry never outlives the deadline.** The policy engine subtracts elapsed
-  time plus the planned backoff before arming the next attempt.
+  time plus the planned backoff before arming the next attempt. For a
+  compensation this bounds the *retries* and not the undo itself: a flow that
+  failed because it ran out of budget is exactly the flow whose effects most need
+  reversing, so the first attempt always runs and only the waits are refused.
 
 Default backoff is exponential with **full jitter**
 (`delay = random(0, base × 2^attempt)`, capped) — decorrelated retries prevent
