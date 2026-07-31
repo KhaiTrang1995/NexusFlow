@@ -348,7 +348,31 @@ criterion, P1's records which criterion it is closing over.
 > followed and the collision has happened anyway. **The fix is a check that fails, not
 > another paragraph asking for care**: a duplicated id across the reachable history is
 > mechanically detectable, and detecting it at merge is what all four collisions needed and
-> none had. Recorded as the next piece of tooling this project owes itself.
+> none had.
+>
+> **That check now exists.** `IdentifierAllocationTests` in `tests/FlowX.Architecture.Tests`
+> fails the build when an identifier is allocated twice, across all three families that have
+> collided: ADR numbers, `FLOWX` diagnostic ids and the work-package numbers this file
+> allocates. For work packages it reads **this file and nothing else** — a definition site is
+> a `### WP-…` heading or a `| **WP-…** —` row of a phase's package table — and it asserts
+> three things: no number defines two packages; every package sits inside the range its
+> phase reserved, read from the sentence below and from [§6a](#6a-p4p9--what-this-plan-does-not-yet-contain)'s
+> allocator table; and no two phases reserve the same numbers. The middle one is the rule
+> WP-70 to WP-74 needed — none of those *duplicated* a number that had been spent, they took
+> numbers a later phase was holding, which no duplicate check can see.
+>
+> **What it catches, stated so nobody relies on more:** a duplicate present in one working
+> tree — a merge, a rebase onto the branch that took the number first, or one author writing
+> both halves. **It cannot see a duplicate that exists only across two unmerged branches.** A
+> test sees the tree it was built from; asking git about the other claim would need a ref
+> this checkout does not have, and "which branches are live" is not a fact on disk. So it
+> reports at the merge — which is exactly where all four of these were found by a human, and
+> the only thing that was missing was a check that read it first.
+>
+> Claiming the number in this file before the work starts is still the instruction, and it is
+> still worth following: it makes the collision visible in a one-line diff instead of in a
+> finished package. What has changed is that following it is no longer the only thing
+> standing between two branches and a number that means two things.
 
 **The two yellow nodes are the same node WP-3 was.** WP-50 and WP-71 are harnesses
 scheduled ahead of the things they measure, for the reason §2 has stated since P0 and
