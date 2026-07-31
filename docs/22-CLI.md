@@ -19,17 +19,19 @@ is genuinely self-describing rather than only usable from inside this repository
 | `flowx graph` | a manifest | a Mermaid flowchart of every flow |
 | `flowx manifest` | a built assembly | the manifest compiled into it |
 | `flowx diff` | two manifests | a compatibility verdict, and a non-zero exit on a break |
+| `flowx verify --cost` | a manifest | flows paying for an execution profile they do not use |
 
 ```
 flowx graph    [--manifest <path>] [--flow <id>] [--output <path>]
 flowx manifest  --assembly <path>  [--output <path>]
 flowx diff      --old <path> --new <path> [--format text|json] [--output <path>]
+flowx verify    --cost [--manifest <path>] [--format text|json] [--output <path>]
 ```
 
 | Exit code | Meaning |
 |---|---|
-| 0 | success — for `diff`, no breaking change |
-| 1 | `diff` found a breaking change |
+| 0 | success — the check found nothing |
+| 1 | the check said no: `diff` found a breaking change, `verify` found something |
 | 2 | usage error |
 | 3 | a file was not found |
 
@@ -38,21 +40,38 @@ flowx diff      --old <path> --new <path> [--format text|json] [--output <path>]
 a tool that returns the same code for both gets the step deleted the first time somebody
 mistypes a path.
 
+`flowx --help` lists exactly the table above and nothing else. It is not the place to
+learn what is planned — §1.1 is — because a verb in a help text that exits `2` when you
+type it is worse than a verb you never heard of.
+
 ### 1.1 Verbs other documents name, and this one does not have
 
-**Three verbs. The table above is the whole tool.** Other documents in this set
-invoke `flowx` with fifteen more, none of which is implemented. They are listed
+**Four verbs. The table above is the whole tool.** Other documents in this set
+invoke `flowx` with fourteen more, none of which is implemented. They are listed
 here because this is the page a reader checks, and finding nothing said about a
 verb they have just read elsewhere is worse than finding it listed as unbuilt.
 
 | Verb | Named in | Blocked on |
 |---|---|---|
-| `flowx replay` (four modes) | [12](12-Observability.md), [20](20-Roadmap.md) | **P5**, behind the **P2** journal |
-| `flowx verify` (`--complete`, `--runtime`, `--cost`) | [01](01-Vision.md), [03](03-Design-Principles.md), [05](05-Architecture.md), [ADR-0003](adr/ADR-0003-execution-profiles.md) | partly superseded — `ManifestIsComplete` is the fitness function that does `--complete`'s job |
+| `flowx replay` (four modes) | [12](12-Observability.md), [20](20-Roadmap.md) | **P5**, behind the **P2** journal — and behind an architecture decision, §8 |
 | `flowx query`, `flowx ai …`, `flowx generate` | [13](13-AI-Native.md), [15](15-Security.md), [19](19-SDK.md) | **P8** |
-| `flowx dev`, `flowx new`, `flowx run`, `flowx docs`, `flowx bench`, `flowx fill` | [19](19-SDK.md) | no template or dev-loop tooling exists |
+| `flowx dev`, `flowx new`, `flowx run`, `flowx docs`, `flowx bench`, `flowx fill` | [19](19-SDK.md) | no template or dev-loop tooling exists. For benchmarks use `scripts/run-benchmarks.sh` |
 | `flowx cancel`, `flowx signal` | [06](06-Execution-Engine.md) | **P2** — there is no durable instance to cancel or signal |
 | `flowx tenant`, `flowx purge` | [15](15-Security.md), [16](16-Multi-Tenant.md) | **P6** |
+
+`flowx verify` was named with three checks and now has one. The other two are not
+delayed, they are answered elsewhere or unanswerable:
+
+| Check | Named in | Status |
+|---|---|---|
+| `--cost` | [ADR-0003](adr/ADR-0003-execution-profiles.md), [18](18-Cloud-Native.md) | **built** — §7 |
+| `--complete` | [01](01-Vision.md), [03](03-Design-Principles.md), [13](13-AI-Native.md), [ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md) | **superseded.** `ManifestIsComplete` does the job, and does it *in* the build rather than after it. A CLI verb would be a second implementation of one rule, run later, and reachable only by a pipeline that remembered to call it |
+| `--runtime` | [05](05-Architecture.md) (R7), [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) | **not buildable yet.** It compares the built manifest against the deployed one, and nothing records what is deployed. It needs a control plane, which no phase currently owns |
+
+`--complete` and `--runtime` are rejected **by name**, not as unknown options, and the
+error says where each check went. Somebody who read `--complete` in
+[03](03-Design-Principles.md) and typed it has done nothing wrong; `unknown option` would
+send them looking for a typo they did not make.
 
 ---
 
@@ -254,6 +273,148 @@ wants the machine-readable form as well can write it out and still get the verdi
 Waiving a finding is deliberately not a flag. A breaking change ships behind a major
 version bump or an ADR ([15 §9](15-Security.md), change control), and a `--ignore` option
 would turn both of those into an argument in a YAML file.
+
+---
+
+## 7. `flowx verify --cost` — the profile chosen by accident
+
+```bash
+flowx verify --cost --manifest artifacts/flowx.manifest.json
+```
+
+[ADR-0003](adr/ADR-0003-execution-profiles.md) makes durability opt-in and then names the
+one thing that decision leaves open: nothing stops somebody opting in by accident.
+[18 §Cost](18-Cloud-Native.md) puts the number on it — a read-heavy flow mistakenly marked
+`Durable` can cost 100× its `Ephemeral` equivalent in storage and IOPS for zero benefit,
+and it is the single largest cost lever in the platform.
+
+Both documents describe the same detector, in the same words, and this is it:
+
+> a durable flow with **no compensation, no signals and no timers**.
+
+| Code | Fires on |
+|---|---|
+| `FLOWX-VERIFY-001` | a flow whose `profile` is `Durable`, in which no step registers a `compensation`, and no step is an `AwaitSignal` or a `Delay` |
+
+Nothing else is a rule. The check has exactly the one the ADR specified, and inventing a
+second — "durable and under three steps", "durable with an HTTP trigger" — would be this
+tool asserting a cost model nobody agreed to.
+
+### 7.1 What clears a flow
+
+A flow is cleared by **any** compensation, signal or timer, wherever it appears:
+
+- **Nested in a branch.** A saga that compensates inside a `When` arm, or awaits a signal
+  in one case of a `Switch`, is using durability exactly as designed. Reading only the top
+  level would report every conditional saga there is.
+- **Inside an inline sub-flow.** An `Inline` child's steps run within the parent's
+  execution and share its budget, so the child's compensations are the parent's. A
+  `Detached` child has its own deadline, lifecycle and profile — what it does is no
+  argument for the parent being durable, and it is not counted. `AwaitCompletion` suspends
+  the parent outright, which is durability by itself.
+
+### 7.2 It abstains rather than guessing
+
+When a flow composes an inline sub-flow that **this manifest does not describe** — the
+child was compiled into another assembly, so the document names it and stops — the check
+says nothing about the parent.
+
+That is deliberate and it is the asymmetry the whole check rests on. A missed finding
+costs storage. A false one costs the rule: a cost gate that accuses a correct saga is a
+cost gate somebody deletes from the pipeline, and then it catches nothing at all. The
+same reasoning is why [§2.2](#22-what-is-never-reported) exists for `diff`.
+
+### 7.3 Reading it
+
+```
+flowx verify --cost — Ecommerce 1.1.0
+
+COST (1)
+  FLOWX-VERIFY-001  flow report.daily@1.0.0
+      profile is Durable, with no compensation, no signal and no timer
+      It pays for a journal write per step, a lease and a resumption path, and uses
+      none of the three.
+
+1 of 2 durable flows uses nothing durability provides.
+```
+
+The denominator is published, in text and in JSON, because "no findings" over an unknown
+total is also exactly what reading the wrong file looks like. A manifest with no durable
+flow at all says so in as many words rather than printing nothing.
+
+```jsonc
+{
+  "application": "Ecommerce", "version": "1.1.0",
+  "passed": false, "durableFlows": 2, "flagged": 1,
+  "findings": [ { "code": "FLOWX-VERIFY-001", "subject": "flow report.daily@1.0.0", … } ]
+}
+```
+
+### 7.4 `--cost` is required, not defaulted
+
+`flowx verify` on its own is a usage error. The verb was documented with three checks, so
+a bare invocation is far likelier to mean "I read about one of the other two" than "run
+whatever you have" — and guessing would run a check the caller did not ask for and then
+report a clean result for the one they did.
+
+Exit `1` on a finding, like `diff`, so a pipeline that wants this gating gets it with no
+wrapper and one that wants it advisory runs it in a step allowed to fail. There is no
+`--ignore`, for the reason [§6](#6-using-it-in-ci) gives.
+
+### 7.5 Why it belongs in the CLI
+
+Every input the rule needs is already published: the profile, each step's kind, and the
+compensation registered against a step. So the check costs no new contract, needs no
+assembly and keeps `CliDependsOnNothingButTheManifest` green.
+
+It also reads `Delay` — a step kind `flowx.manifest.schema.json` defines and this
+repository's generator has no case for yet. That is the correct way round. The CLI is a
+consumer of the schema, not of the current emitter, so the day `Delay` is emitted this
+check is already right.
+
+---
+
+## 8. `flowx replay` against the fitness function — a finding, not a decision
+
+[PLAN WP-64](../PLAN.md) states the conflict rather than leaving it to be discovered:
+`CliDependsOnNothingButTheManifest` is green, `flowx replay` reads a journal, and one of
+the two has to give. This section records what an audit of the CLI found about *how*,
+because it narrows the question and it is not the CLI page's decision to close.
+
+**The rule forbids less than its name suggests.** `CliDependsOnNothingButTheManifest`
+asserts that `FlowX.Cli.csproj` has no `ProjectReference`. It does not count inputs. A
+`replay` verb that reads a journal as **data** would leave it green untouched; a verb that
+imports a FlowX type to deserialise one turns it red. The rule's real content is *the CLI
+links no FlowX assembly*, and that is the part worth keeping — it is what makes the CLI
+evidence that the manifest is consumable from outside this repository.
+
+**What would make `replay` legal is a published journal document.** The manifest is
+consumable by a stranger because [ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md)
+made it an artifact with a versioned schema in `schemas/`. The journal has no such thing:
+[ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md) specifies it as database
+tables — `flow_instance`, `flow_step` — with payloads written through a generated
+`System.Text.Json` context. There is no `flowx.journal.schema.json` beside the manifest's.
+
+**The join `replay --mode inspect` needs already exists.** ADR-0015 derives the resume
+position by replaying committed `flow_step` rows *against the compiled plan*, and a journal
+row's `step_id` and `scope` mean nothing without it. But the manifest already publishes
+that plan — steps, their ids, their kinds, their branches. So rendering an instance's
+history is a join between two published documents, and needs no FlowX type on either side.
+
+So the finding is that the two are **reconcilable without amending the test**, at the price
+of giving the journal what the manifest already has. That price is not obviously worth
+paying and is not this page's call. What the audit does claim:
+
+- If the journal gets a published schema, `replay` is a second document consumer, the
+  fitness function stays as written, and only [§1](#1-what-the-tool-is-for)'s prose —
+  "reads `flowx.manifest.json` and nothing else" — needs widening.
+- If instead `replay` must reach a live store through a FlowX abstraction, then the rule
+  is genuinely in the way and an ADR should **amend** it — restating it as "the CLI links
+  no FlowX assembly except the journal contract", with that exception named — rather than
+  delete it. A fitness function removed to unblock a feature stops being evidence of
+  anything.
+- Either way it is an ADR. Editing the test to make a verb compile would discard the one
+  piece of evidence the repository has that its manifest is a contract.
 
 ---
 

@@ -159,8 +159,32 @@ public sealed class ProgramTests : IDisposable
         output.ShouldContain("flowx graph", Case.Sensitive);
         output.ShouldContain("flowx manifest", Case.Sensitive);
         output.ShouldContain("flowx diff", Case.Sensitive);
-        output.ShouldContain("1 breaking change", Case.Sensitive,
+        output.ShouldContain("flowx verify", Case.Sensitive);
+        output.ShouldContain("1 the check said no", Case.Sensitive,
             "Exit codes are the contract a pipeline reads; the help has to state them.");
+    }
+
+    [Theory]
+    [InlineData("replay")]
+    [InlineData("query")]
+    [InlineData("bench")]
+    [InlineData("new")]
+    [InlineData("run")]
+    [InlineData("signal")]
+    [InlineData("cancel")]
+    [InlineData("tenant")]
+    [InlineData("purge")]
+    [InlineData("generate")]
+    public void HelpNamesNoVerbThisToolDoesNotHave(string absent)
+    {
+        // Other documents in this repository invoke fifteen verbs that were never built.
+        // 22-CLI §1.1 lists them, with the phase each is blocked on, because that is the
+        // page a reader checks. The help text is not that page: it is what somebody reads
+        // to find out what they can run right now, and a verb in it that exits 2 is worse
+        // than one they never heard of.
+        var (_, output, _) = Run("--help");
+
+        output.ShouldNotContain("flowx " + absent, Case.Sensitive);
     }
 
     [Fact]
@@ -385,6 +409,166 @@ public sealed class ProgramTests : IDisposable
         using var document = JsonDocument.Parse(File.ReadAllText(fixture));
 
         document.RootElement.GetProperty("flows").GetArrayLength().ShouldBeGreaterThan(0);
+    }
+
+    /// <summary>A durable flow that compensates nothing, awaits nothing and sleeps for nothing.</summary>
+    private const string WastefulManifest = """
+        {
+          "schemaVersion": "0.1.0",
+          "application": { "name": "Sample.App", "version": "1.0.0" },
+          "flows": [{
+            "id": "report.daily", "version": "1.0.0", "profile": "Durable",
+            "steps": [{ "id": 0, "kind": "Capability", "capability": "report.render@1.0.0" }],
+            "emits": []
+          }],
+          "capabilities": [
+            { "id": "report.render", "version": "1.0.0", "idempotent": true, "sideEffects": [] }
+          ]
+        }
+        """;
+
+    /// <summary>The same flow, durable for a reason: it registers a compensation.</summary>
+    private const string FrugalManifest = """
+        {
+          "schemaVersion": "0.1.0",
+          "application": { "name": "Sample.App", "version": "1.0.0" },
+          "flows": [{
+            "id": "order.place", "version": "1.0.0", "profile": "Durable",
+            "steps": [{ "id": 0, "kind": "Capability", "capability": "inventory.reserve@1.0.0",
+                        "compensation": "inventory.release@1.0.0" }],
+            "emits": []
+          }],
+          "capabilities": [
+            { "id": "inventory.reserve", "version": "1.0.0", "idempotent": true, "sideEffects": [] }
+          ]
+        }
+        """;
+
+    [Fact]
+    public void VerifyCostExitsNonZeroSoItGatesWithoutAWrapper()
+    {
+        var (exitCode, output, _) = Run(
+            "verify", "--cost", "--manifest", WriteManifest("wasteful.json", WastefulManifest));
+
+        exitCode.ShouldBe(1,
+            "Same contract as diff: 1 is the check saying no, and a pipeline that wants " +
+            "this advisory runs it in a step allowed to fail.");
+
+        output.ShouldContain("FLOWX-VERIFY-001", Case.Sensitive);
+        output.ShouldContain("report.daily", Case.Sensitive);
+    }
+
+    [Fact]
+    public void VerifyCostSucceedsWhenEveryDurableFlowUsesDurability()
+    {
+        var (exitCode, output, _) = Run(
+            "verify", "--cost", "--manifest", WriteManifest("frugal.json", FrugalManifest));
+
+        exitCode.ShouldBe(0);
+        output.ShouldContain("1 checked", Case.Sensitive,
+            "A clean result over a stated denominator; a bare 'nothing found' is also " +
+            "what reading the wrong file looks like.");
+    }
+
+    [Fact]
+    public void VerifyReadsTheSwitchWhicheverSideOfTheValuedOptionItIsOn()
+    {
+        // The parser decides an option is a switch when what follows it is another option
+        // or nothing. Before that rule, `--cost --manifest x` made "--manifest" the value
+        // of --cost and lost the path.
+        var manifest = WriteManifest("wasteful.json", WastefulManifest);
+
+        Run("verify", "--cost", "--manifest", manifest).ExitCode.ShouldBe(1);
+        Run("verify", "--manifest", manifest, "--cost").ExitCode.ShouldBe(1);
+    }
+
+    [Fact]
+    public void VerifyWithNoCheckIsAUsageErrorRatherThanAGuess()
+    {
+        var (exitCode, _, stderr) = Run("verify");
+
+        exitCode.ShouldBe(2,
+            "The verb was documented with three checks. A bare invocation far more likely " +
+            "means one of the other two than 'run whatever you have'.");
+
+        stderr.ShouldContain("requires --cost", Case.Sensitive);
+    }
+
+    [Fact]
+    public void VerifyCompleteSendsTheReaderToTheCheckThatDoesRun()
+    {
+        var (exitCode, _, stderr) = Run("verify", "--complete");
+
+        exitCode.ShouldBe(2);
+        stderr.ShouldContain("ManifestIsComplete", Case.Sensitive,
+            "03-Design-Principles, 01-Vision and ADR-0005 all named --complete. Somebody " +
+            "who read one of them and typed it deserves better than 'unknown option'.");
+    }
+
+    [Fact]
+    public void VerifyRuntimeSaysWhatIsMissingRatherThanThatItIsUnknown()
+    {
+        var (exitCode, _, stderr) = Run("verify", "--runtime");
+
+        exitCode.ShouldBe(2);
+        stderr.ShouldContain("control plane", Case.Sensitive);
+    }
+
+    [Fact]
+    public void VerifyCostWithAMissingManifestIsNotFoundRatherThanAUsageError()
+    {
+        var (exitCode, _, stderr) = Run(
+            "verify", "--cost", "--manifest", Path.Combine(_directory, "absent.json"));
+
+        exitCode.ShouldBe(3);
+        stderr.ShouldContain("absent.json", Case.Sensitive);
+    }
+
+    [Fact]
+    public void VerifyCostRejectsAFormatItCannotProduce()
+    {
+        var (exitCode, _, stderr) = Run(
+            "verify", "--cost",
+            "--manifest", WriteManifest("frugal.json", FrugalManifest),
+            "--format", "yaml");
+
+        exitCode.ShouldBe(2, "A usage error, not a finding — the check never ran.");
+        stderr.ShouldContain("Unknown --format 'yaml'", Case.Sensitive);
+    }
+
+    [Fact]
+    public void VerifyCostEmitsParsableJsonWhenAskedTo()
+    {
+        var (exitCode, stdout, _) = Run(
+            "verify", "--cost",
+            "--manifest", WriteManifest("wasteful.json", WastefulManifest),
+            "--format", "json");
+
+        exitCode.ShouldBe(1);
+
+        using var document = JsonDocument.Parse(stdout);
+
+        document.RootElement.GetProperty("passed").GetBoolean().ShouldBeFalse();
+        document.RootElement.GetProperty("findings").GetArrayLength().ShouldBe(1);
+    }
+
+    [Fact]
+    public void VerifyCostKeepsTheVerdictWhenWritingToAFile()
+    {
+        var output = Path.Combine(_directory, "nested", "cost.json");
+
+        var (exitCode, stdout, _) = Run(
+            "verify", "--cost",
+            "--manifest", WriteManifest("wasteful.json", WastefulManifest),
+            "--format", "json",
+            "--output", output);
+
+        exitCode.ShouldBe(1, "Redirecting the report must not change the verdict.");
+        stdout.ShouldBeEmpty();
+
+        using var document = JsonDocument.Parse(File.ReadAllText(output));
+
+        document.RootElement.GetProperty("flagged").GetInt32().ShouldBe(1);
     }
 
     [Fact]
