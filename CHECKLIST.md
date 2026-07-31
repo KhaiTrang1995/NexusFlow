@@ -27,9 +27,14 @@
 > **Build:** 0 warnings, 0 errors · **Tests:** 1490/1490 passing (86 of them against a live
 > PostgreSQL 16.13; 0 skipped). Without `FLOWX_POSTGRES_CONNECTION` the adapter suite skips
 > 79 with reasons; set to an unreachable server it **fails 80 and skips none**, on purpose ·
-> **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) — *last measured before
-> WP-53, WP-55 and WP-58; not re-run since, and the figure is carried rather than
-> verified* · **SDK:** 10.0.110
+> **Coverage:** **83.9 % line / 77.6 % branch** over `src/` and `plugins/`, measured
+> 2026-07-31 with a live PostgreSQL. *This line read 94.0 / 87.0 for several phases. That
+> figure was not re-measured as the codebase grew and was overstated by about ten points;
+> it is replaced rather than annotated.* Both are above the stated 80 / 75 — **and nothing
+> enforces them**: CI collects coverage and no step compares it to a threshold, so the
+> "gate" has never once failed a build. Two further caveats a reader needs: CI runs
+> without `FLOWX_POSTGRES_CONNECTION`, so its number is lower than this one, and the
+> figure excludes generated code · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
 >
@@ -1141,8 +1146,8 @@ adjacent to it shipped early and is recorded here rather than left to be redisco
 |---|---|---|---|
 | Compiler warnings | 0 | **0** ✅ | verified locally |
 | Blocker/critical Sonar issues | 0 | **not running** | WP-0 |
-| Line coverage | ≥ 80 % | **94.0 %** ✅ | carried from before WP-53/55/58; not re-run |
-| Branch coverage | ≥ 75 % | **87.0 %** ✅ | carried from before WP-53/55/58; not re-run |
+| Line coverage | ≥ 80 % | **83.9 %** — *not enforced* | measured 2026-07-31 over `src/` + `plugins/`, live Postgres |
+| Branch coverage | ≥ 75 % | **77.6 %** — *not enforced* | same run; no CI step compares either figure to its target |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
 | Fitness functions | all green | **58/58** ✅ | `dotnet test tests/FlowX.Architecture.Tests -c Release`, plus compiler and code-fix fitness tests |
