@@ -56,13 +56,21 @@ Apache-2.0 redistribution, verified by an automated licence scan in CI.
   protection at this stage, and BSL-style protection would cost the plugin
   ecosystem.
 - **Dependency choice is constrained** — no GPL/AGPL dependencies, ever, even
-  transitively. *Not enforced:* `DependencyLicencesAreCompatible` has never been
-  written and no licence scan runs in any workflow. The constraint currently
-  holds because `FlowX.Abstractions` has zero dependencies by gate
-  (`AbstractionsHasNoDependencies`) and the rest of the solution takes only
-  Microsoft and test-framework packages — which is an observation about today's
-  dependency set, not a control. Adding the scan is cheap and should happen
-  before the first published package.
+  transitively. *Enforced* since the licence gate landed:
+  `DependencyLicencesAreCompatible` reads the resolved transitive graph out of
+  `obj/project.assets.json` and checks every package against the register in
+  [docs/DEPENDENCIES.md](../DEPENDENCIES.md). Until then the constraint held only
+  because `FlowX.Abstractions` has zero dependencies by gate
+  (`AbstractionsHasNoDependencies`) and the rest of the solution took only
+  Microsoft and test-framework packages — an observation about that day's
+  dependency set, not a control. Two things the observation had wrong, and the
+  gate found: `SonarAnalyzer.CSharp` is under the SONAR Source-Available
+  Licence rather than MIT, and `Microsoft.NETCore.Platforms` 1.1.0 under a
+  proprietary Microsoft EULA. Neither is copyleft and neither ships — the gate
+  admits them only because the resolved graph proves they contribute no
+  assembly — but "only Microsoft and test-framework packages" was not the same
+  statement as "only permissive licences", which is the distinction this
+  consequence exists to draw.
 - Contributors must sign a DCO (`Signed-off-by`), a small submission friction.
 - Attribution and NOTICE-file obligations must be maintained in distributions.
 

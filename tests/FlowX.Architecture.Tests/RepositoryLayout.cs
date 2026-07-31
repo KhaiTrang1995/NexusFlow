@@ -21,6 +21,23 @@ internal static class RepositoryLayout
             .OrderBy(static f => f.Name, StringComparer.Ordinal)
             .ToList();
 
+    /// <summary>All project files under the given trees, excluding build output.</summary>
+    /// <remarks>
+    /// <c>SourceProjects</c> answers a narrower question and is left alone: the layering rules
+    /// are about <c>src/</c> and nothing else. This one exists for rules whose subject is every
+    /// project in the repository — <c>DependencyLicencesAreCompatible</c> is the first — and it
+    /// filters <c>bin/</c> and <c>obj/</c> because a restored project leaves generated
+    /// <c>.csproj</c> fragments under <c>obj/</c> that are not projects anybody wrote.
+    /// </remarks>
+    public static IReadOnlyList<FileInfo> ProjectsIn(params string[] trees) =>
+        trees
+            .SelectMany(tree => Root.GetDirectories(tree))
+            .SelectMany(static d => d.GetFiles("*.csproj", SearchOption.AllDirectories))
+            .Where(static f => !f.FullName.Replace('\\', '/').Split('/')
+                .Any(static segment => segment is "obj" or "bin"))
+            .OrderBy(static f => f.FullName, StringComparer.Ordinal)
+            .ToList();
+
     /// <summary>
     /// Whether a project declares itself a Roslyn component.
     /// </summary>

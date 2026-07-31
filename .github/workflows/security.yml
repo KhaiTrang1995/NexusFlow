@@ -87,6 +87,14 @@ jobs:
       - name: Deprecated packages are a warning, not a failure
         run: dotnet list FlowX.slnx package --deprecated || true
 
+      # The other half of dependency hygiene — licences, constraint C6 — is deliberately
+      # not here. `DependencyLicencesAreCompatible` reads the same transitive closure this
+      # job scans for vulnerabilities, out of obj/project.assets.json, and checks it
+      # against docs/DEPENDENCIES.md; it runs in the "Architecture fitness functions" step
+      # of ci.yml, where a developer also meets it on `dotnet test` before committing. A
+      # second copy of the rule as shell here would be the mistake quality.yml's `debt` job
+      # documents at length.
+
   iac:
     name: IaC scan
     runs-on: ubuntu-latest
