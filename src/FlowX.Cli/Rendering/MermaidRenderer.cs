@@ -182,6 +182,15 @@ public static class MermaidRenderer
     /// </remarks>
     private static IEnumerable<int> Exits(ManifestStep step)
     {
+        // A Fail has no exit at all. It is the one terminal kind: the flow ends there, so
+        // drawing an edge onwards from it would show control resuming after a step it can
+        // never leave — and that edge is exactly what a reviewer looks at the picture to
+        // check when a Default arm rejects a request.
+        if (step.Kind == "Fail")
+        {
+            yield break;
+        }
+
         if (step.Branches.Count == 0)
         {
             yield return step.Id;
@@ -249,6 +258,13 @@ public static class MermaidRenderer
             return string.IsNullOrEmpty(step.Mode) ? composed : composed + " · " + step.Mode;
         }
 
+        if (step.Kind == "Fail")
+        {
+            // Not the error, for the reason a condition is not its predicate: the
+            // manifest has no field for it, and an Error's message is business data.
+            return "fail";
+        }
+
         if (step.Kind is "Condition" or "Switch")
         {
             // Not the predicate, and not the selector or the case values: the manifest's
@@ -301,6 +317,10 @@ public static class MermaidRenderer
         // shape is what stops a reader looking for edges out of it that were never going
         // to be there.
         "SubFlow" => $"[({Quote(label)})]",
+        // A double circle, which is how a state diagram spells a final state — and this is
+        // the only kind that is one. Nothing leaves it, so it must not wear a shape a
+        // reader expects an edge out of.
+        "Fail" => $"((({Quote(label)})))",
         _ => $"[{Quote(label)}]",
     };
 

@@ -624,4 +624,43 @@ public sealed class MermaidRendererTests
         diagram.ShouldContain("f0s3 --> f0s4");
         diagram.ShouldContain("f0s0 --> f0s4");
     }
+
+    [Fact]
+    public void ADefaultThatFailsHasNoEdgeOutOfIt()
+    {
+        // The whole point of `.Default(b => b.Fail(...))` is that the value goes no
+        // further. A diagram that drew the rejecting arm rejoining the flow would show
+        // exactly the behaviour the arm was written to prevent — and it is the picture,
+        // not the plan, that a reviewer checks that against.
+        const string RejectingDefault = """
+            {
+              "schemaVersion": "0.1.0",
+              "application": { "name": "Sample.App", "version": "1.0.0" },
+              "flows": [
+                {
+                  "id": "order.price", "version": "1.0.0", "profile": "Ephemeral",
+                  "steps": [
+                    { "id": 0, "kind": "Switch", "branches": [
+                        [ { "id": 1, "kind": "Capability", "capability": "pricing.retail@1.0.0" } ],
+                        [ { "id": 3, "kind": "Fail" } ]
+                      ] },
+                    { "id": 4, "kind": "Capability", "capability": "order.confirm@1.0.0" }
+                  ],
+                  "emits": []
+                }
+              ],
+              "capabilities": []
+            }
+            """;
+
+        var diagram = MermaidRenderer.Render(Parse(RejectingDefault));
+
+        // A double circle: how a state diagram spells a final state, and this is the only
+        // step kind that is one.
+        diagram.ShouldContain("f0s3(((\"fail\")))");
+
+        diagram.ShouldContain("f0s0 -->|default| f0s3");
+        diagram.ShouldContain("f0s1 --> f0s4");
+        diagram.ShouldNotContain("f0s3 -->");
+    }
 }

@@ -297,6 +297,15 @@ public static class FlowAnalyzer
                     AddSignalStep(link, semanticModel, steps, ref nextIndex);
                     break;
 
+                case "Fail":
+                    // Terminal. Everything else in this switch says what happens next;
+                    // this says there is no next, which is why the block ends here rather
+                    // than carrying on and laying out steps the engine can never reach.
+                    AddFailStep(link, steps, ref nextIndex);
+                    ReportUnreachable(links, i, diagnostics);
+
+                    return steps;
+
                 case "CompensateWith":
                     AttachCompensation(link, semanticModel, steps);
                     break;
@@ -354,6 +363,90 @@ public static class FlowAnalyzer
         }
 
         return steps;
+    }
+
+    /// <summary>
+    /// Models a <c>.Fail(error)</c>: one terminal step carrying the author's error
+    /// expression, verbatim.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Verbatim, and no attempt to read the error's code.</strong> Following
+    /// <c>OrderErrors.UnsupportedChannel</c> back to the <c>new Error(code, …)</c> that
+    /// produced it is real work with a real failure mode — a factory in a referenced
+    /// assembly, a code composed at run time — and <see cref="ErrorCatalogueReader"/>
+    /// already does it, soundly, with an <c>IsComplete</c> flag for the cases it cannot
+    /// follow. A second, weaker resolver here would publish a guess where that one
+    /// publishes nothing. So the expression reaches the generated dispatcher, which is
+    /// where the case values already live, and the manifest records only that the arm
+    /// fails.
+    /// </para>
+    /// <para>
+    /// No diagnostic for a <c>.Fail</c> the compiler cannot read, because there is nothing
+    /// to read: unlike a <c>SubFlowMode</c>, the expression is copied through untouched and
+    /// executes exactly as written however it was written.
+    /// </para>
+    /// </remarks>
+    private static void AddFailStep(ChainLink link, List<StepModel> steps, ref int nextIndex)
+    {
+        var arguments = link.Invocation.ArgumentList.Arguments;
+
+        // `.Fail(error)` takes one argument, so a call without it does not compile.
+        // Reachable only from a half-typed buffer, where the C# compiler is already saying
+        // something more useful than a FlowX diagnostic would.
+        if (arguments.Count == 0)
+        {
+            return;
+        }
+
+        steps.Add(StepModel.Fail(
+            nextIndex++,
+            arguments[0].Expression.ToString(),
+            FormatLocation(arguments[0].Expression.GetLocation()),
+            FormatLocation(link.CallLocation)));
+    }
+
+    /// <summary>Chain methods that would have become a step had the block not already ended.</summary>
+    private static readonly HashSet<string> StepProducingMethods = new HashSet<string>(System.StringComparer.Ordinal)
+    {
+        "Step", "Emit", "EmitOnFailure", "AwaitSignal", "When", "Switch", "Parallel",
+        "ForEach", "SubFlow", "Fail", "Delay",
+    };
+
+    /// <summary>
+    /// Reports FLOWX1027 for the first step declared after a <c>.Fail(...)</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Once, against the first one, rather than once per unreachable link. The author made
+    /// a single mistake — they wrote a terminal step in the middle of a block — and a
+    /// diagnostic per step after it would report the same mistake five times and bury it.
+    /// </para>
+    /// <para>
+    /// <c>Return</c> is deliberately not in the list. It declares no step: it is the
+    /// flow's output projection, it is read off the chain rather than laid out, and the
+    /// engine already does not run it when the flow failed. Reporting it would fire on
+    /// <c>flow.Fail(e).Return(…)</c>, which is the one shape a flow that always rejects
+    /// has to be written in for the DSL to type-check.
+    /// </para>
+    /// </remarks>
+    private static void ReportUnreachable(IReadOnlyList<ChainLink> links, int failIndex, List<Diagnostic> diagnostics)
+    {
+        for (var i = failIndex + 1; i < links.Count; i++)
+        {
+            if (!StepProducingMethods.Contains(links[i].MethodName))
+            {
+                continue;
+            }
+
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.StepIsUnreachableAfterFail,
+                links[i].CallLocation,
+                EnclosingFlowName(links[i]),
+                links[i].MethodName));
+
+            return;
+        }
     }
 
     /// <summary>The <c>.Otherwise(...)</c> immediately following the link at <paramref name="index"/>, if any.</summary>

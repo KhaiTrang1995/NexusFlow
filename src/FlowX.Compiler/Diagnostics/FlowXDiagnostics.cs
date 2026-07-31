@@ -385,6 +385,35 @@ public static class FlowXDiagnostics
         "no longer describes how this flow is reached.",
         DiagnosticSeverity.Warning);
 
+    /// <summary>FLOWX1027 — a step declared after a <c>.Fail(...)</c>, which ends the flow.</summary>
+    /// <remarks>
+    /// <para>
+    /// A <strong>warning</strong>, and the model is C#'s own <c>CS0162</c>: the source is
+    /// not wrong, part of it simply cannot run. <c>.Fail(error)</c> is terminal — the flow
+    /// ends there with a business error and unwinds what it completed — so a step after one
+    /// in the same block is unreachable by construction rather than by circumstance.
+    /// </para>
+    /// <para>
+    /// <strong>The unreachable steps are not compiled.</strong> Laying them out would put
+    /// them in the plan, in <c>flowx.manifest.json</c> and in a rendered diagram, where a
+    /// reviewer or an agent reading the published contract would believe the flow does
+    /// work it can never do. Dropping them silently would be worse still, which is what
+    /// this diagnostic is for.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor StepIsUnreachableAfterFail = Create(
+        "FLOWX1027",
+        "Step is unreachable after Fail",
+        "Flow '{0}' declares '.{1}(...)' after a '.Fail(...)', which ends the flow, so it " +
+        "can never run and is not compiled",
+        "'.Fail(error)' terminates the flow with a business error: the engine takes the " +
+        "failure path, the completed compensable steps unwind in strict reverse, and " +
+        "control never reaches the next step in the block. Steps after one are therefore " +
+        "dropped rather than published — a manifest listing work the flow cannot do is a " +
+        "contract that lies. Move them before the '.Fail(...)', or into the branch that " +
+        "does not fail.",
+        DiagnosticSeverity.Warning);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -406,7 +435,8 @@ public static class FlowXDiagnostics
         SubFlowCannotBeComposed,
         FlowHasNoSteps,
         EmitIsNotYetPublished,
-        TriggerCannotBeRead);
+        TriggerCannotBeRead,
+        StepIsUnreachableAfterFail);
 
     private static DiagnosticDescriptor Create(
         string id,

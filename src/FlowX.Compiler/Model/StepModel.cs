@@ -34,6 +34,14 @@ public enum StepKindModel
     /// separately and possibly in another assembly.
     /// </remarks>
     SubFlow = 7,
+
+    /// <summary><c>.Fail(error)</c>.</summary>
+    /// <remarks>
+    /// The one kind that is <em>terminal</em>: control never leaves it, so the steps a
+    /// block declares after one are unreachable and <c>FLOWX1027</c> says so. Everything
+    /// else here is a statement about what happens next.
+    /// </remarks>
+    Fail = 8,
 }
 
 /// <summary>One branch of a <c>Parallel</c>: a block of steps that runs concurrently with its siblings.</summary>
@@ -195,6 +203,30 @@ public sealed record StepModel
 
     /// <summary>Contract version of the compensation.</summary>
     public string? CompensationVersion => Compensation?.CapabilityVersion;
+
+    /// <summary>
+    /// Source text of the <c>.Fail(...)</c> argument, copied verbatim, or <c>null</c> for
+    /// every other kind.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Verbatim for the reason the predicate and the case values are: an author writes
+    /// <c>OrderErrors.UnsupportedChannel</c>, or a factory call carrying structured detail,
+    /// and reconstructing an arbitrary C# expression means re-rendering every form the
+    /// language has and being wrong on the first one nobody thought of.
+    /// </para>
+    /// <para>
+    /// <strong>It reaches the generated dispatcher and nothing else.</strong> An
+    /// <c>Error</c> carries a message, and the messages in this codebase interpolate
+    /// business values — the same reason <c>CapabilityErrorModel</c> publishes a code and a
+    /// category and never a message. The manifest records that the arm <em>fails</em>,
+    /// which is structure; what it fails with stays in compiled code.
+    /// </para>
+    /// </remarks>
+    public string? FailureExpression { get; private init; }
+
+    /// <summary><c>file:line</c> of the error expression, for its <c>#line</c> directive.</summary>
+    public string? FailureLocation { get; private init; }
 
     /// <summary>Event identity for an <see cref="StepKindModel.Emit"/> step.</summary>
     public string? EventType { get; private init; }
@@ -546,6 +578,26 @@ public sealed record StepModel
         return new StepModel(index, StepKindModel.Emit)
         {
             EventType = eventType,
+            Location = location,
+        };
+    }
+
+    /// <summary>Models a <c>.Fail(error)</c> call.</summary>
+    /// <param name="index">Flat index of the terminal step.</param>
+    /// <param name="error">The error expression's source text, copied verbatim.</param>
+    /// <param name="errorLocation"><c>file:line</c> of the error expression.</param>
+    /// <param name="location"><c>file:line</c> of the <c>.Fail</c> call.</param>
+    /// <remarks>
+    /// One index and no layout, like <see cref="SubFlow"/> — but for the opposite reason.
+    /// A sub-flow's steps are somewhere else; a <c>Fail</c> has none, because it is where
+    /// the flow stops.
+    /// </remarks>
+    public static StepModel Fail(int index, string error, string? errorLocation = null, string? location = null)
+    {
+        return new StepModel(index, StepKindModel.Fail)
+        {
+            FailureExpression = error,
+            FailureLocation = errorLocation,
             Location = location,
         };
     }

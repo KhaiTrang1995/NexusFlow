@@ -118,6 +118,28 @@ public enum StepKind
     /// </para>
     /// </remarks>
     SubFlow = 8,
+
+    /// <summary>
+    /// Ends the flow with the business error the author declared, unwinding whatever
+    /// completed before it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one kind that is terminal, and the only one that cannot succeed.</strong>
+    /// It carries no target because control does not continue: the engine reaches it, the
+    /// dispatcher hands back a failed outcome, and the flow takes the ordinary failure path
+    /// — which is exactly the point. A <c>Fail</c> that ended the flow "cleanly" would
+    /// leave a completed <c>inventory.reserve</c> reserved forever, and
+    /// <c>08-Flow-Definition.md §3.2</c> reaches for it precisely to reject a request
+    /// <em>after</em> earlier steps have already had effects.
+    /// </para>
+    /// <para>
+    /// <strong>The error itself is not here</strong>, for the reason a predicate and a case
+    /// value are not: it is a business value, it lives with the generated dispatcher, and
+    /// the plan stays something the engine can run without knowing a single contract type.
+    /// </para>
+    /// </remarks>
+    Fail = 9,
 }
 
 /// <summary>
@@ -672,6 +694,27 @@ public sealed record StepNode
         };
     }
 
+    /// <summary>Creates a terminal step that ends the flow with a business error.</summary>
+    /// <param name="index">Position in the graph.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>No target and no payload, and both are the point.</strong> No target,
+    /// because control never leaves this node — the forward-target rule that proves the
+    /// step loop terminates is untouched, and a <c>Fail</c> simply ends the range it is in.
+    /// No payload, because the <c>Error</c> is a business value: it lives in the generated
+    /// dispatcher beside the case values, and is delivered through the same
+    /// <c>IStepDispatcher.ExecuteAsync</c> that delivers a capability's own failure. That
+    /// is what lets the engine treat "this arm rejects the request" and "payment declined"
+    /// as the same event, which is what a saga needs them to be.
+    /// </para>
+    /// </remarks>
+    public static StepNode ForFail(int index)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+
+        return new StepNode(index, StepKind.Fail);
+    }
+
     /// <summary>
     /// Rejects a target that does not point forward.
     /// </summary>
@@ -711,6 +754,7 @@ public sealed record StepNode
             $"[{Index}] foreach {Index + 1}..{Target} (max {MaxDegreeOfParallelism}" +
             (ContinueOnError ? ", continue on error)" : ")"),
         StepKind.SubFlow => $"[{Index}] subflow {SubFlowId} ({Mode})",
+        StepKind.Fail => $"[{Index}] fail",
         _ => $"[{Index}] {Kind}",
     };
 }

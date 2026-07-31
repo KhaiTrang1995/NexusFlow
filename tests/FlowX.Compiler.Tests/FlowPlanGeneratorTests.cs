@@ -802,10 +802,11 @@ public sealed class FlowPlanGeneratorTests
             "The alternative, with the compensation it declared inside the lambda.");
 
         source.ShouldContainText(
-            "public static readonly Func<FlowContext, bool> Step1 = ctx => ctx.Get<Reservation>().Sku == \"rare\";",
+            "public static readonly Func<FlowContext<Sample.PlaceOrder>, bool> Step1 = " +
+            "ctx => ctx.Get<Reservation>().Sku == \"rare\";",
             "The predicate is the author's expression, verbatim.");
 
-        source.ShouldContainText("return Conditions.Step1(ctx);", "reached by step index, like everything else.");
+        source.ShouldContainText("return Conditions.Step1(Typed(ctx));", "reached by step index, like everything else.");
     }
 
     [Fact]
@@ -895,7 +896,7 @@ public sealed class FlowPlanGeneratorTests
         source.ShouldContainText("StepNode.ForCapability(6, Descriptors.Step6)", "The `Default` block.");
 
         source.ShouldContainText(
-            "public static readonly Func<FlowContext, Sample.Channel> Step1 = " +
+            "public static readonly Func<FlowContext<Sample.PlaceOrder>, Sample.Channel> Step1 = " +
             "ctx => ctx.Get<Reservation>().Sku == \"rare\" ? Channel.Retail : Channel.Wholesale;",
             "The selector is the author's expression verbatim, typed at what C# inferred.");
 
@@ -1326,7 +1327,8 @@ public sealed class FlowPlanGeneratorTests
         var run = GeneratorHarness.Run(WithFlow(IteratingFlow));
 
         run.Plan.ShouldContainText(
-            "public static readonly Func<FlowContext, System.Collections.Generic.IReadOnlyList" +
+            "public static readonly Func<FlowContext<Sample.PlaceOrder>, " +
+            "System.Collections.Generic.IReadOnlyList" +
             "<Sample.OrderLine>> Step1 = ctx => ctx.Get<LineBatch>().Lines;",
             "A list rather than a sequence: the engine reads the count once, before the " +
             "first element, and that count is what bounds the loop.");
