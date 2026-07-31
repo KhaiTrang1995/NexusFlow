@@ -5,19 +5,30 @@
 > this says what is built.
 >
 > **Last updated:** 2026-07-31 · **Phase:** **P0 complete · P1 closed with one accepted
-> exception → P2 in progress: WP-51 and WP-52 landed, WP-50 still not started** ·
-> **Commit:** see `git log`
+> exception → P2 in progress: WP-51, WP-52, WP-53, WP-55 and WP-58 landed, WP-50 still not
+> started** · **Commit:** see `git log`
 >
-> **The durable seam exists and nothing has run against a store.** WP-52 made
+> **Durable execution runs against a real database, and is not yet end to end.** WP-52 made
 > `FlowX.Runtime` read `ExecutionProfile`: a `Durable` flow journals one row per
-> `(instance, scope, step, attempt)` and resumes through the same step loop. Lease
-> acquisition, the recovery scan, Postgres, Redis, the outbox and `AwaitSignal` are not
-> built, and the only `IFlowJournal` in the repository is an in-memory reference in
-> `tests/FlowX.Conformance.Tests`. Durability does not work end to end; see
-> [§5d](#5d-p2--durable-execution--the-seam-is-in-nothing-has-run-against-a-store).
+> `(instance, scope, step, attempt)` and resumes through the same step loop. WP-55 added
+> lease acquisition with background renewal and a recovery scan that claims instances whose
+> lease expired. WP-53 added `plugins/FlowX.Postgres`, which passes the WP-51 conformance
+> suite unmodified from a different assembly against PostgreSQL 16.13 — and found three
+> clauses of ADR-0015 that a dictionary could not have,
+> [ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 1349/1349 passing ·
-> **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
+> **What is still missing is not small:** the transactional outbox (WP-56), `AwaitSignal`
+> and durable suspension (WP-63), Redis (WP-54), and — the one that matters most for a
+> claim about durability — **both durability budgets are unreported rather than passed**,
+> because WP-50, the benchmark harness, has not started. A journal has been made correct
+> without being made fast. See
+> [§5d](#5d-p2--durable-execution--correct-against-a-real-database-and-unmeasured).
+>
+> **Build:** 0 warnings, 0 errors · **Tests:** 1467/1467 passing (63 of them against a live
+> PostgreSQL 16.13; 0 skipped) ·
+> **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) — *last measured before
+> WP-53, WP-55 and WP-58; not re-run since, and the figure is carried rather than
+> verified* · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
 >
@@ -56,9 +67,11 @@ These gate everything below them. None is code work.
       *Resolved:* `required` members on attribute classes compile and are
       observable via reflection — the construct flagged as highest-risk is sound.
       *Found and fixed by the first build:* see §8.
-- [x] **B-3 · ~~Delete remote branch `claude/flowx-platform-docs-djjyxi`.~~ RESOLVED.**
+- [x] **B-3 · ~~Delete a stray tooling-prefixed branch from the remote.~~ RESOLVED.**
       Gone from the remote. History scan is clean: no commit in any branch has
-      bot authorship, a generated-by footer, or a signature.
+      bot authorship, a generated-by footer, or a signature. *The branch name itself
+      is no longer written here: the guard forbids that string in tracked files, and a
+      resolved blocker is not a licence to keep the thing it was about.*
 
 ---
 
@@ -142,9 +155,13 @@ These gate everything below them. None is code work.
       engine's loops into LINQ, which breaks budget B2 — `EngineAllocationTests` is the
       arbiter and the rule is off. Worth knowing that the quality bar and the performance
       bar disagree, rather than discovering it at the next upgrade
-- [ ] **`FlowExecutionContext.Random` documents a journaled seed it cannot produce.** It is
-      built as `new Random()`, whose seed nothing can read back, so the replay guarantee the
-      remarks describe cannot hold. Found incidentally while reading an `S2245` finding
+- [x] **~~`FlowExecutionContext.Random` documents a journaled seed it cannot produce.~~
+      Closed by WP-52.** It was built as `new Random()`, whose seed nothing can read back,
+      so the replay guarantee the remarks described could not hold — found incidentally
+      while reading an `S2245` finding. The seed is now drawn from `Random.Shared.Next()`,
+      exposed as `RandomSeed`, and written into the step's `NondeterminismCapture`, which is
+      the only construction under which those remarks are true. ADR-0015 commitment 4 named
+      this defect and fixing it as the same act
 
 ---
 
@@ -152,7 +169,10 @@ These gate everything below them. None is code work.
 
 - [x] `Result<T>` — readonly struct, allocation-free failure path
 - [x] `Error`, `ErrorCategory` — closed set, terminal/retryable, HTTP mapping
-- [x] `ICapability<TIn, TOut>` — the seven rules documented on the interface
+- [x] `ICapability<TIn, TOut>` — the eight rules documented on the interface, **seven of
+      them enforced at build time** since WP-58 raised `FLOWX1007`–`FLOWX1009`. The one
+      that is not is contract immutability (`FLOWX1006`, WP-59), and the doc comment says
+      which is which rather than claiming the list is compiler-enforced, as it once did
 - [x] `CapabilityAttribute` — `Version` and `Authorization` as required members
 - [x] `Authorization`, `ApprovedByAttribute`, `SensitiveAttribute`
 - [x] `CapabilityContext`, `FlowContext<TIn>` — clock, ids, randomness, deadline
@@ -425,7 +445,7 @@ analysis), three blocked fitness functions (`CrossTenantAccessIsDenied`,
 `dotnet new flowx`, unshipped since P0 and carried twice, **is being attempted in the
 current round** — until it lands, `docs/19-SDK.md` and `docs/03 §12` still describe a
 command that does not run. See
-[§5d](#5d-p2--durable-execution--the-seam-is-in-nothing-has-run-against-a-store) and [PLAN §5](PLAN.md#5-p2--durable-execution).
+[§5d](#5d-p2--durable-execution--correct-against-a-real-database-and-unmeasured) and [PLAN §5](PLAN.md#5-p2--durable-execution).
 
 - [x] **WP-15** The branching DSL — **`When` / `Otherwise` done** through builder, model,
       analysis, emission, graph and engine. A conditional compiles into the *same flat
@@ -898,34 +918,40 @@ Three more surfaced while getting the suite green:
 
 ---
 
-## 5d. P2 · Durable execution — **the seam is in; nothing has run against a store**
+## 5d. P2 · Durable execution — **correct against a real database, and unmeasured**
 
 Work packages in [PLAN.md §5](PLAN.md#5-p2--durable-execution); the design they are held
-to is [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md), still
-**Proposed**. It is listed in full because P1 handed each item over with a named blocker,
-and an inventory that exists only in a closing summary is one nobody reads.
+to is [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md), **Accepted at
+WP-53** and [amended by ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md). It is
+listed in full because P1 handed each item over with a named blocker, and an inventory that
+exists only in a closing summary is one nobody reads.
 
-> **What WP-52 changed, in one paragraph, because the rest of this file now depends on
-> it.** `FlowX.Runtime` reads `ExecutionProfile` (2026-07-31). A `Durable` flow commits one
+> **Where durability actually is, in one paragraph, because the rest of this file depends
+> on it.** `FlowX.Runtime` reads `ExecutionProfile` (WP-52). A `Durable` flow commits one
 > journal row per `(instance, scope, step, attempt)`, captures `ctx.UtcNow`, `ctx.NewId()`
 > and `Random`'s seed per step, gives a composed sub-flow its own instance row, and resumes
-> by replaying its committed rows into the *same* step loop. **Lease acquisition, the
-> recovery scan, Postgres, Redis, the outbox and `AwaitSignal` are not built**, and the only
-> `IFlowJournal` in the repository is an in-memory reference in
-> `tests/FlowX.Conformance.Tests`. A reader must not conclude durability works end to end:
-> the seam exists, and nothing has run against a store. A `Durable` flow started with no
-> journal is now **refused** (`flow.durability_not_configured`), which until WP-55 means a
-> durable flow is rejected at its first invocation unless its caller builds the session.
+> by replaying its committed rows into the *same* step loop. A host acquires a lease,
+> renews it in the background at TTL/3, and runs a recovery scan that claims instances
+> whose lease expired (WP-55); a node that loses its lease stops **without compensating**,
+> because the work belongs to another node now. `plugins/FlowX.Postgres` is a real store
+> (WP-53), and the conformance suite passes against PostgreSQL 16.13 unmodified, from a
+> different assembly. **The outbox, `AwaitSignal` and Redis are not built**, and neither
+> durability budget has been measured. A reader must not conclude durability works end to
+> end — but "nothing has run against a store", which this section said until 2026-07-31, is
+> no longer one of the reasons why.
 
-> **ADR-0015 stays Proposed, and that is the right answer rather than a slip.** Its own
-> condition for becoming Accepted is that the conformance suite hold an *implementation* to
-> the schema. At WP-52 it does — the runtime writes through it — but the implementation on
-> the other side is an **in-memory reference**, a dictionary that satisfies the assertions.
-> That proves the schema is expressible; it says nothing about transaction boundaries,
-> indexes, unique constraints or expand/contract migration, and no store has ever run
-> against a real database. WP-52 also found **two clauses of the ADR wrong** and amended
-> them, which is itself an argument that the record is still moving. It is re-decided at
-> **WP-53**, against Postgres.
+> **ADR-0015 is Accepted, and the caveat matters more than the status.** Its condition was
+> that the conformance suite hold a *real* implementation to the schema — not the in-memory
+> dictionary that could not disagree with a transaction boundary, an index, a unique
+> constraint or a migration. WP-53 supplied one, and **all five Decision commitments held**.
+> Three clauses did not: `jsonb` reorders object keys and so breaks commitment 5 outright
+> (payload columns are `json`); `flow_lease.instance_id` as `PK,FK` is inverted in time,
+> because the lease is taken before the instance row exists; and the state-bag snapshot
+> ADR-0015 names as B8's mitigation had no column saying which commit it came from. Two of
+> the three were in an ERD ADR-0015 already declared superseded; the third was the record
+> contradicting itself. **B7 and B8 are unreported rather than passed** — WP-50 has not
+> started — so a journal has been made correct without being made fast, and that is what
+> Accepted does and does not mean here.
 
 **Roadmap Must:**
 
@@ -970,22 +996,73 @@ and an inventory that exists only in a closing summary is one nobody reads.
       entry binds to the child's context and that died with the node (WP-57); and ADR-0015
       was amended in two places its own first implementation found wrong. The take-down list
       is worked row by row in WP-54's commits
-- [ ] **WP-53** Postgres journal + lease adapter; B7 and B8 reported with an explicit verdict
-- [ ] **WP-54** Redis lease store — concurrent with WP-53, same suite unmodified
-- [ ] **WP-55** Resume: lease acquisition, recovery scan, re-entry into the same step loop
+- [~] **WP-53** Postgres journal + lease adapter; B7 and B8 reported with an explicit
+      verdict. **The adapter shipped 2026-07-31; the verdict did not, and the row stays
+      `[~]` for exactly that half.** `plugins/FlowX.Postgres` implements `IFlowJournal`,
+      `ILeaseStore`, migrations and retention, depending on `FlowX.Abstractions` and nothing
+      else. The WP-51 suite was inherited **unmodified from a different assembly** — the
+      arrangement `17 §5` describes for a third party claiming conformance — and 45
+      conformance assertions plus 18 adapter tests are green against PostgreSQL 16.13.
+      **Three ADR-0015 clauses failed contact** and are amended in
+      [ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md): payload columns are `json`
+      because `jsonb` reorders keys and breaks commitment 5; `flow_lease` carries no foreign
+      key to `flow_instance`, because the lease precedes the instance row; and
+      `flow_instance.state_bag_sequence` was added in migration `0002` to give B8's
+      mitigation the position nothing had given it. Four further things the record does not
+      say are documented rather than absorbed — `JournalStep.Sequence` needs an
+      instance-local column, the lease row must be `UPDATE`d and never `DELETE`d or the
+      token counter resets under a returning zombie, `duration_ms` overflows as `int` at
+      24.8 days, and `CompleteAsync` on an already-terminal instance is a **contract gap**
+      the suite does not specify. **B7 and B8 are unreported**, because WP-50 has not
+      started; the exit criterion asks for an explicit pass or fail and the honest answer is
+      neither yet. Skip behaviour is deliberately three-way: no connection string → every
+      adapter case skips with a reason; a connection string and no server → **59 failures,
+      0 skips**, because a skip would report the suite green against a database never
+      reached; and three always-on tests gate the skip logic itself.
+      **Two gaps found after the merge, by reading the adapter against the documents rather
+      than by a test:** `state_bag_sequence` is written and **never read** — the frontier
+      query is `WHERE instance_id = @instance ORDER BY sequence` with no lower bound, so
+      B8's mitigation is a column and not yet a shorter scan; and the deliverable row's
+      **group-commit batching and `tenant_id` partition key are not built**, which is
+      defensible only because WP-50's absent numbers are the sole rational basis for either
+- [ ] **WP-54** Redis lease store — concurrent with WP-53, same suite unmodified. **Now the
+      only demonstration left of the split-store arrangement** `ILeaseStore`'s remarks
+      describe: a Redis lease store and a Postgres journal sharing no transaction. WP-53
+      made that arrangement *possible* — the lease has no foreign key into the journal's
+      instance table, which is what a shared-nothing pair requires — and *unproved*
+- [x] **WP-55** Resume: lease acquisition, recovery scan, re-entry into the same step loop.
+      **Shipped 2026-07-31.** `DurableLease` acquires and renews in the background at TTL/3;
+      `LeasePolicy` carries the TTL and renewal stance. `FlowRecoveryScan` and
+      `FlowRecoveryService` find instances whose lease has expired and hand each to the same
+      `ExecuteAsync`, so there is still no second recovery code path to rot. **A fenced-out
+      node stops without compensating** (`CompensationOutcome.Abandoned`) — the alternative,
+      compensating work another node now owns, is a double-undo, and the decision is
+      recorded rather than inferred from the code. This discharges the WP-52 consequence
+      that a `Durable` flow was "rejected at its first invocation unless the caller builds
+      the session": a host wires it now
 - [ ] **WP-56** Transactional outbox and publisher. Retires **`FLOWX1024`**, the warning
       that says `.Emit<T>()` publishes nothing
 - [ ] **WP-57** Compensation with its own policies. **Has a dependency the roadmap does not
       show:** no policy executes at run time; the policy engine is P4
-- [ ] **WP-58** `FLOWX1007`–`FLOWX1009`, with the determinism severity stance re-decided
-      **as a set**, `FLOWX1011`'s deliberate deviation included. **No longer blocked on
-      severity:** the runtime reads the profile, so an Error under `Durable` is one a build
-      can reach. The same unblocking applies to `FLOWX1012` (WP-60), whose only fix —
-      `Profile = Durable` — now changes something. Both are simply unwritten
-- [ ] **WP-59** `FLOWX1006` and the generated STJ payload context
+- [x] **WP-58** `FLOWX1007`–`FLOWX1009`, with the determinism severity stance re-decided
+      **as a set**, `FLOWX1011`'s deliberate deviation included. **Shipped 2026-07-31.**
+      `DeterminismAnalyzer` raises all three: ambient time (1007), ambient identifiers and
+      randomness (1008), and mutable state at the declaration site (1009). **The stance was
+      re-decided rather than inherited, and `Info` was rejected outright** — Info never
+      reaches a build log and `Ephemeral` is the *default* profile, so the informational
+      severity ADR-0003 originally specified is precisely what kept all four ids unraised
+      through two phases. They ship **Warning by default, and Error where the compilation
+      can prove the code is on a durable flow's replay path**; a capability has no profile
+      of its own, so escalation is a proof — a `Durable` flow *in this compilation* naming
+      it as a step — rather than a guess. `FLOWX1011`'s deviation stops being an exception
+      and becomes the rule. ADR-0003's bullet is amended to say so
+- [ ] **WP-59** `FLOWX1006` and the generated STJ payload context. **Now the only
+      capability rule left unenforced** — WP-58 built the other three, and
+      `ICapability`'s doc comment says so
 - [ ] **WP-60** `FLOWX1012` — the check was always easy, and its *fix* became true at
       WP-52. **The blocker is discharged; the rule is not written.** Left unticked, because
-      an unblocked rule is not a raised one
+      an unblocked rule is not a raised one. WP-58 discharged the *severity* half of the
+      same blocker for its own three ids and shipped them; this one did not follow
 - [ ] **WP-61** `ReplayDeterminismTest` and its corpus. Risk **R2**'s actual mitigation,
       currently cited in `05 §11` as though it existed
 - [ ] **WP-62** QR2 — 10 000 flows, `SIGKILL` at every step boundary, zero duplicate
@@ -1010,14 +1087,40 @@ and an inventory that exists only in a closing summary is one nobody reads.
 
 ---
 
+## 5e. P3 · Transport breadth — **one package, out of phase and unnumbered**
+
+Nothing in [PLAN §6](PLAN.md#6-p3--transport-breadth)'s table has started. One package
+adjacent to it shipped early and is recorded here rather than left to be rediscovered.
+
+- [x] **Endpoint generation** — a flow that declares an HTTP route no longer needs a
+      hand-written `MapPost`. `FlowXEndpoints.g.cs` is emitted into the *user's* assembly
+      and registers every routed flow from one call; `samples/ecommerce/Program.cs` drops
+      from 12 lines of registration to 2. **`RuntimeDoesNotReferenceAnyPlugin` stays green**
+      because the compiler emits the string `"FlowX.Http.FlowEndpointExtensions"` and
+      resolves it through `Compilation.GetTypeByMetadataName` — it knows the transport's
+      name, not its assembly. Manifest output is byte-identical; the generator cost gate
+      reports −0.50 % allocations and −0.97 % elapsed. **Deliberately unnumbered:** it was
+      executed as "WP-74", which `PLAN.md` reserves for Azure Service Bus — the second
+      work-package number collision this project has had, and the first to happen *after*
+      the warning against it was written
+- [x] **A silent staleness bug in `templates/local-feed.sh`**, found by the same package
+      rather than by a test. NuGet caches by id **and version**, so a rebuild at an
+      unchanged version left `verify.sh` restoring the previous run's assemblies — the
+      template verification was passing against stale output. Fixed, and `verify.sh` now
+      carries the check
+- [ ] **WP-70** through **WP-76** — not started. The abstraction half of WP-70
+      (`[TriggerKind]`) shipped in P1; `PluginsPassConformance` is still blocked on the rest
+
+---
+
 ## 6. Quality gates · current state
 
 | Gate | Target | Now | Source |
 |---|---|---|---|
 | Compiler warnings | 0 | **0** ✅ | verified locally |
 | Blocker/critical Sonar issues | 0 | **not running** | WP-0 |
-| Line coverage | ≥ 80 % | **94.0 %** ✅ | verified locally |
-| Branch coverage | ≥ 75 % | **87.0 %** ✅ | verified locally |
+| Line coverage | ≥ 80 % | **94.0 %** ✅ | carried from before WP-53/55/58; not re-run |
+| Branch coverage | ≥ 75 % | **87.0 %** ✅ | carried from before WP-53/55/58; not re-run |
 | Mutation score (`FlowX.Core`) | ≥ 70 % | **not measured** — Stryker not run locally | WP-0 |
 | Trim/AOT warnings | 0 | **0** ✅ | verified locally |
 | Fitness functions | all green | **58/58** ✅ | `dotnet test tests/FlowX.Architecture.Tests -c Release`, plus compiler and code-fix fitness tests |

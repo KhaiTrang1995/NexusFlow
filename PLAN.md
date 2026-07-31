@@ -212,18 +212,25 @@ criterion, P1's records which criterion it is closing over.
 
 > [!IMPORTANT]
 > **Work-package numbers here are the only authoritative ones, and they were collided
-> with.** Four packages executed after P1 closed were labelled WP-49, WP-70, WP-71,
-> WP-72 and WP-73 by the orchestration that ran them, while this file already reserved
-> WP-70–WP-76 for P3's transports. The work is recorded under what it *did* — the
-> `[TriggerKind]` marker is the abstraction half of WP-70 landing early; the rest were
-> unnumbered maintenance — and **the P3 numbers below are unchanged**.
+> with — twice, and the second time after the warning was written.** Packages executed
+> after P1 closed were labelled WP-49, WP-70, WP-71, WP-72 and WP-73 by the orchestration
+> that ran them, while this file already reserved WP-70–WP-76 for P3's transports. The
+> work is recorded under what it *did* — the `[TriggerKind]` marker is the abstraction
+> half of WP-70 landing early; the rest were unnumbered maintenance — and **the P3
+> numbers below are unchanged**.
 >
-> This is the second collision of its kind this project has had, after two diagnostics
-> were authored against `FLOWX1028` in separate branches on the same day, both having
-> correctly read the index's next-free id. The rule `docs/diagnostics/README.md` adopted
-> then applies here too: **claim the number in this file first, in its own commit,
-> before doing the work.** Reading "the next free number" is not enough when someone
-> else is reading it at the same time.
+> **Then it happened again.** Generated HTTP endpoint registration was executed as
+> "WP-74", which this file reserves for Azure Service Bus. It is recorded below as
+> **endpoint generation**, without a number, and WP-74 still means Azure Service Bus.
+> That this recurred *after* the rule below was written is the more useful finding than
+> the collision itself: a warning in a document does not allocate anything, and the next
+> honest step is a check that fails rather than a paragraph that asks.
+>
+> This class of collision started with two diagnostics authored against `FLOWX1028` in
+> separate branches on the same day, both having correctly read the index's next-free id.
+> The rule `docs/diagnostics/README.md` adopted then applies here too: **claim the number
+> in this file first, in its own commit, before doing the work.** Reading "the next free
+> number" is not enough when someone else is reading it at the same time.
 
 **The two yellow nodes are the same node WP-3 was.** WP-50 and WP-71 are harnesses
 scheduled ahead of the things they measure, for the reason §2 has stated since P0 and
@@ -1262,13 +1269,16 @@ non-idempotent effects, zero lost instances, resume p99 ≤ 45 s.
 
 **The design these packages are held to is
 [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md)**, written for this
-phase and still **Proposed**: it journals the step boundary on
+phase and **Accepted at WP-53**: it journals the step boundary on
 `(instance, scope, step, attempt)` and resumes through the *same* step loop rather than a
 second engine. It also carries the take-down list — what gets deleted the day the runtime
-reads `ExecutionProfile`, which was WP-52 and has happened. *The ADR stays Proposed on
-purpose: the only implementation holding it up is an in-memory reference, which has no
-transaction, no unique constraint and no migration to disagree with it. It is re-decided at
-**WP-53**, against Postgres.*
+reads `ExecutionProfile`, which was WP-52 and has happened. *The ADR was held **Proposed**
+through WP-51 and WP-52 on purpose, because the only implementation holding it up was an
+in-memory reference with no transaction, no unique constraint and no migration to disagree
+with it. WP-53 supplied a real one: all five Decision commitments held against PostgreSQL
+16.13, and the three clauses that failed are amended in
+[ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md). **Accepted does not mean
+measured** — B7 and B8 are still unreported, because WP-50 has not started.*
 
 Two things shape the ordering and are argued in [§2](#2-sequencing) rather than here: the
 **budgets come before the journal** (B12's lesson, learned the expensive way), and the
@@ -1355,15 +1365,21 @@ journal — `LeaseStoreConformance` is in it already, and four more suites are p
   implementation held to the suite is the in-memory reference sitting beside it, and
   publishing a contract that nothing outside its author has pushed back on is how a
   contract ships wrong. It packs at WP-53/WP-54, when a second and third store exist.
+  *WP-53 met the first half of that condition and the suite is still not packed: one
+  outside implementation is one, and the row waits on WP-54.*
 
-**This was to be where ADR-0015 becomes Accepted or changes. It stays *Proposed*, and
-that is the correct outcome, not a slip.** The ADR's own condition is that the suite hold
-an *implementation* to the schema. The suite holds an in-memory reference implementation
-— a dictionary that satisfies the assertions — which proves the schema is *expressible*
-and proves nothing about whether it survives a real store's transaction boundaries,
-indexes or expand/contract migration. Nothing has ever run against a real database. The
-ADR is re-decided at **WP-53**, against Postgres, which is the first thing that can
-disagree with it.
+**This was to be where ADR-0015 becomes Accepted or changes. It stayed *Proposed*, and
+that was the correct outcome, not a slip.** The ADR's own condition is that the suite hold
+an *implementation* to the schema. At WP-51 the suite held an in-memory reference — a
+dictionary that satisfies the assertions — which proves the schema is *expressible* and
+proves nothing about whether it survives a real store's transaction boundaries, indexes or
+expand/contract migration.
+
+*Vindicated at WP-53.* Against PostgreSQL 16.13 all five Decision commitments held and
+**three clauses did not** — one of them, `jsonb`'s key reordering, makes commitment 5 false
+in a way no dictionary could have expressed. That is the exact class of disagreement this
+paragraph was written to wait for. ADR-0015 is now **Accepted**, amended by
+[ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md).
 
 ### WP-52 — The seam: the runtime reads `ExecutionProfile`
 
@@ -1413,7 +1429,43 @@ noise, and noise is what teaches people to suppress a catalogue. The reminder is
 fail on this package and to name what to remove — leaving it red, or skipping it, converts
 the one honest signal in the area into an ignored one.
 
-### WP-53 — Postgres journal and lease store
+### WP-53 — Postgres journal and lease store — **shipped, exit criterion half met**
+
+> **Shipped 2026-07-31.** `plugins/FlowX.Postgres` implements `IFlowJournal`, `ILeaseStore`,
+> migrations and retention against `FlowX.Abstractions` and nothing else. The WP-51 suite
+> was inherited **unmodified from a different assembly** — the arrangement
+> [17 §5](docs/17-Plugin-System.md) describes for a third party claiming conformance — and
+> 45 conformance assertions plus 18 adapter tests are green against PostgreSQL 16.13. That
+> the suite was derivable across an assembly boundary without an edit is the first evidence
+> that the self-certification story works, and the precondition WP-70 needs before packing
+> it.
+>
+> **Three ADR-0015 clauses failed contact with a database**, recorded in
+> [ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md): payload columns are `json`,
+> because `jsonb` sorts object keys and re-renders separators and so makes commitment 5
+> false outright; `flow_lease` carries **no foreign key** to `flow_instance`, because the
+> lease is taken before the instance row exists and the constraint would refuse every first
+> acquisition; and `flow_instance.state_bag_sequence` was added in migration `0002` to give
+> B8's named mitigation the position ADR-0015 never gave it. Two of the three were in an ERD
+> ADR-0015 already declared superseded. This is what an in-memory reference could not have
+> found, and the argument for having held the record Proposed.
+>
+> **The exit criterion is half met, and the unmet half is not this package's to meet.**
+> Conformance is green. **B7 and B8 are unreported** — WP-50, the baseline they are measured
+> against, has not started. The criterion asks for an explicit pass or fail; the honest
+> answer is *neither yet*, and it is recorded as such rather than quietly satisfied.
+>
+> **Deviation from the deliverable row, stated:** the row says Testcontainers, group-commit
+> batching and a `tenant_id` partition key. The suite ran against a directly-provisioned
+> PostgreSQL 16.13 rather than Testcontainers; batching and partitioning are **not built**,
+> and both are optimisations that WP-50's absent numbers are the only rational basis for.
+>
+> **One gap found after the merge, by reading the adapter against the record.**
+> `state_bag_sequence` is written on every commit and **read by nothing**: the frontier
+> query is `WHERE instance_id = @instance ORDER BY sequence`, with no lower bound. The
+> column that exists to bound B8's read does not yet bound it. Recorded here rather than
+> fixed silently, because narrowing that query without a benchmark is the optimisation
+> B12 taught this project not to make.
 
 | | |
 |---|---|
@@ -1434,7 +1486,30 @@ the one honest signal in the area into an ignored one.
 | **Exit** | Identical conformance results to WP-53's lease half; the stale-token rejection proven against Redis |
 | **Depends on** | WP-51 · **concurrent with WP-53** — disjoint projects, shared suite read-only |
 
-### WP-55 — Resume
+### WP-55 — Resume — **shipped, exit criterion half met**
+
+> **Shipped 2026-07-31.** `DurableLease` acquires a lease and renews it in the background at
+> TTL/3; `LeasePolicy` carries the TTL and the renewal stance. `FlowRecoveryScan` and
+> `FlowRecoveryService` find instances whose lease has expired and hand each to the same
+> `ExecuteAsync` — there is still **no second loop**, which is the property option A was
+> rejected to preserve.
+>
+> **A fenced-out node stops without compensating.** `CompensationOutcome.Abandoned` is the
+> recorded decision rather than an emergent one: the instance belongs to whichever node
+> holds the lease, and a loser that unwound its own work would be undoing work its successor
+> is about to redo or has already redone.
+>
+> This discharges WP-52's consequence that a `Durable` flow was rejected at its first
+> invocation unless the caller built the session by hand. A host wires it now.
+>
+> **Ordering deviation, stated:** the row below depends on WP-54, and WP-54 has not started.
+> The lease half of the suite is proved by Postgres alone, so "a second store proves the
+> primitives are store-independent" is still unproved — that claim now rests entirely on
+> WP-54.
+>
+> **The exit criterion is half met.** Multi-node kill behaviour is covered by tests over
+> the lease and the scan, but **resume latency is not measured against 45 s**, because that
+> is WP-50's rig and WP-62's scenario. Stated, not passed.
 
 | | |
 |---|---|
@@ -1474,7 +1549,27 @@ the one honest signal in the area into an ignored one.
 > with a fixed retry. It cannot ship as written without one of those two decisions being
 > taken, and taking it silently is how a phase boundary stops meaning anything.
 
-### WP-58 — `FLOWX1007`–`FLOWX1009`, and the severity stance as a set
+### WP-58 — `FLOWX1007`–`FLOWX1009`, and the severity stance as a set — **shipped**
+
+> **Shipped 2026-07-31.** `DeterminismAnalyzer` raises ambient time (`FLOWX1007`), ambient
+> identifiers and randomness (`FLOWX1008`) and mutable declared state (`FLOWX1009`), over
+> capability bodies as well as flow delegates.
+>
+> **The stance was re-decided as a set, and `Info` was rejected outright.** ADR-0003
+> specified Info under `Ephemeral` and Error under `Durable`. Info never reaches a build log
+> and `Ephemeral` is the *default* profile, so an Info set would have done nothing in nearly
+> every build — which is precisely the state all four ids were already in, and what kept
+> them unraised through two phases. They ship **Warning by default, and Error where the
+> compilation can prove the code is on a durable flow's replay path**. Escalation is a proof
+> rather than a guess: a capability has no profile of its own, so it escalates only when a
+> `Durable` flow *in this compilation* names it as a step. `FLOWX1011`'s deliberate Warning
+> deviation stops being an exception and becomes the rule; ADR-0003's bullet is amended to
+> record that the clause did not survive.
+>
+> **Exit criterion met on both halves:** `06 §5`'s table has no **no — P2** rows left except
+> `FLOWX1006` (WP-59), and `FLOWX1011`'s deviation was re-argued rather than retired, in the
+> same decision. `ICapability`'s doc comment moves three rules from "required, and not
+> enforced" to "enforced at build time", leaving one.
 
 | | |
 |---|---|
@@ -1584,6 +1679,27 @@ plugin projects with no shared source; they read the conformance suite and do no
 WP-75 is not one of them — it needs the lease store, and putting it in the parallel batch
 is exactly the kind of optimism the DSL chain punished.
 
+### Endpoint generation — **shipped, unnumbered, out of phase**
+
+Not in the table above, and deliberately given no number: it was executed as "WP-74", which
+this file reserves for Azure Service Bus, and the collision is recorded in
+[§2](#2-sequencing) rather than resolved by renumbering the phase around it.
+
+A flow that declares an HTTP route no longer needs a hand-written `MapPost`.
+`FlowXEndpoints.g.cs` is emitted into the *user's* assembly and registers every routed flow
+from one call; `samples/ecommerce/Program.cs` drops from 12 lines of registration to 2.
+
+**It does not cost `RuntimeDoesNotReferenceAnyPlugin`**, which is the interesting part. The
+compiler emits the string `"FlowX.Http.FlowEndpointExtensions"` and resolves it through
+`Compilation.GetTypeByMetadataName`, so `FlowX.Compiler` knows the transport's name and not
+its assembly. Manifest output is byte-identical and the generator cost gate reports −0.50 %
+allocations and −0.97 % elapsed, so this is emission the existing budgets already paid for.
+
+It belongs here rather than in P1 because it is the ergonomic half of what P3's three
+transports each have to repeat: the registration a plugin author would otherwise write by
+hand once per transport. Whether the same emitter generalises to Kafka and Service Bus is
+**unproved** — it has one transport to be right about.
+
 **Two things in P3 are not repetition, and both are already visible:**
 
 1. **`FLOWX1025`'s open cause blocks the Must.** A trigger's `Kind` is an overridden
@@ -1653,7 +1769,7 @@ phase-level planning only.
 |---|---|---|---|
 | 1 | Three infographic PNGs must be committed to `docs/assets/` — see [the asset manifest](docs/assets/README.md) | CI `docs` job | repository owner |
 | 2 | ~~Never compiled~~ **Resolved.** SDK 10.0.110 installs from the Ubuntu archive; the official installer hosts are proxy-blocked but `packages.microsoft.com` is not | — | — |
-| 3 | ~~Stray `claude/` branch on the remote~~ **Resolved.** Deleted | — | — |
+| 3 | ~~A stray tooling-prefixed branch on the remote~~ **Resolved.** Deleted | — | — |
 | 4 | `SONAR_TOKEN` repository secret not configured; the `sonar` job no-ops without it | Sonar gate | repository owner |
 | 5 | ~~Benchmarks recorded on shared container hardware with 10 iterations~~ **Resolved at WP-11**, without dedicated hardware. Re-recorded at 30 iterations; the 29× margin is ~11× clear of the worst observed noise factor (2.6×), and [P0.md §5](docs/benchmarks/P0.md) argues the case rather than assuming it. Timing figures remain advisory in the baseline | — | — |
 | 6 | **The build-overhead exception P1 closed over**, and [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) still **Proposed** behind it: the derived error catalogue or the ≤ 8 % budget, one of them gives way | Nothing — P2 proceeds. Listed because an accepted exception with no owner becomes a forgotten one | repository owner |

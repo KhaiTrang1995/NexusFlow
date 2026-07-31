@@ -1,34 +1,43 @@
 # ADR-0015: Journal the step boundary and resume through the same step loop
 
-**Status:** Proposed
-**Date:** 2026-07-31
+**Status:** Accepted
+**Date:** 2026-07-31 (Proposed) · 2026-07-31 (Accepted, at WP-53)
 **Deciders:** Runtime team, Platform architecture
+**Amended by:** [ADR-0016](ADR-0016-postgres-journal-adapter.md)
 
-> **Proposed, not Accepted, and deliberately.** [ADR-0006](ADR-0006-journal-and-leases.md)
-> was accepted before anything met it, and its own warning box now records the price:
-> every consequence in it is "a prediction about a system that has not been written",
-> including a "measured ceiling" that was never measured here. This record is one layer
-> more concrete — it fixes a table shape and a primary key — so the same risk is larger,
-> not smaller. It becomes **Accepted** when the conformance suite in
-> [PLAN §5, WP-51](../../PLAN.md#5-p2--durable-execution) exists to hold an implementation
-> to it, and not before.
+> **Held Proposed for two work packages, and deliberately.**
+> [ADR-0006](ADR-0006-journal-and-leases.md) was accepted before anything met it, and its
+> own warning box records the price: every consequence in it was "a prediction about a
+> system that has not been written", including a "measured ceiling" that was never measured
+> here. This record is one layer more concrete — it fixes a table shape and a primary key —
+> so the same risk was larger, not smaller. The condition set for accepting it was a
+> conformance suite holding a real implementation to it.
 >
-> **Re-decided at WP-52, and still Proposed — a decision, not an oversight.** That
-> condition is now literally met: the suite exists, and since WP-52 the runtime writes
-> through it. It is met by an **in-memory reference** — a dictionary in
-> `tests/FlowX.Conformance.Tests` that satisfies the assertions. What this record commits
-> to is *storage*: a primary key an append-only table must reject a duplicate of, one
-> transaction spanning the step row, the instance update and the outbox rows, a fencing
-> token validated on every write, a retention table, an expand/contract migration. A
-> dictionary has no transaction, no unique constraint, no index and no migration, so it
-> cannot disagree with any of them. It proves the schema is *expressible*; ADR-0006's
-> lesson is about what happens when that is mistaken for *implementable*.
+> WP-51 built the suite and WP-52 made the runtime write through it, and that was
+> **still not enough**, because the only implementation was an **in-memory reference** — a
+> dictionary in `tests/FlowX.Conformance.Tests`. What this record commits to is *storage*:
+> a primary key an append-only table must reject a duplicate of, one transaction spanning
+> the step row, the instance update and the outbox rows, a fencing token validated on every
+> write, a retention table, an expand/contract migration. A dictionary has no transaction,
+> no unique constraint, no index and no migration, so it could not disagree with a single
+> clause. It proved the schema *expressible*; ADR-0006's lesson is about what happens when
+> that is mistaken for *implementable*.
 >
-> Two of this record's own clauses were found wrong by its first implementation and are
-> [amended below](#amendments-the-first-implementation-forced-wp-52). A record still moving
-> under contact is what "Proposed" describes. **First real contact is
-> [WP-53](../../PLAN.md#wp-53--postgres-journal-and-lease-store), against Postgres, and
-> that is where the status is decided.**
+> **WP-53 supplied the disagreement, and this record is Accepted on the strength of what
+> survived it.** `plugins/FlowX.Postgres` runs the suite unmodified, from a different
+> assembly, against PostgreSQL 16.13: 45 conformance assertions and 18 adapter tests green.
+> **All five Decision commitments below hold against a real database.** Three clauses did
+> not survive — two of them in the ERD this record already declared superseded, one an
+> inconsistency inside this record itself — and they are
+> [amended below](#amendments-the-implementations-forced-wp-52-wp-53) rather than quietly
+> corrected. [ADR-0016](ADR-0016-postgres-journal-adapter.md) is the full account.
+>
+> **What Accepted does not mean here.** Budgets **B7 and B8 are unreported**, not passed:
+> WP-50, the benchmark harness they are measured against, has not started. The read cost
+> this record's own "Revisit when" names is therefore unmeasured, and ADR-0006's ceiling
+> stays a literature figure. Accepting a schema on conformance evidence while its
+> performance evidence is missing is the trade being made, stated so that a later
+> measurement is a revisit rather than a surprise.
 
 ## Context
 
@@ -47,7 +56,7 @@ one**. That gap is the whole of P2, and it is why the following is true:
 > written to close.** It is kept as the problem statement, not corrected into a claim about
 > today: the runtime now reads the profile, journals a `Durable` flow's step boundaries and
 > resumes through the same loop. What it still does not do is
-> [below](#what-wp-52-landed-and-what-it-did-not).
+> [below](#what-has-landed-and-what-has-not).
 
 Found at WP-40 while auditing risk R2, made audible at WP-42 by
 [`FLOWX1028`](../diagnostics/FLOWX1028.md), and pinned executably by
@@ -66,7 +75,7 @@ predates.** That schema was drawn when a flow was a straight line. It is no long
 | `ForEach` (WP-29) — one range of the flat step array **re-entered per element** | `(instance, step)` is no longer unique. A 500-element loop writes step 7 five hundred times |
 | `Parallel` (WP-24) — several indices in flight on several threads between a fork and its join | `flow_instance.resume_from_step int` cannot say "branch A done, branch B at step 12" |
 | `SubFlow` (WP-33) — the engine recurses into a **second plan** with its own dispatcher, context and compensation stack | one instance is no longer one plan; `Detached` children outlive the parent's step |
-| `Switch`, `When` (WP-15, WP-20) | control flow is data-dependent, so a resume position cannot be a step count. *This cell also said the journal "must record the branch taken, not only the steps run"; it does not, and the Decision below never gave it a field to — [amended at WP-52](#amendments-the-first-implementation-forced-wp-52)* |
+| `Switch`, `When` (WP-15, WP-20) | control flow is data-dependent, so a resume position cannot be a step count. *This cell also said the journal "must record the branch taken, not only the steps run"; it does not, and the Decision below never gave it a field to — [amended at WP-52](#amendments-the-implementations-forced-wp-52-wp-53)* |
 | B2 is a **hard zero** for the ephemeral path | a durable seam that costs the ephemeral loop one allocation charges every flow for a feature it does not use |
 
 `CompensationStack` already met the first row and answered it: its duplicate check moved
@@ -165,10 +174,18 @@ to be revisited **as a set** rather than one row at a time.
 and `FLOWX1012` are no longer blocked on severity or on a fix that changes nothing. They
 are unwritten, which is a smaller and more ordinary thing to be. WP-58 and WP-60.*
 
-## Amendments the first implementation forced (WP-52)
+<a id="amendments-the-first-implementation-forced-wp-52"></a>
 
-Three, listed rather than folded into the text above. A record quietly corrected teaches
-nobody what it got wrong, and two of these were wrong from the day it was written.
+## Amendments the implementations forced (WP-52, WP-53)
+
+Six, listed rather than folded into the text above. A record quietly corrected teaches
+nobody what it got wrong, and four of these were wrong from the day it was written.
+
+Three came from the in-memory reference at WP-52; three more from the first real store at
+WP-53, and those three are the argument for why an in-memory conformance pass was never
+allowed to be enough.
+
+### From WP-52 — the in-memory reference
 
 **1. The journal does not record the branch taken — 2026-07-31.** The context table's
 `Switch`/`When` row said it must. The Decision one section down commits to exactly one row
@@ -212,19 +229,78 @@ its first commit. `IFlowJournal.FenceAsync` closed the gap, pinned by
 recorded as owed at WP-51 and is discharged here: **the fence rises on acquisition**,
 before any history is read.
 
-## What WP-52 landed, and what it did not
+### From WP-53 — the first real store
 
-The seam exists. **Nothing has run against a store**, and no sentence in this record should
-be read as saying durable execution works end to end.
+These three are the ones a dictionary could not have found. Each is stated in full in
+[ADR-0016](ADR-0016-postgres-journal-adapter.md); the summaries here exist so that a reader
+of *this* record is not left believing a clause that a database refused.
 
-| In, at WP-52 | Not in |
+**4. Commitment 5 is false against `jsonb` — 2026-07-31.** [11 §2](../11-Distributed-Runtime.md#2-the-journal)'s
+ERD types every payload column as `jsonb`, and `jsonb` is a parsed representation rather
+than a document: it sorts object keys, re-renders separators, and keeps only the last of a
+repeated key. What the generated context writes is therefore *not* what comes back, which
+is precisely what commitment 5 says it must be —
+`JournalConformance.APayloadIsStoredAsTheGeneratedContextWroteIt` fails on `jsonb` and
+passes on `json`. **Payload columns are `json`.** The cost is accepted and named: no GIN
+index, and every JSON operator re-parses. The commitment stands; the drawn column type was
+never compatible with it, and nobody could have noticed without a database.
+
+**5. `flow_lease` carries no foreign key to `flow_instance` — 2026-07-31.** The ERD makes
+`flow_lease.instance_id` `PK,FK`. `FlowInstanceStart.Token` is the token of the lease held
+*while starting*, so **the lease exists before the instance row does** and the constraint
+would refuse the first acquisition of every flow. This is an ordering this record implied
+throughout and never drew. Pinned by
+`SchemaContractTests.ALeaseIsTakenBeforeTheInstanceExists`.
+
+**6. The state-bag snapshot needed a position, and this record never gave it one —
+2026-07-31.** The Consequences below name the snapshot as budget B8's mitigation, "which
+bounds the scan to rows committed after it". Neither the Decision nor the ERD supplies a
+column saying *which commit it came from*, and without one it bounds nothing — a resume
+still reads every row to discover which the snapshot already covers. Added as
+`flow_instance.state_bag_sequence`, deliberately in migration `0002` rather than `0001`, so
+that [11 §7](../11-Distributed-Runtime.md#7-deployment-safety)'s expand/contract rule has a
+worked example in this schema from its first release. This is the one of the three that was
+an inconsistency inside this record rather than in the inherited drawing.
+
+> **A portability limit worth carrying here rather than only in ADR-0016.** Commitment 1
+> works in PostgreSQL partly by luck of dialect: `StepScope.Root` renders as the empty
+> string, and PostgreSQL treats `''` as distinct from `NULL`, so the flow body is a legal
+> primary-key component. A database that folds the two — Oracle is the usual example —
+> rejects every root-scope row. Any future adapter must map `Root` explicitly.
+
+<a id="what-wp-52-landed-and-what-it-did-not"></a>
+
+## What has landed, and what has not
+
+The seam exists, a store implements it, and a host acquires a lease and scans for
+abandoned work. **No sentence in this record should be read as saying durable execution
+works end to end** — the outbox and durable suspension are both still absent, and neither
+durability budget has been measured.
+
+*This table read "In, at WP-52 / Not in" and said "nothing has run against a store". Three
+of its five right-hand cells have since been discharged; the ones that have not are the
+honest content of the section now.*
+
+| In | Where |
 |---|---|
-| The runtime reads `ExecutionProfile`; a `Durable` flow commits one row per `(instance, scope, step, attempt)`, and a failed attempt gets a row too | Lease **acquisition** and renewal. The token is passed in; nothing acquires or renews it — WP-55 |
-| **Resumption**: the frontier is read and the same `ExecuteAsync` is re-entered at index 0, skipping steps a successful row covers | The **recovery scan**. Nothing looks for an abandoned instance to hand to that resume — WP-55 |
-| A composed sub-flow gets its own `flow_instance` row, per commitment 3 | **Postgres** (WP-53) and **Redis** (WP-54). The only implementation of `IFlowJournal` anywhere is the in-memory reference in `tests/FlowX.Conformance.Tests` |
-| Non-determinism captured per step, `Random`'s seed journaled, per commitment 4 | The transactional **outbox**. `.Emit<T>()` still publishes nothing ([`FLOWX1024`](../diagnostics/FLOWX1024.md)) — WP-56 |
-| `[Sensitive]` members cannot reach the journal in the clear: payloads enter only through `JournalPayload`, which requires a generated `JsonTypeInfo` | **`AwaitSignal`** and durable suspension ([`FLOWX1017`](../diagnostics/FLOWX1017.md)) — WP-63. A durable flow still runs to completion inside one invocation |
-| B2 re-measured at **0 B** on the ephemeral path; `Durable` costs 192 B per step, recorded as a ceiling | The generated payload writer and `FLOWX1006` (WP-59); B7 and B8, which still have no harness (WP-50) |
+| The runtime reads `ExecutionProfile`; a `Durable` flow commits one row per `(instance, scope, step, attempt)`, and a failed attempt gets a row too | WP-52 |
+| **Resumption**: the frontier is read and the same `ExecuteAsync` is re-entered at index 0, skipping steps a successful row covers | WP-52 |
+| A composed sub-flow gets its own `flow_instance` row, per commitment 3 | WP-52 |
+| Non-determinism captured per step, `Random`'s seed journaled, per commitment 4 | WP-52 |
+| `[Sensitive]` members cannot reach the journal in the clear: payloads enter only through `JournalPayload`, which requires a generated `JsonTypeInfo` | WP-51 |
+| B2 re-measured at **0 B** on the ephemeral path; `Durable` costs 192 B per step, recorded as a ceiling | WP-52 |
+| Lease **acquisition and renewal** — `DurableLease` renews in the background at TTL/3, and a node that loses its lease stops without compensating, because the work is another node's now | WP-55 |
+| The **recovery scan** — a hosted service claims instances whose lease has expired and hands each to the same resume | WP-55 |
+| **A real store.** `plugins/FlowX.Postgres` implements `IFlowJournal` and `ILeaseStore` with migrations, retention and a fence checked under `SELECT … FOR UPDATE`; the conformance suite passes across an assembly boundary | WP-53 |
+
+| Still not in | Owed to |
+|---|---|
+| The transactional **outbox**. `.Emit<T>()` still publishes nothing ([`FLOWX1024`](../diagnostics/FLOWX1024.md)) | WP-56 |
+| **`AwaitSignal`** and durable suspension ([`FLOWX1017`](../diagnostics/FLOWX1017.md)). A durable flow still runs to completion inside one invocation | WP-63 |
+| The generated payload writer and `FLOWX1006` | WP-59 |
+| **B7 and B8 — unreported rather than passed.** The harness they are measured against does not exist, so the read cost this record's "Revisit when" is written around has never been observed | WP-50 |
+| **Redis**, and with it the split-store arrangement `ILeaseStore` describes — a Redis lease store and a Postgres journal sharing no transaction | WP-54 |
+| Rebuilding a skipped sub-flow's compensation stack on resume | WP-57 |
 
 **Two fidelity limits, stated rather than papered over.**
 
@@ -272,14 +348,30 @@ be read as saying durable execution works end to end.
   a 500-element `ForEach` is 500 rows before the first resumed step. The mitigation is the
   state-bag snapshot on the instance row, which bounds the scan to rows committed after
   it; the accepted cost is that the snapshot is a second thing to keep correct.
+  *This bullet named a mitigation the Decision above gave no column for — see
+  [amendment 6](#from-wp-53--the-first-real-store). `flow_instance.state_bag_sequence`
+  exists as of migration `0002`, **and nothing reads it yet**: the Postgres adapter's
+  frontier query is `WHERE instance_id = @instance ORDER BY sequence`, with no lower bound.
+  So the mitigation is currently a **column, not a shorter scan** — the 500-row read this
+  bullet describes is still a 500-row read. That is a smaller gap than the one amendment 6
+  closed, and it is the whole of the gap: the position is recorded, and the query that
+  would use it has not been narrowed. Whether narrowing it is enough is B8's question, and
+  B8 is unmeasured.*
 - **`scope` multiplies rows.** A loop over 10 000 elements writes 10 000 rows for one step
   index, and [11 §2](../11-Distributed-Runtime.md#2-the-journal)'s retention table — which
   is written per instance — did not anticipate a per-instance volume that tracks *data
   size*. Retention becomes a real capacity question for loop-heavy flows, not a default.
+  *WP-53 gave the operator the lever this bullet implies: the same windows are seeded into
+  a `retention_policy` table, per flow with a `'*'` default, changeable without a
+  deployment. The capacity question is unchanged; it is now answerable per flow.*
 - **Child instances complicate retention.** A `Detached` sub-flow can outlive its parent,
   so "completed instance + steps: 30 days" can archive a parent while a child is still
   running. The parent link must be nullable on read, and an orphan must be legible rather
-  than a foreign-key error.
+  than a foreign-key error. *Discharged rather than restated at WP-53:
+  `RetentionTests.PurgingAParentLeavesItsRunningChildLegible` purges a completed parent
+  while a detached child runs, and the child keeps its parent id. This is why commitment 3
+  survives only because `parent_instance_id` carries no foreign key — one would have made
+  the purge itself the error.*
 - **The journal is a new sink for `[Sensitive]` values, and it lands three phases before
   the work that redacts sinks.** Redaction is generated for exactly one sink today — the
   RFC 7807 body — and `RedactionCannotBeBypassed` is blocked until the rest exist. A
@@ -295,12 +387,20 @@ be read as saying durable execution works end to end.
 - **The journal is still the shared bottleneck** (risk R5), and this decision adds to the
   transaction rather than removing from it: one `flow_step` insert, one `flow_instance`
   update, N outbox inserts, in one transaction, per step. B7 is the number that says
-  whether that is affordable, and today no benchmark measures it.
+  whether that is affordable, and today no benchmark measures it. *WP-53 made the
+  transaction real without making it measured — the Postgres adapter takes a
+  `SELECT … FOR UPDATE` on the instance row so the fence check, the terminal check and the
+  sequence allocation are one decision, which is a serialisation point per instance that
+  this bullet predicted and nothing has yet priced.*
 
 **Revisit when:** the derived resume frontier's read cost breaches B8 on a real flow shape
 — a long `ForEach` or a deep `SubFlow` tree are the two candidates and both are ordinary —
 or when journal payloads need a shape the generated STJ context cannot express, at which
-point commitment 5 and ADR-0008 are the pair to re-open together.
+point commitment 5 and ADR-0008 are the pair to re-open together. Note that
+[amendment 4](#from-wp-53--the-first-real-store) has already narrowed the second condition:
+`jsonb` is not an available answer, so *"a shape STJ cannot express"* and *"a payload that
+needs indexing"* are now the same conversation, and `json` plus a generated expression
+index is the likelier resolution than a change of column type.
 
 ## What lands with this, and what is deleted
 
@@ -319,11 +419,11 @@ scaffold it was written to remove.
 | `src/FlowX.Compiler/Analysis/ExecutionProfileAnalyzer.cs` — **narrowed to `Streaming`**, not deleted | `Durable` becomes implemented; `Streaming` does not until P7. Deleting it outright would hand `Streaming` the silence `Durable` had. [FLOWX1028's own deletion table](../diagnostics/FLOWX1028.md#when-this-rule-is-deleted) says the same | **done** — WP-52 |
 | `FLOWX1028`'s `Durable` half: its message, its descriptor text in `FlowXDiagnostics.cs`, its row in `AnalyzerReleases.Unshipped.md`, its tests, and the `Durable` column of `docs/diagnostics/FLOWX1028.md` | Same reason. The page keeps its `Streaming` half and its deletion table | **done** — WP-52 |
 | The `[!WARNING]` box in [06 §4](../06-Execution-Engine.md#4-execution-profiles--the-central-trade-off) — "only the `Ephemeral` column describes something that runs" | The middle column starts describing something that runs. The `Streaming` sentence stays | **done** — WP-54. Replaced, not removed: the middle column now runs *partly*, and the box says which cells are still design |
-| The closing note in [06 §5](../06-Execution-Engine.md#5-the-determinism-boundary) — "`ReplayDeterminismTest` does not exist" and "`FlowX.Runtime` never reads `ExecutionProfile`" — plus the four **no — P2** rows in its table | The test exists at WP-61; the rows are raised at WP-58 and WP-59. The severity paragraph is re-decided **as a set**, including `FLOWX1011`'s deliberate Warning deviation | **half.** The profile sentence is gone (WP-52). `ReplayDeterminismTest` still does not exist and the four rows are still **no** — WP-58, WP-59, WP-61. What changed is the *reason*: they are no longer blocked on severity |
-| The header `[!WARNING]` in [11-Distributed-Runtime](../11-Distributed-Runtime.md) — "nothing in this document is implemented" | Section by section, as each lands. It is not removed wholesale on the first commit | **partial, as designed.** §2 (the journal) and §3 (resume through the same loop) have an implementation; §4–§8 do not. The box now says so per section |
-| The `[!WARNING]` in [ADR-0006](ADR-0006-journal-and-leases.md) — "Accepted, not implemented" — and its literature-derived "measured ceiling", replaced by B7's real number | The record stops being a prediction | **half.** "No `IFlowJournal` anywhere in `src/`" and "the runtime does not read `ExecutionProfile`" are false and are corrected. The **measured ceiling stays a literature figure**: B7 has no harness (WP-50) and no store has been benchmarked |
+| The closing note in [06 §5](../06-Execution-Engine.md#5-the-determinism-boundary) — "`ReplayDeterminismTest` does not exist" and "`FlowX.Runtime` never reads `ExecutionProfile`" — plus the four **no — P2** rows in its table | The test exists at WP-61; the rows are raised at WP-58 and WP-59. The severity paragraph is re-decided **as a set**, including `FLOWX1011`'s deliberate Warning deviation | **three quarters.** The profile sentence went at WP-52. **WP-58 raised `FLOWX1007`–`FLOWX1009` and re-decided the severity stance as a set** — Warning by default, Error where the compilation can prove the code is on a durable flow's replay path; Info rejected outright, [reasoned in ADR-0003](ADR-0003-execution-profiles.md). The fourth row, `FLOWX1006`, waits on the payload writer (WP-59), and `ReplayDeterminismTest` still does not exist (WP-61) |
+| The header `[!WARNING]` in [11-Distributed-Runtime](../11-Distributed-Runtime.md) — "nothing in this document is implemented" | Section by section, as each lands. It is not removed wholesale on the first commit | **partial, as designed.** §2 (the journal), §3 (resume) and the lease and recovery halves of §4 have an implementation, and §2's ERD is [amended by ADR-0016](ADR-0016-postgres-journal-adapter.md) rather than merely annotated. The outbox and the multi-node sections do not. The box says so per section |
+| The `[!WARNING]` in [ADR-0006](ADR-0006-journal-and-leases.md) — "Accepted, not implemented" — and its literature-derived "measured ceiling", replaced by B7's real number | The record stops being a prediction | **half, and the same half.** "No `IFlowJournal` anywhere in `src/`" and "the runtime does not read `ExecutionProfile`" were corrected at WP-54, and WP-53 makes them false a second way — a store now exists outside the test assembly. The **measured ceiling is still a literature figure**, and WP-53 did not move it: B7 has no harness (WP-50), so a real database has been made *correct* here without ever being made *fast* |
 | [ADR-0003](ADR-0003-execution-profiles.md)'s negative bullet "The asymmetry is currently theoretical in one direction", and the `FLOWX1012` sentence in the bullet above it | Both describe the gap this ADR closes | **done** — WP-54. The asymmetry bullet is rewritten; `FLOWX1012`'s sentence keeps "never built" and loses "its fix would change nothing" |
-| Risk **R2** in [05 §11](../05-Architecture.md#11-risks-and-technical-debt) | It stops being *unreachable* and becomes live-and-mitigated, with WP-61 as the mitigation actually named | **half, and the worse half.** R2 is now **live**; it is *not* mitigated. All three named mitigations are still unbuilt, and amendment 1 above added a fourth dependency on `FLOWX1011`'s coverage |
+| Risk **R2** in [05 §11](../05-Architecture.md#11-risks-and-technical-debt) | It stops being *unreachable* and becomes live-and-mitigated, with WP-61 as the mitigation actually named | **live, and now partly mitigated.** R2 went live at WP-52 with nothing standing behind it. WP-58 built three of its four named analyzers, so ambient reads on a replay path are a build error where the compilation can prove the path. What is still missing is the one that would *demonstrate* replay rather than forbid the ways it breaks — `ReplayDeterminismTest`, WP-61 — plus the dependency amendment 1 added on `FLOWX1011`'s coverage |
 | The blocked row for `CrossTenantAccessIsDenied` in [CHECKLIST §4](../../CHECKLIST.md) loses **half** its blocker | "there is no journal, so there is no audit event to assert" ceases to be true. It stays blocked on P4's policy execution, and the row must say so rather than being ticked | **done** — WP-54. Half struck, row still `[ ]`, blocked on P4 (policy execution) and P3 ("every trigger kind") |
 | `JournalBenchmarks` absent from [14 §8](../14-Performance.md#8-benchmark-suite-and-ci-gating), and the "not written — no journal, no second node" chaos row in [21 §7](../21-Quality-Gates.md) | WP-50 writes the harness *before* the journal, so these two are the **first** entries removed, not the last | **not yet, and the prediction inverted.** WP-50 has not started, so both entries stand — but their stated reason ("there is no journal") has stopped being true. They are the *last* entries removed, not the first, and the reason is corrected in both files rather than the state |
 
@@ -335,5 +435,6 @@ stay quiet across the release that lands P2.
 
 ---
 
-**Back to:** [ADR index](README.md) · [06 — Execution Engine](../06-Execution-Engine.md) ·
+**Back to:** [ADR index](README.md) · [ADR-0016 — what a real database said about this](ADR-0016-postgres-journal-adapter.md) ·
+[06 — Execution Engine](../06-Execution-Engine.md) ·
 [11 — Distributed Runtime](../11-Distributed-Runtime.md) · [PLAN §5](../../PLAN.md#5-p2--durable-execution)

@@ -4,7 +4,7 @@
 
 ## What it means
 
-[07 §3](../07-Capability-Model.md#3-rules-all-compiler-enforced) rule 2 says a capability
+[07 §3](../07-Capability-Model.md#3-rules) rule 2 says a capability
 "returns `Result<TOut>`; expected failures are values". The first half needs no analyzer —
 `ICapability<TIn, TOut>.ExecuteAsync` returns `ValueTask<Result<TOut>>`, so a capability
 that does not return a `Result` does not compile. This rule is the second half.

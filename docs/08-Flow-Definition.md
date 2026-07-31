@@ -179,7 +179,7 @@ for what `Fail` costs a flow that has already had effects.
 
 `Switch` compiles into the same flat step array as everything else — one `Switch`
 node carrying a target per case plus a default target, and a `Jump` closing each
-case block. See [06 §3](06-Execution-Engine.md#3-the-step-loop). The manifest
+case block. See [06 §3](06-Execution-Engine.md#3-the-execution-loop). The manifest
 publishes the *shape* — that the flow branches, and what is in each arm — and
 never the selector or the case values, because
 [a manifest is structure, never values](adr/ADR-0005-manifest-as-build-artifact.md).

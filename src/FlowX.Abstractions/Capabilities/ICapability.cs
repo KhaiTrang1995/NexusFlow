@@ -7,12 +7,14 @@ namespace FlowX;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The rules a capability obeys (docs/07-Capability-Model.md §3). <strong>Not all of them
-/// are enforced</strong>, and this list used to say they were — it was headed
-/// "Compiler-enforced rules" while citing three diagnostics that have no descriptor.
+/// The rules a capability obeys (docs/07-Capability-Model.md §3). <strong>One of them is
+/// still not enforced</strong>, and this list once claimed all of them were — it was headed
+/// "Compiler-enforced rules" while citing three diagnostics that had no descriptor.
 /// `FlowXDiagnostics` deliberately does not stub a reserved code, on the grounds that
 /// "a descriptor nothing raises is a promise the compiler is not keeping"; a doc comment
-/// naming one is the same promise made somewhere the compiler cannot see it.
+/// naming one is the same promise made somewhere the compiler cannot see it. Three of those
+/// four have since been built, which is the reason the split below is now four-to-one
+/// rather than five-to-three.
 /// </para>
 /// <para><strong>Enforced at build time:</strong></para>
 /// <list type="number">
@@ -21,21 +23,23 @@ namespace FlowX;
 ///   <item>A capability never invokes another capability (FLOWX1004). Composition is the flow's job.</item>
 ///   <item>A capability never references a transport or plugin assembly (FLOWX1003).</item>
 ///   <item>A capability declares an authorisation stance (FLOWX1010).</item>
+///   <item>A capability is stateless: no mutable instance or static fields (FLOWX1009).</item>
+///   <item>Time, identifiers and randomness come from <see cref="CapabilityContext"/> only
+///     (FLOWX1007, FLOWX1008).</item>
 /// </list>
 /// <para>
-/// <strong>Required, and not enforced.</strong> These three are blocked on P2: their
-/// analysis is the determinism check <c>PredicatePurityAnalyzer</c> already performs for
-/// flow delegates, but their severity is defined against the <c>Durable</c> profile. WP-52
-/// removed the reason they would have shipped doing nothing — the runtime now reads
-/// <see cref="ExecutionProfile"/> and journals a durable flow — and WP-58 is where they are
-/// raised, with the severity stance re-decided as a set rather than one row at a time.
+/// The last three shipped at WP-58, after being blocked on severity rather than on
+/// analysis: they are <c>Warning</c> by default and <c>Error</c> where the compilation can
+/// prove the code is on a durable flow's replay path. Under the old stance they would have
+/// been informational under <c>Ephemeral</c>, which is the default profile — so they would
+/// have shipped saying nothing in nearly every build.
+/// </para>
+/// <para>
+/// <strong>Required, and not enforced — one rule.</strong>
 /// </para>
 /// <list type="number">
-///   <item>A capability is stateless: no mutable instance or static fields (would be FLOWX1009).</item>
-///   <item>Time, identifiers and randomness come from <see cref="CapabilityContext"/> only
-///     (would be FLOWX1007/1008).</item>
 ///   <item>Contract types are immutable records serialisable by a generated context
-///     (would be FLOWX1006, blocked on the serialiser P2 chooses).</item>
+///     (would be FLOWX1006, blocked on the generated payload writer — WP-59).</item>
 /// </list>
 /// <para>
 /// Rule 3 is the load-bearing one: because capabilities cannot call each other, the
