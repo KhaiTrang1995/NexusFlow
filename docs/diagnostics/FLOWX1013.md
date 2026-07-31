@@ -133,9 +133,14 @@ edges — and because the gaps here are wider than they look:
 - **A capability implementing `ICapability<,>` more than once is skipped.**
   [FLOWX1015](FLOWX1015.md) already reports it, and picking one of two contracts to guess
   with would be worse than saying nothing.
-- **Sub-flows are not followed.** Nothing can declare one yet. When `SubFlow` lands, a
-  branch invoking one writes whatever that flow writes, and this rule will have to be
-  extended — or this paragraph rewritten to say it still does not.
+- **Sub-flows are not followed, and no longer need to be.** A branch may now contain a
+  `.SubFlow<T, TIn>(...)`, and the child writes nothing into *this* flow's context: it runs
+  on its own, from its own input, and its result does not come back
+  ([08 §3.7](../08-Flow-Definition.md#37-sub-flows)). So two branches composing two
+  different flows cannot collide here, and two branches composing the *same* flow cannot
+  either. The silence is sound rather than merely convenient — but it rests on that
+  property, so if a child's output is ever propagated into its parent's bag, this rule has
+  to follow the edge.
 - **Slots outside the context are not considered at all.** Two branches writing the same
   database row race in a way no compiler can see. This rule is about the flow's own state
   bag and nothing else.

@@ -101,6 +101,7 @@ public static class FlowEmitter
         EmitConditions(writer, flow);
         EmitSelectors(writer, flow);
         EmitIterations(writer, flow);
+        EmitSubFlowMaps(writer, flow);
         EmitPlan(writer, flow);
         writer.Line();
         EmitProjection(writer, flow);
@@ -329,6 +330,58 @@ public static class FlowEmitter
         writer.Line();
     }
 
+    /// <summary>The flow's sub-flow compositions, ascending by flat index.</summary>
+    private static System.Collections.Generic.List<StepModel> SubFlows(FlowModel flow) => flow.AllSteps
+        .Where(s => s.Kind == StepKindModel.SubFlow)
+        .OrderBy(s => s.Index)
+        .ToList();
+
+    /// <summary>
+    /// Emits one <c>static readonly</c> delegate per <c>.SubFlow(...)</c> input mapping.
+    /// </summary>
+    /// <remarks>
+    /// A field, for the reason the predicates and the selectors are: built once at type
+    /// initialisation rather than once per execution, so composing a flow does not cost a
+    /// delegate allocation every time the parent runs.
+    /// <para>
+    /// Typed at the child's declared input contract, so the value the engine carries as an
+    /// opaque handle is cast back to something the child's first step can bind to. A
+    /// mapping typed at <c>object</c> would have boxed a record struct input and moved the
+    /// error from build time to the child's first <c>ctx.Get&lt;T&gt;()</c>.
+    /// </para>
+    /// </remarks>
+    private static void EmitSubFlowMaps(SourceWriter writer, FlowModel flow)
+    {
+        var subFlows = SubFlows(flow);
+
+        if (subFlows.Count == 0)
+        {
+            return;
+        }
+
+        writer.Line("/// <summary>Sub-flow input mappings, built once at type initialisation.</summary>");
+        writer.Line("/// <remarks>");
+        writer.Line("/// Each is your <c>.SubFlow(...)</c> expression, copied verbatim. They obey the same");
+        writer.Line("/// determinism rule as a condition — context, flow input and prior step results");
+        writer.Line("/// only — and they run on this flow's thread before the child starts, so nothing");
+        writer.Line("/// the child holds points back at this flow's pooled context.");
+        writer.Line("/// </remarks>");
+        writer.Line("private static class SubFlowInputs");
+        writer.OpenBrace();
+
+        foreach (var step in subFlows)
+        {
+            EmitLineDirective(writer, step.SubFlowMapLocation);
+            writer.Line(
+                "public static readonly Func<FlowContext, " + step.SubFlowInputTypeName + "> Step" +
+                step.Index + " = " + step.SubFlowMap + ";");
+            EmitLineDirectiveEnd(writer, step.SubFlowMapLocation);
+        }
+
+        writer.CloseBrace();
+        writer.Line();
+    }
+
     private static void EmitDescriptors(SourceWriter writer, FlowModel flow)
     {
         writer.Line("/// <summary>Capability descriptors, built once at type initialisation.</summary>");
@@ -450,6 +503,13 @@ public static class FlowEmitter
                     EmitStepNodes(writer, step.Body);
                     break;
 
+                case StepKindModel.SubFlow:
+                    // One node and nothing else. The child's steps are in the child's own
+                    // generated plan, so there is no block here to recurse into — which is
+                    // why a flow that composes a hundred-step child emits one line.
+                    writer.Line("        " + SubFlowNodeExpression(step) + ",");
+                    break;
+
                 default:
                     writer.Line("        " + StepNodeExpression(step) + ",");
                     break;
@@ -502,6 +562,18 @@ public static class FlowEmitter
     private static string ForEachNodeExpression(StepModel step) =>
         "StepNode.ForEach(" + step.Index + ", joinTarget: " + step.JoinIndex +
         ", options: " + step.OptionsExpression + ")";
+
+    /// <summary>Emits the composition node: which flow, and how it relates to this one.</summary>
+    /// <remarks>
+    /// The child's <em>id</em> reaches the plan, not its plan object. A node holding another
+    /// plan would make two flows' type initialisers depend on each other, which is a cycle
+    /// the CLR resolves by handing one of them a null — and it would put the child's whole
+    /// graph inside the parent's static state for no gain, since the thing the engine
+    /// actually needs at run time comes from the dispatcher.
+    /// </remarks>
+    private static string SubFlowNodeExpression(StepModel step) =>
+        "StepNode.ForSubFlow(" + step.Index + ", " + Quote(step.SubFlowId!) +
+        ", SubFlowMode." + step.SubFlowMode + ")";
 
     private static string StepNodeExpression(StepModel step)
     {
@@ -557,7 +629,125 @@ public static class FlowEmitter
         EmitDispatcherSelect(writer, flow);
         writer.Line();
         EmitDispatcherIteration(writer, flow);
+        writer.Line();
+        EmitDispatcherSubFlow(writer, flow);
 
+        writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// Emits <c>BeginSubFlow</c> and <c>EnterSubFlow</c>: which flow to compose, and the
+    /// input to seed into it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The pair is the whole of what the engine cannot do for itself, and it is deliberately
+    /// the <em>only</em> thing generated here. Renting the child's context, deriving its
+    /// deadline from this flow's, running its graph and unwinding its compensation are the
+    /// engine's job and are identical for every flow; emitting them per composing flow would
+    /// have put four subtle behaviours into generated source, where a mistake is hardest to
+    /// see and impossible to fix without a rebuild.
+    /// </para>
+    /// <para>
+    /// <c>EnterSubFlow</c> writes into the <em>child's</em> context, which is a different
+    /// object from the one every other method here receives. That is what makes a detached
+    /// child safe: the two contexts never meet, so a child outliving its parent cannot read
+    /// a context that has since been reset and rented to another tenant's flow.
+    /// </para>
+    /// </remarks>
+    private static void EmitDispatcherSubFlow(SourceWriter writer, FlowModel flow)
+    {
+        var subFlows = SubFlows(flow);
+
+        writer.Line("/// <inheritdoc />");
+        writer.Line("public SubFlowSource BeginSubFlow(int stepIndex, FlowContext ctx)");
+        writer.OpenBrace();
+
+        if (subFlows.Count == 0)
+        {
+            EmitNoSubFlow(writer, "compose");
+            writer.CloseBrace();
+            writer.Line();
+            EmitDispatcherEnterSubFlow(writer, subFlows);
+            return;
+        }
+
+        writer.Line("switch (stepIndex)");
+        writer.OpenBrace();
+
+        foreach (var step in subFlows)
+        {
+            writer.Line("case " + step.Index + ":");
+            writer.OpenBrace();
+            writer.Line(
+                "return new SubFlowSource(" + step.SubFlowTypeName + ".Plan, " +
+                SubFlowFieldName(step.SubFlowTypeName!) + ", SubFlowInputs.Step" + step.Index + "(ctx));");
+            writer.CloseBrace();
+        }
+
+        EmitSubFlowDefaultCase(writer);
+
+        writer.CloseBrace();
+        writer.CloseBrace();
+        writer.Line();
+
+        EmitDispatcherEnterSubFlow(writer, subFlows);
+    }
+
+    private static void EmitDispatcherEnterSubFlow(
+        SourceWriter writer, System.Collections.Generic.List<StepModel> subFlows)
+    {
+        writer.Line("/// <inheritdoc />");
+        writer.Line("public void EnterSubFlow(int stepIndex, in SubFlowSource source, FlowContext child)");
+        writer.OpenBrace();
+
+        if (subFlows.Count == 0)
+        {
+            EmitNoSubFlow(writer, "seed");
+            writer.CloseBrace();
+            return;
+        }
+
+        writer.Line("switch (stepIndex)");
+        writer.OpenBrace();
+
+        foreach (var step in subFlows)
+        {
+            writer.Line("case " + step.Index + ":");
+            writer.OpenBrace();
+            writer.Line("// The child's own context, never this flow's. Seeding it here is");
+            writer.Line("// what lets the child's first step bind to its input by type.");
+            writer.Line("child.Set((" + step.SubFlowInputTypeName + ")source.Input!);");
+            writer.Line("return;");
+            writer.CloseBrace();
+        }
+
+        EmitSubFlowDefaultCase(writer);
+
+        writer.CloseBrace();
+        writer.CloseBrace();
+    }
+
+    private static void EmitNoSubFlow(SourceWriter writer, string verb)
+    {
+        writer.Line("throw new ArgumentOutOfRangeException(");
+        writer.Line("    nameof(stepIndex),");
+        writer.Line("    stepIndex,");
+        writer.Line("    \"This flow composes no sub-flow, so the engine never asks it to " + verb + " \" +");
+        writer.Line("    \"one. Reaching this means the plan and this dispatcher came from \" +");
+        writer.Line("    \"different builds.\");");
+    }
+
+    private static void EmitSubFlowDefaultCase(SourceWriter writer)
+    {
+        writer.Line("default:");
+        writer.OpenBrace();
+        writer.Line("throw new ArgumentOutOfRangeException(");
+        writer.Line("    nameof(stepIndex),");
+        writer.Line("    stepIndex,");
+        writer.Line("    \"Step index does not name a sub-flow in the compiled plan. The plan \" +");
+        writer.Line("    \"and this dispatcher are generated together, so this means they came \" +");
+        writer.Line("    \"from different builds.\");");
         writer.CloseBrace();
     }
 
@@ -686,15 +876,33 @@ public static class FlowEmitter
         {
             writer.Line("private readonly " + capability + " " + FieldName(capability) + ";");
         }
+
+        foreach (var composed in flow.ComposedFlows)
+        {
+            writer.Line(
+                "private readonly " + composed + ".Dispatcher " + SubFlowFieldName(composed) + ";");
+        }
     }
 
+    /// <summary>
+    /// Emits the dispatcher's constructor: one parameter per capability, then one per
+    /// composed flow.
+    /// </summary>
+    /// <remarks>
+    /// <strong>A child's dispatcher is injected, not constructed here.</strong> Building one
+    /// would mean this flow had to know the child's capabilities, which is exactly the
+    /// coupling composition exists to avoid — and it would build a fresh one per parent
+    /// rather than sharing the container's. Injection also means a child in another assembly
+    /// costs this flow nothing but a type reference.
+    /// </remarks>
     private static void EmitDispatcherConstructor(SourceWriter writer, FlowModel flow)
     {
         var parameters = string.Join(
             ", ",
-            flow.ReferencedCapabilities.Select(c => c + " " + ParameterName(c)));
+            flow.ReferencedCapabilities.Select(c => c + " " + ParameterName(c))
+                .Concat(flow.ComposedFlows.Select(f => f + ".Dispatcher " + SubFlowParameterName(f))));
 
-        writer.Line("/// <summary>Capabilities are injected, never resolved by reflection.</summary>");
+        writer.Line("/// <summary>Capabilities and composed flows are injected, never resolved by reflection.</summary>");
         writer.Line("public Dispatcher(" + parameters + ")");
         writer.OpenBrace();
 
@@ -703,8 +911,26 @@ public static class FlowEmitter
             writer.Line(FieldName(capability) + " = " + ParameterName(capability) + ";");
         }
 
+        foreach (var composed in flow.ComposedFlows)
+        {
+            writer.Line(SubFlowFieldName(composed) + " = " + SubFlowParameterName(composed) + ";");
+        }
+
         writer.CloseBrace();
     }
+
+    /// <summary>
+    /// The field holding one composed flow's dispatcher.
+    /// </summary>
+    /// <remarks>
+    /// Named from the <em>flow</em> and not from the nested <c>Dispatcher</c> type, because
+    /// every child's dispatcher is called <c>Dispatcher</c> — deriving the name the way a
+    /// capability's is derived would give two composed flows the same field.
+    /// </remarks>
+    private static string SubFlowFieldName(string flowTypeName) => "_" + SubFlowParameterName(flowTypeName);
+
+    private static string SubFlowParameterName(string flowTypeName) =>
+        ParameterName(flowTypeName) + "Dispatcher";
 
     private static void EmitDispatcherExecute(SourceWriter writer, FlowModel flow)
     {
@@ -714,14 +940,16 @@ public static class FlowEmitter
         writer.Line("switch (stepIndex)");
         writer.OpenBrace();
 
-        // Conditions, switches, forks and loops have no case: the engine reaches a
-        // condition through Evaluate, a switch through Select and a loop through
-        // BeginIteration, and it handles a fork and a loop entirely itself — the blocks'
-        // own steps get cases, the branching node does not. A case here would be dead code
-        // in the file the header promises is readable.
+        // Conditions, switches, forks, loops and sub-flows have no case: the engine reaches
+        // a condition through Evaluate, a switch through Select, a loop through
+        // BeginIteration and a composition through BeginSubFlow, and it handles a fork, a
+        // loop and a child flow entirely itself — the blocks' own steps get cases, the
+        // branching node does not, and a child's steps are the child's dispatcher's
+        // business. A case here would be dead code in the file the header promises is
+        // readable.
         foreach (var step in flow.AllSteps
             .Where(s => s.Kind is not (StepKindModel.Condition or StepKindModel.Switch
-                or StepKindModel.Parallel or StepKindModel.ForEach))
+                or StepKindModel.Parallel or StepKindModel.ForEach or StepKindModel.SubFlow))
             .OrderBy(s => s.Index))
         {
             writer.Line("case " + step.Index + ":");

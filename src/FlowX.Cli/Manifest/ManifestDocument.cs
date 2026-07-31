@@ -199,6 +199,31 @@ public sealed class ManifestStep
     public string? Merge { get; set; }
 
     /// <summary>
+    /// The business identity of the flow a <c>SubFlow</c> step composes. Absent on every
+    /// other kind.
+    /// </summary>
+    /// <remarks>
+    /// The child's steps are deliberately <em>not</em> in <see cref="Branches"/> — they are
+    /// in that flow's own entry, which is where a change to them belongs. So a reader
+    /// follows the name to another flow rather than descending into a copy of it, and one
+    /// edit to a shared flow is one diff rather than one per flow that composes it.
+    /// </remarks>
+    [JsonPropertyName("flow")]
+    public string? Flow { get; set; }
+
+    /// <summary>
+    /// How a <c>SubFlow</c> step relates to its child: <c>Inline</c> or <c>Detached</c>.
+    /// Absent on every other kind.
+    /// </summary>
+    /// <remarks>
+    /// Structure, not a value: it says whether the parent waits for the child and whether
+    /// the child's failure is the parent's. That is the one thing about a composition worth
+    /// reading off a diagram, which is why it is on the node's label.
+    /// </remarks>
+    [JsonPropertyName("mode")]
+    public string? Mode { get; set; }
+
+    /// <summary>
     /// Nested blocks of a branching step: for a <c>Condition</c>, the <c>then</c> block
     /// first and the <c>Otherwise</c> block second when there is one; for a
     /// <c>Switch</c>, one block per case in declaration order and then the <c>Default</c>,

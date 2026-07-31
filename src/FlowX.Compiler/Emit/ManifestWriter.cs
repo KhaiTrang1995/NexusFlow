@@ -399,10 +399,56 @@ public static class ManifestWriter
             writer.Property("event", step.EventType);
         }
 
+        WriteSubFlow(writer, step);
         WritePolicies(writer, step);
         WriteBranches(writer, step);
 
         writer.CloseObject();
+    }
+
+    /// <summary>
+    /// Writes which flow a <c>SubFlow</c> step composes, and how.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Both fields are structure, and the distinction is the one that makes this
+    /// file safe to publish.</strong> <c>flow</c> is the child's business identity — the
+    /// same string the child's own manifest entry carries — not a value the flow computed;
+    /// it is what turns a set of flow documents into a graph a reviewer, <c>flowx diff</c>
+    /// or an agent can walk. <c>mode</c> says whether the parent waits for the child and
+    /// whether the child's failure is the parent's, which is a fact about the shape of the
+    /// composition and about nothing flowing through it.
+    /// </para>
+    /// <para>
+    /// <strong>The input mapping is not published, for the reason a predicate is not.</strong>
+    /// <c>ctx =&gt; new FulfilOrder(ctx.Get&lt;OrderId&gt;())</c> names the shape of
+    /// somebody's data, and the rule that makes this document publishable is structure only,
+    /// never values. A reader therefore sees that a flow composes another and on what terms,
+    /// but not with what.
+    /// </para>
+    /// <para>
+    /// <strong>The child's steps are not published here either.</strong> They are in the
+    /// child's own entry, which is where a change to them belongs — splicing them in would
+    /// make every parent's document grow with the child's and turn one edit to a shared
+    /// flow into a diff in every flow that composes it.
+    /// </para>
+    /// </remarks>
+    private static void WriteSubFlow(JsonWriter writer, StepModel step)
+    {
+        if (step.Kind != StepKindModel.SubFlow)
+        {
+            return;
+        }
+
+        if (step.SubFlowId != null)
+        {
+            writer.Property("flow", step.SubFlowId);
+        }
+
+        if (step.SubFlowMode != null)
+        {
+            writer.Property("mode", step.SubFlowMode);
+        }
     }
 
     /// <summary>
@@ -788,6 +834,7 @@ public static class ManifestWriter
         StepKindModel.Switch => "Switch",
         StepKindModel.Parallel => "Parallel",
         StepKindModel.ForEach => "ForEach",
+        StepKindModel.SubFlow => "SubFlow",
         _ => "Capability",
     };
 

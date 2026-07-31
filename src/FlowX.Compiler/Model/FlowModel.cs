@@ -157,6 +157,20 @@ public sealed class FlowModel
     /// <summary>True when any step declared a compensation, inside a branch or not.</summary>
     public bool HasCompensation => AllSteps.Any(step => step.CompensationTypeName != null);
 
+    /// <summary>Every distinct flow type this flow composes, ordinally sorted.</summary>
+    /// <remarks>
+    /// Drives the generated dispatcher's constructor: a composing flow takes the child's
+    /// dispatcher the same way it takes a capability, so the child is injected rather than
+    /// constructed — which is what lets the child's own capabilities be resolved by the
+    /// container and keeps this flow from having to know them.
+    /// </remarks>
+    public IReadOnlyList<string> ComposedFlows => AllSteps
+        .Where(step => step.Kind == StepKindModel.SubFlow && step.SubFlowTypeName != null)
+        .Select(step => step.SubFlowTypeName!)
+        .Distinct(System.StringComparer.Ordinal)
+        .OrderBy(name => name, System.StringComparer.Ordinal)
+        .ToList();
+
     /// <summary>Every distinct capability type the flow invokes, compensations included.</summary>
     public IReadOnlyList<string> ReferencedCapabilities => AllSteps
         .SelectMany(step => new[] { step.CapabilityTypeName, step.CompensationTypeName })

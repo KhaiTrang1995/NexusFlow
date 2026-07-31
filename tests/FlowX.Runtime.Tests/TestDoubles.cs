@@ -50,6 +50,65 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     private readonly Dictionary<(int Index, int Visit), Error> _visitFailures = [];
     private readonly Dictionary<int, int> _visits = [];
 
+    // The sub-flow pair, shaped exactly like the two methods the generator emits: the
+    // mapping is evaluated here, on the parent's thread, and the seeder is the only code
+    // that knows the child's input type.
+    private readonly Dictionary<int, (ExecutionPlan Plan, IStepDispatcher Dispatcher)> _children = [];
+    private readonly Dictionary<int, Action<FlowContext>> _seeds = [];
+
+    /// <summary>A name for this dispatcher in <see cref="Trace"/>, so two of them can be told apart.</summary>
+    public string Name { get; set; } = "flow";
+
+    /// <summary>
+    /// A log shared by a parent and its child, so a test can assert an ordering that spans
+    /// the boundary.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Executed"/> and <see cref="Compensated"/> are per-dispatcher and per-index,
+    /// which is exactly right until the question is "did the parent's undo run before the
+    /// child's" — two lists of indices cannot answer that, because index 2 means a different
+    /// step in each. Assigning both dispatchers the same list makes the interleaving visible.
+    /// </remarks>
+    public List<string> Trace { get; set; } = [];
+
+    /// <summary>Names this dispatcher and gives it a shared trace.</summary>
+    public RecordingDispatcher As(string name, List<string> trace)
+    {
+        Name = name;
+        Trace = trace;
+        return this;
+    }
+
+    /// <summary>Makes step <paramref name="index"/> compose <paramref name="plan"/>.</summary>
+    /// <remarks>
+    /// The two delegates are the hand-written version of what the generator emits, for the
+    /// reason <see cref="IterateOver"/>'s are: the input is carried behind a
+    /// <see cref="SubFlowSource"/> the engine treats as opaque, and only this method — which
+    /// knows <typeparamref name="TIn"/> — ever seeds it into the child's context.
+    /// </remarks>
+    public RecordingDispatcher ComposeAt<TIn>(
+        int index, ExecutionPlan plan, IStepDispatcher dispatcher, TIn input)
+        where TIn : notnull
+    {
+        _children[index] = (plan, dispatcher);
+        _seeds[index] = child => child.Set(input);
+
+        return this;
+    }
+
+    /// <summary>Set to make a sub-flow input mapping throw rather than produce an input.</summary>
+    public int? ThrowAtSubFlow { get; set; }
+
+    /// <summary>Sub-flow step indices the engine asked to compose, in the order it asked.</summary>
+    public List<int> Composed { get; } = [];
+
+    /// <summary>The deadline each child context carried when its first step ran.</summary>
+    /// <remarks>
+    /// Captured from inside the child, because the child's context is pooled too: reading it
+    /// after the composition returned would read a reset instance.
+    /// </remarks>
+    public List<DateTimeOffset> DeadlinesSeen { get; } = [];
+
     /// <summary>Step indices executed, in the order the engine invoked them.</summary>
     public List<int> Executed { get; } = [];
 
@@ -117,6 +176,22 @@ internal sealed class RecordingDispatcher : IStepDispatcher
 
     /// <summary>Invoked before each step runs, so a test can advance a fake clock.</summary>
     public Action<int>? BeforeStep { get; set; }
+
+    /// <summary>
+    /// Reads something off the context <em>while</em> each step is running, into
+    /// <see cref="Observed"/>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ContextsSeen"/> cannot answer a question about a value, because the
+    /// context is pooled and reset the moment the flow returns — a child's context most of
+    /// all, since it is given back as soon as the composition is settled. Anything a test
+    /// wants to know about what a step could see has to be taken while the step is running,
+    /// which is what this is for.
+    /// </remarks>
+    public Func<FlowContext, object?>? Observe { get; set; }
+
+    /// <summary>What <see cref="Observe"/> returned, in step order.</summary>
+    public List<object?> Observed { get; } = [];
 
     /// <summary>Makes step <paramref name="index"/> fail with <paramref name="error"/>.</summary>
     public RecordingDispatcher FailAt(int index, Error error)
@@ -223,6 +298,14 @@ internal sealed class RecordingDispatcher : IStepDispatcher
             _running++;
             PeakConcurrency = Math.Max(PeakConcurrency, _running);
             Executed.Add(stepIndex);
+            Trace.Add(Name + ".run." + stepIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            DeadlinesSeen.Add(ctx.Deadline);
+
+            if (Observe is not null)
+            {
+                Observed.Add(Observe(ctx));
+            }
+
             ContextsSeen.Add(ctx);
             Snapshots.Add(ContextSnapshot.Of(ctx));
 
@@ -269,6 +352,7 @@ internal sealed class RecordingDispatcher : IStepDispatcher
         lock (_recording)
         {
             Compensated.Add(stepIndex);
+            Trace.Add(Name + ".undo." + stepIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
             CompensationScopes.Add(ctx);
         }
 
@@ -336,6 +420,30 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     /// <inheritdoc />
     public FlowContext EnterIteration(int stepIndex, in IterationSource source, int iteration, FlowContext ctx) =>
         _scopes[stepIndex](source, iteration, ctx);
+
+    /// <inheritdoc />
+    public SubFlowSource BeginSubFlow(int stepIndex, FlowContext ctx)
+    {
+        lock (_recording)
+        {
+            Composed.Add(stepIndex);
+        }
+
+        if (ThrowAtSubFlow == stepIndex)
+        {
+            // The realistic failure: a mapping reading a value no step on the path so far
+            // produced. FlowContext.Get<T> throws exactly this.
+            throw new InvalidOperationException("The mapping read a value no step produced.");
+        }
+
+        var child = _children[stepIndex];
+
+        return new SubFlowSource(child.Plan, child.Dispatcher, ctx);
+    }
+
+    /// <inheritdoc />
+    public void EnterSubFlow(int stepIndex, in SubFlowSource source, FlowContext child) =>
+        _seeds[stepIndex](child);
 }
 
 /// <summary>
@@ -616,6 +724,73 @@ internal static class Plans
             StepNode.ForCapability(2, Reserve),
             StepNode.ForCapability(3, Capture),
             StepNode.ForEmit(4, "order.exploded"),
+        ]));
+
+    /// <summary>
+    /// A parent that composes another flow:
+    /// <c>0 validate · 1 subflow(order.fulfil) · 2 capture · 3 emit</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Spelled out rather than built by a helper, for the same reason every other plan here
+    /// is. What the layout shows is the whole claim: the composition is <strong>one
+    /// index</strong> with no target, and the step after it is the ordinary next one. None
+    /// of the child's steps appear — they are in <see cref="Child"/>, which is a different
+    /// array entirely.
+    /// </para>
+    /// <para>
+    /// Step 2 is compensable, so an unwind can be checked to interleave the parent's own
+    /// undo with the child's in strict reverse across the boundary.
+    /// </para>
+    /// </remarks>
+    public static ExecutionPlan Composing(SubFlowMode mode = SubFlowMode.Inline) => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.place", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForCapability(0, Validate),
+            StepNode.ForSubFlow(1, "order.fulfil", mode),
+            StepNode.ForCapability(2, Capture, Refund),
+            StepNode.ForEmit(3, "order.placed"),
+        ]));
+
+    /// <summary>
+    /// A parent whose only compensable work is the child's:
+    /// <c>0 subflow(order.fulfil) · 1 capture</c>, with nothing of its own to undo.
+    /// </summary>
+    /// <remarks>
+    /// The shape that proves the composition node is what makes the plan compensable. If
+    /// <c>StepNode.IsCompensable</c> did not report <c>true</c> for an inline sub-flow, this
+    /// plan would carry no compensation stack at all and the child's completed work would be
+    /// silently unrecoverable when step 1 failed.
+    /// </remarks>
+    public static ExecutionPlan ComposingOnly() => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.thin", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForSubFlow(0, "order.fulfil"),
+            StepNode.ForCapability(1, Capture),
+        ]));
+
+    /// <summary>
+    /// The child: <c>0 reserve (compensable) · 1 validate</c>, on its own deadline.
+    /// </summary>
+    /// <remarks>
+    /// A short declared deadline on purpose — shorter than the parent's — so a test can
+    /// show that the child's budget is the smaller of the two rather than whichever one the
+    /// engine happened to read last.
+    /// </remarks>
+    public static ExecutionPlan Child(TimeSpan? deadline = null) => ExecutionPlan.Create(
+        FlowDescriptor.Create(
+            "order.fulfil", "1.0.0", ExecutionProfile.Ephemeral, deadline ?? TimeSpan.FromSeconds(10)),
+        StepGraph.Create([
+            StepNode.ForCapability(0, Reserve, Release),
+            StepNode.ForCapability(1, Validate),
+        ]));
+
+    /// <summary>A child that composes a child: <c>0 subflow(order.fulfil) · 1 validate</c>.</summary>
+    public static ExecutionPlan ComposingChild() => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.middle", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(20)),
+        StepGraph.Create([
+            StepNode.ForSubFlow(0, "order.fulfil"),
+            StepNode.ForCapability(1, Validate),
         ]));
 
     /// <summary>Two steps, neither compensable.</summary>

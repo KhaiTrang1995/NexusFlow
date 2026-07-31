@@ -498,6 +498,62 @@ public sealed class MermaidRendererTests
         diagram.ShouldContain("f0s2 -.-> f0s2c");
     }
 
+    /// <summary>A flow that composes another, as the compiler publishes it.</summary>
+    /// <remarks>
+    /// No <c>branches</c>, and that is the whole point: the child's steps belong to the
+    /// child's own entry, so the parent's node names it rather than containing it.
+    /// </remarks>
+    private const string SubFlowManifest = """
+        {
+          "schemaVersion": "0.1.0",
+          "application": { "name": "Sample.App", "version": "1.0.0" },
+          "flows": [
+            {
+              "id": "order.place", "version": "1.0.0", "profile": "Ephemeral",
+              "steps": [
+                { "id": 0, "kind": "Capability", "capability": "order.validate@1.0.0" },
+                { "id": 1, "kind": "SubFlow", "flow": "order.fulfil", "mode": "Inline" },
+                { "id": 2, "kind": "SubFlow", "flow": "partner.notify", "mode": "Detached" },
+                { "id": 3, "kind": "Capability", "capability": "order.confirm@1.0.0" }
+              ],
+              "emits": []
+            }
+          ],
+          "capabilities": []
+        }
+        """;
+
+    [Fact]
+    public void DrawsACompositionAsItsChildsNameAndItsMode()
+    {
+        var diagram = MermaidRenderer.Render(Parse(SubFlowManifest));
+
+        // The child's id, because a reader can follow it to that flow's own subgraph. The
+        // mode, because it is the one thing about a composition worth reading at a glance:
+        // whether the parent waits, and whether the child's failure is the parent's.
+        diagram.ShouldContain("f0s1[(\"order.fulfil · Inline\")]");
+        diagram.ShouldContain("f0s2[(\"partner.notify · Detached\")]");
+
+        // Not the subroutine box a ForEach uses, even though "this runs a block" is nearly
+        // right: a loop's block is drawn on this diagram and a sub-flow's is not.
+        diagram.Contains("f0s1[[", StringComparison.Ordinal).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ACompositionHasExactlyOneEdgeOutAndNoneIn()
+    {
+        var diagram = MermaidRenderer.Render(Parse(SubFlowManifest));
+
+        diagram.ShouldContain("f0s0 --> f0s1");
+        diagram.ShouldContain("f0s1 --> f0s2");
+        diagram.ShouldContain("f0s2 --> f0s3");
+
+        // The child's steps are not on this diagram, so there is nothing to branch into.
+        // Drawing an edge to a node that is not here is exactly the shape a reviewer is
+        // looking at the picture to check.
+        Regex.Count(diagram, @"f0s1 -->").ShouldBe(1);
+    }
+
     [Fact]
     public void AForkWhoseMergeCouldNotBeReadIsStillDrawnAsAFork()
     {

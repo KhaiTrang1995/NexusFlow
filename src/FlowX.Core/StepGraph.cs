@@ -103,6 +103,14 @@ public sealed class StepGraph
     /// targets ascend and that the join lies past the last of them; this adds the one fact
     /// only the graph knows, which is that they all fit.
     /// </para>
+    /// <para>
+    /// A <see cref="StepKind.SubFlow"/> passes this loop trivially, because it carries no
+    /// target at all. That is not an omission: it names another flow's plan rather than a
+    /// position in this array, so there is nothing here for it to point at and the
+    /// termination argument for <em>this</em> graph is unaffected. What bounds the sub-flow
+    /// graph is <c>FLOWX1021</c> at build time and the engine's nesting cap at run time;
+    /// neither is a property of one graph, so neither belongs here.
+    /// </para>
     /// </remarks>
     private static void ValidateTargets(ImmutableArray<StepNode> ordered)
     {

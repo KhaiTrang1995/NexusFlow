@@ -28,6 +28,27 @@ public sealed class FlowExecutionContext : FlowContext
     private readonly CompensationStack _compensations = new();
 
     /// <summary>
+    /// Child contexts this execution composed successfully and is still holding, because
+    /// the parent may yet have to undo them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Owned by the context so it is pooled with it, for exactly the reason the
+    /// compensation stack is. The alternative was to find them by walking that stack at the
+    /// end of every successful flow — which works, and costs one iterator per nesting level
+    /// per execution: 96 B measured, on the <em>success</em> path, for a flow that composes
+    /// one child that composes nothing. A list the pool already owns is read with a plain
+    /// <c>for</c> and costs nothing.
+    /// </para>
+    /// <para>
+    /// Only the success path reads it. When the flow fails, the unwind visits the same
+    /// children through the compensation stack — in the right order, which this list does
+    /// not have — and returns them there.
+    /// </para>
+    /// </remarks>
+    private readonly List<FlowExecutionContext> _retainedSubFlows = [];
+
+    /// <summary>
     /// Whether more than one thread can reach this context, and therefore whether the
     /// state bag and the compensation stack have to be serialised.
     /// </summary>
@@ -63,6 +84,23 @@ public sealed class FlowExecutionContext : FlowContext
     private IClock _clock = SystemClock.Instance;
     private Random? _random;
     private Error? _error;
+
+    /// <summary>
+    /// The dispatcher running this context's flow, or <c>null</c> for a context the engine
+    /// was handed no dispatcher for.
+    /// </summary>
+    /// <remarks>
+    /// Recorded for exactly one purpose: a sub-flow's compensation. When a child succeeds
+    /// and its parent later fails, the parent's unwind reaches an entry whose scope is the
+    /// child's context — and the undo has to be dispatched through the <em>child's</em>
+    /// dispatcher, because the step indices on that stack are the child's. Carrying it here
+    /// is what makes "the context of a running flow knows what is running it" true rather
+    /// than something the engine has to thread through five signatures.
+    /// </remarks>
+    private IStepDispatcher? _dispatcher;
+
+    /// <summary>How many sub-flow boundaries lie between this execution and the outermost one.</summary>
+    private int _depth;
 
     /// <inheritdoc />
     public override string CorrelationId => _correlationId;
@@ -174,8 +212,26 @@ public sealed class FlowExecutionContext : FlowContext
     }
 
     /// <summary>Prepares a pooled instance for one execution.</summary>
-    internal void Initialise(ExecutionPlan plan, in FlowInvocation invocation, IClock clock)
+    /// <param name="plan">The flow being executed.</param>
+    /// <param name="invocation">Correlation, tenant and the caller's remaining budget.</param>
+    /// <param name="clock">The time source.</param>
+    /// <param name="dispatcher">
+    /// What is executing this flow. Recorded so a sub-flow's compensation can be dispatched
+    /// through the right one long after the child returned.
+    /// </param>
+    /// <param name="depth">
+    /// How many sub-flow boundaries lie above this execution. Zero for a flow a trigger
+    /// started.
+    /// </param>
+    internal void Initialise(
+        ExecutionPlan plan,
+        in FlowInvocation invocation,
+        IClock clock,
+        IStepDispatcher? dispatcher = null,
+        int depth = 0)
     {
+        _dispatcher = dispatcher;
+        _depth = depth;
         _guarded = plan.HasParallel;
         _flowId = plan.Flow.Id;
         _flowVersion = plan.Flow.Version;
@@ -193,6 +249,39 @@ public sealed class FlowExecutionContext : FlowContext
 
     /// <summary>The compensations registered by this execution. Reused, never reallocated.</summary>
     internal CompensationStack Compensations => _compensations;
+
+    /// <summary>What is executing this flow, for a sub-flow's deferred unwind.</summary>
+    internal IStepDispatcher? Dispatcher => _dispatcher;
+
+    /// <summary>Child contexts still rented on this execution's behalf.</summary>
+    internal List<FlowExecutionContext> RetainedSubFlows => _retainedSubFlows;
+
+    /// <summary>
+    /// Records a successfully composed child whose context this execution keeps.
+    /// </summary>
+    /// <remarks>
+    /// Serialised under the same lock the state bag uses when the flow forks, for the same
+    /// reason <see cref="RecordCompleted"/> is: two parallel branches can each compose a
+    /// child at the same instant, and a lost entry here is a pooled context that is never
+    /// given back.
+    /// </remarks>
+    internal void RetainSubFlow(FlowExecutionContext child)
+    {
+        if (_guarded)
+        {
+            lock (_state)
+            {
+                _retainedSubFlows.Add(child);
+            }
+
+            return;
+        }
+
+        _retainedSubFlows.Add(child);
+    }
+
+    /// <summary>How many sub-flow boundaries lie above this execution.</summary>
+    internal int Depth => _depth;
 
     /// <summary>
     /// Pushes a completed compensable step onto the unwind stack, serialising the push
@@ -248,7 +337,7 @@ public sealed class FlowExecutionContext : FlowContext
     /// </remarks>
     internal string EnterStep(StepNode step)
     {
-        var id = step.Capability?.Id ?? step.EventType ?? step.SignalType ?? string.Empty;
+        var id = step.Capability?.Id ?? step.EventType ?? step.SignalType ?? step.SubFlowId ?? string.Empty;
         _capabilityId = id;
         return id;
     }
@@ -268,6 +357,7 @@ public sealed class FlowExecutionContext : FlowContext
     {
         _state.Clear();
         _compensations.Reset();
+        _retainedSubFlows.Clear();
         _guarded = false;
         _flowId = string.Empty;
         _flowVersion = string.Empty;
@@ -279,5 +369,7 @@ public sealed class FlowExecutionContext : FlowContext
         _clock = SystemClock.Instance;
         _random = null;
         _error = null;
+        _dispatcher = null;
+        _depth = 0;
     }
 }

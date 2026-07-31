@@ -74,9 +74,12 @@ namespace FlowX.Compiler.Analysis;
 /// the file does not compile, and that message is better than this one.
 /// </item>
 /// <item>
-/// <strong>Sub-flows are not followed.</strong> Nothing can declare one yet; when
-/// <c>SubFlow</c> lands, a branch invoking one writes whatever that flow writes, and this
-/// rule will have to be extended or its silence stated again.
+/// <strong>Sub-flows are not followed, and no longer need to be.</strong> A branch may
+/// contain a <c>.SubFlow&lt;T, TIn&gt;(...)</c>, and the child writes nothing into
+/// <em>this</em> flow's context — it runs on its own context, from its own input, and its
+/// result does not come back. So the silence here is sound rather than convenient; it does
+/// rest on that property, so propagating a child's output into its parent's bag would mean
+/// following the edge.
 /// </item>
 /// </list>
 /// <para>

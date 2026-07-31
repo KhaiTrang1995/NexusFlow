@@ -338,6 +338,13 @@ public static class FlowAnalyzer
                     AddForEachStep(link, semanticModel, diagnostics, steps, ref nextIndex);
                     break;
 
+                case "SubFlow":
+                    // One call and — uniquely — no block at all. The steps it runs belong
+                    // to another flow's own model, so there is nothing to lay out and no
+                    // trial pass to do.
+                    AddSubFlowStep(link, semanticModel, diagnostics, steps, ref nextIndex);
+                    break;
+
                 default:
                     // Return, and anything the DSL grows in a later phase. Skipped rather
                     // than reported — see the class remarks on why a generator must not
@@ -719,6 +726,200 @@ public static class FlowAnalyzer
             arguments[2].Expression.ToString(),
             FormatLocation(arguments[0].Expression.GetLocation()),
             FormatLocation(link.CallLocation)));
+    }
+
+    /// <summary>
+    /// Models a <c>.SubFlow&lt;TFlow, TSubIn&gt;(map, mode)</c>.
+    /// </summary>
+    /// <param name="link">The <c>.SubFlow</c> call.</param>
+    /// <param name="semanticModel">Resolves the child flow and the mapped input type.</param>
+    /// <param name="diagnostics">Collects everything worth reporting.</param>
+    /// <param name="steps">The block being built.</param>
+    /// <param name="nextIndex">The shared flat index counter.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The simplest of the composite shapes to lay out, because it has no
+    /// layout.</strong> A conditional reserves slots for jumps, a switch walks blocks in
+    /// order, a fork and a loop both need a trial pass in case the block turns out to be
+    /// empty. This takes one index and stops: the child's steps are in the child's model,
+    /// and this flow says only <em>which</em> child.
+    /// </para>
+    /// <para>
+    /// <strong>Two refusals rather than two silences.</strong> A target with no
+    /// <c>[Flow]</c> attribute has no compiled plan to run, and <c>AwaitCompletion</c> has
+    /// no journal to suspend into. Skipping either would drop the step from the plan and the
+    /// manifest and ship a flow missing the composition its author wrote, so both are
+    /// FLOWX1026. What is <em>not</em> reported here is a cycle: that is a question about
+    /// the whole compilation and no single chain link can answer it —
+    /// <see cref="SubFlowCycleAnalyzer"/> does.
+    /// </para>
+    /// </remarks>
+    private static void AddSubFlowStep(
+        ChainLink link,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        List<StepModel> steps,
+        ref int nextIndex)
+    {
+        var arguments = link.Invocation.ArgumentList.Arguments;
+
+        // `.SubFlow<TFlow, TSubIn>(map)` takes the mapping, so a call without it does not
+        // compile. Reachable only from a half-typed buffer, where the C# compiler is
+        // already saying something more useful than a FlowX diagnostic would.
+        if (arguments.Count == 0 || link.TypeArguments.Count == 0)
+        {
+            return;
+        }
+
+        var flowName = EnclosingFlowName(link);
+        var target = ResolveType(link.TypeArguments[0], semanticModel);
+
+        if (target is null || target.TypeKind == TypeKind.Error)
+        {
+            // The type does not bind, which means the file does not compile, and that
+            // message is better than this one.
+            return;
+        }
+
+        var flowAttribute = target.GetAttributes()
+            .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == FlowAttribute);
+
+        // FLOWX1026 — a flow class with no [Flow] has no generated plan, so there is
+        // nothing to compose and nothing the emitter could name.
+        if (flowAttribute is null || flowAttribute.ConstructorArguments.Length == 0)
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.SubFlowCannotBeComposed,
+                link.TypeArguments[0].GetLocation(),
+                flowName,
+                $"'{target.Name}' carries no [Flow] attribute, so nothing generates a plan " +
+                "for it and there is no compiled flow to run"));
+
+            return;
+        }
+
+        var mode = ReadSubFlowMode(arguments);
+
+        // FLOWX1026 — AwaitCompletion suspends the parent, and a suspension point needs a
+        // journal to suspend into. Neither degenerate form is honest: running it inline
+        // changes the parent's deadline and failure semantics, and skipping it drops
+        // business logic.
+        if (mode is null or "AwaitCompletion")
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.SubFlowCannotBeComposed,
+                link.CallLocation,
+                flowName,
+                mode is null
+                    ? "the mode is an expression this compiler cannot read, and the mode " +
+                      "decides whether the parent waits, whether the child's failure is the " +
+                      "parent's and whose deadline applies — write SubFlowMode.Inline or " +
+                      "SubFlowMode.Detached directly"
+                    : "AwaitCompletion suspends the parent until the child completes, which " +
+                      "needs a durable suspension point, and there is no journal to suspend " +
+                      "into in this release"));
+
+            return;
+        }
+
+        var inputType = ResolveSubFlowInput(link, semanticModel);
+
+        if (inputType is null)
+        {
+            // The emitted mapping is a typed field; without the type there is no compilable
+            // shape to emit, and guessing `object` would box every input.
+            return;
+        }
+
+        steps.Add(StepModel.SubFlow(
+            nextIndex++,
+            flowAttribute.ConstructorArguments[0].Value as string ?? target.Name,
+            Display(target),
+            inputType,
+            arguments[0].Expression.ToString(),
+            mode,
+            FormatLocation(arguments[0].Expression.GetLocation()),
+            FormatLocation(link.CallLocation)));
+    }
+
+    /// <summary>
+    /// Names the <c>SubFlowMode</c> a call selects, or <c>null</c> when it cannot be read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Read syntactically, from <c>SubFlowMode.Detached</c> or a bare <c>Detached</c>, and
+    /// defaulted to <c>Inline</c> when the argument is omitted — which is the DSL's own
+    /// default parameter value and therefore the only answer that can be right.
+    /// </para>
+    /// <para>
+    /// <strong>Unlike <c>merge:</c> and <c>options:</c>, an unreadable mode is refused
+    /// rather than copied through.</strong> Those two carry numbers, and a plan that copies
+    /// the author's expression verbatim executes correctly however it was written; only the
+    /// manifest's label is lost. A mode is not a number — it decides whether the parent
+    /// waits for the child, whether the child's failure fails the parent, and whose deadline
+    /// applies. A mode the compiler cannot read is a mode FLOWX1026 cannot check and the
+    /// manifest cannot publish, so it is reported instead of guessed.
+    /// </para>
+    /// </remarks>
+    private static string? ReadSubFlowMode(SeparatedSyntaxList<ArgumentSyntax> arguments)
+    {
+        if (arguments.Count < 2)
+        {
+            return "Inline";
+        }
+
+        var name = arguments[1].Expression switch
+        {
+            MemberAccessExpressionSyntax member => member.Name.Identifier.ValueText,
+            IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+            _ => null,
+        };
+
+        return name switch
+        {
+            "Inline" => "Inline",
+            "Detached" => "Detached",
+            "AwaitCompletion" => "AwaitCompletion",
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// The fully-qualified input contract C# inferred for a <c>.SubFlow&lt;TFlow,
+    /// TSubIn&gt;(...)</c> call.
+    /// </summary>
+    /// <remarks>
+    /// Read from the resolved method's <em>second</em> type argument rather than from the
+    /// lambda body, because that is what C# itself inferred — and the emitted mapping is a
+    /// field typed at it, so a second opinion that disagreed with the compiler's would not
+    /// compile.
+    /// </remarks>
+    private static string? ResolveSubFlowInput(ChainLink link, SemanticModel semanticModel)
+    {
+        var method = semanticModel.GetSymbolInfo(link.Invocation).Symbol as IMethodSymbol;
+
+        return method is { TypeArguments.Length: 2 } && method.TypeArguments[1].TypeKind != TypeKind.Error
+            ? Display(method.TypeArguments[1])
+            : null;
+    }
+
+    /// <summary>The name of the flow class a chain link was written in, for a message.</summary>
+    /// <remarks>
+    /// Taken from the syntax rather than passed down, because <see cref="BuildBlock"/> is
+    /// reached from six places and threading the flow's name through all of them to reach
+    /// one diagnostic would be a parameter every caller has to carry and none of them reads.
+    /// </remarks>
+    private static string EnclosingFlowName(ChainLink link)
+    {
+        for (SyntaxNode? node = link.Invocation; node is not null; node = node.Parent)
+        {
+            if (node is ClassDeclarationSyntax declaration)
+            {
+                return declaration.Identifier.ValueText;
+            }
+        }
+
+        return "(unknown)";
     }
 
     /// <summary>Builds every branch block, numbering them back to back from the cursor.</summary>

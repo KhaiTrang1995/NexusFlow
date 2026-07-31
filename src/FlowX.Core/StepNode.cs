@@ -26,9 +26,13 @@ namespace FlowX;
 /// length. See <see cref="ForEach"/> for what bounds it instead.
 /// </para>
 /// <para>
-/// The remaining branching kind — sub-flow — arrives with the DSL surface that can express
-/// it. Adding it here first would be speculative: a shape nothing can construct and no
-/// test can exercise.
+/// <see cref="SubFlow"/> is the last kind, and the one that does <em>not</em> fit the flat
+/// array — not because it needs a target, but because it has none. Every other kind is a
+/// statement about this array: a range of it, a destination in it, a span re-entered from
+/// it. A sub-flow is one node that names <em>another flow's whole plan</em>, with its own
+/// steps, its own compensation and its own deadline. So the array stays flat and stays the
+/// engine's one loop; what stops being true is that one array describes one execution. See
+/// <see cref="SubFlow"/> and <c>FlowEngine.RunSubFlowAsync</c> for what that costs.
 /// </para>
 /// </remarks>
 public enum StepKind
@@ -89,6 +93,31 @@ public enum StepKind
     /// exactly one branch, which is why the engine reuses the same range machinery.
     /// </remarks>
     ForEach = 7,
+
+    /// <summary>
+    /// Runs another flow's compiled plan, identified by
+    /// <see cref="StepNode.SubFlowId"/> and related to this one by
+    /// <see cref="StepNode.Mode"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one kind whose work is not in this graph.</strong> A
+    /// <see cref="Branch"/> names an index here, a <see cref="Parallel"/> names ranges here,
+    /// a <see cref="ForEach"/> names a span here. This names nothing here: it carries no
+    /// target, occupies exactly one index, and the steps it runs live in a different
+    /// <see cref="StepGraph"/> reached through the dispatcher. That is deliberate — the
+    /// alternative, splicing the child's steps into the parent's array, would make the
+    /// parent's manifest claim the child's capabilities as its own, discard the child's
+    /// deadline and profile, and be impossible across an assembly boundary.
+    /// </para>
+    /// <para>
+    /// <strong>Termination.</strong> The forward-target rule is untouched, because there is
+    /// no target. What replaces it for the sub-flow graph is <c>FLOWX1021</c>, which refuses
+    /// a cycle at build time, and a hard nesting bound in the engine for the cycles it
+    /// cannot see across an assembly boundary.
+    /// </para>
+    /// </remarks>
+    SubFlow = 8,
 }
 
 /// <summary>
@@ -236,8 +265,43 @@ public sealed record StepNode
     /// </summary>
     public bool ContinueOnError { get; private init; }
 
-    /// <summary>True when this step declared a compensation.</summary>
-    public bool IsCompensable => Compensation is not null;
+    /// <summary>
+    /// Business identity of the flow a <see cref="StepKind.SubFlow"/> step runs.
+    /// <c>null</c> for every other kind.
+    /// </summary>
+    /// <remarks>
+    /// The child's id, not its plan. The plan is a runtime object the generated dispatcher
+    /// hands over; the id is structure, so it is what reaches the manifest and a rendered
+    /// diagram — a reader can see <em>which</em> flow is composed without the plan having to
+    /// hold a reference to another plan and without the manifest carrying a value.
+    /// </remarks>
+    public string? SubFlowId { get; private init; }
+
+    /// <summary>
+    /// How a <see cref="StepKind.SubFlow"/> step relates to its child.
+    /// <see cref="SubFlowMode.Inline"/> for every other kind, and unread there.
+    /// </summary>
+    public SubFlowMode Mode { get; private init; }
+
+    /// <summary>True when this step declared a compensation, or is a step that may have to undo one.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>An inline sub-flow reports <c>true</c> without naming a compensation.</strong>
+    /// It has none of its own — what it may have to undo is whatever the <em>child</em>
+    /// completed, and the plan cannot know that: the child is compiled separately and may
+    /// live in another assembly. So the node says "this step is one the unwind may need to
+    /// visit", which is what this property is read for — <see cref="ExecutionPlan"/> uses it
+    /// to decide whether the flow needs a compensation stack at all, and a flow that
+    /// composes another flow does.
+    /// </para>
+    /// <para>
+    /// A <see cref="SubFlowMode.Detached"/> sub-flow reports <c>false</c>: its lifecycle is
+    /// its own, so the parent failing says nothing about it and there is nothing for the
+    /// parent's unwind to do.
+    /// </para>
+    /// </remarks>
+    public bool IsCompensable =>
+        Compensation is not null || (Kind == StepKind.SubFlow && Mode == SubFlowMode.Inline);
 
     /// <summary>True when this step moves the instruction pointer rather than doing work.</summary>
     public bool IsControlTransfer => Kind is StepKind.Branch or StepKind.Jump or StepKind.Switch;
@@ -557,6 +621,57 @@ public sealed record StepNode
         };
     }
 
+    /// <summary>Creates a step that runs another flow.</summary>
+    /// <param name="index">Position in the graph.</param>
+    /// <param name="subFlowId">
+    /// Business identity of the child flow, <c>&lt;domain&gt;.&lt;verb&gt;</c>. Structure,
+    /// so it may safely reach the manifest.
+    /// </param>
+    /// <param name="mode">How the child relates to this flow.</param>
+    /// <exception cref="InvalidFlowPlanException">
+    /// <paramref name="mode"/> is <see cref="SubFlowMode.AwaitCompletion"/>.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>No target, and that is the whole of the layout.</strong> Unlike every other
+    /// composite kind, a sub-flow occupies exactly one index and the steps it runs are in
+    /// another graph. Nothing in the parent's array moves, nothing is spliced, and the
+    /// manifest of a flow that composes a hundred-step child is the size of the flow the
+    /// author wrote.
+    /// </para>
+    /// <para>
+    /// <strong><see cref="SubFlowMode.AwaitCompletion"/> is unrepresentable.</strong> It
+    /// means "suspend the parent until the child finishes", which needs a durable
+    /// suspension point, which needs a journal that does not exist. The honest degenerate
+    /// forms are both wrong: running it inline instead silently changes the parent's
+    /// deadline and failure semantics, and skipping it silently drops business logic.
+    /// <c>FLOWX1026</c> refuses it at build time; this refuses it in the one place a plan
+    /// can be built by hand.
+    /// </para>
+    /// </remarks>
+    public static StepNode ForSubFlow(int index, string subFlowId, SubFlowMode mode = SubFlowMode.Inline)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+
+        if (mode == SubFlowMode.AwaitCompletion)
+        {
+            throw new InvalidFlowPlanException(
+                $"Step {index} composes flow '{subFlowId}' with AwaitCompletion, which " +
+                "suspends the parent until the child finishes. A suspension point needs a " +
+                "journal to suspend into and there is not one, so the step cannot be " +
+                "executed — and neither of the two ways to pretend otherwise is honest: " +
+                "running it inline changes the parent's deadline and failure semantics, " +
+                "and skipping it drops business logic. Use SubFlow<T>() or " +
+                "SubFlow<T>(Detached).");
+        }
+
+        return new StepNode(index, StepKind.SubFlow)
+        {
+            SubFlowId = Identifiers.RequireIdentity(subFlowId, nameof(subFlowId)),
+            Mode = mode,
+        };
+    }
+
     /// <summary>
     /// Rejects a target that does not point forward.
     /// </summary>
@@ -595,6 +710,7 @@ public sealed record StepNode
         StepKind.ForEach =>
             $"[{Index}] foreach {Index + 1}..{Target} (max {MaxDegreeOfParallelism}" +
             (ContinueOnError ? ", continue on error)" : ")"),
+        StepKind.SubFlow => $"[{Index}] subflow {SubFlowId} ({Mode})",
         _ => $"[{Index}] {Kind}",
     };
 }

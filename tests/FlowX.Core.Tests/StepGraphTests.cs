@@ -612,6 +612,113 @@ public sealed class StepGraphTests
         LoopPlan(StepNode.ForEach(0, joinTarget: 2, Bounded(2))).HasParallel.ShouldBeTrue();
     }
 
+    // ------------------------------------------------------------------------- sub-flows
+
+    [Fact]
+    public void ASubFlowCarriesTheChildsIdentityAndNothingElse()
+    {
+        var composition = StepNode.ForSubFlow(1, "order.fulfil");
+
+        composition.Kind.ShouldBe(StepKind.SubFlow);
+        composition.SubFlowId.ShouldBe("order.fulfil");
+        composition.Mode.ShouldBe(SubFlowMode.Inline);
+
+        composition.Target.ShouldBeNull(
+            "A sub-flow names another flow's plan, not a position in this array. It is the " +
+            "one composite kind with no target at all.");
+        composition.CaseTargets.ShouldBeEmpty();
+        composition.BranchTargets.ShouldBeEmpty();
+        composition.Capability.ShouldBeNull();
+        composition.IsControlTransfer.ShouldBeFalse(
+            "It does work — a whole flow of it — so it is not a transfer.");
+    }
+
+    [Fact]
+    public void AnInlineSubFlowIsCompensableWithoutNamingACompensation()
+    {
+        // It has none of its own. What it may have to undo is whatever the *child*
+        // completed, which the parent's plan cannot know — the child is compiled separately
+        // and may live in another assembly. Reporting true is what makes the parent build a
+        // compensation stack at all, and without it the child's completed work would be
+        // silently unrecoverable.
+        StepNode.ForSubFlow(0, "order.fulfil").IsCompensable.ShouldBeTrue();
+        StepNode.ForSubFlow(0, "order.fulfil").Compensation.ShouldBeNull();
+
+        StepNode.ForSubFlow(0, "order.fulfil", SubFlowMode.Detached).IsCompensable.ShouldBeFalse(
+            "A detached child's lifecycle is its own, so the parent failing says nothing " +
+            "about it and there is nothing for the parent's unwind to do.");
+    }
+
+    [Fact]
+    public void APlanKnowsWhetherItComposesAnotherFlow()
+    {
+        var composing = ExecutionPlan.Create(
+            FlowDescriptor.Create("order.place", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(1)),
+            StepGraph.Create([StepNode.ForSubFlow(0, "order.fulfil"), Step(1, Fixtures.CapturePayment)]));
+
+        composing.HasSubFlow.ShouldBeTrue();
+        composing.HasCompensation.ShouldBeTrue(
+            "The composition alone makes the flow compensable.");
+        composing.HasParallel.ShouldBeFalse(
+            "A child runs on its own context, so composing one does not make two threads " +
+            "reach this flow's — which is what keeps the state bag unguarded and budget B2 " +
+            "a hard zero here.");
+
+        LoopPlan(StepNode.ForEach(0, joinTarget: 2, Bounded())).HasSubFlow.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ASubFlowDoesNotAffectTheTerminationProofForThisGraph()
+    {
+        // Every other kind is a statement about this array, so the forward-target rule
+        // covers it. A sub-flow has no target, so there is nothing here to prove — what
+        // bounds the *composition* graph is FLOWX1021 at build time and the engine's
+        // nesting cap at run time, and neither is a property of one graph.
+        var graph = StepGraph.Create([
+            StepNode.ForBranch(0, falseTarget: 3),
+            StepNode.ForSubFlow(1, "order.fulfil"),
+            StepNode.ForJump(2, target: 4),
+            StepNode.ForSubFlow(3, "order.notify", SubFlowMode.Detached),
+            Step(4, Fixtures.CapturePayment),
+        ]);
+
+        graph.Count.ShouldBe(5);
+
+        foreach (var step in graph.Steps)
+        {
+            if (step.Target is { } target)
+            {
+                target.ShouldBeGreaterThan(step.Index);
+                target.ShouldBeLessThanOrEqualTo(graph.Count);
+            }
+        }
+    }
+
+    [Fact]
+    public void ASubFlowMustNameAWellFormedFlowIdentity()
+        // The id reaches the manifest and a rendered diagram, where a reader matches it
+        // against the child's own entry. An id that is not <domain>.<verb> would match
+        // nothing and could not be followed.
+        => Should.Throw<ArgumentException>(() => StepNode.ForSubFlow(0, "fulfil"));
+
+    [Fact]
+    public void AwaitCompletionCannotBeBuiltIntoAPlan()
+    {
+        // FLOWX1026 refuses it at build time; this refuses it in the one place a plan can
+        // be built by hand. Neither degenerate form is honest: running it inline changes the
+        // parent's deadline and failure semantics, and skipping it drops business logic.
+        var thrown = Should.Throw<InvalidFlowPlanException>(
+            () => StepNode.ForSubFlow(0, "order.fulfil", SubFlowMode.AwaitCompletion));
+
+        thrown.Message.ShouldContain("journal");
+    }
+
+    [Fact]
+    public void ASubFlowDescribesItselfWithTheChildAndTheMode()
+        => StepNode.ForSubFlow(2, "order.fulfil", SubFlowMode.Detached)
+            .ToString()
+            .ShouldBe("[2] subflow order.fulfil (Detached)");
+
     [Fact]
     public void TheGraphIsImmutableOnceBuilt()
     {

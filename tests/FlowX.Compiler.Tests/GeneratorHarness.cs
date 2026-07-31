@@ -149,6 +149,32 @@ internal static class GeneratorHarness
         return [.. diagnostics.Select(static d => d.Id).Distinct().OrderBy(static id => id, StringComparer.Ordinal)];
     }
 
+    /// <summary>
+    /// Runs the given analyzers and returns their formatted messages, not only their ids.
+    /// </summary>
+    /// <remarks>
+    /// For the rules whose <em>message</em> is the useful part. FLOWX1021 is the clearest
+    /// case: knowing that a cycle exists is nearly worthless next to knowing which edge to
+    /// cut, and the path is only in the message — so a test asserting the id alone would
+    /// pass against an analyzer that had stopped naming it.
+    /// </remarks>
+    public static string[] AnalyzeWithMessages(string source, params DiagnosticAnalyzer[] analyzers)
+    {
+        var compilation = CSharpCompilation.Create(
+            "FlowX.AnalyzerTests",
+            [CSharpSyntaxTree.ParseText(source, path: "/src/Flows/Sample.cs")],
+            References,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+
+        var diagnostics = compilation
+            .WithAnalyzers([.. analyzers])
+            .GetAnalyzerDiagnosticsAsync()
+            .GetAwaiter()
+            .GetResult();
+
+        return [.. diagnostics.Select(static d => $"{d.Id}: {d.GetMessage(CultureInfo.InvariantCulture)}")];
+    }
+
     /// <summary>Asserts the input compiles cleanly before the generator sees it.</summary>
     /// <remarks>
     /// Without this, a typo in a test's source string surfaces as "the generator found

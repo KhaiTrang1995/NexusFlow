@@ -331,4 +331,97 @@ public static class FlowErrors
             .With("stepIndex", stepIndex)
             .With("exceptionType", exception.GetType().FullName);
     }
+
+    /// <summary>
+    /// A <c>SubFlow</c>'s input mapping threw instead of producing the child's input.
+    /// </summary>
+    /// <param name="flowId">The parent flow.</param>
+    /// <param name="stepIndex">Index of the sub-flow step, so the failure names one mapping.</param>
+    /// <param name="exception">What the mapping threw.</param>
+    /// <remarks>
+    /// Its own code rather than <see cref="IterationFailed"/> or
+    /// <see cref="SelectorFailed"/>, for the reason those are distinct from each other:
+    /// they point at different lines and at different mistakes, and no element or arm is
+    /// involved here. Reported as <see cref="ErrorCategory.Internal"/> on the same grounds —
+    /// the mapping is pure by construction, so it throwing is a defect and never a
+    /// transient fault, and the child has not started when it happens.
+    /// </remarks>
+    public static Error SubFlowMappingFailed(string flowId, int stepIndex, Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        return new Error(
+            "flow.subflow_mapping_failed",
+            $"The sub-flow input mapping at step {stepIndex} of flow '{flowId}' threw " +
+            $"{exception.GetType().Name}. A mapping may read only the context, the flow " +
+            "input and prior step results, and must not throw.",
+            ErrorCategory.Internal)
+            .With("flowId", flowId)
+            .With("stepIndex", stepIndex)
+            .With("exceptionType", exception.GetType().FullName);
+    }
+
+    /// <summary>
+    /// A synchronous sub-flow failed, and its failure is the parent's.
+    /// </summary>
+    /// <param name="flowId">The parent flow.</param>
+    /// <param name="stepIndex">Index of the sub-flow step.</param>
+    /// <param name="subFlowId">The child flow.</param>
+    /// <param name="cause">The child's own error, kept as the reason.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The child's error is carried, not replaced.</strong> A parent that reported
+    /// only "the sub-flow failed" would throw away the one fact an operator needs — the
+    /// payment was declined, the address did not validate — and would make every
+    /// composition look identical in the logs. So the code, the message and the category
+    /// are the child's; what this adds is where it happened, which the child cannot know.
+    /// </para>
+    /// <para>
+    /// The category in particular has to be the child's: a declined payment is a
+    /// <see cref="ErrorCategory.Conflict"/> whether or not it happened one flow down, and
+    /// relabelling it <see cref="ErrorCategory.Internal"/> at the boundary would change
+    /// what the HTTP mapping returns and whether a caller retries.
+    /// </para>
+    /// </remarks>
+    public static Error SubFlowFailed(string flowId, int stepIndex, string subFlowId, Error cause)
+    {
+        ArgumentNullException.ThrowIfNull(cause);
+
+        return cause
+            .With("subFlowOf", flowId)
+            .With("subFlowStepIndex", stepIndex)
+            .With("subFlowId", subFlowId);
+    }
+
+    /// <summary>
+    /// Sub-flow composition nested deeper than the runtime will follow.
+    /// </summary>
+    /// <param name="flowId">The flow that tried to compose one level too many.</param>
+    /// <param name="subFlowId">The child it tried to compose.</param>
+    /// <param name="depth">The cap that was reached.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the run-time half of the DAG guarantee.</strong> <c>FLOWX1021</c>
+    /// refuses a cycle at build time, and does so soundly for every edge it can see — but
+    /// it can only see the flows whose <c>Define</c> bodies are in the compilation. A cycle
+    /// closed through a referenced assembly is invisible to it, and without a cap it would
+    /// be an unbounded recursion: a stack overflow, which kills the process rather than
+    /// failing one flow.
+    /// </para>
+    /// <para>
+    /// <see cref="ErrorCategory.Internal"/> because it is a defect in the composition, not
+    /// a transient fault: retrying reaches exactly the same depth.
+    /// </para>
+    /// </remarks>
+    public static Error SubFlowTooDeep(string flowId, string subFlowId, int depth) =>
+        new Error(
+            "flow.subflow_too_deep",
+            $"Flow '{flowId}' composes '{subFlowId}' more than {depth} sub-flows deep. " +
+            "The flow graph is a DAG and FLOWX1021 refuses a cycle it can see, but a cycle " +
+            "closed through a referenced assembly is not visible at build time — this cap " +
+            "is what turns that into one failed flow instead of a stack overflow.",
+            ErrorCategory.Internal)
+            .With("flowId", flowId)
+            .With("subFlowId", subFlowId)
+            .With("maxDepth", depth);
 }

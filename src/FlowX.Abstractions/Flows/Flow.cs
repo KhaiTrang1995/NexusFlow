@@ -40,6 +40,32 @@ public sealed class FlowDeadlineAttribute(string duration) : Attribute
 }
 
 /// <summary>
+/// The non-generic root of every flow.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Exists for exactly one reason: <c>IFlowBuilder.SubFlow&lt;TFlow, TSubIn&gt;</c> has to
+/// say <em>which kinds of type may be composed</em>, and it cannot name
+/// <see cref="Flow{TIn, TOut}"/> — the child's own contracts are not the parent's and are
+/// not inferable from the call. Without a constraint, <c>.SubFlow&lt;PaymentCapture,
+/// …&gt;()</c> — a capability, not a flow — compiles, and the mistake surfaces as a
+/// missing <c>Plan</c> member in generated code. With it, the mistake is an ordinary C#
+/// error on the author's own line, which is the better diagnostic and costs no rule.
+/// </para>
+/// <para>
+/// The constructor is <c>private protected</c>, so nothing outside this assembly can
+/// derive from it directly. A flow is still declared by deriving from
+/// <see cref="Flow{TIn, TOut}"/>; this type never appears in user code.
+/// </para>
+/// </remarks>
+public abstract class Flow
+{
+    private protected Flow()
+    {
+    }
+}
+
+/// <summary>
 /// Base class for every flow. A flow expresses <em>order, condition and recovery</em> —
 /// nothing else. Business rules live in capabilities.
 /// </summary>
@@ -56,7 +82,7 @@ public sealed class FlowDeadlineAttribute(string duration) : Attribute
 /// </remarks>
 /// <typeparam name="TIn">Input contract.</typeparam>
 /// <typeparam name="TOut">Output contract.</typeparam>
-public abstract class Flow<TIn, TOut>
+public abstract class Flow<TIn, TOut> : Flow
 {
     /// <summary>Declares the flow's graph. Called by the compiler and, at most once, by the runtime.</summary>
     /// <param name="flow">The builder to declare against.</param>

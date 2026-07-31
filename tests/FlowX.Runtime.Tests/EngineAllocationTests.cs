@@ -405,6 +405,134 @@ public sealed class EngineAllocationTests
     }
 
     /// <summary>
+    /// A composition allocates, and this records how much rather than asserting a zero it
+    /// cannot promise.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Budget B2 is unchanged and still a hard zero</strong> for the linear,
+    /// conditional and switch paths, which is what it has always covered and what the
+    /// theories above assert. A sub-flow is doing something none of those do: it runs a
+    /// second, independent flow, with its own context, its own compensation stack and its
+    /// own deadline.
+    /// </para>
+    /// <para>
+    /// <strong>The measured figure, Release, .NET 10, x64: 0 B</strong> for a parent whose
+    /// child completes synchronously and leaves compensations pending. That is worth
+    /// writing down rather than quietly enjoying, because it is not "sub-flows are free" —
+    /// it is that every part of a composition was made pooled or a struct on purpose. The
+    /// child's context comes from the same <c>ContextPool</c> the parent's does; its
+    /// compensation stack is owned by that context and reset rather than rebuilt;
+    /// <c>SubFlowSource</c> and <c>FlowInvocation</c> are structs; the engine awaits the
+    /// child's range directly rather than through <c>Task</c>, so no state machine is boxed
+    /// when the child's steps complete synchronously; and the children still rented at the
+    /// end are found through a list the context owns rather than by walking the compensation
+    /// stack, which the first version did and which cost <strong>96 B</strong> — one
+    /// iterator per nesting level, on the success path.
+    /// </para>
+    /// <para>
+    /// <strong>What a real composition does allocate is the author's own input.</strong>
+    /// <c>ctx =&gt; new FulfilOrder(ctx.Get&lt;OrderId&gt;())</c> is a record construction,
+    /// and it is charged to the flow that wrote it — the dispatcher here returns a
+    /// pre-built value so the measurement is the engine's and not the test's litter, which
+    /// is the same convention the <c>ForEach</c> measurement uses for its elements.
+    /// </para>
+    /// <para>
+    /// The ceiling is 512 B, and the assertion is deliberately <em>not</em> "greater than
+    /// zero": unlike a fork, where a zero would mean the branches never actually forked,
+    /// there is no correctness claim hiding inside a composition costing nothing. What the
+    /// ceiling defends is that the cost stays per-composition — if it is ever hit, something
+    /// started allocating per step inside the child, or the child's context stopped coming
+    /// from the pool.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ASubFlowAllocatesAndTheAmountIsRecorded()
+    {
+        RequireOptimisedBuild();
+
+        var engine = new FlowEngine(new FakeClock(T0));
+
+        var allocated = MeasureSteadyState(
+            engine, Plans.Composing(), new ComposingDispatcher(new NullDispatcher()));
+
+        allocated.ShouldBeLessThan(512,
+            $"Measured {allocated} B for a flow composing a two-step child that leaves a " +
+            "compensation pending. A composition is allowed to cost something per child; " +
+            "it is not allowed to cost anything per step of that child, and it must not " +
+            "stop renting the child's context from the pool.");
+    }
+
+    /// <summary>
+    /// The steady-state cost of a composition must not grow with the child's work.
+    /// </summary>
+    /// <remarks>
+    /// The measurement that actually protects the shape, in the same spirit as the fork's
+    /// and the loop's. An absolute ceiling would still pass if each of the child's steps
+    /// allocated a few bytes; comparing a two-step child against a four-step one catches it,
+    /// because a per-step component would show up as a difference the per-composition
+    /// component cannot explain.
+    /// </remarks>
+    [Fact]
+    public void TheCostOfACompositionTracksTheChildRatherThanItsSteps()
+    {
+        RequireOptimisedBuild();
+
+        var engine = new FlowEngine(new FakeClock(T0));
+
+        var twoStepChild = MeasureSteadyState(
+            engine, Plans.Composing(), new ComposingDispatcher(new NullDispatcher()));
+
+        var fourStepChild = MeasureSteadyState(
+            engine,
+            Plans.Composing(),
+            new ComposingDispatcher(new NullDispatcher(), Plans.FourStepSaga()));
+
+        fourStepChild.ShouldBe(twoStepChild,
+            $"Doubling the child's work changed the cost from {twoStepChild} B to " +
+            $"{fourStepChild} B. A composition pays for the child, not for the steps " +
+            "inside it.");
+    }
+
+    /// <summary>
+    /// A dispatcher that composes a child at step 1 and allocates nothing itself.
+    /// </summary>
+    /// <remarks>
+    /// The input is a pre-built object rather than one created per call, for the reason the
+    /// loop's elements are pre-boxed: what is being measured is the engine's per-composition
+    /// cost, not the mapping the author wrote.
+    /// </remarks>
+    private sealed class ComposingDispatcher(IStepDispatcher child, ExecutionPlan? childPlan = null)
+        : IStepDispatcher
+    {
+        private static readonly object Input = new();
+
+        private readonly ExecutionPlan _plan = childPlan ?? Plans.Child();
+
+        public ValueTask<StepOutcome> ExecuteAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+            => ValueTask.FromResult(StepOutcome.Success);
+
+        public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+            => ValueTask.FromResult(StepOutcome.Success);
+
+        public bool Evaluate(int stepIndex, FlowContext ctx) => true;
+
+        public int Select(int stepIndex, FlowContext ctx) => -1;
+
+        public IterationSource BeginIteration(int stepIndex, FlowContext ctx) =>
+            throw new NotSupportedException("This dispatcher has no iteration to begin.");
+
+        public FlowContext EnterIteration(int stepIndex, in IterationSource source, int iteration, FlowContext ctx) =>
+            throw new NotSupportedException("This dispatcher has no iteration to enter.");
+
+        public SubFlowSource BeginSubFlow(int stepIndex, FlowContext ctx) =>
+            new(_plan, child, Input);
+
+        public void EnterSubFlow(int stepIndex, in SubFlowSource source, FlowContext child) =>
+            child.Set(source.Input!);
+    }
+
+    /// <summary>
     /// The guarded state bag must not cost a flow that never forks anything at all.
     /// </summary>
     /// <remarks>

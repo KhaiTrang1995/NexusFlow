@@ -183,6 +183,39 @@ internal static class Models
             StepModel.Emit(4, "order.reserved"),
         ]);
 
+    /// <summary>
+    /// A flow that composes another: <c>validate · subflow(order.fulfil) · capture</c>.
+    /// </summary>
+    /// <remarks>
+    /// The composition occupies index 1 and nothing else. Unlike every other composite
+    /// shape here, it carries no block: the child's steps are in the child's own model,
+    /// compiled separately and possibly in another assembly — which is why a flow that
+    /// composes a hundred-step child still has three steps in this list.
+    /// </remarks>
+    public static FlowModel Composing(string mode = "Inline") => new(
+        flowId: "order.place",
+        version: "1.0.0",
+        profile: "Ephemeral",
+        deadline: null,
+        containingNamespace: "Sample.Flows",
+        typeName: "PlaceOrderFlow",
+        inputTypeName: "Sample.Contracts.PlaceOrder",
+        outputTypeName: "Sample.Contracts.OrderPlacedResult",
+        steps:
+        [
+            Validate(0),
+            StepModel.SubFlow(
+                1,
+                "order.fulfil",
+                "Sample.Flows.FulfilOrderFlow",
+                "Sample.Contracts.FulfilOrder",
+                "ctx => new FulfilOrder(ctx.Get<OrderId>())",
+                mode,
+                mapLocation: "/src/Flows/Place.cs:14",
+                location: "/src/Flows/Place.cs:14"),
+            Capture(2),
+        ]);
+
     /// <summary>Every trigger kind the abstraction ships, declared on <c>order.place</c>.</summary>
     public static FlowTriggersModel Triggers() => new(
         "order.place",

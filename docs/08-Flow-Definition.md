@@ -283,18 +283,72 @@ Engine. At-least-once, never lost, never published before the step is durable.
 
 ```csharp
 flow.Step<ValidateOrder>()
-    .SubFlow<FulfilOrderFlow>(ctx => new FulfilOrder(ctx.Get<OrderId>()))
+    .SubFlow<FulfilOrderFlow, FulfilOrder>(ctx => new FulfilOrder(ctx.Get<OrderId>()))
     .Step<NotifyCustomer>();
 ```
 
-| Mode | Semantics |
-|---|---|
-| `SubFlow<T>` | synchronous; child shares parent's deadline and correlation; child failure fails the parent |
-| `SubFlow<T>(Detached)` | fire-and-forget; child gets its own deadline and lifecycle |
-| `SubFlow<T>(AwaitCompletion)` | parent suspends until child completes (durable only) |
+| Mode | Semantics | Ships |
+|---|---|---|
+| `SubFlow<T>` | synchronous; child shares parent's deadline and correlation; child failure fails the parent | yes |
+| `SubFlow<T>(Detached)` | fire-and-forget; child gets its own deadline and lifecycle | yes |
+| `SubFlow<T>(AwaitCompletion)` | parent suspends until child completes (durable only) | no — [`FLOWX1026`](diagnostics/FLOWX1026.md) |
 
-Sub-flow **cycles are a compile error** (`FLOWX1021`). The flow graph is a DAG,
-always.
+`AwaitCompletion` is refused at build time under **every** profile. It needs a durable
+suspension point and there is no journal to suspend into, and unlike `AwaitSignal` — which
+degenerates honestly into a step that completes — a sub-flow has no truthful degenerate
+form: running it inline instead would change the parent's deadline and failure semantics,
+and skipping it would drop business logic. [`FLOWX1026`](diagnostics/FLOWX1026.md) says so
+rather than the compiler guessing.
+
+**A sub-flow is one node, and the child's steps are not in the parent's graph.** The parent
+compiles to a single `StepKind.SubFlow` with no target; the child has its own
+`ExecutionPlan`, its own dispatcher, its own pooled context and its own compensation stack.
+So the flat step array survives intact — the graph validation and the termination proof for
+the parent are unchanged — but one array stops describing one execution. The manifest is
+the same shape: the parent's entry names the child by id and does not inline its steps, so
+a flow that composes a hundred-step child is the size of the flow its author wrote, and one
+edit to a shared flow is one diff.
+
+**Deadline and correlation.** An inline child inherits the parent's correlation, tenant and
+idempotency key — one operation, one trace, one deduplication identity — and its budget is
+`min(parent's remaining, child's own declared deadline)`. Composition can therefore only
+ever *shorten*: a child cannot buy time its parent does not have, and a parent cannot buy
+the child more than its own author allowed. A detached child keeps the correlation, which
+is identity rather than lifetime, and starts its own budget from now.
+
+**Compensation crosses the boundary in one direction.** If an inline child succeeds and the
+*parent* then fails, the child's completed steps are undone — anything else would mean that
+extracting steps into a sub-flow silently weakened the saga, which is exactly what
+[`FLOWX1005`](diagnostics/FLOWX1005.md) advises people to do. Strict reverse survives: the
+parent records the composition as one entry in its own stack, so a parent that completed
+`A`, then a child that completed `X` and `Y`, then `B`, unwinds `B, Y, X, A` — the same
+order the steps would have had written inline. A detached child compensates only itself; it
+has its own lifecycle, so the parent's failure says nothing about it.
+
+**The child's result does not flow into the parent's context, and that is a stated
+limit rather than an oversight.** A sub-flow is composed for its *effects*: the parent
+sees that it succeeded or failed, and the steps after it bind to what the *parent's* own
+steps produced. Two ways to pass the child's answer up were considered and both were
+refused. Calling the child's `.Return(...)` projection would mean the parent's generator
+depending on a member of the child's *generated* partial class — which does not exist yet
+when the parent is analysed in the same compilation, so the rule would work across an
+assembly boundary and not within one. Copying the child's declared output contract out of
+its context instead would work everywhere and would silently deliver a *different* value
+from the one the child says it returns, in exactly the case where an author computed
+something in `Return`. Neither is worth two behaviours where the DSL documents one. Until
+there is a way to do it that is the same in both directions, a value the parent needs is a
+value the parent's own steps should produce.
+
+**A detached child is drained.** It is started from inside a step, so `FlowHost` never
+counted it — `DrainAsync` waits for the engine's detached count as well as its own, because
+a drain that reported success while a fire-and-forget saga was mid-way through reserving
+inventory would leave it reserved when the kill arrived.
+
+Sub-flow **cycles are a compile error** ([`FLOWX1021`](diagnostics/FLOWX1021.md)). The flow
+graph is a DAG, always — within a compilation, which is the honest scope: an edge into a
+referenced assembly cannot be followed, so `FlowEngine.MaxSubFlowDepth` bounds at run time
+what the analyzer cannot see at build time. The rule's page says exactly what it proves and
+what it does not.
 
 ---
 

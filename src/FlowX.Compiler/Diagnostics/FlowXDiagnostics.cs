@@ -194,6 +194,59 @@ public static class FlowXDiagnostics
         "returned it. Move the step after one that produces the type, add a step that " +
         "does, or supply it explicitly with .Step<TCapability, TStepIn>(ctx => ...).");
 
+    /// <summary>FLOWX1021 — a flow composes itself, directly or through a chain.</summary>
+    /// <remarks>
+    /// <para>
+    /// <c>docs/08-Flow-Definition.md</c> §3.7 has said since before anything could declare a
+    /// sub-flow that "cycles are a compile error (FLOWX1021). The flow graph is a DAG,
+    /// always." Until <see cref="Analysis.SubFlowCycleAnalyzer"/> existed the id was
+    /// reserved and the sentence was a promise the compiler was not keeping.
+    /// </para>
+    /// <para>
+    /// <c>{1}</c> is the cycle written out — <c>order.place → order.fulfil → order.place</c>
+    /// — because the useful thing about a cycle is never that there is one, it is which
+    /// edge to cut. A message naming only the flow would send a reader to look for a
+    /// <c>SubFlow</c> call that may be three flows away.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor SubFlowCycle = Create(
+        "FLOWX1021",
+        "Sub-flow composition forms a cycle",
+        "Flow '{0}' composes itself: {1}",
+        "The flow graph is a DAG. A cycle in it has no bottom — each level rents a context, " +
+        "opens a compensation scope and shortens the deadline, so the recursion ends in a " +
+        "stack overflow or a deadline nobody can explain, and neither failure names the flow " +
+        "that caused it. Break the cycle by extracting the steps the two flows share into a " +
+        "third flow that composes neither, or by making the repeated work a capability, " +
+        "which is a set and not a graph.");
+
+    /// <summary>FLOWX1026 — a <c>.SubFlow(...)</c> call the compiler will not turn into a step.</summary>
+    /// <remarks>
+    /// <para>
+    /// One id for two refusals, because they are the same sentence from the author's point
+    /// of view: <em>this composition cannot become a step, and here is why</em>. The two are
+    /// an <c>AwaitCompletion</c> mode, which needs a durable suspension point that does not
+    /// exist, and a target that carries no <c>[Flow]</c> attribute, which has no compiled
+    /// plan to run. Splitting them would give two pages saying the same thing about the same
+    /// line.
+    /// </para>
+    /// <para>
+    /// An error rather than a warning, and that is the whole point. Both cases would
+    /// otherwise be silent: the step would simply not be emitted, and a flow would ship
+    /// missing the composition its author wrote. A dropped step is the one diagnostic
+    /// severity question this catalogue does not have to think about.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor SubFlowCannotBeComposed = Create(
+        "FLOWX1026",
+        "Sub-flow cannot be composed",
+        "The sub-flow step in flow '{0}' cannot be composed: {1}",
+        "A '.SubFlow(...)' that the compiler cannot turn into a step would be dropped from " +
+        "the plan and from the manifest, so the flow would ship without the composition its " +
+        "author wrote. Compose a type that carries [Flow], and use SubFlow<T>() or " +
+        "SubFlow<T>(SubFlowMode.Detached) — AwaitCompletion needs a durable suspension " +
+        "point, and there is no journal to suspend into in this release.");
+
     /// <summary>FLOWX1023 — a flow declares no steps.</summary>
     public static readonly DiagnosticDescriptor FlowHasNoSteps = Create(
         "FLOWX1023",
@@ -273,6 +326,8 @@ public static class FlowXDiagnostics
         AwaitSignalRequiresDurable,
         CacheRequiresNoSideEffects,
         StepInputIsNeverProduced,
+        SubFlowCycle,
+        SubFlowCannotBeComposed,
         FlowHasNoSteps,
         EmitIsNotYetPublished,
         TriggerCannotBeRead);
