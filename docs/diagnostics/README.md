@@ -115,10 +115,13 @@ nowhere, so `Durable` ran the ephemeral engine and a determinism violation in a 
 flow was a defect in a replay that could not happen. It now commits one journal row per step
 boundary, captures `ctx.UtcNow`, `ctx.NewId()` and `ctx.Random`'s seed per step, and resumes
 by replaying committed rows into the same step loop. A violation in such a flow is a real
-replay defect. What is still missing — stated so that this section does not overclaim — is
-that **nothing replays the capture back into execution yet**: `ReplayDeterminismTest` is
-WP-61, and until it exists a determinism leak still leaves no trace at run time. Which is the
-argument for a build-time rule, not against one.
+replay defect. *This paragraph then said, so as not to overclaim, that "nothing replays the
+capture back into execution yet" and that until `ReplayDeterminismTest` existed a determinism
+leak left no trace at run time.* **WP-61 (2026-07-31) built it** — `ReplayDeterminismTests`,
+a corpus of eight shapes each replayed against its own journal — so a leak in a shape the
+corpus covers does now leave a trace. That is not an argument against a build-time rule: a
+corpus catches a leak in the flows somebody wrote a corpus entry for, and these rules catch
+it in every flow that compiles, before anything runs.
 
 ## The severity of `FLOWX1012`, which is not the determinism set's argument
 
@@ -271,6 +274,28 @@ mode this paragraph exists to prevent, arriving from the one direction it did no
 Reading "the next free id" is not enough when someone else is reading it too. Claim the id
 in this file *first*, in its own commit, before writing the rule.
 
+> [!IMPORTANT]
+> **That instruction is now checked, because on its own it does not work.** It was followed
+> exactly by both authors of two `ADR-0017`s on 2026-07-31 — each claimed the number in its
+> index first, in its own commit — and they collided anyway, because they claimed it from
+> the same base commit and neither claim was visible to the other. A claim-first rule
+> serialises nothing when the claimants branch from one point.
+>
+> `IdentifierAllocationTests` in `tests/FlowX.Architecture.Tests` fails the build when an id
+> is allocated twice. For this family it checks that no id is catalogued twice, reserved
+> twice or release-tracked twice; that no id is both catalogued **and** reserved; that the
+> catalogue, the pages in this directory and `AnalyzerReleases.*.md` hold the same set of
+> ids; and that the next-free id named at the end of this section is above every id already
+> taken and inside the declared range. The descriptors themselves are covered by
+> `DiagnosticIdsAreUnique` and `EveryDiagnosticIsReleaseTracked`, which is why this gate does
+> not read them a second time.
+>
+> **What it catches is a duplicate present in one working tree** — the merge, the rebase, or
+> one author writing both halves. **It cannot see a duplicate that exists only across two
+> unmerged branches**, because a test sees the tree it was built from and CI clones one
+> branch. So it reports at the merge, which is where all of these collisions were found by
+> hand; what was missing was a check that found them instead of a reviewer.
+
 **`FLOWX1030` is claimed** — *authorisation stance names no permission or policy*:
 `Authorization = Authorization.Permission` or `= Authorization.Policy` declared with no
 `Permission = "…"` or `Policy = "…"` beside it. It is none of the reservations and it is
@@ -284,15 +309,22 @@ The next is `FLOWX1031`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 
-1. Add the descriptor to `FlowXDiagnostics`, with a message naming the offending
+1. **Claim the id first, in its own commit**: add the catalogue row and move the
+   "the next is …" sentence above to the id after it. Both halves are checked —
+   a claim that does not advance the pointer leaves it aimed at an id you are
+   already using, and hands it to the next two people who read it.
+2. Add the descriptor to `FlowXDiagnostics`, with a message naming the offending
    symbol, a description saying what to do instead, and a help URI.
-2. Add the id to `AnalyzerReleases.Unshipped.md`. The build fails without it —
+3. Add the id to `AnalyzerReleases.Unshipped.md`. The build fails without it —
    RS2008 — which is intentional: a diagnostic id is public surface, because teams
    write suppressions against it.
-3. Write the page in this directory.
-4. Add the test that proves it fires, and the test that proves it does not fire on
+4. Write the page in this directory.
+5. Add the test that proves it fires, and the test that proves it does not fire on
    valid code. The second one matters more; a rule with false positives gets
    suppressed everywhere and then protects nothing.
+
+Step 1 does not make a collision impossible — nothing a single branch does can — but
+`IdentifierAllocationTests` makes it impossible to merge one without the build going red.
 
 ---
 

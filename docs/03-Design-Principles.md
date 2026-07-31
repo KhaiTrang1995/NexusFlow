@@ -247,24 +247,34 @@ in P1:**
   any code path. "Traces, metrics and structured logs exist without user
   instrumentation" is true of the *design* — the compiled graph is what makes it
   derivable — and is not true of the runtime. **P5.**
-- **Replay.** `ReplayDeterminismTest` does not exist. *This line has been wrong twice
-  and both corrections are kept.* It said there is no journal type in the solution;
-  WP-51 declared `IFlowJournal`. It then said no code path writes to a journal and that
-  `FlowX.Runtime` never reads `ExecutionProfile`; **WP-52 (2026-07-31) made it read the
-  profile**, and a `Durable` flow now journals a step boundary, captures `ctx.UtcNow`,
-  `ctx.NewId()` and `Random`'s seed per step, and resumes through the same loop. What is
-  still missing is what would make replay *provable*: nothing replays a capture back into
-  execution, there is no corpus, and the only implementation of `IFlowJournal` is an
-  in-memory reference in `tests/FlowX.Conformance.Tests` that has never met a database.
-  So the capture is written and never read, which is exactly the state in which a
-  determinism leak leaves no trace. **P2 · WP-61.**
+- **Replay.** *This line has been wrong three times and every correction is kept.* It
+  said there is no journal type in the solution; WP-51 declared `IFlowJournal`. It then
+  said no code path writes to a journal and that `FlowX.Runtime` never reads
+  `ExecutionProfile`; **WP-52 (2026-07-31) made it read the profile**, and a `Durable`
+  flow now journals a step boundary, captures `ctx.UtcNow`, `ctx.NewId()` and `Random`'s
+  seed per step, and resumes through the same loop. It then said `ReplayDeterminismTest`
+  does not exist, that nothing replays a capture back into execution, that there is no
+  corpus, and that "the capture is written and never read, which is exactly the state in
+  which a determinism leak leaves no trace". **WP-61 (2026-07-31) ended that state**:
+  `ReplayDeterminismTests` replays a corpus of eight shapes against their own journals
+  and compares them action for action and row for row, and
+  `FlowExecutionContext.ReplayNondeterminism` is the read half of the capture it needed
+  to do it. What is left is three measured gaps — an overlapping `Parallel`, a
+  compensation's ambient reads, and the engine's own deadline check — each pinned by a
+  test that goes red when it is closed. **Done at P2 · WP-61.**
 
-The determinism *analyzers* this principle leans on are further behind:
-`FLOWX1007`, `FLOWX1008` and `FLOWX1009` do not exist — no longer blocked on severity
-since WP-52, merely unwritten (WP-58) — and `FLOWX1011`, the one rule of the five that
-ships, is a Warning rather than an Error on a premise that has now expired: `Ephemeral`
-was the only profile the runtime executed. The stance is re-decided as a set at WP-58
-rather than one row at a time. See
+The determinism *analyzers* this principle leans on **shipped at WP-58**.
+*This paragraph said `FLOWX1007`, `FLOWX1008` and `FLOWX1009` "do not exist", and that
+`FLOWX1011` was "the one rule of the five that ships" whose Warning severity rested on a
+premise that had expired. All three were raised on 2026-07-31.* The stance was re-decided
+**as a set** rather than one row at a time, and `Info` was rejected outright: it never
+reaches a build log, and `Ephemeral` is the *default* profile, so an informational set
+would do nothing in nearly every build — which is precisely the state that kept all four
+ids unraised through two phases. They ship **Warning by default, and Error where the
+compilation can prove the code is on a durable flow's replay path**, so `FLOWX1011`'s
+deviation stopped being an exception and became the rule. `FLOWX1006` is the one of the
+five still unwritten, and it was never a severity question — it waits on the generated
+payload writer (WP-59). See
 [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) and risk R2 in
 [05 §11](05-Architecture.md#11-risks-and-technical-debt), which carried the same
 claim as a *mitigation* and has now been corrected to say so.
@@ -366,7 +376,7 @@ corrections now standing above, it is ten.** P1 named `FlowNamingRule`, P2
 benchmark called `EphemeralDispatch` *and* a 5 % regression gate that is
 advisory, P6 the command `flowx verify --complete`, P7 `StatelessRuntimeRule` and
 a chaos test, P9 `BackpressureConformanceTest`, P10 `TelemetryConformanceTest`
-and `ReplayDeterminismTest`, and P12 `DiagnosticQualityTest`. Only P8 and P11
+and `ReplayDeterminismTest` (which WP-61 built, as `ReplayDeterminismTests`), and P12 `DiagnosticQualityTest`. Only P8 and P11
 were sound as written. Three of the six tension resolutions were in the same
 state. Undercounting the problem is the same class of error as the problem: a
 reader who sees "six" assumes the other six were checked. A reader who saw a test

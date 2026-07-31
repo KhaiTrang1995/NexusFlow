@@ -312,12 +312,18 @@ requires to be byte-identical. The full list, and what the rule provably cannot 
 **Replay contract:** replaying a completed durable instance must produce
 byte-identical step inputs and identical control flow.
 
-> **Nothing verifies it.** `ReplayDeterminismTest` does not exist — it is WP-61.
-> *This box called it risk [R2](05-Architecture.md#11-risks-and-technical-debt)'s only
-> real mitigation; since WP-58 it is the remaining one.* The three analyzers above
-> report the ordinary ways flow and capability code stops being deterministic, which
-> is prevention; nothing compares a run against its replay, which is proof. The
-> contract above is still a *specification*, not a property under test.
+> **Something verifies it now — WP-61, on 2026-07-31.** *This box said "Nothing
+> verifies it. `ReplayDeterminismTest` does not exist"; it does, as
+> `ReplayDeterminismTests` in `tests/FlowX.Runtime.Tests`, and the corpus it is named
+> for exists with it.* Eight shapes — linear, `When`/`Otherwise`, `Switch`, `ForEach`,
+> `Parallel`, `SubFlow` inline and `Detached`, a failure with its unwind, and a flow
+> that reads all three ambient sources — are each run twice: once against the world,
+> once against the journal the first run wrote. What is compared is every action the
+> flow took and every row the journal holds, including the whole
+> `NondeterminismCapture`. The replay's clock is deliberately a hundred days from the
+> original's, so a value that was **not** replayed cannot be mistaken for one that
+> was, and the corpus cannot pass by comparing nothing — which is the failure mode the
+> exit criterion named.
 >
 > *Two earlier versions of this box are now wrong, and both are recorded rather
 > than deleted.* It said there was no journal type in the solution; WP-51 declared
@@ -326,20 +332,36 @@ byte-identical step inputs and identical control flow.
 > boundary, captures `ctx.UtcNow`, `ctx.NewId()` and `Random`'s seed per step, and
 > resumes by replaying its committed rows into this same loop.
 >
-> **What is still missing is the thing that would make replay provable**, and it is
-> neither the journal nor, now, the store: there is no corpus and nothing replays a
-> capture *back* into execution. *This paragraph also said "no store, no lease
-> acquisition, no second node". WP-53 and WP-55 took all three off the list — a lease
-> is acquired and renewed, `plugins/FlowX.Postgres` persists the rows, and a host
-> that finds an abandoned instance finishes it — and none of it moved this box, which
-> is the point: replay is a property of the capture, not of where it is stored.* So
-> the capture is written and never read, which is exactly the state in which a
-> determinism leak leaves no trace. One known fidelity limit follows from that and
-> is stated on
-> [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md#what-wp-52-landed-and-what-it-did-not):
-> inside a `Parallel`, one pooled context is shared by every branch, so a captured
-> id can be attributed to a sibling's row. Harmless while nothing replays it;
-> WP-61 needs a per-branch context before it is not.
+> **The capture is now read as well as written**, which is what WP-61 had to buy
+> before it could compare anything: `FlowExecutionContext.ReplayNondeterminism` hands
+> a step the instant, the ids and the seed its row records, and `ctx.UtcNow`,
+> `ctx.NewId()` and `ctx.Random` answer from them. *This paragraph said "the capture
+> is written and never read, which is exactly the state in which a determinism leak
+> leaves no trace". That state is over.* What still does **not** happen is the engine
+> calling it: the step loop skips a committed step rather than re-running it, so no
+> resumed execution reaches a step it holds a capture for, and a replay has to be
+> driven from outside the loop. `flowx replay` (WP-64) is the driver that ships.
+>
+> **Three fidelity limits are now measured rather than predicted**, each pinned by a
+> test that goes red the day it is fixed.
+>
+> 1. **A `Parallel` whose branches genuinely overlap does not replay.** One pooled
+>    context is shared by every branch, so a capture can land on a sibling's row —
+>    [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md#what-wp-52-landed-and-what-it-did-not)
+>    called this best-effort attribution and said WP-61 needed a per-branch context
+>    before it was safe. **WP-61 did not buy one.** It pinned the exact interleaving
+>    with a rendezvous instead, so the misattribution is reproduced on every run rather
+>    than one in twenty, and it measured the consequence: the branch whose id was taken
+>    by its sibling mints a fresh one on replay. A fork whose branches do **not**
+>    overlap replays exactly, and that is the whole of what "a `Parallel` replays"
+>    currently means.
+> 2. **A compensation's ambient reads are captured by nothing.** The forward path takes
+>    an envelope at every step boundary; `CommitCompensationAsync` takes none, so an
+>    undo that reads `ctx.UtcNow` leaves no record of what it read and no replay can
+>    reproduce it. This was named in no document before WP-61 measured it.
+> 3. **The engine's own deadline check is not replayed.** It reads the clock before any
+>    hook outside the loop is reached, so it sees the replaying node's time. Everything
+>    the *flow* reads is replayed; the engine's own read is not.
 >
 > `AwaitSignal` is still refused at build time
 > ([`FLOWX1017`](diagnostics/FLOWX1017.md)), so a durable flow still runs to
