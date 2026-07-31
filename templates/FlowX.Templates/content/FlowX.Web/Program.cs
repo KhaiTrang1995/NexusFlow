@@ -1,5 +1,5 @@
+using FlowX.Generated;
 using FlowX.Hosting;
-using FlowX.Http;
 using FlowXStarter;
 
 var builder = WebApplication.CreateSlimBuilder(args);
@@ -18,6 +18,11 @@ builder.Services.AddSingleton<ITicketStore, InMemoryTicketStore>();
 // dispatcher takes them as constructor parameters, so a missing registration is a
 // start-up failure rather than a null reference on the first request. There is no
 // assembly scan.
+//
+// These three lines are the only wiring the generator does not write, and deliberately:
+// it knows which types the dispatcher needs, but nothing in the flow declares a service
+// lifetime, so choosing one for you would be inventing a fact. Forgetting a line here
+// fails at start-up and names the type.
 builder.Services.AddSingleton<ValidateTicket>();
 builder.Services.AddSingleton<RecordTicket>();
 builder.Services.AddSingleton<OpenTicketFlow.Dispatcher>();
@@ -26,19 +31,12 @@ var app = builder.Build();
 
 app.MapHealthChecks("/health");
 
-// One endpoint, from the compiled plan. Plan, Dispatcher, Projection and
-// SensitiveMembers are all generated from OpenTicketFlow.Define — nothing here restates
-// the flow, so the two cannot drift. Keep the method and route equal to the
-// [HttpTrigger] on the flow until the endpoint generator emits this call itself.
-app.MapFlow(
-    "POST",
-    "/api/v1/tickets",
-    OpenTicketFlow.Plan,
-    services => services.GetRequiredService<OpenTicketFlow.Dispatcher>(),
-    OpenTicketFlow.Projection,
-    AppJsonContext.Default.OpenTicket,
-    AppJsonContext.Default.TicketOpened,
-    requireIdempotencyKey: true,
-    sensitiveMembers: OpenTicketFlow.SensitiveMembers);
+// Every endpoint this application declares, generated from the [HttpTrigger] on the flow.
+// The method, the route and the Idempotency-Key rule come from that attribute — the same
+// reading of it that produced flowx.manifest.json — and the plan, the dispatcher, the
+// projection and the sensitive-member list are the flow's own generated members. Change
+// the route on the flow and this line still serves it. There is nothing here to keep in
+// step, because there is nothing here that restates the flow.
+app.MapFlowX();
 
 await app.RunAsync().ConfigureAwait(false);

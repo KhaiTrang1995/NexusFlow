@@ -16,10 +16,11 @@ namespace FlowXStarter;
 /// <c>obj/generated</c>, with line directives back to this file.
 /// </para>
 /// <para>
-/// <strong>The <c>[HttpTrigger]</c> is read, not yet acted on.</strong> It reaches the
-/// manifest, so the published contract states the address this flow answers on; the
-/// registration that serves it is in <c>Program.cs</c> until the endpoint generator
-/// lands. Keep the two in step.
+/// <strong>The <c>[HttpTrigger]</c> below <em>is</em> the endpoint.</strong> One reading
+/// of it produces both the <c>triggers</c> block of <c>flowx.manifest.json</c> and the
+/// route registration that <c>app.MapFlowX()</c> calls, so the address this flow
+/// publishes and the address it answers on are the same string by construction. Change
+/// the route here and nothing else has to change.
 /// </para>
 /// </remarks>
 [Flow("ticket.open", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral, Owner = "support")]

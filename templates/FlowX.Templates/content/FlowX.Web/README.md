@@ -30,13 +30,20 @@ capability returned. Send it without the header and you get `400` — the flow d
 | `Contracts.cs` | The records on the wire and between steps. No behaviour. |
 | `Capabilities.cs` | Two capabilities and the one port they depend on. All the business rules. |
 | `OpenTicketFlow.cs` | The control flow: order, and where recovery would go. |
-| `Program.cs` | Composition. Registrations and one route. |
+| `Program.cs` | Composition. Registrations, and `MapFlowX()` for every declared endpoint. |
 | `Infrastructure.cs` | The in-memory adapter and the JSON context. |
 
 The plan, the step dispatcher, the projection and the manifest are generated from
 `OpenTicketFlow.Define` at build time. They are on disk under `obj/generated`, as
 ordinary C# with line directives back to your source — set a breakpoint on a step and it
 lands in `Capabilities.cs`.
+
+So is the endpoint. `FlowXEndpoints.g.cs` holds the route registration `app.MapFlowX()`
+calls, written from the `[HttpTrigger]` on the flow — the same reading of that attribute
+that produced the `triggers` block of the manifest. Change the method or the route on the
+flow, rebuild, and the served address moves with it: `Program.cs` never named it. The
+file exists only because this project references `FlowX.Http`; a project without an HTTP
+transport gets no such file.
 
 ## The next thing to change
 

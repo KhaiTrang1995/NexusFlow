@@ -18,12 +18,12 @@ namespace Ecommerce;
 /// directives back to this file — set a breakpoint on a step and it lands here.
 /// </para>
 /// <para>
-/// <strong>The <c>[HttpTrigger]</c> below is read, not yet acted on.</strong> It reaches
-/// <c>flowx.manifest.json</c>, so the published contract states the address this flow
-/// answers on; the registration that actually serves it is still written by hand in
-/// <c>Program.cs</c> until the endpoint generator lands. The two are deliberately
-/// identical — a declared address that nothing serves would be exactly the kind of
-/// documented-but-not-produced claim the manifest exists to eliminate.
+/// <strong>The <c>[HttpTrigger]</c> below <em>is</em> the endpoint.</strong> One reading of
+/// it produces both the <c>triggers</c> block of <c>flowx.manifest.json</c> and the route
+/// <c>app.MapFlowX()</c> registers, so the address this flow publishes and the address it
+/// answers on are one string rather than two kept in step. A declared address that nothing
+/// serves would be exactly the documented-but-not-produced claim the manifest exists to
+/// eliminate; there is now no way to write one.
 /// </para>
 /// </remarks>
 [Flow("order.place", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral, Owner = "orders")]
