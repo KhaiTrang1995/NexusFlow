@@ -620,10 +620,62 @@ public sealed class ManifestDiffTests
 
     // ------------------------------------------------------------------- errors
 
+    /// <summary>
+    /// A catalogue the compiler could not read must not be diffed as one that was emptied.
+    /// </summary>
+    /// <remarks>
+    /// The generator emits three states and the difference between two of them is the whole
+    /// point: <c>[]</c> means "declares no errors", an <em>absent</em> property means "could
+    /// not resolve it". They arrived here as the same thing, because the deserialised
+    /// property defaulted to an empty list — so a capability whose error factory merely moved
+    /// into a referenced assembly was reported as having deleted every code it declares.
+    /// Breaking, in the gate that blocks the merge, for a change that altered no contract.
+    /// A tool that turns a loss of information into a reported contract break is worse than
+    /// one that stays quiet.
+    /// </remarks>
+    [Fact]
+    public void AWithheldErrorCatalogueIsNotComparedAndIsNotBreaking()
+    {
+        var report = Diff(candidate => Cap(candidate, "payment.capture").Errors = null);
+
+        NotFired(report, "FLOWX-DIFF-017");
+        Fired(report, "FLOWX-DIFF-019").Severity.ShouldBe(DiffSeverity.Neutral);
+        report.Compatible.ShouldBeTrue(
+            "Withholding a catalogue says something about the build, not about the contract.");
+    }
+
+    [Fact]
+    public void ACatalogueBecomingReadableIsAlsoNotCompared()
+    {
+        // The mirror case. Comparing a resolved catalogue against a withheld one in either
+        // direction proves nothing, so neither direction may report a code change.
+        var report = Diff(
+            baseline => baseline.Capabilities.Single(c => c.Id == "payment.capture").Errors = null,
+            candidate => { });
+
+        NotFired(report, "FLOWX-DIFF-104");
+        NotFired(report, "FLOWX-DIFF-017");
+        Fired(report, "FLOWX-DIFF-019").Severity.ShouldBe(DiffSeverity.Neutral);
+    }
+
+    [Fact]
+    public void TwoWithheldCataloguesReportNothingAtAll()
+    {
+        // Neither side knows, so there is nothing to say — not even that the comparison
+        // was skipped. A finding on every build of a project the reader cannot resolve
+        // is a finding people learn to scroll past.
+        var report = Diff(
+            baseline => baseline.Capabilities.Single(c => c.Id == "payment.capture").Errors = null,
+            candidate => Cap(candidate, "payment.capture").Errors = null);
+
+        NotFired(report, "FLOWX-DIFF-019");
+        NotFired(report, "FLOWX-DIFF-017");
+    }
+
     [Fact]
     public void AddingAnErrorCodeIsAdditive()
     {
-        var report = Diff(candidate => Cap(candidate, "payment.capture").Errors.Add(
+        var report = Diff(candidate => Cap(candidate, "payment.capture").Errors!.Add(
             new ManifestError { Code = "payment.gateway_unavailable", Category = "Unavailable" }));
 
         Fired(report, "FLOWX-DIFF-104").Severity.ShouldBe(DiffSeverity.Additive);
@@ -635,7 +687,7 @@ public sealed class ManifestDiffTests
     [Fact]
     public void RemovingAnErrorCodeIsBreaking()
     {
-        var report = Diff(candidate => Cap(candidate, "payment.capture").Errors.Clear());
+        var report = Diff(candidate => Cap(candidate, "payment.capture").Errors!.Clear());
 
         Fired(report, "FLOWX-DIFF-017").Severity.ShouldBe(DiffSeverity.Breaking);
         // Codes disappear far more often because they were renamed than because the
@@ -646,7 +698,7 @@ public sealed class ManifestDiffTests
     [Fact]
     public void RecategorisingAnErrorIsBreakingEvenThoughTheCodeIsUnchanged()
     {
-        var report = Diff(candidate => Cap(candidate, "payment.capture").Errors[0].Category = "Forbidden");
+        var report = Diff(candidate => Cap(candidate, "payment.capture").Errors![0].Category = "Forbidden");
 
         var finding = Fired(report, "FLOWX-DIFF-018");
 
@@ -661,7 +713,7 @@ public sealed class ManifestDiffTests
     [Fact]
     public void AnUnchangedErrorCatalogueIsNotReported()
     {
-        var report = Diff(candidate => Cap(candidate, "payment.capture").Errors.Add(
+        var report = Diff(candidate => Cap(candidate, "payment.capture").Errors!.Add(
             new ManifestError { Code = "payment.declined", Category = "Conflict" }));
 
         report.Findings.ShouldBeEmpty("The catalogue is a set keyed by code; a duplicate is not a change.");
@@ -870,6 +922,18 @@ public sealed class ManifestDiffTests
 
     private static DiffReport Diff(Action<ManifestDocument> change) =>
         ManifestDiff.Compare(Parse(), Mutate(change));
+
+    /// <summary>Diffs with both sides mutated, for rules that are not symmetric.</summary>
+    /// <remarks>
+    /// Most rules can be exercised by changing only the candidate, because the baseline is
+    /// the fixture. A rule whose two directions mean different things — a catalogue becoming
+    /// unreadable versus becoming readable — needs the baseline moved too, or only half of it
+    /// is ever tested.
+    /// </remarks>
+    private static DiffReport Diff(
+        Action<ManifestDocument> baseline,
+        Action<ManifestDocument> candidate) =>
+        ManifestDiff.Compare(Mutate(baseline), Mutate(candidate));
 
     private static ManifestFlow Flow(ManifestDocument document, string id) =>
         document.Flows.Single(f => f.Id == id);

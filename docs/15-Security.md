@@ -151,6 +151,12 @@ Summarised here, detailed in [16-Multi-Tenant](16-Multi-Tenant.md):
 `CrossTenantAccessTest` in the conformance suite attempts a cross-tenant read
 through every trigger kind and asserts a `Forbidden` plus an audit event.
 
+**Status: designed, not built.** Of the seven layers above, one exists —
+`TenantId` is resolved from validated claims at the HTTP boundary and carried on the
+invocation. Nothing consumes it: no policy executes at runtime, there is no journal and
+there is no cache. The table describes P4 and P6; see
+[21 §2.4](21-Quality-Gates.md) for what the gate is blocked on.
+
 ---
 
 ## 6. Secrets and configuration
@@ -220,10 +226,12 @@ mechanisms that compliance work needs:
 | Test | Asserts |
 |---|---|
 | `EveryCapabilityDeclaresAuthorization` | no capability ships without a stance |
-| `PublicCapabilitiesAreReviewed` | `Authorization.Public` requires an `[ApprovedBy]` annotation naming the reviewer |
-| `CrossTenantAccessIsDenied` | isolation across every trigger kind |
-| `SensitiveFieldsAreRedacted` | `[Sensitive]` never appears in logs, traces, journal or replay output |
-| `ManifestContainsNoSecrets` | pattern scan over emitted manifests |
+| `PublicCapabilitiesAreReviewed` | `Authorization.Public` requires an `[ApprovedBy]` annotation naming the reviewer, and no approval outlives the stance it approved |
+| `NoPermissiveDefaults` | nothing on the contract surface reaches a permissive stance by omission |
+| `SuppressionsAreAccountable` | every suppression names a registered, unexpired debt id (§6.1 of [21](21-Quality-Gates.md)) |
+| `ManifestContainsNoSecrets` | pattern scan over emitted manifests, matching the shape of a secret rather than a list of forbidden words |
+| `CrossTenantAccessIsDenied` | isolation across every trigger kind — **not yet enforced.** Blocked on P4 policy execution and the P2 journal; see [21 §2.4](21-Quality-Gates.md) |
+| `SensitiveFieldsAreRedacted` / `RedactionCannotBeBypassed` | `[Sensitive]` never appears in logs, traces, journal or replay output — **not yet enforced.** None of those four sinks exists; see [21 §2.4](21-Quality-Gates.md) |
 | `ErrorsDoNotLeakInternals` | no stack traces, connection strings or type names in RFC 7807 bodies |
 | `ExternalCapabilitiesHaveResilience` | outbound calls carry timeout + breaker (`FLOWX1023`) |
 | `DependencyLicencesAreCompatible` | no non-Apache-2.0-compatible transitive dependency |

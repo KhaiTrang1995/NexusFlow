@@ -611,6 +611,17 @@ govern.
 CI runs these on every pull request. A red fitness function is a build failure,
 not a discussion.
 
+**Not all of them exist yet, and this table has been read as though they did.** Implemented
+under these names: `AbstractionsHasNoDependencies`, `LayersPointInward`,
+`NoCyclicDependencies`, `EveryCapabilityDeclaresAuthorization` (WP-30),
+`EveryDiagnosticIsHelpful`. Implemented under a different name: `BenchmarkBudgetsHold` is
+the *Benchmark budgets* job in `performance.yml`, and `AotPublishSucceeds` is the *NativeAOT
+smoke test* job in `ci.yml`. Not implemented anywhere: `NoReflectionOnHotPath`,
+`RuntimeHasNoMutableStatics`, `FlowsAreTransportFree`, `CapabilitiesDoNotCallCapabilities`,
+`EveryPublicContractIsVersioned`, `ManifestIsComplete`, `PluginsPassConformance`. The
+enforced set is [CHECKLIST §4](../CHECKLIST.md); the reasoning about gates that cannot yet
+be written is [21-Quality-Gates §2.4](21-Quality-Gates.md).
+
 ---
 
 **Next:** [06 — Execution Engine](06-Execution-Engine.md) ·

@@ -7,7 +7,7 @@
 > **Last updated:** 2026-07-30 · **Phase:** **P0 complete → P1 in progress** ·
 > **Commit:** see `git log`
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 905/905 passing ·
+> **Build:** 0 warnings, 0 errors · **Tests:** 918/918 passing ·
 > **Coverage:** 94.0 % line / 87.0 % branch (gates: 80 / 75) · **SDK:** 10.0.110
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
@@ -98,37 +98,98 @@ These gate everything below them. None is code work.
 - [x] Trigger attributes — http, kafka, cron, stream, agent
 - [x] Zero package references, zero project references
 
-Verified by `dotnet build -c Release` with `TreatWarningsAsErrors`, and by the
-29 fitness tests in §4 which assert these properties by reflection.
+Verified by `dotnet build -c Release` with `TreatWarningsAsErrors`, and by the fitness
+functions in §4, which assert these properties by reflection over the built contract
+surface and by reading the repository's own source.
 
 ---
 
-## 4. WP-1 · Architecture fitness functions — **30/30 green**
+## 4. WP-1 · Architecture fitness functions — **23 enforced, 2 blocked and named**
+
+The heading here used to read *30/30 green* with seven boxes below it empty, and the line
+above §4 spoke of *29 fitness tests*. Neither number was reachable from the list. What
+follows is the list as it is — including five functions that were already running and had
+never been written down.
+
+### Structure
 
 - [x] `AbstractionsHasNoDependencies` — reads the `.csproj`
 - [x] `LayersPointInward`
+- [x] `EverySourceProjectIsCoveredByTheLayeringRule` — a rule with a hand-maintained
+      subject list needs a rule about the list
 - [x] `RuntimeDoesNotReferenceAnyPlugin`
+- [x] `CliDependsOnNothingButTheManifest`
+- [x] `RoslynComponentsReferenceNoRuntimeAssemblies`
 - [x] `EveryShippedRuntimeProjectIsAotAnalyzed` — exempts Roslyn components
 - [x] `RoslynComponentsTargetNetStandard20`
+- [x] `NoCyclicDependencies` — DFS over the project graph, not just direct edges
+- [x] `ModelLayerHasNoRoslynDependency` / `EmitLayerHasNoRoslynDependency` — the R1 mitigation
+
+### Contract surface
+
 - [x] `ResultIsAnAllocationFreeValueType`
 - [x] `ErrorCategoryRemainsClosed`
 - [x] `TerminalCategoriesAreNeverRetried`
+- [x] `ErrorCategoryMapsToTheDocumentedHttpStatus`
 - [x] `CapabilityMustDeclareVersionAndAuthorization`
 - [x] `ExecutionProfileDefaultsToEphemeral`
 - [x] `PolicyStageOrderEncodesTheSafetyGuarantees`
 - [x] `TenantScopedIsTheDefaultForEveryScopeEnum`
 - [x] `FlowBuilderExposesNoTransportTypes`
 - [x] `FlowBuilderHasNoEscapeHatchForInlineCode`
-- [x] `NoCyclicDependencies` — DFS over the project graph, not just direct edges
-- [ ] `SuppressionsAreAccountable`
-- [ ] `ManifestContainsNoSecrets`
-- [ ] `EveryCapabilityDeclaresAuthorization`
-- [ ] `PublicCapabilitiesAreReviewed`
-- [ ] `CrossTenantAccessIsDenied`
-- [ ] `RedactionCannotBeBypassed`
-- [ ] `NoPermissiveDefaults`
+- [x] `EveryPublicTypeIsInTheFlowXNamespace`
 - [x] `EveryDiagnosticIsHelpful` — in `FlowX.Compiler.Tests`, beside what it governs
-- [x] `ModelLayerHasNoRoslynDependency` / `EmitLayerHasNoRoslynDependency` — the R1 mitigation
+
+### Security · WP-30
+
+Four of these were listed here, cited in the OWASP mapping in
+[21-Quality-Gates §3](docs/21-Quality-Gates.md) and in
+[15-Security §10](docs/15-Security.md), and existed nowhere in the repository. A control
+that is claimed and absent is worse than one never claimed: the claim is what stops
+anyone looking.
+
+- [x] `SuppressionsAreAccountable` — every suppression carries a `FLOWX-DEBT` marker whose
+      id has a row in `docs/DEBT.md`, unexpired and at most six months out. A shell version
+      already ran in `quality.yml`; this one fails on `dotnet test`, before the commit, and
+      additionally checks the id is registered and that the marker is *near* the suppression
+- [x] `ManifestContainsNoSecrets` — pattern scan over the manifests the build **actually
+      emitted**, matching the shape of a secret rather than the word. See the note below
+- [x] `EveryCapabilityDeclaresAuthorization` — every `ICapability<,>` under `src/`,
+      `plugins/` and `samples/` carries `[Capability]` naming a stance. Distinct from
+      `CapabilityMustDeclareVersionAndAuthorization`, which only says the stance cannot be
+      omitted from an attribute that is already present
+- [x] `PublicCapabilitiesAreReviewed` — `Authorization.Public` requires `[ApprovedBy]` with
+      a reviewer and an ISO-8601 date, and an approval left behind after the stance narrowed
+      is also a failure. Nothing declares `Public` today, so it currently rejects nothing
+- [x] `NoPermissiveDefaults` — no property or optional parameter on the contract surface
+      reaches a permissive stance by being left alone. `Authorization.Public` is the *zero
+      value* of its enum, so `required` is the only thing between `default(Authorization)`
+      and "anyone may invoke it"
+- [ ] `CrossTenantAccessIsDenied` — **blocked, not overlooked.** Nothing consumes
+      `TenantId`: no policy executes at runtime, so no stage can return `Forbidden`; there
+      is no journal, so there is no audit event to assert; one transport exists, so "every
+      trigger kind" cannot be exercised. Needs P4 (policy execution, audit) and P2
+      (journal). [21-Quality-Gates §2.4](docs/21-Quality-Gates.md)
+- [ ] `RedactionCannotBeBypassed` — **blocked, not overlooked.** Exactly one sink can
+      serialise a contract value today (the RFC 7807 body), and `ProblemDetailsMapperTests`
+      already covers it. Logs, traces, the journal and replay output — the four sinks the
+      rule is about — do not exist. Needs P3 and P5. Same section
+
+Written alongside the above so the family cannot pass by finding nothing:
+`TheCapabilitySurveyFindsTheShippedCapabilities`,
+`EveryDeclaredStanceIsAKnownAuthorizationMember`,
+`ApprovalsDoNotOutliveTheStanceTheyApproved`, `EveryScopeEnumDefaultsToTenant`,
+`TheDebtRegisterIsWellFormed`.
+
+> **On `ManifestContainsNoSecrets`.** The rule *was* asserted — in
+> `FlowX.Compiler.Tests/ManifestWriterTests.ContainsStructureButNoValues`, under a doc
+> comment citing this exact name — but over a hand-built model, and by forbidden **word**.
+> Run that same word list against the manifest `samples/ecommerce` actually emits and it
+> fails: the manifest correctly lists a `[Sensitive]` member named `PaymentToken`, and the
+> list forbids `token`. Naming a sensitive field is the manifest doing its job; carrying a
+> value is the leak. The architecture gate therefore scans emitted manifests for the
+> *shape* of a secret — PEM blocks, JWTs, `Password=` assignments, credentials in a URL,
+> provider key prefixes. The writer test keeps its own name and its own job.
 
 ---
 
@@ -268,8 +329,9 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       what makes the third reading believable. **It slipped in because the scale job is
       advisory** — correct while the measurement could not beat the noise, but the cost is
       now concrete: a 3× regression merged across four packages in silence. The job cannot
-      just be made blocking while the criterion fails, so this wants a *relative* gate
-      against the committed figure instead of an absolute one against the budget.
+      just be made blocking while the criterion fails, so this wanted a *relative* gate
+      against the committed figure instead of an absolute one against the budget —
+      **built at WP-31, and it catches this one at fifty times its threshold**.
       **Bisected at WP-28 to one commit:** `c7ae70a`, WP-22's error-catalogue emission,
       **5.60 → 27.28 ms/flow (×4.9)**. `Switch`, `Parallel` and the sort-key fix cost
       nothing detectable; `FLOWX1011` never appeared in the generator's number, being an
@@ -281,6 +343,17 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
       from code binds every capability body, so generator cost now tracks how much
       capability *implementation* exists rather than how many flows do. Whether that
       catalogue is worth two thirds of the compile-time budget is a product decision
+- [x] **WP-31** A **relative** cost gate, blocking, on a **deterministic proxy** — bytes
+      allocated by one `RunGeneratorsAndUpdateCompilation` call, against a committed
+      baseline, threshold **+2 %**. **Validated against `c7ae70a`: FAIL at +102 %**, fifty
+      times the threshold, on the commit that caused the incident. **Wall clock provably
+      cannot do this**: gating the same probe on elapsed time, a no-op commit produces a
+      false signal of up to **+166 %** while the real 4.9× regression produces **+39 – 77 %**
+      — a threshold wide enough not to fire on nothing is 2–4× too wide to fire on the
+      incident, and more rounds cannot fix a signal smaller than its noise. Confirmed in
+      review under **load average 38.6**, where the gated metric moved **+0.01 %**. The
+      absolute criterion is reprinted as `ABSOLUTE CRITERION — FAIL` on every run, passing
+      ones included, so a green relative gate cannot be read as a met budget
 - [ ] **WP-27** cut `StepBindingAnalyzer` 89 % — 4.70 → 0.53 ms per flow — by binding a
       step's type argument outside the `Define` body. 96 % of its cost was one
       `GetSymbolInfo` call: a node inside a statement cannot be bound without binding the

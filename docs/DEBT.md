@@ -23,9 +23,15 @@ now has one entry, with a date on it.
 Every `[SuppressMessage]` in the codebase must carry a `FLOWX-DEBT` marker whose
 `id` matches a row here. A `#pragma warning disable` must carry either the same
 marker or a same-line reason — it silences a rule just as completely, and was not
-covered by the gate until the sample used one. The `SuppressionsAreAccountable` gate in
-`.github/workflows/quality.yml` fails the build otherwise, and fails it again the
-day an `expires` date passes.
+covered by the gate until the sample used one. The `SuppressionsAreAccountable` gate fails
+the build otherwise, and fails it again the day an `expires` date passes.
+
+It runs in two places, on purpose. The shell step in `.github/workflows/quality.yml` is
+the one that blocks a merge. The fitness function of the same name in
+`tests/FlowX.Architecture.Tests` is the one that tells you *before* you commit — and it
+asks one thing the shell step does not: that the id has a row in the table below. A marker
+citing `DEBT-0099` when no such row exists is accountable to nobody, and reads as
+accountable to everybody.
 
 ```csharp
 // FLOWX-DEBT: id=DEBT-0042 owner=runtime expires=2026-12-31

@@ -87,14 +87,42 @@ downstream test result uninteresting.
 |---|---|
 | `AbstractionsHasNoDependencies` | `FlowX.Abstractions` has zero package and project references ([ADR-0009](adr/ADR-0009-plugin-contracts.md)) |
 | `LayersPointInward` | Abstractions ← Core ← Runtime ← Runtime.Durable, never the reverse |
+| `EverySourceProjectIsCoveredByTheLayeringRule` | no project under `src/` escapes the rule above by not being named in it |
 | `RuntimeDoesNotReferenceAnyPlugin` | adding a transport never means editing the runtime (quality goal Q6) |
 | `NoCyclicDependencies` | no dependency cycle between any two assemblies or namespaces |
-| `EveryCapabilityDeclaresAuthorization` | deny-by-default is structural, not conventional (principle P11) |
-| `PublicCapabilitiesAreReviewed` | every `Authorization.Public` carries an `[ApprovedBy]` |
-| `CrossTenantAccessIsDenied` | tenant resolution comes from claims only |
+| `EveryCapabilityDeclaresAuthorization` | every `ICapability<,>` that ships carries `[Capability]` naming a stance (principle P11) |
+| `PublicCapabilitiesAreReviewed` | every `Authorization.Public` carries an `[ApprovedBy]`, and no approval outlives the stance it approved |
+| `NoPermissiveDefaults` | nothing on the contract surface reaches a permissive stance by being left alone |
+| `SuppressionsAreAccountable` | every suppression names a registered, unexpired `FLOWX-DEBT` id (§6.1) |
 | `EveryDiagnosticIsHelpful` | every `FLOWX####` has a message, a fix and a help URI |
 | `ManifestContainsNoSecrets` | the emitted manifest is structure, never values |
 | `EveryShippedProjectIsAotAnalyzed` | no project silences the trim/AOT analyzer (constraint C2) |
+
+`ManifestContainsNoSecrets` matches the **shape** of a secret — PEM blocks, JWTs,
+`Password=` assignments, credentials embedded in a URL, provider key prefixes — across the
+manifests the build actually emitted. It deliberately does not forbid words. A manifest
+that lists a `[Sensitive]` member called `PaymentToken` is doing its job; one that carries
+a payment token has leaked. A word list cannot tell those apart, and in practice that
+argument is settled by deleting the word from the list.
+
+### 2.4 Gates named here but not yet enforced
+
+Two rules named in the OWASP mapping below and in [15-Security §10](15-Security.md) have
+no fitness function, because the code they would govern does not exist yet. They are
+recorded here rather than left as an empty checkbox: an unticked box reads as "not got
+round to it", and the difference between *unwritten* and *not yet writable* is the
+difference between a backlog item and a false claim of coverage.
+
+**A fitness function asserting a property of code that has not been written is not a gate.
+It is decoration — and worse than nothing, because it stops the next reviewer looking.**
+
+| Named gate | Blocked on | What *is* assertable today |
+|---|---|---|
+| `CrossTenantAccessIsDenied` | **P4** — no policy executes at runtime, so no stage exists that could return `Forbidden`; **P2** — no journal, so there is no audit event to assert. `TenantId` is resolved from claims and carried on the invocation, and nothing consumes it. "Across every trigger kind" additionally needs **P3**: HTTP is the only transport. | That tenant resolution reads validated claims and nothing else. Covered behaviourally by `HttpTriggerReaderTests` — which is the `TenantComesFromClaimsOnly` control the A07 row cites, under a different name, for the one transport that exists. |
+| `RedactionCannotBeBypassed` | **P3** and **P5** — the rule is that no path reaches logs, traces, journal or replay output un-redacted, and none of those four sinks exists. Exactly one sink can serialise a contract value today: the RFC 7807 body, redacted by `ProblemDetailsMapper` and covered by `ProblemDetailsMapperTests`. Redaction is *not* applied by a generated serialiser; see the remarks on `SensitiveAttribute`. | That the compiler records `[Sensitive]` members in the manifest and emits them onto the flow — `ManifestWriterTests`, `PlaceOrderEndpointTests`. That is provenance, not an un-bypassable control. |
+
+Both are exit criteria of their phases in [20-Roadmap](20-Roadmap.md). Neither should be
+written before then, and neither should be cited as present until it is.
 
 ---
 
@@ -106,8 +134,8 @@ executable test — never a review step alone.
 
 | # | Risk | FlowX control | Verified by |
 |---|---|---|---|
-| **A01** | Broken access control | Authorisation is a **required member** on `[Capability]`, so a capability cannot compile without a stance. Enforcement is at the business operation, not the route, so it holds over HTTP, Kafka and the agent surface alike. `Authorization.Internal` is unreachable from any external trigger. | `FLOWX1010` (build) · `EveryCapabilityDeclaresAuthorization`, `PublicCapabilitiesAreReviewed`, `CrossTenantAccessIsDenied` (merge) |
-| **A02** | Cryptographic failures | `[Sensitive]` redaction is applied by the **generated** serialiser, so no code path reaches logs, traces, journal or replay output un-redacted. Secrets resolve from a secret provider at startup; `IConfiguration` is never a secret source. TLS is required for every egress plugin. | `RedactionCannotBeBypassed` (merge) · `ManifestContainsNoSecrets` (merge) · secret-scanning (merge) |
+| **A01** | Broken access control | Authorisation is a **required member** on `[Capability]`, so a capability cannot compile without a stance. Enforcement is at the business operation, not the route, so it holds over HTTP, Kafka and the agent surface alike. `Authorization.Internal` is *designed* to be unreachable from any external trigger — **the enforcement is not built**; nothing under `src/FlowX.Runtime`, `src/FlowX.Hosting` or `plugins/` reads the stance, which reaches the manifest and no further (P4). | `FLOWX1010` (build) · `EveryCapabilityDeclaresAuthorization`, `PublicCapabilitiesAreReviewed` (merge) · `CrossTenantAccessIsDenied` — **not yet enforced, see §2.4** |
+| **A02** | Cryptographic failures | The intent is that `[Sensitive]` redaction is applied by the **generated** serialiser so no code path reaches logs, traces, journal or replay output un-redacted. **Today it reaches one sink**: the RFC 7807 body, redacted by `ProblemDetailsMapper`. The other three do not exist (P3, P5), and redaction is not generated. Secrets resolve from a secret provider at startup; `IConfiguration` is never a secret source. TLS is required for every egress plugin. | `ManifestContainsNoSecrets` (merge) · secret-scanning (merge) · `RedactionCannotBeBypassed` — **not yet enforced, see §2.4** |
 | **A03** | Injection | Capabilities own their own data access, so FlowX cannot prevent a hand-written SQL string — this is a **stated limitation** ([15 §11](15-Security.md)). What the platform does provide: flow graphs are compile-time constants, so no input can alter control flow; the DSL has no `Do(lambda)` and no dynamic step resolution; all contract deserialisation is generated and schema-validated. | CodeQL + Semgrep (merge) · `FlowGraphIsCompileTimeConstant` (merge) · capability review checklist |
 | **A04** | Insecure design | STRIDE per trust boundary in [15 §3](15-Security.md), ADR for every significant decision, threat model refreshed at each phase gate. Design defects are cheapest here and this is the only control that catches them. | ADR presence check (merge) · phase-gate review (release) |
 | **A05** | Security misconfiguration | There is **no permissive default anywhere**: authorisation, tenant scope on cache/rate-limit/idempotency, and `Public` all require an explicit, greppable declaration. Configuration is validated at startup and the host refuses to start on a violation — a misconfigured node is a dead node, never a quietly insecure one. | `NoPermissiveDefaults` (merge) · startup validation test (merge) · container scan (merge) |
@@ -126,7 +154,7 @@ feature. It gets its own mapping because the risks are different in kind.
 |---|---|---|---|
 | **LLM01** | Prompt injection | An agent invokes a **generated tool surface**, never free-form code. A tool is a flow, and the flow's authorisation applies unchanged — a prompt cannot grant a permission the caller's identity lacks. | `AgentSurfaceEqualsFlowSurface` (merge) |
 | **LLM02** | Insecure output handling | Tool outputs are typed contracts, schema-validated on the way out. | generated schema validation (build) |
-| **LLM06** | Sensitive information disclosure | `[Sensitive]` redaction applies to the agent surface identically to every other transport. | `RedactionCannotBeBypassed` (merge) |
+| **LLM06** | Sensitive information disclosure | `[Sensitive]` redaction is intended to apply to the agent surface identically to every other transport. Neither the agent surface nor redaction beyond the RFC 7807 body is built. | `RedactionCannotBeBypassed` — **not yet enforced, see §2.4** |
 | **LLM07** | Insecure plugin design | Agent tools are generated from flows; there is no separate plugin registration path an attacker could target. | `AgentSurfaceEqualsFlowSurface` (merge) |
 | **LLM08** | Excessive agency | `ConfirmationMode.RequiredForSideEffects` is the default, and confirmation prompts state the **declared** side effects rather than a generic warning. Capabilities with `Authorization.Internal` are excluded from the tool surface entirely. | `InternalCapabilitiesAreNotAgentReachable` (merge) |
 

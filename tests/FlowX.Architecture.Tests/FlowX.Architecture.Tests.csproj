@@ -15,6 +15,15 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.3" />
     <PackageReference Include="Shouldly" Version="4.3.0" />
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+    <!--
+      Parses the repository's own source so the security gates can ask what a capability
+      *declares*. A regular expression over attribute lists misses the declaration written
+      in an unfamiliar style, and misses it silently — the wrong failure direction for a
+      gate whose job is to notice a missing authorisation stance. Syntax only: no
+      compilation and no metadata references, so it costs milliseconds and cannot be
+      broken by an unrelated build error.
+    -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
   </ItemGroup>
 
   <ItemGroup>
