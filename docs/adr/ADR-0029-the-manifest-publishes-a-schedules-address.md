@@ -32,7 +32,7 @@
 | The compiler reads them off `[CronTrigger]` | `TriggerReader.Shape`, the `FlowX.CronTriggerAttribute` arm |
 | The compiler writes them | `ManifestWriter`, `WriteOptional(writer, "cron", …)` / `"timeZone"` |
 | The CLI reads them | `ManifestDocument.ManifestTrigger.Cron` / `.TimeZone` |
-| `flowx diff` classifies a change to `cron` | `ManifestDiff.Describe` includes it in a trigger's **address**, so a changed expression is `FLOWX-DIFF-001` (removed) **plus** `FLOWX-DIFF-002` (added) — both Breaking |
+| `flowx diff` classifies a change to `cron` | `ManifestDiff.Describe` includes it in a trigger's **address**, so a changed expression is `FLOWX-DIFF-005` — *trigger removed*, **Breaking** — plus `FLOWX-DIFF-103` — *trigger added*, Additive |
 | `flowx diff` classifies a change to `timeZone` | `ManifestDiff.CompareTriggerTerms` → `FLOWX-DIFF-205`, Neutral |
 
 So neither field is one of ADR-0017 §1's twelve unproduced ones, and neither is an F5
@@ -44,6 +44,30 @@ step further along. `samples/workflow/flowx.manifest.json` now carries:
 ```json
 { "kind": "Schedule", "cron": "0 2 * * *", "timeZone": "Europe/Berlin" }
 ```
+
+**And both rules were then run against it, rather than read.** Two copies of that manifest
+differing only in the expression:
+
+```text
+BREAKING (1)
+  FLOWX-DIFF-005  flow offer.window.close@1
+      trigger removed: Schedule 0 2 * * *
+ADDITIVE (1)
+  FLOWX-DIFF-103  flow offer.window.close@1
+      trigger added: Schedule 0 3 * * *
+```
+
+and two differing only in the zone:
+
+```text
+NEUTRAL (1)
+  FLOWX-DIFF-205  flow offer.window.close@1 trigger Schedule 0 2 * * *
+      time zone changed: Europe/Berlin -> UTC
+```
+
+That is F5's question answered for these two fields by a command with an exit code, which is the
+standard [ADR-0021 §4](ADR-0021-manifest-publishes-the-wait.md#4-how-adr-0017s-criteria-move) set
+and the standard F5 itself says a human reading two files cannot sustain.
 
 ### 1.2 What is newly readable and might therefore be published
 
@@ -164,7 +188,7 @@ answer is "unchanged" for all eight, which is itself the thing worth writing dow
 | **F2** — no field is a constant standing in for a fact | **Unchanged.** Both values are read from the attribute. Option D is the version of this change that would have broken F2, and it is refused above |
 | **F3** — `ManifestIsComplete` covers all four of Q3's nouns | **Untouched.** A trigger is not one of the four nouns |
 | **F4** — the two absent producers have landed | **Untouched.** The outbox and the policy engine are unaffected by a trigger binding |
-| **F5** — `flowx diff` can see every field the freeze makes permanent | **Unchanged, and now exercised.** `cron` is part of a trigger's address in `ManifestDiff.Describe`, so changing it is `FLOWX-DIFF-001` plus `FLOWX-DIFF-002`; `timeZone` is `FLOWX-DIFF-205`. Both rules existed and neither had ever had a manifest to fire on. F5 itself stays open, because the *instrument* that would find the next unclassified field is still unwritten |
+| **F5** — `flowx diff` can see every field the freeze makes permanent | **Unchanged, and now exercised.** `cron` is part of a trigger's address in `ManifestDiff.Describe`, so changing it is `FLOWX-DIFF-005` plus `FLOWX-DIFF-103`; `timeZone` is `FLOWX-DIFF-205`. All three rules existed and none had ever had a `Schedule` manifest to fire on. F5 itself stays open, because the *instrument* that would find the next unclassified field is still unwritten |
 | **F6** — the escape hatch is exercised | **Untouched.** Nothing here writes `extensions`. Worth noting *for* F6 that the four unpublished properties are the kind of one-off a consumer might reach for it with, and none of them needed to |
 | **F7** — the bump is one atomic change | **Untouched.** `schemaVersion` stays `0.1.0` |
 | **F8** — no field whose record is still Proposed is frozen | **Unchanged, and this record is Accepted.** `cron` and `timeZone` are governed by this record and by ADR-0004; ADR-0014 remains the only Proposed record governing a field |
@@ -200,9 +224,13 @@ cost; this one adds nothing at all.
   later reader knows it was chosen.**
 - **`flowx diff` reports a changed cron as a removal plus an addition, not as a modification.**
   That falls out of `ManifestDiff.Describe` treating the expression as part of the address, which
-  is right for a route and slightly noisy for a schedule: moving a job from 02:00 to 03:00 reads
-  as two Breaking findings rather than one. It is correct — anybody depending on the 02:00 run no
-  longer has one — and it is louder than the change deserves.
+  is right for a route and reads oddly for a schedule: moving a job from 02:00 to 03:00 is one
+  Breaking finding (`FLOWX-DIFF-005`, *"callers using this address can no longer reach the
+  flow"*) and one Additive one (`FLOWX-DIFF-103`), where a reviewer would expect one Neutral
+  "the schedule moved". The Breaking half is defensible — anybody depending on the 02:00 run no
+  longer has one — and the consequence text is written for a route and reads wrongly here,
+  because a schedule has no callers. **Not fixed in this change**, because narrowing it means a
+  schedule-specific rule, which is this record's third Revisit-when.
 - **Nothing reports `Overlap`, `Jitter` or `PerTenant` reaching no artifact.** A reader has to
   consult [09 §8](../09-Trigger-Model.md#8-schedule-trigger) to find out, where FLOWX1032's
   precedent would suggest a diagnostic. §2.3 argues they are inert rather than deleted, which is
