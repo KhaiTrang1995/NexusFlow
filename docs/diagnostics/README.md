@@ -297,6 +297,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1030](FLOWX1030.md) | Authorisation stance names no permission or policy | **A capability published as permission-protected that names no permission, and a `flowx diff` rule with nothing to compare when the grant moves** |
 | [FLOWX1031](FLOWX1031.md) | Suspension construct is declared but not honoured by the compiler | **A flow written to wait seven days for a countersignature running straight past the wait, with a clean journal, a published manifest and a successful result** |
 | [FLOWX1032](FLOWX1032.md) | Declared policy is not executed by the runtime | **A step declaring a three-second timeout, three retries and a circuit breaker, published in the manifest as wrapped in all three and dispatched once with no clock, no attempt count and no breaker** |
+| [FLOWX1033](FLOWX1033.md) | `CompensationRetry` is declared on a step with no compensation | **The one policy the runtime executes, dropped by the emitter in silence: a manifest promising five attempts at an undo, and a plan with no undo to attempt** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -418,7 +419,16 @@ policy is *applied*. It is not `FLOWX1028` either — that rule reads a flow's p
 reads a step's policy set — though it takes that rule's severity argument wholesale, which is
 [below](#the-severity-of-flowx1032-which-is-flowx1028s-argument-one-level-down).
 
-The next is `FLOWX1033`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1033` is claimed** — *`CompensationRetry` is declared on a step with no
+compensation*: `FlowEmitter.PolicyArguments` emits the compensation chain only for a step
+that `IsCompensable`, so on any other step the one policy this runtime executes is dropped
+without a word, while `ManifestWriter` publishes it regardless. It is a separate id from
+`FLOWX1032` rather than a second report of it because the two have opposite lifetimes and
+opposite severities: `FLOWX1032` is deleted when P4 lands, and this one is not, because no
+release gives a non-compensable step an undo. It is not `FLOWX1014` either — that rule asks
+whether the *compensating capability* is idempotent, and presupposes there is one.
+
+The next is `FLOWX1034`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 
