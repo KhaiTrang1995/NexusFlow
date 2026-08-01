@@ -260,13 +260,11 @@ public sealed class DeclaredPolicyAnalyzerTests
 
     // ------------------------------------------------------ FLOWX1032 must not fire
 
-    /// <summary>
-    /// A compensation-only set is silent, and it is the set the DSL ships as a constant.
-    /// </summary>
+    /// <summary>A compensation-only set is silent — it is the one set that does what it says.</summary>
     /// <remarks>
-    /// <c>PolicySet.CompensationDefault</c> is <c>CompensationRetry(attempts: 5)</c> and
-    /// nothing else. A rule that reported on it would be telling authors that the one policy
-    /// this runtime executes does not execute.
+    /// The shape <c>PolicySet.CompensationDefault</c> has: <c>CompensationRetry(attempts: 5)</c>
+    /// and nothing else. A rule that reported on it would be telling authors that the one
+    /// policy this runtime executes does not execute.
     /// </remarks>
     [Fact]
     public void ACompensationRetryOnlySetIsSilent() =>

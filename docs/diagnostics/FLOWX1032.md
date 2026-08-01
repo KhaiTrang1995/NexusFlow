@@ -105,14 +105,16 @@ times on one line, which is how a catalogue gets suppressed wholesale.
 
 **What stays silent**, so the rule's silence means something:
 
-- A set containing only `CompensationRetry`, like `LedgerUndo` above, and
-  `PolicySet.CompensationDefault`.
+- A set containing only `CompensationRetry`, like `LedgerUndo` above.
 - A step with no `.WithPolicy(...)` at all.
 - A `.WithPolicy(...)` whose argument the compiler cannot resolve to a field or property
-  initialiser declared in source — a set built at run time, or one arriving from a
-  referenced assembly. `PolicySetReader` returns nothing rather than guessing, which is the
-  same restriction FLOWX1014 and FLOWX1019 already work under, and a report naming policies
-  the compiler inferred would name policies the author cannot find.
+  initialiser declared in source — a set built at run time, one returned by a method, or one
+  arriving from a referenced assembly, `PolicySet.CompensationDefault` included.
+  `PolicySetReader` returns nothing rather than guessing, which is the same restriction
+  FLOWX1014 and FLOWX1019 already work under, and it is exactly where
+  `FlowEmitter.PolicyArguments` is silent too: a set whose kinds the compiler could not read
+  produces no policy argument at all. A report naming policies the compiler inferred would
+  name policies the author cannot find.
 
 ## How to fix it
 
