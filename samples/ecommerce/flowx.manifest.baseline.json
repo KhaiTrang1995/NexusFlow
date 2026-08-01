@@ -6,6 +6,48 @@
   },
   "flows": [
     {
+      "id": "order.confirm",
+      "version": "1.0.0",
+      "profile": "Durable",
+      "deadline": "PT30S",
+      "input": {
+        "type": "Ecommerce.PlaceOrder",
+        "sensitive": [
+          "PaymentToken"
+        ]
+      },
+      "output": {
+        "type": "Ecommerce.OrderPlacedResult"
+      },
+      "triggers": [
+        {
+          "kind": "Http",
+          "method": "POST",
+          "route": "/api/v1/confirmations",
+          "idempotent": true
+        }
+      ],
+      "steps": [
+        {
+          "id": 0,
+          "kind": "Capability",
+          "capability": "order.validate@1.0.0"
+        },
+        {
+          "id": 1,
+          "kind": "Emit",
+          "event": "order.placed"
+        }
+      ],
+      "emits": [
+        "order.placed"
+      ],
+      "errors": [
+        "order.invalid_quantity"
+      ],
+      "source": "ConfirmOrderFlow.cs:37"
+    },
+    {
       "id": "order.place",
       "version": "1.0.0",
       "profile": "Ephemeral",
@@ -59,6 +101,37 @@
         "payment.declined"
       ],
       "source": "PlaceOrderFlow.cs:52"
+    },
+    {
+      "id": "order.reprice",
+      "version": "1.0.0",
+      "profile": "Durable",
+      "deadline": "PT30S",
+      "input": {
+        "type": "FlowX.BusMessage"
+      },
+      "output": {
+        "type": "Ecommerce.RepricedOrder"
+      },
+      "triggers": [
+        {
+          "kind": "Bus",
+          "topic": "order.placed",
+          "group": "pricing"
+        }
+      ],
+      "steps": [
+        {
+          "id": 0,
+          "kind": "Capability",
+          "capability": "order.reprice@1.0.0"
+        }
+      ],
+      "emits": [],
+      "errors": [
+        "order.event_has_no_body"
+      ],
+      "source": "RepriceOrderFlow.cs:55"
     }
   ],
   "capabilities": [
@@ -92,6 +165,23 @@
         {
           "code": "inventory.out_of_stock",
           "category": "Conflict"
+        }
+      ]
+    },
+    {
+      "id": "order.reprice",
+      "version": "1.0.0",
+      "input": "FlowX.BusMessage",
+      "output": "Ecommerce.RepricedOrder",
+      "authorization": {
+        "mode": "Internal"
+      },
+      "idempotent": true,
+      "sideEffects": [],
+      "errors": [
+        {
+          "code": "order.event_has_no_body",
+          "category": "Validation"
         }
       ]
     },

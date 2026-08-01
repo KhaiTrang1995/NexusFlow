@@ -22,3 +22,12 @@ public sealed record OrderPlacedResult(string OrderId, string ReceiptId);
 
 /// <summary>Published once the order is placed.</summary>
 public sealed record OrderPlaced(string OrderId, string Sku, int Quantity);
+
+/// <summary>What repricing an order produced.</summary>
+/// <remarks>
+/// The output of <see cref="RepriceOrderFlow"/>, which is started by a broker rather than by a
+/// caller — so nobody is waiting for this value. It is journalled on the instance and is what a
+/// replay or <c>flowx replay --mode inspect</c> shows, which is the whole audience a
+/// bus-triggered flow's return has.
+/// </remarks>
+public sealed record RepricedOrder(string OrderId, string Sku, decimal Total);

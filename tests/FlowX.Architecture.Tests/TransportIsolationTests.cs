@@ -207,7 +207,7 @@ public sealed class TransportIsolationTests
         using var module = CompiledAssemblies.Read("Ecommerce");
 
         Capabilities(module).Select(static c => c.Name).ShouldBe(
-            ["CapturePayment", "ReleaseInventory", "ReserveInventory", "ValidateOrder"],
+            ["CapturePayment", "ReleaseInventory", "RepriceBasket", "ReserveInventory", "ValidateOrder"],
             ignoreOrder: true,
             "The IL scan no longer finds the sample's capabilities, so " +
             "CapabilitiesDoNotCallCapabilities is passing vacuously.");

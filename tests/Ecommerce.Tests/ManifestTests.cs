@@ -17,7 +17,64 @@ public sealed class ManifestTests
 {
     private static readonly JsonDocument Manifest = JsonDocument.Parse(FlowXManifest.Json);
 
-    private static JsonElement Flow => Manifest.RootElement.GetProperty("flows")[0];
+    /// <summary>
+    /// The flow every test below is about: <c>order.place</c>, the HTTP-triggered reference
+    /// endpoint.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Selected by id, not by position.</strong> This was <c>flows[0]</c> until the
+    /// sample gained a second and a third flow — <c>order.confirm</c> and <c>order.reprice</c>,
+    /// the emitting and consuming halves of the bus chain — and <c>ManifestWriter</c> orders
+    /// flows by id, so the index silently began naming a different flow. Every assertion here
+    /// still passed its type check and compared the wrong document; picking by id is what makes
+    /// adding a flow a change to <see cref="TheManifestNamesEveryFlowTheSampleDeclares"/> alone.
+    /// </remarks>
+    private static JsonElement Flow => Manifest.RootElement
+        .GetProperty("flows")
+        .EnumerateArray()
+        .Single(flow => flow.GetProperty("id").GetString() == "order.place");
+
+    /// <summary>The sample declares three flows, and the manifest publishes all three.</summary>
+    /// <remarks>
+    /// The assertion the index above used to make implicitly and wrongly. It is also where the
+    /// bus chain becomes visible in the contract document: <c>order.confirm</c> emits
+    /// <c>order.placed</c> and <c>order.reprice</c> subscribes to it, and nothing in either
+    /// flow names the other.
+    /// </remarks>
+    [Fact]
+    public void TheManifestNamesEveryFlowTheSampleDeclares() => Manifest.RootElement
+        .GetProperty("flows")
+        .EnumerateArray()
+        .Select(flow => flow.GetProperty("id").GetString())
+        .ShouldBe(["order.confirm", "order.place", "order.reprice"], ignoreOrder: true);
+
+    /// <summary>The consuming flow publishes a bus address and nothing beyond it.</summary>
+    /// <remarks>
+    /// <strong>The manifest gains no field for a subscription</strong>
+    /// (<c>docs/adr/ADR-0039-a-bus-subscription-publishes-no-new-manifest-field.md</c>). The
+    /// address is <c>kind</c>, <c>topic</c> and <c>group</c>, all three of which already had
+    /// producers; how many deliveries a message gets and how often the consumer polls are
+    /// <c>FlowXOptions</c> values and are deliberately absent. <c>transport</c> is absent too,
+    /// because <c>[BusTrigger]</c> names no broker — which is the honest reading of a flow that
+    /// consumes a topic on whatever bus the host wired.
+    /// </remarks>
+    [Fact]
+    public void TheSubscriptionPublishesItsAddressAndNothingElse()
+    {
+        var trigger = Manifest.RootElement
+            .GetProperty("flows")
+            .EnumerateArray()
+            .Single(flow => flow.GetProperty("id").GetString() == "order.reprice")
+            .GetProperty("triggers")[0];
+
+        trigger.EnumerateObject()
+            .Select(property => property.Name)
+            .ShouldBe(["kind", "topic", "group"], ignoreOrder: true);
+
+        trigger.GetProperty("kind").GetString().ShouldBe("Bus");
+        trigger.GetProperty("topic").GetString().ShouldBe("order.placed");
+        trigger.GetProperty("group").GetString().ShouldBe("pricing");
+    }
 
     [Fact]
     public void NamesTheFlowAndItsProfile()

@@ -21,6 +21,18 @@ public static class OrderErrors
             .With("sku", sku)
             .With("available", available);
 
+    /// <summary>A delivered event carried no body to reprice from.</summary>
+    /// <remarks>
+    /// A <c>Result</c> failure and not an exception, which is what decides what the broker is
+    /// told: a flow that ran and failed is <em>acknowledged</em>
+    /// (<a href="../../docs/adr/ADR-0036-a-message-is-acknowledged-when-its-flow-is-journalled.md">ADR-0036</a>),
+    /// because it happened. Throwing instead would leave the message pending and redeliver a body
+    /// that will never be any different.
+    /// </remarks>
+    public static Error EventHasNoBody(Guid eventId) =>
+        new Error("order.event_has_no_body", "The delivered event carried no body.", ErrorCategory.Validation)
+            .With("eventId", eventId.ToString("d"));
+
     /// <summary>The payment instrument was declined.</summary>
     public static Error PaymentDeclined(string reason) =>
         new Error("payment.declined", $"The payment was declined: {reason}.", ErrorCategory.Conflict)
