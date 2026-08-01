@@ -58,6 +58,22 @@ budget you are already failing reads the same before a regression as after it.
 replaces it — blocking, on every pull request, against a committed baseline — together with
 the measurement showing that it could not have been built on wall clock.
 
+**Everything above is compile time. The one runtime measurement here that is not a benchmark
+is [QR2-chaos.md](QR2-chaos.md)**, which is P2's correctness criterion rather than a budget:
+10 000 durable flows per arm, **97 worker processes killed with `SIGKILL`** at a step boundary
+against a shared PostgreSQL, **zero duplicate effects against the guarantee** and **zero lost
+instances**. Its scope is deliberately narrower than the working package it belongs to —
+WP-50 is *"B7, B8 and the QR2 chaos rig"* and **only the rig is built**.
+
+Two of its numbers should always be quoted together. The exposure the rig *does* find is
+[ADR-0006](../adr/ADR-0006-journal-and-leases.md)'s documented one — an effect that happened
+with no commit to record it — and at concurrency 1 it is exactly one duplicate per kill, and
+exactly zero when the kill moves to the other side of the commit. And the resume p99 is
+**measured and not gated**: **32.9 s against QR2's 45 s** on the recorded run, **48.1 s** and
+**69.9 s** on two others with every correctness row still zero. It is the 30 s lease TTL plus
+however long a backlog takes to drain through `MaxConcurrentRecoveries`, so it is not a figure
+to quote on its own.
+
 ---
 
 ## 1. Budget B1 — the engine, measured
