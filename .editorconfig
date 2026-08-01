@@ -207,6 +207,24 @@ dotnet_diagnostic.S3878.severity = none   # explicit array in a params call, for
 dotnet_diagnostic.S5332.severity = none   # http:// is insecure
 dotnet_diagnostic.S1075.severity = none   # hardcoded URI
 
+[samples/workflow/**.cs]
+# FLOWX-DEBT(people-ops, 2026-12-31): Policies.DirectoryService declares a Timeout,
+# a Retry and a CircuitBreaker, and this release applies none of them — which is
+# FLOWX1032, and which samples/workflow/Policies.cs has said in prose since WP-57.
+# The flow is survivable with them unenforced: OnboardEmployeeFlow's deadline bounds
+# the run, and the one policy it depends on for correctness is FacilitiesUndo's
+# CompensationRetry, which does execute and which this rule is silent about.
+#
+# Here rather than as a pragma in the sample, unlike samples/banking, for one
+# reason: this file is the narrower edit. samples/banking is the sample this rule
+# was written against and argues its suppression at the call site, where a reader
+# meets it; samples/workflow makes the same trade for the same reason and did not
+# need to be reopened to say so. Both decisions are reviewable; only one of them is
+# a teaching artefact.
+#
+# Deleted with FLOWX1032 on the day P4 lands the policy engine.
+dotnet_diagnostic.FLOWX1032.severity = suggestion
+
 [src/FlowX.Runtime/FlowEngine.cs]
 # The comment above the step loop quotes the for-loop it is deliberately NOT
 # using, to explain why. S125 reads the quoted line as commented-out code.

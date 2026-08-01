@@ -11,7 +11,7 @@ from at run time, or expensive enough that discovering it in production is the w
 place. A warning is a rule nobody has to obey; if a rule is worth having, it stops
 the build.
 
-Twelve entries below are not errors, or not only errors, and each says why on its own page. Three of the twelve —
+Thirteen entries below are not errors, or not only errors, and each says why on its own page. Three of the thirteen —
 the determinism set [FLOWX1007](FLOWX1007.md), [FLOWX1008](FLOWX1008.md) and
 [FLOWX1009](FLOWX1009.md) — say why *together*, in
 [the section below](#the-severity-of-the-determinism-set), because
@@ -43,6 +43,10 @@ covers three constructs the compiler cannot honour, and it is an **error** for t
 puts a value into the plan that the author did not write and a **warning** for the two it
 merely drops.
 [The section below](#the-severity-of-flowx1031-which-is-split) is that argument.
+[FLOWX1032](FLOWX1032.md) is the thirteenth and is `FLOWX1028`'s argument taken one level
+down, from the flow's execution profile to a step's policy set;
+[its section](#the-severity-of-flowx1032-which-is-flowx1028s-argument-one-level-down) says
+where the two rules' reasoning is the same and where this one has to make its own case.
 
 ## The severity of the determinism set
 
@@ -224,6 +228,40 @@ action's premise — "the author wrote `AwaitSignal`, so the flow suspends" — 
 this rule is what makes that visible; `AwaitSignal` having no legal profile is an accurate
 description of a platform with no suspension engine.
 
+## The severity of `FLOWX1032`, which is `FLOWX1028`'s argument one level down
+
+A **warning**, and the argument is not new: it is [FLOWX1028](FLOWX1028.md)'s, moved from
+the flow's `Profile` to a step's `.WithPolicy(...)`. Both of that rule's halves transfer,
+which is worth saying explicitly, because [FLOWX1031](FLOWX1031.md) — the nearer neighbour
+in shape — could only use one of them.
+
+**An error erases the inventory the fixing phase needs.** The only edit that silences an
+error is deleting the `.WithPolicy(...)` call or emptying the set. That declaration is P4's
+list of the steps that asked for a timeout, and it is the same greppability ADR-0003 lists
+as a positive consequence for the profile.
+
+**The source is not wrong.** This is the half FLOWX1031 could not use, and it is what puts
+this rule on FLOWX1028's side of the line. *No flow is correct with a seven-day wait
+compiled to no wait* — but a great many flows are correct with a `RateLimit` enforced by the
+gateway in front of the process, or a `Timeout` subsumed by a `[FlowDeadline]` that is
+already shorter. "Confirm the flow is correct as it is, and record that" is a real remedy
+here and is the page's first one.
+
+**And nothing is falsified.** FLOWX1031's error half turns on the plan carrying a value no
+author wrote. The plan here carries exactly the declared set, in exactly ADR-0011's stage
+order; what a reader over-reads is *behaviour*, not *declaration*. That is
+[FLOWX1027](FLOWX1027.md)'s category at `CS0162`'s severity.
+
+**What does not transfer is [FLOWX1033](FLOWX1033.md)**, which is an **error**, and the two
+being adjacent ids about the same DSL call makes the distinction worth stating here rather
+than only on the pages. FLOWX1032 reports a policy that a *later release* will execute;
+FLOWX1033 reports a `CompensationRetry` attached to a step with no compensation, which no
+release will ever execute because there is nothing for it to wrap. One is scaffolding for a
+missing phase and is deleted when the phase lands; the other is a mistake in the source and
+is permanent. `StepNode.ForCapability` already refuses that shape with an
+`InvalidFlowPlanException`, which is the same relationship `FLOWX1014` and `FLOWX1018` have
+to `PolicyChain`'s two rejections — and all three are errors.
+
 ## Catalogue
 
 | Id | Rule | Prevents |
@@ -258,6 +296,8 @@ description of a platform with no suspension engine.
 | [FLOWX1028](FLOWX1028.md) | Execution profile is declared but not honoured by the runtime | **A payment saga declaring `Durable` and losing its instance on the next deploy** |
 | [FLOWX1030](FLOWX1030.md) | Authorisation stance names no permission or policy | **A capability published as permission-protected that names no permission, and a `flowx diff` rule with nothing to compare when the grant moves** |
 | [FLOWX1031](FLOWX1031.md) | Suspension construct is declared but not honoured by the compiler | **A flow written to wait seven days for a countersignature running straight past the wait, with a clean journal, a published manifest and a successful result** |
+| [FLOWX1032](FLOWX1032.md) | Declared policy is not executed by the runtime | **A step declaring a three-second timeout, three retries and a circuit breaker, published in the manifest as wrapped in all three and dispatched once with no clock, no attempt count and no breaker** |
+| [FLOWX1033](FLOWX1033.md) | `CompensationRetry` is declared on a step with no compensation | **The one policy the runtime executes, dropped by the emitter in silence: a manifest promising five attempts at an undo, and a plan with no undo to attempt** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -370,7 +410,25 @@ profile a suspension point may be declared under, and this one asks whether the 
 honour it under any — which is why it does not read the profile. Its severity is **split**,
 and the argument is [below](#the-severity-of-flowx1031-which-is-split).
 
-The next is `FLOWX1032`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1032` is claimed** — *declared policy is not executed by the runtime*: every kind a
+`.WithPolicy(...)` set declares except `CompensationRetry`, which is the only policy any code
+path in `src/` reads. It is none of the reservations, and it is not `FLOWX1014` or
+`FLOWX1018`: those ask whether a declared policy is *safe* for the capability it wraps and
+have always been enforced, and this one presupposes that they passed and asks whether the
+policy is *applied*. It is not `FLOWX1028` either — that rule reads a flow's profile, this one
+reads a step's policy set — though it takes that rule's severity argument wholesale, which is
+[below](#the-severity-of-flowx1032-which-is-flowx1028s-argument-one-level-down).
+
+**`FLOWX1033` is claimed** — *`CompensationRetry` is declared on a step with no
+compensation*: `FlowEmitter.PolicyArguments` emits the compensation chain only for a step
+that `IsCompensable`, so on any other step the one policy this runtime executes is dropped
+without a word, while `ManifestWriter` publishes it regardless. It is a separate id from
+`FLOWX1032` rather than a second report of it because the two have opposite lifetimes and
+opposite severities: `FLOWX1032` is deleted when P4 lands, and this one is not, because no
+release gives a non-compensable step an undo. It is not `FLOWX1014` either — that rule asks
+whether the *compensating capability* is idempotent, and presupposes there is one.
+
+The next is `FLOWX1034`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 
