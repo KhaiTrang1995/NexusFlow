@@ -35,6 +35,27 @@ namespace Banking;
 /// reader assume it is enforced is the failure mode this repository exists to avoid, and a
 /// banking sample would be the worst possible place to commit it.
 /// </para>
+/// <para>
+/// <strong>Two corrections this file used to get wrong, both now checked by a compiler
+/// rule.</strong>
+/// </para>
+/// <para>
+/// <strong>First: the line is not "stages 1–6".</strong> <see cref="LedgerPost"/>'s
+/// <c>Audit</c> is a <see cref="PolicyStage.Consistency"/> policy — stage 7, the same stage
+/// as <see cref="PolicySet.CompensationRetry"/> — and it is inert all the same, because
+/// <c>PolicyChain.ForStep</c> moves only the compensation retry onto the undo's chain and
+/// <c>CompensationPolicy.From</c> reads only that kind. The cut is by <em>what a policy
+/// wraps</em>, not by which stage it runs in. So "no financial audit record is written by a
+/// policy" is a true sentence about this bank, and the paragraph above was one stage away
+/// from implying otherwise.
+/// </para>
+/// <para>
+/// <strong>Second: the prose was the only thing saying any of it.</strong>
+/// <a href="../../docs/diagnostics/FLOWX1032.md">FLOWX1032</a> now reports it at build time,
+/// on all seven of this flow's <c>.WithPolicy(...)</c> calls, and
+/// <c>ExecuteTransferFlow</c> carries an argued suppression rather than a quiet one. A
+/// paragraph can go stale; a build cannot.
+/// </para>
 /// </remarks>
 public static class Policies
 {
@@ -101,6 +122,24 @@ public static class Policies
         .Idempotency(TimeSpan.FromHours(24));
 
     /// <summary>The settlement register write.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>No <c>CompensationRetry</c>, and the omission is the point.</strong>
+    /// <c>RecordSettlement</c> is not compensable — once the register holds the transfer
+    /// there is nothing to take back — so a compensation retry here would wrap nothing.
+    /// <c>FlowEmitter</c> drops such a declaration without a word and <c>ManifestWriter</c>
+    /// publishes it anyway, which would leave this bank's published contract promising a
+    /// retried undo for a settlement that has no undo.
+    /// </para>
+    /// <para>
+    /// That is <a href="../../docs/diagnostics/FLOWX1033.md">FLOWX1033</a>, and it is an
+    /// <em>error</em> rather than FLOWX1032's warning: P4 will execute a <c>Timeout</c>, and
+    /// no release will ever give this step an undo. Reusing <see cref="LedgerPost"/> here —
+    /// which is the tempting edit, since the two sets differ by one line — is the mistake the
+    /// rule exists to catch, and it is why this set exists separately rather than being a
+    /// second application of that one.
+    /// </para>
+    /// </remarks>
     public static readonly PolicySet SettlementRegister = PolicySet.Named("settlement-register")
         .Timeout(TimeSpan.FromSeconds(5))
         .Audit("financial");

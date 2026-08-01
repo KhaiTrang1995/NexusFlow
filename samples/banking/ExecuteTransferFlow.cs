@@ -35,6 +35,16 @@ namespace Banking;
 /// exception is the <c>CompensationRetry</c> on the two ledger legs: delete the
 /// <c>.WithPolicy(...)</c> calls and only those two undos change, five attempts to one.
 /// </para>
+/// <para>
+/// <strong>The compiler now says so, on all seven of them.</strong>
+/// <a href="../../docs/diagnostics/FLOWX1032.md">FLOWX1032</a> reports every declared policy
+/// this release does not apply, and this flow was its first finding: seven reports, one per
+/// <c>.WithPolicy(...)</c>, naming <c>Audit</c> and <c>Timeout</c> on the ledger legs and not
+/// their <c>CompensationRetry</c>. The paragraph above used to be the only thing standing
+/// between a reader and the assumption that a declared timeout is an enforced one; it is now
+/// the argument for a suppression rather than a promise nobody checks. The suppression's
+/// reasoning is below and on <see cref="Policies"/>.
+/// </para>
 /// </remarks>
 [Flow("transfer.execute", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "payments")]
 [FlowDeadline("PT60S")]
@@ -46,6 +56,18 @@ public sealed partial class ExecuteTransferFlow : Flow<ExecuteTransfer, Transfer
     {
         ArgumentNullException.ThrowIfNull(flow);
 
+        // Deliberate, and argued rather than hidden: every .WithPolicy below declares
+        // policies P4 will execute and this release does not, which is exactly what
+        // FLOWX1032 reports and exactly what this sample exists to state out loud. Its page
+        // asks for one of three answers; this is the first — the flow is survivable with
+        // them unenforced. The PT60S deadline bounds the run whatever the step timeouts say;
+        // the rate limit belongs in front of the process and a real deployment puts it
+        // there; and the audits are a statement of what a financial reviewer should be able
+        // to read, which the manifest delivers. Deleting the declarations to buy a green
+        // build would delete the record P4 needs and change nothing about how this transfer
+        // runs. See docs/diagnostics/FLOWX1032.md and the README's "What is declared and not
+        // enforced".
+#pragma warning disable FLOWX1032 // Deliberate: declared, unenforced, and argued in docs/diagnostics/FLOWX1032.md
         flow
             // Reads the debtor's balance and hands it forward. It does not judge it: the
             // judgement is the arm below, so that "we refuse transfers we cannot fund" is
@@ -124,5 +146,6 @@ public sealed partial class ExecuteTransferFlow : Flow<ExecuteTransfer, Transfer
                 ctx.Get<CreditPosted>().EntryId,
                 ctx.Get<ValidatedTransfer>().Amount,
                 ctx.Get<ValidatedTransfer>().Currency));
+#pragma warning restore FLOWX1032
     }
 }
