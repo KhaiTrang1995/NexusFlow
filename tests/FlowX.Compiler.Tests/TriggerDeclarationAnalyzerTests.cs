@@ -237,12 +237,26 @@ public sealed class TriggerDeclarationAnalyzerTests
     [InlineData("""[AgentTrigger(Description = "Place a customer order")]""")]
     public void EveryTriggerTheAbstractionShipsIsSilent(string attribute)
     {
-        Analyze(FlowWith(attribute)).ShouldBeEmpty(
+        Analyze(FlowWith(attribute)).ShouldNotContain(
+            "FLOWX1025",
             $"{attribute} is read into the manifest, so there is nothing to warn about. " +
             "A rule that fires on a built-in trigger would be downgraded everywhere and " +
             "then protect nothing.");
     }
 
+    /// <summary>
+    /// All five together raise nothing about a missing kind — and one thing about the cron.
+    /// </summary>
+    /// <remarks>
+    /// <strong>This test asserted an empty list until the schedule trigger was bound, and the
+    /// difference is a real limit rather than a rule being noisy.</strong> A schedule's flow must
+    /// take <c>ScheduledFire</c>, because a firing has no body and the flow may not read a clock
+    /// (<a href="../../docs/adr/ADR-0028-a-scheduled-flows-input-is-its-occurrence.md">ADR-0028</a>),
+    /// and an HTTP endpoint binds a request body into whatever the flow declares. So one flow
+    /// cannot serve both — <c>09 §3</c>'s "four transports, zero changes to the flow body" holds
+    /// for the four whose payload the caller supplies, and stops at the one whose payload the
+    /// platform supplies. FLOWX1037 is what says so.
+    /// </remarks>
     [Fact]
     public void AllFiveTogetherAreSilent()
     {
@@ -254,7 +268,7 @@ public sealed class TriggerDeclarationAnalyzerTests
             [StreamTrigger("orders.stream", Window = "tumbling:1m")]
             [AgentTrigger(Description = "Place a customer order", Confirmation = ConfirmationMode.Always)]
             """))
-            .ShouldBeEmpty();
+            .ShouldBe(["FLOWX1037"], "no trigger here fails to declare its kind");
     }
 
     [Fact]
@@ -310,13 +324,13 @@ public sealed class TriggerDeclarationAnalyzerTests
 
     // ------------------------------------------------------------------ severity
 
-    /// <summary>The analyzer declares the rule it raises. Roslyn silently drops it otherwise.</summary>
+    /// <summary>The analyzer declares the rules it raises. Roslyn silently drops one otherwise.</summary>
     [Fact]
     public void TheAnalyzerDeclaresTheRule()
     {
         new TriggerDeclarationAnalyzer().SupportedDiagnostics
             .Select(static d => d.Id)
-            .ShouldBe(["FLOWX1025"]);
+            .ShouldBe(["FLOWX1025", "FLOWX1037"]);
     }
 
     /// <summary>

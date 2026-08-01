@@ -54,6 +54,19 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     /// </remarks>
     private const string HttpEndpointExtensionsName = "FlowX.Http.FlowEndpointExtensions";
 
+    /// <summary>
+    /// The one thing this generator knows about the host that fires a schedule: a name to look
+    /// for.
+    /// </summary>
+    /// <remarks>
+    /// The same arrangement <see cref="HttpEndpointExtensionsName"/> has, and for the same
+    /// reason. <c>FlowX.Hosting</c> is not a plugin, but the generator cannot reference it either
+    /// — it is a netstandard2.0 analyzer — and a flow library compiled on its own has no reason
+    /// to depend on a host. Asking the user's compilation whether the type exists answers the
+    /// only question that matters.
+    /// </remarks>
+    private const string ScheduleRegistrationName = "FlowX.Hosting.FlowScheduleRegistration";
+
     /// <summary>The id whose reporting this class decides rather than passes through.</summary>
     private static readonly string EmitDiagnosticId = FlowXDiagnostics.EmitIsNotYetPublished.Id;
 
@@ -161,6 +174,150 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                 var ((((analysed, declared), contexts), available), assembly) = data;
                 ProduceEndpoints(production, analysed, declared, contexts, available, assembly);
             });
+
+        // Whether this compilation can register a schedule at all, expressed as one bool for the
+        // reason httpAvailable is: nothing downstream re-runs when an unrelated reference
+        // changes.
+        var schedulingAvailable = context.CompilationProvider.Select(
+            static (compilation, _) => compilation.GetTypeByMetadataName(ScheduleRegistrationName) is not null);
+
+        context.RegisterSourceOutput(
+            flows.Collect()
+                .Combine(triggers.Collect())
+                .Combine(schedulingAvailable)
+                .Combine(application),
+            static (production, data) =>
+            {
+                var (((analysed, declared), available), assembly) = data;
+                ProduceSchedules(production, analysed, declared, available, assembly);
+            });
+    }
+
+    /// <summary>
+    /// Emits one registration per <c>[CronTrigger]</c> the host can actually fire, or nothing
+    /// at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing at all is the common case: a project with no flow that declares a schedule, or a
+    /// flow library with no host to register into, gets no file — zero types, zero IL.
+    /// </para>
+    /// <para>
+    /// <strong>A flow this host could not fire is skipped here and reported by
+    /// <c>TriggerDeclarationAnalyzer</c>, not by both.</strong> The two conditions are the same
+    /// two <c>FLOWX1037</c> names — an input contract that is not <c>ScheduledFire</c>, and a
+    /// profile that is not <c>Durable</c> — and the analyzer has the attribute's own span to
+    /// point at where this has a collected model and nothing else. Reporting from both would put
+    /// the same defect in the build log twice, in one case with no file name.
+    /// </para>
+    /// </remarks>
+    private static void ProduceSchedules(
+        SourceProductionContext production,
+        ImmutableArray<AnalysisResult?> results,
+        ImmutableArray<FlowTriggersModel?> triggers,
+        bool schedulingAvailable,
+        string assemblyName)
+    {
+        if (!schedulingAvailable)
+        {
+            return;
+        }
+
+        var declared = triggers
+            .Where(static t => t is not null)
+            .GroupBy(static t => t!.FlowId, StringComparer.Ordinal)
+            .ToDictionary(static g => g.Key, static g => g.First()!, StringComparer.Ordinal);
+
+        var models = results
+            .Where(static r => r is { IsSuccess: true, Model: not null })
+            .Select(static r => r!.Model!)
+            .OrderBy(static m => m.FlowId, StringComparer.Ordinal)
+            .ToList();
+
+        var schedules = new List<ScheduleModel>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var flow in models)
+        {
+            if (!declared.TryGetValue(flow.FlowId, out var flowTriggers) || !CanBeFired(flow))
+            {
+                continue;
+            }
+
+            foreach (var trigger in flowTriggers.Triggers.Where(IsScheduleAddress))
+            {
+                schedules.Add(new ScheduleModel(
+                    flow.FlowId,
+                    flow.FullTypeName,
+                    ScheduleMethodName(flow.TypeName, names),
+                    trigger.Cron!,
+                    trigger.TimeZone ?? "UTC",
+                    MissedFireFor(flowTriggers, trigger.Cron!)));
+            }
+        }
+
+        if (schedules.Count > 0)
+        {
+            production.AddSource(
+                ScheduleEmitter.FileName,
+                SourceText.From(ScheduleEmitter.Emit(assemblyName, schedules), Encoding.UTF8));
+        }
+    }
+
+    /// <summary>Whether a firing of this flow could be started, and started once.</summary>
+    /// <remarks>
+    /// The two conditions <c>FLOWX1037</c> reports, restated as a predicate: a cron firing has no
+    /// body, so the flow has to bind the occurrence; and an ephemeral flow journals no instance,
+    /// so nothing would refuse a second node's firing of the same occurrence.
+    /// </remarks>
+    private static bool CanBeFired(FlowModel flow) =>
+        string.Equals(flow.InputTypeName, "FlowX.ScheduledFire", StringComparison.Ordinal) &&
+        string.Equals(flow.Profile, "Durable", StringComparison.Ordinal);
+
+    /// <summary>A schedule trigger this build could read an expression off.</summary>
+    /// <remarks>
+    /// A trigger whose kind is <c>Schedule</c> but whose arguments this compiler could not
+    /// interpret reaches the manifest as a bare kind, and must produce no registration for the
+    /// same reason it produces no endpoint: an expression nobody read is not a schedule to fire.
+    /// </remarks>
+    private static bool IsScheduleAddress(TriggerModel trigger) =>
+        string.Equals(trigger.Kind, "Schedule", StringComparison.Ordinal) &&
+        !string.IsNullOrEmpty(trigger.Cron);
+
+    /// <summary>
+    /// The missed-fire policy declared beside this expression, or the attribute's own default.
+    /// </summary>
+    /// <remarks>
+    /// Joined on the expression rather than on position, because <c>FlowTriggersModel</c> sorts
+    /// its triggers ordinally so the manifest is byte-stable and the declarations are in source
+    /// order. A flow declaring the same expression twice gets the first policy for both, which is
+    /// a declaration nobody should write and which fires one schedule either way — the two
+    /// registrations collapse onto one key in <c>FlowScheduleCatalog</c>.
+    /// </remarks>
+    private static string MissedFireFor(FlowTriggersModel triggers, string cron) => triggers.Schedules
+        .Where(schedule => string.Equals(schedule.Cron, cron, StringComparison.Ordinal))
+        .Select(static schedule => schedule.MissedFire)
+        .FirstOrDefault() ?? "RunOnce";
+
+    /// <summary>The extension method one schedule is registered by.</summary>
+    /// <remarks>
+    /// Named from the flow's type for <see cref="MethodName"/>'s reason:
+    /// <c>services.AddReconcileLedgerFlowSchedule()</c> reads as the flow it registers. A flow
+    /// declaring two schedules takes a numeric suffix, deterministically, in the order the flows
+    /// were sorted by id.
+    /// </remarks>
+    private static string ScheduleMethodName(string typeName, HashSet<string> taken)
+    {
+        var candidate = "Add" + typeName + "Schedule";
+        var suffix = 2;
+
+        while (!taken.Add(candidate))
+        {
+            candidate = "Add" + typeName + "Schedule" + suffix.ToString(CultureInfo.InvariantCulture);
+            suffix++;
+        }
+
+        return candidate;
     }
 
     /// <summary>
@@ -434,7 +591,7 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
         var attribute = context.Attributes.FirstOrDefault(a => a.ConstructorArguments.Length > 0);
         var flowId = attribute?.ConstructorArguments[0].Value as string ?? symbol.Name;
 
-        return new FlowTriggersModel(flowId, declared);
+        return new FlowTriggersModel(flowId, declared, TriggerReader.ReadSchedules(symbol));
     }
 
     private static void ProduceManifest(

@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Text.Json;
+using FlowX.Compiler.Analysis;
 using FlowX.Compiler.Emit;
 using Shouldly;
 using Xunit;
@@ -118,8 +119,10 @@ public sealed class ScheduleGenerationTests
 
         trigger.GetProperty("kind").GetString().ShouldBe("Schedule");
 
-        SchedulesIn(run).ShouldContain("\"" + trigger.GetProperty("cron").GetString() + "\"");
-        SchedulesIn(run).ShouldContain("\"" + trigger.GetProperty("timeZone").GetString() + "\"");
+        var generated = SchedulesIn(run).ShouldNotBeNull();
+
+        generated.ShouldContain("\"" + trigger.GetProperty("cron").GetString() + "\"");
+        generated.ShouldContain("\"" + trigger.GetProperty("timeZone").GetString() + "\"");
     }
 
     /// <summary>The declared missed-fire policy reaches the registration.</summary>
@@ -137,6 +140,7 @@ public sealed class ScheduleGenerationTests
             StringComparison.Ordinal);
 
         SchedulesIn(RunOn(source, HostingStub))
+            .ShouldNotBeNull()
             .ShouldContain("global::FlowX.MissedFirePolicy.RunAll");
     }
 
@@ -153,10 +157,9 @@ public sealed class ScheduleGenerationTests
     {
         var source = Scheduled.Replace("ScheduledFire", "ReconciliationDone", StringComparison.Ordinal);
 
-        var run = RunOn(source, HostingStub);
-
-        run.Ids.ShouldContain("FLOWX1037");
-        SchedulesIn(run).ShouldBeNull("a flow that cannot bind an occurrence gets no registration");
+        GeneratorHarness.Analyze(source, new TriggerDeclarationAnalyzer()).ShouldContain("FLOWX1037");
+        SchedulesIn(RunOn(source, HostingStub))
+            .ShouldBeNull("a flow that cannot bind an occurrence gets no registration");
     }
 
     /// <summary>An ephemeral scheduled flow is reported for the same reason.</summary>
@@ -170,10 +173,8 @@ public sealed class ScheduleGenerationTests
         var source = Scheduled.Replace(
             ", Profile = ExecutionProfile.Durable", string.Empty, StringComparison.Ordinal);
 
-        var run = RunOn(source, HostingStub);
-
-        run.Ids.ShouldContain("FLOWX1037");
-        SchedulesIn(run).ShouldBeNull();
+        GeneratorHarness.Analyze(source, new TriggerDeclarationAnalyzer()).ShouldContain("FLOWX1037");
+        SchedulesIn(RunOn(source, HostingStub)).ShouldBeNull();
     }
 
     /// <summary>A flow with no cron produces no registration and no rule.</summary>
@@ -183,9 +184,7 @@ public sealed class ScheduleGenerationTests
         var source = Scheduled.Replace(
             "[CronTrigger(\"0 2 * * *\", TimeZone = \"Europe/Berlin\")]", string.Empty, StringComparison.Ordinal);
 
-        var run = RunOn(source, HostingStub);
-
-        run.Ids.ShouldNotContain("FLOWX1037");
-        SchedulesIn(run).ShouldBeNull();
+        GeneratorHarness.Analyze(source, new TriggerDeclarationAnalyzer()).ShouldNotContain("FLOWX1037");
+        SchedulesIn(RunOn(source, HostingStub)).ShouldBeNull();
     }
 }

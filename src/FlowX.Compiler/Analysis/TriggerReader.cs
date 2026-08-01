@@ -129,6 +129,74 @@ public static class TriggerReader
         return triggers;
     }
 
+    /// <summary>
+    /// What each <c>[CronTrigger]</c> on the type declares that the manifest does not carry.
+    /// </summary>
+    /// <param name="flow">The flow's class symbol.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>This reads no address.</strong> The cron expression comes back only as the key
+    /// that joins one of these to the <see cref="TriggerModel"/> <see cref="Read"/> produced, and
+    /// the registration takes its expression and its zone from that model — the arrangement
+    /// <c>EndpointEmitter</c> has with a route, and the arrangement that makes a declared
+    /// schedule and a fired one the same declaration
+    /// (<a href="../../../docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
+    /// </para>
+    /// <para>
+    /// <c>MissedFire</c> is the only property here because it is the only one this release's
+    /// runtime reads. <c>Overlap</c>, <c>Jitter</c> and <c>PerTenant</c> are declared on the same
+    /// attribute and reach nothing, which <c>docs/09-Trigger-Model.md §8</c> records rather than
+    /// this method pretending otherwise.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<ScheduleDeclaration> ReadSchedules(INamedTypeSymbol? flow)
+    {
+        if (flow is null)
+        {
+            return System.Array.Empty<ScheduleDeclaration>();
+        }
+
+        var schedules = new List<ScheduleDeclaration>();
+
+        foreach (var attribute in flow.GetAttributes())
+        {
+            if (attribute.AttributeClass?.ToDisplayString() != "FlowX.CronTriggerAttribute" ||
+                Positional(attribute, 0) is not { } cron)
+            {
+                continue;
+            }
+
+            schedules.Add(new ScheduleDeclaration(cron, MissedFireName(attribute)));
+        }
+
+        return schedules;
+    }
+
+    /// <summary>
+    /// Maps <c>MissedFirePolicy</c>'s underlying value back to its name.
+    /// </summary>
+    /// <remarks>
+    /// Spelled out rather than derived, for the reason <see cref="KindName"/> gives: reordering
+    /// the enum is a breaking change the compiler cannot see here, and it should surface as a
+    /// failing test rather than as generated code that registers the wrong behaviour. The
+    /// default matches the attribute's own — <c>RunOnce</c> — so omitting the argument and
+    /// writing it produce the same registration.
+    /// </remarks>
+    private static string MissedFireName(AttributeData attribute)
+    {
+        var declared = attribute.NamedArguments
+            .Where(pair => pair.Key == "MissedFire")
+            .Select(pair => pair.Value.Value)
+            .FirstOrDefault();
+
+        return declared switch
+        {
+            0 => "Skip",
+            2 => "RunAll",
+            _ => "RunOnce",
+        };
+    }
+
     /// <summary>Whether an attribute derives from <c>FlowX.TriggerAttribute</c>.</summary>
     /// <remarks>
     /// Public because <c>TriggerDeclarationAnalyzer</c> asks the same question and must
