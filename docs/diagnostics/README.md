@@ -298,6 +298,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1032](FLOWX1032.md) | Declared policy is not executed by the runtime | **A step declaring a three-second timeout, three retries and a circuit breaker, published in the manifest as wrapped in all three and dispatched once with no clock, no attempt count and no breaker** |
 | [FLOWX1033](FLOWX1033.md) | `CompensationRetry` is declared on a step with no compensation | **The one policy the runtime executes, dropped by the emitter in silence: a manifest promising five attempts at an undo, and a plan with no undo to attempt** |
 | [FLOWX1034](FLOWX1034.md) | Step declares more than one policy set | **A declared timeout, breaker or audit deleted before the plan and the manifest are written, because the second `.WithPolicy(...)` on a step replaces the first rather than adding to it** |
+| [FLOWX1035](FLOWX1035.md) | `CompensationRetry` declares a single attempt | A manifest entry that says the undo is retried, over an undo dispatched exactly once — `IsRetrying` is `Attempts > 1`, so one attempt leaves `HasCompensationPolicies` false and the engine takes `CompensationPolicy.None` |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -440,7 +441,16 @@ page](FLOWX1019.md) already recorded the gap — it declines to count a second `
 the grounds that "which set wins is a resolution question this rule has no answer to" — and
 this is the rule that answers it.
 
-The next is `FLOWX1035`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1035` is claimed** — *`CompensationRetry` declares a single attempt*:
+`CompensationPolicy.IsRetrying` is `Attempts > 1`, so `attempts: 1` leaves
+`ExecutionPlan.HasCompensationPolicies` false and the engine takes `CompensationPolicy.None`
+— one dispatch, which is what a step with no declared chain already gets — while
+`ManifestWriter` publishes `CompensationRetry` with its stage and no parameters, so nothing
+in the published contract tells it apart from five attempts. It is none of the reservations,
+and it is not `FLOWX1033`: that rule asks whether the retry has an undo to wrap, and this one
+presupposes that it has and asks whether the count retries anything.
+
+The next is `FLOWX1036`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 
