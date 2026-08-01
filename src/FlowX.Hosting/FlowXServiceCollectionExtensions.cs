@@ -115,6 +115,18 @@ public static class FlowXServiceCollectionExtensions
                 ResolveScheduleScan(provider),
                 provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
 
+        // Registered whether or not anything is put in it, for FlowScheduleCatalog's reason.
+        services.TryAddSingleton<FlowBusCatalog>();
+
+        // A fourth loop, and not a query on any of the first three. A bus pass asks a broker
+        // rather than an index of ours, so it has no interval in common with the sweeps that read
+        // rows: a deployment reasonably wants sub-second consumption and ten-second recovery, and
+        // one loop whose interval meant both could not give it either.
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowBusService>(
+            static provider => new FlowBusService(
+                ResolveBusScan(provider),
+                provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
+
         services.TryAddSingleton<FlowXHealthCheck>();
 
         // Registering the type is not the same as registering the check. Before this,
@@ -238,6 +250,120 @@ public static class FlowXServiceCollectionExtensions
             durability,
             provider.GetRequiredService<IOptions<FlowXOptions>>().Value,
             provider.GetRequiredService<IClock>());
+    }
+
+    /// <summary>The bus pass, or null when this host has no broker or no journal.</summary>
+    /// <remarks>
+    /// <para>
+    /// Two ways to be null, and they are different configurations. <strong>No
+    /// <see cref="IBusConsumer"/></strong> is the ordinary state of an application that consumes
+    /// nothing, and of one that declares <c>[BusTrigger]</c> and forgot to wire a broker — the
+    /// second is a real mistake and is caught by <c>FlowBusScan.IsEnabled</c> being false rather
+    /// than by a start-up failure, because a flow library referenced by a host that serves only
+    /// some of its subscriptions is legitimate. <strong>No journal</strong> is not a supported
+    /// configuration for a subscription at all, for <see cref="ResolveScheduleScan"/>'s reason
+    /// one transport over: without a primary key to refuse a redelivery, one message starts one
+    /// flow per delivery and nothing records that it did. <c>FlowBusCatalog.Add</c> is where an
+    /// application that meant to subscribe finds out.
+    /// </para>
+    /// <para>
+    /// <strong>Whether anything is registered is deliberately not decided here.</strong>
+    /// Subscriptions reach the catalogue from the composition root <em>after</em> the container is
+    /// built, by the generated <c>AddFlowXSubscriptions</c>, exactly as a flow reaches
+    /// <see cref="FlowCatalog"/>.
+    /// </para>
+    /// </remarks>
+    private static FlowBusScan? ResolveBusScan(IServiceProvider provider)
+    {
+        if (provider.GetService<IBusConsumer>() is not { } consumer ||
+            ResolveDurability(provider) is not { } durability)
+        {
+            return null;
+        }
+
+        return new FlowBusScan(
+            provider.GetRequiredService<FlowHost>(),
+            provider.GetRequiredService<FlowBusCatalog>(),
+            consumer,
+            durability,
+            provider.GetRequiredService<IOptions<FlowXOptions>>().Value);
+    }
+}
+
+/// <summary>
+/// What generated subscription registration code calls, and the only thing it knows about this
+/// assembly.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>A named type with a stable signature, for <c>FlowScheduleRegistration</c>'s
+/// reason.</strong> The generator links against nothing and knows this assembly only by the string
+/// <c>"FlowX.Hosting.FlowBusSubscriptionRegistration"</c>, which it looks up in the user's own
+/// compilation before emitting anything. An application that does not reference
+/// <c>FlowX.Hosting</c> gets no file, no type and no IL.
+/// </para>
+/// <para>
+/// <strong>It takes primitives and not a <see cref="BusSubscription"/>.</strong> The generated
+/// call site is C# the compiler writes from attribute data, and attribute data is strings.
+/// </para>
+/// </remarks>
+public static class FlowBusSubscriptionRegistration
+{
+    /// <summary>Registers one declared subscription on this node.</summary>
+    /// <param name="services">The built container, which is where the dispatcher comes from.</param>
+    /// <param name="plan">The compiled flow.</param>
+    /// <param name="dispatcher">Resolves the flow's generated dispatcher.</param>
+    /// <param name="topic">The topic, exactly as the manifest published it.</param>
+    /// <param name="group">The consumer group, exactly as the manifest published it.</param>
+    /// <param name="transport">
+    /// The broker family the declaration named, or null when it named none.
+    /// </param>
+    /// <returns>The same provider, so registrations chain.</returns>
+    /// <exception cref="ArgumentException">
+    /// The flow does not declare <c>Durable</c>, or a broker is wired that does not serve the
+    /// declared transport. Both are startup failures on purpose — see
+    /// <see cref="FlowBusCatalog.Add"/>.
+    /// </exception>
+    public static IServiceProvider Add(
+        IServiceProvider services,
+        ExecutionPlan plan,
+        Func<IServiceProvider, IStepDispatcher> dispatcher,
+        string topic,
+        string group,
+        string? transport = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(dispatcher);
+
+        // A [KafkaTrigger] on a host wired for a different bus is refused here, loudly. Serving
+        // it anyway would consume from the wrong broker while the manifest went on publishing
+        // "transport": "kafka" to everyone reading it — a documented-but-false claim, which is
+        // the class of defect the manifest exists to eliminate.
+        if (transport is not null &&
+            services.GetService<IBusConsumer>() is { } consumer &&
+            !string.Equals(consumer.Transport, transport, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"Flow '{plan.Flow.Id}' declares a '{transport}' subscription to '{topic}' and " +
+                $"this host has wired an IBusConsumer serving '{consumer.Transport}'. Serving it " +
+                "anyway would consume from a broker the manifest does not name. Declare " +
+                "[BusTrigger] if the flow is genuinely transport-neutral, or wire the broker the " +
+                "flow names.",
+                nameof(transport));
+        }
+
+        services.GetRequiredService<FlowBusCatalog>().Add(
+            new BusSubscription(plan.Flow.Id, plan.Flow.Version, topic, group, transport),
+            plan,
+            dispatcher(services));
+
+        // A consumed instance is a durable instance like any other: a node that dies holding one
+        // has abandoned it, and a recovery sweep can only take it over if this node can turn its
+        // (flow_id, flow_version) back into a plan.
+        services.GetRequiredService<FlowCatalog>().Add(plan, dispatcher(services));
+
+        return services;
     }
 }
 
