@@ -220,12 +220,26 @@ and they are corrected above rather than quietly redrawn
 - ***The lease row was implicitly deletable.*** It is never `DELETE`d; release and
   expiry are an `UPDATE` to `expires_at`. See §3.
 
-`flow_signal` is the one entity above with no table behind it. Durable suspension and
-`AwaitSignal` are WP-63, and a durable flow still runs to completion inside one
-invocation — so no instance is ever `Suspended` and no signal is ever delivered.
-[`FLOWX1017`](diagnostics/FLOWX1017.md) refuses `AwaitSignal` below the `Durable`
-profile, and [`FLOWX1031`](diagnostics/FLOWX1031.md) refuses it at that profile too:
-between them, no flow can declare a suspension point this schema has nowhere to record.
+`flow_signal` is the one entity above with no table behind it, and **since WP-63
+(2026-08-01) that is a decision rather than a gap**. *This paragraph said durable suspension
+was unbuilt, no instance was ever `Suspended` and no signal was ever delivered.* All three
+have expired: a `Durable` flow that reaches `.AwaitSignal<T>(timeout)` is sealed `Suspended`
+at its resume frontier, and `FlowHost.SignalAsync` resumes it through the same step loop the
+recovery scan uses.
+
+**What it does not do is write a signal row.** A delivered signal is journaled as the
+`AwaitSignal` step's *own* `flow_step` row — same primary key `(instance_id, scope, step_id,
+attempt)`, same transaction, same state-bag snapshot — so the derived frontier that decides
+which steps to skip is also what makes a redelivered signal inert, and no migration was
+needed. A second table would have been one fact stored in two places, and the stored copy
+would be the one nothing checks; that is
+[ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md)'s own argument for deriving
+the resume position, applied to a signal.
+
+[`FLOWX1017`](diagnostics/FLOWX1017.md) still refuses `AwaitSignal` below `Durable`.
+[`FLOWX1031`](diagnostics/FLOWX1031.md) no longer refuses it at `Durable`, and is narrowed to
+`.Delay(...)` and `.OnTimeout(...)` — which do still need a table this schema has nowhere for,
+because a **timer** is a row someone has to sweep and a signal is not.
 
 | Property | Guarantee |
 |---|---|

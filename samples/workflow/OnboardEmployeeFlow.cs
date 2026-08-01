@@ -16,11 +16,16 @@ namespace Workflow;
 /// than listed, because how they combine is the part a reader cannot get from the table.
 /// </para>
 /// <para>
-/// <strong>What is not below is the point of the README.</strong> <c>AwaitSignal</c>,
-/// <c>Delay</c> and <c>OnTimeout</c> — the three that would make this a multi-day process
-/// with human waits — are absent. They are not absent because the sample chose a shorter
-/// story: they do not work. Durable suspension is WP-63 and has not started, and the
-/// README's first section shows exactly what the compiler does with them today.
+/// <strong>What is not below, and why it is not.</strong> <c>AwaitSignal</c>, <c>Delay</c>
+/// and <c>OnTimeout</c> — the three that would make this a multi-day process with human
+/// waits — are absent, and the reason changed at WP-63. <c>Delay</c> and <c>OnTimeout</c>
+/// are still absent because they do not work: there is no timer, and both are reported as
+/// <c>FLOWX1031</c>. <c>AwaitSignal</c> works, and is absent from <em>this</em> flow for a
+/// different reason: this flow carries an <c>[HttpTrigger]</c>, the generated endpoint
+/// answers <c>200</c> with the projected output, and a suspended flow has no output to
+/// project. The wait lives in <see cref="AcceptOfferFlow"/>, which has no trigger attribute
+/// and two hand-written routes in <c>Program.cs</c>. The README's second section is the
+/// account.
 /// </para>
 /// <para>
 /// <strong>Everything below compiles to one flat <c>StepNode[]</c>.</strong> The conditional

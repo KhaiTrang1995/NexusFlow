@@ -5,11 +5,20 @@ bounded loop, a composed child flow and a business rejection is **one readable f
 every effect it has is reversed in strict reverse order when any part of it fails —
 including the child's, and including one undo per element of the loop.
 
-**Claim not proved, and previously claimed here:** that the same file expresses *a multi-day
-process with human approvals, escalations and timers*. It does not. The three constructs that
-would express it — `AwaitSignal`, `Delay` and `OnTimeout` — do not work, and
-[§2](#2-what-this-sample-does-not-do-and-why) shows exactly what the compiler does with each
-of them today. Durable suspension is **WP-63**, which has not started.
+**Second claim proved, since WP-63:** a **multi-day process with a human wait** is one
+readable file too. `offer.accept` sends an offer out for countersignature and stops. The
+request that started it returns `202` with an instance id, the instance is one `Suspended`
+row in PostgreSQL holding no thread, no pooled context and no lease, and a countersignature
+arriving days later on a different request resumes it through the same step loop a recovery
+scan uses — including the compensation the first node registered and did not live to run.
+[§2](#2-the-wait-what-it-used-to-do-instead-and-what-is-still-missing) is the account, and it is the section that used
+to say the opposite.
+
+**Claim still not proved:** the *escalations and timers* half. `.Delay(...)` and
+`.OnTimeout(...)` compile to nothing and say so as
+[`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md), so the duration an `AwaitSignal` declares
+reaches the plan and nothing arms it. What bounds a waiting instance is its own
+`[FlowDeadline]`. That is the other half of **WP-63**.
 
 Run it:
 
@@ -108,8 +117,9 @@ public sealed partial class ProvisionWorkspaceFlow : Flow<ProvisionWorkspace, Wo
 | `SubFlow` | `workspace.provision` | `SubFlowTests` (whole class) |
 | `WithPolicy` | `identity.create`, `workspace.allocate_desk` | `WithPolicyTests` — **and see [§3](#3-withpolicy-reaches-the-plan-one-of-its-policies-runs)** |
 | `Emit` | `employee.onboarded` | `ManifestTests.TheEventIsPublishedWithoutASuppression`, and the outbox row in [§5](#5-what-it-actually-does-when-you-run-it) |
-| `Durable` + `[FlowDeadline]` | both flows | `TimeoutTests`, `ResumeTests` |
-| `OnTimeout` | **absent** | [§2](#2-what-this-sample-does-not-do-and-why) |
+| `Durable` + `[FlowDeadline]` | all three flows | `TimeoutTests`, `ResumeTests` |
+| `AwaitSignal` | not here — `offer.accept`, the third flow, is where the wait is | `SuspensionTests`, and [§2](#2-the-wait-what-it-used-to-do-instead-and-what-is-still-missing) |
+| `OnTimeout` | **absent** | [§2](#2-the-wait-what-it-used-to-do-instead-and-what-is-still-missing) |
 
 The nesting is the part a table cannot show: the loop contains a conditional whose two arms
 meet, the fork's branches carry their own compensations, and the child is composed from the
@@ -137,12 +147,101 @@ open, no payroll record.
 
 ---
 
-## 2. What this sample does not do, and why
+## 2. The wait, what it used to do instead, and what is still missing
 
-The claim this file used to make was: *"a multi-day process with human approvals,
-escalations, timers and reversible steps is one readable file — and it survives every
-deployment that happens during those days."* Only the last four words of the first clause
-are true.
+**This section is now half history.** The claim this file used to make was: *"a multi-day
+process with human approvals, escalations, timers and reversible steps is one readable file —
+and it survives every deployment that happens during those days."* When it was written, only
+the last four words of the first clause were true. **The human wait is true now**; the
+escalations and the timers are not.
+
+### 2.0 What waits, and what it costs
+
+`offer.accept` is the second flow in this application and it exists for one construct:
+
+```csharp
+[Flow("offer.accept", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "people-ops")]
+[FlowDeadline("P30D")]
+public sealed partial class AcceptOfferFlow : Flow<OfferToAccept, AcceptedOffer>
+{
+    protected override void Define(IFlowBuilder<OfferToAccept, AcceptedOffer> flow) => flow
+        .Step<SendOfferForSignature>().CompensateWith<WithdrawOffer>()
+        .AwaitSignal<OfferCountersigned>(Waits.Countersignature)   // seven days
+        .Step<StartOnboarding>()
+        .Return(ctx => new AcceptedOffer(
+            ctx.Input.CandidateId, ctx.Get<OnboardingStarted>().OnboardingId));
+}
+```
+
+Run it against a real PostgreSQL and the two requests look like this:
+
+```
+$ curl -i -X POST :5199/api/v1/offers -d '{"candidateId":"c-42","role":"staff-engineer","site":"london"}'
+HTTP/1.1 202 Accepted
+{"instanceId":"019fbd44-20de-77fc-9c6a-524782b5ad60","awaitingSignal":"offer.countersigned"}
+```
+
+```sql
+select state from flowx.flow_instance where instance_id = '019fbd44-…';  -- Suspended
+select step_id, capability_id from flowx.flow_step where instance_id = '019fbd44-…';
+--  0 | offer.send
+select count(*) from flowx.flow_lease
+ where instance_id = '019fbd44-…' and expires_at > now();                --  0
+```
+
+One row, no lease. Then, on a different request:
+
+```
+$ curl -i -X POST :5199/api/v1/offers/019fbd44-…/signals/offer.countersigned \
+       -d '{"envelopeId":"env-c-42","signedBy":"ada","signedAt":"2026-08-01T12:00:00Z"}'
+HTTP/1.1 200 OK
+```
+
+```sql
+select step_id, capability_id, outcome from flowx.flow_step where instance_id = '019fbd44-…';
+--  0 | offer.send          | Success
+--  1 | offer.countersigned | Success   ← the signal, journaled as the step's own row
+--  2 | onboarding.start    | Success
+select state from flowx.flow_instance where instance_id = '019fbd44-…';  -- Completed
+```
+
+**Four things in that are worth reading off rather than being told.**
+
+1. **There is no signal table.** The delivered signal is the suspension point's own
+   `flow_step` row, with the payload as its `result` and the state-bag snapshot beside it. So
+   the frontier that skips committed steps is also what makes a redelivered signal inert —
+   `SuspensionTests.ACountersignatureDeliveredTwiceStartsOneOnboarding` — and nothing about
+   the schema changed to support suspension.
+2. **`onboarding.start` binds `OfferCountersigned`**, a contract no step produced. The engine
+   seeds a delivered signal into the state bag under the type the flow declared, before it
+   dispatches the suspension point, so a step after the wait reads it exactly as it reads an
+   earlier step's output — and nothing in the capability knows there was a wait.
+3. **The unwind spans the wait.** `offer.send`'s compensation was registered on the
+   invocation that suspended, and that invocation is long gone. Make `onboarding.start` fail
+   and the offer is still withdrawn: the resumed flow rebuilds the unwind stack from the
+   journal's committed rows, and the undo binds an `OfferToAccept` restored from the
+   journaled state bag —
+   `SuspensionTests.AFailureAfterTheWaitWithdrawsTheOfferThatWentOutBeforeIt`.
+4. **A waiting instance is not swept up.** Both shipped recovery indexes list `Pending`,
+   `Running` and `Compensating` only, so a scan does not take a lease on every waiting offer
+   every TTL, resume it, find the same wait open and put it back —
+   `SuspensionTests.AWaitingOfferIsNotSweptUpAsAbandonedWork`. Left running for three minutes,
+   the second offer above is still `Suspended` with one row.
+
+**`offer.accept` has no `[HttpTrigger]`, and that is a gap in the transport rather than a
+choice.** `MapFlowX` generates an endpoint that answers `200` with the flow's projected
+output, and a suspended flow has none — its `.Return(...)` reads values the steps after the
+wait were going to produce. `202 Accepted` with the instance id is the answer that shape
+needs, `plugins/FlowX.Http` has no path for it, and `Program.cs` therefore maps the two routes
+above by hand rather than publishing a route that fails on the request that suspends.
+
+**And the timeout is carried, not armed.** `Waits.Countersignature` reaches
+`StepNode.SignalTimeout` — that is the fabricated one hour below gone — and nothing fires when
+it expires. What bounds this flow is `[FlowDeadline("P30D")]`, checked at every step boundary
+*including* the one that decides whether to suspend, so an instance whose budget has gone
+times out rather than waiting for a signal it can no longer act on.
+
+### 2.1 What `AwaitSignal` used to do — kept, because it is why the fix has the shape it has
 
 `AwaitSignal`, `Delay` and `OnTimeout` are declared on `IFlowBuilder`, documented in
 `docs/08-Flow-Definition.md §3.5`, and shown in the flow this README used to print. Here is
@@ -182,34 +281,35 @@ Three separate failures, none of them reported:
    yet, which is the right default and is why this is silent.
 2. **`Delay` produces no step at all.** Same `default:` arm, same silence. A flow that says
    "wait a day before sending the welcome pack" sends it immediately.
-3. **`AwaitSignal` compiles to a step that completes.** `FLOWX1017` fires only outside the
-   `Durable` profile, so a durable flow is accepted. The generated dispatcher answers
+3. **`AwaitSignal` compiled to a step that completes.** `FLOWX1017` fires only outside the
+   `Durable` profile, so a durable flow was accepted. The generated dispatcher answered
    `StepOutcome.Success` for that index — *"Emit and AwaitSignal have no capability to call"*
-   — and `FlowEngine` has no case for `StepKind.AwaitSignal` at all, so it falls through to
-   the ordinary capability path and returns. `TheAbsentHalfTests.AnAwaitSignalStepDoesNotWaitForAnything`
-   runs this shape on the real engine against a real journal: three step boundaries, three
-   committed rows, the instance `Completed`, and the clock never moves.
+   — and `FlowEngine` had no case for `StepKind.AwaitSignal` at all, so it fell through to
+   the ordinary capability path and returned. `TheAbsentHalfTests.AnAwaitSignalStepDoesNotWaitForAnything`
+   ran that shape on the real engine against a real journal — three step boundaries, three
+   committed rows, the instance `Completed`, and the clock never moving — and was written to
+   go red the day WP-63 landed. It did, and it is gone;
+   [`SuspensionTests`](../../tests/Workflow.Tests/SuspensionTests.cs) is what replaced it.
 
    Note also `TimeSpan.FromHours(1)` in the generated plan. The author wrote seven days.
-   `FlowEmitter` emits the constant `TimeSpan.FromHours(1)` for every `AwaitSignal`, so the
-   declared timeout is discarded too.
+   `FlowEmitter` emitted the constant for every `AwaitSignal`, so the declared timeout was
+   discarded too. *This README said the manifest published that hour as well. It did not:
+   `ManifestWriter` publishes `"kind": "AwaitSignal"` and no duration at all, so the
+   fabrication reached the plan and the generated source and stopped there. The manifest
+   still publishes no signal identity and no timeout — that is owed, and it is a schema change
+   under [ADR-0017](../../docs/adr/ADR-0017-manifest-v1-freeze-criteria.md) rather than a line
+   of emitter code.*
 
-**So a flow that used these would compile, run green, publish a manifest naming the signal,
-and quietly not wait.** That is worse than a build error, and it is exactly the shape the
-old README documented as a feature. This sample therefore has no human wait, no escalation
-and no timer, and it says so here rather than pretending the domain never needed them:
-`RecordEquipmentApproval` records an approval that arrived *with the request*, and is not a
-step that waits for a person.
+**So a flow that used these compiled, ran green, and quietly did not wait.** That was worse
+than a build error, and it was exactly the shape the old README documented as a feature.
 
-### What the compiler says now
+### 2.2 What the compiler says now
 
-[`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) closed the silence. The same throwaway
-project, same profile, same three lines:
+[`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) closed the silence, as an error on
+`AwaitSignal` and a warning on the other two. **WP-63 narrowed it to the other two.** The same
+throwaway project, same profile, same three lines:
 
 ```
-Flows.cs(29,10): error FLOWX1031: Flow 'AcceptOfferFlow' declares 'AwaitSignal', which this
-  release cannot honour: the step completes immediately, so the flow does not wait, and the
-  plan would carry a one-hour timeout in place of the duration declared here
 Flows.cs(30,14): warning FLOWX1031: Flow 'AcceptOfferFlow' declares 'OnTimeout', which this
   release cannot honour: the block is discarded, so its steps reach no plan, no dispatcher
   and no manifest
@@ -218,31 +318,42 @@ Flows.cs(31,10): warning FLOWX1031: Flow 'AcceptOfferFlow' declares 'Delay', whi
   waiting
 ```
 
-**And there is no longer a generated plan for that flow at all.** The `AwaitSignal` report
-is an *error*, so the generator emits neither the plan nor the manifest entry — which is
-what removes the fourth failure above, the one that is not about suspension. `FlowEmitter`
-no longer contains `TimeSpan.FromHours(1)`: the compiler has no timeout to write but the one
-the author declared, and the model has nowhere to carry it until WP-63 adds the field. Given
-a choice between publishing a duration nobody wrote and publishing nothing, it publishes
-nothing.
+The `AwaitSignal` line is gone, and the plan it produces carries the author's own expression:
+
+```csharp
+StepNode.ForAwaitSignal(1, "offer.countersigned", Waits.Countersignature),
+```
+
+**The refusal in `FlowEmitter` was made unnecessary, not deleted.** The error existed because
+`StepNode.ForAwaitSignal` demands a duration and the compiler's step model had no field for
+one, which left two endings — publish a value nobody wrote, or publish no plan. WP-63 added
+the field, so the emitter writes what the author declared; the `InvalidOperationException` is
+still in that arm, still saying this generator does not invent a duration, and nothing reaches
+it because `AwaitSignal<TSignal>(TimeSpan timeout)` has no overload without a timeout.
+`SuspensionConstructTests.TheEmitterStillRefusesAnAwaitSignalItHasNoDurationFor` pins it.
 
 `Delay` and `OnTimeout` stay **warnings**, because dropping a call leaves a plan that says
 less than the source and nothing untrue — the category `FLOWX1027` occupies at the severity
-C# gives `CS0162`. The full argument, including why `FLOWX1028`'s "an error would erase the
-inventory" reasoning stops where it does, is on
-[the page](../../docs/diagnostics/FLOWX1031.md#why-awaitsignal-is-an-error-and-the-other-two-are-warnings).
+C# gives `CS0162` — and because an error would erase the `.Delay(...)` grep the timer package
+needs to find the flows that asked for one. Narrowing rather than deleting is what
+`FLOWX1028` did when `Durable` started running, and for the same reason: deleting the rule
+outright would hand a discarded `OnTimeout` block the silence `AwaitSignal` used to have.
 
-One consequence is worth stating plainly: with `FLOWX1017` an error below `Durable` and
-`FLOWX1031` an error at it, **`AwaitSignal` has no profile it can legally declare**, and
-`AwaitSignalRequiresDurableCodeFixProvider` is a quick action whose result is a different
-diagnostic. That is an accurate description of a platform with no suspension engine rather
-than a cost the rule imposes, and it is argued rather than assumed on the page.
+One consequence is worth stating plainly, because this README used to state its opposite:
+`FLOWX1017` is an error below `Durable` and `FLOWX1031` no longer reports at it, so
+**`AwaitSignal` has exactly one profile it can declare and that profile honours it** — and
+`AwaitSignalRequiresDurableCodeFixProvider` is a quick action whose result now compiles and
+waits. For two phases it was a quick action whose result was a different diagnostic.
 
 **The one timeout that does work is the flow's own deadline.** `[FlowDeadline("PT60S")]` is
 an absolute budget set when the flow starts, checked at every step boundary, and enforced by
 failing the flow and unwinding everything compensable — `TimeoutTests` moves the clock past
 it from inside a step and asserts that the overrunning step finishes, the step after it never
-starts, and the saga unwinds.
+starts, and the saga unwinds. It is also the only thing bounding a **wait**: the boundary check
+runs before the suspension point is evaluated, so an instance whose budget has gone times out
+rather than waiting for a signal it can no longer act on
+(`SuspensionTests.AWaitPastTheFlowsDeadlineTimesOutRatherThanWaiting`, in
+`FlowX.Runtime.Tests`).
 
 ---
 
@@ -536,14 +647,20 @@ after the three runs in §5 every row has `flow_instance.input IS NULL` and
 
 | Missing | Work package |
 |---|---|
-| `AwaitSignal` — a durable suspension point, a signal table, and a compiler that keeps the declared timeout: a field on the step model, a parameter through `FlowEmitter`, a manifest column | WP-63 — and [`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) is deleted with it |
-| `Delay` — a durable timer, and a `case` in `FlowAnalyzer` that lays out a step rather than reporting one | WP-63 |
-| `OnTimeout` — a layout for the branch, and something to time out of | WP-63 |
+| ~~`AwaitSignal` — a durable suspension point, a signal table, and a compiler that keeps the declared timeout~~ **done at WP-63**, and by a narrower construction than this row named: there is **no signal table** and no manifest column. A delivered signal is the suspension point's own `flow_step` row, so no schema changed; the step model got the timeout field, and [`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) was narrowed rather than deleted | WP-63 |
+| `Delay` — a durable timer, and a `case` in `FlowAnalyzer` that lays out a step rather than reporting one | WP-63, second half |
+| `OnTimeout` — a layout for the branch, and something to time out of | WP-63, second half |
+| A signal identity and a duration in `flowx.manifest.json` — the step object is `additionalProperties: false`, so this is a schema decision under [ADR-0017](../../docs/adr/ADR-0017-manifest-v1-freeze-criteria.md) | unassigned |
+| A `202 Accepted` shape in `plugins/FlowX.Http`, so an `[HttpTrigger]`ed flow may suspend. Until then `Program.cs` maps `offer.accept`'s two routes by hand | unassigned |
+| An inline composed child that may wait — refused today as `flow.suspension_inside_composition`, because a parent's composition is one row written when the child finishes | unassigned; the same schema question `SubFlowMode.AwaitCompletion` needs |
 | A resumed flow that can bind step outputs (§7.1) | WP-59 |
 | A forward policy that *executes* — the chain is in the compiled plan (§3), and nothing arms it | P4 |
 | A per-branch context, so a fork replays (§6.1) | unassigned |
 | A resumed parent that rebuilds a child's unwind stack (§6.2) | unassigned; needs a journal or index contract change |
 
-Until WP-63, a process with human waits is not something this platform can express, and a
-sample claiming otherwise is the documented-but-not-produced failure the manifest exists to
-eliminate.
+*This paragraph read: "Until WP-63, a process with human waits is not something this platform
+can express, and a sample claiming otherwise is the documented-but-not-produced failure the
+manifest exists to eliminate."* **The wait is expressible and this sample expresses it.** What
+a process with human waits still cannot express here is the *escalation* — the branch taken
+when nobody signs — because there is no clock to take it from, and a sample claiming that one
+would be the same failure with a different word in it.

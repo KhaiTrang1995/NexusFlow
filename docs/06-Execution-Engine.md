@@ -199,8 +199,17 @@ flowchart TD
 > rig that would show this under a `SIGKILL` is WP-50 and has not started
 > ([21 §8](21-Quality-Gates.md#8-reliability-gates)).
 >
-> **"Suspend/resume — yes (timers, signals)" is the cell that is still design**, and
-> it is refused at build time by [`FLOWX1017`](diagnostics/FLOWX1017.md).
+> **"Suspend/resume — yes (timers, signals)" is now half a mechanism.** *This box said
+> the whole cell was design, refused at build time.* Since WP-63 (2026-08-01) the
+> **signal** half runs: a `Durable` flow that reaches `.AwaitSignal<T>(timeout)`
+> suspends — the invocation returns, the instance is sealed `Suspended` at its resume
+> frontier holding no thread, no pooled context and no lease, and
+> `FlowHost.SignalAsync` re-enters the same step loop `FlowRecoveryScan` uses. The
+> **timer** half does not: `.Delay(...)` and `.OnTimeout(...)` still compile to
+> nothing and still say so as [`FLOWX1031`](diagnostics/FLOWX1031.md), so a wait's
+> declared duration reaches the plan and nothing arms it, and the only enforced
+> budget on a waiting instance is its own `[FlowDeadline]`. [§6](#6-suspension-waiting-without-holding-resources)
+> is the account.
 >
 > **A `Durable` flow with no journal is refused**, not run ephemerally:
 > `flow.durability_not_configured`, before its first step. Since WP-55 that is a
@@ -365,36 +374,62 @@ byte-identical step inputs and identical control flow.
 >    hook outside the loop is reached, so it sees the replaying node's time. Everything
 >    the *flow* reads is replayed; the engine's own read is not.
 >
-> `AwaitSignal` is refused at build time under **every** profile — by
-> [`FLOWX1017`](diagnostics/FLOWX1017.md) below `Durable`, and by
-> [`FLOWX1031`](diagnostics/FLOWX1031.md) at it — so a durable flow still runs to
-> completion inside one invocation. Everything §6 describes about *suspension* is
-> design, not runtime.
+> **A fourth gap closed on 2026-08-01, and it is worth naming here because this
+> paragraph used to be the place that said so.** It read: *"`AwaitSignal` is refused
+> at build time under every profile … so a durable flow still runs to completion
+> inside one invocation."* It does not. A durable flow suspends at its suspension
+> point and is resumed by a signal, and what a resumed invocation replays is what
+> every other resume replays — the committed rows, the state-bag snapshot and the
+> control-flow delegates. The delivered signal itself is journaled as the
+> `AwaitSignal` step's own row, so it is replayed by the same mechanism as a step's
+> output and adds no fourth fidelity limit. [`FLOWX1017`](diagnostics/FLOWX1017.md)
+> still refuses `AwaitSignal` below `Durable`; [`FLOWX1031`](diagnostics/FLOWX1031.md)
+> no longer refuses it at `Durable`.
 
 ---
 
 ## 6. Suspension: waiting without holding resources
 
 > [!WARNING]
-> **Nothing in this section runs, and the flow below does not compile.** It is the
-> design [WP-63](20-Roadmap.md#3-increment-detail) will build. Read it as a
-> specification.
+> **The signal half of this section runs; the clock half does not, and the flow below
+> still does not compile clean.** *This box read "nothing in this section runs" until
+> WP-63 (2026-08-01).*
 >
-> All three constructs it uses are reported by
-> [`FLOWX1031`](diagnostics/FLOWX1031.md):
->
-> | Construct | What the compiler does with it today |
+> | Construct | What the compiler and the engine do with it today |
 > |---|---|
-> | `.AwaitSignal<T>(timeout)` | **Error.** It produced a step the engine completes immediately — `FlowEngine` has no `case StepKind.AwaitSignal` — and the emitted plan carried `TimeSpan.FromHours(1)` whatever the author declared. No plan is emitted for a flow that declares it |
-> | `.OnTimeout(block)` | **Warning.** The block is discarded: its steps reach no plan, no dispatcher and no manifest |
-> | `.Delay(duration)` | **Warning.** No step is produced at all, so the flow continues without waiting |
+> | `.AwaitSignal<T>(timeout)` | **Honoured.** The plan carries the author's declared duration, `FlowEngine` has a `case StepKind.AwaitSignal`, and a `Durable` flow that reaches one with no committed row and no delivered signal stops there. No diagnostic |
+> | `.OnTimeout(block)` | **[`FLOWX1031`](diagnostics/FLOWX1031.md), warning.** The block is discarded: its steps reach no plan, no dispatcher and no manifest |
+> | `.Delay(duration)` | **[`FLOWX1031`](diagnostics/FLOWX1031.md), warning.** No step is produced at all, so the flow continues without waiting |
 >
-> Nothing writes a `Suspended` state, and there is no timer table, no signal table and
-> no scheduler engine. `samples/workflow/README.md §2` measures all of it, and
-> `TheAbsentHalfTests.AnAwaitSignalStepDoesNotWaitForAnything` runs the shape on the
-> real engine against a real journal: three committed rows, the instance `Completed`,
-> and the clock never moves. Until WP-63 lands, express the wait outside the flow —
-> split the process at the pause and trigger the second half from the arriving signal.
+> **What runs.** The instance is sealed `Suspended` with its committed prefix intact;
+> the lease is released rather than renewed for the length of the wait; the pooled
+> context goes back to the pool. `FlowHost.SignalAsync` re-enters the same
+> `FlowEngine.ExecuteAsync` a recovery scan re-enters, steps over every
+> `(scope, step)` that committed, seeds the signal's payload into the state bag under
+> the contract the flow declared, and runs on. A waiting instance is not in any
+> recovery scan's candidate set, so it is not swept up and re-suspended every TTL.
+>
+> **What does not.** There is **no scheduler engine and no timer table**, so the
+> `alt` arm of the diagram below never fires and the declared `timeout` reaches the
+> plan and the run time and is armed by nothing. The only enforced budget on a waiting
+> instance is its own `[FlowDeadline]`, checked at the step boundary that decides
+> whether to suspend — so a flow whose budget has gone times out rather than waiting.
+> There is also **no signal table**, and that one is by design rather than by
+> omission: a delivered signal is journaled as the `AwaitSignal` step's own row,
+> through the same `CommitAsync` every step boundary uses.
+>
+> `samples/workflow`'s `offer.accept` is the running version of the flow below, minus
+> the `Delay` and the `OnTimeout`, and `tests/Workflow.Tests/SuspensionTests` measures
+> it against the real host and the real journal.
+>
+> **Two limits worth knowing before you write one.** An inline composed child may not
+> suspend — a parent records a composition as one row written when the child finishes,
+> so a parent resumed past a waiting child would compose a *second* child instance and
+> repeat its effects; it is refused as `flow.suspension_inside_composition`, and a
+> `Detached` child is allowed to wait. And a flow with an `[HttpTrigger]` should not
+> suspend: the generated endpoint answers `200` with the flow's projected output, and a
+> suspended flow has none, so `202 Accepted` with the instance id is the answer and
+> `plugins/FlowX.Http` has no path for it yet.
 
 ```csharp
 protected override void Define(IFlowBuilder<OnboardCustomer, OnboardResult> flow) => flow
@@ -419,19 +454,28 @@ sequenceDiagram
     FE->>FE: release lease, free context to pool
     Note over FE: zero threads, zero memory held anywhere
     EXT->>FE: POST /flows/42/signals/EmailVerified
-    FE->>J: append signal, state=Pending
-    FE->>FE: any node leases instance and resumes at next step
+    FE->>J: commit the AwaitSignal step's own row, carrying the payload
+    FE->>FE: the same ExecuteAsync a recovery scan uses resumes at the next step
     alt no signal within 3 days
         SE->>FE: timer fires
         FE->>FE: run OnTimeout branch → ExpireOnboarding
     end
 ```
 
+**Two arrows in that diagram are not built.** `register timer` and the whole `alt`
+block need a scheduler engine and a timer table, and there are neither — so a wait
+whose signal never arrives ends at the flow's own `[FlowDeadline]` rather than in an
+`OnTimeout` branch. Everything above the `alt` runs, and the arrow that used to read
+*"append signal, state=Pending"* is corrected rather than aspirational: a signal is not
+appended to a table of its own, it is the suspension point's journal row.
+
 A suspended instance costs one row. A million suspended onboardings cost a
 million rows and zero compute — this is what makes long-running business
-processes affordable. **That is the argument for building it, not a description of
-what it does**: today a durable flow declaring `AwaitSignal` gets no execution plan
-at all, and one declaring `Delay` gets a plan the delay is missing from.
+processes affordable. *This paragraph used to end "that is the argument for building
+it, not a description of what it does".* It is now a description of the signal path:
+`offer.accept` in `samples/workflow` sends an offer out, suspends holding no lease,
+and is resumed days later by a countersignature that arrives on another request —
+against PostgreSQL, with the instance `Suspended` and one committed row in between.
 
 ---
 
