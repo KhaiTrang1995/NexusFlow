@@ -294,7 +294,8 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                     trigger.Method!,
                     trigger.Route!,
                     trigger.Idempotent == true,
-                    ContextFor(contexts, flow.InputTypeName, flow.OutputTypeName)));
+                    ContextFor(contexts, flow.InputTypeName, flow.OutputTypeName),
+                    SignalsOf(flow)));
             }
         }
 
@@ -304,6 +305,45 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                 EndpointEmitter.FileName,
                 SourceText.From(EndpointEmitter.Emit(assemblyName, endpoints), Encoding.UTF8));
         }
+    }
+
+    /// <summary>
+    /// Every signal a flow can suspend at, deduplicated by identity in step order.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Read from the flow's body, which is the one field of
+    /// <see cref="HttpEndpointModel"/> that does not come from the trigger attribute.</strong>
+    /// A wait is declared in <c>Define</c>, and that is where this reads it, so a route serving
+    /// a signal nothing waits for cannot be generated — see
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0022-http-shape-of-a-suspending-flow.md">ADR-0022</a>,
+    /// rejected option F.
+    /// </para>
+    /// <para>
+    /// <c>AllSteps</c> rather than <c>Steps</c>, so a wait inside a conditional or a loop body
+    /// gets its route: it is still a wait the flow can stop at, and a sender delivering to it
+    /// does not know which branch put it there. A wait whose contract this compilation could
+    /// not resolve produces no route, for the reason an unreadable trigger produces no
+    /// endpoint — the emitted call needs a type to name.
+    /// </para>
+    /// </remarks>
+    private static List<SignalEndpointModel> SignalsOf(FlowModel flow)
+    {
+        var signals = new List<SignalEndpointModel>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var step in flow.AllSteps)
+        {
+            if (step.Kind == StepKindModel.AwaitSignal &&
+                step.SignalType is { Length: > 0 } signal &&
+                step.SignalContractTypeName is { Length: > 0 } contract &&
+                seen.Add(signal))
+            {
+                signals.Add(new SignalEndpointModel(signal, contract));
+            }
+        }
+
+        return signals;
     }
 
     /// <summary>An HTTP trigger this build could read an address off.</summary>

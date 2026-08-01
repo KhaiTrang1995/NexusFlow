@@ -16,6 +16,15 @@
 
   <ItemGroup>
     <ProjectReference Include="../../plugins/FlowX.Http/FlowX.Http.csproj" />
+
+    <!--
+      A suspending flow needs a journal and a lease store to suspend into, and these are the
+      reference in-memory pair that JournalConformance, LeaseStoreConformance and
+      RecoveryIndexConformance hold to the published contracts. A second pair written here
+      would be a second pair to keep correct — the same reasoning FlowX.Hosting.Tests gives
+      for the same reference.
+    -->
+    <ProjectReference Include="../FlowX.Conformance.Tests/FlowX.Conformance.Tests.csproj" />
   </ItemGroup>
 
 </Project>

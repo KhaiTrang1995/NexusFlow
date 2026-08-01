@@ -416,6 +416,7 @@ public static class ManifestWriter
         }
 
         WriteSubFlow(writer, step);
+        WriteWait(writer, step);
         WritePolicies(writer, step);
         WriteBranches(writer, step);
 
@@ -465,6 +466,46 @@ public static class ManifestWriter
         {
             writer.Property("mode", step.SubFlowMode);
         }
+    }
+
+    /// <summary>
+    /// Writes what an <c>AwaitSignal</c> step waits for, and how long it declared to wait.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Both fields are structure, and the first is an address.</strong> Until
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0021-manifest-publishes-the-wait.md">ADR-0021</a>
+    /// this step published <c>{ "id": n, "kind": "AwaitSignal" }</c> and nothing else, so two
+    /// flows waiting for different things were byte-identical here and <c>flowx diff</c> had
+    /// no field to compare. <c>signal</c> is the identity a transport addresses a delivery to
+    /// — the same string <c>StepNode.SignalType</c> carries and the generated signal endpoint
+    /// puts in its route — which makes it the same kind of fact as a trigger's route: how the
+    /// flow is reached from outside, not what any instance carried.
+    /// </para>
+    /// <para>
+    /// <strong><c>timeout</c> is the folded duration and never the author's expression.</strong>
+    /// The plan carries <c>Waits.Countersignature</c> verbatim because generated C# can
+    /// evaluate it; a consumer reading this document cannot, and a <c>FLOWX-DIFF-206</c> over a
+    /// symbol name would fire on a rename and stay silent on a change of value. So the
+    /// compiler evaluates what it can and this omits the rest — <see cref="WriteParallelBranches"/>'s
+    /// stance on an unreadable merge strategy, for the same reason: an absent field is a
+    /// consumer asking, a guessed one is a consumer misled.
+    /// </para>
+    /// <para>
+    /// Nothing arms the wait — there is no scheduler and no timer table — so this publishes
+    /// what was <em>declared</em>, exactly as <c>policies</c> does for a policy set nothing
+    /// executes. It is not a value the writer invented, which is the line that matters.
+    /// </para>
+    /// </remarks>
+    private static void WriteWait(JsonWriter writer, StepModel step)
+    {
+        if (step.Kind != StepKindModel.AwaitSignal)
+        {
+            return;
+        }
+
+        WriteOptional(writer, "signal", step.SignalType);
+        WriteOptional(writer, "timeout", step.SignalTimeoutIso);
     }
 
     /// <summary>

@@ -311,6 +311,14 @@
             "Quorum"
           ]
         },
+        "signal": {
+          "description": "AwaitSignal steps only: the identity of the signal this step waits for — the name a transport addresses a delivery to, and the string StepNode.SignalType carries. Structure, not a value: it is the flow's inbound address for being continued, exactly as a trigger is its inbound address for being started. Present on every AwaitSignal step; a step whose contract could not be resolved produces no step at all.",
+          "$ref": "#/$defs/identity"
+        },
+        "timeout": {
+          "description": "AwaitSignal steps only: the wait the author declared, evaluated at compile time. Absent when the declaring expression could not be evaluated — the plan carries the expression verbatim because generated C# can, and a symbol name is not a duration to a reader who has never seen the assembly. Nothing arms this: there is no scheduler and no timer table, so it states what was declared, as the step's policies do.",
+          "$ref": "#/$defs/duration"
+        },
         "branches": {
           "type": "array",
           "items": {
@@ -319,13 +327,6 @@
               "$ref": "#/$defs/step"
             }
           }
-        },
-        "merge": {
-          "enum": [
-            "AllMustSucceed",
-            "AllSettled",
-            "FirstSuccess"
-          ]
         }
       }
     },

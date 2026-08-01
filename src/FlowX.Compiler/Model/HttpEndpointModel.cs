@@ -39,6 +39,10 @@ public sealed class HttpEndpointModel
     /// The fully qualified serialiser context declaring both contracts, or <c>null</c>
     /// when this compilation has no single unambiguous one.
     /// </param>
+    /// <param name="signals">
+    /// Every signal this flow can suspend at, deduplicated by identity in step order. Empty
+    /// for a flow that never waits, which is most of them.
+    /// </param>
     public HttpEndpointModel(
         string flowId,
         string flowTypeName,
@@ -48,8 +52,10 @@ public sealed class HttpEndpointModel
         string method,
         string route,
         bool requiresIdempotencyKey,
-        string? jsonContextTypeName)
+        string? jsonContextTypeName,
+        IReadOnlyList<SignalEndpointModel>? signals = null)
     {
+        Signals = signals ?? Array.Empty<SignalEndpointModel>();
         FlowId = flowId;
         FlowTypeName = flowTypeName;
         MethodName = methodName;
@@ -95,7 +101,42 @@ public sealed class HttpEndpointModel
     /// pick one is not. See <c>EndpointEmitter</c>.
     /// </remarks>
     public string? JsonContextTypeName { get; }
+
+    /// <summary>
+    /// Every signal this flow can suspend at, and therefore every route that continues it.
+    /// </summary>
+    /// <remarks>
+    /// This is the one field on this model that does not come from the trigger attribute — it
+    /// comes from the flow's <c>Define</c> body, which is where a wait is declared. The
+    /// consequence is worth stating: a flow's HTTP surface depends on its body and not only on
+    /// its attributes, so adding an <c>.AwaitSignal&lt;T&gt;</c> adds routes. That coupling is
+    /// accepted in
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0022-http-shape-of-a-suspending-flow.md">ADR-0022</a>
+    /// because the alternative is a second declaration that can disagree with the plan, and it
+    /// is visible: <c>FLOWX-DIFF-022</c> reports the flow gaining the wait.
+    /// </remarks>
+    public IReadOnlyList<SignalEndpointModel> Signals { get; }
 }
+
+/// <summary>One signal a flow waits for, as a route the transport can serve.</summary>
+/// <param name="SignalType">
+/// The identity the plan carries and a sender addresses, e.g. <c>offer.countersigned</c>. It
+/// becomes a literal segment of the route, so an identity nothing waits for is a routing miss
+/// rather than a comparison in a handler.
+/// </param>
+/// <param name="ContractTypeName">
+/// The fully-qualified contract the flow declared in <c>.AwaitSignal&lt;T&gt;(...)</c>. It
+/// becomes the generic argument of the emitted <c>MapFlowSignal</c> call, which is what lets
+/// the plugin deserialise a payload it has never heard of with no reflection.
+/// </param>
+/// <remarks>
+/// Read from the flow's own <c>Define</c> body rather than from an attribute, because the
+/// body is where the wait is declared and an attribute would be a second declaration that
+/// could name a signal no step waits for
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0022-http-shape-of-a-suspending-flow.md">ADR-0022</a>,
+/// rejected option F).
+/// </remarks>
+public sealed record SignalEndpointModel(string SignalType, string ContractTypeName);
 
 /// <summary>
 /// A <c>JsonSerializerContext</c> found in the compilation, and the contracts it

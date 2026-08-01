@@ -384,6 +384,80 @@ public sealed class SuspensionConstructTests
 
     // ------------------------------------------------------------------ helpers
 
+    // ------------------------------------------------- what the wait publishes
+
+    /// <summary>
+    /// The declared wait reaches the manifest as a duration, through a named constant.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The indirection is the assertion.</strong> <c>DeclaredDurationTests</c> proves
+    /// the folder evaluates <c>TimeSpan.FromDays(7)</c>; this proves the compiler gets from
+    /// <c>Waits.Countersignature</c> to that expression, which needs a semantic model and
+    /// therefore cannot be asserted anywhere but against a real compilation.
+    /// </para>
+    /// <para>
+    /// It matters because <c>samples/workflow</c> writes the wait exactly this way — a
+    /// duration is a business decision and belongs where it can be read without opening a
+    /// flow — so without this hop the repository's only waiting flow would publish no
+    /// <c>timeout</c> at all, and the field would have a producer on paper and none in
+    /// practice.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheDeclaredWaitReachesTheManifestThroughANamedConstant()
+    {
+        var run = GeneratorHarness.Run(Durable("""
+                .Step<ReserveInventory>()
+                .AwaitSignal<PaymentConfirmed>(Waits.Countersignature)
+            """).Replace(
+            "public sealed record PaymentConfirmed(string Id);",
+            """
+            public sealed record PaymentConfirmed(string Id);
+
+            public static class Waits
+            {
+                public static TimeSpan Countersignature { get; } = TimeSpan.FromDays(7);
+            }
+            """,
+            StringComparison.Ordinal));
+
+        run.ManifestJson.ShouldNotBeNull(run.Describe());
+        run.ManifestJson!.ShouldContain("\"signal\": \"payment.confirmed\"", Case.Sensitive);
+        run.ManifestJson!.ShouldContain("\"timeout\": \"P7D\"", Case.Sensitive);
+    }
+
+    /// <summary>
+    /// A wait the compiler cannot evaluate publishes its identity and no duration.
+    /// </summary>
+    /// <remarks>
+    /// The plan is unaffected — it carries the expression verbatim and means what the source
+    /// means. Only the manifest loses the number, and omitting it is the same choice
+    /// <c>merge</c> makes for a strategy that could not be read statically.
+    /// </remarks>
+    [Fact]
+    public void AWaitTheCompilerCannotEvaluatePublishesNoDuration()
+    {
+        var run = GeneratorHarness.Run(Durable("""
+                .Step<ReserveInventory>()
+                .AwaitSignal<PaymentConfirmed>(Waits.Window())
+            """).Replace(
+            "public sealed record PaymentConfirmed(string Id);",
+            """
+            public sealed record PaymentConfirmed(string Id);
+
+            public static class Waits
+            {
+                public static TimeSpan Window() => TimeSpan.FromDays(7);
+            }
+            """,
+            StringComparison.Ordinal));
+
+        run.ManifestJson.ShouldNotBeNull(run.Describe());
+        run.ManifestJson!.ShouldContain("\"signal\": \"payment.confirmed\"", Case.Sensitive);
+        run.ManifestJson!.ShouldNotContain("\"timeout\"", Case.Sensitive);
+    }
+
     private static string Durable(string steps) => Flow("Profile = ExecutionProfile.Durable", steps);
 
     private static string Ephemeral(string steps) => Flow(null, steps);

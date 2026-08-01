@@ -224,6 +224,29 @@ public sealed class ManifestStep
     public string? Mode { get; set; }
 
     /// <summary>
+    /// The identity an <c>AwaitSignal</c> step waits for. Absent on every other kind.
+    /// </summary>
+    /// <remarks>
+    /// The one part of a step that is a <em>contract</em> rather than an implementation
+    /// detail: it is the address a sender has to use to continue the flow, which is the same
+    /// kind of fact as a trigger's route and is compared for the same reason
+    /// (<c>FLOWX-DIFF-021</c> and <c>022</c>). Everything else about a step is refactoring.
+    /// </remarks>
+    [JsonPropertyName("signal")]
+    public string? Signal { get; set; }
+
+    /// <summary>
+    /// The wait an <c>AwaitSignal</c> step declared, as an ISO-8601 duration.
+    /// </summary>
+    /// <remarks>
+    /// Absent when the compiler could not evaluate the author's expression, which is a fact
+    /// about the build rather than about the declaration — so <c>FLOWX-DIFF-206</c> renders a
+    /// change into or out of that state as <c>(none)</c> and stays Neutral either way.
+    /// </remarks>
+    [JsonPropertyName("timeout")]
+    public string? Timeout { get; set; }
+
+    /// <summary>
     /// Nested blocks of a branching step: for a <c>Condition</c>, the <c>then</c> block
     /// first and the <c>Otherwise</c> block second when there is one; for a
     /// <c>Switch</c>, one block per case in declaration order and then the <c>Default</c>,

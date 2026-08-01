@@ -422,14 +422,17 @@ byte-identical step inputs and identical control flow.
 > the `Delay` and the `OnTimeout`, and `tests/Workflow.Tests/SuspensionTests` measures
 > it against the real host and the real journal.
 >
-> **Two limits worth knowing before you write one.** An inline composed child may not
-> suspend — a parent records a composition as one row written when the child finishes,
-> so a parent resumed past a waiting child would compose a *second* child instance and
-> repeat its effects; it is refused as `flow.suspension_inside_composition`, and a
-> `Detached` child is allowed to wait. And a flow with an `[HttpTrigger]` should not
-> suspend: the generated endpoint answers `200` with the flow's projected output, and a
-> suspended flow has none, so `202 Accepted` with the instance id is the answer and
-> `plugins/FlowX.Http` has no path for it yet.
+> **One limit worth knowing before you write one, and one that has gone.** An inline
+> composed child may not suspend — a parent records a composition as one row written
+> when the child finishes, so a parent resumed past a waiting child would compose a
+> *second* child instance and repeat its effects; it is refused as
+> `flow.suspension_inside_composition`, and a `Detached` child is allowed to wait.
+> *The second limit read "a flow with an `[HttpTrigger]` should not suspend … and
+> `plugins/FlowX.Http` has no path for it yet". It has one at WP-64:* the run endpoint
+> answers `202` with the instance and where to continue it, and the compiler generates
+> one delivery route per signal — `POST {flow route}/{instanceId}/signals/{identity}`,
+> which is the arrow drawn in the diagram below
+> ([ADR-0022](adr/ADR-0022-http-shape-of-a-suspending-flow.md)).
 
 ```csharp
 protected override void Define(IFlowBuilder<OnboardCustomer, OnboardResult> flow) => flow

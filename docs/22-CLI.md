@@ -129,7 +129,7 @@ ignore the output.
 |---|---|
 | `source` (file:line) | moves whenever anyone edits above a declaration; it is navigation metadata |
 | `application.version`, `commit`, `builtAt` | they change on every release by design |
-| a flow's `steps` | the implementation of a flow, not its contract — and refactoring it is what FlowX exists to make safe |
+| a flow's `steps`, **except** an `AwaitSignal` step's `signal` and `timeout` | every other step describes what the flow *does*, and refactoring that is what FlowX exists to make safe. A wait describes what the flow **requires from outside** — the identity a sender addresses to continue it — which is the same kind of fact as a `trigger` and is compared for the same reason ([ADR-0021 §2.4](adr/ADR-0021-manifest-publishes-the-wait.md)). Moving a wait behind a `When`, or changing the steps around it, still reports nothing |
 | a flow's `emits` and `errors` | both are aggregated by the compiler from steps and capabilities; the same facts appear once more, with versions, in `events` and each capability's `errors` |
 | array order anywhere | every list is compared as a set |
 
@@ -160,6 +160,8 @@ ignore the output.
 | `FLOWX-DIFF-017` | error code removed | consumers branching on it silently stop matching — codes disappear far more often because they were renamed |
 | `FLOWX-DIFF-018` | error category changed | the category drives the transport status code, so a client keyed on 409 now sees 403 for the same failure |
 | `FLOWX-DIFF-020` | event removed, or its schema major bumped without keeping the old one | subscribers pinned to that major receive nothing, and nothing in their build says so |
+| `FLOWX-DIFF-021` | a flow no longer waits for a signal it waited for | the quietest break here. A delivery to an instance that is not waiting for that signal is **inert, not refused** — so senders keep posting, every delivery is accepted, nothing fails, nothing is logged, and any instance expecting it waits until its deadline |
+| `FLOWX-DIFF-022` | a flow waits for a signal it did not wait for | the flow stops finishing on the request that starts it. Over HTTP the answer changes from the flow's output to a `202` carrying an instance id, and the work does not complete until somebody delivers a signal the baseline never published |
 
 ### 3.2 Additive
 
@@ -185,6 +187,7 @@ ignore the output.
 | `FLOWX-DIFF-203` | deadline changed | an operational budget tuned against production latency, not a promise — though shortening one can turn slow-but-successful executions into timeouts |
 | `FLOWX-DIFF-204` | deprecation notice added or removed | nothing breaks today; it is the signal to start migrating |
 | `FLOWX-DIFF-205` | schedule time zone changed | the schedule fires at a different wall-clock time, and its DST behaviour changes with it — operationally significant, contractually nothing |
+| `FLOWX-DIFF-206` | the wait a flow declared for a signal changed | an operational budget tuned against how long real people take, not a term of the contract — and **nothing arms it**, because there is no scheduler and no timer table ([06 §6](06-Execution-Engine.md#6-suspension-waiting-without-holding-resources)). A change into or out of `(none)` means the compiler's ability to evaluate the declaration moved, which is a fact about the build. [ADR-0021](adr/ADR-0021-manifest-publishes-the-wait.md) records that this severity is re-argued the day a timer fires |
 | `FLOWX-DIFF-019` | **one side's error catalogue is withheld, so the two were not compared** | the compiler could not resolve a catalogue, which is a fact about the *build* and not about the contract. It sits out of numeric order because it belongs to the 01x error-catalogue family and to this severity |
 
 **`FLOWX-DIFF-019` exists because its absence was worse than a false negative.**

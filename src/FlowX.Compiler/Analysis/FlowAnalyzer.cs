@@ -1618,6 +1618,7 @@ public static class FlowAnalyzer
         // suspends at the step, so there is neither a fabrication to refuse nor a wait that
         // does not happen. `Delay` and `OnTimeout` still have neither, and still report.
         var arguments = link.Invocation.ArgumentList.Arguments;
+        var declared = arguments.Count == 0 ? null : arguments[0].Expression;
 
         steps.Add(StepModel.AwaitSignal(
             nextIndex++,
@@ -1628,14 +1629,89 @@ public static class FlowAnalyzer
             // `AwaitSignal<TSignal>(TimeSpan timeout)` — so the null branch is reachable
             // only from a half-typed buffer, where C# is already saying something more
             // useful and the emitter refuses the model rather than inventing a duration.
-            arguments.Count == 0 ? null : arguments[0].Expression.ToString(),
+            declared?.ToString(),
 
             // The signal's payload is seeded into the state bag under this contract, which
             // makes it a journaled contract in the sense FLOWX1006 checks and the sense
             // `DescribeStep` and `RestoreState` have to carry.
             Display(symbol),
-            FormatLocation(link.CallLocation)));
+            FormatLocation(link.CallLocation),
+
+            // And the same duration again, folded, for the manifest. See ADR-0021 §2.2 for
+            // why one declaration reaches two artifacts in two forms.
+            FoldDeclaredWait(declared, semanticModel)));
     }
+
+    /// <summary>
+    /// Evaluates the declared wait for the manifest, following a named constant exactly one
+    /// step to its declaration.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one level of indirection is the whole reason this method exists rather
+    /// than a bare call to <see cref="DeclaredDuration.Fold"/>.</strong>
+    /// <c>samples/workflow</c> declares <c>Waits.Countersignature</c> as a named property
+    /// rather than a literal at the call site — deliberately, because a duration is a
+    /// business decision and belongs where it can be read without opening a flow — and a
+    /// <c>timeout</c> field the repository's only waiting flow could not populate would be a
+    /// field with a producer on paper and none in practice, which is the failure
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0017-manifest-v1-freeze-criteria.md">ADR-0017</a>'s
+    /// F1 is about.
+    /// </para>
+    /// <para>
+    /// <strong>Exactly one level, and no recursion.</strong> A constant defined in terms of
+    /// another constant is a chain this compiler does not walk: each hop is a chance to
+    /// resolve to a declaration in a referenced assembly whose syntax is not in this
+    /// compilation, and the honest answer there is the same omission any other unreadable
+    /// expression gets. One hop covers the form authors write; two would buy an edge case at
+    /// the cost of a loop with a termination argument to make.
+    /// </para>
+    /// </remarks>
+    private static string? FoldDeclaredWait(ExpressionSyntax? declared, SemanticModel semanticModel)
+    {
+        if (declared is null)
+        {
+            return null;
+        }
+
+        if (DeclaredDuration.Fold(declared.ToString()) is { } folded)
+        {
+            return folded;
+        }
+
+        var symbol = semanticModel.GetSymbolInfo(declared).Symbol;
+
+        if (symbol is not IFieldSymbol and not IPropertySymbol)
+        {
+            return null;
+        }
+
+        foreach (var reference in symbol.DeclaringSyntaxReferences)
+        {
+            var initialiser = Initialiser(reference.GetSyntax());
+
+            if (initialiser is not null && DeclaredDuration.Fold(initialiser.ToString()) is { } value)
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The expression a field or property declaration initialises itself with.</summary>
+    /// <remarks>
+    /// Three shapes, because C# has three ways of writing the same constant: a field's
+    /// <c>= …</c>, a property's <c>{ get; } = …</c>, and an expression-bodied property's
+    /// <c>=&gt; …</c>. A property with a statement body has none, and is refused with
+    /// everything else.
+    /// </remarks>
+    private static ExpressionSyntax? Initialiser(SyntaxNode declaration) => declaration switch
+    {
+        VariableDeclaratorSyntax field => field.Initializer?.Value,
+        PropertyDeclarationSyntax property => property.Initializer?.Value ?? property.ExpressionBody?.Expression,
+        _ => null,
+    };
 
     /// <summary>
     /// Reports FLOWX1031 against one call, at the severity that call has earned.

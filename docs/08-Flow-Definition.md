@@ -333,14 +333,40 @@ commit that records the suspension point, so a second crash does not lose it. Th
 a state-bag contract in the sense [`FLOWX1006`](diagnostics/FLOWX1006.md) checks: it must be
 declared by a source-generated `JsonSerializerContext`.
 
-**Three limits worth reading before you write a wait.** A flow with an `[HttpTrigger]` should
-not suspend — the generated endpoint answers `200` with the flow's projected output and a
-suspended flow has none. An **inline** composed child may not suspend, because the parent's
-composition row is written only when the child finishes, so a parent resumed past a waiting
-child would compose a second child instance; it is refused as
+**A flow with an `[HttpTrigger]` may suspend, and gets two routes for it.** *This paragraph
+opened "A flow with an `[HttpTrigger]` should **not** suspend — the generated endpoint answers
+`200` with the flow's projected output and a suspended flow has none" until WP-64
+(2026-08-01).* That was true of the transport and not of the flow, and it is what kept
+`samples/workflow`'s `offer.accept` — the one flow in the repository that demonstrates durable
+suspension — from declaring an address at all. The endpoint now answers `202` with the instance
+and where to continue it, and the compiler emits one delivery route per signal the flow waits
+for, read off the `.AwaitSignal<T>` calls in this `Define` body:
+
+```
+POST /api/v1/offers                                                 -> 202 { instanceId, awaiting }
+POST /api/v1/offers/{instanceId:guid}/signals/offer.countersigned   -> 202 { instanceId, status }
+```
+
+The consequence is worth knowing before you add a wait to a flow that already has a trigger:
+**its HTTP surface follows its body.** Adding an `.AwaitSignal<T>` adds routes and changes what
+the existing route answers, which `flowx diff` reports as `FLOWX-DIFF-022`, Breaking. See
+[ADR-0022](adr/ADR-0022-http-shape-of-a-suspending-flow.md).
+
+**Two limits that have not moved.** An **inline** composed child may not suspend, because the
+parent's composition row is written only when the child finishes, so a parent resumed past a
+waiting child would compose a second child instance; it is refused as
 `flow.suspension_inside_composition`, and a `Detached` child may wait. And the only budget
 enforced on a waiting instance is the flow's own `[FlowDeadline]`, checked at the boundary
 that decides whether to suspend.
+
+**The wait reaches `flowx.manifest.json`.** An `AwaitSignal` step publishes `signal` — the
+identity a sender addresses, which is the same string the generated delivery route carries —
+and `timeout`, the declared wait folded to an ISO-8601 duration. The folding is deliberately
+small: `TimeSpan.Zero`, the five `TimeSpan.From…` factories with a constant argument, and one
+level of indirection through a named constant like `Waits.Countersignature`. Anything else — a
+method call, a conditional, a configuration lookup — publishes **no** `timeout` rather than a
+guess, because the plan carries the expression verbatim and a symbol name is not a duration to
+a tool that has never seen the assembly ([ADR-0021](adr/ADR-0021-manifest-publishes-the-wait.md)).
 
 ### 3.6 Emitting events
 

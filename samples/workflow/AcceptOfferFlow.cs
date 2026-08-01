@@ -40,13 +40,18 @@ namespace Workflow;
 /// </item>
 /// <item>
 /// <description>
-/// <strong>No <c>[HttpTrigger]</c>.</strong> The generated endpoint answers <c>200</c> with
-/// the flow's projected output, and a suspended flow has no output to project — its
-/// <c>.Return(...)</c> reads values the steps after the wait were going to produce.
-/// <c>202 Accepted</c> is the answer that shape needs and the HTTP plugin does not have one
-/// yet, so this sample maps its own two endpoints in <c>Program.cs</c> rather than publishing
-/// a route that would fail on the request that suspends. It is a gap in the transport, named
-/// in the README rather than worked around silently.
+/// <strong>An ordinary <c>[HttpTrigger]</c>, and two generated routes.</strong> <em>This
+/// entry read "No <c>[HttpTrigger]</c>" until WP-64.</em> The generated endpoint answered
+/// <c>200</c> with the flow's projected output, and a suspended flow has none — its
+/// <c>.Return(...)</c> reads values the steps after the wait were going to produce — so the
+/// attribute was left off and <c>Program.cs</c> mapped two routes by hand. The plugin has the
+/// <c>202</c> path now (<c>docs/adr/ADR-0022-http-shape-of-a-suspending-flow.md</c>), so this
+/// flow declares its address like any other and the generator publishes both routes it needs:
+/// <c>POST /api/v1/offers</c>, which answers <c>202</c> with the instance and where to
+/// continue it, and
+/// <c>POST /api/v1/offers/{instanceId}/signals/offer.countersigned</c>, which delivers the
+/// countersignature. The identity in the second route is read off the <c>.AwaitSignal</c>
+/// below — there is no second declaration of it to disagree with the plan.
 /// </description>
 /// </item>
 /// <item>
@@ -63,6 +68,7 @@ namespace Workflow;
 /// </list>
 /// </remarks>
 [Flow("offer.accept", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "people-ops")]
+[HttpTrigger("POST", "/api/v1/offers")]
 [FlowDeadline("P30D")]
 public sealed partial class AcceptOfferFlow : Flow<OfferToAccept, AcceptedOffer>
 {
