@@ -24,7 +24,7 @@
       what makes the run-time check that replaces it faithful.
 
       It is a reference from a TEST project. FlowX.Cli itself still references no FlowX
-      assembly, which is the whole of what CliDependsOnNothingButTheManifest asserts.
+      assembly, which is the whole of what CliLinksNoFlowXAssembly asserts.
     -->
     <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
   </ItemGroup>

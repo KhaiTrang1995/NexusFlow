@@ -173,7 +173,7 @@ public static class Program
     /// permits it is <a href="../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md">ADR-0020</a>.</strong>
     /// It reads rows over the published migration contract through a third-party driver and
     /// joins them against the manifest's plan, so the CLI still links no FlowX assembly and
-    /// <c>CliDependsOnNothingButTheManifest</c> is untouched.
+    /// <c>CliLinksNoFlowXAssembly</c> is untouched.
     /// </para>
     /// <para>
     /// <c>--mode</c> is required rather than defaulted, for the reason <c>verify --cost</c>

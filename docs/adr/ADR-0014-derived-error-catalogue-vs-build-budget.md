@@ -229,7 +229,7 @@ written to `obj/`; `FlowPlanGenerator` emits it as a **compiled-in `const string
 incrementality and races with the build"*. `flowx manifest --assembly` **extracts** that
 constant; it does not compute a manifest. [22-CLI §1](../22-CLI.md) is explicit that the
 CLI *"reads `flowx.manifest.json` and nothing else"* and has no project reference to any
-FlowX assembly, held by the `CliDependsOnNothingButTheManifest` fitness test.
+FlowX assembly, held by the `CliLinksNoFlowXAssembly` fitness test.
 
 So this option means building a **second compiler front end** that re-analyses the source
 outside the build. Then the manifest in the assembly and the manifest published to the

@@ -20,7 +20,7 @@ namespace FlowX.Cli.Verification;
 /// <strong>It reads the manifest and nothing else.</strong> Every input the rule needs is
 /// already published: the profile, each step's kind, and the compensation registered
 /// against a step. So the check costs no new contract and keeps
-/// <c>CliDependsOnNothingButTheManifest</c> green — which is the point of putting it here
+/// <c>CliLinksNoFlowXAssembly</c> green — which is the point of putting it here
 /// rather than in an analyzer that would need the source.
 /// </para>
 /// <para>
