@@ -17,7 +17,7 @@
 
 [PLAN WP-64](../../PLAN.md) states the conflict rather than leaving it to be discovered:
 `CliDependsOnNothingButTheManifest` is a green fitness function, `flowx replay` reads a
-journal, and one of the two has to give. [22-CLI §8](../22-CLI.md#8-flowx-replay-against-the-fitness-function--a-finding-not-a-decision)
+journal, and one of the two has to give. [22-CLI §8](../22-CLI.md#8-flowx-replay-and-the-fitness-function--decided)
 narrows it to two resolutions — publish a `flowx.journal.schema.json` beside the manifest's
 and make `replay` a second *document* consumer, or amend the fitness function by ADR — and
 says explicitly that choosing between them is not that page's call.
