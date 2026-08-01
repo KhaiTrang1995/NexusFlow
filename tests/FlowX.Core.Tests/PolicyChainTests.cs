@@ -73,6 +73,120 @@ public sealed class PolicyChainTests
         PolicyChain.Empty.Ordered.ShouldBeEmpty();
     }
 
+    // ------------------------------------------------------------------ the two-way split
+
+    /// <summary>
+    /// One declared set describes two different things, and the two are separated by kind.
+    /// </summary>
+    /// <remarks>
+    /// <c>.WithPolicy(...)</c> names one set for a step that may carry a compensation, and the
+    /// set legitimately says something about both: <c>Timeout</c> bounds the step,
+    /// <c>CompensationRetry</c> bounds its undo. They cannot go into one chain, because the two
+    /// wrap different capabilities and are checked against different idempotency declarations —
+    /// which is the reason <see cref="StepNode.CompensationPolicies"/> is a separate property
+    /// in the first place.
+    /// </remarks>
+    [Fact]
+    public void ForStepKeepsEverythingExceptTheCompensationRetry()
+    {
+        var declared = PolicySet.Named("ledger-post")
+            .Timeout(TimeSpan.FromSeconds(5))
+            .Audit("financial")
+            .CompensationRetry(attempts: 5);
+
+        var chain = PolicyChain.ForStep(declared, Fixtures.ReserveInventory);
+
+        chain.Ordered.Select(static p => p.Kind).ShouldBe(
+            ["Timeout", "Audit"],
+            "Audit is a forward-path Consistency policy and belongs to the step. Only the " +
+            "compensation retry wraps the undo.");
+    }
+
+    [Fact]
+    public void ForCompensationKeepsOnlyTheCompensationRetry()
+    {
+        var declared = PolicySet.Named("ledger-post")
+            .Timeout(TimeSpan.FromSeconds(5))
+            .Audit("financial")
+            .CompensationRetry(attempts: 5);
+
+        var chain = PolicyChain.ForCompensation(declared, Fixtures.ReleaseInventory);
+
+        chain.Ordered.Select(static p => p.Kind).ShouldBe(
+            [CompensationPolicy.CompensationRetryKind],
+            "A Timeout on the step says nothing about its undo, and arming one there would " +
+            "be the policy engine arriving early.");
+
+        CompensationPolicy.From(chain).Attempts.ShouldBe(5);
+    }
+
+    /// <summary>
+    /// The pairing the split exists for: a capture that must not be retried, carrying a refund
+    /// that must be.
+    /// </summary>
+    /// <remarks>
+    /// <c>PolicyChain.Create</c> validates every descriptor against the one capability it is
+    /// handed, so handing it this set and <c>payment.capture</c> would refuse the
+    /// <c>CompensationRetry</c> — and refuse it for the wrong capability's idempotency.
+    /// Splitting first is what makes the legitimate case expressible.
+    /// </remarks>
+    [Fact]
+    public void ACompensationRetryIsCheckedAgainstTheUndoAndNotAgainstTheStep()
+    {
+        var declared = PolicySet.Named("capture").CompensationRetry(attempts: 3);
+
+        PolicyChain.ForStep(declared, Fixtures.CapturePayment).IsEmpty.ShouldBeTrue(
+            "payment.capture is not idempotent, and nothing in this set wraps it.");
+
+        PolicyChain.ForCompensation(declared, Fixtures.RefundPayment)
+            .Ordered.ShouldContain(static p => p.Kind == CompensationPolicy.CompensationRetryKind);
+    }
+
+    /// <summary>FLOWX1014's rule, applied to the capability that would actually run twice.</summary>
+    [Fact]
+    public void ForCompensationRefusesANonIdempotentCompensatingCapability()
+    {
+        var error = Should.Throw<InvalidFlowPlanException>(
+            () => PolicyChain.ForCompensation(
+                PolicySet.Named("risky").CompensationRetry(attempts: 3),
+                Fixtures.CapturePayment));
+
+        error.Message.ShouldContain("payment.capture");
+        error.Message.ShouldContain("CompensationRetry");
+    }
+
+    /// <summary>A forward Retry is still refused where it lands — on the step.</summary>
+    [Fact]
+    public void ForStepStillRefusesARetryOnANonIdempotentCapability()
+    {
+        var error = Should.Throw<InvalidFlowPlanException>(
+            () => PolicyChain.ForStep(
+                PolicySet.Named("risky").Retry(attempts: 3),
+                Fixtures.CapturePayment));
+
+        error.Message.ShouldContain("payment.capture");
+    }
+
+    [Fact]
+    public void BothHalvesOfAnEmptySetAreEmpty()
+    {
+        PolicyChain.ForStep(PolicySet.Empty, Fixtures.CapturePayment).IsEmpty.ShouldBeTrue();
+        PolicyChain.ForCompensation(PolicySet.Empty, Fixtures.CapturePayment).IsEmpty.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ForStepStillOrdersByStage()
+    {
+        var declared = PolicySet.Named("backwards")
+            .Cache(TimeSpan.FromMinutes(5))
+            .Timeout(TimeSpan.FromSeconds(2))
+            .RateLimit(100, TimeSpan.FromSeconds(1));
+
+        PolicyChain.ForStep(declared, Fixtures.ValidateOrder)
+            .Ordered.Select(static p => p.Stage)
+            .ShouldBe([PolicyStage.Admission, PolicyStage.Resilience, PolicyStage.Efficiency]);
+    }
+
     [Fact]
     public void StagesWithEqualRankKeepDeclarationOrder()
     {

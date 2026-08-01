@@ -106,7 +106,7 @@ public sealed partial class ProvisionWorkspaceFlow : Flow<ProvisionWorkspace, Wo
 | `ForEach` | one item of kit at a time | `AnEmptyCollectionRunsTheBodyNotAtAll`, `EachElementTakesItsOwnArmOfTheConditionalInsideTheLoop` |
 | `When` / `Otherwise` | **inside the loop**, and again at the top level | the two loop tests above, `ScreeningRunsWhenTheOfferAsksForIt`, `ScreeningIsWaivedWhenTheOfferDoesNotAskForIt` |
 | `SubFlow` | `workspace.provision` | `SubFlowTests` (whole class) |
-| `WithPolicy` | `identity.create`, `workspace.allocate_desk` | `WithPolicyTests` — **and see [§3](#3-withpolicy-reaches-the-manifest-and-not-the-plan)** |
+| `WithPolicy` | `identity.create`, `workspace.allocate_desk` | `WithPolicyTests` — **and see [§3](#3-withpolicy-reaches-the-plan-one-of-its-policies-runs)** |
 | `Emit` | `employee.onboarded` | `ManifestTests.TheEventIsPublishedWithoutASuppression`, and the outbox row in [§5](#5-what-it-actually-does-when-you-run-it) |
 | `Durable` + `[FlowDeadline]` | both flows | `TimeoutTests`, `ResumeTests` |
 | `OnTimeout` | **absent** | [§2](#2-what-this-sample-does-not-do-and-why) |
@@ -246,7 +246,7 @@ starts, and the saga unwinds.
 
 ---
 
-## 3. `WithPolicy` reaches the manifest and not the plan
+## 3. `WithPolicy` reaches the plan; one of its policies runs
 
 `docs/10-Policy-Framework.md` says exactly one policy is applied at run time —
 `CompensationRetry`, at stage 7 — and that on the forward path there is no policy execution
@@ -254,12 +254,12 @@ at all. The first half is true of the **engine**: `FlowEngine` reads
 `StepNode.CompensationRetry` and honours attempts, backoff and retryable categories, which
 `CompensationPolicyTests` proves against a hand-built plan.
 
-It is not true of a flow written in the DSL. `FlowX.Compiler`'s `FlowEmitter` emits no
-`PolicyChain` anywhere, so every generated `StepNode.ForCapability(...)` carries an id, a
-descriptor and at most a compensation — and `StepNode.Policies` and
-`StepNode.CompensationPolicies` are `PolicyChain.Empty` on every step of every compiled flow.
-`ManifestWriter` is a different class and does publish the set, so a reader of
-`flowx.manifest.json` sees this on `identity.create`:
+**It used not to be true of a flow written in the DSL.** `FlowX.Compiler`'s `FlowEmitter`
+emitted no `PolicyChain` anywhere, so every generated `StepNode.ForCapability(...)` carried an
+id, a descriptor and at most a compensation — and `StepNode.Policies` and
+`StepNode.CompensationPolicies` were `PolicyChain.Empty` on every step of every compiled flow.
+`ManifestWriter` is a different class and published the set regardless, so a reader of
+`flowx.manifest.json` saw this on `identity.create`:
 
 ```json
 "policies": [ { "kind": "CircuitBreaker", "stage": "Resilience" },
@@ -267,11 +267,28 @@ descriptor and at most a compensation — and `StepNode.Policies` and
               { "kind": "Timeout",        "stage": "Resilience" } ]
 ```
 
-…and nothing arms any of them. The sharper case is `Policies.FacilitiesUndo` on
-`workspace.allocate_desk`: `CompensationRetry` is the one policy kind the engine knows how to
-execute, attached to the one kind of step it applies to, and it still never arrives — so that
-desk's undo is a single attempt whatever the set says. `WithPolicyTests` asserts the
-publication and the emptiness as a pair; both invert the day the generator emits a chain.
+…and nothing armed any of them, nor could. The emitter now splits a declared set by **what
+each policy wraps** — `CompensationRetry` onto the compensation's chain, checked against the
+*compensating* capability's idempotency, everything else onto the step's — and passes both
+halves to `StepNode.ForCapability`:
+
+```csharp
+StepNode.ForCapability(7, Descriptors.Step7, Descriptors.Step7Compensation,
+    policies: PolicyChain.ForStep(Policies.DirectoryService, Descriptors.Step7)),
+```
+
+The three above are still armed by nothing: the Policy Engine is P4 and the forward path
+executes zero policies. What changed is that the plan now *states* what was declared, so a
+reader of the plan and a reader of the manifest stop disagreeing about the same source line.
+
+**The one that does run** is `Policies.FacilitiesUndo` on `workspace.allocate_desk`.
+`CompensationRetry` is the one policy kind the engine knows how to execute, attached to the
+one kind of step it applies to, and it now arrives: `ProvisionWorkspaceFlow.Plan
+.HasCompensationPolicies` is `true`, and a `workspace.release_desk` that fails with a
+retryable category is dispatched up to three times before the unwind gives up on it.
+`WithPolicyTests` asserts the publication, the plan and the retried dispatch together — and
+also that `employee.onboard`, which declares no compensation policy on any of its six
+compensable steps, keeps `HasCompensationPolicies == false` and pays nothing.
 
 What *is* real is the build-time half. `Policies.DirectoryService` declares a retry, and
 `FLOWX1014` refuses a retry on a capability that does not declare itself idempotent. That
@@ -511,7 +528,7 @@ after the three runs in §5 every row has `flow_instance.input IS NULL` and
 | `Delay` — a durable timer, and a `case` in `FlowAnalyzer` that lays out a step rather than reporting one | WP-63 |
 | `OnTimeout` — a layout for the branch, and something to time out of | WP-63 |
 | A resumed flow that can bind step outputs (§7.1) | WP-59 |
-| A policy chain in the compiled plan (§3) | P4, and the generator half is unassigned |
+| A forward policy that *executes* — the chain is in the compiled plan (§3), and nothing arms it | P4 |
 | A per-branch context, so a fork replays (§6.1) | unassigned |
 | A resumed parent that rebuilds a child's unwind stack (§6.2) | unassigned; needs a journal or index contract change |
 
