@@ -1,3 +1,5 @@
+using FlowX.Observability;
+
 namespace FlowX.Runtime;
 
 /// <summary>
@@ -34,12 +36,43 @@ namespace FlowX.Runtime;
 internal sealed class CircuitBreakerState
 {
     private readonly Lock _sync = new();
+    private readonly string _key;
 
     private int _successes;
     private int _failures;
     private DateTimeOffset _windowStart;
     private DateTimeOffset _openUntil;
     private bool _probing;
+
+    /// <summary>
+    /// The last state published, so a transition can be told from a repetition.
+    /// </summary>
+    /// <remarks>
+    /// <c>docs/10 §9</c>'s <c>flowx_circuit_state</c> is a gauge, and a gauge recorded on every
+    /// call rather than on every change would put one measurement per dispatch on the meter —
+    /// which is a per-step cost on the policed path for a value that changes a handful of times
+    /// a day. Publishing only on change is also what makes the series readable: a step function
+    /// between 0 and 2 is the shape an operator expects from a state.
+    /// </remarks>
+    private int _published = Unpublished;
+
+    /// <summary>
+    /// No state has been published yet, so the first call publishes its baseline.
+    /// </summary>
+    /// <remarks>
+    /// Not <see cref="PolicyMetrics.CircuitClosed"/>, which would suppress the baseline as a
+    /// no-op change and leave the series empty until the first outage. An alert of the form
+    /// "<c>flowx_circuit_state == 2</c>" needs the 0 to recover to, and a dashboard needs to be
+    /// able to tell a closed breaker from a breaker that was never asked.
+    /// </remarks>
+    private const int Unpublished = -1;
+
+    /// <param name="key">
+    /// What this breaker is keyed by, for the metric's <c>capability</c> and <c>key</c> labels.
+    /// It is the capability id — see this type's remarks on why the other three components of
+    /// <c>docs/10 §6</c>'s composite key are not expressible.
+    /// </param>
+    public CircuitBreakerState(string key) => _key = key;
 
     /// <summary>
     /// Whether a call may be made, and when the breaker will next allow one if not.
@@ -59,6 +92,8 @@ internal sealed class CircuitBreakerState
         {
             if (_openUntil == default)
             {
+                Publish(_probing ? PolicyMetrics.CircuitHalfOpen : PolicyMetrics.CircuitClosed);
+
                 until = default;
                 return true;
             }
@@ -76,6 +111,8 @@ internal sealed class CircuitBreakerState
             _successes = 0;
             _failures = 0;
             _windowStart = now;
+
+            Publish(PolicyMetrics.CircuitHalfOpen);
 
             until = default;
             return true;
@@ -112,6 +149,10 @@ internal sealed class CircuitBreakerState
                     Open(policy, now);
                     return;
                 }
+
+                // The probe came back. The dependency is answering again, and this is the
+                // transition an operator watching for recovery is waiting for.
+                Publish(PolicyMetrics.CircuitClosed);
             }
 
             // A sampling window that never rolls is a lifetime average, which cannot recover:
@@ -150,6 +191,29 @@ internal sealed class CircuitBreakerState
         _successes = 0;
         _failures = 0;
         _windowStart = now;
+
+        Publish(PolicyMetrics.CircuitOpen);
+    }
+
+    /// <summary>
+    /// Records the breaker's state when it differs from the last one published.
+    /// </summary>
+    /// <remarks>
+    /// Called under <c>_sync</c>, which is what makes "differs from the last one" true rather
+    /// than racy: two threads that open the same breaker at the same instant would otherwise
+    /// both see a stale <c>_published</c> and emit the transition twice, and a state gauge that
+    /// double-reports is one an operator cannot count edges on.
+    /// </remarks>
+    private void Publish(int state)
+    {
+        if (_published == state)
+        {
+            return;
+        }
+
+        _published = state;
+
+        PolicyMetrics.CircuitChanged(_key, state);
     }
 }
 
@@ -177,13 +241,20 @@ internal sealed class BulkheadGate : IDisposable
 {
     private readonly SemaphoreSlim _permits;
     private readonly int _queueDepth;
+    private readonly string _capability;
 
     private int _waiting;
 
-    public BulkheadGate(int maxConcurrency, int queueDepth)
+    /// <param name="maxConcurrency">How many callers may be inside the capability at once.</param>
+    /// <param name="queueDepth">How many more may wait before one is refused.</param>
+    /// <param name="capability">
+    /// The dependency this pool isolates, for <c>docs/10 §9</c>'s <c>flowx_bulkhead_queue_depth</c>.
+    /// </param>
+    public BulkheadGate(int maxConcurrency, int queueDepth, string capability)
     {
         _permits = new SemaphoreSlim(maxConcurrency, maxConcurrency);
         _queueDepth = queueDepth;
+        _capability = capability;
     }
 
     /// <summary>Releases the semaphore behind the pool.</summary>
@@ -211,11 +282,19 @@ internal sealed class BulkheadGate : IDisposable
             return true;
         }
 
-        if (Interlocked.Increment(ref _waiting) > _queueDepth)
+        var queued = Interlocked.Increment(ref _waiting);
+
+        if (queued > _queueDepth)
         {
             Interlocked.Decrement(ref _waiting);
             return false;
         }
+
+        // Only ever recorded on the path that actually queues. The uncontended case above
+        // returns before reaching here, so a bulkhead nobody is waiting for costs no
+        // measurement — which is also why the gauge has no zero to fall back to until a
+        // queue has formed and drained at least once.
+        PolicyMetrics.BulkheadQueued(_capability, queued);
 
         try
         {
@@ -224,7 +303,7 @@ internal sealed class BulkheadGate : IDisposable
         }
         finally
         {
-            Interlocked.Decrement(ref _waiting);
+            PolicyMetrics.BulkheadQueued(_capability, Interlocked.Decrement(ref _waiting));
         }
     }
 
