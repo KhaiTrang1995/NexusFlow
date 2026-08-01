@@ -100,4 +100,54 @@ public static class ServiceCollectionExtensions
 
         return services;
     }
+
+    /// <summary>Registers <see cref="IBusConsumer"/> over Redis Streams.</summary>
+    /// <param name="services">The container being built.</param>
+    /// <param name="configuration">A StackExchange.Redis configuration string.</param>
+    /// <param name="options">
+    /// Where in the key space the streams live. <strong>Must be the same options the publisher
+    /// writing them uses</strong> — the key prefix is what makes one deployment's events findable
+    /// and another's invisible, and a consumer pointed at a different prefix reads nothing and
+    /// says nothing.
+    /// </param>
+    /// <param name="consumerName">This node's name inside the consumer group.</param>
+    /// <returns>The same collection, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="configuration"/> is null or blank.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>A fourth call, for the reason there are three.</strong> A deployment may take its
+    /// leases from Redis and its broker from somewhere else, publish to Redis and consume from
+    /// somewhere else, or any other combination. What they share is the multiplexer, registered
+    /// with <c>TryAdd</c> so a host making several calls gets one connection.
+    /// </para>
+    /// <para>
+    /// <strong>This registers the consumer, not the loop.</strong> What drives it is
+    /// <c>FlowX.Hosting</c>'s <c>FlowBusService</c>, which <c>AddFlowX</c> already registers and
+    /// which does nothing until both an <see cref="IBusConsumer"/> and a subscription exist.
+    /// Registering a background service here would put a hosting dependency in a plugin — the
+    /// same line <see cref="AddFlowXRedisStreams"/> declines to cross.
+    /// </para>
+    /// </remarks>
+    public static IServiceCollection AddFlowXRedisStreamConsumer(
+        this IServiceCollection services,
+        string configuration,
+        RedisStreamOptions? options = null,
+        string? consumerName = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentException.ThrowIfNullOrWhiteSpace(configuration);
+
+        var settings = options ?? new RedisStreamOptions();
+
+        services.TryAddSingleton(settings);
+        services.TryAddSingleton<IConnectionMultiplexer>(
+            _ => ConnectionMultiplexer.Connect(configuration));
+        services.AddSingleton<IBusConsumer>(provider => new RedisStreamBusConsumer(
+            provider.GetRequiredService<IConnectionMultiplexer>(),
+            provider.GetRequiredService<RedisStreamOptions>(),
+            consumerName));
+
+        return services;
+    }
 }
