@@ -299,6 +299,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1033](FLOWX1033.md) | `CompensationRetry` is declared on a step with no compensation | **The one policy the runtime executes, dropped by the emitter in silence: a manifest promising five attempts at an undo, and a plan with no undo to attempt** |
 | [FLOWX1034](FLOWX1034.md) | Step declares more than one policy set | **A declared timeout, breaker or audit deleted before the plan and the manifest are written, because the second `.WithPolicy(...)` on a step replaces the first rather than adding to it** |
 | [FLOWX1035](FLOWX1035.md) | `CompensationRetry` declares a single attempt | A manifest entry that says the undo is retried, over an undo dispatched exactly once — `IsRetrying` is `Attempts > 1`, so one attempt leaves `HasCompensationPolicies` false and the engine takes `CompensationPolicy.None` |
+| [FLOWX1036](FLOWX1036.md) | Policy set cannot be read at compile time | **A whole policy set reaching no plan, no manifest and none of `FLOWX1014`, `FLOWX1018`, `FLOWX1019`, `FLOWX1032` or `FLOWX1033` — a shared library's `CompensationRetry` not running, and a duplicate-charge rule with nothing to read** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -450,7 +451,16 @@ in the published contract tells it apart from five attempts. It is none of the r
 and it is not `FLOWX1033`: that rule asks whether the retry has an undo to wrap, and this one
 presupposes that it has and asks whether the count retries anything.
 
-The next is `FLOWX1036`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1036` is claimed** — *policy set cannot be read at compile time*: a `.WithPolicy(...)`
+argument that resolves to no initialiser the compiler can walk — a set in a referenced
+assembly, one returned by a method, one assembled at run time. `PolicySetReader` returns
+nothing rather than guessing, and `FlowEmitter`, `ManifestWriter`, `FLOWX1014`, `FLOWX1018`,
+`FLOWX1019`, `FLOWX1032` and `FLOWX1033` are all quiet together on the same argument, which
+is not an unchecked policy but an absent one. It is none of the reservations, and it is not
+`FLOWX1032`: that rule names the kinds a set declares and says they do not execute, and this
+one fires precisely because there are no kinds to name.
+
+The next is `FLOWX1037`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 
