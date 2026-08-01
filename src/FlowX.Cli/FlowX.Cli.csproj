@@ -45,7 +45,7 @@
     Deliberately no project reference to FlowX. The CLI consumes the manifest as data,
     exactly as any third-party tool would — which is the strongest available evidence
     that the manifest is genuinely self-describing rather than only usable from inside
-    this repository (ADR-0005). CliDependsOnNothingButTheManifest asserts it.
+    this repository (ADR-0005). CliLinksNoFlowXAssembly asserts it.
 
     ADR-0020 widened the CLI's *inputs* to include the journal and left that rule exactly
     as it was: a journal read adds no project reference. What it did add is

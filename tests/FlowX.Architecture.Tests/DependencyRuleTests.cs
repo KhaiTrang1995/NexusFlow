@@ -143,17 +143,38 @@ public sealed class DependencyRuleTests
     }
 
     /// <summary>
-    /// The CLI reads the manifest as data and references no FlowX assembly.
+    /// <c>FlowX.Cli.csproj</c> has no <c>ProjectReference</c>: the CLI links no FlowX
+    /// assembly.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The strongest available evidence that the manifest is genuinely self-describing
     /// (ADR-0005). The CLI is its first consumer that is not the compiler; if it needed
     /// to import a FlowX type to make sense of the file, the manifest would be an
     /// internal serialisation format wearing a contract's clothes, and no third-party
     /// tool could consume it either.
+    /// </para>
+    /// <para>
+    /// <strong>This counts links, not inputs, and the name says so on purpose.</strong>
+    /// It was called <c>CliDependsOnNothingButTheManifest</c> until
+    /// <a href="../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md">ADR-0020</a>,
+    /// which is a stronger claim than the assertion below has ever made — and one that was
+    /// already false when the CLI shipped, because <c>flowx manifest --assembly</c> reads a
+    /// built assembly and <c>flowx diff</c> reads two arbitrary files. ADR-0020 then added
+    /// a journal as a second input via a <c>PackageReference</c> on <c>Npgsql</c>, which
+    /// this rule does not count and must not be read as forbidding. The gap between the old
+    /// name and the assertion is what put a false collision between <c>flowx replay</c> and
+    /// this gate into the plan; the name is now the assertion, so there is nothing left to
+    /// misread.
+    /// </para>
+    /// <para>
+    /// "The CLI runs against an artifact with no database" is <em>not</em> asserted here and
+    /// never was. It has its own test — <c>EveryVerbButReplayRunsWithNoStore</c>, in
+    /// <c>tests/FlowX.Cli.Tests</c> — per ADR-0020 §3.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void CliDependsOnNothingButTheManifest()
+    public void CliLinksNoFlowXAssembly()
     {
         var cli = RepositoryLayout.SourceProjects
             .SingleOrDefault(static p => p.Name == "FlowX.Cli.csproj");
@@ -165,7 +186,10 @@ public sealed class DependencyRuleTests
 
         RepositoryLayout.ProjectReferences(cli).ShouldBeEmpty(
             "FlowX.Cli must consume the manifest exactly as a third-party tool would. " +
-            "A reference here would prove the document is not self-describing.");
+            "A project reference here would prove the document is not self-describing. " +
+            "This rule counts project links only: a PackageReference (Npgsql, " +
+            "System.Reflection.MetadataLoadContext) is not a violation, and neither is " +
+            "reading a second published contract as data (ADR-0020).");
     }
 
     /// <summary>

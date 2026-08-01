@@ -6,12 +6,16 @@
 > [!WARNING]
 > **FlowX emits nothing today.** There is no `ActivitySource`, no `Meter`, no
 > `ILogger` and no exporter anywhere under `src/` — not one span, metric or log
-> record in this document is produced by any code path. `flowx replay` is not a
-> CLI verb ([22-CLI](22-CLI.md) has four: `graph`, `manifest`, `diff` and
-> `verify`). *This box also said "the journal every replay mode reads from does
+> record in this document is produced by any code path, and [§3](#3-metrics) now says
+> per metric what each one would additionally need — three of the thirteen need more than
+> an emitter. *This box also said "the journal every replay mode reads from does
 > not exist"; since WP-53 it does — `plugins/FlowX.Postgres` stores one row per
 > step boundary with its non-determinism capture, which is precisely what a
-> replay reads. The missing thing is the verb, not the data.*
+> replay reads. The missing thing is the verb, not the data.* ***It then said
+> `flowx replay` is not a CLI verb and that [22-CLI](22-CLI.md) has four. Both expired at
+> WP-64:*** the CLI has five, `flowx replay --mode inspect` renders an instance from the
+> journal, and [§5](#5-flow-replay--the-differentiator) carries which of the four modes
+> that is and which three still do not exist.
 >
 > This document is therefore a **frozen schema, not a description**. That is
 > deliberate and it is why it is written in the present tense elsewhere: the
@@ -96,23 +100,66 @@ to the third downstream event.
 
 ### Golden signals, automatically, per graph node
 
-| Metric | Type | Labels |
-|---|---|---|
-| `flowx_flow_duration_seconds` | histogram | `flow`, `profile`, `outcome`, `tenant` |
-| `flowx_flow_active` | gauge | `flow`, `state` |
-| `flowx_flow_total` | counter | `flow`, `outcome` |
-| `flowx_step_duration_seconds` | histogram | `flow`, `step`, `capability`, `outcome` |
-| `flowx_capability_duration_seconds` | histogram | `capability`, `outcome` |
-| `flowx_capability_unhandled_total` | counter | `capability` — **a defect signal** |
-| `flowx_trigger_admitted_total` / `_rejected_total` | counter | `kind`, `reason`, `tenant` |
-| `flowx_journal_commit_seconds` | histogram | `operation` |
-| `flowx_lease_lost_total` | counter | `reason` |
-| `flowx_outbox_pending` | gauge | `type` |
-| `flowx_outbox_lag_seconds` | gauge | `type` |
-| `flowx_stream_lag_records` | gauge | `topic`, `partition` |
-| `flowx_flow_compensation_failed_total` | counter | `flow`, `step` — **always alert** |
+| Metric | Type | Labels | Today |
+|---|---|---|---|
+| `flowx_flow_duration_seconds` | histogram | `flow`, `profile`, `outcome`, `tenant` | no emitter; the subject runs |
+| `flowx_flow_active` | gauge | `flow`, `state` | no emitter; and `state=Suspended` would be permanently zero — `FlowInstanceState.Suspended` is a value nothing sets (**WP-63**) |
+| `flowx_flow_total` | counter | `flow`, `outcome` | no emitter; the subject runs |
+| `flowx_step_duration_seconds` | histogram | `flow`, `step`, `capability`, `outcome` | no emitter; the subject runs |
+| `flowx_capability_duration_seconds` | histogram | `capability`, `outcome` | no emitter; the subject runs |
+| `flowx_capability_unhandled_total` | counter | `capability` — **a defect signal** | no emitter; `FlowErrors.Unhandled` is the fact it would count |
+| `flowx_trigger_admitted_total` / `_rejected_total` | counter | `kind`, `reason`, `tenant` | no emitter **and nowhere to emit from.** There is no Trigger Engine; §5 of [09-Trigger-Model](09-Trigger-Model.md) is a diagram with four of its nine decisions enforced, all inside the HTTP endpoint. A `kind` label needs one admission point serving every transport, and there is one transport |
+| `flowx_journal_commit_seconds` | histogram | `operation` | no emitter; the subject runs (`IFlowJournal`, both adapters) |
+| `flowx_lease_lost_total` | counter | `reason` | no emitter; the subject runs (`DurableLease`, `FencingToken`) |
+| `flowx_outbox_pending` | gauge | `type` | no emitter, **and nothing else missing** — unlike its sibling below. `SELECT count(*) … WHERE published_at IS NULL GROUP BY type` over `outbox_event` is exactly this gauge |
+| `flowx_outbox_lag_seconds` | gauge | `type` | no emitter **and the fact is not recorded anywhere.** See below |
+| `flowx_stream_lag_records` | gauge | `topic`, `partition` | no emitter **and no subject.** `ExecutionProfile.Streaming` is an enum member no code branches on, and no stream trigger reaches a transport (**P7**) |
+| `flowx_flow_compensation_failed_total` | counter | `flow`, `step` — **always alert** | no emitter; the *seam* exists. `ICompensationAlertSink.CompensationExhausted` fires exactly once per exhausted compensation, and its own doc comment names this metric as the thing that is not built |
 
-Plus every policy metric from [10 §9](10-Policy-Framework.md#9-observing-policies).
+Plus every policy metric from [10 §9](10-Policy-Framework.md#9-observing-policies) —
+none of which is emitted either, and for a further reason: [10](10-Policy-Framework.md)
+records that no policy runs on the forward path, so a rate-limit rejection or a cache hit
+is not merely uncounted, it does not occur.
+
+> [!WARNING]
+> **The fourth column reads "no emitter" thirteen times, and that is the whole table.**
+> The box at the top of this document says FlowX emits nothing; this column says what each
+> row would additionally need, because "not built" hides three different distances from
+> being true and an operator reading a dashboard specification deserves to know which one
+> a row is.
+>
+> - **Ten rows need only an emitter.** The thing being measured happens today, in code
+>   this repository ships. When a `Meter` arrives, these come with it.
+> - **`flowx_stream_lag_records` has no subject at all.** Nothing streams, so it cannot be
+>   emitted by adding an emitter — it arrives with **P7**, not with **P5**.
+> - **`flowx_trigger_*` has a subject and no seam.** HTTP does reject requests at
+>   admission, but it is the only transport and the rejection happens inside the endpoint;
+>   a counter labelled by `kind` presupposes the shared admission point **P3** introduces.
+> - **`flowx_outbox_lag_seconds` needs a schema change**, and it is the row this section
+>   overstated hardest.
+>
+> **`flowx_outbox_lag_seconds` is not merely unemitted — nothing in the store could
+> compute it.** The outbox itself is real: [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)
+> declares `IEventPublisher`, `FlowEngine` stages an event in the step's own transaction,
+> and `PostgresOutboxPublisher` drains `outbox_event` at-least-once in per-`partition_key`
+> order. But `outbox_event` carries exactly one timestamp — `published_at`, which is `NULL`
+> for precisely the rows this gauge is about. Migration `0004` added `staged_seq`, which is
+> an ordering sequence and deliberately not a clock: ADR-0018 considered ordering by a
+> staging timestamp and rejected it, because *"a timestamp is not monotonic across nodes
+> and ties are ordinary at commit granularity"*. So the age of a pending event is a fact the
+> schema does not hold, and this gauge needs a column before it needs a meter. Its sibling
+> `flowx_outbox_pending` needs no column: the rows are there and so is `type`.
+>
+> One thing the lag gauge would not tell you even then, and it is the reason a reader
+> should not wait for it: `IEventPublisher`'s only implementation anywhere is a recording
+> test double ([11 §5](11-Distributed-Runtime.md#5-the-transactional-outbox)). On a
+> deployment with no broker wired, *pending* is not a backlog and *lag* is not a delay —
+> both are the publisher being absent, which `flowx_outbox_pending` already says by growing
+> without bound.
+>
+> The emitter is **P5** in [20-Roadmap](20-Roadmap.md), and `TelemetryConformanceTest` —
+> named in four documents as an existing gate — is the thing that would stop this table
+> drifting from what is emitted once anything is.
 
 ### Cardinality discipline
 
@@ -339,13 +386,26 @@ exporter attached, **0 ns and 0 allocations** without one.
 
 ## 9. What to look at first, by symptom
 
+> [!WARNING]
+> **Every first signal in this table is a metric nothing emits** — see
+> [§3](#3-metrics), which says per row what each would need. This is a runbook for the
+> platform once **P5** lands, not a procedure that works today; an operator who follows a
+> row now finds no such series, which is indistinguishable from a healthy one. The
+> right-hand column is more usable than the left: a trace exemplar, a publisher log and a
+> capability's idempotency declaration are things a reader can go and look at, and
+> `flowx replay --mode inspect` is a verb that exists.
+>
+> Two rows are worse than uncounted and are marked below: they would be misleading even
+> with an emitter attached, because the subsystem they diagnose is not the one this
+> repository has.
+
 | Symptom | First signal | Then |
 |---|---|---|
 | Latency spike | `flowx_step_duration_seconds` by capability | trace exemplar for the slow step |
 | Error spike | `flowx_flow_total{outcome=Failure}` by `error_code` | `flowx replay --mode inspect` on a failing instance |
-| Stuck flows | `flowx_flow_active{state=Suspended\|Running}` growing | lease metrics; a step exceeding its budget |
-| Events not arriving | `flowx_outbox_pending`, `flowx_outbox_lag_seconds` | publisher logs, broker health |
-| Duplicated effects | `flowx_idempotency_replays_total` = 0 with retries > 0 | a capability declaring `Idempotent = true` but not honouring the key |
+| Stuck flows | `flowx_flow_active{state=Suspended\|Running}` growing | lease metrics; a step exceeding its budget — **but no instance is ever `Suspended`** (WP-63), so only the `Running` half of this can move |
+| Events not arriving | `flowx_outbox_pending` — **and not `flowx_outbox_lag_seconds`,** which no schema can compute (§3) | publisher logs, broker health — **but the only `IEventPublisher` anywhere is a test double, so a growing `outbox_pending` on a real deployment means no publisher is wired rather than a broker in trouble** |
+| Duplicated effects | `flowx_idempotency_replays_total` = 0 with retries > 0 | a capability declaring `Idempotent = true` but not honouring the key — **note that this counter is zero by construction today: no policy runs on the forward path ([10](10-Policy-Framework.md)), so nothing replays a recorded result** |
 | One tenant slow | tenant-labelled histograms | quota and rate-limit rejections |
 | Memory growth | `flowx_bulkhead_queue_depth`, stream channel depth | backpressure not reaching the source |
 

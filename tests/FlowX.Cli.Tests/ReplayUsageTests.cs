@@ -150,7 +150,7 @@ public sealed class ReplayUsageTests : IDisposable
     /// <strong>This is the compensating control
     /// [ADR-0020](../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md) §3 commits
     /// to.</strong> "The CLI is runnable against an artifact with no database" was one of
-    /// three properties resting on <c>CliDependsOnNothingButTheManifest</c>, and the only one
+    /// three properties resting on <c>CliLinksNoFlowXAssembly</c>, and the only one
     /// that rule never asserted. It was true because no verb had needed a store. The moment
     /// one does, it stops being accidental and has to be checked.
     /// </para>
