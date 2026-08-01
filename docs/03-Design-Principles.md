@@ -315,10 +315,15 @@ saying what to do instead, and a help URI that resolves to a committed page.
 the rule does, under the name above.* Onboarding study criterion V8 in
 [01-Vision](01-Vision.md) — an unrun study, not a gate.
 
-The other half of P12 is not enforced. `dotnet new flowx` has no template
-package in this repository, and `flowx graph` is the only one of the three
-promised commands that ships (`flowx dev`, `flowx new` do not — see
-[22-CLI](22-CLI.md)).
+The other half of P12 *was* unenforced, and this paragraph said so: that
+`dotnet new flowx` had no template package in this repository. It has one.
+`templates/FlowX.Templates` is that package, `templates/verify.sh` generates a
+project from it and asserts that it builds with `TreatWarningsAsErrors`, emits
+its own endpoint and serves a request, and CI runs that script on every push.
+`flowx graph` is still the only one of the three promised commands that ships —
+`flowx dev` and `flowx new` do not, see [22-CLI](22-CLI.md). The path from the
+scaffold onwards is [24 Getting Started](24-Getting-Started.md), whose every code
+block is compiled by a test.
 
 ---
 
