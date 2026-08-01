@@ -14,7 +14,7 @@ benchmark where a budget applies, and a generated architecture diagram.
 | [event-driven](event-driven/) | Transport portability: HTTP → Kafka → cron, zero logic changes | [09](../docs/09-Trigger-Model.md), quality goal Q4 |
 | [scheduler](scheduler/) | Cron with leader election, overlap and missed-fire policies | [09 §8](../docs/09-Trigger-Model.md#8-schedule-trigger) |
 | [polling](polling/) | Long-running external polling without holding resources | [06 §6](../docs/06-Execution-Engine.md#6-suspension-waiting-without-holding-resources) |
-| [workflow](workflow/) | Multi-day human-in-the-loop process with signals and timers | [06](../docs/06-Execution-Engine.md), [11](../docs/11-Distributed-Runtime.md) |
+| [workflow](workflow/) | Multi-step orchestration: switch, fork, loop, composed sub-flow, and a strict-reverse unwind across all three. **Not** the signals-and-timers process this row used to claim — see the sample's §2 | [08](../docs/08-Flow-Definition.md), [06 §3](../docs/06-Execution-Engine.md#3-the-execution-loop) |
 
 ## Running any sample
 

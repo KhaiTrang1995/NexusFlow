@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit.v3" Version="2.0.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.3" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The sample project itself, not a copy of it. If the sample stops compiling or its flow
+      changes shape, these tests fail — which is the only way a reference application stays a
+      reference rather than becoming stale documentation.
+    -->
+    <ProjectReference Include="../../samples/workflow/Workflow.csproj" />
+
+    <!--
+      The host, because a Durable flow needs one: FlowTestHost has no journal seam, so it
+      refuses this sample's flow before its first step. WhyTheseTestsDoNotUseFlowTestHostTests
+      is that refusal, asserted rather than described.
+    -->
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+
+    <!--
+      The test context the platform ships. Used where it can be — for the capability-level
+      tests, which are profile-independent.
+    -->
+    <ProjectReference Include="../../src/FlowX.Testing/FlowX.Testing.csproj" />
+
+    <!--
+      The conformance suite's reference journal and lease store. Referenced for the same
+      reason tests/FlowX.Runtime.Tests references it: a second in-memory store would be a
+      store nothing holds to the conformance suite, and the first thing it would drift on is
+      the fencing check — which is the behaviour every durable assertion here rests on.
+    -->
+    <ProjectReference Include="../FlowX.Conformance.Tests/FlowX.Conformance.Tests.csproj" />
+  </ItemGroup>
+
+</Project>
