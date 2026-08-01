@@ -1141,7 +1141,7 @@ public sealed class FlowEngine
                 {
                     var refusal = await CommitStepAsync(
                         plan, dispatcher, context, scope, cursor, step, stepFailure, startedAt,
-                        capabilityVersion: null, ct)
+                        capabilityVersion: null, attempt, ct)
                         .ConfigureAwait(false);
 
                     if (refusal is not null)
@@ -1528,6 +1528,11 @@ public sealed class FlowEngine
     /// The resolved version to record. Supplied by the caller only for a sub-flow, where the
     /// meaningful version is the child flow's rather than a capability's.
     /// </param>
+    /// <param name="attempt">
+    /// Which attempt at this step this node is committing, counting from one. Added to the
+    /// number derived from the committed history, because that history is the frontier this
+    /// run began from and does not contain the rows this run has already written.
+    /// </param>
     /// <param name="ct">Cancels the store call.</param>
     /// <returns>
     /// <c>null</c> when the row is committed, or the journal's refusal — which ends the flow,
@@ -1576,6 +1581,7 @@ public sealed class FlowEngine
         Error? failure,
         DateTimeOffset startedAt,
         string? capabilityVersion,
+        int attempt,
         CancellationToken ct)
     {
         var run = cursor.Run!;
@@ -1597,8 +1603,18 @@ public sealed class FlowEngine
 
         var commit = new StepCommit
         {
+            // NextAttempt derives its number from the committed history, which is the frontier
+            // this run started from and therefore does not include the rows this run has
+            // already written. That was exactly right while a forward step was dispatched once
+            // — and a Retry writes a row per attempt, so the second one would collide with the
+            // first and the journal would refuse it as a duplicate. The in-flight attempt is
+            // added for the same reason CommitCompensationAsync adds its own: the derived
+            // number answers "what has survived me", and this answers "what have I done since".
             Key = new StepKey(
-                run.InstanceId, cursor.Scope, step.Index, run.NextAttempt(cursor.Scope, step.Index)),
+                run.InstanceId,
+                cursor.Scope,
+                step.Index,
+                run.NextAttempt(cursor.Scope, step.Index) + attempt - 1),
             Token = run.Token,
             CapabilityId = step.Identity,
             CapabilityVersion = capabilityVersion ?? step.Capability?.Version ?? plan.Flow.Version,
@@ -2554,7 +2570,7 @@ public sealed class FlowEngine
         return cursor.IsJournaled
             ? await CommitStepAsync(
                 plan, dispatcher, context, scope, cursor, step, failure, startedAt,
-                source.Plan.Flow.Version, ct).ConfigureAwait(false)
+                source.Plan.Flow.Version, attempt: 1, ct).ConfigureAwait(false)
             : null;
     }
 
