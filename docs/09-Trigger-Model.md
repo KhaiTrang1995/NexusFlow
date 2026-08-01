@@ -1,14 +1,15 @@
 # 09 — Trigger Model
 
-> **Status:** Accepted · **one transport is served; the rest are an attribute or nothing** ·
+> **Status:** Accepted · **two transports are served; the rest are an attribute or nothing** ·
 > **Audience:** application engineers, plugin authors
 > **Answers:** how does one abstraction serve HTTP, brokers, cron, streams and agents?
 
 > [!WARNING]
 > **[ADR-0004](adr/ADR-0004-universal-trigger-model.md)'s "one trigger abstraction for
-> every transport" is true of the *declaration* and, so far, of nothing else.** Five
+> every transport" is true of the *declaration* and, so far, of two transports.** Five
 > trigger attributes ship in `FlowX.Abstractions`, the compiler reads all five into
-> `flowx.manifest.json`, and **one of them reaches a running transport.** There is no
+> `flowx.manifest.json`, and **two of them reach a running transport.** *This box said "one
+> of them" until 2026-08-01, when `[CronTrigger]` was bound.* There is no
 > Trigger Engine: no type under `src/` or `plugins/` normalises, admits, dedupes or binds,
 > and §11's `ITriggerSource` / `ITriggerSink` are declared nowhere.
 >
@@ -16,7 +17,7 @@
 > |---|---|
 > | **HTTP** ([§6](#6-http-trigger)) | **served, and generated.** `[HttpTrigger]` → `TriggerReader` → `EndpointEmitter` → `FlowXEndpoints.g.cs` → `plugins/FlowX.Http`. Route, body binding, `Idempotency-Key` enforcement when `Idempotent = true`, and RFC 7807 with `[Sensitive]` redaction are all real; `samples/ecommerce` and `samples/workflow` call the generated `app.MapFlowX()`. **A flow that suspends is served too, since WP-64** — `202` with where to continue it, and one generated delivery route per signal it waits for ([ADR-0022](adr/ADR-0022-http-shape-of-a-suspending-flow.md)); *this row used to say the signal endpoint was a design, and §6's own box has the correction*. **The OpenAPI operation is still not generated** — nothing in this repository writes an OpenAPI document, and `Version` is dropped by the reader rather than published, despite §6's *"Generated: … the OpenAPI operation"* and the same claim on `HttpTriggerAttribute` itself |
 > | **Bus** ([§7](#7-bus-trigger)) | **attribute only.** `[KafkaTrigger]` compiles and publishes `kind`, `transport`, `topic` and `group`; `MaxInFlight` and `DeadLetter` reach no artifact. There is no `FlowX.Kafka` — `plugins/` holds `FlowX.Http`, `FlowX.Postgres` and `FlowX.Redis` — so nothing consumes a topic, commits an offset or dead-letters, and §7's sequence diagram is specification. **WP-72**, P3 |
-> | **Schedule** ([§8](#8-schedule-trigger)) | **attribute only.** `[CronTrigger]` publishes `cron` and `timeZone`. `Overlap`, `MissedFire`, `Jitter` and `PerTenant` reach nothing at all: the manifest schema's `trigger` object has no property for them and no code reads them. Nothing fires a schedule, so "leader-elected, never double-fires" is a design — the lease store it names is real (`ILeaseStore`, both adapters), the scheduler that would take the lease is **WP-63** |
+> | **Schedule** ([§8](#8-schedule-trigger)) | **served, and generated.** `[CronTrigger]` → `TriggerReader` → `ScheduleEmitter` → `FlowXSchedules.g.cs` → `FlowScheduleScan`, and `samples/workflow` calls the generated `services.AddFlowXSchedules()`. `cron`, `timeZone` and `MissedFire` are all read; the first two publish, the third executes. **There is no leader and no election** — *this row said "leader-elected, never double-fires" was a design, and what replaced it is not an election*: every node computes the same occurrence, derives the same instance id from it, and the lease store and the journal's primary key refuse all but one ([ADR-0026](adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md)). `Overlap`, `Jitter` and `PerTenant` still reach nothing at all |
 > | **Stream** ([§9](#9-stream-trigger)) | **attribute only, over an unbuilt profile.** `[StreamTrigger]` publishes its source; `Window`, `Lateness`, `Checkpoint` and `Parallelism` are dropped. `ExecutionProfile.Streaming` is an enum member no code branches on, and `.Window(…)` / `.Aggregate(…)` are not members of `IFlowBuilder<TIn, TOut>` — **§9's example does not compile.** Streaming is **P7** |
 > | **Agent** ([§10](#10-agent-trigger)) | **attribute only.** `[AgentTrigger]` publishes `description` and `confirmation`. There is no MCP server, no tool descriptor and no JSON Schema generation; `MCP` occurs under `src/` only inside doc comments. §10's two properties are consequences of a surface nothing serves. **P8** — see [13-AI-Native](13-AI-Native.md), which states the same thing about `AgentTriggerAttribute` |
 > | **Change**, **Cli**, **Manual** | **kinds with no attribute.** All three are `TriggerKind` members and values of the manifest schema's closed `kind` enum, so a third-party `TriggerAttribute` carrying `[TriggerKind]` can declare one and reach the manifest with it. `FlowX.Abstractions` ships nothing that does, and `TriggerKind.Cli`'s summary names `flowx run`, which is not one of the CLI's five verbs ([22-CLI](22-CLI.md)) |
@@ -42,6 +43,16 @@
 > propagated; no store holds a recorded result to return), and the
 > `flowx_trigger_unbound_total` counter, which is one of the metrics
 > [12-Observability](12-Observability.md) does not emit.
+>
+> **§3's "four transports, zero changes to the flow body" holds for three of the four, and the
+> fourth is the one below.** A schedule's flow must declare `Flow<ScheduledFire, TOut>`, because
+> a firing has no body and `FLOWX1007` forbids the flow reading a clock to work out which
+> occurrence it is ([ADR-0028](adr/ADR-0028-a-scheduled-flows-input-is-its-occurrence.md)) — while
+> an HTTP endpoint binds a request body into whatever the flow declares. So **one flow cannot
+> serve both an HTTP route and a cron expression**, and `FLOWX1037` says so. The business
+> operation is still transport-free; what does not compose is two inbound *contracts* on one
+> flow. §3's example, and ADR-0004's own first Positive, both print the arrangement that does not
+> compile.
 >
 > **What is genuinely load-bearing** is the declaration path, and it is checked: `[TriggerKind]`
 > is what the compiler can read out of a referenced assembly, `FLOWX1025` reports a trigger
@@ -129,6 +140,25 @@ public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult>
 
 Four transports, zero changes to the flow body. **This is quality goal Q4, and it
 is the single most visible benefit of the model.**
+
+> [!WARNING]
+> **The block above does not compile, and the reason is a real limit rather than a typo.** A flow
+> carrying `[CronTrigger]` must declare `Flow<ScheduledFire, TOut>` — a firing has no body, and
+> `FLOWX1007` and `FLOWX1011` forbid the flow reading a clock to discover which occurrence it is,
+> so the occurrence has to arrive as input
+> ([ADR-0028](adr/ADR-0028-a-scheduled-flows-input-is-its-occurrence.md)). `PlaceOrderFlow` takes
+> a `PlaceOrder`, which is what its `[HttpTrigger]` binds a request body into. **A flow cannot
+> declare both**, and [FLOWX1037](diagnostics/FLOWX1037.md) reports the attempt.
+>
+> Q4 survives, narrowed to the claim it can actually make: **zero changes to the flow body**
+> across every transport whose payload the *caller* supplies — HTTP, bus, stream, agent. The one
+> whose payload the *platform* supplies fixes the contract, and the ordinary shape for "this
+> operation runs on a request and on a schedule" has always been two flows over one capability.
+>
+> This was found by a test rather than by reading it:
+> `TriggerDeclarationAnalyzerTests.AllFiveTogetherAreSilent` asserted an empty diagnostic list
+> against exactly this declaration, and began reporting `FLOWX1037` the day the schedule trigger
+> was bound.
 
 ---
 
@@ -307,20 +337,99 @@ a durability strategy.
 ## 8. Schedule trigger
 
 ```csharp
-[CronTrigger("0 2 * * *", TimeZone = "Europe/Berlin",
-    Overlap = OverlapPolicy.Skip, MissedFire = MissedFirePolicy.RunOnce)]
+[Flow("offer.window.close", Profile = ExecutionProfile.Durable)]
+[CronTrigger("0 2 * * *", TimeZone = "Europe/Berlin", MissedFire = MissedFirePolicy.RunOnce)]
+public sealed partial class CloseOfferWindowFlow : Flow<ScheduledFire, OfferWindowClosed>
 ```
 
-| Option | Values | Meaning |
-|---|---|---|
-| `Overlap` | `Skip` \| `Queue` \| `Concurrent` | what happens when the previous run is still going |
-| `MissedFire` | `Skip` \| `RunOnce` \| `RunAll` | behaviour after downtime |
-| `TimeZone` | IANA id | DST-correct; a schedule without a zone is UTC |
-| `Jitter` | duration | spreads load across replicas and tenants |
+`services.AddFlowXSchedules()` — generated from that attribute, in the application's own
+assembly, the way `app.MapFlowX()` is generated from `[HttpTrigger]`. There is no hosted service
+to write, no timer to arm, and no line in `Program.cs` that mentions 02:00.
 
-The Scheduler Engine is **leader-elected** using the same lease store as durable
-flows. Two replicas never fire the same schedule; a dead leader is replaced
-within the lease TTL. Schedules are per-tenant when the flow is tenant-scoped.
+**Two things about the declaration are enforced**, both by
+[FLOWX1037](diagnostics/FLOWX1037.md):
+
+- **The input contract is `ScheduledFire`** — the occurrence, the expression and the zone. A
+  firing carries no body, and `FLOWX1007` / `FLOWX1011` forbid the flow reading a clock to work
+  out which occurrence it is, so the instant has to arrive as data and be journalled on
+  `flow_instance.input` like any other trigger's payload
+  ([ADR-0028](adr/ADR-0028-a-scheduled-flows-input-is-its-occurrence.md)). `OccurrenceAt` is the
+  instant that was **due**, never the instant the sweep noticed it.
+- **The profile is `Durable`.** Not because a schedule suspends, but because the thing that stops
+  a fleet firing the same occurrence *n* times is `flow_instance`'s primary key. An ephemeral
+  flow journals nothing, so the id is inert and every replica runs every occurrence, silently.
+
+| Option | Values | Status |
+|---|---|---|
+| `Cron` | five fields | **read.** Published as `trigger.cron`, and one of the five values the instance id is derived from |
+| `TimeZone` | IANA id | **read.** Published as `trigger.timeZone`. Wall clock, so DST-correct — see below |
+| `MissedFire` | `Skip` \| `RunOnce` \| `RunAll` | **executes.** Not published, because it is this deployment's tolerance for late work rather than a promise to anyone outside ([ADR-0029](adr/ADR-0029-the-manifest-publishes-a-schedules-address.md)) |
+| `Overlap` | `Skip` \| `Queue` \| `Concurrent` | **reaches nothing.** Its default reads as though it stopped a `RunAll` catch-up running its firings concurrently; it does not |
+| `Jitter` | duration | **reaches nothing.** The sweep itself is jittered ±25 %, which is a different thing — it spreads the *sweeps*, not the firings |
+| `PerTenant` | bool | **reaches nothing.** There is no tenant registry to fan out over |
+
+### 8.1 One occurrence, one instance, and no leader
+
+> [!IMPORTANT]
+> **This section said the Scheduler Engine is *leader-elected*, and what replaced it is not an
+> election.** *"Two replicas never fire the same schedule; a dead leader is replaced within the
+> lease TTL"* — the second clause describes how fast a successor appears, not what happens to the
+> firing the dead leader was holding, and a leader that has lost its lease without noticing fires
+> anyway.
+
+A schedule is the one transport where nothing is delivered, so **every node computes the same
+occurrence without talking to any other node.** The instance id is then derived from it:
+
+```text
+InstanceId = uuidv8( SHA-256( flowId ␀ flowVersion ␀ cron ␀ timeZone ␀ occurrence ) )
+```
+
+Ten nodes therefore race to start *one* instance, and the two stores the runtime already had
+settle it: `ILeaseStore.AcquireAsync` refuses the losers while the winner runs, and
+`IFlowJournal.StartAsync` refuses them with `journal.instance_exists` afterwards. The lease is
+the fast answer and the primary key is the permanent one
+([ADR-0026](adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md)).
+
+`FlowScheduleScan` is `FlowTimerScan`'s shape with the store query removed — a durable timer
+reads an instant off a row, a schedule computes one — and it fires through the same
+`FlowHost.RunAsync` an HTTP request reaches, with the minted instance id replaced by the derived
+one. There is no schedule-shaped entry into a flow.
+
+### 8.2 What happens to a firing nobody was there to take
+
+**It happens late, inside `FlowXOptions.ScheduleCatchUp` — one day by default**
+([ADR-0027](adr/ADR-0027-a-missed-schedule-fires-late.md)). That is what ADR-0004 §4's
+*at-least-once* row commits a schedule to, and it is bounded rather than absolute: a fleet down
+for longer than the horizon loses the firings outside it, with nothing to report them.
+
+A node with no memory of a schedule walks backwards from the newest occurrence, asking the
+journal for each derived id, and stops at the first one that exists — everything after it is
+missed. A schedule the journal has **never** held is new rather than neglected, so its floor is
+when that node started: a first deployment fires from its next occurrence rather than replaying a
+day of work nobody missed.
+
+`MissedFire` then narrows what is fired: `Skip` takes only an occurrence within two sweep
+intervals of now, `RunOnce` takes the most recent, `RunAll` takes every one up to
+`ScheduleFireBatchSize` per sweep.
+
+### 8.3 The two days a year a wall-clock time is not an instant
+
+`0 2 * * *` in `Europe/Berlin` names a *local* time, so on the last Sunday in March 02:30 does
+not exist and on the last Sunday in October it happens twice. Both are answered rather than left
+to chance, because a nightly job that silently does not run once a year is what a time-zone field
+exists to prevent:
+
+- **The spring gap:** the occurrence lands on the first local time that does exist — the
+  transition instant. Late by up to the size of the gap, never skipped.
+- **The autumn fold:** the occurrence fires **once, on the first pass**. Firing twice would run a
+  nightly job twice a year with no declaration anywhere saying so.
+
+### 8.4 What the parser does not read
+
+Three-letter month and day names (`JAN`, `MON`), the `@daily` macros, a seconds field, and
+Quartz's `L`, `W` and `#`. Each is refused rather than approximated: `CronSchedule.Parse` answers
+`schedule.cron_unreadable`, `FlowSchedule.Create` throws, and the deployment finds out from a pod
+that never becomes ready rather than from a job that never runs.
 
 ---
 

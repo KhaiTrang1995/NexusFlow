@@ -497,7 +497,7 @@ flowchart TB
         subgraph ns["namespace: ordering"]
             api["order-api<br/><i>Deployment 3..30, HPA on RPS+p99</i><br/>FlowX ephemeral flows"]
             wrk["order-worker<br/><i>Deployment 2..20, KEDA on lag</i><br/>FlowX durable + stream flows"]
-            sched["order-scheduler<br/><i>Deployment 2 (leader-elected)</i><br/>cron + timer flows"]
+            sched["order-scheduler<br/><i>Deployment 2</i><br/>cron + timer flows"]
         end
         otelc["OTel Collector<br/><i>DaemonSet</i>"]
     end
@@ -535,7 +535,7 @@ flowchart TB
 | Rule | Reason |
 |---|---|
 | API and worker are separate deployments of the *same* image | Different scaling signals; identical code and manifest |
-| Scheduler runs leader-elected, replica ≥ 2 | Avoid duplicate cron firing; survive node loss |
+| ~~Scheduler runs leader-elected, replica ≥ 2~~ **A scheduled flow needs no separate deployment and no leader.** Every replica sweeps; a firing is named by its occurrence, so the lease store and the journal's primary key make it exclusive ([ADR-0026](adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md)) | *The rule as written was a design, and its second clause did not follow from its first: a leader that has lost its lease and not noticed fires anyway, and a leader that dies at 01:59 takes the 02:00 firing with it until a successor is elected. The `order-scheduler` box above remains a legitimate deployment shape — a schedule that fires heavy work is worth isolating — but it is a **capacity** decision now, not a correctness one, and `replica ≥ 2` buys availability rather than exclusivity* |
 | `terminationGracePeriodSeconds` ≥ max flow step budget + 10 s | Graceful drain: stop accepting, finish in-flight, release leases |
 | Journal DB is regional, not global | Cross-region durable flows need explicit design ([11](11-Distributed-Runtime.md)) |
 | Manifest is published at deploy, not at build | The registry records what is *running*, not what was compiled |

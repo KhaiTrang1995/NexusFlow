@@ -50,7 +50,7 @@ namespace FlowX.Compiler.Analysis;
 /// declared marker, and says so.
 /// </para>
 /// <para>
-/// <strong>A declared trigger is not the same as a bound one — for every kind but one.</strong>
+/// <strong>A declared trigger is not the same as a bound one — for every kind but two.</strong>
 /// This paragraph said "nothing yet turns these attributes into endpoint registrations —
 /// the sample maps its route by hand in <c>Program.cs</c>". Both halves expired:
 /// <c>EndpointEmitter</c> turns each <c>[HttpTrigger]</c> into a registration in
@@ -60,9 +60,25 @@ namespace FlowX.Compiler.Analysis;
 /// HTTP flow there is no second copy of the route to drift from the declared one. What is
 /// still unasserted is the other direction: nothing stops a hand-written route reaching a
 /// flow at an address it never declared.
-/// <c>Bus</c>, <c>Schedule</c>, <c>Stream</c>, <c>Change</c> and <c>Agent</c> are still
-/// declaration only: nothing binds them, so a flow declaring one of those declares an
-/// address nothing serves. (<c>Manual</c> needs no binding, and <c>Cli</c>'s summary names
+/// </para>
+/// <para>
+/// <strong><c>Schedule</c> is the second, and it is bound the same way.</strong> <em>This
+/// paragraph named it among the five that were declaration only, and said in those words
+/// that "a flow declaring one of those declares an address nothing serves". That expired on
+/// 2026-08-01.</em> <c>ScheduleEmitter</c> turns each <c>[CronTrigger]</c> into a
+/// registration in <c>FlowXSchedules.g.cs</c>, <c>samples/workflow</c> calls the generated
+/// <c>services.AddFlowXSchedules()</c>, and <c>FlowScheduleScan</c> fires it. The copy rule
+/// is stricter here than for a route: the expression and the zone are taken off the
+/// <see cref="TriggerModel"/> this reader produced for the manifest, because they are two of
+/// the five values every node derives the instance id from
+/// (<a href="../../../docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>)
+/// — a second copy would not mislead a reader, it would split one schedule into two.
+/// <c>FLOWX1037</c> refuses the two declarations that could not be fired.
+/// </para>
+/// <para>
+/// <c>Bus</c>, <c>Stream</c>, <c>Change</c> and <c>Agent</c> are still declaration only:
+/// nothing binds them, so a flow declaring one of those declares an address nothing serves.
+/// (<c>Manual</c> needs no binding, and <c>Cli</c>'s summary names
 /// <c>flowx run</c>, which is not one of the CLI's verbs.) The manifest publishes the
 /// declaration either way,
 /// because it is the authored intent; that it can outrun what is bound is a property of
