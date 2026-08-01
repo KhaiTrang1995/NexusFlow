@@ -191,6 +191,60 @@ public sealed class EngineAllocationTests
             "A policy nobody has needed yet is a field on a node the loop does not read.");
     }
 
+    /// <summary>
+    /// A plan whose only declared kinds are the two still inert costs the step loop nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one way widening <c>StepPolicy.IsActive</c> could have lost B2.</strong> Stage
+    /// 1 and stage 3 landed by adding fields to <c>StepPolicy</c> and counting two more kinds in
+    /// <c>IsActive</c> — which is
+    /// <a href="../../docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>'s
+    /// "widening is mechanical" taken literally, and is why no plan flag went with them
+    /// (<a href="../../docs/adr/ADR-0036-stage-one-and-stage-three-run-outside-the-retry.md">ADR-0036</a>).
+    /// The failure mode that widening invites is an <c>IsActive</c> that has drifted into
+    /// meaning "some step declared something", at which point <c>HasStepPolicies</c> is true for
+    /// every flow in <c>samples/banking</c> and gates nothing.
+    /// </para>
+    /// <para>
+    /// A <c>Cache</c> and an <c>Audit</c> are what is left of the kinds nothing applies, so this
+    /// is the plan that would go non-zero on that drift and no other would.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void APlanDeclaringOnlyTheKindsNothingAppliesCostsTheSuccessPathNothing()
+    {
+        RequireOptimisedBuild();
+
+        var plan = DeferredPolicySaga();
+
+        plan.HasStepPolicies.ShouldBeFalse(
+            "a Cache and an Audit are declared and neither is executed, so the flag that gates " +
+            "the whole policy path must stay false.");
+
+        var allocated = MeasureSteadyState(new FlowEngine(new FakeClock(T0)), plan, new NullDispatcher());
+
+        allocated.ShouldBe(0,
+            $"Measured {allocated} B for a four-step saga whose first step declares a Cache and " +
+            "an Audit. Six kinds are counted by StepPolicy.IsActive now rather than four, and " +
+            "a declaration whose stage is not implemented must still cost the flow nothing.");
+    }
+
+    /// <summary>The four-step saga, with the two inert kinds declared on step 0.</summary>
+    private static ExecutionPlan DeferredPolicySaga() => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.place", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForCapability(
+                0,
+                Plans.Validate,
+                policies: PolicyChain.ForStep(
+                    PolicySet.Named("deferred").Cache(TimeSpan.FromHours(1)).Audit("financial"),
+                    Plans.Validate)),
+            StepNode.ForCapability(1, Plans.Reserve, Plans.Release),
+            StepNode.ForCapability(2, Plans.Capture, Plans.Refund),
+            StepNode.ForEmit(3, "order.placed"),
+        ]));
+
     /// <summary>The four-step saga, with a compensation retry declared on step 1's undo.</summary>
     private static ExecutionPlan RetryingSaga() => ExecutionPlan.Create(
         FlowDescriptor.Create("order.place", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
