@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>FlowX.Chaos</RootNamespace>
+
+    <!--
+      This project spawns and kills operating-system processes and reflects over nothing.
+      It ships to nobody: it is a measurement harness, in the same position as
+      tests/FlowX.Benchmarks, so the AOT and trim analyzers have no subject here.
+      EveryShippedProjectIsAotAnalyzed guards the trees that do ship.
+    -->
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+
+    <!--
+      CA1031 — a general catch. The coordinator is the process that has to survive every
+      way a child process, a socket or a database can fail, because its own failure is
+      indistinguishable from "the rig proved nothing" and that is the one outcome
+      docs/benchmarks/QR2-chaos.md exists to make impossible. Every catch here reports
+      what it caught; none swallows.
+
+      CA1303 — literal strings passed to Console. This harness prints a report, not a UI.
+    -->
+    <NoWarn>$(NoWarn);CA1031;CA1303</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The host, because the recovery half of the rig has to be the real FlowRecoveryScan
+      over the real FlowHost. A rig that re-implemented the sweep would be testing the rig.
+    -->
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+    <!--
+      The adapter, because the whole point is a shared PostgreSQL that outlives the
+      processes writing to it.
+    -->
+    <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -4,19 +4,21 @@
 > **Answers:** how does durable execution stay correct across nodes, crashes and deployments?
 
 > [!WARNING]
-> **Two sections of this document have an implementation, and one real store stands
-> behind them. The rest do not.** This box is retired section by section as each lands, not
-> wholesale — it said "nothing in this document is implemented", which was true
-> until WP-52 (2026-07-31) and is no longer.
+> **Two sections of this document have an implementation, one real store stands behind
+> them, and as of WP-50 a rig has killed real processes against it. The rest do not.** This
+> box is retired section by section as each lands, not wholesale — it said "nothing in this
+> document is implemented", which was true until WP-52 (2026-07-31) and is no longer, and it
+> said the missing piece was a demonstration at scale, which was true until WP-50
+> (2026-08-01).
 >
 > | § | State |
 > |---|---|
-> | [1 · distribution model](#1-the-distribution-model) | **not built.** Both coordination points now exist — a Postgres journal and a Postgres lease store — but nothing has run as two *processes*. The multi-node behaviour §3 describes is exercised by two hosts inside one test process, Redis is still WP-54, and the outbox now publishes to a test double rather than to a broker |
+> | [1 · distribution model](#1-the-distribution-model) | **exercised across a real process boundary, not deployed.** *This row said "nothing has run as two processes" and that the multi-node behaviour is "exercised by two hosts inside one test process". Both expired at WP-50 (2026-08-01):* `tests/FlowX.Chaos` runs worker processes and recovery-node processes as separate operating-system processes coordinating through nothing but a shared PostgreSQL, and kills the workers with `SIGKILL` — 10 000 flows per arm, 97 kills, [benchmarks/QR2-chaos.md](benchmarks/QR2-chaos.md). What is still not built is a *deployment*: there is no scheduler, no service discovery and no partitioning, Redis is still WP-54, and the outbox publishes to a test double rather than to a broker |
 > | [2 · the journal](#2-the-journal) | **built, against a real database.** WP-51 declared `IFlowJournal`, `ILeaseStore` and `FencingToken` in `src/FlowX.Abstractions/Durability/`; WP-52 made `FlowX.Runtime` read `ExecutionProfile` and commit one row per step boundary, and resume by replaying committed rows into the same step loop; WP-53 implemented both in `plugins/FlowX.Postgres/`, where 45 conformance assertions and 41 adapter tests run green against PostgreSQL 16.13. **The ERD below is no longer the drawn version** — it is migrations `0001`, `0002` and `0003`, after [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md) superseded three of the drawn clauses and [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md) found six more wrong against a real database |
 > | [3 · leases and fencing](#3-leases-and-fencing) | **built.** *This row said that nothing acquires or renews a lease and nothing scans for an abandoned instance; WP-55 built all three.* `DurableLease` acquires, renews and releases; `FlowHost` takes the lease before the first step; `FlowRecoveryScan` and `FlowRecoveryService` are node-2's half of the diagram below. *A later row said one half had no PostgreSQL behind it — that the adapter implemented no `IRecoveryIndex`, so a Postgres-backed node fenced correctly and scanned for nothing. `PostgresRecoveryIndex` closed it, in a class of its own rather than on the journal, because a scan is not part of executing an instance* |
-> | [4 · exactly-once](#4-exactly-once-honestly) | **not built**, and unchanged by WP-52, WP-53 or WP-55: a process that dies after an effect and before its commit still re-executes the step |
+> | [4 · exactly-once](#4-exactly-once-honestly) | **not built**, and unchanged by WP-52, WP-53 or WP-55: a process that dies after an effect and before its commit still re-executes the step. **WP-50 measured it rather than changing it.** Under real `SIGKILL`s at that exact instruction, with a non-idempotent effect recorded in its own PostgreSQL ledger, the step re-executes **exactly once per kill and never otherwise** — 20 duplicate effects from 20 kills at concurrency 1, and **0 from 20 kills** when the signal moves to the far side of the commit |
 > | [5 · the outbox](#5-the-transactional-outbox) | **built end to end, and unproved against a broker.** The table is in the schema, `.Emit<T>()`'s generated `DescribeStep` builds the event, `FlowEngine.CommitStepAsync` stages it in the step's own transaction, and `PostgresOutboxPublisher` drains it at-least-once in per-`partition_key` order. What is not built is a broker: `IEventPublisher` is declared and the only implementation anywhere is a recording test double, so *published* means *handed to a publisher*. [`FLOWX1024`](diagnostics/FLOWX1024.md) survives, narrowed to the two cases that still stage nothing |
-> | [6 · partitioning](#6-partitioning-and-scale) · [8 · failure catalogue](#8-failure-catalogue) | **not built.** No second node, no sharding, no scheduler. §8's first two rows — node crash and zombie writes — are what §3 now implements; the rest of the catalogue is design |
+> | [6 · partitioning](#6-partitioning-and-scale) · [8 · failure catalogue](#8-failure-catalogue) | **not built.** No sharding, no scheduler. *This row also said "no second node"; WP-50's rig runs several, as processes, though nothing deploys them for you.* §8's first two rows — node crash and zombie writes — are what §3 implements, and **only the first of them has been exercised by killing anything**: see §8's note |
 > | [7 · deployment safety](#7-deployment-safety) | **partly built.** *This row said "no migration"; there are three.* Rules 2, 3 and 4 have implementations — an explicit release on drain, a version-pinned candidate the scan leaves alone, and migrations `0002` and `0003` as the expand/contract worked examples. Rule 1 is still a number an operator has to set |
 >
 > So: a `Durable` flow journals its step boundaries to PostgreSQL under a lease that
@@ -28,10 +30,19 @@
 > instance kept its prefix, kept its fence, and waited. That is closed:
 > `PostgresRecoveryIndex` serves the query, `AddFlowXPostgres` registers it, and
 > `PostgresRecoveryHostTests` plays out a real death — lease dropped without renewal —
-> and a real scan finishing the instance over real stores.* What is left is not a
-> missing part but a missing **demonstration at scale**: nothing has killed a process,
-> nothing has crossed a process boundary, and nothing has run ten thousand of anything.
-> That is WP-62, and the rig it needs is WP-50.
+> and a real scan finishing the instance over real stores.* ***It then said what was left
+> was a missing demonstration at scale — "nothing has killed a process, nothing has crossed
+> a process boundary, and nothing has run ten thousand of anything". All three sentences are
+> now false.*** WP-50 built the rig: `tests/FlowX.Chaos` kills worker processes with
+> `SIGKILL` at a step boundary chosen so the effect has happened and the commit has not,
+> across a process boundary, against a shared PostgreSQL, at **10 000 flows per arm** — and
+> measured **zero duplicate effects against the guarantee and zero lost instances**. Resume
+> p99 was **32.9 s** against QR2's 45 s on that run and **48.1 s** on another with the same
+> zeroes, which is why it is reported and not gated: the figure is the lease TTL plus a
+> queueing term, not a property of the runtime. The record is
+> [benchmarks/QR2-chaos.md](benchmarks/QR2-chaos.md); what it does *not* cover — partitions
+> and zombie nodes, forks and compensations, the outbox, and a kill during a takeover — is
+> §5 of that document, and it is what WP-62 still has to answer for.
 > A `Durable` flow started with no journal is still **refused** rather than run
 > ephemerally (`flow.durability_not_configured`) — on a host that registers a journal
 > and a lease store, that refusal has stopped being the normal path.
@@ -41,8 +52,12 @@
 > non-idempotent effects, resume p99 ≤ 45 s — are the hard ones, and designing
 > them before writing them is what this document is for. Its exit criterion is
 > QR2 in
-> [05 §10](05-Architecture.md#10-quality-requirements-stimulus--response--measure),
-> and nothing measures it yet: B7, B8 and the chaos rig are WP-50, unstarted.
+> [05 §10](05-Architecture.md#10-quality-requirements-stimulus--response--measure).
+> *This paragraph said "nothing measures it yet: B7, B8 and the chaos rig are WP-50,
+> unstarted".* **WP-50 shipped the chaos rig and only the chaos rig**, so QR2's two
+> correctness clauses are measured and passing and its resume p99 is measured and reported
+> without being gated; **B7 and B8 remain unstarted**, and WP-50 must not be read as
+> complete.
 >
 > Read the rest as the design a P2 implementer is held to. Outside §2, §3 and §7's
 > rules, do not read any sentence here as describing behaviour you can observe today.
@@ -575,8 +590,19 @@ Rules that make rolling updates non-events:
 The first two rows are what §3 implements; the rest of this catalogue is still the
 design a P2 implementer is held to. *The first row used to carry a caveat that it was
 only as good as a scan no adapter implemented; it is now backed by a store rather than
-by a test double.* What it has never been is exercised across a process boundary — the
-kill is simulated by dropping a lease, not by killing anything (WP-62).
+by a test double.* ***It then said the row "has never been exercised across a process
+boundary — the kill is simulated by dropping a lease, not by killing anything". It has
+now.*** WP-50's rig kills worker processes with `SIGKILL` against a shared PostgreSQL, and
+at 10 000 flows the first row's promises hold as written: every abandoned instance was
+resumed from its last commit, none was lost, and **the in-flight step re-executed — exactly
+once per kill, and only when its commit had not landed.** That last clause is the row's
+parenthesis, *"idempotency required"*, measured rather than asserted; the record is
+[benchmarks/QR2-chaos.md](benchmarks/QR2-chaos.md).
+
+**The second row is untouched by that.** A `SIGKILL`ed node is gone, not partitioned, so
+nothing in the rig makes a zombie wake up holding a stale token. `LeaseTests` remains the
+only evidence for the fencing row, and it is in-process — which is now the *largest*
+unexercised claim in this catalogue rather than the second largest (WP-62).
 
 The last row is the only case with no automatic resolution. FlowX makes it
 visible rather than pretending otherwise; the operator runbook is
