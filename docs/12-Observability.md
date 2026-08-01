@@ -204,15 +204,61 @@ State: CompensationFailed        Duration: 4.2s        Trigger: kafka:orders.req
   → Next action: flowx replay --instance fi_01HV8… --from 1c   (after inventory recovers)
 ```
 
-| Mode | Behaviour | Use |
-|---|---|---|
-| `--mode inspect` | render history, no execution | incident analysis |
-| `--mode simulate` | re-execute with capabilities stubbed from the journal | verify a fix against real data |
-| `--mode resume --from <step>` | continue the real instance | operator recovery |
-| `--mode fork` | new instance seeded from this history | test a fix without touching production state |
+| Mode | Behaviour | Use | Status |
+|---|---|---|---|
+| `--mode inspect` | render history, no execution | incident analysis | **built** — WP-64, [22 §9](22-CLI.md#9-flowx-replay---mode-inspect--reading-an-instance) |
+| `--mode simulate` | re-execute with capabilities stubbed from the journal | verify a fix against real data | needs the engine |
+| `--mode resume --from <step>` | continue the real instance | operator recovery | needs the engine, a lease and a fence |
+| `--mode fork` | new instance seeded from this history | test a fix without touching production state | needs the engine and a journal *write* |
 
 `simulate` is what makes post-incident work fast: you reproduce a production
 failure locally, with the exact inputs, without touching any production system.
+
+> **`inspect` is built and the other three are not, and the split is not about effort.**
+> `inspect` renders and runs nothing, which is the only reason the CLI is allowed to read a
+> journal at all: [ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md) permits the verb
+> *because* reading rows needs no engine, and it says in as many words that its argument
+> does **not** reach the three modes that execute. Those are blocked on a decision — an
+> out-of-process engine the CLI shells to, or the conclusion that they are not CLI verbs at
+> all — and not merely on a phase.
+
+### 5.1 Where the worked output above is aspirational
+
+The rendering above is this page's specification and the built verb follows its shape. Four
+things in it are **not** what the tool prints, and each is a place where this document
+assumed the journal holds more than it does. They are recorded here, at the spec, rather
+than only as departures noted at the implementation.
+
+- **`Trigger: kafka:orders.requested[3]@1042`.** Nothing journals a trigger. `flow_instance`
+  carries `correlation_id` and `trace_id`, and neither is a broker, topic, partition or
+  offset. The built verb prints the correlation id and does not invent the rest.
+- **`→ ValidatedOrder{id=…, total=EUR 19.98}`.** The journal stores a payload as JSON, not
+  as a typed literal, and a tool that links no FlowX assembly has no contract types to
+  render it through. It prints the stored document.
+- **`attempts: 3 · backoff 213ms, 587ms · breaker Closed→Open`.** No column records a
+  backoff or a breaker transition. What the journal has is one row per attempt, so the built
+  verb shows the attempts themselves and says nothing about the policy that spaced them.
+- **`→ Next action: flowx replay … --from 1c`.** That is a `resume`, which does not exist
+  and is not reachable under ADR-0020. The built verb suggests no next action, because the
+  only ones it could honestly suggest are the ones it cannot perform.
+- **The captures under a forked step.** The capture is real; its *attribution* is not
+  reliable, because a `Parallel`'s branches share one execution context and a capture taken
+  at one branch's commit carries everything minted since the previous commit — including a
+  sibling's, which
+  `ReplayDeterminismTests.AForkAttributesOneBranchsCapturedIdToItsSiblingsRow` pins. The
+  built verb joins the manifest's plan to learn which steps are branches and marks their
+  captures; with no manifest it reports that the check could not run.
+
+**And `flow_instance.input` is NULL on every row ever written** — `FlowHost` passes
+`input: null` — so no replay mode currently has the "exact inputs" `simulate` is described
+above as using. `inspect` renders that as `unknown` rather than as an empty payload, because
+NULL does not distinguish a flow started with no input from one whose input was never
+captured. The emoji markers are ASCII in the built verb too, for the reasons
+[22 §9.2](22-CLI.md#92-two-departures-from-12-5) gives.
+
+The `fi_01HV8…` instance id is illustrative in the same way: the journal keys on a UUID, so
+that is what `--instance` takes. The verb says so by name when it is handed something else,
+rather than reporting an unknown instance.
 
 ---
 
