@@ -64,11 +64,18 @@ public enum CompensationOutcome
 /// <summary>The outcome of one flow execution. A struct: the result path allocates nothing.</summary>
 public readonly struct FlowExecutionResult
 {
-    internal FlowExecutionResult(Error? error, int completedSteps, CompensationOutcome compensation)
+    internal FlowExecutionResult(
+        Error? error,
+        int completedSteps,
+        CompensationOutcome compensation,
+        bool suspended = false,
+        Guid? instanceId = null)
     {
         Error = error;
         CompletedSteps = completedSteps;
         Compensation = compensation;
+        IsSuspended = suspended;
+        InstanceId = instanceId;
     }
 
     /// <summary>The business error, or <c>null</c> when the flow completed.</summary>
@@ -80,8 +87,44 @@ public readonly struct FlowExecutionResult
     /// <summary>What happened to the compensations.</summary>
     public CompensationOutcome Compensation { get; }
 
+    /// <summary>
+    /// True when the flow stopped at a suspension point rather than ending.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Neither a success nor a failure, and the third answer is the whole of WP-63.</strong>
+    /// The instance is <see cref="FlowInstanceState.Suspended"/> in the journal at its resume
+    /// frontier: nothing has failed, so nothing is compensated, and nothing has completed, so
+    /// the flow's <c>.Return(...)</c> has not run and must not be projected. Collapsing this
+    /// into <see cref="IsSuccess"/> would hand a caller an output built from steps that never
+    /// executed.
+    /// </para>
+    /// <para>
+    /// A caller that wants the flow to continue delivers the signal it is waiting for; see
+    /// <c>FlowHost.SignalAsync</c>. <see cref="InstanceId"/> is what names the instance to
+    /// deliver it to.
+    /// </para>
+    /// </remarks>
+    public bool IsSuspended { get; }
+
+    /// <summary>
+    /// The journaled instance this execution ran, or <c>null</c> for an ephemeral flow.
+    /// </summary>
+    /// <remarks>
+    /// Recorded because a suspended flow is unreachable without it: the id is minted by the
+    /// host, and until this existed nothing gave it back, so a caller had no way to name the
+    /// instance a signal belongs to. Present on every journaled outcome rather than only on a
+    /// suspended one, because "which instance did that request become" is the same question an
+    /// operator asks of a flow that failed.
+    /// </remarks>
+    public Guid? InstanceId { get; }
+
     /// <summary>True when every step completed.</summary>
-    public bool IsSuccess => Error is null;
+    /// <remarks>
+    /// False for a suspended flow. It has not failed and it has not finished, and the steps
+    /// after its suspension point have not run.
+    /// </remarks>
+    public bool IsSuccess => Error is null && !IsSuspended;
 
     /// <summary>True when the flow ended with an error.</summary>
     /// <remarks>
@@ -106,6 +149,18 @@ public readonly struct FlowExecutionResult
         ArgumentNullException.ThrowIfNull(error);
         return new FlowExecutionResult(error, completedSteps: 0, CompensationOutcome.NotRequired);
     }
+
+    /// <summary>
+    /// A flow that reached a suspension point and is waiting in the journal.
+    /// </summary>
+    /// <param name="completedSteps">How many steps ran before the wait.</param>
+    /// <remarks>
+    /// Nothing failed, so <see cref="CompensationOutcome.NotRequired"/> is the truthful answer
+    /// rather than a placeholder: the completed steps are still on the instance's history and
+    /// are still undone if the flow fails <em>after</em> it resumes.
+    /// </remarks>
+    public static FlowExecutionResult Suspended(int completedSteps) =>
+        new(null, completedSteps, CompensationOutcome.NotRequired, suspended: true);
 
     /// <summary>
     /// A flow with a declared output that was refused before any step ran.
@@ -164,16 +219,32 @@ public readonly struct FlowExecutionResult<TOut>
     /// <summary>True when the flow ended with an error.</summary>
     public bool IsFailure => Outcome.IsFailure;
 
+    /// <inheritdoc cref="FlowExecutionResult.IsSuspended" />
+    public bool IsSuspended => Outcome.IsSuspended;
+
+    /// <inheritdoc cref="FlowExecutionResult.InstanceId" />
+    public Guid? InstanceId => Outcome.InstanceId;
+
     /// <summary>
     /// The projected output. Reading it on a failed flow is a defect in the caller, so
     /// it throws — the same stance <see cref="Result{T}.Value"/> takes, for the same
     /// reason: a silent <c>default</c> would be serialised to a client as a real answer.
     /// </summary>
     /// <exception cref="InvalidOperationException">The flow did not complete.</exception>
+    /// <remarks>
+    /// A suspended flow throws too, and is named separately rather than reported as an error
+    /// it does not have: its <c>.Return(...)</c> clause reads values the steps after the
+    /// suspension point were going to produce, so projecting it would build an answer out of
+    /// work that has not happened.
+    /// </remarks>
     public TOut Value => IsSuccess
         ? _value!
         : throw new InvalidOperationException(
-            $"Cannot read Value of a flow that ended with '{Error!.Code}'.");
+            IsSuspended
+                ? "Cannot read Value of a flow that is suspended at a signal: its steps after " +
+                  "the suspension point have not run, so its .Return(...) clause has no values " +
+                  "to project. Deliver the signal, then read the resumed execution's Value."
+                : $"Cannot read Value of a flow that ended with '{Error!.Code}'.");
 
     /// <summary>Non-throwing accessor, for call sites that branch on the outcome.</summary>
     public bool TryGetValue(out TOut? value)
@@ -455,6 +526,42 @@ public static class FlowErrors
             .With("flowId", flowId)
             .With("subFlowId", subFlowId)
             .With("maxDepth", depth);
+
+    /// <summary>
+    /// An inline composed child reached a suspension point, which its parent cannot wait at.
+    /// </summary>
+    /// <param name="flowId">The composing parent.</param>
+    /// <param name="stepIndex">Index of the composition, so the failure names one call site.</param>
+    /// <param name="subFlowId">The child that tried to wait.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Refused rather than allowed to double an effect.</strong> A parent records a
+    /// composition as one row, written when the child finishes. A child that suspends writes
+    /// no such row, so a parent resumed afterwards would reach the composition, find nothing
+    /// committed, and compose a <em>second</em> child instance — running every step the first
+    /// child had already run, against the same real systems. The journal would then hold two
+    /// child instances for one composition and no record that they were meant to be one.
+    /// </para>
+    /// <para>
+    /// <see cref="ErrorCategory.Internal"/> because it is a property of how the two flows are
+    /// composed rather than a business outcome: retrying reaches the same wait. The repair is
+    /// to give the waiting flow its own trigger and correlate it, or to compose it
+    /// <c>Detached</c> — a detached child has its own instance and its own lifecycle, so it is
+    /// allowed to wait.
+    /// </para>
+    /// </remarks>
+    public static Error SuspensionInsideComposition(string flowId, int stepIndex, string subFlowId) =>
+        new Error(
+            "flow.suspension_inside_composition",
+            $"Step {stepIndex} of flow '{flowId}' composes '{subFlowId}' inline, and that " +
+            "child reached a suspension point. A parent records a composition as one row " +
+            "written when the child finishes, so a parent resumed past a waiting child would " +
+            "compose a second child instance and repeat its effects. Give the waiting flow " +
+            "its own trigger, or compose it with SubFlowMode.Detached.",
+            ErrorCategory.Internal)
+            .With("flowId", flowId)
+            .With("stepIndex", stepIndex)
+            .With("subFlowId", subFlowId);
 
     /// <summary>
     /// A flow declaring <see cref="ExecutionProfile.Durable"/> was started with no journal to

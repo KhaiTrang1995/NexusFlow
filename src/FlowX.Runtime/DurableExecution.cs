@@ -33,6 +33,8 @@ namespace FlowX.Runtime;
 /// </remarks>
 public sealed class DurableExecution
 {
+    private FlowSignal? _pending;
+
     private DurableExecution(
         IFlowJournal journal,
         Guid instanceId,
@@ -62,6 +64,73 @@ public sealed class DurableExecution
 
     /// <summary>Whether this execution is re-entering an instance that already ran.</summary>
     public bool IsResumed => Frontier is not null;
+
+    /// <summary>
+    /// The signal this invocation carries into the instance, or <c>null</c> when it carries
+    /// none.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>One signal per invocation, and it is consumed by the first suspension point
+    /// that asked for it.</strong> A flow that waits twice for the same identity is resumed
+    /// twice, once per delivery — which is the only reading under which "the signal that
+    /// arrived satisfied the wait that was open" stays true. Delivering a batch would need the
+    /// engine to decide which wait each one belongs to, and the journal already answers that:
+    /// the open wait is the first <c>AwaitSignal</c> with no committed row.
+    /// </para>
+    /// <para>
+    /// A resume with no signal is exactly what <c>FlowRecoveryScan</c> issues. Such an
+    /// invocation runs the instance forward to its next suspension point and stops there
+    /// again, which is why picking up a suspended instance is harmless rather than a way of
+    /// skipping the wait.
+    /// </para>
+    /// </remarks>
+    public FlowSignal? PendingSignal => _pending;
+
+    /// <summary>
+    /// Attaches a signal to this invocation.
+    /// </summary>
+    /// <param name="signal">The signal being delivered.</param>
+    /// <returns>The same session, so a caller can chain it onto <c>ResumeAsync</c>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="signal"/> is null.</exception>
+    /// <remarks>
+    /// On the session rather than on <c>ExecuteAsync</c>'s parameter list, so that delivering a
+    /// signal reaches the engine through the <em>same</em> overload a recovery scan reaches it
+    /// through. A second entry point taking a signal would be the second resume path
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0015-journal-schema-and-durable-execution.md">ADR-0015</a>
+    /// rejected a second engine to avoid.
+    /// </remarks>
+    public DurableExecution WithSignal(FlowSignal signal)
+    {
+        ArgumentNullException.ThrowIfNull(signal);
+
+        _pending = signal;
+
+        return this;
+    }
+
+    /// <summary>
+    /// Hands over the pending signal if it is the one this suspension point waits for.
+    /// </summary>
+    /// <param name="signalType">The identity the plan's node carries.</param>
+    /// <returns>The signal, or <c>null</c> when none was delivered or it is a different one.</returns>
+    /// <remarks>
+    /// Taken rather than read, so that a flow declaring the same signal at two suspension
+    /// points does not satisfy both from one delivery — the second wait is still open, and the
+    /// instance suspends again at it.
+    /// </remarks>
+    internal FlowSignal? TakeSignal(string? signalType)
+    {
+        if (_pending is not { } pending ||
+            !string.Equals(pending.SignalType, signalType, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        _pending = null;
+
+        return pending;
+    }
 
     /// <summary>
     /// Opens the <c>flow_instance</c> row for a fresh instance and returns the session the
