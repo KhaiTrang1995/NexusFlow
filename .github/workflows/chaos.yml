@@ -1,0 +1,354 @@
+name: Chaos
+
+# WP-62. WP-50 built the QR2 rig — `tests/FlowX.Chaos`, worker processes SIGKILLed at a step
+# boundary against a shared PostgreSQL — and until this file existed the only thing that had
+# ever run it was a person deciding to. A recorded run is evidence; this is the schedule.
+#
+# READ THIS BEFORE CHANGING ANY OF IT. `CHECKLIST.md` blocker B-4 and the unnumbered package
+# above WP-31 in `PLAN.md` document, at length, what this repository has already learnt about
+# nightly jobs: the *Benchmark budgets* job has been blocking and red on `dev` since
+# 2026-07-31 through sixty-odd pushes, and sixteen bytes of allocation regression crossed
+# underneath it, because **nothing tells anyone**. Their conclusion — "a merge-class gate
+# whose failure has no consequence is a nightly report with a red icon" — is the design
+# constraint on this file, not a footnote to it. Adding a nightly job that can go red in
+# silence would reproduce that finding on purpose.
+#
+# So the consequence is not the icon. A non-PASS run opens a labelled issue, assigned to the
+# repository owner, and a PASS closes it again — `scripts/publish-chaos-verdict.py` is where
+# that lives and why. What is deliberately NOT claimed anywhere: that this gate blocks a
+# merge. It does not and it cannot; it runs at 03:41 against no pull request.
+#
+# THE SECOND HALF OF THE ANSWER is `verdict-self-test` below, which runs on every push and
+# pull request. The chaos run cannot be merge-gated, but the judgement can, and the judgement
+# is where a silent softening would happen — most of all to the resume p99, which QR2 states
+# and this repository deliberately does not gate on.
+
+on:
+  schedule:
+    # 03:41 UTC. Off the hour for the same reason security.yml is at :17 — the on-the-hour
+    # slot is heavily oversubscribed on hosted runners and a scheduled job that starts late
+    # is a scheduled job that sometimes does not start.
+    - cron: '41 3 * * *'
+
+  workflow_dispatch:
+    inputs:
+      flows:
+        description: 'Flows per arm (QR2 asks for 10000)'
+        required: false
+        default: '10000'
+      kill_every:
+        description: 'Arrivals at the kill point one worker survives'
+        required: false
+        default: '100'
+
+  # The self-test only. The chaos run itself is guarded by an `if` on every job below that
+  # needs a database, because it takes minutes and kills operating-system processes.
+  push:
+    branches: [master, dev]
+  pull_request:
+    branches: [master, dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  # One chaos run at a time. Two overlapping runs would share the PostgreSQL service only in
+  # the sense that each has its own, but they would also both file issues, and a second
+  # opinion arriving while the first is being read is noise.
+  group: chaos-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+  # The nightly configuration, in one place so that changing it is a one-line reviewed diff.
+  # These are the recorded run's parameters (docs/benchmarks/QR2-chaos.md §4), which produced
+  # 97 SIGKILLs per arm at 10 000 flows in 328 s of wall clock on a four-core container at a
+  # load average of 36. A hosted runner is idle and has at least as many cores, so the scale
+  # is affordable — but it has never been run on one, and the first scheduled run is the
+  # experiment. If it proves too big, lower FLOWX_CHAOS_FLOWS here rather than widening
+  # anything: a smaller run that says so is worth more than a bigger one that times out.
+  FLOWX_CHAOS_FLOWS: '10000'
+  FLOWX_CHAOS_KILL_EVERY: '100'
+
+jobs:
+  verdict-self-test:
+    name: The QR2 verdict can fail, and does not gate the latency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The rig's opt-in is three-way, and the middle case is a failure
+        # `scripts/run-chaos-qr2.sh` skips with a reason when FLOWX_CHAOS is unset and FAILS
+        # when it is set with no database, because a skip in the second case would report a
+        # chaos run that never happened as a green job. That rule is the reason the nightly
+        # below can be trusted at all, and nothing asserted it until now.
+        #
+        # Both branches return before the script builds anything, so this costs a second.
+        run: |
+          set -o pipefail
+
+          set +e
+          output=$(env -u FLOWX_CHAOS -u FLOWX_POSTGRES_CONNECTION ./scripts/run-chaos-qr2.sh 2>&1)
+          skipped=$?
+          set -e
+          echo "$output"
+
+          if [ "$skipped" -ne 0 ]; then
+            echo "::error::With FLOWX_CHAOS unset the rig must skip and exit 0; it exited $skipped."
+            exit 1
+          fi
+
+          if ! echo "$output" | grep -q 'Skipped: FLOWX_CHAOS is not set'; then
+            echo "::error::The rig skipped without saying why, which is a silent skip."
+            exit 1
+          fi
+
+          set +e
+          output=$(env -u FLOWX_POSTGRES_CONNECTION FLOWX_CHAOS=1 ./scripts/run-chaos-qr2.sh 2>&1)
+          asked=$?
+          set -e
+          echo "$output"
+
+          if [ "$asked" -eq 0 ]; then
+            echo "::error::FLOWX_CHAOS set with no database must FAIL, not skip. A skip there reports a chaos run that never happened as a green job."
+            exit 1
+          fi
+
+          echo "Three-way opt-in holds: skip with a reason, then fail rather than skip."
+
+      - name: PASS, FAIL and INCONCLUSIVE are three states
+        # Eleven documents derived from the real recorded run by changing one field each.
+        # Two of the cases are the ones that matter beyond the exit code: the recorded run
+        # passes *with* its 260 and 186 duplicates inside ADR-0006's documented window, and a
+        # resume p99 of 999 s is still a PASS. The second is the mechanical guarantee that
+        # QR2's 45 s clause stays reported and not gated — if somebody makes it a gate, this
+        # step goes red on the pull request that does it, which is the only place that can be
+        # caught, since the nightly job is not on the merge path.
+        run: python3 scripts/selftest-chaos-verdict.py
+
+      - name: The verdict reaches a person for each non-PASS state
+        # `publish-chaos-verdict.py` is what makes a red night different from a red icon, so
+        # it gets exercised too — without --notify, which prints the `gh` calls it would make
+        # rather than making them. Asserts the job exit code per state and that the three
+        # states file three different things.
+        run: |
+          set -o pipefail
+
+          fabricate() {
+            python3 - "$1" "$2" <<'PY'
+          import json, sys
+          document = json.load(open('docs/benchmarks/QR2-chaos.json'))
+          if sys.argv[2] == 'fail':
+              document['arms'][0]['duplicatesAgainstGuarantee'] = 1
+          elif sys.argv[2] == 'inconclusive':
+              for arm in document['arms']:
+                  arm['killExitCodes'] = {'0': arm['processKills']}
+          json.dump(document, open(sys.argv[1], 'w'))
+          PY
+          }
+
+          for state in pass fail inconclusive; do
+            fabricate "/tmp/$state.json" "$state"
+
+            set +e
+            python3 scripts/check-chaos-qr2.py "/tmp/$state.json" > "/tmp/$state.txt" 2>&1
+            code=$?
+            python3 scripts/publish-chaos-verdict.py --code "$code" \
+              --results "/tmp/$state.json" --verdict "/tmp/$state.txt" \
+              --owner "${{ github.repository_owner }}" > "/tmp/$state.published" 2>&1
+            published=$?
+            set -e
+
+            echo "--- $state: checker $code, job $published"
+            tail -6 "/tmp/$state.published"
+
+            if [ "$state" = "pass" ] && [ "$published" -ne 0 ]; then
+              echo "::error::A PASS must leave the job green."
+              exit 1
+            fi
+
+            if [ "$state" != "pass" ] && [ "$published" -eq 0 ]; then
+              echo "::error::A $state verdict left the job green. That is the failure B-4 records."
+              exit 1
+            fi
+          done
+
+          # The third state has to be visibly a third state and not a second kind of
+          # failure. Matched on the heading rather than on the word appearing anywhere: the
+          # checker prints an arm's refusals beside its failures, so a document that is both
+          # carries the word INCONCLUSIVE inside a FAIL legitimately.
+          if ! grep -q '^## QR2 chaos — FAIL$' /tmp/fail.published; then
+            echo "::error::A FAIL was not reported as a FAIL."
+            exit 1
+          fi
+
+          if ! grep -q '^## QR2 chaos — INCONCLUSIVE$' /tmp/inconclusive.published \
+             || ! grep -q 'produced no verdict' /tmp/inconclusive.published; then
+            echo "::error::An INCONCLUSIVE run was not reported as one. Folding it into either of the other two is the failure both this job and check-chaos-qr2.py exist to prevent."
+            exit 1
+          fi
+
+          echo "Three verdicts, three outcomes, and only one of them green."
+
+  qr2:
+    name: QR2 — SIGKILL at a step boundary
+    runs-on: ubuntu-latest
+    # Nightly and on demand only. Never on a pull request: it takes minutes, it kills
+    # operating-system processes, and a merge cannot wait on it. What a pull request gets
+    # instead is `verdict-self-test` above.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      # The whole point. Without this the job can only be a red icon, which is the thing
+      # B-4 is about; with it, a non-PASS reaches a named person's notifications.
+      issues: write
+
+    services:
+      postgres:
+        # No other workflow in this repository stands one up — `tests/FlowX.Postgres.Tests`
+        # is opt-in on FLOWX_POSTGRES_CONNECTION and CI does not set it, so its 113 database
+        # tests skip. This is the first Postgres service container here, and it is written
+        # to be the one the others copy: pinned major version matching what the recorded run
+        # used (PostgreSQL 16), a health check so the rig never races the server, and a
+        # password because the rig connects over TCP.
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Settle the run's parameters
+        id: parameters
+        # The dispatch inputs arrive through `env`, not interpolated into the script, and
+        # they are checked to be digits before anything else uses them. Two reasons: a
+        # `${{ }}` expansion inside a shell line is a script-injection shape whatever this
+        # particular input can hold, and the steps below DO interpolate these outputs —
+        # which is only safe because this step has already established they are integers.
+        env:
+          INPUT_FLOWS: ${{ github.event.inputs.flows }}
+          INPUT_KILL_EVERY: ${{ github.event.inputs.kill_every }}
+        run: |
+          flows="${INPUT_FLOWS:-$FLOWX_CHAOS_FLOWS}"
+          kill_every="${INPUT_KILL_EVERY:-$FLOWX_CHAOS_KILL_EVERY}"
+
+          for value in "$flows" "$kill_every"; do
+            case "$value" in
+              ''|*[!0-9]*)
+                echo "::error::'$value' is not a positive integer. Both parameters are flow counts."
+                exit 1 ;;
+            esac
+          done
+
+          echo "flows=$flows" >> "$GITHUB_OUTPUT"
+          echo "kill_every=$kill_every" >> "$GITHUB_OUTPUT"
+          echo "Running $flows flows per arm, killing every $kill_every arrivals."
+
+      - name: Kill processes
+        id: run
+        env:
+          FLOWX_CHAOS: '1'
+          FLOWX_POSTGRES_CONNECTION: 'Host=127.0.0.1;Port=5432;Database=postgres;Username=postgres;Password=postgres'
+        # The parameters are the recorded run's (QR2-chaos.md §4), except --converge-timeout,
+        # which is raised well above it. That is not slack for its own sake: when the
+        # coordinator gives up waiting it reports every instance still running as LOST — the
+        # same field a genuinely lost instance lands in — so a runner too slow to drain its
+        # backlog produces a correctness FAIL that is not one. The results document does not
+        # record the timeout, so the checker cannot tell the two apart; until it can, the
+        # defences are a generous timeout here and the log line
+        # `scripts/publish-chaos-verdict.py` greps for and puts at the top of the issue.
+        run: |
+          rm -f .artifacts/chaos-qr2.json
+
+          # Not `set -o pipefail`, and deliberately: this step must reach its own guard
+          # below whatever the rig did, and the exit code that matters is the checker's,
+          # taken explicitly two steps down. A rig that crashed is caught by the guard.
+          set +e
+          ./scripts/run-chaos-qr2.sh \
+            --flows "${{ steps.parameters.outputs.flows }}" \
+            --kill-every "${{ steps.parameters.outputs.kill_every }}" \
+            --kill-step 1 \
+            --workers 3 --concurrency 6 \
+            --recovery-nodes 2 --max-concurrent-recoveries 24 \
+            --lease-ttl 30 --scan-interval 3 \
+            --converge-timeout 1800 2>&1 | tee run.log
+          set -e
+
+          echo "Rig finished."
+
+      - name: A run that did not happen is a failure here, not a skip
+        # `run-chaos-qr2.sh` exits 0 and writes nothing when FLOWX_CHAOS is unset. That is
+        # right for a developer's shell and wrong for this job: if the variable above is ever
+        # dropped, the step succeeds, the checker is never reached, and the night reports a
+        # green QR2 on a run that never started. So the results document existing is asserted
+        # rather than assumed — in CI a skip IS the failure.
+        run: |
+          if [ ! -s .artifacts/chaos-qr2.json ]; then
+            echo "::error::The chaos rig wrote no results document. Nothing about QR2 was verified tonight, and this job is red for that reason rather than for a defect."
+            tail -40 run.log 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: The verdict
+        id: verdict
+        # The exit code the whole job turns on, taken from one place: 0 PASS, 1 FAIL,
+        # 2 INCONCLUSIVE. `--flows` makes the checker refuse a PASS below the scale the run
+        # asked for, so a night whose workers stopped claiming cannot be quoted as a clean
+        # run at the scale in the job name.
+        #
+        # Note what is NOT passed: nothing about the resume p99. The checker prints it
+        # against QR2's 45 s and never fails on it, three runs of this rig disagree on it by
+        # a factor of two with every correctness row zero, and `verdict-self-test` asserts
+        # that a p99 of 999 s is still a PASS. It is reported, and it is not a gate.
+        run: |
+          set +e
+          python3 scripts/check-chaos-qr2.py .artifacts/chaos-qr2.json \
+            --flows "${{ steps.parameters.outputs.flows }}" > verdict.txt 2>&1
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          set -e
+          cat verdict.txt
+
+      - name: Publish it, and give a red night a consequence
+        # Writes the step summary, annotates the run, and — the part that is not a red icon —
+        # opens or updates a labelled issue assigned to the repository owner on FAIL,
+        # INCONCLUSIVE or a checker that broke, and closes it again on the next PASS.
+        # Returns non-zero for everything except PASS, which is what fails this job.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/publish-chaos-verdict.py \
+            --code "${{ steps.verdict.outputs.code }}" \
+            --results .artifacts/chaos-qr2.json \
+            --verdict verdict.txt \
+            --log run.log \
+            --owner "${{ github.repository_owner }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --notify
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          # Kept whatever the verdict, and kept on a PASS too: the recorded runs in
+          # docs/benchmarks/ are the only evidence anyone can compare a bad night against,
+          # and a green night's document is what a p99 argument needs.
+          name: chaos-qr2
+          path: |
+            .artifacts/chaos-qr2.json
+            verdict.txt
+            run.log
+          retention-days: 90
