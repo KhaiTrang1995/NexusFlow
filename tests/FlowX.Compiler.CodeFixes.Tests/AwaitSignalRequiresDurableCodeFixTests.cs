@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.CodeAnalysis;
 using Shouldly;
 using Xunit;
@@ -62,47 +63,48 @@ public sealed class AwaitSignalRequiresDurableCodeFixTests
     }
 
     /// <summary>
-    /// And the flow it produces is not clean, which this test exists to keep visible.
+    /// And the flow it produces is clean, which this test exists to keep true.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <c>FLOWX1031</c> is an error on <c>AwaitSignal</c> under <em>every</em> profile,
-    /// <c>Durable</c> included, because nothing implements suspension: the step completes
-    /// immediately and the plan it reached carried a one-hour timeout whatever the author
-    /// declared. So this quick action clears one error and raises another, which
-    /// <c>ExecutionProfileAnalyzerTests</c> calls the mark of a broken fix.
+    /// <strong>This assertion used to be its own inverse, and the inversion is the whole
+    /// point of WP-63.</strong> It read
+    /// <c>TheFixTradesFLOWX1017ForFLOWX1031BecauseDurableDoesNotSuspendEither</c>: this quick
+    /// action cleared one error and raised another, because <c>FLOWX1031</c> was an error on
+    /// <c>AwaitSignal</c> under every profile including <c>Durable</c> — nothing implemented
+    /// suspension, the step completed immediately, and the plan it reached carried a one-hour
+    /// timeout whatever the author declared. <c>ExecutionProfileAnalyzerTests</c> calls a fix
+    /// whose result is a different diagnostic a broken fix, and this one was.
     /// </para>
     /// <para>
-    /// <strong>The fix is not broken; its premise is.</strong> The provider's own remarks
-    /// say it does not guess because "the author wrote <c>AwaitSignal</c>, so the flow
-    /// suspends". The flow does not suspend, and <c>Durable</c> was never the missing half
-    /// of a working suspension — it was the profile under which the same nothing happened
-    /// without a message. Asserting the second diagnostic here rather than asserting its
-    /// absence is what stops this suite reading as evidence that the quick action lands
-    /// somewhere usable. <c>docs/diagnostics/FLOWX1031.md</c> argues the severity that
-    /// makes this true.
+    /// <strong>The fix was never broken; its premise was.</strong> The provider's own remarks
+    /// say it does not guess, because "the author wrote <c>AwaitSignal</c>, so the flow
+    /// suspends". The flow now does suspend, so the premise is true and the destination is a
+    /// flow that compiles and waits — which is what the quick action was always claiming to
+    /// produce.
     /// </para>
     /// <para>
-    /// <strong>Red when WP-63 lands.</strong> A suspension point that suspends deletes
-    /// <c>FLOWX1031</c>, and this test with it — at which point the quick action's
-    /// destination really is clean and <c>TheDiagnosticIsGoneAfterTheFix</c> says the whole
-    /// truth on its own.
+    /// <c>FLOWX1006</c> is what is left, and it is the fixture's rather than the fix's: this
+    /// project declares no <c>JsonSerializerContext</c> at all, so every contract a
+    /// <c>Durable</c> flow's journal would write is reported — the flow's own input included,
+    /// and that was true before the signal joined the state bag. It is asserted by name
+    /// instead of being allowed for, so that a <em>new</em> id appearing here fails.
     /// </para>
     /// </remarks>
     [Fact]
-    public void TheFixTradesFLOWX1017ForFLOWX1031BecauseDurableDoesNotSuspendEither()
+    public void TheFixLandsOnAFlowThatCompilesAndWaits()
     {
         var fixedProject = ApplyFix(Ephemeral());
 
-        CodeFixHarness.DiagnosticIds(fixedProject).ShouldContain(
+        CodeFixHarness.DiagnosticIds(fixedProject).ShouldNotContain(
             "FLOWX1031",
-            "A quick action that lands on a different error is worth stating in a test " +
-            "rather than discovering in an editor.");
+            "the profile the fix writes is the one the suspension point needs, and the " +
+            "suspension point is honoured under it.");
 
-        CodeFixHarness.Single(fixedProject, "FLOWX1031").Severity.ShouldBe(
-            DiagnosticSeverity.Error,
-            "AwaitSignal is the half of FLOWX1031 that fabricates a timeout, so it refuses " +
-            "the plan rather than annotating it.");
+        CodeFixHarness.DiagnosticIds(fixedProject).Distinct().ShouldBe(
+            ["FLOWX1006"],
+            "nothing the fix produced is reported. What is left is this project having no " +
+            "serialiser context for a durable flow's contracts.");
     }
 
     private static Project Ephemeral() =>

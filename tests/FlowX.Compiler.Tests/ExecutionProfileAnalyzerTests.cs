@@ -253,15 +253,13 @@ public sealed class ExecutionProfileAnalyzerTests
     /// test above states.
     /// </para>
     /// <para>
-    /// <strong>"The fix's output is clean" is no longer true, and this test never asserted
-    /// it.</strong> It runs one analyzer, so it speaks only for <c>FLOWX1028</c>.
-    /// <c>FLOWX1031</c> is an error on <c>AwaitSignal</c> under every profile, <c>Durable</c>
-    /// included, because nothing implements suspension — so the quick action does land on a
-    /// different diagnostic, deliberately, and
-    /// <c>AwaitSignalRequiresDurableCodeFixTests.TheFixTradesFLOWX1017ForFLOWX1031BecauseDurableDoesNotSuspendEither</c>
-    /// asserts that rather than leaving it to be found in an editor. The principle in the
-    /// message below still holds; what changed is that the broken thing is the quick
-    /// action's premise, not the rule that exposes it.
+    /// <strong>"The fix's output is clean" was untrue for two phases and is true again.</strong>
+    /// This test runs one analyzer, so it only ever spoke for <c>FLOWX1028</c> — and while
+    /// <c>FLOWX1031</c> was an error on <c>AwaitSignal</c> under every profile, the quick
+    /// action really did land on a different diagnostic. WP-63 made the flow suspend and
+    /// narrowed <c>FLOWX1031</c> off <c>AwaitSignal</c>, so
+    /// <c>AwaitSignalRequiresDurableCodeFixTests.TheFixLandsOnAFlowThatCompilesAndWaits</c>
+    /// now asserts the whole claim rather than the shortfall.
     /// </para>
     /// </remarks>
     [Fact]
