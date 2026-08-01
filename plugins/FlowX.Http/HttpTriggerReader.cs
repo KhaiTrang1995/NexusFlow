@@ -79,7 +79,7 @@ public static class HttpTriggerReader
             Deadline: null,
 
             // The validated principal, and nothing derived from a header. This is the whole
-            // of where identity crosses the boundary (ADR-0027): past this line the engine
+            // of where identity crosses the boundary (ADR-0028): past this line the engine
             // decides a capability's authorisation stance against it and cannot tell whether
             // a request, a broker record or a cron tick produced it.
             //

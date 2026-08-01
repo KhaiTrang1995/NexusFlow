@@ -1,4 +1,4 @@
-# ADR-0027: Identity reaches the engine on the invocation, as the `ClaimsPrincipal` the trigger already resolved
+# ADR-0028: Identity reaches the engine on the invocation, as the `ClaimsPrincipal` the trigger already resolved
 
 **Status:** Accepted
 **Date:** 2026-08-01
@@ -13,7 +13,7 @@
 
 ## 1. Context
 
-[ADR-0026](ADR-0026-authorisation-runs-in-the-step-loop.md) puts the check in the step loop.
+[ADR-0027](ADR-0027-authorisation-runs-in-the-step-loop.md) puts the check in the step loop.
 The step loop needs a caller. There was none.
 
 ### 1.1 What already existed, which is nearly all of it
@@ -177,6 +177,6 @@ expressible as claims, which would reopen §1.3's rejection of a FlowX-owned typ
 ---
 
 **See also:** [ADR-0004](ADR-0004-universal-trigger-model.md) ·
-[ADR-0026](ADR-0026-authorisation-runs-in-the-step-loop.md) ·
-[ADR-0028](ADR-0028-a-refusal-is-a-result-failure.md) ·
+[ADR-0027](ADR-0027-authorisation-runs-in-the-step-loop.md) ·
+[ADR-0029](ADR-0029-a-refusal-is-a-result-failure.md) ·
 [15 — Security](../15-Security.md)

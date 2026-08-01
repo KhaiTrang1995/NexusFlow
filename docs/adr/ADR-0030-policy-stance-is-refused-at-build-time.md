@@ -1,4 +1,4 @@
-# ADR-0029: `Authorization.Policy` is refused at build time rather than skipped at run time
+# ADR-0030: `Authorization.Policy` is refused at build time rather than skipped at run time
 
 **Status:** Accepted
 **Date:** 2026-08-01
@@ -13,7 +13,7 @@
 
 ## 1. Context
 
-[ADR-0026](ADR-0026-authorisation-runs-in-the-step-loop.md) decides four of the five stances in
+[ADR-0027](ADR-0027-authorisation-runs-in-the-step-loop.md) decides four of the five stances in
 the step loop. `Authorization.Policy` is the fifth.
 
 [15 §4](../15-Security.md#4-authorisation-model) is specific about what it means:
@@ -45,11 +45,11 @@ So the stance reaches `flowx.manifest.json`, reaches `flowx diff`'s `FLOWX-DIFF-
   declaration the author believed in into a `403` in production, discovered by a customer. The
   compiler can see this at build time, and a rule that fires where the mistake is made is worth
   more than a failure where it is felt. (The engine still refuses it, as a fail-closed backstop
-  for a hand-built plan — see [ADR-0028 §2.1](ADR-0028-a-refusal-is-a-result-failure.md) — but
+  for a hand-built plan — see [ADR-0029 §2.1](ADR-0029-a-refusal-is-a-result-failure.md) — but
   that is a floor, not the mechanism.)
 * **Declare an `IAuthorizationPolicyEvaluator` in `FlowX.Abstractions` and have the host
   supply an ASP.NET-backed implementation.** The right long-term answer, and rejected *for
-  now* on three counts. It is asynchronous, and [ADR-0026 §2.3](ADR-0026-authorisation-runs-in-the-step-loop.md)'s
+  now* on three counts. It is asynchronous, and [ADR-0027 §2.3](ADR-0027-authorisation-runs-in-the-step-loop.md)'s
   check is synchronous and inside the hot loop. The engine has no container to resolve it from
   — `FlowEngine` takes a clock, and nothing else. And an evaluator that is *not registered*
   leaves the same hole this record is about, one indirection further away, where a
@@ -161,6 +161,6 @@ name which of them it means.
 
 **See also:** [FLOWX1037](../diagnostics/FLOWX1037.md) ·
 [FLOWX1032](../diagnostics/FLOWX1032.md) ·
-[ADR-0026](ADR-0026-authorisation-runs-in-the-step-loop.md) ·
+[ADR-0027](ADR-0027-authorisation-runs-in-the-step-loop.md) ·
 [ADR-0004](ADR-0004-universal-trigger-model.md) ·
 [15 — Security](../15-Security.md)

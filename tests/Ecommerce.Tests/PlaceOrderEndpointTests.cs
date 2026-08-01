@@ -72,7 +72,7 @@ public sealed class PlaceOrderEndpointTests
     /// </para>
     /// <para>
     /// <c>403</c> rather than <c>401</c>, and that is a deliberate loss of precision recorded
-    /// in ADR-0028: <c>ErrorCategory</c> is a closed set with no authentication member, and
+    /// in ADR-0029: <c>ErrorCategory</c> is a closed set with no authentication member, and
     /// the engine is transport-agnostic so it has no <c>WWW-Authenticate</c> challenge to
     /// name. The <em>code</em> still distinguishes the two, which is what an operator needs.
     /// </para>
@@ -118,7 +118,7 @@ public sealed class PlaceOrderEndpointTests
     /// </para>
     /// <para>
     /// <strong>And the saga unwinds behind the refusal.</strong> That is the half that makes
-    /// ADR-0028's "a refusal is a business outcome" concrete rather than a slogan: the
+    /// ADR-0029's "a refusal is a business outcome" concrete rather than a slogan: the
     /// refusal is an <c>Error</c> on the result, so the engine's failure path runs exactly as
     /// it does for a declined payment, and the reservation this caller did legitimately take
     /// is given back. An exception thrown out of the step loop would have skipped it.

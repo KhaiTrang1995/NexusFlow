@@ -398,7 +398,7 @@ public sealed class FlowHost
     /// does not.</strong> A resumed instance's invocation is rebuilt from its journal row,
     /// and that row carries a correlation id, a tenant and a deadline — no claims. That is
     /// deliberate and is argued in
-    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0027-identity-arrives-on-the-invocation.md">ADR-0027</a>:
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0028-identity-arrives-on-the-invocation.md">ADR-0028</a>:
     /// persisting a principal would put claims at rest for the life of the instance, and
     /// would then authorise a payment on Friday with a grant proved on Monday, which the
     /// grant's issuer has had four days to revoke.
@@ -483,7 +483,7 @@ public sealed class FlowHost
                     record.DeadlineAt,
 
                     // Whoever is resuming it, and never whoever started it. The row carries no
-                    // claims by design (ADR-0027).
+                    // claims by design (ADR-0028).
                     principal,
 
                     // And when nobody is resuming it — a timer sweep, a recovery scan — this is

@@ -1079,7 +1079,7 @@ public sealed class FlowEngine
             // for the shapes that have always had it.
             var policy = plan.HasStepPolicies ? step.StepPolicy : StepPolicy.None;
 
-            // ADR-0026, and the whole of the authorisation hook: ADR-0023's shape struck a
+            // ADR-0027, and the whole of the authorisation hook: ADR-0023's shape struck a
             // second time. One comparison against a field the plan already holds, and a plan
             // nobody can be refused from — every step Public, Internal or unstanced — never
             // reads a principal or a claim.

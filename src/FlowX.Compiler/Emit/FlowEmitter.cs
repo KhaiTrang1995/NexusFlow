@@ -1180,7 +1180,7 @@ public static class FlowEmitter
                         // work this principal already caused, and `StepNode.ForCapability`
                         // resolves the node's stance from the forward capability alone — so a
                         // stance here would reach no decision and would read as though it did.
-                        // ADR-0026 argues why a compensation is not authorised.
+                        // ADR-0027 argues why a compensation is not authorised.
                         authorizationMode: null,
                         authorizationValue: null) + ";");
             }

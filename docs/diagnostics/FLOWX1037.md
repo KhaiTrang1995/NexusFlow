@@ -84,7 +84,7 @@ Any suppression must still carry a `FLOWX-DEBT` marker with an owner and an expi
 honour — as a **warning**, on the argument that "an error erases the inventory the fixing
 phase needs" and that "the source is not wrong; it is written correctly for a platform that
 has the feature". Neither half transfers, and the reason is what
-[ADR-0029](../adr/ADR-0029-policy-stance-is-refused-at-build-time.md) records:
+[ADR-0030](../adr/ADR-0030-policy-stance-is-refused-at-build-time.md) records:
 
 **There is no inventory to preserve.** FLOWX1032's argument turns on the `.WithPolicy(...)`
 calls being the list of steps that asked for a timeout, which is what let P4 find them. Here
@@ -141,4 +141,4 @@ unhandled.
 **Back to:** [diagnostics index](README.md) · [FLOWX1010](FLOWX1010.md) ·
 [FLOWX1030](FLOWX1030.md) · [FLOWX1032](FLOWX1032.md) ·
 [Security](../15-Security.md) ·
-[ADR-0029](../adr/ADR-0029-policy-stance-is-refused-at-build-time.md)
+[ADR-0030](../adr/ADR-0030-policy-stance-is-refused-at-build-time.md)

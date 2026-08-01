@@ -364,7 +364,7 @@ public static class FlowEndpointExtensions
                 FlowSignal.Of(signalType, payload),
 
                 // The signal's deliverer, and not the caller who started the instance. The
-                // journal row carries no claims (ADR-0027), so the steps after the wait are
+                // journal row carries no claims (ADR-0028), so the steps after the wait are
                 // authorised against whoever is delivering the signal now — which is also the
                 // only principal this request has validated.
                 context.User,

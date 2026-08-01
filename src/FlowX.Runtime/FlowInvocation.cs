@@ -33,7 +33,7 @@ namespace FlowX.Runtime;
 /// </para>
 /// <para>
 /// <strong><see cref="Principal"/> is the whole of where identity comes from</strong>
-/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0027-identity-arrives-on-the-invocation.md">ADR-0027</a>).
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0028-identity-arrives-on-the-invocation.md">ADR-0028</a>).
 /// It travels the path <see cref="TenantId"/> already travelled —
 /// <c>TriggerHeaders</c> to here to <c>FlowContext.Principal</c> — so a stance means the same
 /// thing whichever transport activated the flow, which is

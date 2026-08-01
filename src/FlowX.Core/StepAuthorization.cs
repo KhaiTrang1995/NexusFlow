@@ -13,7 +13,7 @@ namespace FlowX;
 /// <see cref="ExecutionPlan.HasAuthorizedSteps"/>, which is
 /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>'s
 /// shape applied to a second stage, and
-/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-authorisation-runs-in-the-step-loop.md">ADR-0026</a>
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0027-authorisation-runs-in-the-step-loop.md">ADR-0027</a>
 /// is why. Nothing reads a <c>[Capability]</c> attribute at run time; there is no reflection
 /// on this path at all, which is what keeps it NativeAOT-clean (constraint C2).
 /// </para>
@@ -28,7 +28,7 @@ namespace FlowX;
 /// <see cref="Authorization.Policy"/> names an ASP.NET Core authorisation policy, which only
 /// <c>IAuthorizationService</c> can evaluate and which <c>FlowX.Runtime</c> may not reference.
 /// It is refused at build time by <c>FLOWX1037</c> instead —
-/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0029-policy-stance-is-refused-at-build-time.md">ADR-0029</a>
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0030-policy-stance-is-refused-at-build-time.md">ADR-0030</a>
 /// — so it can never reach this type from compiled source, and
 /// <see cref="Decide"/> refuses it rather than falling through to a permit if it ever does.
 /// </para>

@@ -24,7 +24,7 @@ namespace FlowX.Runtime.Tests;
 /// and the refusal is asserted to be a <see cref="Result{T}"/> failure carrying
 /// <see cref="ErrorCategory.Forbidden"/> rather than an exception, which is
 /// <a href="../../docs/adr/ADR-0007-result-over-exceptions.md">ADR-0007</a> and
-/// <a href="../../docs/adr/ADR-0028-a-refusal-is-a-result-failure.md">ADR-0028</a>.
+/// <a href="../../docs/adr/ADR-0029-a-refusal-is-a-result-failure.md">ADR-0029</a>.
 /// </para>
 /// <para>
 /// <strong><see cref="Authorization.Internal"/> has no refusing test and that is the finding,
@@ -436,7 +436,7 @@ public sealed class AuthorizationEnforcementTests
     /// <c>FlowHost.ResumeAsync</c>, when there is neither a signal nor a principal, which is
     /// a timer sweep or a recovery scan. Both are the platform continuing work it already
     /// admitted: no caller is asking for anything, and the instance's journal row carries no
-    /// claims to ask about because persisting them was refused (ADR-0027).
+    /// claims to ask about because persisting them was refused (ADR-0028).
     /// </para>
     /// <para>
     /// <strong>Without it, <c>.Delay</c> would revoke a grant.</strong> A flow that waits an

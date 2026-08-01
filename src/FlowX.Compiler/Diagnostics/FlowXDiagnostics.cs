@@ -232,7 +232,7 @@ public static class FlowXDiagnostics
     /// that an error would delete the inventory the fixing phase needs, and that a rate limit
     /// enforced at the gateway is a correct program. Neither transfers: the declaration is a
     /// choice among five of which four work, and an authorisation stance that checks nothing
-    /// is the control failing open. ADR-0029 carries it in full.
+    /// is the control failing open. ADR-0030 carries it in full.
     /// </para>
     /// </remarks>
     public static readonly DiagnosticDescriptor AuthorizationStanceNotEnforceable = Create(

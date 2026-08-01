@@ -479,7 +479,7 @@ step loop; this one names an ASP.NET Core authorisation policy, which only
 then be checked; this one presupposes that it was named and reports that nothing checks it.
 It is `FLOWX1032`'s shape one concept across — a declaration the runtime does not honour —
 and it is an **error** rather than that rule's warning, for the reason
-[ADR-0029](../adr/ADR-0029-policy-stance-is-refused-at-build-time.md) gives.
+[ADR-0030](../adr/ADR-0030-policy-stance-is-refused-at-build-time.md) gives.
 
 The next is `FLOWX1038`. The range is `FLOWX1001`–`FLOWX1099`.
 

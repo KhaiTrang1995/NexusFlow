@@ -1,4 +1,4 @@
-# ADR-0026: The authorisation check runs in the step loop, reached through a plan flag and a resolved node field
+# ADR-0027: The authorisation check runs in the step loop, reached through a plan flag and a resolved node field
 
 **Status:** Accepted
 **Date:** 2026-08-01
@@ -102,7 +102,7 @@ flow's deadline and one audit event becomes three. `ErrorCategory.Forbidden` is 
 no `Retry` would act on it in any case; placing the check outside the loop means the flow does
 not depend on that remaining true.
 
-`IsContinuation` is [ADR-0027](ADR-0027-identity-arrives-on-the-invocation.md)'s.
+`IsContinuation` is [ADR-0028](ADR-0028-identity-arrives-on-the-invocation.md)'s.
 
 ### 2.4 A compensation is not authorised
 
@@ -154,14 +154,14 @@ endpoint.
   pins it so the behaviour is stated rather than discovered.
 * **The decision is synchronous.** Anything needing I/O to decide — a permission lookup, a
   policy handler with a dependency — cannot be expressed. That is what makes
-  [ADR-0029](ADR-0029-policy-stance-is-refused-at-build-time.md) necessary rather than
+  [ADR-0030](ADR-0030-policy-stance-is-refused-at-build-time.md) necessary rather than
   optional, and it is the first thing this record would have to reopen.
 * **A compensation runs unauthorised, by construction** (§2.4). An undo with side effects
   heavier than the step it reverses is undone for a caller who was authorised for the step and
   not, separately, for its inverse. The argument for it is strong and the surface is real.
 
 **Revisit when:** a stance needs an asynchronous decision, at which point §2.3's placement and
-the whole shape of `Decide` reopen together with ADR-0029; or a stance has to be decided before
+the whole shape of `Decide` reopen together with ADR-0030; or a stance has to be decided before
 the flow starts rather than per step — an admission-time quota, for instance — at which point
 §1.1's rejection of the trigger needs re-arguing rather than citing; or `EngineAllocationTests`
 records a non-zero figure for an unstanced ephemeral plan, which would mean the gate this
@@ -172,7 +172,7 @@ exist should probably become one bit set" is due.
 ---
 
 **See also:** [ADR-0023](ADR-0023-policy-stages-hook-through-the-plan.md) ·
-[ADR-0027](ADR-0027-identity-arrives-on-the-invocation.md) ·
-[ADR-0028](ADR-0028-a-refusal-is-a-result-failure.md) ·
-[ADR-0029](ADR-0029-policy-stance-is-refused-at-build-time.md) ·
+[ADR-0028](ADR-0028-identity-arrives-on-the-invocation.md) ·
+[ADR-0029](ADR-0029-a-refusal-is-a-result-failure.md) ·
+[ADR-0030](ADR-0030-policy-stance-is-refused-at-build-time.md) ·
 [15 — Security](../15-Security.md)

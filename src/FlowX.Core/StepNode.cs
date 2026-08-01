@@ -246,7 +246,7 @@ public sealed record StepNode
     /// stance admits every caller holds the shared <see cref="StepAuthorization.None"/> and
     /// answers one comparison. Gated by <see cref="ExecutionPlan.HasAuthorizedSteps"/>, so an
     /// unstanced or wholly permissive plan never reaches it —
-    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-authorisation-runs-in-the-step-loop.md">ADR-0026</a>.
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0027-authorisation-runs-in-the-step-loop.md">ADR-0027</a>.
     /// </remarks>
     public StepAuthorization StepAuthorization { get; private init; } = StepAuthorization.None;
 
@@ -523,7 +523,7 @@ public sealed record StepNode
             // undo runs on the failure path to reverse work this principal has already
             // caused; refusing it there would leave the inconsistent state the compensation
             // exists to remove, and the caller has already been authorised for the step that
-            // made the mess. ADR-0026 records the trade.
+            // made the mess. ADR-0027 records the trade.
             StepAuthorization = StepAuthorization.From(capability),
         };
     }

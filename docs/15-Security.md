@@ -150,9 +150,9 @@ anonymous callers.
 | `Policy` | **Not enforceable.** [`FLOWX1037`](diagnostics/FLOWX1037.md) refuses it at build time |
 
 The check runs in `FlowEngine`'s step loop, before the dispatch and outside the retry loop,
-gated by `ExecutionPlan.HasAuthorizedSteps` — [ADR-0026](adr/ADR-0026-authorisation-runs-in-the-step-loop.md).
+gated by `ExecutionPlan.HasAuthorizedSteps` — [ADR-0027](adr/ADR-0027-authorisation-runs-in-the-step-loop.md).
 Identity arrives on `FlowInvocation` as the `ClaimsPrincipal` the transport resolved from
-validated claims — [ADR-0027](adr/ADR-0027-identity-arrives-on-the-invocation.md).
+validated claims — [ADR-0028](adr/ADR-0028-identity-arrives-on-the-invocation.md).
 
 **Three corrections to the diagram above**, each of which is a decision rather than a gap:
 
@@ -160,7 +160,7 @@ validated claims — [ADR-0027](adr/ADR-0027-identity-arrives-on-the-invocation.
   opening it would change the transport mapping for every existing consumer. The *codes* stay
   distinct — `authorization.not_authenticated` and `authorization.permission_denied` — and a
   `401` would in any case be malformed, because the engine is transport-agnostic and has no
-  `WWW-Authenticate` challenge to name. [ADR-0028](adr/ADR-0028-a-refusal-is-a-result-failure.md).
+  `WWW-Authenticate` challenge to name. [ADR-0029](adr/ADR-0029-a-refusal-is-a-result-failure.md).
 - **`Internal`'s "no" branch is unreachable.** It asks *"invoked from a flow, not a trigger?"*,
   and in FlowX a trigger addresses a **flow** and never a capability — `[HttpTrigger]` is
   declared on a `Flow<,>` ([ADR-0004](adr/ADR-0004-universal-trigger-model.md)). Every
@@ -178,8 +178,8 @@ validated claims — [ADR-0027](adr/ADR-0027-identity-arrives-on-the-invocation.
 **A compensation is not authorised**, and a resumed instance is authorised by whoever resumes
 it rather than by whoever started it — the journal row carries no claims, deliberately, so a
 week-old grant cannot authorise today's payment. Both are argued in
-[ADR-0026 §2.4](adr/ADR-0026-authorisation-runs-in-the-step-loop.md) and
-[ADR-0027 §2.2](adr/ADR-0027-identity-arrives-on-the-invocation.md).
+[ADR-0027 §2.4](adr/ADR-0027-authorisation-runs-in-the-step-loop.md) and
+[ADR-0028 §2.2](adr/ADR-0028-identity-arrives-on-the-invocation.md).
 
 ---
 
@@ -306,8 +306,8 @@ Stated plainly, because unstated limitations are how breaches happen:
 | The journal contains business inputs by design | replay can expose data to operators | field redaction, encryption at rest, RBAC on replay, audited access |
 | Compensation is best-effort | a failed compensation leaves inconsistent state | alert + operator runbook + explicit `CompensationFailed` state |
 | Plugins execute in-process | a malicious plugin has process-level access | plugin signing, review, permission declaration; process isolation is a v2 item |
-| A durable flow's authorisation is discontinuous across a wait | the steps before a suspension point are decided against the caller who started it, the steps after against whoever delivered the signal — so "who authorised this transfer" has two answers | deliberate: the journal keeps no claims, so a grant proved a week ago cannot authorise today's payment ([ADR-0027 §2.2](adr/ADR-0027-identity-arrives-on-the-invocation.md)). A timer sweep and a recovery scan carry no caller at all and are not re-decided, which is what keeps `.Delay` usable before a stanced step |
-| A compensation runs unauthorised | an undo with side effects heavier than the step it reverses is not separately authorised | deliberate: refusing an undo leaves standing the inconsistent state it exists to remove, and the caller was authorised for the step that made the mess ([ADR-0026 §2.4](adr/ADR-0026-authorisation-runs-in-the-step-loop.md)) |
+| A durable flow's authorisation is discontinuous across a wait | the steps before a suspension point are decided against the caller who started it, the steps after against whoever delivered the signal — so "who authorised this transfer" has two answers | deliberate: the journal keeps no claims, so a grant proved a week ago cannot authorise today's payment ([ADR-0028 §2.2](adr/ADR-0028-identity-arrives-on-the-invocation.md)). A timer sweep and a recovery scan carry no caller at all and are not re-decided, which is what keeps `.Delay` usable before a stanced step |
+| A compensation runs unauthorised | an undo with side effects heavier than the step it reverses is not separately authorised | deliberate: refusing an undo leaves standing the inconsistent state it exists to remove, and the caller was authorised for the step that made the mess ([ADR-0027 §2.4](adr/ADR-0027-authorisation-runs-in-the-step-loop.md)) |
 | Agent confirmation depends on accurate `SideEffects` | a mis-declared capability produces a misleading prompt | side effects are a review item; the analyzer warns when a capability with I/O declares none |
 
 ---

@@ -22,7 +22,7 @@ namespace FlowX;
 /// <para>
 /// <strong>Every one of them is <see cref="ErrorCategory.Forbidden"/>, including the one
 /// <c>docs/15-Security.md §4</c> draws as a 401</strong>, and
-/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0028-a-refusal-is-a-result-failure.md">ADR-0028</a>
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0029-a-refusal-is-a-result-failure.md">ADR-0029</a>
 /// is that decision. <see cref="ErrorCategory"/> is a closed set (ADR-0009) with no
 /// authentication member, and adding one would change the transport mapping table for every
 /// existing consumer — so an anonymous caller and an under-privileged one both answer 403.
@@ -42,7 +42,7 @@ public static class AuthorizationErrors
     /// <para>
     /// <see cref="ErrorCategory.Forbidden"/> and therefore <c>403</c>, where
     /// <c>docs/15-Security.md §4</c>'s flowchart draws <c>401</c>. That is a deliberate
-    /// downgrade in precision recorded in ADR-0028, not an oversight: a <c>401</c> is
+    /// downgrade in precision recorded in ADR-0029, not an oversight: a <c>401</c> is
     /// obliged by RFC 9110 to carry a <c>WWW-Authenticate</c> header naming a challenge, and
     /// the engine — which is transport-agnostic by construction (ADR-0004) — has no
     /// challenge to name and no header to put it in.

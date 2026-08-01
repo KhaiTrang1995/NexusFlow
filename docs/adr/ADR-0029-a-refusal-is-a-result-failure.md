@@ -1,4 +1,4 @@
-# ADR-0028: A refusal is a `Result` failure carrying `ErrorCategory.Forbidden`, and the model's 401 collapses into it
+# ADR-0029: A refusal is a `Result` failure carrying `ErrorCategory.Forbidden`, and the model's 401 collapses into it
 
 **Status:** Accepted
 **Date:** 2026-08-01
@@ -14,7 +14,7 @@
 
 ## 1. Context
 
-[ADR-0026](ADR-0026-authorisation-runs-in-the-step-loop.md) decides where the check runs.
+[ADR-0027](ADR-0027-authorisation-runs-in-the-step-loop.md) decides where the check runs.
 Something has to come back from it.
 
 ### 1.1 The easy half
@@ -93,7 +93,7 @@ refuses. `ARefusalNamesTheGrantAndNotTheCaller` asserts both halves against the 
 `ErrorCategoryExtensions.IsTerminal` already returns `true` for `Forbidden`, so no `Retry`
 policy acts on a refusal and no bus consumer treats it as transient. Asking the same question
 of the same principal three times gets the same answer three times.
-[ADR-0026 §2.3](ADR-0026-authorisation-runs-in-the-step-loop.md) places the check outside the
+[ADR-0027 §2.3](ADR-0027-authorisation-runs-in-the-step-loop.md) places the check outside the
 retry loop anyway, so the flow does not depend on this remaining true — but it is true, and
 the two agree.
 
@@ -150,6 +150,6 @@ and this record's last negative can be closed.
 ---
 
 **See also:** [ADR-0007](ADR-0007-result-over-exceptions.md) ·
-[ADR-0026](ADR-0026-authorisation-runs-in-the-step-loop.md) ·
-[ADR-0029](ADR-0029-policy-stance-is-refused-at-build-time.md) ·
+[ADR-0027](ADR-0027-authorisation-runs-in-the-step-loop.md) ·
+[ADR-0030](ADR-0030-policy-stance-is-refused-at-build-time.md) ·
 [15 — Security](../15-Security.md)

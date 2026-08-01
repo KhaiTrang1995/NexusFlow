@@ -441,7 +441,7 @@ public sealed class ManifestTriggerAndErrorTests
         // manifest to read: FLOWX1037 makes Authorization.Policy an error, so the compilation
         // below reports and the generator writes nothing. The writer's behaviour is still
         // worth pinning — the schema field and ManifestWriter's mapping outlive the rule, and
-        // ADR-0029's revisit condition is the day a policy evaluator ships and this becomes a
+        // ADR-0030's revisit condition is the day a policy evaluator ships and this becomes a
         // manifest again.
         var run = GeneratorHarness.Run(Source(Guarded(
             """[Capability("payment.capture", Version = "2.1.0", Authorization = Authorization.Policy, Policy = "eu-residents-only")]""")));

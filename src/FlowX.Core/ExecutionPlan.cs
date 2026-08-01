@@ -208,7 +208,7 @@ public sealed class ExecutionPlan
     /// </para>
     /// <para>
     /// See
-    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-authorisation-runs-in-the-step-loop.md">ADR-0026</a>,
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0027-authorisation-runs-in-the-step-loop.md">ADR-0027</a>,
     /// which is
     /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>'s
     /// bargain struck a second time, for a second stage.
