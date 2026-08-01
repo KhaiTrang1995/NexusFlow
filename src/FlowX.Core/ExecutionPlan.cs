@@ -31,10 +31,12 @@ public sealed class ExecutionPlan
         bool hasCompensationPolicies,
         bool hasStepPolicies,
         bool hasEmit,
-        bool hasTimers)
+        bool hasTimers,
+        bool hasAuthorizedSteps)
     {
         HasStepPolicies = hasStepPolicies;
         HasTimers = hasTimers;
+        HasAuthorizedSteps = hasAuthorizedSteps;
         Flow = flow;
         Graph = graph;
         CompensableStepIndices = compensableStepIndices;
@@ -186,6 +188,34 @@ public sealed class ExecutionPlan
     /// </remarks>
     public bool HasTimers { get; }
 
+    /// <summary>True when any step of this plan can refuse a caller.</summary>
+    /// <remarks>
+    /// <para>
+    /// Precomputed for the reason <see cref="HasParallel"/> is, and read in the same shape as
+    /// <see cref="HasStepPolicies"/>: the step loop reads it before it reads
+    /// <see cref="StepNode.StepAuthorization"/>, so a plan that can refuse nobody reaches no
+    /// claim lookup and no principal read — one predictable always-false comparison on a field
+    /// the plan already holds.
+    /// </para>
+    /// <para>
+    /// <strong>It counts what can refuse, not what was declared.</strong> This is the whole of
+    /// why it is not simply "some step declared a stance": <c>FLOWX1010</c> makes a stance
+    /// mandatory, so a flag of that shape would be true for every compiled flow in existence
+    /// and would gate nothing. A step declaring <see cref="Authorization.Public"/> or
+    /// <see cref="Authorization.Internal"/> admits every caller — the first by declaration,
+    /// the second because a trigger addresses a flow and never a capability — so both leave
+    /// this false and cost the flow nothing.
+    /// </para>
+    /// <para>
+    /// See
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0027-authorisation-runs-in-the-step-loop.md">ADR-0027</a>,
+    /// which is
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>'s
+    /// bargain struck a second time, for a second stage.
+    /// </para>
+    /// </remarks>
+    public bool HasAuthorizedSteps { get; }
+
     /// <summary>Builds a validated plan.</summary>
     /// <param name="flow">The flow's identity and profile.</param>
     /// <param name="graph">Its compiled step sequence.</param>
@@ -207,6 +237,7 @@ public sealed class ExecutionPlan
         var stepPolicies = false;
         var emit = false;
         var timers = false;
+        var authorized = false;
 
         foreach (var step in graph.Steps)
         {
@@ -222,6 +253,11 @@ public sealed class ExecutionPlan
             // whose stages are all unimplemented resolves to StepPolicy.None and leaves this
             // false, so declaring one costs the flow nothing until the stage that runs it lands.
             stepPolicies |= step.StepPolicy.IsActive;
+
+            // The same bargain again, for the authorisation stage: what is counted is what can
+            // say no. A Public or Internal step resolves to StepAuthorization.None and leaves
+            // this false, so a flow nobody can be refused from takes the path it always took.
+            authorized |= step.StepAuthorization.CanRefuse;
 
             parallel |= step.Kind == StepKind.Parallel ||
                         (step.Kind == StepKind.ForEach && step.MaxDegreeOfParallelism > 1);
@@ -253,7 +289,8 @@ public sealed class ExecutionPlan
             compensationPolicies,
             stepPolicies,
             emit,
-            timers);
+            timers,
+            authorized);
     }
 
     private static void AddEffects(SortedSet<string> effects, CapabilityDescriptor? capability)

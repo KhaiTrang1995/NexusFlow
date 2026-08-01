@@ -1080,6 +1080,32 @@ public sealed class FlowEngine
             // for the shapes that have always had it.
             var policy = plan.HasStepPolicies ? step.StepPolicy : StepPolicy.None;
 
+            // ADR-0027, and the whole of the authorisation hook: ADR-0023's shape struck a
+            // second time. One comparison against a field the plan already holds, and a plan
+            // nobody can be refused from — every step Public, Internal or unstanced — never
+            // reads a principal or a claim.
+            //
+            // Before the retry loop, deliberately. A refusal is terminal: asking the same
+            // question of the same principal three times gets the same answer three times,
+            // while the backoff spends the flow's deadline and one audit event becomes three.
+            //
+            // Before the dispatch, even more deliberately. A check that ran after the call
+            // would have authorised nothing, because the payment has already been captured.
+            // `!context.IsContinuation` is not a bypass, and the distinction is on
+            // FlowInvocation: a timer sweep and a recovery scan are the platform continuing an
+            // instance it already admitted, with no caller asking for anything and no claims on
+            // the journal row to ask about. Re-deciding a stance there would make
+            // `.Delay(TimeSpan.FromHours(1))` a construct no flow could place before an
+            // authenticated step, and would turn a node restart into a refusal. A signal is the
+            // opposite — somebody is delivering something now — and carries its deliverer.
+            if (plan.HasAuthorizedSteps
+                && !context.IsContinuation
+                && step.StepAuthorization.Decide(context.Principal, capabilityId) is { } denial)
+            {
+                failure = denial;
+                break;
+            }
+
             var attempt = 0;
             Error? stepFailure = null;
             var abandoned = false;

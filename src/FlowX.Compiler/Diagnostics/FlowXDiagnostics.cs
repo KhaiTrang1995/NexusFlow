@@ -211,6 +211,43 @@ public static class FlowXDiagnostics
         "compare when the grant later moves. If no named grant is actually required, the " +
         "honest stance is Authenticated or Internal — both are complete in themselves.");
 
+    /// <summary>FLOWX1037 — a declared stance is one the runtime cannot decide.</summary>
+    /// <remarks>
+    /// <para>
+    /// The third rule of the authorisation chain, and it presupposes the first two passed.
+    /// <c>FLOWX1010</c> asks whether a stance was declared; <c>FLOWX1030</c> asks whether a
+    /// stance that needs a name has one; this asks whether the stance that was declared and
+    /// named is one the engine can reach a decision for. Four of the five are —
+    /// <c>StepAuthorization.Decide</c> settles <c>Public</c>, <c>Authenticated</c>,
+    /// <c>Permission</c> and <c>Internal</c> against the invocation's <c>ClaimsPrincipal</c>.
+    /// </para>
+    /// <para>
+    /// <c>Authorization.Policy</c> is not. It names an ASP.NET Core authorisation policy,
+    /// which only <c>IAuthorizationService</c> can evaluate, and <c>FlowX.Runtime</c> may not
+    /// reference ASP.NET Core — <c>RuntimeIsolationTests</c> is the gate, and it exists so a
+    /// flow behaves identically whichever transport activated it (ADR-0004).
+    /// </para>
+    /// <para>
+    /// <strong>An error, and not <c>FLOWX1032</c>'s warning.</strong> That rule's argument is
+    /// that an error would delete the inventory the fixing phase needs, and that a rate limit
+    /// enforced at the gateway is a correct program. Neither transfers: the declaration is a
+    /// choice among five of which four work, and an authorisation stance that checks nothing
+    /// is the control failing open. ADR-0030 carries it in full.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor AuthorizationStanceNotEnforceable = Create(
+        "FLOWX1037",
+        "Authorisation stance is not enforced by the runtime",
+        "Capability '{0}' declares Authorization.{1}, which the runtime cannot enforce",
+        "Authorization.Policy names an ASP.NET Core authorisation policy, and only " +
+        "IAuthorizationService can evaluate one — which FlowX.Runtime may not reference, so " +
+        "the stance reaches the manifest and `flowx diff` and is then checked by nothing. If " +
+        "the policy is a single claim requirement, which most are, declare " +
+        "Authorization.Permission with that claim's value and the runtime enforces it. If it " +
+        "genuinely needs a handler, keep the policy on the transport endpoint and declare the " +
+        "stance the capability is left with — accepting that the rule then holds over HTTP " +
+        "only, and not for a bus or agent invocation of the same flow.");
+
     /// <summary>
     /// FLOWX1011 — a flow condition, selector or projection reads something outside the
     /// flow's state.

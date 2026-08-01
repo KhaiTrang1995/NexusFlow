@@ -153,7 +153,9 @@ public sealed class ShippedLimitTests
         var harness = OnboardingHarness.Create();
         var journal = new NodeDiesJournal(harness.Journal);
         var input = Offers.Permanent(equipment: []);
-        var invocation = new FlowInvocation("corr-resume", "key-resume");
+        var invocation = new FlowInvocation(
+            "corr-resume", "key-resume", TenantId: null, Deadline: null,
+            Principal: OnboardingHarness.Coordinator);
         var ct = TestContext.Current.CancellationToken;
         var instanceId = Guid.NewGuid();
         var engine = new FlowEngine(harness.Clock);

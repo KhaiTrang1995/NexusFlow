@@ -1,4 +1,5 @@
 using FlowX.Runtime;
+using System.Security.Claims;
 
 namespace FlowX.Hosting;
 
@@ -349,7 +350,7 @@ public sealed class FlowHost
         Guid instanceId,
         FlowRegistration registration,
         CancellationToken ct = default) =>
-        ResumeAsync(instanceId, registration, signal: null, ct);
+        ResumeAsync(instanceId, registration, signal: null, principal: null, ct);
 
     /// <summary>
     /// Delivers a signal to an instance that is waiting for one, and runs it on from there.
@@ -387,15 +388,39 @@ public sealed class FlowHost
     /// signals.
     /// </para>
     /// </remarks>
+    /// <param name="principal">
+    /// Who is delivering the signal, resolved from validated claims by whatever transport
+    /// carried it, or <c>null</c> for an anonymous delivery.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The deliverer authorises the steps after the wait, and the original caller
+    /// does not.</strong> A resumed instance's invocation is rebuilt from its journal row,
+    /// and that row carries a correlation id, a tenant and a deadline — no claims. That is
+    /// deliberate and is argued in
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0028-identity-arrives-on-the-invocation.md">ADR-0028</a>:
+    /// persisting a principal would put claims at rest for the life of the instance, and
+    /// would then authorise a payment on Friday with a grant proved on Monday, which the
+    /// grant's issuer has had four days to revoke.
+    /// </para>
+    /// <para>
+    /// So the caller who delivers the countersignature is the caller the remaining steps are
+    /// decided against. Leaving this <c>null</c> resumes anonymously, and a step declaring
+    /// <see cref="Authorization.Authenticated"/> or <see cref="Authorization.Permission"/>
+    /// after the wait is then refused — loudly, as a <see cref="ErrorCategory.Forbidden"/>
+    /// failure, rather than run unauthorised.
+    /// </para>
+    /// </remarks>
     public ValueTask<FlowExecutionResult> SignalAsync(
         Guid instanceId,
         FlowRegistration registration,
         FlowSignal signal,
+        ClaimsPrincipal? principal = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(signal);
 
-        return ResumeAsync(instanceId, registration, signal, ct);
+        return ResumeAsync(instanceId, registration, signal, principal, ct);
     }
 
     /// <inheritdoc cref="ResumeAsync(Guid, FlowRegistration, CancellationToken)" />
@@ -403,6 +428,7 @@ public sealed class FlowHost
         Guid instanceId,
         FlowRegistration registration,
         FlowSignal? signal,
+        ClaimsPrincipal? principal,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(registration);
@@ -454,7 +480,17 @@ public sealed class FlowHost
                     record.CorrelationId,
                     instanceId.ToString(),
                     record.TenantId,
-                    record.DeadlineAt);
+                    record.DeadlineAt,
+
+                    // Whoever is resuming it, and never whoever started it. The row carries no
+                    // claims by design (ADR-0028).
+                    principal,
+
+                    // And when nobody is resuming it — a timer sweep, a recovery scan — this is
+                    // the platform continuing an instance it already admitted rather than a
+                    // caller asking for something, so the stances of the steps after the wait
+                    // are not re-decided against an absence that will never be filled.
+                    IsContinuation: signal is null && principal is null);
 
                 // Opened after the lease and the frontier read, unlike a fresh execution's:
                 // an instance another node got to first is not a flow this node ran, and a

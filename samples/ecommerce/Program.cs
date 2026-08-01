@@ -1,11 +1,27 @@
 using Ecommerce;
 using FlowX.Generated;
 using FlowX.Hosting;
+using Microsoft.AspNetCore.Authentication;
 
 var builder = WebApplication.CreateSlimBuilder(args);
 
 builder.Services.AddRouting();
 builder.Services.AddFlowX(options => options.ApplicationName = "Ecommerce");
+
+// Authentication, which is the only reason this application has a principal at all.
+//
+// The stances are on the capabilities — order.validate and inventory.reserve are
+// Authenticated, payment.capture requires the payment.write permission — and the engine
+// decides them against HttpContext.User, which is what this line populates. Nothing here
+// names a route or a permission: an endpoint-level rule would hold over HTTP and not over a
+// broker or an agent, which is exactly the transport-attached authorisation the capability
+// stance exists to replace (docs/15-Security.md §4, ADR-0004).
+//
+// DemoTokenHandler is a stand-in for an OIDC handler and says so at length. A real
+// deployment replaces this one call with AddJwtBearer and changes nothing else.
+builder.Services
+    .AddAuthentication(DemoTokenHandler.SchemeName)
+    .AddScheme<AuthenticationSchemeOptions, DemoTokenHandler>(DemoTokenHandler.SchemeName, null);
 
 // Infrastructure. In-memory here; the capabilities do not know or care.
 builder.Services.AddSingleton<IInventoryStore, InMemoryInventoryStore>();
@@ -40,6 +56,12 @@ var telemetry = SampleTelemetry.Start();
 builder.Services.AddSingleton(telemetry);
 
 var app = builder.Build();
+
+// Runs the scheme above, so HttpContext.User carries the token's claims by the time the
+// generated endpoint reads it. Without this line the handler is registered and never
+// invoked, every request is anonymous, and the first step of every order is refused —
+// which is a failure mode worth naming, because it looks exactly like a broken token.
+app.UseAuthentication();
 
 app.MapHealthChecks("/health");
 
