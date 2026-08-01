@@ -330,11 +330,22 @@ public sealed class DurableHostTests
     /// The same signal delivered twice does not run the flow's remaining steps twice.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Not a check written for signals. The second delivery re-enters an instance whose wait
     /// now has a committed row, so the frontier steps over it exactly as it steps over any
-    /// completed step — and the instance is already <c>Completed</c>, so the journal refuses
-    /// the write outright. At-least-once delivery is the ordinary case for a transport, and
+    /// completed step, and over everything after it too — the loop reaches the end having
+    /// dispatched nothing. At-least-once delivery is the ordinary case for a transport, and
     /// this is the property that makes it safe.
+    /// </para>
+    /// <para>
+    /// <strong>It is reported as a success, not as a refusal, and that is worth being exact
+    /// about.</strong> The redelivery re-seals an instance that is already <c>Completed</c>
+    /// with the same state, which both shipped stores accept — PostgreSQL's
+    /// <c>CompleteAsync</c> refuses a terminal instance only when the state would
+    /// <em>change</em>. So a transport that redelivers gets a second 200 rather than a
+    /// conflict, and the flow's effects happened exactly once. A caller that needs to tell
+    /// the two apart reads the instance.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task ASignalDeliveredTwiceDoesNotRunTheFlowTwice()
@@ -348,8 +359,11 @@ public sealed class DurableHostTests
         var signal = FlowSignal.Of("contract.countersigned", "signed-by-ada");
         var registration = new FlowRegistration(WaitingPlan(), new CountingDispatcher());
 
-        await host.SignalAsync(suspended.InstanceId!.Value, registration, signal, ct);
+        var first = await host.SignalAsync(suspended.InstanceId!.Value, registration, signal, ct);
 
+        first.IsSuccess.ShouldBeTrue(first.Error?.ToString());
+
+        var commits = journal.Commits;
         var again = new CountingDispatcher();
 
         var redelivered = await host.SignalAsync(
@@ -357,10 +371,14 @@ public sealed class DurableHostTests
 
         again.Executed.ShouldBeEmpty("nothing ran a second time");
 
-        redelivered.Error?.Code.ShouldBe(
-            "journal.instance_terminal",
-            "the instance is finished, and a journal that let a finished instance be written " +
-            "to would be the one thing an append-only history cannot allow");
+        journal.Commits.ShouldBe(commits, "and nothing was written a second time either");
+
+        redelivered.IsSuccess.ShouldBeTrue(
+            redelivered.Error?.ToString() ??
+            "a redelivery walks a fully committed frontier and re-seals the instance in the " +
+            "state it is already in, which both shipped stores accept.");
+
+        journal.Instances[0].State.ShouldBe(FlowInstanceState.Completed);
     }
 
     /// <summary>
