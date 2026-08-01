@@ -56,13 +56,22 @@ namespace Workflow;
 /// </item>
 /// <item>
 /// <description>
-/// <strong>The declared timeout is carried, not armed.</strong> <c>Waits.Countersignature</c>
-/// reaches <c>StepNode.SignalTimeout</c> — that is the fabricated <c>TimeSpan.FromHours(1)</c>
-/// gone, and it is what <c>FLOWX1031</c> was raised over — but nothing fires when it expires,
-/// because there is no timer. What bounds this flow is <c>[FlowDeadline("P30D")]</c>, checked
-/// at every step boundary including the one that decides whether to wait. The same is true of
-/// <c>.OnTimeout(...)</c>, which is why this flow does not declare one: it would compile to
-/// nothing and say so as <c>FLOWX1031</c>.
+/// <strong>The declared timeout is armed, and the escalation is what makes the wait
+/// bounded.</strong> <c>Waits.Countersignature</c> reaches <c>StepNode.SignalTimeout</c>, the
+/// instance records that instant when it parks, and a timer sweep resumes it when the instant
+/// passes — so an offer nobody signs runs the <c>.OnTimeout</c> block rather than sitting
+/// until <c>[FlowDeadline("P30D")]</c>. The block ends in a <c>.Fail</c>, which is how a
+/// block says "and stop": both paths out of a suspension point rejoin at the step after the
+/// escalation, exactly as the two arms of a <c>.When</c> do, so falling through would start
+/// onboarding for a candidate who never signed.
+/// </description>
+/// </item>
+/// <item>
+/// <description>
+/// <strong>And the <c>.Delay</c> is the second wait, which is the one that costs nothing to
+/// be long.</strong> It holds no thread, no pooled context and no lease; the instance is a row
+/// carrying an instant, and the node that resumes it is whichever one sweeps next — not
+/// necessarily the node that parked it, and not necessarily one that existed when it did.
 /// </description>
 /// </item>
 /// </list>
@@ -89,7 +98,19 @@ public sealed partial class AcceptOfferFlow : Flow<OfferToAccept, AcceptedOffer>
             // The suspension point. The invocation returns here.
             .AwaitSignal<OfferCountersigned>(Waits.Countersignature)
 
-            // And this binds what the signal carried.
+                // And this is what happens when nobody signs. It runs at the index
+                // immediately after the wait — the escalation is the contiguous block,
+                // because the other path out of a wait is the rest of the flow — and the
+                // failure it ends with is what unwinds `offer.withdraw`.
+                .OnTimeout(f => f.Fail(OfferErrors.NotCountersigned()))
+
+            // Payroll's nightly sync has to have seen the signed contract before onboarding
+            // creates an identity against it. Nothing publishes an event when it does, so the
+            // dependency is expressed as a wait — and a durable timer is the only way to wait
+            // a day without holding a day of anything.
+            .Delay(Waits.Settling)
+
+            // And this binds what the signal carried, a day after it arrived.
             .Step<StartOnboarding>()
 
             .Return(ctx => new AcceptedOffer(

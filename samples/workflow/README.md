@@ -14,11 +14,11 @@ scan uses — including the compensation the first node registered and did not l
 [§2](#2-the-wait-what-it-used-to-do-instead-and-what-is-still-missing) is the account, and it is the section that used
 to say the opposite.
 
-**Claim still not proved:** the *escalations and timers* half. `.Delay(...)` and
-`.OnTimeout(...)` compile to nothing and say so as
-[`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md), so the duration an `AwaitSignal` declares
-reaches the plan and nothing arms it. What bounds a waiting instance is its own
-`[FlowDeadline]`. That is the other half of **WP-63**.
+**And the escalations and timers half is proved too**, as of WP-63's second half.
+`offer.accept` withdraws an offer nobody countersigns when its window closes, and waits a day
+after the signature before it starts onboarding. Both waits cost one row and no process;
+[§2](#2-the-wait-what-it-used-to-do-instead-and-what-is-still-missing) is the account,
+including the one bound a sweep-based timer cannot give you.
 
 Run it:
 
@@ -149,11 +149,12 @@ open, no payroll record.
 
 ## 2. The wait, what it used to do instead, and what is still missing
 
-**This section is now half history.** The claim this file used to make was: *"a multi-day
-process with human approvals, escalations, timers and reversible steps is one readable file —
-and it survives every deployment that happens during those days."* When it was written, only
-the last four words of the first clause were true. **The human wait is true now**; the
-escalations and the timers are not.
+**This section is now history, and one paragraph of remaining honesty.** The claim this file
+used to make was: *"a multi-day process with human approvals, escalations, timers and
+reversible steps is one readable file — and it survives every deployment that happens during
+those days."* When it was written, only the last four words of the first clause were true.
+All of it is true now. What is still worth reading is *why* the fix has the shape it has, and
+the one thing a sweep-based timer cannot promise.
 
 ### 2.0 What waits, and what it costs
 
@@ -167,11 +168,36 @@ public sealed partial class AcceptOfferFlow : Flow<OfferToAccept, AcceptedOffer>
     protected override void Define(IFlowBuilder<OfferToAccept, AcceptedOffer> flow) => flow
         .Step<SendOfferForSignature>().CompensateWith<WithdrawOffer>()
         .AwaitSignal<OfferCountersigned>(Waits.Countersignature)   // seven days
+            .OnTimeout(f => f.Fail(OfferErrors.NotCountersigned()))
+        .Delay(Waits.Settling)                                     // one day
         .Step<StartOnboarding>()
         .Return(ctx => new AcceptedOffer(
             ctx.Input.CandidateId, ctx.Get<OnboardingStarted>().OnboardingId));
 }
 ```
+
+**Both durations are build-time constants, and they were briefly not.** They were read from
+`FLOWX_SAMPLE_OFFER_WINDOW` and `FLOWX_SAMPLE_SETTLING` so a demonstration would not have to
+wait seven days for the thing it exists to demonstrate. That override was removed when the
+two halves of this feature met, because **it silently cost this flow its `timeout` field in
+`flowx.manifest.json`**.
+
+A declared wait reaches two artifacts by two routes. The plan carries the author's
+*expression* and generated C# evaluates it at run time, so an environment read works there.
+The manifest carries the duration **folded at build time**, because a consumer reading JSON
+has never seen this assembly — and a method call cannot be folded. `flowx diff` then had no
+window to compare, and [ADR-0021](../../docs/adr/ADR-0021-manifest-publishes-the-wait.md)'s
+new field lost the only producer in the repository. That is exactly the *"a producer on paper
+and none in practice"* failure [ADR-0017](../../docs/adr/ADR-0017-manifest-v1-freeze-criteria.md)'s
+**F1** exists to catch — arriving, as usual, by a route nobody had listed.
+
+Nothing warned. The compiler publishes nothing it cannot fold and says nothing about it,
+which is right for `merge` and wrong for a wait. Recorded as an open item rather than patched
+around here.
+
+`FLOWX_SAMPLE_TIMER_SCAN` is unaffected and still works: the sweep interval is a *host*
+setting, not a declared value, so it never reaches the plan or the manifest. Set it low and
+the transcripts below happen on the sweep's schedule rather than on a seven-day one.
 
 Run it against a real PostgreSQL and the two requests look like this:
 
@@ -196,22 +222,65 @@ select count(*) from flowx.flow_lease
 One row, no lease. Then, on a different request:
 
 ```
-$ curl -i -X POST :5199/api/v1/offers/019fbd86-…/signals/offer.countersigned \
-       -d '{"envelopeId":"env-c-42","signedBy":"ada","signedAt":"2026-08-01T12:00:00Z"}'
+$ curl -i -X POST :5311/api/v1/offers/019fbd8d-…/signals/offer.countersigned \
+       -d '{"envelopeId":"env-ada","signedBy":"ada.lovelace","signedAt":"2026-08-01T13:40:15Z"}'
 HTTP/1.1 202 Accepted
-
-{"instanceId":"019fbd86-b1be-7398-a9bb-b90a96c6774c","status":"completed"}
+{"instanceId":"019fbd8d-b228-7aad-9a0b-a62b9d45636b","awaitingSignal":"offer.countersigned"}
 ```
+
+**`202` again, and it is the second wait.** The signature satisfied the suspension point and
+the flow ran on into the settling period, so the instance is parked a second time — on a
+clock this time, with nothing to deliver to it:
 
 ```sql
-select step_id, capability_id, outcome from flowx.flow_step where instance_id = '019fbd44-…';
---  0 | offer.send          | Success
---  1 | offer.countersigned | Success   ← the signal, journaled as the step's own row
---  2 | onboarding.start    | Success
-select state from flowx.flow_instance where instance_id = '019fbd44-…';  -- Completed
+select state, wake_at, wake_step_id from flowx.flow_instance where instance_id = '019fbd8d-…';
+-- Suspended | 2026-08-01 13:40:27.763+00 | 3     ← step 3 is the .Delay, not the wait
 ```
 
-**Four things in that are worth reading off rather than being told.**
+Nothing then happens for five seconds, and nothing is holding anything while it does not
+happen. `FlowTimerScan` finds the row on its next sweep, and:
+
+```sql
+select step_id, capability_id, outcome, committed_at from flowx.flow_step
+ where instance_id = '019fbd8d-…' order by sequence;
+--  0 | offer.send          | Success | 13:40:07.858
+--  1 | offer.countersigned | Success | 13:40:22.759   ← the signal, as the step's own row
+--  3 | flow.delay          | Success | 13:40:28.254   ← the timer, five seconds later
+--  4 | onboarding.start    | Success | 13:40:28.258
+select state, wake_at from flowx.flow_instance where instance_id = '019fbd8d-…';
+-- Completed | (null)                                  ← the wait went with the state
+```
+
+**Step 2 is missing from that history, and it is meant to be.** It is the `.OnTimeout`
+block's `Fail`, laid out immediately after the wait; the signal path jumps past it to step 3.
+The two paths rejoin there, which is why the escalation ends in a `.Fail` rather than falling
+through — falling through would start onboarding for a candidate who never signed.
+
+**And here is the other path, on an offer nobody signed.** Same application, same twenty-second
+window, no second request at all:
+
+```sql
+select state, wake_at, wake_step_id from flowx.flow_instance where instance_id = '019fbd8e-…';
+-- Suspended | 2026-08-01 13:41:21.440+00 | 1         ← step 1 is the wait
+
+-- twenty seconds later, without anybody asking:
+select scope, step_id, attempt, capability_id, outcome, committed_at from flowx.flow_step
+ where instance_id = '019fbd8e-…' order by sequence;
+--   | 0 | 1 | offer.send     | Success     | 13:41:01.436
+--   | 2 | 1 |                | Failure     | 13:41:22.147   ← the .OnTimeout block's Fail
+--   | 0 | 3 | offer.withdraw | Compensated | 13:41:22.186   ← the unwind, from the journal
+select state, wake_at from flowx.flow_instance where instance_id = '019fbd8e-…';
+-- Failed | (null)
+```
+
+**The envelope that went out is closed by the clock.** `offer.withdraw` was put on the
+compensation stack by an invocation that returned twenty seconds earlier, on a node with no
+memory of it by then; the resumed flow rebuilt the stack from the journal's committed rows —
+the same frontier scan that decides which steps to skip — and the undo bound an
+`OfferToAccept` restored from the journaled state bag. *Before the timer half landed, that
+instance sat `Suspended` with the envelope open until `[FlowDeadline("P30D")]`.*
+
+**Six things in that are worth reading off rather than being told.**
 
 1. **There is no signal table.** The delivered signal is the suspension point's own
    `flow_step` row, with the payload as its `result` and the state-bag snapshot beside it. So
@@ -228,11 +297,26 @@ select state from flowx.flow_instance where instance_id = '019fbd44-…';  -- Co
    journal's committed rows, and the undo binds an `OfferToAccept` restored from the
    journaled state bag —
    `SuspensionTests.AFailureAfterTheWaitWithdrawsTheOfferThatWentOutBeforeIt`.
-4. **A waiting instance is not swept up.** Both shipped recovery indexes list `Pending`,
-   `Running` and `Compensating` only, so a scan does not take a lease on every waiting offer
-   every TTL, resume it, find the same wait open and put it back —
-   `SuspensionTests.AWaitingOfferIsNotSweptUpAsAbandonedWork`. Left running for three minutes,
-   the second offer above is still `Suspended` with one row.
+4. **A waiting instance is not swept up as abandoned work.** Both shipped recovery indexes
+   list `Pending`, `Running` and `Compensating` only, so a *recovery* scan does not take a
+   lease on every waiting offer every TTL, resume it, find the same wait open and put it back —
+   `SuspensionTests.AWaitingOfferIsNotSweptUpAsAbandonedWork`. The **timer** sweep reads
+   exactly the state that one excludes, and filters it on an instant the instance chose, so a
+   parked instance whose wait is still running is never fetched either —
+   `SuspensionTests.ASweepBeforeTheWaitIsDueTouchesNothing`.
+5. **A durable timer is three columns, not a table.** `wake_at`, `wake_step_id` and
+   `wake_scope` on `flow_instance`, written by the same `CompleteAsync` that writes
+   `Suspended`. One write, because two would leave a window in which an instance is parked
+   with nothing scheduled to wake it — and the step and the scope are there because one row
+   carries one wait and a flow may declare several: without them, a flow whose first wait was
+   satisfied late would read a stale instant on reaching its second and walk straight through
+   a wait that had not started.
+6. **A wait is a lower bound, never an upper one.** `FlowTimerScan` runs on
+   `FlowXOptions.TimerScanInterval` — ten seconds by default, jittered — so the five-second
+   settling period above elapsed in 5.5. That is the same promise a scheduled trigger makes
+   and the only one a sweep can keep. A host whose journal registers no `ITimerIndex` makes
+   none at all: it parks instances correctly and nothing ever comes back for them, which
+   `FlowTimerScan.IsEnabled` reports.
 
 **Both routes above are generated, and neither was until WP-64.** *This paragraph read
 "`offer.accept` has no `[HttpTrigger]`, and that is a gap in the transport rather than a
@@ -264,11 +348,12 @@ seen this assembly. `flowx diff` reads both: a signal removed or added is Breaki
 (`FLOWX-DIFF-021`, `022`) and a changed window is Neutral (`FLOWX-DIFF-206`). See
 [ADR-0021](../../docs/adr/ADR-0021-manifest-publishes-the-wait.md).
 
-**And the timeout is carried and published, not armed.** `Waits.Countersignature` reaches
-`StepNode.SignalTimeout` — that is the fabricated one hour below gone — and the manifest, and
-nothing fires when it expires. What bounds this flow is `[FlowDeadline("P30D")]`, checked at every step boundary
-*including* the one that decides whether to suspend, so an instance whose budget has gone
-times out rather than waiting for a signal it can no longer act on.
+**And the flow's own deadline is still the outer bound, on a different question.**
+`Waits.Countersignature` bounds the *wait* — seven days, after which the escalation runs.
+`[FlowDeadline("P30D")]` bounds the *flow*, is checked at every step boundary *including* the
+one that decides whether to park, and fails an instance whose budget has gone rather than
+letting it wait for a signal it could no longer act on. *This paragraph used to say the
+deadline was the only one of the two that did anything.*
 
 ### 2.1 What `AwaitSignal` used to do — kept, because it is why the fix has the shape it has
 
@@ -334,43 +419,45 @@ than a build error, and it was exactly the shape the old README documented as a 
 
 ### 2.2 What the compiler says now
 
-[`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) closed the silence, as an error on
-`AwaitSignal` and a warning on the other two. **WP-63 narrowed it to the other two.** The same
-throwaway project, same profile, same three lines:
-
-```
-Flows.cs(30,14): warning FLOWX1031: Flow 'AcceptOfferFlow' declares 'OnTimeout', which this
-  release cannot honour: the block is discarded, so its steps reach no plan, no dispatcher
-  and no manifest
-Flows.cs(31,10): warning FLOWX1031: Flow 'AcceptOfferFlow' declares 'Delay', which this
-  release cannot honour: the call produces no step at all, so the flow continues without
-  waiting
-```
-
-The `AwaitSignal` line is gone, and the plan it produces carries the author's own expression:
+`FLOWX1031` closed the silence, as an error on `AwaitSignal` and a warning on the other two.
+**WP-63 narrowed it to the other two, and then deleted it.** The same throwaway project, same
+profile, same three lines, compiles clean — and the plan it produces is the whole of the
+answer:
 
 ```csharp
-StepNode.ForAwaitSignal(1, "offer.countersigned", Waits.Countersignature),
+StepNode.ForCapability(0, Descriptors.Step0, Descriptors.Step0Compensation),
+StepNode.ForAwaitSignal(1, "offer.countersigned", Waits.Countersignature, signalTarget: 3),
+StepNode.ForFail(2),
+StepNode.ForDelay(3, Waits.Settling),
+StepNode.ForCapability(4, Descriptors.Step4),
 ```
 
-**The refusal in `FlowEmitter` was made unnecessary, not deleted.** The error existed because
-`StepNode.ForAwaitSignal` demands a duration and the compiler's step model had no field for
-one, which left two endings — publish a value nobody wrote, or publish no plan. WP-63 added
-the field, so the emitter writes what the author declared; the `InvalidOperationException` is
-still in that arm, still saying this generator does not invent a duration, and nothing reaches
-it because `AwaitSignal<TSignal>(TimeSpan timeout)` has no overload without a timeout.
-`SuspensionConstructTests.TheEmitterStillRefusesAnAwaitSignalItHasNoDurationFor` pins it.
+Three things to read off it. **`Waits.Countersignature` and `Waits.Settling` are there as
+expressions**, not as folded values — the generator does not constant-fold, so the plan means
+what the source means. **The escalation is at index 2**, immediately after the wait, and
+`signalTarget: 3` is where a delivered signal carries on: the two paths rejoin at 3, which is
+the mirror of a `When`'s layout, and the reason it is that way round is that the *other* path
+out of a wait is the rest of the flow and has no end to jump over. And **a wait with no
+`.OnTimeout` carries no target at all**, rather than one equal to the next index — the engine
+reads the absence as "there is nowhere for this timeout to go" and ends the flow with
+`flow.signal_not_received`.
 
-`Delay` and `OnTimeout` stay **warnings**, because dropping a call leaves a plan that says
-less than the source and nothing untrue — the category `FLOWX1027` occupies at the severity
-C# gives `CS0162` — and because an error would erase the `.Delay(...)` grep the timer package
-needs to find the flows that asked for one. Narrowing rather than deleting is what
-`FLOWX1028` did when `Durable` started running, and for the same reason: deleting the rule
-outright would hand a discarded `OnTimeout` block the silence `AwaitSignal` used to have.
+**The refusal in `FlowEmitter` was made unnecessary, not deleted, and it now covers both
+kinds.** The error existed because `StepNode.ForAwaitSignal` demands a duration and the
+compiler's step model had no field for one, which left two endings — publish a value nobody
+wrote, or publish no plan. WP-63 added the field, so the emitter writes what the author
+declared; the `InvalidOperationException` is still in that arm, still saying this generator
+does not invent a duration, and nothing reaches it because neither DSL method has an overload
+without one. `TimerConstructTests` pins both arms.
+
+**And the rule is deleted rather than fixed.** A rule that outlives the gap it describes is
+noise, and noise is what teaches people to suppress a catalogue —
+[the diagnostics index](../../docs/diagnostics/README.md#flowx1031-is-deleted-with-what-it-described)
+keeps the argument and retires the id.
 
 One consequence is worth stating plainly, because this README used to state its opposite:
-`FLOWX1017` is an error below `Durable` and `FLOWX1031` no longer reports at it, so
-**`AwaitSignal` has exactly one profile it can declare and that profile honours it** — and
+`FLOWX1017` is an error below `Durable` and nothing reports at it, so **both waits have
+exactly one profile they can declare and that profile honours them** — and
 `AwaitSignalRequiresDurableCodeFixProvider` is a quick action whose result now compiles and
 waits. For two phases it was a quick action whose result was a different diagnostic.
 
@@ -676,7 +763,8 @@ after the three runs in §5 every row has `flow_instance.input IS NULL` and
 
 | Missing | Work package |
 |---|---|
-| ~~`AwaitSignal` — a durable suspension point, a signal table, and a compiler that keeps the declared timeout~~ **done at WP-63**, and by a narrower construction than this row named: there is **no signal table** and no manifest column. A delivered signal is the suspension point's own `flow_step` row, so no schema changed; the step model got the timeout field, and [`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) was narrowed rather than deleted | WP-63 |
+| ~~`AwaitSignal` — a durable suspension point, a signal table, and a compiler that keeps the declared timeout~~ **done at WP-63**, and by a narrower construction than this row named: there is **no signal table** and no manifest column. A delivered signal is the suspension point's own `flow_step` row, so no schema changed; the step model got the timeout field | WP-63 |
+| ~~`Delay` and `OnTimeout` — a timer table and a scheduler engine~~ **done at WP-63's second half**, and again by a narrower construction: there is **no timer table** and no scheduler engine. A wait is three columns on the instance row that is waiting — `wake_at`, `wake_step_id`, `wake_scope` — written by the same call that writes `Suspended`, and `FlowTimerScan` is a sweep on an interval rather than a timer per instance. `FLOWX1031` was deleted with the gap | WP-63 |
 | `Delay` — a durable timer, and a `case` in `FlowAnalyzer` that lays out a step rather than reporting one | WP-63, second half |
 | `OnTimeout` — a layout for the branch, and something to time out of | WP-63, second half |
 | ~~A signal identity and a duration in `flowx.manifest.json` — the step object is `additionalProperties: false`, so this is a schema decision under [ADR-0017](../../docs/adr/ADR-0017-manifest-v1-freeze-criteria.md)~~ **done at WP-64**, as [ADR-0021](../../docs/adr/ADR-0021-manifest-publishes-the-wait.md): `signal` is always written, `timeout` is the folded duration or nothing, and three `flowx diff` rules read them. ADR-0017's F1 count of unproduced fields did not move | WP-64 |

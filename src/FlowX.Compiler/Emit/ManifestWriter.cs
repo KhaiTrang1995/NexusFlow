@@ -560,6 +560,27 @@ public static class ManifestWriter
             return;
         }
 
+        // An `.OnTimeout(...)` block is carried in Then, the way a conditional's block is,
+        // so it writes as a `branches` array with exactly one entry. Without this the block's
+        // steps reached no branches array at all: their capabilities still appeared in the
+        // manifest's top-level capability list, because FlowModel.AllSteps walks SelfAndNested,
+        // so the manifest named work it could not place — a reader saw an escalation's
+        // capability with nothing in the step tree that runs it. One entry rather than two,
+        // because a wait has no `Otherwise`: the other way out is the rest of the flow.
+        if (step.Kind == StepKindModel.AwaitSignal)
+        {
+            if (step.Then.Count == 0)
+            {
+                return;
+            }
+
+            writer.PropertyName("branches");
+            writer.OpenArray();
+            WriteBranch(writer, step.Then);
+            writer.CloseArray();
+            return;
+        }
+
         if (step.Kind != StepKindModel.Condition)
         {
             return;
@@ -920,6 +941,16 @@ public static class ManifestWriter
         // category and never a message. "This arm terminates the flow" is structure; what
         // it terminates with stays in compiled code.
         StepKindModel.Fail => "Fail",
+
+        // A timer is a step that takes a while, and the schema has listed "Delay" in the
+        // step `kind` enum since before anything emitted one. Without this arm the default
+        // below published a delay as {"id": 3, "kind": "Capability"} with no `capability`
+        // field — schema-valid, and false: a consumer diffing two manifests would see a
+        // capability step appear and disappear as a `.Delay(...)` moved. The duration is
+        // deliberately absent, on `merge`'s precedent and `Fail`'s: the manifest carries
+        // structure, and a delay's duration is an arbitrary expression in the flow's source.
+        StepKindModel.Delay => "Delay",
+
         _ => "Capability",
     };
 

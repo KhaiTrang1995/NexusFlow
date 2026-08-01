@@ -242,6 +242,7 @@ public sealed class InMemoryFlowJournal : IFlowJournal
         FencingToken token,
         FlowInstanceState state,
         JournalPayload stateBag,
+        FlowWake? wake,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stateBag);
@@ -265,6 +266,13 @@ public sealed class InMemoryFlowJournal : IFlowJournal
                 Fence = token,
                 State = state,
                 StateBagJson = stateBag.IsEmpty ? entry.Record.StateBagJson : stateBag.ToJson(),
+
+                // Assigned, not merged, and the asymmetry with the state bag above is the
+                // contract rather than an oversight: an absent bag means "unchanged", an
+                // absent wake means "nothing is due to wake this instance". A completed
+                // instance that kept the instant it was parked at would be found by every
+                // timer sweep for ever.
+                Wake = wake,
                 UpdatedAt = DateTimeOffset.UtcNow,
             };
 

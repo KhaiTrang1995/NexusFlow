@@ -32,7 +32,17 @@ public sealed class FlowDurability
     /// means this host runs no recovery scan — durable flows still run, and an instance whose
     /// node dies waits for a node that does scan.
     /// </param>
-    public FlowDurability(IFlowJournal journal, ILeaseStore leases, IRecoveryIndex? recoveryIndex = null)
+    /// <param name="timerIndex">
+    /// How parked instances that are due are found, when the journal can answer that cheaply.
+    /// Null means this host runs no timer sweep — durable flows still run and still park, and
+    /// a <c>.Delay(...)</c> or an expired <c>.OnTimeout(...)</c> waits for a node that does
+    /// sweep, or for the flow's own <c>[FlowDeadline]</c>.
+    /// </param>
+    public FlowDurability(
+        IFlowJournal journal,
+        ILeaseStore leases,
+        IRecoveryIndex? recoveryIndex = null,
+        ITimerIndex? timerIndex = null)
     {
         ArgumentNullException.ThrowIfNull(journal);
         ArgumentNullException.ThrowIfNull(leases);
@@ -40,6 +50,7 @@ public sealed class FlowDurability
         Journal = journal;
         Leases = leases;
         RecoveryIndex = recoveryIndex;
+        TimerIndex = timerIndex;
     }
 
     /// <summary>Where step boundaries are committed.</summary>
@@ -53,6 +64,18 @@ public sealed class FlowDurability
 
     /// <summary>Whether this host can run a recovery scan at all.</summary>
     public bool CanScan => RecoveryIndex is not null;
+
+    /// <summary>How parked instances that are due are found, or null when this host does not look.</summary>
+    /// <remarks>
+    /// Separate from <see cref="RecoveryIndex"/> rather than the same optional service, because
+    /// the two sweeps ask opposite questions of disjoint sets of rows: one looks for instances
+    /// a node died holding, the other for instances parked by design whose clock has come
+    /// round. A deployment may reasonably run either without the other.
+    /// </remarks>
+    public ITimerIndex? TimerIndex { get; }
+
+    /// <summary>Whether this host can run a timer sweep at all.</summary>
+    public bool CanWake => TimerIndex is not null;
 
     /// <summary>The lease policy these options describe.</summary>
     /// <param name="options">The validated host options.</param>

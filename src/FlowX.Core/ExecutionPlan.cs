@@ -29,8 +29,10 @@ public sealed class ExecutionPlan
         bool hasParallel,
         bool hasSubFlow,
         bool hasCompensationPolicies,
-        bool hasEmit)
+        bool hasEmit,
+        bool hasTimers)
     {
+        HasTimers = hasTimers;
         Flow = flow;
         Graph = graph;
         CompensableStepIndices = compensableStepIndices;
@@ -139,6 +141,25 @@ public sealed class ExecutionPlan
     /// </remarks>
     public bool HasEmit { get; }
 
+    /// <summary>True when any step waits on a clock: a timer, or a suspension point.</summary>
+    /// <remarks>
+    /// <para>
+    /// Precomputed for the reason <see cref="HasParallel"/> is, and read in the same shape: a
+    /// flow that never waits must not pay for the ones that do. It is what a timer sweep reads
+    /// to decide whether a registered flow can have a parked instance at all, and what the
+    /// step loop reads before it consults the instance's recorded wake instant.
+    /// </para>
+    /// <para>
+    /// <strong>It is false for every <see cref="ExecutionProfile.Ephemeral"/> plan, by
+    /// construction rather than by convention.</strong> Both kinds it counts are refused below
+    /// <see cref="ExecutionProfile.Durable"/> by
+    /// <see cref="ValidateProfileSupportsEveryStep"/>, so the ephemeral path reaches nothing
+    /// this flag guards and budget B2 is untouched — the same bargain <see cref="HasEmit"/>
+    /// struck for the outbox.
+    /// </para>
+    /// </remarks>
+    public bool HasTimers { get; }
+
     /// <summary>Builds a validated plan.</summary>
     /// <param name="flow">The flow's identity and profile.</param>
     /// <param name="graph">Its compiled step sequence.</param>
@@ -158,6 +179,7 @@ public sealed class ExecutionPlan
         var subFlow = false;
         var compensationPolicies = false;
         var emit = false;
+        var timers = false;
 
         foreach (var step in graph.Steps)
         {
@@ -179,6 +201,11 @@ public sealed class ExecutionPlan
 
             emit |= step.Kind == StepKind.Emit;
 
+            // Both kinds, because both park the instance until an instant the row records and
+            // both are woken by the same sweep. The flag answers "can an instance of this flow
+            // be waiting on a clock", and a suspension point with an armed timeout can.
+            timers |= step.Kind is StepKind.Delay or StepKind.AwaitSignal;
+
             AddEffects(effects, step.Capability);
             AddEffects(effects, step.Compensation);
         }
@@ -191,7 +218,8 @@ public sealed class ExecutionPlan
             parallel,
             subFlow,
             compensationPolicies,
-            emit);
+            emit,
+            timers);
     }
 
     private static void AddEffects(SortedSet<string> effects, CapabilityDescriptor? capability)
@@ -216,16 +244,27 @@ public sealed class ExecutionPlan
 
         foreach (var step in graph.Steps)
         {
-            if (step.Kind != StepKind.AwaitSignal)
+            if (step.Kind == StepKind.AwaitSignal)
             {
-                continue;
+                throw new InvalidFlowPlanException(
+                    $"Flow '{flow.Id}' runs under the {flow.Profile} profile, but step " +
+                    $"{step.Index} awaits signal '{step.SignalType}'. A suspension point " +
+                    "requires the Durable profile: an in-memory wait does not survive a " +
+                    "deployment, a crash, or a scale-in.");
             }
 
-            throw new InvalidFlowPlanException(
-                $"Flow '{flow.Id}' runs under the {flow.Profile} profile, but step " +
-                $"{step.Index} awaits signal '{step.SignalType}'. A suspension point " +
-                "requires the Durable profile: an in-memory wait does not survive a " +
-                "deployment, a crash, or a scale-in.");
+            // The same rule and the same sentence, because it is the same fact. A timer
+            // outside a journal has nowhere to record when it is due, so the only way to
+            // honour it in memory is to hold the process for the duration — which is a
+            // Task.Delay, and is exactly what a durable timer exists not to be.
+            if (step.Kind == StepKind.Delay)
+            {
+                throw new InvalidFlowPlanException(
+                    $"Flow '{flow.Id}' runs under the {flow.Profile} profile, but step " +
+                    $"{step.Index} delays for {step.Delay}. A durable timer requires the " +
+                    "Durable profile: there is nowhere outside a journal to record when it " +
+                    "is due, and a wait that survives nothing is a held thread.");
+            }
         }
     }
 

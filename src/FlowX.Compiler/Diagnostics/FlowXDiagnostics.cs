@@ -415,12 +415,30 @@ public static class FlowXDiagnostics
         "engine already reports as defects rather than as outcomes.",
         DiagnosticSeverity.Warning);
 
-    /// <summary>FLOWX1017 — a suspension point in a non-durable flow.</summary>
+    /// <summary>FLOWX1017 — a wait in a non-durable flow.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Both kinds of wait, since WP-63's timer half.</strong> The rule was written for
+    /// <c>AwaitSignal</c> because that was the only wait a plan could carry; <c>.Delay</c>
+    /// compiled to nothing at all, so there was nothing to report about it. Now that it is a
+    /// step, it needs the same profile for the same reason — there is nowhere outside a journal
+    /// to record when a timer is due, so the only way to honour one in memory is to hold the
+    /// process for the duration, which is a <c>Task.Delay</c> wearing a plan node.
+    /// </para>
+    /// <para>
+    /// The title still names <c>AwaitSignal</c> alone, and the message names whichever
+    /// construct the flow declared. That is deliberate: the id and the title are what an
+    /// <c>.editorconfig</c> line and a build log carry, and renaming a shipped rule's title to
+    /// cover a second construct would break every search anybody has saved for the first.
+    /// </para>
+    /// </remarks>
     public static readonly DiagnosticDescriptor AwaitSignalRequiresDurable = Create(
         "FLOWX1017",
         "AwaitSignal requires the Durable profile",
-        "Flow '{0}' uses AwaitSignal but runs under the {1} profile",
-        "An in-memory wait does not survive a deployment, a crash or a scale-in. Set " +
+        "Flow '{0}' uses {2} but runs under the {1} profile",
+        "An in-memory wait does not survive a deployment, a crash or a scale-in, and a timer " +
+        "outside a journal has nowhere to record when it is due — so the only way to honour " +
+        "one in memory is to hold the process for the duration. Set " +
         "Profile = ExecutionProfile.Durable on the flow.");
 
     /// <summary>FLOWX1018 — a cache policy on a capability with side effects.</summary>
@@ -797,68 +815,6 @@ public static class FlowXDiagnostics
         "remaining profile.",
         DiagnosticSeverity.Warning);
 
-    /// <summary>FLOWX1031 — a suspension construct the compiler cannot compile into a plan.</summary>
-    /// <remarks>
-    /// <para>
-    /// <c>Delay</c> and <c>OnTimeout</c> are declared on <c>IFlowBuilder</c>, documented in
-    /// <c>08 §3.5</c>, and neither survives compilation: both reach <c>FlowAnalyzer</c>'s
-    /// <c>default:</c> arm and are skipped, so the call produces no step and an
-    /// <c>OnTimeout</c> block's steps reach no plan, no dispatcher and no manifest.
-    /// </para>
-    /// <para>
-    /// <strong>Narrowed at WP-63, not deleted, and the precedent is <c>FLOWX1028</c>.</strong>
-    /// This rule covered a third construct: <c>AwaitSignal</c> reached the plan, the
-    /// dispatcher and the manifest, and it reached them carrying
-    /// <c>TimeSpan.FromHours(1)</c> — a value no author wrote, in place of one they did —
-    /// because the compiler's step model had no field for a timeout and
-    /// <c>StepNode.ForAwaitSignal</c> demands one. That made it an <em>error</em>: publishing
-    /// no plan was the only ending that published nothing untrue. WP-63 gave the model the
-    /// field and the engine a suspension point, so a durable flow now stops at its
-    /// <c>AwaitSignal</c> and resumes on the signal, with the declared duration in the plan.
-    /// Deleting the whole rule on that day would have handed a discarded <c>OnTimeout</c>
-    /// block the silence <c>AwaitSignal</c> used to have, which is exactly what narrowing
-    /// <c>FLOWX1028</c> to <c>Streaming</c> avoided rather than deleting it.
-    /// </para>
-    /// <para>
-    /// <strong>A warning throughout now, which is <c>FLOWX1028</c>'s answer to the same
-    /// shape.</strong> The argument that carries is its first one: an error erases the
-    /// declaration the fixing phase needs to find, and <c>.Delay(...)</c> is the grep that
-    /// finds the flows the timer half of WP-63 has to make work. A dropped call also leaves a
-    /// plan that says less than the source and nothing untrue — the category
-    /// <c>FLOWX1027</c> occupies, at the severity C# gives <c>CS0162</c>.
-    /// </para>
-    /// <para>
-    /// <strong>And the cost this rule used to carry is gone.</strong> With
-    /// <see cref="AwaitSignalRequiresDurable"/> an error below <c>Durable</c> and this an
-    /// error at it, <c>AwaitSignal</c> had no profile it could legally declare and
-    /// <c>AwaitSignalRequiresDurableCodeFixProvider</c> was a quick action whose result was a
-    /// different diagnostic. The quick action's premise — "the author wrote
-    /// <c>AwaitSignal</c>, so the flow suspends" — is true now, so its output is a flow that
-    /// compiles and waits.
-    /// </para>
-    /// <para>
-    /// <strong>Deleted, not fixed, when the timer lands.</strong> A rule that outlives the gap
-    /// it describes is noise, and noise is what teaches people to suppress a catalogue. The
-    /// deletion table is on <c>docs/diagnostics/FLOWX1031.md</c>.
-    /// </para>
-    /// </remarks>
-    public static readonly DiagnosticDescriptor SuspensionIsNotHonoured = Create(
-        "FLOWX1031",
-        "Suspension construct is declared but not honoured by the compiler",
-        "Flow '{0}' declares '{1}', which this release cannot honour: {2}",
-        "Delay and OnTimeout express a flow that waits on a clock, and nothing implements a " +
-        "timer yet. Both compile to nothing — the call produces no step, and an OnTimeout " +
-        "block's steps are absent from the plan, from the generated dispatcher and from " +
-        "flowx.manifest.json. AwaitSignal is no longer one of them: WP-63 made a durable " +
-        "flow suspend at it and resume when the signal is delivered, with the timeout the " +
-        "author declared carried into the plan. Until the timer half lands, express a wait " +
-        "on a clock outside the flow — a scheduled trigger replaces a Delay, and a scheduled " +
-        "sweep over instances that have waited too long replaces an OnTimeout branch. Do not " +
-        "delete the construct and ship the rest: a flow that needed to wait and now does not " +
-        "is the same defect with the evidence removed. This rule is deleted, not fixed, on " +
-        "the day the timer lands.",
-        DiagnosticSeverity.Warning);
-
     /// <summary>FLOWX1032 — a declared policy the runtime applies to nothing.</summary>
     /// <remarks>
     /// <para>
@@ -878,9 +834,8 @@ public static class FlowXDiagnostics
     /// </para>
     /// <para>
     /// <strong>A warning, on <see cref="ProfileIsNotHonouredByTheRuntime"/>'s argument one
-    /// level down.</strong> Both of that rule's halves transfer, and unlike
-    /// <see cref="SuspensionIsNotHonoured"/> this one may use the second as well as the
-    /// first. An error's only repair is deleting the <c>.WithPolicy(...)</c> call, which
+    /// level down.</strong> Both of that rule's halves transfer, and unlike the deleted rule
+    /// over the suspension constructs, this one may use the second as well as the first. An error's only repair is deleting the <c>.WithPolicy(...)</c> call, which
     /// erases the inventory P4 needs to find; and the source is not wrong — a great many
     /// flows are correct with a <c>RateLimit</c> enforced by the gateway in front of the
     /// process or a <c>Timeout</c> subsumed by a shorter <c>[FlowDeadline]</c>, so "confirm
@@ -939,7 +894,7 @@ public static class FlowXDiagnostics
     /// no fixing phase — P4 implements the eight inert kinds; it does not give a
     /// non-compensable step an undo. There is no legitimate program — a retry over an undo
     /// that does not exist is not a design decision anyone defends. And something *is*
-    /// falsified, which is the property that made <see cref="SuspensionIsNotHonoured"/>'s
+    /// falsified, which is the property that made the deleted suspension rule's
     /// <c>AwaitSignal</c> half an error: the manifest and the plan disagree about the same
     /// source line.
     /// </para>
@@ -1153,7 +1108,6 @@ public static class FlowXDiagnostics
         StepIsUnreachableAfterFail,
         StepInputMappingHasWrongType,
         ProfileIsNotHonouredByTheRuntime,
-        SuspensionIsNotHonoured,
         PolicyIsNotExecutedByTheRuntime,
         CompensationRetryHasNoCompensation,
         StepDeclaresMoreThanOnePolicySet,

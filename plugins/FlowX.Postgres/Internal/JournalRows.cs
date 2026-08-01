@@ -33,7 +33,19 @@ internal static class JournalRows
         ParentStepId = Db.NullableInt(reader, 14),
         CreatedAt = Db.ReadTimestamp(reader, 15),
         UpdatedAt = Db.ReadTimestamp(reader, 16),
+        Wake = Wake(reader),
     };
+
+    /// <summary>Reads the wait a parked instance is at, or null when it is at none.</summary>
+    /// <remarks>
+    /// Keyed off <c>wake_at</c> alone, because <c>flow_instance_wake_check</c> makes the three
+    /// columns all-or-nothing — so one null is all three null, and testing the other two would
+    /// be re-checking a constraint the database already holds.
+    /// </remarks>
+    private static FlowWake? Wake(NpgsqlDataReader reader) =>
+        Db.NullableTimestamp(reader, 17) is { } at
+            ? new FlowWake(StepScope.Parse(reader.GetString(19)), reader.GetInt32(18), at)
+            : null;
 
     /// <summary>Reads a <c>flow_step</c> row.</summary>
     /// <param name="reader">The reader, positioned on the row.</param>

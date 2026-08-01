@@ -8,7 +8,24 @@ using Workflow;
 var builder = WebApplication.CreateSlimBuilder(args);
 
 builder.Services.AddRouting();
-builder.Services.AddFlowX(options => options.ApplicationName = "Workflow");
+builder.Services.AddFlowX(options =>
+{
+    options.ApplicationName = "Workflow";
+
+    // The resolution of every timer this application declares: a `.Delay` of one second under
+    // a ten-second sweep waits between one and eleven. A wait is a lower bound and never an
+    // upper one, which is the same promise a scheduled trigger makes and the only one a sweep
+    // can keep — so a sample that winds its waits down to seconds has to wind this down too,
+    // or it spends most of a demonstration inside the sweep interval rather than inside the
+    // wait it is demonstrating.
+    if (TimeSpan.TryParse(
+            Environment.GetEnvironmentVariable("FLOWX_SAMPLE_TIMER_SCAN"),
+            System.Globalization.CultureInfo.InvariantCulture,
+            out var sweep) && sweep > TimeSpan.Zero)
+    {
+        options.TimerScanInterval = sweep;
+    }
+});
 
 // The journal, and the whole reason this sample has a dependency samples/ecommerce does not.
 //
@@ -16,8 +33,10 @@ builder.Services.AddFlowX(options => options.ApplicationName = "Workflow");
 // and no lease store is refused with `flow.durability_not_configured` before its first step —
 // not run ephemerally — so this line is not optional configuration, it is the difference
 // between an application that starts and one that answers every request with a refusal.
-// AddFlowX resolves IFlowJournal, ILeaseStore and IRecoveryIndex out of the container; this
-// registers all three over one data source.
+// AddFlowX resolves IFlowJournal, ILeaseStore, IRecoveryIndex and ITimerIndex out of the
+// container; this registers all four over one data source. The last of them is what makes
+// `offer.accept`'s `.Delay` come due and its `.OnTimeout` fire — a host that registered no
+// ITimerIndex would park instances correctly and never wake them.
 builder.Services.AddFlowXPostgres(
     builder.Configuration.GetConnectionString("FlowX")
     ?? Environment.GetEnvironmentVariable("FLOWX_POSTGRES_CONNECTION")
@@ -86,6 +105,22 @@ var app = builder.Build();
 await app.Services.GetRequiredService<PostgresMigrator>()
     .MigrateAsync(CancellationToken.None)
     .ConfigureAwait(false);
+
+// What makes a parked instance resumable by a sweep rather than only by a request.
+//
+// A trigger arrives with its plan and its dispatcher in hand; an instance a sweep finds is a
+// row carrying a flow id and a version and nothing else, so something has to turn those two
+// strings back into an ExecutionPlan and an IStepDispatcher. That is the catalogue, and this
+// is the registration `offer.accept` needs in order for its `.Delay` to ever come due and its
+// `.OnTimeout` to ever fire — without it FlowTimerScan finds the instance, cannot run it, and
+// counts it as NotRunnable, which is the honest answer to "this node was not deployed with
+// that flow".
+//
+// Only the flow that waits. The other two are started by a request and finish inside it, so
+// nothing ever looks for them by id.
+app.Services.GetRequiredService<FlowCatalog>().Add(
+    AcceptOfferFlow.Plan,
+    app.Services.GetRequiredService<AcceptOfferFlow.Dispatcher>());
 
 app.MapHealthChecks("/health");
 

@@ -366,4 +366,52 @@ public sealed class ManifestTests
                 .ShouldNotContain("AwaitSignal", id + " declares a suspension point.");
         }
     }
+
+    /// <summary>
+    /// A <c>.Delay(...)</c> is published as a <c>Delay</c>, not as a capability with no
+    /// capability.
+    /// </summary>
+    /// <remarks>
+    /// <c>StepKindName</c> had no arm for it, so its <c>_ =&gt; "Capability"</c> default
+    /// published <c>{"id": 3, "kind": "Capability"}</c> with the <c>capability</c> field
+    /// absent. That validates — the schema requires <c>capability</c> only where the kind
+    /// implies one — and it is false in the way that matters to a consumer: two manifests
+    /// diffed across a commit that moved a timer would report a capability step appearing and
+    /// disappearing. The schema has listed <c>"Delay"</c> in the step <c>kind</c> enum since
+    /// before anything emitted one, so nothing about the contract had to change.
+    /// </remarks>
+    [Fact]
+    public void ADelayIsPublishedAsItsOwnKind()
+    {
+        var delay = Flow("offer.accept").GetProperty("steps").EnumerateArray()
+            .Single(s => s.GetProperty("kind").GetString() == "Delay");
+
+        delay.TryGetProperty("capability", out _).ShouldBeFalse(
+            "a timer runs no capability, and publishing an absent one is how it came to be " +
+            "published as a capability step in the first place.");
+    }
+
+    /// <summary>
+    /// The steps of an <c>.OnTimeout(...)</c> block are placed in the step tree, not merely
+    /// counted in the capability list.
+    /// </summary>
+    /// <remarks>
+    /// <c>WriteBranches</c> had no <c>AwaitSignal</c> arm, so the block's steps reached no
+    /// <c>branches</c> array. Their capabilities still appeared in the manifest's top-level
+    /// capability list, because <c>FlowModel.AllSteps</c> walks <c>SelfAndNested</c> — so the
+    /// manifest named work it could not place, and a reader saw an escalation's capability
+    /// with nothing in the step tree that runs it. One entry rather than a conditional's two,
+    /// because a wait has no <c>Otherwise</c>: the other way out of it is the rest of the flow.
+    /// </remarks>
+    [Fact]
+    public void TheEscalationBlockIsInTheStepTree()
+    {
+        var wait = Flow("offer.accept").GetProperty("steps").EnumerateArray()
+            .Single(s => s.GetProperty("kind").GetString() == "AwaitSignal");
+
+        var branches = wait.GetProperty("branches").EnumerateArray().ToList();
+
+        branches.Count.ShouldBe(1, "a wait has one block; the other path out is the flow.");
+        Kinds(branches[0]).ShouldNotBeEmpty("the escalation runs something.");
+    }
 }

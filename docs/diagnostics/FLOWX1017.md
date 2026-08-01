@@ -4,16 +4,28 @@
 
 ## What it means
 
-A suspension point must survive a deployment, a crash and a scale-in. Under the `Ephemeral` profile there is no journal, so a waiting flow simply disappears when its node does.
+A wait must survive a deployment, a crash and a scale-in. Under the `Ephemeral` profile there
+is no journal, so a waiting flow simply disappears when its node does — and a timer has
+nowhere to record when it is due, which leaves holding the process for the duration as the
+only way to honour it.
 
 > [!NOTE]
-> **This rule's fix produces a working flow, as of 2026-08-01.** For two phases it did not:
-> [`FLOWX1031`](FLOWX1031.md) was an error on `AwaitSignal` under *every* profile, `Durable`
+> **This rule covers `.Delay(duration)` as well as `.AwaitSignal<T>(timeout)`, since
+> 2026-08-02.** It could not before, and not because anybody decided it should not: `.Delay`
+> compiled to no step at all, so there was nothing for a rule that reads the compiled step
+> model to see. The title still names `AwaitSignal` alone — an id and a title are what an
+> `.editorconfig` line and a build log carry, and renaming a shipped rule to cover a second
+> construct would break every search saved for the first — and the **message** names whichever
+> construct the flow declared.
+
+> [!NOTE]
+> **This rule's fix produces a working flow, as of 2026-08-01.** For two phases it did not: a
+> since-deleted rule reported `AwaitSignal` as an error under *every* profile, `Durable`
 > included, because nothing implemented suspension — so this rule's quick action cleared one
 > error and raised another, and `AwaitSignal` had no profile it could legally declare. WP-63
 > made a `Durable` flow suspend at its suspension point and resume when the signal is
-> delivered, and narrowed `FLOWX1031` off `AwaitSignal`. Nothing about *this* rule changed;
-> what changed is that its answer is now worth applying.
+> delivered. Nothing about *this* rule changed; what changed is that its answer is now worth
+> applying.
 
 ## Example that triggers it
 
@@ -31,11 +43,13 @@ flow.AwaitSignal<PaymentConfirmed>(TimeSpan.FromHours(1))
 ```
 
 The deadline is not decoration and the quick action deliberately does not write one. A flow
-that waits for a person needs longer than thirty seconds, and `[FlowDeadline]` is the **only**
-timeout this release enforces on a wait: the duration declared on `.AwaitSignal<T>(timeout)`
-reaches the plan and nothing arms it, because there is no timer
-([FLOWX1031](FLOWX1031.md#what-is-still-owed)). An instance whose budget has gone times out at
-its next step boundary rather than waiting for a signal it can no longer act on.
+that waits for a person needs longer than thirty seconds. *This paragraph used to go on to say
+that `[FlowDeadline]` was the only timeout enforced on a wait, because the declared duration
+reached the plan and nothing armed it.* It is armed now — the instance records when it is due
+and a sweep brings it back — so the two bounds are different questions again: the wait's own
+duration ends the wait, and the flow's deadline ends the flow. An instance whose budget has
+gone times out at its next step boundary rather than waiting for a signal it can no longer act
+on, which is checked *before* the decision to park.
 
 ## When to suppress
 

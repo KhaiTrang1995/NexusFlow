@@ -66,6 +66,29 @@ public sealed class DurableExecution
     public bool IsResumed => Frontier is not null;
 
     /// <summary>
+    /// The instant recorded for the wait at this <c>(scope, step)</c>, or <c>null</c> when the
+    /// instance was not found parked there.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Identity is what makes the recorded instant readable.</strong> One row carries
+    /// one wait, and a flow may declare several: an instance whose first wait was satisfied
+    /// late, reaching its second, would read an instant already in the past and walk straight
+    /// through a wait that had not started. Matching the step and the iteration is what makes
+    /// that unrepresentable rather than unlikely.
+    /// </para>
+    /// <para>
+    /// A miss is not an error — it is "this wait is being reached for the first time", which is
+    /// what a fresh instance and a resumed one past its first wait both are — so the loop arms
+    /// it from the clock.
+    /// </para>
+    /// </remarks>
+    internal DateTimeOffset? RecordedWake(StepScope scope, int stepId) =>
+        Frontier?.Instance.Wake is { } wake && wake.Scope == scope && wake.StepId == stepId
+            ? wake.At
+            : null;
+
+    /// <summary>
     /// The signal this invocation carries into the instance, or <c>null</c> when it carries
     /// none.
     /// </summary>

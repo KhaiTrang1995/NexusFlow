@@ -290,7 +290,7 @@ public sealed class RetentionTests
             Cancellation);
 
         await schema.Journal.CompleteAsync(
-            instance, new FencingToken(1), state, JournalPayload.Empty, Cancellation);
+            instance, new FencingToken(1), state, JournalPayload.Empty, wake: null, Cancellation);
 
         // Age the row. The sweeper reads updated_at, which the adapter sets to now() on
         // every write, so backdating it is the only way to test a 30-day window in a test.

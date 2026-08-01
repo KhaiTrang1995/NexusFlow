@@ -70,4 +70,25 @@ public sealed record PostgresJournalOptions
     /// </para>
     /// </remarks>
     public bool RegisterRecoveryIndex { get; init; } = true;
+
+    /// <summary>
+    /// Whether <see cref="PostgresTimerIndex"/> is registered as the host's
+    /// <see cref="ITimerIndex"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>On by default, for the reason <see cref="RegisterRecoveryIndex"/> is.</strong>
+    /// Off is the state a host is in when nothing registers one, and in that state a
+    /// <c>.Delay(...)</c> never comes due and an <c>.OnTimeout(...)</c> never fires — the flow
+    /// parks and waits for a signal or its own <c>[FlowDeadline]</c>. That is a defensible
+    /// configuration to choose and a surprising one to inherit.
+    /// </para>
+    /// <para>
+    /// Separate from <see cref="RegisterRecoveryIndex"/> rather than one switch over both,
+    /// because they are two different sweeps over two disjoint sets of rows: a deployment may
+    /// well want its parked instances woken on a node that does not take over other nodes'
+    /// work, or the reverse.
+    /// </para>
+    /// </remarks>
+    public bool RegisterTimerIndex { get; init; } = true;
 }

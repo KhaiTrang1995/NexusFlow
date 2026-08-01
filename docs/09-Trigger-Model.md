@@ -196,6 +196,9 @@ error mapping and the idempotency filter.
 > **This row was a design and is now generated. Two things it said were wrong, and the
 > route it printed was one of them.** *This box read "the signal row is a design, and
 > nothing generates that endpoint" until WP-64 (2026-08-01).*
+> There is no signal table and there never will be: a delivered signal is journaled as
+> the suspension point's own `flow_step` row, which is why a redelivery is inert without
+> a check written for it.
 >
 > **It is not `/api/v1/flows/{instanceId}/…`.** There is no flow-instance resource
 > namespace — `GET /api/v1/flows/{instanceId}` above is still built by nothing — so the

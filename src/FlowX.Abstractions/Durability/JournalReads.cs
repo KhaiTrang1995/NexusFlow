@@ -62,6 +62,27 @@ public sealed record FlowInstanceRecord
     /// <summary>The operator's hint. Never the resume position — see <see cref="StepCommit.ResumeHint"/>.</summary>
     public int? ResumeHint { get; init; }
 
+    /// <summary>
+    /// The wait a <see cref="FlowInstanceState.Suspended"/> instance is parked at and the
+    /// instant it is due, or <c>null</c> when nothing is due to wake it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the whole of a durable timer.</strong> A wait is three values on a row,
+    /// so a million parked instances cost a million rows and no compute — and what ends the
+    /// wait is a sweep reading a column, not a process holding a <c>Task.Delay</c> for seven
+    /// days.
+    /// </para>
+    /// <para>
+    /// <strong>Read by the step loop as well as by the sweep, and the step loop is the one
+    /// that decides.</strong> A sweep says "this instance is due"; the engine, standing on the
+    /// node the instance is parked at, compares the recorded instant against its clock and
+    /// either walks on or parks again. That keeps the decision beside the plan that declared
+    /// the duration rather than in a query that would have to be told about it.
+    /// </para>
+    /// </remarks>
+    public FlowWake? Wake { get; init; }
+
     /// <summary>When the instance was recorded.</summary>
     public DateTimeOffset CreatedAt { get; init; }
 
