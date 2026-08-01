@@ -174,6 +174,7 @@ public sealed class CapabilityContextTests
         public override string CorrelationId => "corr-1";
         public override string? FlowInstanceId => null;
         public override string CapabilityId => "test.capability";
+        public override string? CompensatingFor => null;
         public override string? TenantId => null;
         public override string IdempotencyKey => "key-1";
         public override DateTimeOffset Deadline { get; } = deadline;

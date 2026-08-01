@@ -40,6 +40,7 @@ public sealed class TestFlowContext : FlowContext
     /// <param name="correlationId">See <see cref="TestCapabilityContext"/>.</param>
     /// <param name="tenantId">See <see cref="TestCapabilityContext"/>.</param>
     /// <param name="capabilityId">See <see cref="TestCapabilityContext"/>.</param>
+    /// <param name="compensatingFor">See <see cref="TestCapabilityContext"/>.</param>
     /// <param name="flowInstanceId">See <see cref="TestCapabilityContext"/>.</param>
     /// <param name="utcNow">See <see cref="TestCapabilityContext"/>.</param>
     /// <param name="budget">See <see cref="TestCapabilityContext"/>.</param>
@@ -54,6 +55,7 @@ public sealed class TestFlowContext : FlowContext
         string correlationId = "test-correlation-id",
         string? tenantId = null,
         string capabilityId = "test.capability",
+        string? compensatingFor = null,
         string? flowInstanceId = null,
         DateTimeOffset? utcNow = null,
         TimeSpan? budget = null,
@@ -65,6 +67,7 @@ public sealed class TestFlowContext : FlowContext
             correlationId,
             tenantId,
             capabilityId,
+            compensatingFor,
             flowInstanceId,
             utcNow,
             budget,
@@ -94,6 +97,9 @@ public sealed class TestFlowContext : FlowContext
 
     /// <inheritdoc />
     public override string CapabilityId => _values.CapabilityId;
+
+    /// <inheritdoc />
+    public override string? CompensatingFor => _values.CompensatingFor;
 
     /// <inheritdoc />
     public override string? TenantId => _values.TenantId;

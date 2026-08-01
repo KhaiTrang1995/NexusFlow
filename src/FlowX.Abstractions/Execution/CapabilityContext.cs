@@ -19,7 +19,65 @@ public abstract class CapabilityContext
     public abstract string? FlowInstanceId { get; }
 
     /// <summary>Identity of the capability being executed, e.g. <c>payment.capture</c>.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The capability that is running, never the one it is running on behalf
+    /// of.</strong> Inside a compensation this is the <em>compensating</em> capability —
+    /// <c>payment.refund</c>, not the <c>payment.capture</c> being reversed. What is being
+    /// undone is <see cref="CompensatingFor"/>, and the two are deliberately separate
+    /// values because they are read for opposite purposes.
+    /// </para>
+    /// <para>
+    /// <strong>This is what to derive an idempotency key from</strong>, together with
+    /// <see cref="IdempotencyKey"/>. The pair is stable across a retry and across a replay
+    /// and distinct between a step and its undo — which is the property that makes a contra
+    /// write land instead of being deduplicated against the write it reverses. It is also
+    /// what the journal row records, what a span is named after, and what an unhandled
+    /// throw is attributed to, so a capability reading it here sees the same string an
+    /// operator reading the audit trail does.
+    /// </para>
+    /// <para>
+    /// Inside a parallel branch this is best-effort: one pooled context is shared by every
+    /// branch, so a sibling entering its own step overwrites the field. Per-branch identity
+    /// needs a per-branch context.
+    /// </para>
+    /// </remarks>
     public abstract string CapabilityId { get; }
+
+    /// <summary>
+    /// The capability this execution is undoing, or <c>null</c> when it is running forward.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Both facts are on the type because both have readers, and one value cannot
+    /// serve both.</strong> A compensator writing to a store needs to know what
+    /// <em>it</em> is, so its write is keyed differently from the one it reverses; an
+    /// operator reading a trace, and a log line explaining why an undo is happening at all,
+    /// need to know which step is being reversed. Collapsing them into one member is the
+    /// defect this pair replaced: <see cref="CapabilityId"/> answered the second question
+    /// while every caller read it for the first, and an undo keyed on it produced the
+    /// forward step's key exactly.
+    /// </para>
+    /// <para>
+    /// <c>null</c> is the whole of the forward path, so <c>ctx.CompensatingFor is not
+    /// null</c> — spelled <see cref="IsCompensating"/> — is how a capability that is both a
+    /// step and somebody else's compensation tells which way round it is being run.
+    /// </para>
+    /// <para>
+    /// A step whose undo is a nested unwind rather than a capability — an inline sub-flow —
+    /// reports its own identity here, because the composition is what is being undone and
+    /// there is no separate compensating capability to name.
+    /// </para>
+    /// </remarks>
+    public abstract string? CompensatingFor { get; }
+
+    /// <summary>True when this execution is undoing a completed step rather than running one.</summary>
+    /// <remarks>
+    /// Not virtual: it is <see cref="CompensatingFor"/> being non-null, and an override that
+    /// could disagree with that would be a third answer to a question that already had one
+    /// too many.
+    /// </remarks>
+    public bool IsCompensating => CompensatingFor is not null;
 
     /// <summary>
     /// Resolved from validated claims only, never from a payload or header

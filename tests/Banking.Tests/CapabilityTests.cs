@@ -306,31 +306,59 @@ public sealed class CapabilityTests
     }
 
     /// <summary>
-    /// An undo keyed on the context would be keyed identically to the write it undoes.
+    /// A reversal keys its contra write on its own identity, not the debit's.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The engine sets <c>ctx.CapabilityId</c> from <c>step.Capability.Id</c> before
-    /// dispatching a compensation, so inside <see cref="ReverseDebit"/> the context reports
-    /// <c>ledger.post_debit</c>. The first argument below is that context, and the two keys
-    /// are what a reversal would use with and without <see cref="LedgerKeys.ForUndo"/>.
+    /// <strong>This assertion used to pin the opposite, and it is worth saying why.</strong>
+    /// The engine entered a compensation with the <em>forward</em> step, so inside
+    /// <see cref="ReverseDebit"/> the context reported <c>ledger.post_debit</c> and
+    /// <see cref="LedgerKeys.For"/> produced the debit's own key. This sample worked around
+    /// it with a second key function that took the compensating id as a literal argument,
+    /// and this test pinned the hazard so nobody deleted the workaround by accident. The
+    /// runtime names the running capability now, so the workaround is gone and the test
+    /// pins what actually happens: the same one key function, on both sides of the unwind,
+    /// producing two different keys.
     /// </para>
     /// <para>
-    /// This is pinned as its own assertion because the failure it prevents is silent: a
-    /// ledger deduplicating the contra entry against the debit returns the debit's entry, the
+    /// Still its own assertion because the failure it prevents is silent. A ledger
+    /// deduplicating the contra entry against the debit returns the debit's entry, the
     /// compensation reports success, and the engine reports
     /// <c>CompensationOutcome.Succeeded</c> over money that never came back.
+    /// <c>ExecuteTransferFlowTests</c> proves the engine supplies the identity asserted
+    /// here; this proves the capability derives the right key from it.
     /// </para>
     /// </remarks>
     [Fact]
-    public void AnUndoKeyedOnTheContextWouldCollideWithTheWriteItUndoes()
+    public void AReversalIsKeyedDifferentlyFromTheWriteItUndoes()
     {
-        var duringTheUnwind = ContextFor("ledger.post_debit");
+        LedgerKeys.For(ContextFor("ledger.post_debit")).ShouldBe("idem-1:ledger.post_debit");
 
-        LedgerKeys.For(duringTheUnwind).ShouldBe("idem-1:ledger.post_debit");
+        LedgerKeys.For(ContextFor("ledger.reverse_debit")).ShouldBe("idem-1:ledger.reverse_debit");
+    }
 
-        LedgerKeys.ForUndo(duringTheUnwind, "ledger.reverse_debit")
-            .ShouldBe("idem-1:ledger.reverse_debit");
+    /// <summary>
+    /// A reversal can tell it is a reversal, and say what it is reversing.
+    /// </summary>
+    /// <remarks>
+    /// The other half of the identity the engine supplies during an unwind. This sample does
+    /// not need it — its reversals are separate capabilities and never run forward — but a
+    /// capability that is both a step and somebody else's compensation does, and a sample
+    /// that only ever showed one of the two members would read as though the other did not
+    /// exist.
+    /// </remarks>
+    [Fact]
+    public void AReversalCanReadTheStepItIsUndoing()
+    {
+        var undoing = new TestCapabilityContext(
+            "idem-1",
+            capabilityId: "ledger.reverse_debit",
+            compensatingFor: "ledger.post_debit");
+
+        undoing.IsCompensating.ShouldBeTrue();
+        undoing.CompensatingFor.ShouldBe("ledger.post_debit");
+
+        ContextFor("ledger.post_debit").IsCompensating.ShouldBeFalse();
     }
 
     [Fact]

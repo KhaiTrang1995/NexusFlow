@@ -353,6 +353,48 @@ public sealed record StepNode
     /// <summary>True when this step moves the instruction pointer rather than doing work.</summary>
     public bool IsControlTransfer => Kind is StepKind.Branch or StepKind.Jump or StepKind.Switch;
 
+    /// <summary>
+    /// What this step is, as one string: the capability it invokes, or the one thing it is
+    /// about for the kinds that invoke none.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Read by everything that has to name a running step to somebody — the journal row's
+    /// <c>capability_id</c>, <c>ctx.CapabilityId</c>, the identity an unhandled throw is
+    /// attributed to. It lives here, on the node, so those readers cannot drift: the
+    /// expression used to be written out at each of them, and two of the copies disagreeing
+    /// about the same step is exactly the failure <see cref="CompensationIdentity"/> was
+    /// added to end.
+    /// </para>
+    /// <para>
+    /// Empty only for the control-transfer kinds, which do no work and are never reported
+    /// as having run.
+    /// </para>
+    /// </remarks>
+    public string Identity => Capability?.Id ?? EventType ?? SignalType ?? SubFlowId ?? string.Empty;
+
+    /// <summary>What runs when this step is undone, as one string.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The compensating capability, not the step it reverses.</strong> Undoing
+    /// <c>inventory.reserve</c> is <c>inventory.release</c> running, and everything that
+    /// reports on it — the journal row, the alert raised when it is given up on, and
+    /// <c>ctx.CapabilityId</c> inside the compensating capability itself — has to say so. A
+    /// compensator deriving an idempotency key from its own identity would otherwise key its
+    /// contra write exactly as the forward write was keyed, and any store honouring that key
+    /// would deduplicate the undo away and report success over an effect that never
+    /// happened.
+    /// </para>
+    /// <para>
+    /// <strong>An inline sub-flow falls back to <see cref="Identity"/>.</strong> It declares
+    /// no compensation of its own — see <see cref="IsCompensable"/> — because what its undo
+    /// runs is the <em>child's</em> unwind, against the child's own steps and the child's own
+    /// context, each of which names itself. There is no third name for the composition's
+    /// undo, so it keeps its own.
+    /// </para>
+    /// </remarks>
+    public string CompensationIdentity => Compensation?.Id ?? Identity;
+
     /// <summary>Creates a capability step.</summary>
     /// <param name="index">Position in the graph.</param>
     /// <param name="capability">The capability to invoke.</param>

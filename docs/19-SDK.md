@@ -274,10 +274,13 @@ PlaceOrderFlow.Projection(ctx).ReceiptId.ShouldBe(…);
 ```
 
 `Fail(error)` puts it into the state a compensation actually meets, since a
-compensation runs after a failure and may read `ctx.Error`.
+compensation runs after a failure and may read `ctx.Error`. `compensatingFor:` is the
+other half of that state: it is what the engine sets during an unwind, so a capability
+under test sees `ctx.CapabilityId` as itself and `ctx.CompensatingFor` as the step it is
+reversing — which is what a compensator keying an idempotency key depends on.
 
 **Why this is in the platform and not in your test project.** `CapabilityContext` is
-abstract with nine members, so the first thing every consumer wrote was the same
+abstract with ten members, so the first thing every consumer wrote was the same
 thirty-line stub — the reference sample's own tests carried one. Ceremony that every
 user pays is a platform defect, not a user problem.
 

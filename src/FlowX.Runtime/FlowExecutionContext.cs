@@ -77,6 +77,7 @@ public sealed class FlowExecutionContext : FlowContext
     private string _flowId = string.Empty;
     private string _flowVersion = string.Empty;
     private string _capabilityId = string.Empty;
+    private string? _compensatingFor;
     private string _correlationId = string.Empty;
     private string _idempotencyKey = string.Empty;
     private string? _tenantId;
@@ -228,6 +229,9 @@ public sealed class FlowExecutionContext : FlowContext
 
     /// <inheritdoc />
     public override string CapabilityId => _capabilityId;
+
+    /// <inheritdoc />
+    public override string? CompensatingFor => _compensatingFor;
 
     /// <inheritdoc />
     public override string? TenantId => _tenantId;
@@ -637,11 +641,58 @@ public sealed class FlowExecutionContext : FlowContext
     /// step most recently started, which may be a sibling's. That is a fidelity limit of
     /// one shared field, stated rather than papered over; per-branch identity needs a
     /// per-branch context, which is a larger change than this work package.
+    /// <para>
+    /// <see cref="StepNode.Identity"/> rather than the expression spelled out here, so this
+    /// and the journal row cannot drift about what the same step is called.
+    /// </para>
     /// </remarks>
     internal string EnterStep(StepNode step)
     {
-        var id = step.Capability?.Id ?? step.EventType ?? step.SignalType ?? step.SubFlowId ?? string.Empty;
+        ArgumentNullException.ThrowIfNull(step);
+
+        var id = step.Identity;
         _capabilityId = id;
+
+        // Cleared rather than left, although no forward step runs after an unwind starts and
+        // Reset clears it again before the context is reused. A method that sets one of two
+        // fields describing the same thing and leaves the other is the exact shape that made
+        // this defect possible; both entry points state the whole identity, and it costs one
+        // store of a null.
+        _compensatingFor = null;
+
+        return id;
+    }
+
+    /// <summary>
+    /// Records that this execution is now undoing <paramref name="step"/>, and returns the
+    /// identity of the capability doing the undoing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The counterpart of <see cref="EnterStep"/>, and it exists because reusing
+    /// that one lost money.</strong> The unwind used to call <see cref="EnterStep"/> with
+    /// the completed step, so <c>ctx.CapabilityId</c> named the capability being
+    /// <em>reversed</em> while the capability actually running was its compensation. An undo
+    /// keying an idempotency key on the context therefore produced the forward step's key
+    /// byte for byte; a store honouring that key deduplicated the contra write away, the
+    /// capability returned success, and the engine recorded
+    /// <see cref="CompensationOutcome.Succeeded"/> over an effect that never happened. The
+    /// journal row was right the whole time, which is what made the disagreement invisible.
+    /// </para>
+    /// <para>
+    /// Both facts are recorded because both have readers, and neither can be derived from
+    /// the other at the point of use: a compensator needs its own identity to key a write,
+    /// and an operator reading a trace needs to know which step is being reversed.
+    /// </para>
+    /// </remarks>
+    internal string EnterCompensation(StepNode step)
+    {
+        ArgumentNullException.ThrowIfNull(step);
+
+        var id = step.CompensationIdentity;
+        _capabilityId = id;
+        _compensatingFor = step.Identity;
+
         return id;
     }
 
@@ -803,6 +854,7 @@ public sealed class FlowExecutionContext : FlowContext
         _flowId = string.Empty;
         _flowVersion = string.Empty;
         _capabilityId = string.Empty;
+        _compensatingFor = null;
         _correlationId = string.Empty;
         _idempotencyKey = string.Empty;
         _tenantId = null;

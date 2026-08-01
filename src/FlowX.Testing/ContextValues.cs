@@ -9,7 +9,7 @@ namespace FlowX.Testing;
 /// derived class, so a test double for each cannot share a base of its own —
 /// <c>TestFlowContext</c> must inherit <see cref="FlowContext"/>, which rules out
 /// inheriting <see cref="TestCapabilityContext"/>. Composition instead: each context is
-/// nine forwarding properties over one of these, and the defaults, the validation and
+/// ten forwarding properties over one of these, and the defaults, the validation and
 /// the identifier sequence exist once.
 /// </para>
 /// <para>
@@ -28,6 +28,7 @@ internal sealed class ContextValues
         string correlationId,
         string? tenantId,
         string capabilityId,
+        string? compensatingFor,
         string? flowInstanceId,
         DateTimeOffset? utcNow,
         TimeSpan? budget,
@@ -42,6 +43,7 @@ internal sealed class ContextValues
         CorrelationId = correlationId;
         TenantId = tenantId;
         CapabilityId = capabilityId;
+        CompensatingFor = compensatingFor;
         FlowInstanceId = flowInstanceId;
 
         // A fixed instant, not UtcNow: a test asserting on a timestamp must not pass
@@ -62,6 +64,8 @@ internal sealed class ContextValues
     internal string? TenantId { get; }
 
     internal string CapabilityId { get; }
+
+    internal string? CompensatingFor { get; }
 
     internal string? FlowInstanceId { get; }
 

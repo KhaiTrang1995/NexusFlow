@@ -192,6 +192,12 @@ public readonly struct FlowContext<TIn> : IEquatable<FlowContext<TIn>>
     /// <inheritdoc cref="CapabilityContext.CapabilityId" />
     public string CapabilityId => _context.CapabilityId;
 
+    /// <inheritdoc cref="CapabilityContext.CompensatingFor" />
+    public string? CompensatingFor => _context.CompensatingFor;
+
+    /// <inheritdoc cref="CapabilityContext.IsCompensating" />
+    public bool IsCompensating => _context.IsCompensating;
+
     /// <inheritdoc cref="CapabilityContext.TenantId" />
     public string? TenantId => _context.TenantId;
 

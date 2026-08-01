@@ -290,25 +290,30 @@ public sealed class ExecuteTransferFlowTests
     }
 
     /// <summary>
-    /// The journal names the compensating capability; the context names the step it undoes.
+    /// The journal and the ledger are told the same thing about what ran.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Two different answers to "what is running", from the two places a reader would look,
-    /// and the disagreement is why the collision in <c>LedgerKeys.ForUndo</c> is invisible.
-    /// The audit trail says <c>ledger.reverse_debit</c> ran — <c>FlowEngine</c> writes
-    /// <c>entry.Step.Compensation.Id</c> onto the row — while the capability that ran saw
-    /// <c>ctx.CapabilityId == "ledger.post_debit"</c>, because
-    /// <c>FlowExecutionContext.EnterStep</c> is called with the forward step.
+    /// <strong>These two answers used to differ, and the difference is what made a real
+    /// loss invisible.</strong> The audit trail said <c>ledger.reverse_debit</c> ran —
+    /// <c>FlowEngine</c> has always written the compensating capability onto the row — while
+    /// the capability that ran saw <c>ctx.CapabilityId == "ledger.post_debit"</c>, because
+    /// the engine entered a compensation with the forward step. A reversal keying its contra
+    /// write on the context therefore produced the debit's key exactly, the ledger returned
+    /// the debit's entry and moved nothing, and the journal recorded a successful undo over
+    /// it. The keys below are the half that would have been wrong: the reversals derive them
+    /// from the context alone, so four distinct keys is the evidence that the engine hands a
+    /// compensation its own identity and the contra entries were written rather than
+    /// deduplicated away.
     /// </para>
     /// <para>
-    /// Pinned in both directions: the four distinct ledger keys are the evidence that the
-    /// contra entries were written rather than deduplicated away, and the journal rows are
-    /// the evidence an operator reading the audit trail is told the truth.
+    /// Both directions are still pinned, because agreement is the property: the ledger keys
+    /// are what the running code saw, and the journal rows are what an operator reading the
+    /// audit trail is told, and neither is worth much while the other can silently differ.
     /// </para>
     /// </remarks>
     [Fact]
-    public async Task TheJournalNamesTheCompensationsAndTheLedgerSeesFourDistinctKeys()
+    public async Task TheJournalAndTheLedgerAgreeOnWhichCapabilitiesUnwoundTheTransfer()
     {
         var harness = new TransferHarness()
             .Substitute("settlement.record", TransferErrors.NoCorrespondent("GB"));

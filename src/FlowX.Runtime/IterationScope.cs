@@ -136,6 +136,9 @@ internal sealed class IterationScope<TItem>(FlowContext outer, TItem item) : Flo
     public override string CapabilityId => outer.CapabilityId;
 
     /// <inheritdoc />
+    public override string? CompensatingFor => outer.CompensatingFor;
+
+    /// <inheritdoc />
     public override string? TenantId => outer.TenantId;
 
     /// <inheritdoc />
