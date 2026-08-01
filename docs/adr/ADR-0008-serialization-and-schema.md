@@ -37,10 +37,19 @@ schema evolution follows the additive-only rules in
 [07 §5](../07-Capability-Model.md#5-versioning).
 
 > [!IMPORTANT]
-> **Accepted; most of it is still unbuilt, and two clauses of this box expired at WP-52.**
-> FlowX emits no STJ context of its own, there is no `IPayloadSerializer` interface and no
-> binary plugin. `FLOWX1006`, cited below as the build-time failure for an unannotated
-> contract, does not exist — it is blocked on the generated payload writer (**WP-59**).
+> **Accepted; two clauses of this box expired at WP-52 and three more at WP-59.**
+> *This box said "FlowX emits no STJ context of its own, there is no `IPayloadSerializer`
+> interface and no binary plugin", and that `FLOWX1006` "does not exist — it is blocked on
+> the generated payload writer (**WP-59**)".* **WP-59 shipped on 2026-08-01.**
+> `IPayloadSerializer` exists (`src/FlowX.Abstractions/Durability/`), with
+> `JsonPayloadSerializer.Default` as its one implementation and no binary plugin yet.
+> `FLOWX1006` exists and is an **error**, uniformly rather than by this record's
+> Warning/Error split, because it reports only on `Durable` flows — so its trigger *is* the
+> escalation condition. It does not block emission: the emitter omits the contract and the
+> plan still compiles, so one accurate error does not become a page of consequential ones.
+> What this record asked for and did **not** get is a generated STJ context of FlowX's own;
+> the writer hands named values to `JournalPayload` instead, and none is owed — see the
+> redaction paragraph below, which is why.
 >
 > *This box said there was "no journal, outbox or replay to serialise into".* **There is a
 > journal.** Since WP-52 `FlowX.Runtime` commits one row per step boundary for a `Durable`
@@ -63,7 +72,15 @@ schema evolution follows the additive-only rules in
 > the same compile-time route a journal payload is, and `[Sensitive]` redaction reaches it
 > without a second implementation. `OutboxWrite.SchemaVersion` is written, from the same
 > constant the manifest's `events` array stamps, so the two cannot drift; it is still a
-> constant rather than something a contract declares. Replay is still absent.
+> constant rather than something a contract declares. *"Replay is still absent" expired at
+> WP-64:* `flowx replay --mode inspect` reads the journal **as rows**, over the published
+> migration contract, and joins it against the manifest — so it does not deserialise a
+> payload through this record's route at all, and publishes no journal document schema.
+> [ADR-0020](ADR-0020-cli-reads-the-journal-as-rows.md) records why. The `schemaVersion`
+> stamp this decision requires on every persisted payload **is now written**, as a reserved
+> first member on every document, in the same pass that redacts. It versions the *envelope*,
+> not the contract: a contract's own version already sits beside every payload, and inventing
+> a second is what [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md) F2 objects to.
 >
 > *It also said `[Sensitive]` redaction has "exactly one sink, the RFC 7807 body".* **There
 > are two since WP-52**, and the second holds the property by a different mechanism than
@@ -74,16 +91,27 @@ schema evolution follows the additive-only rules in
 > case-insensitively, at every depth — so a store has no route to the object graph and
 > therefore no route to serialise it unredacted. The Positive consequence below reads
 > *"applied inside the generated serialiser, so no code path can bypass it"*: the property
-> holds on this sink and the stated mechanism is not what holds it. The generated serialiser
-> is still WP-59, and `RedactionCannotBeBypassed` stays blocked until **P5**, because it is
+> holds on this sink and the stated mechanism is not what holds it. ~~The generated
+> serialiser is still WP-59~~ — **and when it arrived it did not open a second exit, which
+> is the outcome this paragraph was written to worry about.** WP-59's writer never composes
+> a document: it hands named values to `JournalPayload.OfState`, composition happens inside
+> `JournalPayload` *before* `ToJson()`, and `JournalMember` exposes no accessor for its value
+> either. Pinned twice — the generated source must contain neither `Utf8JsonWriter` nor
+> `JsonSerializer.Serialize`, and a hostile `IPayloadSerializer` receives only the
+> already-redacted document, which is why that seam takes a `JsonElement` and never the
+> object graph. That costs part of this record's ~20 % CPU claim and none of its 2–3× size
+> claim. `RedactionCannotBeBypassed` stays blocked until **P5** regardless, because it is
 > blocked on every sink at once rather than on any one of them.
 >
 > What holds today is the decision's core: contracts are immutable records, no
 > serialisation path uses reflection, and `EveryShippedRuntimeProjectIsAotAnalyzed`
 > plus the *NativeAOT smoke test* job keep the AOT constraint honest. The
 > `flowx.manifest.json` writer is hand-written and AOT-clean. Journal payloads arrived with
-> **P2**; the generated writer and `FLOWX1006` are **WP-59**, and redaction across every sink
-> is **P5**.
+> **P2**; the generated writer and `FLOWX1006` **arrived with WP-59**; redaction across every
+> sink is still **P5**. What remains unbuilt of this record: a binary serialiser plugin, a
+> contract-declared `schemaVersion` rather than a constant, and a generated STJ context of
+> FlowX's own — the last of which the writer's structural redaction makes unnecessary rather
+> than merely late.
 
 ## Consequences
 
