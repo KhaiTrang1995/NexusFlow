@@ -5,9 +5,9 @@
 > this says what is built.
 >
 > **Last updated:** 2026-08-01 · **Phase:** **P0 complete · P1 closed with one accepted
-> exception → P2 in progress: every package except WP-59, WP-62 and WP-63 has landed at
-> least in part; WP-64 landed whole, and WP-50 landed its chaos rig without B7 or B8** ·
-> **Commit:** see `git log`
+> exception → P2 in progress: every package except WP-62 and WP-63 has landed at
+> least in part; WP-59 and WP-64 landed whole, and WP-50 landed its chaos rig without B7 or
+> B8** · **Commit:** see `git log`
 >
 > **Durable execution runs against a real database, and is not yet end to end.** WP-52 made
 > `FlowX.Runtime` read `ExecutionProfile`: a `Durable` flow journals one row per
@@ -28,23 +28,37 @@
 > the run on a nightly schedule is WP-62 and is not started. Record:
 > [docs/benchmarks/QR2-chaos.md](docs/benchmarks/QR2-chaos.md).
 >
+> **A durable flow now writes what it did, and a durable build proves it can.** WP-59 shipped
+> on 2026-08-01: the generated dispatcher describes **every** step boundary — the step's
+> result and the state bag as it then stands — describes the trigger input, and reads the bag
+> back on resume. `FLOWX1006` is an **error** on a `Durable` flow whose state-bag contract no
+> single generated JSON context declares, and it does not block emission. `flow_instance.input`
+> stops being NULL on every row. **No second exit from a payload was opened**: the writer
+> composes no document, so `JournalPayload.ToJson()` is still the one place redaction and the
+> new `schemaVersion` stamp happen. See
+> [§5d](#5d-p2--durable-execution--nearly-complete-qr2-measured-on-demand-b7-and-b8-not-at-all).
+>
 > **What is still missing is not small:** `AwaitSignal` and durable suspension (WP-63),
-> `FLOWX1006` (WP-59), QR2 in CI (WP-62), and — the one that matters most for a claim about
+> QR2 in CI (WP-62), and — the one that matters most for a claim about
 > durability — **both durability budgets are still unreported rather than passed**. *This
 > paragraph said that was "because WP-50, the benchmark harness, has not started", and also
 > listed the outbox (WP-56) and Redis (WP-54) as missing; all three clauses expired.* WP-56
 > and WP-54 shipped on 2026-07-31, and WP-50 shipped one of the three items in its
-> deliverable row: the rig, not `JournalBenchmarks`. A journal has been made correct without
+> deliverable row: the rig, not `JournalBenchmarks`. *`FLOWX1006` (WP-59) was the fourth
+> entry on this list and expired on 2026-08-01.* A journal has been made correct without
 > being made fast. See
 > [§5d](#5d-p2--durable-execution--nearly-complete-qr2-measured-on-demand-b7-and-b8-not-at-all).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** **1887/1887 passing across 16 assemblies**
+> **Build:** 0 warnings, 0 errors · **Tests:** **1908/1908 passing across 16 assemblies**
 > (a large share against a live PostgreSQL 16.13 and Redis 7.0.15; **0 failed, 0 skipped**).
+> *This read **1887**, which was the count before WP-59 merged. The figure here is
+> re-measured on the merged tree — `dotnet test FlowX.slnx -c Release` with both stores
+> reachable — rather than adjusted by the number of tests the package added.*
 > Without `FLOWX_POSTGRES_CONNECTION` the adapter suite skips **113 of its 120 with
 > reasons**; set to an unreachable server it **fails 114 and skips none**, on purpose.
 > *Those two figures read 79 and 80 until 2026-08-01: the suite grew and nobody re-ran the
 > probes. Both are re-measured rather than annotated.*
-> **The chaos rig is not in the 1887 and must not be** — `tests/FlowX.Chaos` is an `Exe`,
+> **The chaos rig is not in the 1908 and must not be** — `tests/FlowX.Chaos` is an `Exe`,
 > not a test project, so the ordinary suite is unchanged by it; it kills processes, and one
 > recorded run took 328 s and spawned 203 children ·
 > **Coverage:** **83.9 % line / 77.6 % branch** over `src/` and `plugins/`, measured
@@ -117,8 +131,13 @@ What changed is that it is no longer tracked as a blocker.*
       *Two of the three named here have since been fixed and this line did not say so:
       **ADR-0013** gained a `Revisit when` and **ADR-0016** a `Negative` section, both on
       2026-07-31.* See [PLAN open item 11](PLAN.md#9-open-items-blocking-the-plan)
-- [x] `docs/diagnostics/` — 23 pages plus an index, one per raised diagnostic; every help
-      URI resolves, asserted by test
+- [x] `docs/diagnostics/` — **30 pages** plus an index, one per raised diagnostic; every help
+      URI resolves, asserted by test. *This line read **23** and was not re-counted as
+      `FLOWX1007`–`FLOWX1009` (WP-58), `FLOWX1012` (WP-60), `FLOWX1030`, `FLOWX1031` and
+      `FLOWX1006` (WP-59) were raised. Re-counted against the directory and against
+      `AnalyzerReleases.Unshipped.md`, which lists the same 30 ids — the two surfaces
+      `IdentifierAllocationTests` holds equal, and the reason the page count is checkable at
+      all rather than remembered.*
 - [x] `docs/benchmarks/` — baseline, gate policy, and the honest caveats
 - [x] 9 sample application specifications
 - [x] `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE` (Apache-2.0)
@@ -135,6 +154,14 @@ What changed is that it is no longer tracked as a blocker.*
       image paths referenced from `README.md` and `docs/05-Architecture.md`.
       Every non-image link resolves. The `docs` job is red until the PNGs land,
       which is the intended forcing function, not an oversight.
+      **"Resolve" has meant less than it reads, and now says so.** The job's checker splits
+      each link on `#` and tests only the file part, and skips a link beginning with `#`
+      outright — so a `#anchor` that stops resolving because a heading was reworded is
+      invisible to it. One such was found and fixed on 2026-08-01: `PLAN.md` pointed at
+      ADR-0015's `#amendments-the-first-implementation-forced-wp-52` after that heading became
+      *"Amendments the implementations forced (WP-52, WP-53)"*. Every anchor in `PLAN.md` and
+      this file has since been resolved against its target's headings; **nothing in CI does
+      that**, so this is a measurement rather than a gate.
 - [ ] All Mermaid diagrams parse (the `docs` job cannot reach this step while the
       infographic links are broken)
 
@@ -206,17 +233,35 @@ What changed is that it is no longer tracked as a blocker.*
 
 - [x] `Result<T>` — readonly struct, allocation-free failure path
 - [x] `Error`, `ErrorCategory` — closed set, terminal/retryable, HTTP mapping
-- [x] `ICapability<TIn, TOut>` — the eight rules documented on the interface, **seven of
-      them enforced at build time** since WP-58 raised `FLOWX1007`–`FLOWX1009`. The one
-      that is not is contract immutability (`FLOWX1006`, WP-59), and the doc comment says
-      which is which rather than claiming the list is compiler-enforced, as it once did
+- [x] `ICapability<TIn, TOut>` — the eight rules documented on the interface, **all eight now
+      carry a build-time rule** since WP-59 raised `FLOWX1006`. *This line read "seven of
+      them", with the eighth — contract immutability — named as WP-59's to close. WP-59
+      **split** that rule rather than closing it:* what is still enforced by nothing is
+      **half of rule 8**. The serialisable half is `FLOWX1006`; **nothing refuses a mutable
+      contract**, and the two halves were only ever one rule because a record with init-only
+      members usually satisfies both at once. The doc comment says which is which rather than
+      claiming the list is compiler-enforced, as it once did
 - [x] `CapabilityAttribute` — `Version` and `Authorization` as required members
 - [x] `Authorization`, `ApprovedByAttribute`, `SensitiveAttribute`
 - [x] `CapabilityContext`, `FlowContext<TIn>` — clock, ids, randomness, deadline
 - [x] `Flow<TIn, TOut>`, `IFlowBuilder<,>` — no `Do(lambda)`, no trigger types
 - [x] `ExecutionProfile` — `Ephemeral` as the zero value
 - [x] `PolicySet`, `PolicyStage` — stage order encoding the safety guarantees
-- [x] Trigger attributes — http, kafka, cron, stream, agent
+- [~] Trigger attributes — http, kafka, cron, stream, agent. **The attributes are declared
+      and read; the envelope they describe never reaches a flow.** Recorded 2026-08-01, from
+      the status box [09-Trigger-Model](docs/09-Trigger-Model.md) gained the same day; it was
+      in neither planning file before. **`FlowExecutionContext.Trigger` is a get-only
+      auto-property that is never assigned**, so every running flow reads `default` — kind
+      `Manual`, a null `Source`, no body, a null `CorrelationId` — and `FlowContext.Trigger`
+      and `IterationScope.Trigger` forward that faithfully. The only code anywhere that
+      constructs a `TriggerEnvelope` is `FlowX.Testing`'s `TestFlowContext` and two test
+      projects, so the one thing a test can set is the one thing production never sets.
+      Separately, **`TriggerKind.Grpc` does not exist** although [09 §4](docs/09-Trigger-Model.md#4-trigger-kinds-and-their-semantics)
+      gives it a row with its own delivery, reply and ordering semantics: there is no such
+      enum member, no such value in the manifest schema's closed `kind` enum and no
+      attribute, and `TriggerKind.Http` folds *"REST, gRPC, GraphQL, webhook"* into one kind.
+      Both are P3's to resolve and are recorded as such in
+      [PLAN §6](PLAN.md#6-p3--transport-breadth)
 - [x] Zero package references, zero project references
 
 Verified by `dotnet build -c Release` with `TreatWarningsAsErrors`, and by the fitness
@@ -314,7 +359,13 @@ anyone looking.
       `JournalPayload` and its only exit is `ToJson()`, which redacts, so a store has no
       route to the object graph. Proven by a durable flow whose input, state bag and every
       step result carry a marked member, read back from all six stored strings
-      (`DurableSeamTests`). Logs, traces and replay output — the remaining two of the four
+      (`DurableSeamTests`). **WP-59 added two things that could each have made a third, and
+      neither did**: the generated payload writer composes no document — it hands named
+      values to `JournalPayload.OfState`, asserted by the generated source containing no
+      `Utf8JsonWriter` and no `JsonSerializer.Serialize` — and `IPayloadSerializer` receives
+      the already-redacted, stamped document rather than the object graph, asserted against a
+      deliberately hostile implementation. The count of live sinks is therefore still **two**.
+      Logs, traces and replay output — the remaining two of the four
       sinks the rule is about — do not exist. Needs P3 and P5. Same section
 
 ### Runtime, transport and published contract · WP-35
@@ -484,6 +535,10 @@ forbids, so the documented shape was corrected rather than faked. `AwaitSignal` 
 `FLOWX1007`–`FLOWX1009`, `FLOWX1012`, four of them blocked on *severity* and not on
 analysis), three blocked fitness functions (`CrossTenantAccessIsDenied`,
 `RedactionCannotBeBypassed`, `PluginsPassConformance`), and the build-overhead exception.
+**The first pile is now empty:** WP-58 raised `FLOWX1007`–`FLOWX1009`, WP-60 raised
+`FLOWX1012`, and WP-59 raised `FLOWX1006` on 2026-08-01 — the one of the five that was
+blocked on a payload writer rather than on severity, and therefore the last. The second and
+third piles are unchanged, and the reason each is unchanged is in its own row below.
 `dotnet new flowx` **has shipped**, and this paragraph said otherwise for longer than the
 command was actually missing. *It read "unshipped since P0 and carried twice, is being
 attempted in the current round".* It scaffolds, builds at **0 warnings**, serves a request,
@@ -984,11 +1039,14 @@ exists only in a closing summary is one nobody reads.
 > live. *Each fix made the next defect reachable rather than creating it — the holes were
 > always there and nothing could get to them.*
 >
-> **P2's Must has two packages nothing has been written for, three that shipped in part,
+> **P2's Must has one package nothing has been written for, three that shipped in part,
 > and its correctness clauses are measured while its budgets are not.** Of the **thirteen**
-> numbered Must packages, **eleven have shipped at least in part**; **WP-59 and WP-62** are
-> the two with nothing, and **WP-50, WP-53 and WP-57** are the three carrying a named gap.
-> *This paragraph said "of the twelve Must packages, ten have shipped" — the count was
+> numbered Must packages, **twelve have shipped at least in part**; **WP-62** is the one with
+> nothing, and **WP-50, WP-53 and WP-57** are the three carrying a named gap.
+> *This paragraph read "two packages … eleven have shipped … **WP-59 and WP-62** are the two
+> with nothing" until WP-59 merged on 2026-08-01. What is left is not a compiler package:
+> WP-62's deliverable is a nightly schedule.*
+> *It also said "of the twelve Must packages, ten have shipped" — the count was
 > twelve when WP-50..WP-62 is thirteen — and that **WP-50 has not started**, "so B7, B8 and
 > the chaos rig do not exist, which is why WP-62, P2's own Done-when, cannot run: nothing
 > kills a node, nothing crosses a process boundary, nothing has executed ten thousand of
@@ -1013,12 +1071,21 @@ exists only in a closing summary is one nobody reads.
 > different assembly. **All of that has now been made to happen across a real process
 > boundary under `SIGKILL`** — WP-50's rig runs the shipped `FlowRecoveryScan` in real
 > recovery-node processes against workers the kernel destroys, and nothing in that path is
-> rig-specific. **`AwaitSignal` is not built** (WP-63), and **neither durability budget has
+> rig-specific. **Since WP-59 the resumed steps can also do something**, which is the half
+> this section recorded as absent: the generated dispatcher journals a state bag at every step
+> boundary and restores it before the first resumed step, so a node taking an instance over
+> re-enters holding the values its earlier steps produced. *Until 2026-08-01 the dispatcher
+> described only `Emit` steps, `flow_instance.state_bag` stayed null, `RestoreState` was never
+> called, and the first step past the frontier that bound an earlier step's output failed — so
+> "resumes on another node" was true of the loop and not of a flow. `ResumeTests` was written
+> to assert that and now asserts the opposite.* **`AwaitSignal` is not built** (WP-63), and
+> **neither durability budget has
 > been measured**. *This sentence also named the outbox and Redis as not built; WP-56 and
 > WP-54 shipped on 2026-07-31 and the clause was carried a day too long.* A reader must not
 > conclude durability works end to end — but "nothing has run against a store", which this
-> section said until 2026-07-31, and "nothing has killed a process", which it said until
-> 2026-08-01, are no longer among the reasons why.
+> section said until 2026-07-31, "nothing has killed a process", which it said until
+> 2026-08-01, and "a resumed instance re-enters with an empty bag", which it said until later
+> the same day, are no longer among the reasons why.
 
 > **ADR-0015 is Accepted, and the caveat matters more than the status.** Its condition was
 > that the conformance suite hold a *real* implementation to the schema — not the in-memory
@@ -1264,9 +1331,64 @@ exists only in a closing summary is one nobody reads.
       of its own, so escalation is a proof — a `Durable` flow *in this compilation* naming
       it as a step — rather than a guess. `FLOWX1011`'s deviation stops being an exception
       and becomes the rule. ADR-0003's bullet is amended to say so
-- [ ] **WP-59** `FLOWX1006` and the generated STJ payload context. **Now the only
-      capability rule left unenforced** — WP-58 built the other three, and
-      `ICapability`'s doc comment says so
+- [x] **WP-59** `FLOWX1006` and the journal payload contract. **Shipped 2026-08-01, the last
+      P2 Must with nothing written for it.** *This row read `[ ]` and "**now the only
+      capability rule left unenforced** — WP-58 built the other three".*
+      **What the writer is.** `FlowEmitter` emits, onto a `Durable` flow's dispatcher only:
+      `DescribeStep`, which describes **every** step boundary — what the step produced and
+      the state bag as it then stands — `DescribeInput`, and `RestoreState`. **None of it is
+      emitted for an `Ephemeral` flow**: the contract list comes back empty before a line is
+      written when the profile is not `Durable`, so **B2's hard zero is untouched by the
+      writer existing** and `AnEphemeralFlowGetsNoWriterAtAll` asserts each member's absence
+      by name. (An ephemeral flow that stages an `.Emit` still gets WP-56's outbox
+      `DescribeStep`; that member predates this package.) `TryGet`, not `Get`, throughout: a
+      step that succeeded without writing a result journals no result rather than failing a
+      flow inside its own commit.
+      **`[Sensitive]` stayed structural and no second exit was opened**, which was this
+      package's real risk and [PLAN's own prediction](PLAN.md#wp-59--flowx1006-and-the-journal-payload-contract--shipped)
+      about it. The writer **composes no document**: `StateBag` hands named `JournalMember`s
+      to `JournalPayload.OfState`, and composition happens inside the payload, ahead of the
+      one `ToJson()` that redacts and stamps. Pinned twice — the generated source must
+      contain neither `Utf8JsonWriter` nor `JsonSerializer.Serialize`
+      (`tests/FlowX.Compiler.Tests/PayloadWriterTests.cs`), and a **hostile**
+      `IPayloadSerializer` receives only the redacted, stamped document, never the value
+      (`tests/FlowX.Abstractions.Tests/PayloadContractTests.cs`). `JournalMember` exposes its
+      `Name` and no accessor for its value, so composition adds no route to one either.
+      **`FLOWX1006` is an `error` uniformly**, not the determinism set's Warning-then-
+      escalate: it reports only on `Durable` flows, so its trigger **is** the escalation
+      condition the rest of the set has to prove — `FLOWX1012`'s mutual exclusivity read from
+      the other end. **It does not block emission**: the emitter leaves the undeclarable
+      contract out and the plan still compiles, so one accurate error does not become a page
+      of "does not contain a definition for `Plan`". Two contexts declaring one contract is
+      the same answer as none, which is the rule `EndpointEmitter` and `FLOWX1024` already
+      follow. It fires on both durable samples and on the Postgres suite's durable fixture,
+      and the fix each time is the one attribute the message names
+      ([FLOWX1006](docs/diagnostics/FLOWX1006.md)).
+      **`schemaVersion` and `IPayloadSerializer` shipped with it**, ADR-0008 Decision clauses
+      that were in neither planning file until 2026-07-31. The stamp rides the redaction pass
+      rather than adding a second walk, and versions the **envelope** — placeholder, name
+      matching, composition, the presence of the stamp — deliberately not the contract. A
+      document whose root is not an object carries no stamp, because a stamp is a member.
+      `JsonPayloadSerializer.Default` is the JSON case of the seam.
+      **`flow_instance.input` stops being NULL on every row**, closing a defect this file
+      recorded before the package existed. `FlowHost` passed the literal `input: null` and now
+      passes `dispatcher.DescribeInput(input)` — `src/FlowX.Hosting/FlowHost.cs:495`. It was
+      never fixable in the host: journaling an input needs a `JsonTypeInfo<TIn>` and only
+      generated code can name one.
+      **One deviation from its Deliverable row, and it is that row's first item.** *"The
+      generated STJ context ADR-0008 chose"* was **not built and is not owed**. FlowX emits no
+      `JsonSerializerContext`; the writer reads the ones the compilation declares and makes
+      membership of one of them the build-time requirement — a context FlowX generated would
+      be a *second* context declaring the same contracts, the case the rule itself refuses.
+      **Two measurements it did not move.** `samples/ecommerce` is `Ephemeral`, so no writer
+      is emitted for it and `flowx.manifest.baseline.json` did not change; and the
+      `schemaVersion` stamp is a field of a stored payload row, not a manifest field, so
+      [ADR-0017](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md)'s **F1** stays at twelve
+      schema-declared fields nothing writes.
+      **What it found and did not fix:** `IStepDispatcher.DescribeInput` is a *defaulted*
+      interface member, and both hand-written decorating dispatchers inherited the default and
+      put `input` back to NULL —
+      [PLAN open item 12](PLAN.md#9-open-items-blocking-the-plan)
 - [x] **WP-60** `FLOWX1012` — **shipped 2026-07-31 as a `Warning`, uniformly, with no
       escalation.** The source is not wrong: a compensable `Ephemeral` flow unwinds
       correctly on every failure that is not a crash, which is the trade ADR-0003 ratified
@@ -1388,7 +1510,15 @@ adjacent to it shipped early and is recorded here rather than left to be redisco
       reports −0.50 % allocations and −0.97 % elapsed. **Deliberately unnumbered:** it was
       executed as "WP-74", which `PLAN.md` reserves for Azure Service Bus — the second
       work-package number collision this project has had, and the first to happen *after*
-      the warning against it was written
+      the warning against it was written.
+      **One file has not heard.** `src/FlowX.Compiler/Analysis/TriggerReader.cs`'s class
+      remarks still say *"Nothing yet turns these attributes into endpoint registrations —
+      the sample maps its route by hand in `Program.cs`"*, which this row is the refutation
+      of. Its *conclusion* survives and is why the sentence matters rather than merely
+      being old: a flow may still be reachable at an address it does not declare and may
+      declare one nothing serves, because nothing asserts the generated route against the
+      manifest's. Found while writing `docs/09`'s status box and left unfixed because that
+      file was held — [PLAN open item 13](PLAN.md#9-open-items-blocking-the-plan)
 - [x] **A silent staleness bug in `templates/local-feed.sh`**, found by the same package
       rather than by a test. NuGet caches by id **and version**, so a rebuild at an
       unchanged version left `verify.sh` restoring the previous run's assemblies — the
@@ -1510,12 +1640,12 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | 0003 execution profiles | Accepted | not fired | `flowx verify --cost` is load-bearing in this ADR twice and **appears in neither planning file** |
 | 0005 manifest · 0007 `Result` | Accepted | not fired | **0007:** `Result.Try` is named in the ADR and does not exist |
 | 0006 journal + leases | Accepted | not fired | ceiling still a literature figure — tracked |
-| **0008** serialization | Accepted | **cannot fire** — keyed on B7, which has no harness | Its warning box is **false since WP-53**: says "no journal to serialise into". `schemaVersion` and `IPayloadSerializer` are in neither planning file |
-| **0009** plugin contracts | Accepted | reviewed "each phase gate" — **no record of a review at P1's gate** | Its warning box is **false since WP-53**: still says "no store has ever run against a real database". This is the record a plugin author reads |
+| **0008** serialization | Accepted | **cannot fire** — keyed on B7, which has no harness | Its warning box is **false since WP-53**, and **WP-59 made it false a second time**: it still says there is "no `IPayloadSerializer` interface" and that `FLOWX1006` "does not exist — it is blocked on the generated payload writer (**WP-59**)", and its closing clause that "the outbox and replay are still absent" outlived WP-56 and WP-64. All three shipped. *This cell also said `schemaVersion` and `IPayloadSerializer` "are in neither planning file"; both were added to [PLAN WP-59](PLAN.md#wp-59--flowx1006-and-the-journal-payload-contract--shipped)'s Deliverable on 2026-07-31 and shipped on 2026-08-01, so that clause is struck.* [PLAN open item 14](PLAN.md#9-open-items-blocking-the-plan) |
+| **0009** plugin contracts | Accepted | reviewed "each phase gate" — **no record of a review at P1's gate** | ~~Its warning box is **false since WP-53**: still says "no store has ever run against a real database".~~ **Discharged.** The box now records those three clauses as expired and names `plugins/FlowX.Postgres` as the second plugin that ran the suite unmodified from another assembly. Struck rather than deleted: this is the record a plugin author reads, and what it used to say is why the row existed |
 | **0011** policy stage order | Accepted | needs three counterexamples collected — **nothing collects them**, so it cannot be revisited | the counterexample register does not exist |
-| **0013** DSL vocabulary | Accepted | **has no `Revisit when`** | violates the index's own rule |
+| **0013** DSL vocabulary | Accepted | ~~**has no `Revisit when`**~~ — gained one on 2026-07-31 | ~~violates the index's own rule~~ **Discharged**, and this cell said so nowhere while §1 above already recorded the fix. A row that contradicts a row 1 400 lines earlier is the drift this file exists to remove |
 | **0014** catalogue vs budget | **Proposed** | **one of four FIRED** — the inner loop pays full derivation per edit, by construction. A second is **crossed, not fired**: withheld 42 % vs a 20 % trigger, on a corpus [B13 §2](docs/benchmarks/B13-error-catalogue-resolution.md) argues is inadmissible. *This cell said "two of four" and overstated it* | **corrected 2026-07-31.** The record headlined **+77.1 %** and claimed 200 flows had not been re-measured; [ADR-0014 §10](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) now states +67.1 % and which triggers fired |
-| 0015 journal schema | Accepted | cannot fire — keyed on B8, no harness | tracked well |
+| **0015** journal schema | Accepted | cannot fire — keyed on B8, no harness | *This cell read "tracked well".* Its **Still not in / Owed to** table still carries the row "The generated payload writer and `FLOWX1006` → **WP-59**", and its take-down list still says the fourth `06 §5` row "waits on the payload writer (WP-59)". Both shipped on 2026-08-01, including commitment 5's requirement that the writer consult `SensitiveMembers` — [PLAN open item 14](PLAN.md#9-open-items-blocking-the-plan) |
 | **0016** Postgres adapter | Accepted | not fired | *This cell said the record **has no `Negative` section**; it gained a Positive / Negative split on 2026-07-31 and the cell was not updated.* Its WP-56 purge-guard note and its Oracle `Root`-scope portability rule are still in neither planning file |
 | **0020** CLI reads the journal as rows | Accepted | not fired | *This cell said the record **names its own owed work and nothing was tracking it**.* Tracked, then discharged on 2026-08-01: `CliDependsOnNothingButTheManifest` is `CliLinksNoFlowXAssembly` and all six citing documents moved with it. The record's owed-work item is struck rather than deleted, and §1/§2 keep the old name where they *quote* it, because those sections are the argument about the name |
 

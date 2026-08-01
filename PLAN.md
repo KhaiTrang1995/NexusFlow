@@ -12,12 +12,18 @@
 > is closed with one exit criterion unmet and accepted** — the build-overhead
 > budget, at **+67.1 %** against ≤ 8 %; see [§4](#4-p1--compiler-hardening), which
 > states the exception before it states anything else. **P2 — Durable execution is
-> in progress**: **WP-64 has shipped** — `flowx replay --mode inspect` renders an instance
+> in progress**: **WP-59 has shipped**, the last package in P2's Must with nothing written
+> for it — the generated payload writer, `FLOWX1006`, the `schemaVersion` stamp,
+> `IPayloadSerializer`, and an input the instance row keeps
+> ([§5 WP-59](#wp-59--flowx1006-and-the-journal-payload-contract--shipped)); **WP-64 has
+> shipped** — `flowx replay --mode inspect` renders an instance
 > from the journal, reading it as rows over the published migration contract rather than as
 > a published document ([ADR-0020](docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md)) —
 > and **WP-50 has shipped one of the three things in its deliverable row**: the QR2 chaos
 > rig exists, kills real processes and has been run; B7 and B8 still have no harness, so
-> that package is **partially delivered and must not be read as done**.
+> that package is **partially delivered and must not be read as done**. **WP-62 is now the
+> only Must with nothing written for it**, and it is a nightly schedule rather than code;
+> WP-63, a *Should*, is the other package not started.
 > *This sentence read "WP-51, WP-52, WP-53, WP-55 and WP-58 have shipped, WP-50 has not
 > started". The WP-50 clause expired on 2026-08-01. The list before it was never the live
 > record and is not one now —
@@ -1487,7 +1493,8 @@ runtime chain is **sequential because of files**, exactly as the DSL chain was.
 > baseline WP-53 was supposed to be judged against will now be written by someone who
 > already knows what the journal looks like. *This box said "WP-51 shipped and WP-50 did
 > not". By the time the rig landed, every other P2 package except WP-59, WP-62 and WP-63
-> had shipped at least in part.* P2 is in exactly the position
+> had shipped at least in part; WP-59 shipped later the same day, leaving WP-62 and WP-63.*
+> P2 is in exactly the position
 > [§2](#the-lesson-b12-taught-twice) describes B12 as having been in, for the two budgets —
 > and the rig, which arrived after the thing it measures rather than before it, is now
 > evidence for that lesson rather than an application of it.
@@ -1597,7 +1604,7 @@ its anchor.)*
 > **Three things the package found and recorded rather than absorbed.** ADR-0015 said the
 > journal must record the branch a `Switch` took and gave it no field to do so — resolved in
 > favour of the Decision, by replaying pure predicates against the restored bag, and
-> [amended](docs/adr/ADR-0015-journal-schema-and-durable-execution.md#amendments-the-first-implementation-forced-wp-52).
+> [amended](docs/adr/ADR-0015-journal-schema-and-durable-execution.md#amendments-the-implementations-forced-wp-52-wp-53).
 > Non-determinism attribution inside a `Parallel` is **best-effort**: one pooled context is
 > shared by the branches, so a sibling's id can land on the wrong row — harmless while
 > nothing replays a capture, and **WP-61** needs a per-branch context before it is not. And a
@@ -1790,7 +1797,10 @@ the one honest signal in the area into an ignored one.
 > **Exit criterion met on both halves:** `06 §5`'s table has no **no — P2** rows left except
 > `FLOWX1006` (WP-59), and `FLOWX1011`'s deviation was re-argued rather than retired, in the
 > same decision. `ICapability`'s doc comment moves three rules from "required, and not
-> enforced" to "enforced at build time", leaving one.
+> enforced" to "enforced at build time", leaving one. *WP-59 has since taken that last row
+> and the last rule: `06 §5`'s table has no **no — P2** rows at all, and what `ICapability`
+> still lists as unenforced is **half** of rule 8 — contract immutability — because
+> `FLOWX1006` raised its serialisable half and nothing refuses a mutable contract.*
 
 | | |
 |---|---|
@@ -1801,7 +1811,78 @@ the one honest signal in the area into an ignored one.
 | **Exit** | `06 §5`'s table has no **no — P2** rows left except `FLOWX1006`; `FLOWX1011`'s deviation is either retired or re-argued in the same commit |
 | **Depends on** | WP-52 · concurrent with WP-59 and WP-60 **only if the ids are claimed in the diagnostics index first** |
 
-### WP-59 — `FLOWX1006` and the journal payload contract
+### WP-59 — `FLOWX1006` and the journal payload contract — **shipped**
+
+> **Shipped 2026-08-01, and it was the last package in P2's Must with nothing written for
+> it.** `FlowEmitter` emits a payload writer onto a `Durable` flow's dispatcher:
+> `DescribeStep` describes every step boundary — what the step produced and the state bag as
+> it then stands — `DescribeInput` describes the trigger input, and `RestoreState` reads the
+> bag back, because only generated code can name the contract types either way. **None of it
+> is emitted for an `Ephemeral` flow** — the contract list is empty before a line is written
+> when the profile is not `Durable`, so `RestoreState`, `DescribeInput` and the state-bag
+> helper are absent from the type an ephemeral flow loads and budget B2's hard zero is
+> untouched by the writer existing. (An ephemeral flow that stages an `.Emit` still gets
+> WP-56's outbox `DescribeStep`; that member predates this package.)
+>
+> **Both halves of the exit criterion are met.** A `Durable` flow whose state bag holds a
+> contract no single generated context declares fails the build naming the member
+> (`AStateBagMemberOutsideTheGeneratedContextFailsTheBuildNamingIt`,
+> `tests/FlowX.Compiler.Tests/PayloadWriterTests.cs`); and every payload the writer hands
+> over carries `SensitiveMembers` — ADR-0015's commitment 5, which the note below named as
+> the obligation this package was most likely to forget.
+>
+> **The second exit the note below warned about was not opened, and that is the deliverable's
+> real content.** The writer composes no document: `StateBag` hands named values to
+> `JournalPayload.OfState` and composition happens *inside* `JournalPayload`, ahead of the
+> one `ToJson()` that redacts and stamps. Pinned two ways — the generated source must contain
+> neither `Utf8JsonWriter` nor `JsonSerializer.Serialize`
+> (`TheStateBagIsHandedToJournalPayloadRatherThanComposedByTheWriter`), and a hostile
+> `IPayloadSerializer` receives only the redacted, stamped document
+> (`tests/FlowX.Abstractions.Tests/PayloadContractTests.cs`). `JournalMember` has no accessor
+> for its value, so composition adds no route to one either.
+>
+> **`FLOWX1006` is an `error` uniformly**, rather than the determinism set's Warning-then-
+> escalate, because it reports only on `Durable` flows — so its trigger *is* the escalation
+> condition the rest of the set has to prove, which is `FLOWX1012`'s mutual exclusivity read
+> from the other end. **It does not block emission:** the emitter leaves the undeclarable
+> contract out and the plan still compiles, so one accurate error does not become a page of
+> "does not contain a definition for `Plan`"
+> ([docs/diagnostics/FLOWX1006.md](docs/diagnostics/FLOWX1006.md)).
+>
+> **`schemaVersion` and `IPayloadSerializer` shipped with it**, both from ADR-0008's
+> Decision. The stamp rides the redaction pass rather than adding a second walk of the
+> document, and it versions the **envelope** — the placeholder, the case-insensitive name
+> matching that produces it, the composition of a state bag, and the presence of the stamp
+> itself — deliberately not the contract, whose version is already recorded beside every
+> payload. `JsonPayloadSerializer.Default` is the JSON case of the seam.
+>
+> **`flow_instance.input` stops being NULL on every row**, which was an outstanding defect
+> recorded before this package. `FlowHost` passed the literal `input: null` and now passes
+> `dispatcher.DescribeInput(input)` (`src/FlowX.Hosting/FlowHost.cs:495`). It was not fixable
+> in the host — journaling an input needs a `JsonTypeInfo<TIn>` and only generated code can
+> name one, which is the same reason `DescribeStep` is on the dispatcher; the reasoning is
+> written at the declaration in `src/FlowX.Runtime/IStepDispatcher.cs`. Until this landed a
+> replay could not reconstruct what was requested, the audit trail had no record of it, and
+> `[Sensitive]` on an input contract protected nothing, because nothing was stored.
+>
+> **One deviation from the Deliverable row, and it is the first item in it.** *"The generated
+> STJ context ADR-0008 chose"* was **not** built and is not owed: FlowX emits no
+> `JsonSerializerContext` of its own. The writer reads the contexts the compilation already
+> declares and makes membership of one of them the build-time requirement, which is what
+> `FLOWX1006`'s fix is — one `[JsonSerializable]` attribute on the author's own context. A
+> context FlowX generated would have to be a *second* context declaring the same contracts,
+> which is the "two contexts declaring one contract" case the rule itself refuses.
+>
+> **Two things it did not move, checked rather than assumed.** `samples/ecommerce` is
+> `Ephemeral`, so no writer is emitted for it and the manifest baseline did not change; and
+> the `schemaVersion` stamp is a field of a stored payload row, not a manifest field, so
+> [ADR-0017](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md)'s **F1** stays at **twelve**
+> schema-declared fields nothing writes.
+>
+> **What it found and left open:** `IStepDispatcher.DescribeInput` is a *defaulted* interface
+> member, and during this package both hand-written decorating dispatchers silently inherited
+> the default and put `input` back to NULL —
+> [open item 12](#9-open-items-blocking-the-plan).
 
 | | |
 |---|---|
@@ -1821,6 +1902,11 @@ the one honest signal in the area into an ignored one.
 > remembered"* — and this is the package that would forget. Redaction on the journal is
 > structural today because `JournalPayload.ToJson()` is the only exit; a *generated* writer
 > is a second exit, and it is this package that opens it.
+>
+> *The last clause was a prediction and it did not come true: the writer composes no
+> document, so `ToJson()` is still the only exit and there is still one redaction pass. It is
+> kept rather than deleted because it is the risk the shipped design was built against, and
+> the two assertions that pin the outcome were written from this sentence.*
 
 ### WP-60 — `FLOWX1012`, once its fix stops being a lie
 
@@ -2042,7 +2128,7 @@ transports each have to repeat: the registration a plugin author would otherwise
 hand once per transport. Whether the same emitter generalises to Kafka and Service Bus is
 **unproved** — it has one transport to be right about.
 
-**Two things in P3 are not repetition, and both are already visible:**
+**Three things in P3 are not repetition, and all three are already visible:**
 
 1. **`FLOWX1025`'s open cause blocks the Must.** A trigger's `Kind` is an overridden
    property — executable code, not attribute data — so a third-party `TriggerAttribute`
@@ -2077,6 +2163,29 @@ hand once per transport. Whether the same emitter generalises to Kafka and Servi
    creates a sink is the phase that redacts it**, because `RedactionCannotBeBypassed` is
    blocked on all of them at once and will otherwise be written against sinks that have
    been leaking for two phases.
+3. **The trigger model is documented past what exists, in two places, and P3 is where both
+   are paid for.** Recorded here on 2026-08-01, from the status box
+   [09-Trigger-Model](docs/09-Trigger-Model.md) gained on the same day; neither appeared in
+   this file or the checklist before.
+
+   **`TriggerKind.Grpc` does not exist at any level.** [09 §4](docs/09-Trigger-Model.md#4-trigger-kinds-and-their-semantics)
+   gives `Grpc` its own row with its own delivery, reply and ordering semantics, and there
+   is no `Grpc` member of `TriggerKind` (`src/FlowX.Abstractions/Triggers/TriggerEnvelope.cs`),
+   no such value in `schemas/flowx.manifest.schema.json`'s **closed** `kind` enum, and no
+   attribute. `TriggerKind.Http`'s own summary folds *"REST, gRPC, GraphQL, webhook"* into
+   one kind. **This is a ninth kind that was never declared, not a declared one awaiting
+   implementation**, and the distinction decides WP-76: shipping gRPC either accepts that it
+   reports as `Http` — which is what the abstraction currently says it is — or adds an enum
+   member and a schema `enum` value, and the schema is the one ADR-0017 is about to freeze.
+
+   **`FlowExecutionContext.Trigger` is a get-only auto-property that is never assigned**, so
+   every running flow reads `default` — kind `Manual`, a null `Source`, no body and a null
+   `CorrelationId`. `FlowContext.Trigger` and `IterationScope.Trigger` both forward
+   to it faithfully. `TriggerEnvelope` is a type rather than a value in the running system:
+   the only places that construct one are `FlowX.Testing`'s `TestFlowContext` and two test
+   projects, so **the one thing a test can set is the one thing production never sets**.
+   Three transports each producing an envelope with nowhere to put it is the shape of the
+   cost, and it lands on WP-70 with `[TriggerKind]` rather than on each plugin.
 
 ---
 
@@ -2097,7 +2206,7 @@ commit, before the work starts.**
 | Phase | Reserved | Held to | Design that already exists | Could packages be *recorded*, or would they be *invented*? |
 |---|---|---|---|---|
 | **P4** Policy and security | **WP-77 … WP-89** | [ADR-0011](docs/adr/ADR-0011-fixed-policy-stage-order.md), [ADR-0007](docs/adr/ADR-0007-result-over-exceptions.md) | [10-Policy-Framework](docs/10-Policy-Framework.md) — 7 stages, a 16-row policy catalogue, 5-level resolution order, retry-safety flowchart, breaker keys; [15-Security](docs/15-Security.md) — STRIDE, all five authorisation stances | **Mostly recorded.** Three decisions would be invented: the `IIdempotencyStore` contract shape, the audit-record schema, and where policy stages hook into the emitted plan without costing Q1 |
-| **P5** Observability and replay | **WP-90 … WP-99** | [ADR-0008](docs/adr/ADR-0008-serialization-and-schema.md) | [12-Observability](docs/12-Observability.md) — 13 span attributes, 13 metrics, all four `replay` modes, cardinality rules, SLOs | **Recorded.** *This cell said one decision had to be forced — that [22-CLI §8](docs/22-CLI.md) recorded a conflict between `flowx replay` and the green fitness function `CliDependsOnNothingButTheManifest`, "and it is an ADR either way". The ADR was written and the conflict was not one:* [ADR-0020](docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md) makes `--mode inspect` legal without amending the rule, **and explicitly does not reach `simulate`, `resume --from` or `fork`** — all three need the engine, which is the position the rule exists to forbid. So P5 inherits a narrower question than this cell described, on worse terms: an out-of-process engine the CLI shells to, or three of the four modes not being CLI verbs |
+| **P5** Observability and replay | **WP-90 … WP-99** | [ADR-0008](docs/adr/ADR-0008-serialization-and-schema.md) | [12-Observability](docs/12-Observability.md) — 13 span attributes, 13 metrics, all four `replay` modes, cardinality rules, SLOs | **Recorded.** *This cell said one decision had to be forced — that [22-CLI §8](docs/22-CLI.md) recorded a conflict between `flowx replay` and the green fitness function `CliDependsOnNothingButTheManifest`, "and it is an ADR either way". The ADR was written and the conflict was not one:* [ADR-0020](docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md) makes `--mode inspect` legal without amending the rule, **and explicitly does not reach `simulate`, `resume --from` or `fork`** — all three need the engine, which is the position the rule exists to forbid. So P5 inherits a narrower question than this cell described, on worse terms: an out-of-process engine the CLI shells to, or three of the four modes not being CLI verbs. **One of the 13 metrics needs a migration rather than a meter**, recorded 2026-08-01 from [12 §3](docs/12-Observability.md)'s corrected table: `flowx_outbox_lag_seconds` cannot be computed by any emitter, because `outbox_event` carries exactly one timestamp — `published_at`, `NULL` for precisely the rows the gauge is about — and migration `0004`'s `staged_seq` is an ordering sequence rather than a clock, [ADR-0018](docs/adr/ADR-0018-outbox-publication-and-ordering.md) having considered and rejected a staging timestamp. Its sibling `flowx_outbox_pending` needs no new column. So P5's metrics are not one shape repeated either: ten need an emitter, one needs **P7**, one needs **P3**'s shared admission point, and this one needs a schema change in a store plugin |
 | **P6** Multi-tenancy | **WP-100 … WP-109** | [ADR-0006](docs/adr/ADR-0006-journal-and-leases.md) | [16-Multi-Tenant](docs/16-Multi-Tenant.md) — `ITenantResolver` with its signature, four isolation levels, six fairness mechanisms, RLS as worked DDL | **Partly.** Resolution, fairness and RLS are recordable. **Journal partitioning would be invented** — [11 §6](docs/11-Distributed-Runtime.md) names sharding as a lever and stops |
 | **P7** Streaming | **WP-110 … WP-119** | [ADR-0003](docs/adr/ADR-0003-execution-profiles.md) | **No dedicated document.** [06 §10](docs/06-Execution-Engine.md) is one backpressure diagram; [09 §9](docs/09-Trigger-Model.md) is a window-semantics table and a DSL sketch | **Invented.** Roughly one of the roadmap's five Must items is specified. Nothing anywhere defines the checkpoint format, watermark generation, how window state is journaled, or budget B13 |
 | **P8** AI surface and Studio | **WP-120 … WP-129** | [ADR-0005](docs/adr/ADR-0005-manifest-as-build-artifact.md), [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md), [ADR-0017](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md) | [13-AI-Native](docs/13-AI-Native.md) — the MCP tool descriptor, the `tools/call` sequence including refusal and confirmation | **Split.** MCP and `AgentTrigger` are recordable. **Studio is 16 one-line mentions and no design.** *This cell read "manifest v1.0 freeze criteria are written nowhere" until [ADR-0017](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md) wrote them. The phase's first Must now has an entry gate — and two of its eight conditions are the outbox (**WP-56**, P2) and a policy engine (**P4**), so P8's freeze is gated on two earlier phases rather than on P8's own work* |
@@ -2153,13 +2262,24 @@ phase-level planning only.
 | 7 | ~~**Blocks WP-57, which is next in P2's chain.**~~ **Resolved 2026-07-31: P2 built the slice.** `PolicySet.CompensationRetry` executes at `PolicyStage.Consistency` and nowhere else, so the forward path still runs zero policies and P4 generalises rather than replaces it. Original text: "Compensation with its own policies" is in P2's Must and **no policy executes at run time at all** — the policy engine is P4. Either P2 builds the slice (retry with backoff at the `Consistency` stage, honouring [ADR-0011](docs/adr/ADR-0011-fixed-policy-stage-order.md)'s fixed order) and P4 generalises it, or the item moves into [§6a](#6a-p4p9--what-this-plan-does-not-yet-contain)'s P4 range. **P4's design is complete enough that either is recordable.** What is not acceptable is the third outcome — taking it by default, which is what happens while WP-57 sits at the head of the queue | **WP-57, now** | repository owner |
 | 8 | ~~**The journal is a new sink for `[Sensitive]` values three phases before the package that redacts sinks**~~ **Resolved at WP-52.** Redaction on the journal is *structural*, not remembered: a payload enters only through `JournalPayload`, whose sole exit is `ToJson()`, which redacts — so a store has no route to the object graph. Proved by reading all six stored strings back on a flow whose input, state bag and every step result carry a marked member. `RedactionCannotBeBypassed` is still blocked until P5, because it is blocked on *all* sinks at once | — | — |
 | 9 | ~~**Constraint C6 is enforced by nothing, and a package is about to be published**~~ **Resolved.** `DependencyLicencesAreCompatible` exists in `DependencyLicenceTests` and reads the *resolved* transitive graph out of `obj/project.assets.json`, not only what is declared, so the scan is offline and runs before the commit rather than after it. `Npgsql` is vetted: PostgreSQL Licence, permissive. Two packages nobody had looked at turned out not to be MIT — `SonarAnalyzer.CSharp` (SONAR Source-Available Licence) and `Microsoft.NETCore.Platforms` 1.1.0 (a proprietary Microsoft EULA) — and both are admitted only because the graph proves they contribute no assembly. *What is left is not the gate but its reach*: the three projects outside `FlowX.slnx` have their declared references checked and their closure unread, and the template's cannot be restored until WP-70 publishes the packages it names — see [DEPENDENCIES.md §5](docs/DEPENDENCIES.md#5-projects-whose-transitive-closure-is-not-vetted) | — | — |
-| 10 | ~~**Manifest v1.0's freeze criteria are written nowhere**~~ **Resolved.** [**ADR-0018**](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md) records eight criteria, amending [ADR-0005](docs/adr/ADR-0005-manifest-as-build-artifact.md) from a new record rather than editing it — the arrangement [ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md) used on 0015, chosen because ADR-0005's `Revisit when` is "never expected" and a freeze checklist has to move as producers land. **Not one of the eight holds today** — seven name a gap in the repository and the eighth is the version bump itself — which is what makes the deadline datable: thirteen schema-declared fields are written by nothing; `event.schemaVersion` is emitted as a constant; `ManifestIsComplete` still covers two of Q3's four nouns and cannot cover the other two non-vacuously until **WP-56** and **P4** land; `flowx diff` has a **Breaking** rule (`FLOWX-DIFF-015`) that compares `authorization.value`, a field the compiler never writes, so it cannot fire; `extensions` — ADR-0005's stated escape hatch and the whole mitigation for "a public contract forever" — is written, read and tested by nothing. *What is **not** resolved, and is stated in ADR-0018 §3 F8 rather than here: item 6's decision is still unmade, and the freeze is what will force it. Its fourth revisit trigger is now datable; a freeze landing with ADR-0014 still **Proposed** keeps the `errors` field by default, which is this table's own failure mode arriving on a date somebody can now read off the repository* | — | — |
-| 11 | **Three ADRs are stale or malformed against the project's own rules.** (a) **ADR-0002** does not record that its own revisit trigger has fired, while `§1`'s kill criterion says "revisit ADR-0002 first" — and its mitigation list, declared *"all mandatory"*, includes a ≤ 8 % gate that ADR-0014 §4(4) has since made advisory, so **two ADRs disagree on whether the gate binds**. (b) **ADR-0013** has no `Revisit when`, which [the ADR index's own rule](docs/adr/README.md) calls "a decision nobody can ever safely change". (c) **ADR-0009 and ADR-0008's warning boxes are false since WP-53** — ADR-0009 still says "no store has ever run against a real database" and is the record a plugin author reads to learn whether the extension point is real | Nothing builds; these mislead readers | repository owner |
+| 10 | ~~**Manifest v1.0's freeze criteria are written nowhere**~~ **Resolved.** [**ADR-0018**](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md) records eight criteria, amending [ADR-0005](docs/adr/ADR-0005-manifest-as-build-artifact.md) from a new record rather than editing it — the arrangement [ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md) used on 0015, chosen because ADR-0005's `Revisit when` is "never expected" and a freeze checklist has to move as producers land. **Not one of the eight holds today** — seven name a gap in the repository and the eighth is the version bump itself — which is what makes the deadline datable: thirteen schema-declared fields are written by nothing — *twelve since `capability.authorization.value` was closed and struck in ADR-0017 §1; the figure here is what the record said when this item was resolved, and **F1**'s live count is the ADR's, not this row's*; `event.schemaVersion` is emitted as a constant; `ManifestIsComplete` still covers two of Q3's four nouns and cannot cover the other two non-vacuously until **WP-56** and **P4** land; `flowx diff` has a **Breaking** rule (`FLOWX-DIFF-015`) that compares `authorization.value`, a field the compiler never writes, so it cannot fire; `extensions` — ADR-0005's stated escape hatch and the whole mitigation for "a public contract forever" — is written, read and tested by nothing. *What is **not** resolved, and is stated in ADR-0018 §3 F8 rather than here: item 6's decision is still unmade, and the freeze is what will force it. Its fourth revisit trigger is now datable; a freeze landing with ADR-0014 still **Proposed** keeps the `errors` field by default, which is this table's own failure mode arriving on a date somebody can now read off the repository* | — | — |
+| 11 | **Three ADRs are stale or malformed against the project's own rules.** (a) **ADR-0002** does not record that its own revisit trigger has fired, while `§1`'s kill criterion says "revisit ADR-0002 first" — and its mitigation list, declared *"all mandatory"*, includes a ≤ 8 % gate that ADR-0014 §4(4) has since made advisory, so **two ADRs disagree on whether the gate binds**. (b) ~~**ADR-0013** has no `Revisit when`~~ — **discharged.** The record gained one on 2026-07-31; the clause is struck rather than deleted because it is what the item was opened for. (c) **ADR-0009 and ADR-0008's warning boxes are false since WP-53** — ADR-0009 still says "no store has ever run against a real database" and is the record a plugin author reads to learn whether the extension point is real. *ADR-0009's half is also discharged: its box now states those three clauses as expired and names `plugins/FlowX.Postgres`. **ADR-0008's is not, and WP-59 made it false a second time** — see [item 14](#9-open-items-blocking-the-plan) rather than growing this row, because the two records no longer fail in the same way.* Only (a) and the ADR-0008 half of (c) are live | Nothing builds; these mislead readers | repository owner |
+| 12 | **`IStepDispatcher.DescribeInput` is a defaulted interface member, and a decorator that forgets it is invisible.** The reasoning for defaulting to `JournalPayload.Empty` rather than throwing is written at the declaration and is defensible: a hand-written dispatcher is entitled to run under `Durable`, and an instance row without an input is what every release wrote until WP-59, so a default that threw would make such a dispatcher unusable. **The cost showed up inside WP-59 itself.** Both hand-written *decorating* dispatchers — `tests/Banking.Tests/TransferHarness.cs` and `tests/Workflow.Tests/OnboardingHarness.cs` — forward most members and silently inherited this one, putting `flow_instance.input` straight back to NULL while every other test went on passing; the author found and fixed both. **This is the second time a defaulted interface member has cost this repository the same way.** The contrast is in the tree: `CapabilityContext.CompensatingFor` — the member added when `ctx.CapabilityId` was found naming the step being *undone* — was declared **`abstract`**, so no implementation could quietly keep the old answer and the compiler listed every one that had to change. **Do not change the interface on this entry**; what is owed is a decision about which of the two shapes the durable dispatcher members take, and it is worth taking once for `DescribeStep`, `DescribeInput` and `RestoreState` together rather than three times | Nothing; a silent wrong journal | repository owner |
+| 13 | **`src/FlowX.Compiler/Analysis/TriggerReader.cs` carries a stale remark that reads as a design statement.** Its class remarks say *"Nothing yet turns these attributes into endpoint registrations — the sample maps its route by hand in `Program.cs`"*. **HTTP triggers are generated and served**: `EndpointEmitter` writes `FlowXEndpoints.g.cs` into the user's assembly, `FlowX.Http` registers it, and two samples use it — the change that dropped `samples/ecommerce/Program.cs` from 12 registration lines to 2, recorded in [§6](#endpoint-generation--shipped-unnumbered-out-of-phase). The paragraph's *conclusion* is still true and is why the sentence is load-bearing rather than merely old: a flow may be reachable at an address it does not declare and may declare one nothing serves, because nothing asserts the generated route against the manifest's. Found while writing [09-Trigger-Model](docs/09-Trigger-Model.md)'s status box and left unfixed because that file was held by another package | Nothing; it misleads a reader of the trigger pipeline | repository owner |
+| 14 | **ADR-0008 and ADR-0015 still record the payload writer and `FLOWX1006` as owed, one day after WP-59 shipped them.** ADR-0008's `[!IMPORTANT]` box says *"there is no `IPayloadSerializer` interface"* and that `FLOWX1006` *"does not exist — it is blocked on the generated payload writer (**WP-59**)"*; both are now false, as is its closing clause that *"the outbox and replay are still absent"* — WP-56 and WP-64. ADR-0015's *Still not in / Owed to* table carries the row *"The generated payload writer and `FLOWX1006` → WP-59"*, and its take-down list still says the fourth `06 §5` row *"waits on the payload writer (WP-59)"*. **Editing ADRs was out of scope for the commit that recorded WP-59**, which is why this is an item rather than a fix; ADR-0008 is the record a reader consults to learn whether AOT-safe serialisation is a convention or a compile error, and it currently answers the wrong way | Nothing; these mislead readers | repository owner |
 
-**No item in this table is live.** Item 7 was resolved on 2026-07-31 by WP-57 building the retry slice; item 10 by [ADR-0017](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md).
+**Three items in this table are live: 12, 13 and 14, all opened on 2026-08-01, plus what is
+left of 11.** *This line read "**No item in this table is live**", which was already wrong
+when it was written — item 11 was never struck through and carries a Blocks and an Owner —
+and the sentence below it listed 11 among the struck rows. Both are corrected rather than
+deleted, because a table that says it is empty is one nobody re-reads.* Item 7 was resolved
+on 2026-07-31 by WP-57 building the retry slice; item 10 by
+[ADR-0017](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md).
 
-Items 2, 3, 5, 8, 9, 10 and 11 are struck through above rather than deleted, because a plan
-that silently repairs its own premises teaches nobody what it got wrong.
+Items 2, 3, 5, 8, 9 and 10 are struck through above rather than deleted, because a plan
+that silently repairs its own premises teaches nobody what it got wrong. Item 11 is struck
+**clause by clause** for the same reason: (b) and half of (c) are discharged and (a) is not.
+*This sentence listed 11 among the fully struck rows while the row itself was live.*
 
 *Closing item 10 moved one thing about the removed item 6 and did not touch the decision:
 ADR-0014's fourth revisit trigger — "P8 approaches manifest v1.0 freeze" — was recorded
