@@ -74,6 +74,42 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers <see cref="IRateLimiterStore"/> and <see cref="IIdempotencyStore"/> over the
+    /// data source <see cref="AddFlowXPostgres"/> built.
+    /// </summary>
+    /// <param name="services">The container being built.</param>
+    /// <returns>The same collection, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>Separate from <see cref="AddFlowXPostgres"/> for
+    /// <see cref="AddFlowXPostgresOutbox"/>'s reason</strong>, and one more that is specific to
+    /// these two: a deployment that keeps its journal in PostgreSQL very often wants its rate
+    /// limits in Redis, because a bucket is a hot small write and a journal is not. Folding the
+    /// registration into the journal's would make that arrangement need an override rather than
+    /// a choice.
+    /// </para>
+    /// <para>
+    /// <strong>Requires migration 6.</strong> Both stores read tables <c>0006_policy_stores.sql</c>
+    /// creates, and a host that registers them against an unmigrated schema gets a refusal
+    /// naming the migration rather than a silent admission — which is the direction
+    /// <see cref="IRateLimiterStore"/>'s contract requires.
+    /// </para>
+    /// </remarks>
+    public static IServiceCollection AddFlowXPostgresPolicyStores(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddSingleton<IRateLimiterStore>(
+            provider => new PostgresRateLimiterStore(provider.GetRequiredService<NpgsqlDataSource>()));
+
+        services.AddSingleton<IIdempotencyStore>(
+            provider => new PostgresIdempotencyStore(provider.GetRequiredService<NpgsqlDataSource>()));
+
+        return services;
+    }
+
+    /// <summary>
     /// Registers <see cref="PostgresOutboxPublisher"/> over the data source
     /// <see cref="AddFlowXPostgres"/> built.
     /// </summary>

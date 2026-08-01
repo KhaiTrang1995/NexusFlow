@@ -70,10 +70,20 @@ public static class FlowXServiceCollectionExtensions
         {
             var options = provider.GetRequiredService<IOptions<FlowXOptions>>().Value;
 
+            // The two policy stores are resolved rather than required, and there is deliberately
+            // no default for either — TryAdd's bargain above does not transfer. A default alert
+            // sink that counts leaves a deployment degraded about a state the instance row still
+            // records; a default in-memory rate limiter would leave one admitting n × the
+            // declared rate across n nodes behind a declaration that reads as a deployment-wide
+            // bound, and a default in-memory idempotency store would deduplicate one caller in n.
+            // A step that declares either policy with no store registered is refused rather than
+            // run (ADR-0035 §2.2), which is loud, and one registration fixes it.
             return new FlowEngine(
                 provider.GetRequiredService<IClock>(),
                 options.MaxPooledContexts,
-                provider.GetService<ICompensationAlertSink>());
+                provider.GetService<ICompensationAlertSink>(),
+                provider.GetService<IRateLimiterStore>(),
+                provider.GetService<IIdempotencyStore>());
         });
 
         // The catalogue is registered whether or not anything is put in it. It is only read
