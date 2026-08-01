@@ -29,3 +29,9 @@ CLAUDE.md
 # Local infrastructure from `flowx dev up`
 docker-compose.override.yml
 .env.local
+
+# Redis snapshots written by a locally started redis-server during testing.
+# The lease-store suite needs a live Redis; its default save behaviour drops a
+# dump.rdb in whatever directory the server was started from.
+dump.rdb
+*.rdb
