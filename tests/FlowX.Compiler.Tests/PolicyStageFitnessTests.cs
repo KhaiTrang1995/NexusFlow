@@ -81,6 +81,54 @@ public sealed class PolicyStageFitnessTests
     }
 
     /// <summary>
+    /// FLOWX1032 must report exactly the kinds no code path applies, in both directions.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>DeclaredPolicyAnalyzer.ExecutedKinds</c> is the list the rule is the complement of,
+    /// and it is a hand-written copy for <c>ManifestWriter.KnownPolicyStages</c>'s reason: the
+    /// compiler targets netstandard2.0 and can reference neither <c>StepPolicy</c> nor
+    /// <c>CompensationPolicy</c>. An unpinned copy of "what runs" drifts in both directions and
+    /// each is bad in its own way — a kind the engine gained and the rule kept reporting
+    /// teaches an author to suppress a catalogue, and a kind the rule dropped without the
+    /// engine gaining it goes silent on a policy that is still inert.
+    /// </para>
+    /// <para>
+    /// The real list is read off the two resolvers rather than typed out again: <c>StepPolicy</c>
+    /// publishes the four stage-4 descriptor kinds it reads as constants, and
+    /// <c>CompensationPolicy</c> publishes the one it reads. A fifth kind implemented without a
+    /// constant would slip past this — which is why they are constants.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void FLOWX1032ReportsExactlyTheKindsNothingApplies()
+    {
+        string[] executed =
+        [
+            StepPolicy.TimeoutKind,
+            StepPolicy.RetryKind,
+            StepPolicy.CircuitBreakerKind,
+            StepPolicy.BulkheadKind,
+            CompensationPolicy.CompensationRetryKind,
+        ];
+
+        DeclaredPolicyAnalyzer.ExecutedKinds.OrderBy(k => k, StringComparer.Ordinal).ShouldBe(
+            executed.OrderBy(k => k, StringComparer.Ordinal),
+            "FLOWX1032 reports every declared kind that is not in this set. If it disagrees " +
+            "with what StepPolicy and CompensationPolicy actually read, the rule either warns " +
+            "about a policy that now runs or goes silent about one that does not.");
+
+        // And every one of them is a kind PolicySet can actually produce. A constant naming a
+        // descriptor kind nothing emits would make the rule silent about a policy that does
+        // not exist, which reads as correctness and is not.
+        foreach (var kind in executed)
+        {
+            ReadRealMapping().ShouldContainKey(kind,
+                $"'{kind}' is treated as executed, and no PolicySet builder emits it.");
+        }
+    }
+
+    /// <summary>
     /// The compiler's copy of what <c>PolicySet</c>'s own well-known sets contain must match
     /// the real ones, in both directions.
     /// </summary>

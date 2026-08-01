@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using FlowX.Observability;
 using FlowX.Runtime;
 
 namespace FlowX.Hosting;
@@ -101,9 +103,14 @@ public sealed class FlowTimerScan
     /// </remarks>
     public async ValueTask<TimerScanReport> RunOnceAsync(CancellationToken ct = default)
     {
+        // The sweep's own span, for the reason FlowRecoveryScan.RunOnceAsync opens one: a woken
+        // instance's flow span otherwise has no parent, and "why did this instance run at 03:14"
+        // is the first question asked of a flow nobody triggered.
+        using var span = FlowXTelemetry.Source.StartActivity("timer scan", ActivityKind.Internal);
+
         if (_durability.TimerIndex is not { } index || _host.IsDraining)
         {
-            return TimerScanReport.Nothing;
+            return Tagged(span, TimerScanReport.Nothing);
         }
 
         var query = new DueInstanceQuery
@@ -118,14 +125,14 @@ public sealed class FlowTimerScan
 
         if (listed.IsFailure)
         {
-            return TimerScanReport.Nothing with { Error = listed.Error };
+            return Tagged(span, TimerScanReport.Nothing with { Error = listed.Error });
         }
 
         var candidates = listed.Value;
 
         if (candidates.Count == 0)
         {
-            return TimerScanReport.Nothing;
+            return Tagged(span, TimerScanReport.Nothing);
         }
 
         var offset = Random.Shared.Next(candidates.Count);
@@ -153,7 +160,8 @@ public sealed class FlowTimerScan
 
         if (wakes is null)
         {
-            return TimerScanReport.Nothing with { Examined = examined, NotRunnable = notRunnable };
+            return Tagged(
+                span, TimerScanReport.Nothing with { Examined = examined, NotRunnable = notRunnable });
         }
 
         var attempts = await Task.WhenAll(wakes).ConfigureAwait(false);
@@ -178,14 +186,34 @@ public sealed class FlowTimerScan
             }
         }
 
-        return new TimerScanReport
+        return Tagged(span, new TimerScanReport
         {
             Examined = examined,
             Woken = woken,
             Contended = contended,
             NotRunnable = notRunnable,
             Failed = failed,
-        };
+        });
+    }
+
+    /// <summary>Puts what a sweep did onto its span, and hands the report back unchanged.</summary>
+    /// <remarks>
+    /// The mirror of <c>FlowRecoveryScan.Tagged</c>, and separate from it for the same reason
+    /// the two sweeps are separate types: they ask opposite questions of disjoint sets of rows,
+    /// and a shared helper would have to carry both vocabularies to name either.
+    /// </remarks>
+    private static TimerScanReport Tagged(Activity? span, in TimerScanReport report)
+    {
+        if (span is not null)
+        {
+            span.SetTag("flowx.scan.examined", report.Examined);
+            span.SetTag("flowx.scan.woken", report.Woken);
+            span.SetTag("flowx.scan.contended", report.Contended);
+            span.SetTag("flowx.scan.not_runnable", report.NotRunnable);
+            span.SetTag("flowx.scan.failed", report.Failed);
+        }
+
+        return report;
     }
 
     /// <summary>

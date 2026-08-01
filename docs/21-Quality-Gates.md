@@ -211,7 +211,7 @@ is still the right control — it is the *tense* that was wrong.
 | `FlowGraphIsCompileTimeConstant` (A03) | not written. The property holds — the DSL has no `Do(lambda)`, and `FlowBuilderHasNoEscapeHatchForInlineCode` in `ContractSurfaceTests` asserts that much of it | — could be written now against the builder surface |
 | `TenantComesFromClaimsOnly` (A07) | not written under that name. `HttpTriggerReaderTests` covers the behaviour for the one transport that exists | **P3** for "every transport" |
 | `EveryDenialIsAudited` (A09) | not written. No authorisation decision is made at run time and no audit record is written | **P4** |
-| `TelemetryConformanceTest` (A09) | not written. Nothing emits a span, metric or log ([12](12-Observability.md)) | **P5** |
+| `TelemetryConformanceTest` (A09) | **runs** — `tests/FlowX.Hosting.Tests/TelemetryConformanceTests.cs` (WP-90). It asserts the frozen span and metric names as literals, asserts that they are emitted rather than merely declared, and gates [12 §3](12-Observability.md#3-metrics)'s cardinality rule. *It does not yet cover A09's own concern:* there is no `ILogger` and no audit record, so the denial-is-audited claim in the row below has nothing to assert against | partly **P4** (the `Audit` policy), partly **P5** (logs) |
 | `EgressIsAllowListed` (A10) | not written. No egress plugin exists, so nothing declares an allow-list | **P3** |
 | `AgentSurfaceEqualsFlowSurface` (LLM01, LLM07) | not written. There is no agent surface; `[AgentTrigger]` reaches the manifest and nothing serves it | **P8** |
 | `InternalCapabilitiesAreNotAgentReachable` (LLM08) | not written, and vacuous today for the same reason | **P8** |
@@ -399,7 +399,7 @@ feature. It gets its own mapping because the risks are different in kind.
 | SCA | **Dependabot** | NuGet + GitHub Actions | review required | weekly | **yes** — `.github/dependabot.yml` |
 | Container | **Trivy** | published image | HIGH/CRITICAL fails | every PR | **no** — not in any workflow. There is no `Dockerfile` and no image is built anywhere, so there is nothing to scan |
 | IaC | **Checkov** | Helm charts, Kubernetes manifests | HIGH fails | every PR | **no-op** — the step exists and exits cleanly because neither `deploy/` nor `charts/` exists. Deliberate, and stated in the job |
-| **DAST** | **OWASP ZAP** baseline + full scan | `samples/ecommerce` run by `dotnet run` | any HIGH fails | nightly | **newly** — the job's guard tested for two paths that never existed, so it skipped every night since WP-10; repaired, and not yet observed on a real scheduled run. *(This cell credited the repair to **WP-50**. WP-50 is the B7/B8 benchmark and QR2 chaos rig, and none of it has been built — `JournalBenchmarks` and `scripts/chaos-qr2.sh` do not exist. The gate repairs were unnumbered work, and attributing them to a package that has not started made an unstarted package look partly delivered.)* `samples/banking` is a README, not a project, and nothing runs in Docker |
+| **DAST** | **OWASP ZAP** baseline + full scan | `samples/ecommerce` run by `dotnet run` | any HIGH fails | nightly | **newly** — the job's guard tested for two paths that never existed, so it skipped every night since WP-10; repaired, and not yet observed on a real scheduled run. *(This cell credited the repair to **WP-50**. WP-50 is the B7/B8 benchmarks and the QR2 chaos rig, and the gate repairs were unnumbered work; attributing them to another package made it look more delivered than it was. **The correction itself has since half expired and is corrected in turn:** it read "none of it has been built — `JournalBenchmarks` and `scripts/chaos-qr2.sh` do not exist". The rig shipped on 2026-08-01 as `tests/FlowX.Chaos` with `scripts/run-chaos-qr2.sh`, and `.github/workflows/chaos.yml` schedules it since WP-62 — see [§8](#8-reliability-gates). `JournalBenchmarks` still does not exist and B7 and B8 are still unmeasured, which is the half that stands. Neither has anything to do with this row, which is about DAST.)* `samples/banking` is a README, not a project, and nothing runs in Docker |
 | Fuzzing | **SharpFuzz** | trigger payload deserialisation | any crash fails | nightly | **no** — not in any workflow |
 | Supply chain | **CycloneDX SBOM** + Sigstore | release artifacts | missing attestation fails | every release | **no** — there is no release workflow and no tag-triggered workflow at all |
 
@@ -505,7 +505,7 @@ Budgets live in [14-Performance](14-Performance.md). Their enforcement is here.
 | B2 | allocations must be **exactly 0** — not "low" | Merge | **runs** — `AllocationBudgetTests`, `EngineAllocationTests` |
 | Generator cost | > 2 % more bytes allocated by the generator than the committed baseline fails the build | Merge | **runs** — [generator-cost-gate.md](benchmarks/generator-cost-gate.md) |
 | B12 against its **+8 %** budget | — | — | **failing.** +46.6 % at 50 flows, +77 % at 200. The relative gate above stops it getting worse; it does not make the budget met |
-| B4, B5, B6, B10, B11 | regression > 5 % vs the baseline | Merge | **no harness.** Policy chain (P4), telemetry (P5) and start-up/RSS (P9) have nothing to measure |
+| B4, B5, B6, B10, B11 | regression > 5 % vs the baseline | Merge | **no harness**, and one exception. Policy chain (P4) and start-up/RSS (P9) have nothing to measure. Telemetry now emits (WP-90), so **B5** — telemetry cost *with* an exporter attached — has a subject and no harness, which is the ordinary state of this row. **B6 is different: it is a hard zero, and a hard zero needs no harness.** `TelemetryCostTests` asserts it as a unit test the way `AllocationBudgetTests` asserts B2, on every pull request, and the nanosecond half of B6 is deliberately not measured rather than measured badly |
 | B7–B9, B13 | nightly load test; regression opens a blocking issue | Release | **no harness.** Journal (P2 — the step-commit path exists since WP-52 and `plugins/FlowX.Postgres` backs it since WP-53; *"no store backs it" has stopped being the reason* — nothing measures it, WP-50), HTTP end-to-end (P3), streaming (P7). ***WP-50 is "B7, B8 and the QR2 chaos rig" and shipped the rig only***, so this row is unchanged by it: [§8](#8-reliability-gates)'s chaos row now runs and these budgets still have nothing measuring them |
 | Baseline updates | require a reviewed commit stating why the budget moved | Merge | convention |
 
@@ -548,12 +548,56 @@ than what it hopes.
 
 | Gate | Rule | Class | State |
 |---|---|---|---|
-| Chaos: SIGKILL at every step boundary | 10 000 flows, zero duplicate non-idempotent effects, zero lost instances | Release | **runs — WP-50, 2026-08-01.** *This row said "not written … nothing kills a node, nothing crosses a process boundary, and nothing has run 10 000 of anything". All three expired.* `tests/FlowX.Chaos` spawns worker processes against a shared PostgreSQL and **SIGKILLs them at a step boundary chosen so the effect has happened and the commit has not** — 97 kills per arm, every one observed to exit 137. At **10 000 flows** per arm: **zero duplicate effects against the guarantee, zero lost instances**, zero orphan effects, zero instances run by two live nodes. The duplicates it *does* find — 260 and 186 — are all [ADR-0006](adr/ADR-0006-journal-and-leases.md)'s documented window, and at concurrency 1 that is exactly one per kill and exactly zero when the kill moves after the commit. **It does not run in the ordinary suite and must not**: it is opt-in on `FLOWX_CHAOS`, skipping with a reason when unset and failing rather than skipping when set with no database. Record: [benchmarks/QR2-chaos.md](benchmarks/QR2-chaos.md). **P2** (QR2) |
-| Chaos: resume p99 ≤ 45 s | the latency half of the same criterion | Release | **measured, not gated — WP-50.** **32.9 s** and **32.6 s** at 10 000 flows. The rig prints it against 45 s on every run and its checker does not fail on it, because B7 and B8 are latency budgets set aside for this phase (WP-50 shipped the rig only). **Two other runs of the same rig missed the budget** — 48.1 s at the rig's own defaults, 69.9 s in a 500-flow pilot — with every correctness row still zero, so **this is not a figure to quote on its own**. It is ~30 s of lease TTL plus however long a backlog takes to drain through `MaxConcurrentRecoveries`, which means a deployment that raises `LeaseTtl` above 45 s fails QR2 by configuration and one whose recovery capacity is below its crash rate fails it by queueing. [benchmarks/QR2-chaos.md §4.4](benchmarks/QR2-chaos.md). **P2** |
+| Chaos: SIGKILL at every step boundary | 10 000 flows, zero duplicate non-idempotent effects, zero lost instances | Release · nightly | **runs, and since WP-62 runs on a schedule.** *This row said "not written … nothing kills a node, nothing crosses a process boundary, and nothing has run 10 000 of anything". All three expired.* `tests/FlowX.Chaos` spawns worker processes against a shared PostgreSQL and **SIGKILLs them at a step boundary chosen so the effect has happened and the commit has not** — 97 kills per arm, every one observed to exit 137. At **10 000 flows** per arm: **zero duplicate effects against the guarantee, zero lost instances**, zero orphan effects, zero instances run by two live nodes. The duplicates it *does* find — 260 and 186 — are all [ADR-0006](adr/ADR-0006-journal-and-leases.md)'s documented window, and at concurrency 1 that is exactly one per kill and exactly zero when the kill moves after the commit. **It does not run in the ordinary suite and must not**: it is opt-in on `FLOWX_CHAOS`, skipping with a reason when unset and failing rather than skipping when set with no database. Record: [benchmarks/QR2-chaos.md](benchmarks/QR2-chaos.md). **WP-62 put it on a schedule (2026-08-01)**: [`.github/workflows/chaos.yml`](../.github/workflows/chaos.yml) runs it at 03:41 UTC against a PostgreSQL 16 service container and takes `scripts/check-chaos-qr2.py`'s exit code as the verdict — 0 PASS, 1 FAIL, **2 INCONCLUSIVE, which is a third state and is not folded into either of the others**. *That row previously read "**No CI job runs it**", and it is what changed.* **What a red night costs, exactly**: the job is red **and** an issue labelled `qr2-nightly` is opened and assigned to the repository owner, commented on rather than duplicated if the next night is red too, and closed automatically by the next green one. **This is not a merge gate and this row does not claim one** — it runs on a schedule, against no pull request, and [§8.1](#81-why-the-chaos-nightly-is-not-described-as-blocking) is why that phrasing is chosen deliberately. **P2** (QR2) |
+| Chaos: resume p99 ≤ 45 s | the latency half of the same criterion | Release | **measured, not gated — WP-50.** **32.9 s** and **32.6 s** at 10 000 flows. The rig prints it against 45 s on every run and its checker does not fail on it, because B7 and B8 are latency budgets set aside for this phase (WP-50 shipped the rig only). **Two other runs of the same rig missed the budget** — 48.1 s at the rig's own defaults, 69.9 s in a 500-flow pilot — with every correctness row still zero, so **this is not a figure to quote on its own**. It is ~30 s of lease TTL plus however long a backlog takes to drain through `MaxConcurrentRecoveries`, which means a deployment that raises `LeaseTtl` above 45 s fails QR2 by configuration and one whose recovery capacity is below its crash rate fails it by queueing. [benchmarks/QR2-chaos.md §4.4](benchmarks/QR2-chaos.md). **WP-62 scheduled the row above and deliberately left this one where it is.** The nightly job passes the checker no budget argument, so nothing in it can fail on the p99; and because "not gated" decays into "gated" the moment somebody adds one line, that is now asserted rather than intended — [`scripts/selftest-chaos-verdict.py`](../scripts/selftest-chaos-verdict.py) feeds the checker a run with a **999 s** resume p99 and every correctness row zero and requires a **PASS**. It runs on every pull request, so the change that turned this into a gate would be red on the pull request that made it. **P2** |
 | Replay determinism corpus | zero divergence across the full corpus | Merge | **runs — WP-61, 2026-07-31.** *This row said the corpus was not written and that nothing replayed a capture back into execution.* `ReplayDeterminismTests` in `tests/FlowX.Runtime.Tests` is the corpus, and it runs in the ordinary test job rather than needing one of its own. Zero divergence across eight shapes; the three shapes that cannot replay — an overlapping fork, a compensation's ambient reads, the engine's own deadline check — are asserted to diverge and named, so closing any of them turns the gate red until the note is deleted |
 | Backpressure conformance | bounded memory with a deliberately slow capability | Release | **not written** — no Stream Engine. **P7** |
 | Tenant fairness | one tenant at 10× quota degrades another's p99 by ≤ 10 % | Release | **not written** — no quota, no admission control. **P6** |
 | Graceful shutdown | in-flight flows drain within the termination grace period | Merge | **runs** — `DrainTests` in `FlowX.Hosting.Tests`. *Drain only, and the caveat has narrowed: this said "there is no checkpoint, so a flow still running at the end of the grace period is lost rather than resumed". Since WP-52/WP-53 a `Durable` flow has a committed prefix and since WP-55 the host releases its lease on the way out, so another node's recovery scan can pick it up. An `Ephemeral` one — the default — is still simply lost, and the drain test asserts the drain, not the takeover* |
+
+### 8.1 Why the chaos nightly is not described as blocking
+
+The word matters here more than usual, because [§7](#7-performance-gates) was corrected for
+getting it wrong. That table described the *Benchmark budgets* job as one that "runs", and
+[CHECKLIST **B-4**](../CHECKLIST.md) and the unnumbered package above `WP-31` in
+[PLAN](../PLAN.md) then established what "runs" was hiding: the job is blocking, it has been
+red on `dev` since 2026-07-31, sixty-odd pushes merged over it, sixteen bytes of allocation
+regression crossed underneath it — and nothing told anyone, because no branch protection
+required it and no notification fired. Their sentence for that state is the design
+constraint on the chaos job, not a footnote to it:
+
+> A merge-class gate whose failure has no consequence is a nightly report with a red icon.
+
+A nightly chaos run cannot be made merge-blocking. It runs at 03:41 against no pull request,
+it takes minutes, it kills operating-system processes, and there is no author to hold
+responsible for a `SIGKILL` that duplicated an effect. So the consequence is not a merge
+check and this section does not pretend otherwise. **Three things are true instead:**
+
+1. **A non-PASS reaches a person.** The job is red *and*
+   [`scripts/publish-chaos-verdict.py`](../scripts/publish-chaos-verdict.py) opens a labelled
+   issue, assigned to the repository owner, carrying the failing clause, the arm, the exact
+   command that reproduces the run, and the results document as an artifact. §7's own
+   Release-class convention — *"nightly load test; regression opens a blocking issue"* — is
+   what that implements. A second red night comments on the same issue rather than opening a
+   second one, and a green night closes it, because a tracker that fills up and a red that
+   nobody closes are the same failure one step later.
+2. **The judgement is merge-gated even though the run is not.** `verdict-self-test` in
+   [`chaos.yml`](../.github/workflows/chaos.yml) runs on every push and pull request, needs
+   no database, and asserts that `check-chaos-qr2.py` still returns each of its three
+   verdicts — including that the recorded run's 260 and 186 duplicates inside ADR-0006's
+   documented window are **not** a failure, and that a 999 s resume p99 **is** still a pass.
+   The chaos run is where a regression shows up; the checker is where a softening would.
+3. **`INCONCLUSIVE` is not converted into a pass.** The checker refuses to grade a run in
+   which nothing was killed, no worker exited 137, nothing was recovered, or an arm ran
+   fewer flows than it registered. The job carries that through as its own state, with its
+   own issue and its own wording, and is red for it. Folding it into PASS would tick the
+   chaos row above on evidence that does not exist, which is the outcome that exit code was
+   written to prevent; folding it into FAIL would report a defect nobody observed.
+
+**What has not happened yet:** no scheduled run has occurred, because the schedule takes
+effect when this lands on the default branch. Everything above is what the workflow says;
+none of it is an observation of a real nightly, and the first one is also the first time the
+10 000-flow configuration has been asked of a hosted runner.
 
 ---
 

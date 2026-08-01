@@ -38,6 +38,14 @@
 > and nothing was lost, but the flow did not run. §3.2 says why that is counted separately
 > rather than netted off.
 >
+> **And since 2026-08-01 it runs on a schedule.** *This box, and §6 below, said the verdict
+> was "the thing CI should gate on" and that nothing ran it.* **WP-62** put the rig on a
+> nightly job with a PostgreSQL service container, and gave a night that is not green a
+> consequence that is not a red icon: an issue, assigned, closed again by the next green run.
+> **§7** is the schedule, the three verdicts and — stated there rather than implied — what
+> the job does **not** do, which is block a merge. The resume p99 is still not gated, and
+> that is now asserted by a test on the merge path rather than left as an intention.
+>
 > **Recorded:** 2026-08-01 · **P2** · `./scripts/run-chaos-qr2.sh` ·
 > raw samples [`QR2-chaos.json`](QR2-chaos.json), [`QR2-chaos-isolated.json`](QR2-chaos-isolated.json)
 
@@ -430,6 +438,120 @@ A smaller default keeps the rig usable: `./scripts/run-chaos-qr2.sh` with no arg
 configuration on a shared runner and read its p99**, for the reason §4.4 gives; it should run
 the correctness clauses at whatever scale the runner affords and leave the latency number to a
 recorded run like this one.
+
+---
+
+## 7. The nightly run — WP-62
+
+*§6 above said `check-chaos-qr2.py` "is the thing CI should gate on" and that nothing did.
+Since 2026-08-01, [`.github/workflows/chaos.yml`](../../.github/workflows/chaos.yml) does.*
+This section is the schedule and what its verdict means; §1–§6 remain the record of the
+run performed by hand.
+
+### 7.1 What runs, and when
+
+`03:41 UTC`, every night, plus `workflow_dispatch` for a run on demand. QR2's own **10 000
+flows** per arm at the parameters in §4, against a **PostgreSQL 16 service container** — the
+first one in this repository, since `tests/FlowX.Postgres.Tests` is opt-in on
+`FLOWX_POSTGRES_CONNECTION` and no workflow has ever set it. The verdict is
+`scripts/check-chaos-qr2.py`'s exit code, taken in one place, with `--flows` set to the count
+the run asked for so that a night whose workers stopped claiming cannot be quoted as a clean
+run at that scale.
+
+**Two things about the scale are worth saying plainly.** §6 advises against the 10 000-flow
+configuration on a shared runner, and the objection there is to *reading its p99* — which
+this job does not do. And 328 s of wall clock for both arms on a four-core container at a
+load average of 36 makes the scale affordable in principle. **It has never been run on a
+GitHub-hosted runner, and the first scheduled run is the experiment.** If it proves too big,
+the correct response is to lower `FLOWX_CHAOS_FLOWS` — one line of `env:` — and let the job
+say it ran at a smaller scale, not to widen anything until the failure fits.
+
+`--converge-timeout` is raised to **1800 s** from the rig's 600, and not for slack. When the
+coordinator gives up waiting it counts every instance still running as **lost** — the same
+field a genuinely lost instance lands in — so a runner too slow to drain its backlog produced
+a correctness `FAIL` that was not one, against the clause QR2 exists to test.
+
+*This paragraph said the results document could not tell the two apart and that recording the
+timeout "is the fix and is not done here", because the fix belongs to `tests/FlowX.Chaos` and
+the package that found it deliberately changed no part of the rig.* **It is done now.**
+`ConvergeAsync` returns whether it reached its deadline, `ArmResult` carries
+`convergenceTimedOut`, and the results document publishes it. `check-chaos-qr2.py` reads it
+and returns **INCONCLUSIVE** rather than FAIL: a run that stopped waiting has not disproved
+the guarantee, it has not reached a verdict on it — which is what the third exit code is for.
+
+The two cases are held apart by a **pair** in `scripts/selftest-chaos-verdict.py`, running on
+every pull request: the same mutation, one bit apart, asserted to produce exit 1 and exit 2.
+Collapsing them back into one verdict turns that self-test red on the change that does it.
+The larger timeout and the `convergence timed out` log line the publisher puts at the top of
+the issue both stay — they are what stops the third state from being reached in the first
+place.
+
+### 7.2 The three verdicts, kept three
+
+| Exit | Verdict | The job | What is filed |
+|---:|---|---|---|
+| 0 | **PASS** | green | any open `qr2-nightly` issue is **closed** with a link to the green run |
+| 1 | **FAIL** | red | an issue titled *"a correctness clause of QR2 is not holding"*, opened or commented on |
+| 2 | **INCONCLUSIVE** | red | a **different** issue, titled *"the chaos run produced no verdict"* |
+| other | the checker broke | red | a third title, saying that nothing about QR2 was established either way |
+
+`INCONCLUSIVE` is not folded into either neighbour, and the reasoning is symmetric: folding
+it into PASS would tick [21 §8](../21-Quality-Gates.md#8-reliability-gates)'s chaos row on
+evidence that does not exist, which is the outcome that exit code exists to prevent, and
+folding it into FAIL would report a correctness defect nobody observed. GitHub gives a job
+two conclusions and QR2 has three verdicts, so the third one is carried by the issue title,
+the annotation and the step summary rather than by the icon.
+
+`performance.yml`'s `generator-cost` job treats *its* `INCONCLUSIVE` as non-blocking, and
+that is not a contradiction. That job runs on pull requests, where an unresolvable
+measurement would fail somebody's change for the weather. This one runs at 03:41 against
+nobody's change, so there is no such cost — and the cost of a false green is the whole of
+[CHECKLIST B-4](../../CHECKLIST.md).
+
+### 7.3 The p99 is still not a gate, and that is now asserted
+
+The nightly passes the checker **no budget argument**. Nothing in the job can fail on the
+resume p99, for §4.4's reason: three runs of this one rig give 32.9, 48.1 and 69.9 s with
+every correctness row still zero, and the number is ~30 s of lease TTL plus however long a
+backlog takes to drain. A p99 over 45 s on a nightly run is **not a defect and must not be
+filed as one**; the issue body says so on every run, including failing ones.
+
+"Not gated" decays into "gated" the moment somebody adds one line, so it is asserted rather
+than intended. [`scripts/selftest-chaos-verdict.py`](../../scripts/selftest-chaos-verdict.py)
+feeds the checker this document's own recorded run with the resume p99 set to **999 s** and
+requires a **PASS**. It runs on every push and pull request, so the change that turned QR2's
+latency clause into a gate would be red on the pull request that made it.
+
+### 7.4 What a red night costs, and why that is the whole package
+
+The rig existed before this section and was run by whoever remembered to. Putting it on a
+schedule is only half of what that is worth; the other half is that a night which is not
+green has a consequence.
+
+[CHECKLIST **B-4**](../../CHECKLIST.md) records what happens when it does not: the
+*Benchmark budgets* job has been blocking and red on `dev` since 2026-07-31, sixty-odd pushes
+merged over it, and 16 B of allocation regression crossed underneath it, because nothing told
+anyone. So a red night here opens an issue labelled `qr2-nightly`, **assigned to the
+repository owner**, carrying the failing clause, which arm it was, the exact command that
+reproduces the run, and the results document as an artifact — comment rather than duplicate
+on a second red night, closed by the next green one.
+
+**What is deliberately not claimed anywhere: that this blocks a merge.** It does not and it
+cannot. [21 §8.1](../21-Quality-Gates.md#81-why-the-chaos-nightly-is-not-described-as-blocking)
+is the long form of that sentence, and the one thing here that *is* on the merge path is the
+judgement rather than the run: `verdict-self-test` needs no database, runs on every pull
+request, and asserts that `check-chaos-qr2.py` still returns each of its three verdicts —
+including that this document's 260 and 186 duplicates inside ADR-0006's window are not a
+failure.
+
+### 7.5 What has not been verified
+
+**No scheduled run has happened.** The cron takes effect when this reaches the default
+branch. Everything in §7 is what the workflow file says, plus what could be run outside
+GitHub Actions: the rig itself against a real PostgreSQL 16, the checker returning each of
+its three codes, the publisher's output for each verdict, and the whole `qr2` job's own shell
+executed locally at reduced scale. **The service container, the schedule, and every `gh` call
+that files or closes an issue are unverified until the first real night.**
 
 ---
 

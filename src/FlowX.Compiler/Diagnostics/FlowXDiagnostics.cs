@@ -818,19 +818,21 @@ public static class FlowXDiagnostics
     /// <summary>FLOWX1032 — a declared policy the runtime applies to nothing.</summary>
     /// <remarks>
     /// <para>
-    /// <strong>Eight of the nine kinds <c>PolicySet</c> offers are executed by no code.</strong>
-    /// <c>FlowEngine</c> reads exactly two policy properties — <c>HasCompensationPolicies</c>
-    /// and <c>StepNode.CompensationRetry</c> — and both are on the failure path. Underneath
-    /// them <c>PolicyChain.Ordered</c> is read in one place in the whole runtime,
-    /// <c>CompensationPolicy.From</c>, which skips every descriptor whose kind is not
-    /// <c>CompensationRetry</c>. <c>StepNode.Policies</c> is read nowhere at all.
+    /// <strong>Four of the nine kinds <c>PolicySet</c> offers are executed by no code:</strong>
+    /// <c>RateLimit</c>, <c>Idempotency</c>, <c>Cache</c> and <c>Audit</c>. The rule was
+    /// written over eight of the nine and narrowed when the policy engine landed
+    /// <c>PolicyStage.Resilience</c> — <c>Timeout</c>, <c>Retry</c>, <c>CircuitBreaker</c> and
+    /// <c>Bulkhead</c> are now applied around every step that declares them, and
+    /// <c>CompensationRetry</c> has been applied to the unwind since WP-57.
     /// </para>
     /// <para>
-    /// <strong>The cut is by what a policy wraps, not by which stage it runs in.</strong>
-    /// <c>Audit</c> is a <c>PolicyStage.Consistency</c> policy — stage 7, the same stage as
-    /// <c>CompensationRetry</c> — and it is inert, because <c>PolicyChain.ForStep</c> moves
-    /// only <c>CompensationRetry</c> onto the compensation's chain. "Stages 1–6 do not run"
-    /// is the wrong summary and would make this rule silent on every declared audit.
+    /// <strong>The cut is by stage now, and it was not before.</strong> The four that remain
+    /// are stage 1, stage 3, stage 5 and half of stage 7 — but the half of stage 7 is the
+    /// reason the rule cannot be written as a stage range. <c>Audit</c> shares
+    /// <c>PolicyStage.Consistency</c> with <c>CompensationRetry</c>, which executes, so
+    /// "stages 1, 3, 5 and 7 do not run" would be silent on nothing and wrong about the undo.
+    /// The list is a list, pinned against the runtime by
+    /// <c>PolicyStageFitnessTests</c>.
     /// </para>
     /// <para>
     /// <strong>A warning, on <see cref="ProfileIsNotHonouredByTheRuntime"/>'s argument one
@@ -860,22 +862,22 @@ public static class FlowXDiagnostics
         "Declared policy is not executed by the runtime",
         "'{0}' declares policies this release does not execute: {1}. The compiled plan and " +
         "flowx.manifest.json carry them; no code applies them.",
-        "CompensationRetry is the only policy any code path in FlowX executes: the engine " +
-        "reads it off the step node while unwinding, and nothing reads the chain that wraps " +
-        "the step itself. So a declared Timeout arms no clock, a Retry dispatches once, a " +
-        "CircuitBreaker never opens, a Cache is never consulted, a RateLimit counts nothing " +
-        "and an Audit writes no record. The Policy Engine is P4, which has not started. Keep " +
-        "the declaration: it is the published statement of what this step needs, it reaches " +
-        "flowx.manifest.json where a reviewer and a 'flowx diff' can read it, it is what P4 " +
-        "will execute, and deleting it to silence this warning would remove the record while " +
-        "changing nothing about how the step runs. Instead, confirm the step is survivable " +
-        "with the policy unenforced — a rate limit the gateway already applies, a timeout the " +
-        "flow's deadline already subsumes — and if it is, downgrade this rule in " +
-        ".editorconfig with a FLOWX-DEBT marker; if it is not, move the control into the " +
-        "capability or in front of the process, where it is real. FLOWX1014 and FLOWX1018 " +
-        "are unaffected and still errors: whether a declared policy is safe is a different " +
-        "question from whether it is applied. This rule is deleted, not fixed, on the day P4 " +
-        "lands.",
+        "Four of the nine kinds PolicySet offers are executed by nothing: RateLimit, " +
+        "Idempotency, Cache and Audit. So a declared RateLimit counts nothing, an Idempotency " +
+        "window records and replays nothing, a Cache is never consulted, and an Audit writes " +
+        "no record. The other five do run — Timeout, Retry, CircuitBreaker and Bulkhead are " +
+        "applied around the step, and CompensationRetry around its undo — so this rule names " +
+        "only what is left. Keep the declaration: it is the published statement of what this " +
+        "step needs, it reaches flowx.manifest.json where a reviewer and a 'flowx diff' can " +
+        "read it, it is what the stage that implements it will execute, and deleting it to " +
+        "silence this warning would remove the record while changing nothing about how the " +
+        "step runs. Instead, confirm the step is survivable with the policy unenforced — a " +
+        "rate limit the gateway already applies, a cache the capability can hold itself — and " +
+        "if it is, downgrade this rule in .editorconfig with a FLOWX-DEBT marker; if it is " +
+        "not, move the control into the capability or in front of the process, where it is " +
+        "real. FLOWX1014 and FLOWX1018 are unaffected and still errors: whether a declared " +
+        "policy is safe is a different question from whether it is applied. This rule is " +
+        "deleted, not fixed, and only when the last four kinds execute.",
         DiagnosticSeverity.Warning);
 
     /// <summary>FLOWX1033 — a compensation retry attached to a step with no compensation.</summary>
@@ -1039,7 +1041,7 @@ public static class FlowXDiagnostics
     /// FLOWX1019, <see cref="PolicyIsNotExecutedByTheRuntime"/> and
     /// <see cref="CompensationRetryHasNoCompensation"/> all decline to speak. That is not an
     /// unchecked policy; it is an absent one, and a <c>CompensationRetry</c> inside such a set
-    /// — the one policy this runtime executes — does not run.
+    /// — the one policy an undo can carry — does not run.
     /// </para>
     /// <para>
     /// <strong>Silence was the deliberate choice, and it was the wrong one.</strong> The

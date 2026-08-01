@@ -739,11 +739,14 @@ generator emits no `policies` section", and **both halves of that are now false.
 `FLOWX1014` and `FLOWX1018` off its contents, and `ManifestWriter.WritePolicies` emits a
 `policies` array per step with each policy's fixed stage.
 
-What is still true is narrower and worth stating exactly: **nothing in this repository
-declares a policy**, so the emission path has never run against a shipped assembly, and no
-policy *executes* — `FlowX.Runtime` contains no policy engine at all, so a declared `Retry`
-is a manifest entry and nothing more. A completeness check for policies would therefore pass
-vacuously today. It becomes meaningful with P4.
+*What used to be true here was that no policy executed at all, so a completeness check over
+`policies` would pass vacuously.* **Both halves have expired.** `samples/banking` declares
+seven policy sets, so the emission path runs against a shipped assembly on every build; and
+`FlowX.Runtime` executes `PolicyStage.Resilience` — a declared `Timeout` is armed, a declared
+`Retry` makes its attempts, a `CircuitBreaker` opens and a `Bulkhead` counts. What is left is
+narrower: four declarable kinds are still applied by nothing — `RateLimit`, `Idempotency`,
+`Cache` and `Audit` — which [`FLOWX1032`](diagnostics/FLOWX1032.md) reports and
+[ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) argues.
 
 **`events` is no longer the same case, and that is the change worth stating.** `.Emit<T>()`
 reaches the plan, the manifest *and* the outbox: a `Durable` flow's emitted event is staged

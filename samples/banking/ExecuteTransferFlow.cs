@@ -29,21 +29,22 @@ namespace Banking;
 /// answers on are one string rather than two kept in step.
 /// </para>
 /// <para>
-/// <strong>What the policies below do at run time: one thing.</strong> See
-/// <see cref="Policies"/> — the policy engine is P4, so the timeouts, the retry, the breaker,
-/// the rate limit and the audits are carried into the plan and enforced by no code. The one
-/// exception is the <c>CompensationRetry</c> on the two ledger legs: delete the
-/// <c>.WithPolicy(...)</c> calls and only those two undos change, five attempts to one.
+/// <strong>What the policies below do at run time: most of it.</strong> See
+/// <see cref="Policies"/>. The policy engine executes <c>PolicyStage.Resilience</c>, so the
+/// three-second timeout and the three attempts on <c>ScreenSanctions</c> are real, the five-
+/// second timeouts on the ledger legs and the settlement write are real, the breaker in front
+/// of the screening provider opens, and the <c>CompensationRetry</c> on the two ledger legs
+/// has run since WP-57. <c>ExecuteTransferFlowTests</c> settles a transfer whose screening
+/// provider fails once, which is a transfer this sample refused a release ago.
 /// </para>
 /// <para>
-/// <strong>The compiler now says so, on all seven of them.</strong>
-/// <a href="../../docs/diagnostics/FLOWX1032.md">FLOWX1032</a> reports every declared policy
-/// this release does not apply, and this flow was its first finding: seven reports, one per
-/// <c>.WithPolicy(...)</c>, naming <c>Audit</c> and <c>Timeout</c> on the ledger legs and not
-/// their <c>CompensationRetry</c>. The paragraph above used to be the only thing standing
-/// between a reader and the assumption that a declared timeout is an enforced one; it is now
-/// the argument for a suppression rather than a promise nobody checks. The suppression's
-/// reasoning is below and on <see cref="Policies"/>.
+/// <strong>Three declarations still do nothing, and the pragmas below say which.</strong>
+/// <a href="../../docs/diagnostics/FLOWX1032.md">FLOWX1032</a> reported all seven of this
+/// flow's <c>.WithPolicy(...)</c> calls when it was written; it now reports four of them,
+/// naming <c>RateLimit</c> and <c>Idempotency</c> on the first step and <c>Audit</c> on the
+/// three that declare one. The three <c>ExternalRead</c> calls in the <c>Switch</c> carry no
+/// suppression at all, which is the visible half of the change: a policy that runs needs no
+/// argument for why it does not.
 /// </para>
 /// </remarks>
 [Flow("transfer.execute", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "payments")]
@@ -56,23 +57,26 @@ public sealed partial class ExecuteTransferFlow : Flow<ExecuteTransfer, Transfer
     {
         ArgumentNullException.ThrowIfNull(flow);
 
-        // Deliberate, and argued rather than hidden: every .WithPolicy below declares
-        // policies P4 will execute and this release does not, which is exactly what
-        // FLOWX1032 reports and exactly what this sample exists to state out loud. Its page
-        // asks for one of three answers; this is the first — the flow is survivable with
-        // them unenforced. The PT60S deadline bounds the run whatever the step timeouts say;
-        // the rate limit belongs in front of the process and a real deployment puts it
-        // there; and the audits are a statement of what a financial reviewer should be able
-        // to read, which the manifest delivers. Deleting the declarations to buy a green
-        // build would delete the record P4 needs and change nothing about how this transfer
-        // runs. See docs/diagnostics/FLOWX1032.md and the README's "What is declared and not
-        // enforced".
-#pragma warning disable FLOWX1032 // Deliberate: declared, unenforced, and argued in docs/diagnostics/FLOWX1032.md
+        // The suppression below is narrower than it was, and the narrowing is the news.
+        // FLOWX1032 used to report all seven of this flow's .WithPolicy(...) calls, so one
+        // pragma wrapped the whole method. The policy engine now executes
+        // PolicyStage.Resilience, so the three ExternalRead calls in the Switch below carry
+        // no suppression at all: their Timeout, Retry and CircuitBreaker are applied. What
+        // is left is RateLimit, Idempotency and Audit, and each is suppressed beside the
+        // step that declares it rather than by one pragma over the lot.
+        //
+        // The rate limit and the idempotency window here are the first of FLOWX1032's three
+        // answers — the flow is survivable with them unenforced. A real deployment puts the
+        // limit in front of the process, and the endpoint is [HttpTrigger(Idempotent = true)]
+        // so the caller's key already reaches the flow as ctx.IdempotencyKey; what does not
+        // happen is a recorded result being replayed for a repeated key.
+#pragma warning disable FLOWX1032 // RateLimit and Idempotency: stage 1 and stage 3 are not implemented.
         flow
             // Reads the debtor's balance and hands it forward. It does not judge it: the
             // judgement is the arm below, so that "we refuse transfers we cannot fund" is
             // a node in the published graph rather than an `if` inside a class.
             .Step<ValidateTransfer>().WithPolicy(Policies.Admission)
+#pragma warning restore FLOWX1032
 
             // A business outcome, not an exception (ADR-0007). The engine treats this
             // exactly as it treats a capability that returned Result.Fail — the failure
@@ -102,6 +106,12 @@ public sealed partial class ExecuteTransferFlow : Flow<ExecuteTransfer, Transfer
             // is mapped because a DebitInstruction is not something an earlier step
             // returned — it is one half of the validated transfer, and saying so here is
             // what keeps the capability's contract down to one account and one amount.
+            //
+            // The Timeout on these three steps is applied now and the Audit is not, which is
+            // the whole of what the pragma covers. An unwritten financial audit record is a
+            // real loss rather than a conservative default, and ADR-0025 §2.4 says so in
+            // those words instead of filing it beside the two above.
+#pragma warning disable FLOWX1032 // Audit: stage 7's audit record is not implemented.
             .Step<PostDebit, DebitInstruction>(ctx => new DebitInstruction(
                 ctx.Get<ValidatedTransfer>().DebtorIban,
                 ctx.Get<ValidatedTransfer>().Amount,
@@ -126,6 +136,7 @@ public sealed partial class ExecuteTransferFlow : Flow<ExecuteTransfer, Transfer
                 ctx.Get<ValidatedTransfer>().Amount,
                 ctx.Get<ValidatedTransfer>().Currency))
                 .WithPolicy(Policies.SettlementRegister)
+#pragma warning restore FLOWX1032
 
             // Staged into the outbox by the same transaction that commits the step, so the
             // event and the state it announces are one write. The account numbers in the
@@ -146,6 +157,5 @@ public sealed partial class ExecuteTransferFlow : Flow<ExecuteTransfer, Transfer
                 ctx.Get<CreditPosted>().EntryId,
                 ctx.Get<ValidatedTransfer>().Amount,
                 ctx.Get<ValidatedTransfer>().Currency));
-#pragma warning restore FLOWX1032
     }
 }

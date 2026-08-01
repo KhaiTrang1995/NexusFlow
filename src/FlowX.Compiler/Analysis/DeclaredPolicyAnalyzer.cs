@@ -15,22 +15,20 @@ namespace FlowX.Compiler.Analysis;
 /// <remarks>
 /// <para>
 /// <strong>What is actually executed, established from the call sites rather than from the
-/// documents.</strong> <c>FlowEngine</c> reads two policy properties in the whole engine —
-/// <c>ExecutionPlan.HasCompensationPolicies</c> and <c>StepNode.CompensationRetry</c> — and
-/// both are inside <c>CompensateAsync</c>, on the failure path. Underneath them,
-/// <c>PolicyChain.Ordered</c> is read in exactly one place in <c>src/</c>:
-/// <c>CompensationPolicy.From</c>, which <c>continue</c>s past every descriptor whose kind is
-/// not <c>CompensationRetry</c>. <c>StepNode.Policies</c> — the chain that wraps the step
-/// itself — is read by nothing at all. So one of the nine kinds <c>PolicySet</c> offers is
-/// applied, and this analyzer is the build-time statement of that fact.
+/// documents.</strong> <c>FlowEngine</c> reads four policy properties:
+/// <c>ExecutionPlan.HasCompensationPolicies</c> and <c>StepNode.CompensationRetry</c> on the
+/// failure path, and <c>ExecutionPlan.HasStepPolicies</c> and <c>StepNode.StepPolicy</c> in
+/// the step loop. Underneath them, <c>PolicyChain.Ordered</c> is read in exactly two places in
+/// <c>src/</c> — <c>CompensationPolicy.From</c> and <c>StepPolicy.From</c> — and between them
+/// they read five of the nine kinds <c>PolicySet</c> offers. This analyzer is the build-time
+/// statement of the other four.
 /// </para>
 /// <para>
-/// <strong>The cut is by what a policy wraps, not by which stage it runs in.</strong>
-/// <c>Audit</c> is a <c>PolicyStage.Consistency</c> policy — stage 7, the same stage as
-/// <c>CompensationRetry</c> — and it is inert, because <c>PolicyChain.ForStep</c> moves only
-/// <c>CompensationRetry</c> onto the compensation's chain. A rule written against "stages 1–6
-/// do not execute" would be silent on every declared audit, which in a banking flow is the
-/// declaration that most reads as a control.
+/// <strong>The remaining list is a list, not a stage range.</strong> <c>Audit</c> is a
+/// <c>PolicyStage.Consistency</c> policy — stage 7, the same stage as <c>CompensationRetry</c>,
+/// which executes — so a rule written against a range of stages would be wrong about one of
+/// them whichever way it drew the line. <see cref="ExecutedKinds"/> is therefore enumerated,
+/// and pinned against the runtime's own constants by <c>PolicyStageFitnessTests</c>.
 /// </para>
 /// <para>
 /// <strong>Two ids, because they have opposite lifetimes.</strong> FLOWX1032 reports a policy
@@ -69,7 +67,7 @@ namespace FlowX.Compiler.Analysis;
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
 {
-    /// <summary>The one policy kind any code path in this runtime applies.</summary>
+    /// <summary>The compensation retry, which FLOWX1033 and FLOWX1035 are both about.</summary>
     /// <remarks>
     /// <c>PolicySet</c>'s method name, not <c>FlowX.Core</c>'s descriptor kind constant, for
     /// the reason <c>FlowAnalyzer</c> keeps its own copy: <see cref="PolicySetReader"/>
@@ -78,6 +76,35 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     /// <c>nameof</c>, and this assembly targets netstandard2.0 and can see neither.
     /// </remarks>
     private const string CompensationRetryKind = "CompensationRetry";
+
+    /// <summary>Every policy kind some code path in this runtime applies.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The list FLOWX1032 is the complement of, and it is pinned rather than
+    /// asserted.</strong> <c>PolicyStageFitnessTests.FLOWX1032ReportsExactlyTheKindsNothingApplies</c>
+    /// compares it against the real ones — <c>StepPolicy</c>'s four kind constants and
+    /// <c>CompensationPolicy.CompensationRetryKind</c> — because this assembly targets
+    /// netstandard2.0 and can reference neither. A kind added to the engine and forgotten here
+    /// would leave the build warning about a policy that now runs, which teaches an author to
+    /// suppress the rule; forgotten the other way, the rule would go silent on a policy that
+    /// does not.
+    /// </para>
+    /// <para>
+    /// The four stage-4 names arrived with the policy engine
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>).
+    /// <c>RateLimit</c>, <c>Idempotency</c>, <c>Cache</c> and <c>Audit</c> are deliberately
+    /// absent: their stages are not implemented, which is what this rule now reports and the
+    /// whole of what it reports.
+    /// </para>
+    /// </remarks>
+    public static readonly ImmutableHashSet<string> ExecutedKinds =
+        ImmutableHashSet.Create(
+            System.StringComparer.Ordinal,
+            "Timeout",
+            "Retry",
+            "CircuitBreaker",
+            "Bulkhead",
+            CompensationRetryKind);
 
     /// <summary>The call this rule is about.</summary>
     private const string WithPolicyMethod = "WithPolicy";
@@ -365,15 +392,24 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     }
 
     /// <summary>
-    /// FLOWX1032 — every kind in the set except the one the runtime applies.
+    /// FLOWX1032 — every kind in the set that no code path applies.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <strong>Narrowed rather than deleted when the policy engine landed</strong>, exactly as
+    /// WP-52 narrowed <see cref="ExecutionProfileAnalyzer"/>'s rule and as FLOWX1031 was
+    /// narrowed before it was finally deleted. Stage 4 executes, so <c>Timeout</c>,
+    /// <c>Retry</c>, <c>CircuitBreaker</c> and <c>Bulkhead</c> left this report; four kinds
+    /// remain, and an author who declares one still has to be told.
+    /// </para>
+    /// <para>
     /// One report naming every inert kind, rather than one report per kind. A set of eight
     /// reported eight times on one line is how a catalogue gets suppressed wholesale, which
     /// is the argument <see cref="ExecutionProfileAnalyzer"/> already makes for reporting
     /// once at the declaration rather than once per consequence. The kinds arrive ordinally
     /// sorted from <see cref="PolicySetReader"/>, so the message is the same on every build
     /// of the same source.
+    /// </para>
     /// </remarks>
     private static void ReportInertPolicies(
         SyntaxNodeAnalysisContext context,
@@ -381,7 +417,7 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
         string set,
         Location location)
     {
-        var inert = kinds.Where(static kind => kind != CompensationRetryKind).ToList();
+        var inert = kinds.Where(static kind => !ExecutedKinds.Contains(kind)).ToList();
 
         if (inert.Count == 0)
         {

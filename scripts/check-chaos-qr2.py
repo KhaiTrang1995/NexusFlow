@@ -94,7 +94,19 @@ def judge_arm(arm: dict, budget: float) -> dict:
             f"instance, which the lease and the fencing token exist to prevent."
         )
 
-    if lost:
+    if lost and arm.get("convergenceTimedOut"):
+        # A timeout and a lost instance were the same number until the rig started recording
+        # which it was. An instance still running when the coordinator stopped watching is
+        # indistinguishable, from the database alone, from one no recovery scan ever found —
+        # so a runner too slow to drain its backlog filed a correctness failure against a
+        # clause it had not tested. This is the third state, not the second: the run did not
+        # disprove the guarantee, it did not reach a verdict on it.
+        refusals.append(
+            f"{lost} instance(s) were still running when the rig stopped waiting, so they "
+            f"are counted as lost without having been shown to be. Raise --converge-timeout "
+            f"or lower --flows; a run that gave up waiting has not tested the clause."
+        )
+    elif lost:
         failures.append(
             f"{lost} instance(s) never reached a terminal state: journaled, abandoned by a "
             f"killed node, and never picked up."

@@ -266,6 +266,101 @@ public sealed class ExecuteTransferFlowTests
         (await harness.Ledger.AvailableAsync(Debtor, Cancellation)).ShouldBe(500m);
     }
 
+    // ------------------------------------------------------- the policies that now bite
+
+    /// <summary>
+    /// <c>Policies.ExternalRead</c>'s retry survives a screening provider that blinks.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The sample's first assertion that a declared policy changes what happens.</strong>
+    /// Every policy statement in this project used to be of the form "declared, published, and
+    /// executed by nothing"; <c>Policies.ExternalRead</c> declares
+    /// <c>Retry(attempts: 3, ExponentialJitter(200ms))</c> over
+    /// <c>compliance.screen_sanctions</c>, and this is the transfer that would have been
+    /// refused before the policy engine and settles now.
+    /// </para>
+    /// <para>
+    /// Every precondition FLOWX1014 protects is real here rather than hypothetical:
+    /// <c>compliance.screen_sanctions</c> declares <c>Idempotent = true</c>, so the build
+    /// permits the retry, and the failure is <see cref="ErrorCategory.Unavailable"/> — the
+    /// provider did not answer, which is worth asking again, unlike the sanctions <em>hit</em>
+    /// two tests above, which is <see cref="ErrorCategory.Forbidden"/> and terminal.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ATransientScreeningFailureIsRetriedAndTheTransferSettles()
+    {
+        var harness = new TransferHarness()
+            .SubstituteForAttempts("compliance.screen_sanctions", attempts: 1, ProviderDown);
+
+        var result = await harness.RunAsync(Transfer(120m, TransferChannel.Sepa), "t-p1", Cancellation);
+
+        result.IsSuccess.ShouldBeTrue(result.Error?.ToString());
+
+        harness.Executed.ShouldBe(
+            [
+                "transfer.validate",
+                "compliance.screen_sanctions",
+                "compliance.screen_sanctions",
+                "ledger.post_debit",
+                "ledger.post_credit",
+                "settlement.record",
+                "emit:transfer.completed",
+            ],
+            "The provider failed once and the declared Retry asked again. Before the policy " +
+            "engine this list held one screening call and ended there.");
+
+        (await harness.Ledger.AvailableAsync(Creditor, Cancellation)).ShouldBe(120m);
+    }
+
+    /// <summary>
+    /// And the retry is bounded by what the author declared, not by patience.
+    /// </summary>
+    /// <remarks>
+    /// The half that stops the test above from being a statement about an engine that retries
+    /// for ever. Three attempts are declared and a provider that never recovers gets exactly
+    /// three, after which the transfer is refused with the provider's own error and no money
+    /// has moved — the screening step is upstream of both ledger legs, which is why the arm is
+    /// ordered the way it is.
+    /// </remarks>
+    [Fact]
+    public async Task AScreeningProviderThatNeverRecoversIsAskedExactlyTheDeclaredNumberOfTimes()
+    {
+        var harness = new TransferHarness()
+            .Substitute("compliance.screen_sanctions", ProviderDown);
+
+        var result = await harness.RunAsync(Transfer(120m, TransferChannel.Sepa), "t-p2", Cancellation);
+
+        result.IsFailure.ShouldBeTrue();
+        result.Error!.Code.ShouldBe("compliance.screening_unavailable");
+
+        harness.Executed.Count(static id => id == "compliance.screen_sanctions").ShouldBe(
+            3,
+            "Policies.ExternalRead declares Retry(attempts: 3), and attempts includes the " +
+            "first. A fourth would mean the count is read as 'retries' rather than 'attempts'.");
+
+        harness.Executed.ShouldNotContain("ledger.post_debit");
+        harness.Compensated.ShouldBeEmpty();
+
+        (await harness.Ledger.AvailableAsync(Debtor, Cancellation)).ShouldBe(500m);
+    }
+
+    /// <summary>
+    /// The transient failure this bank's <c>ExternalRead</c> set exists for.
+    /// </summary>
+    /// <remarks>
+    /// Declared here rather than in <c>TransferErrors</c>, because no capability in
+    /// <c>samples/banking</c> returns it: <c>ISanctionsScreening</c>'s in-memory
+    /// implementation always answers. Putting it in the sample's published catalogue would
+    /// add a code to the manifest that nothing can produce, which is the shape of claim this
+    /// repository removes rather than adds.
+    /// </remarks>
+    private static readonly Error ProviderDown = new(
+        "compliance.screening_unavailable",
+        "The sanctions screening provider did not answer.",
+        ErrorCategory.Unavailable);
+
     /// <summary>
     /// A step on an untaken arm never runs, which is what makes the arm assertions mean
     /// something.

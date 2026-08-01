@@ -1,0 +1,108 @@
+using System.Diagnostics.Metrics;
+
+namespace FlowX.Observability;
+
+/// <summary>
+/// The instruments behind <a href="../../../docs/12-Observability.md">12-Observability</a> §3's
+/// table, for the eleven rows that have a subject this repository ships.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>Eleven of thirteen, and the two absences are structural.</strong>
+/// <see cref="TelemetryNames.StreamLagRecords"/> has no subject — nothing streams — and
+/// <see cref="TelemetryNames.TriggerAdmittedTotal"/> has a subject and no seam, because a
+/// <c>kind</c> label presupposes the one admission point P3 introduces. Neither is created
+/// here: an instrument that exists and is never written to publishes an empty series, and an
+/// empty series is indistinguishable from a healthy one, which is the exact failure §9's
+/// warning box describes.
+/// </para>
+/// <para>
+/// <strong>Every call site checks <see cref="Instrument.Enabled"/> first.</strong> That is
+/// budget B6 — "telemetry with no listener costs 0 ns and 0 B per step" — and it is a property
+/// of the <em>caller</em>, not of the instrument: <c>Record(value, tags)</c> is cheap with no
+/// listener, but building the tags to pass it is not, because a label value that is not already
+/// a <see cref="string"/> boxes on the way into a <see cref="KeyValuePair{TKey,TValue}"/>. The
+/// guard is what stops a step paying for a box nobody reads.
+/// </para>
+/// <para>
+/// <strong>Durations are seconds, as doubles.</strong> The names say <c>_seconds</c> and the
+/// SLOs in §7 are stated in seconds and milliseconds; a histogram recorded in milliseconds
+/// under a name ending <c>_seconds</c> is the kind of unit mismatch that survives for years
+/// because every dashboard is wrong by the same factor.
+/// </para>
+/// </remarks>
+public static class FlowXMetrics
+{
+    private const string Seconds = "s";
+
+    /// <summary>How long a flow took, end to end. Labels: flow, profile, outcome, tenant.</summary>
+    public static Histogram<double> FlowDuration { get; } = FlowXTelemetry.Meter.CreateHistogram<double>(
+        TelemetryNames.FlowDurationSeconds,
+        Seconds,
+        "Wall-clock duration of one flow execution, from admission to outcome.");
+
+    /// <summary>How many flows have ended, by outcome. Labels: flow, outcome.</summary>
+    public static Counter<long> FlowTotal { get; } = FlowXTelemetry.Meter.CreateCounter<long>(
+        TelemetryNames.FlowTotal,
+        unit: null,
+        "Flow executions that reached an outcome.");
+
+    /// <summary>How long one step took. Labels: flow, step, capability, outcome.</summary>
+    public static Histogram<double> StepDuration { get; } = FlowXTelemetry.Meter.CreateHistogram<double>(
+        TelemetryNames.StepDurationSeconds,
+        Seconds,
+        "Wall-clock duration of one step dispatch.");
+
+    /// <summary>
+    /// How long one capability took. Labels: capability, outcome.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not the same series as <see cref="StepDuration"/> with a label dropped. §9
+    /// diagnoses a latency spike "by capability" and a capability used by six flows is one
+    /// dependency with one p99; aggregating the step histogram over <c>flow</c> would answer a
+    /// different question, because the same capability at two steps of one flow contributes
+    /// twice.
+    /// </remarks>
+    public static Histogram<double> CapabilityDuration { get; } = FlowXTelemetry.Meter.CreateHistogram<double>(
+        TelemetryNames.CapabilityDurationSeconds,
+        Seconds,
+        "Wall-clock duration of one capability invocation.");
+
+    /// <summary>
+    /// Capabilities that threw instead of returning an error. Label: capability.
+    /// </summary>
+    /// <remarks>
+    /// A defect signal, and §7 gives it an SLO of zero with a ticket on any occurrence.
+    /// Counted at the dispatch seam and re-thrown, so the engine still converts it into
+    /// <c>FlowErrors.Unhandled</c> exactly as it did before anything counted it.
+    /// </remarks>
+    public static Counter<long> CapabilityUnhandled { get; } = FlowXTelemetry.Meter.CreateCounter<long>(
+        TelemetryNames.CapabilityUnhandledTotal,
+        unit: null,
+        "Capability invocations that threw. Expected failures are values (ADR-0007), so any of these is a defect.");
+
+    /// <summary>How long a journal call took. Label: operation.</summary>
+    public static Histogram<double> JournalCommit { get; } = FlowXTelemetry.Meter.CreateHistogram<double>(
+        TelemetryNames.JournalCommitSeconds,
+        Seconds,
+        "Wall-clock duration of one IFlowJournal call, whichever store backs it.");
+
+    /// <summary>Leases this node stopped owning while still executing. Label: reason.</summary>
+    public static Counter<long> LeaseLost { get; } = FlowXTelemetry.Meter.CreateCounter<long>(
+        TelemetryNames.LeaseLostTotal,
+        unit: null,
+        "Renewals that were refused or could not be made before the lease would have lapsed.");
+
+    /// <summary>
+    /// Compensations that exhausted their policy. Labels: flow, step. Alert on any occurrence.
+    /// </summary>
+    /// <remarks>
+    /// §7 pages immediately on this one, and it is the only row in that table with a target of
+    /// exactly zero and no burn-rate window: two systems now disagree about the same business
+    /// fact, and nothing automatic resolves it.
+    /// </remarks>
+    public static Counter<long> CompensationFailed { get; } = FlowXTelemetry.Meter.CreateCounter<long>(
+        TelemetryNames.FlowCompensationFailedTotal,
+        unit: null,
+        "Compensations that failed every attempt their policy allowed. An effect is still standing.");
+}

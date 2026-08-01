@@ -98,38 +98,57 @@ public sealed class ReferenceSamplePolicyTests
     // ------------------------------------------------------------------ it fires
 
     /// <summary>
-    /// The rule reports once per <c>.WithPolicy(...)</c> in the reference saga: seven times.
+    /// The rule reports four of the reference saga's seven <c>.WithPolicy(...)</c> calls.
     /// </summary>
     /// <remarks>
-    /// The count is the assertion, not merely the presence. Six would mean one of the two
-    /// calls inside a <c>Case</c> block was missed; eight would mean something is reported
-    /// twice. Both are silent failures a "should contain FLOWX1032" assertion would pass.
+    /// <para>
+    /// <strong>This asserted seven, and the drop to four is the policy engine landing.</strong>
+    /// The three calls that went quiet name <c>Policies.ExternalRead</c> — two of them inside
+    /// <c>Case</c> blocks — whose <c>Timeout</c>, <c>Retry</c> and <c>CircuitBreaker</c> are
+    /// all applied now. The four that remain are <c>Admission</c> once, <c>LedgerPost</c>
+    /// twice and <c>SettlementRegister</c> once, each carrying a <c>RateLimit</c>, an
+    /// <c>Idempotency</c> window or an <c>Audit</c>.
+    /// </para>
+    /// <para>
+    /// The count is the assertion, not merely the presence. Three would mean one of the
+    /// remaining calls was missed; five would mean a set whose every kind now runs is still
+    /// reported, which is how a narrowed rule teaches an author to suppress it anyway.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void EveryPolicyCallInTheReferenceSagaIsReported()
+    public void OnlyThePolicyCallsWhoseKindsAreStillInertAreReported()
     {
         var reported = Report().Where(static d => d.Id == "FLOWX1032").ToList();
 
         reported.Count.ShouldBe(
-            7,
-            "samples/banking declares seven .WithPolicy(...) calls, two of them inside Case " +
-            "blocks. Reported:\n" + Describe(reported));
+            4,
+            "samples/banking declares seven .WithPolicy(...) calls; the three naming " +
+            "Policies.ExternalRead are wholly executed. Reported:\n" + Describe(reported));
 
         reported.ShouldAllBe(static d => d.Severity == DiagnosticSeverity.Warning);
+
+        reported
+            .Select(static d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture))
+            .ShouldAllBe(static m => !m.Contains("Policies.ExternalRead", StringComparison.Ordinal));
     }
 
     /// <summary>
-    /// The ledger legs are told about <c>Audit</c> and <c>Timeout</c>, and not about the
-    /// retry that runs.
+    /// The ledger legs are told about <c>Audit</c> and about nothing else.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The one report in this sample where getting it wrong would be actively harmful:
-    /// <c>Policies.LedgerPost</c> is the set that carries the one policy this runtime
-    /// executes, and naming its <c>CompensationRetry</c> here would tell a payments team
-    /// their reversal is not retried when it is.
+    /// <c>Policies.LedgerPost</c> carries the <c>CompensationRetry</c> that unwinds a failed
+    /// transfer and the <c>Timeout</c> that now bounds the ledger write, and naming either
+    /// here would tell a payments team a control is off when it is on.
+    /// </para>
+    /// <para>
+    /// <strong><c>Timeout</c> moved from the first assertion to the second.</strong> It was
+    /// one of the two kinds this report had to name; it is now one of the two it must not.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void TheLedgerLegsAreToldAboutTheAuditAndNotAboutTheRetry()
+    public void TheLedgerLegsAreToldAboutTheAuditAndNothingElse()
     {
         var ledger = Report()
             .Where(static d => d.Id == "FLOWX1032")
@@ -142,7 +161,7 @@ public sealed class ReferenceSamplePolicyTests
         foreach (var message in ledger)
         {
             message.ShouldContain("Audit");
-            message.ShouldContain("Timeout");
+            message.ShouldNotContain("Timeout");
             message.ShouldNotContain("CompensationRetry");
         }
     }
