@@ -187,7 +187,7 @@ sequenceDiagram
     FE->>J: commit step 9, attempt 1 — Failure
     FE->>D: reverse debit (contra entry, key = …:ledger.reverse_debit)
     FE->>J: commit step 8, attempt 2 — Compensated
-    Note over FE,J: one dispatch per undo — the declared<br/>CompensationRetry does not run; see below
+    Note over FE,J: one dispatch, because the first one worked —<br/>Policies.LedgerPost allows five; see below
 ```
 
 ---
@@ -198,25 +198,40 @@ This is the section the sample exists for. Everything below is in
 `flowx.manifest.json`, is visible to a reviewer, and changes nothing about how the
 program runs. Each one has a test that goes red if that ever stops being true.
 
-### The policy engine is P4, so no policy runs
+### The policy engine is P4, so no *forward* policy runs
 
 `Policies.cs` declares `Timeout`, `Retry`, `CircuitBreaker`, `RateLimit`,
-`Idempotency` and `Audit`. Nothing applies any of them. The manifest records each
-kind with its fixed `PolicyStage`, and that is the whole of their effect.
+`Idempotency` and `Audit`. Nothing applies any of them. They now reach
+`StepNode.Policies` in the compiled plan as well as the manifest — the plan and the
+document agree about what was declared — but no timeout is armed and no rate limit
+is counted, and that is the whole of their effect.
 
-### Worse: `CompensationRetry` is implemented, and is unreachable from the DSL
+### The exception: `CompensationRetry` is implemented, and now reachable
 
 `FlowEngine` really does retry a failing compensation — WP-57 — and reads
-`ExecutionPlan.HasCompensationPolicies` to decide. **The source generator never emits
-a policy chain.** `FlowEmitter` writes every node as
-`StepNode.ForCapability(index, capability, compensation)` and passes no policies, so
-a compiled plan always reports `HasCompensationPolicies == false` and every undo is
-dispatched exactly once. The retry is reachable only from a hand-built
-`ExecutionPlan`.
+`ExecutionPlan.HasCompensationPolicies` to decide. **It used to be unreachable from
+the DSL.** `FlowEmitter` wrote every node as
+`StepNode.ForCapability(index, capability, compensation)` and passed no policies, so
+a compiled plan always reported `HasCompensationPolicies == false` and every undo was
+dispatched exactly once; the retry was reachable only from a hand-built
+`ExecutionPlan`, and `.WithPolicy(Policies.LedgerPost)` published a five-attempt
+retry on both ledger legs that did not exist.
 
-So `.WithPolicy(Policies.LedgerPost)` publishes a five-attempt retry on both ledger
-legs that does not exist. `ManifestTests.ThePlanCarriesNoPolicyChain` asserts both
-halves at once — the document says `CompensationRetry`, the plan says nothing — and
+The emitter now splits a declared set by **what each policy wraps**, because a step
+and its compensation are different calls with different idempotency declarations:
+
+```csharp
+StepNode.ForCapability(8, Descriptors.Step8, Descriptors.Step8Compensation,
+    policies:              PolicyChain.ForStep(Policies.LedgerPost, Descriptors.Step8),
+    compensationPolicies:  PolicyChain.ForCompensation(Policies.LedgerPost, Descriptors.Step8Compensation)),
+```
+
+`Timeout` and `Audit` wrap `ledger.post_debit`; `CompensationRetry` wraps
+`ledger.reverse_debit`, and is checked against *its* `Idempotent = true` — which is
+exactly why the reversals declare it. A reversal that fails with `Conflict`,
+`Unavailable` or `Internal` is now dispatched up to five times with full-jitter
+backoff before the run reports `PartiallyFailed`.
+`ManifestTests.ThePlanCarriesTheDeclaredPolicyChain` asserts both halves at once, and
 fails on the day either changes.
 
 ### There is no `[RateLimit]`, `[Audit]` or `[Timeout]` attribute

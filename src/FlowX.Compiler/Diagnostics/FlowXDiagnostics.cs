@@ -743,6 +743,76 @@ public static class FlowXDiagnostics
         "remaining profile.",
         DiagnosticSeverity.Warning);
 
+    /// <summary>FLOWX1031 — a suspension construct the compiler cannot compile into a plan.</summary>
+    /// <remarks>
+    /// <para>
+    /// <c>AwaitSignal</c>, <c>Delay</c> and <c>OnTimeout</c> are declared on
+    /// <c>IFlowBuilder</c> and documented in <c>08 §3.5</c>, and none of them survives
+    /// compilation. <c>Delay</c> and <c>OnTimeout</c> reach <c>FlowAnalyzer</c>'s
+    /// <c>default:</c> arm and are skipped, so the call produces no step and the block's
+    /// steps reach no plan, no dispatcher and no manifest. <c>AwaitSignal</c> produces a
+    /// step the generated dispatcher answers <c>Success</c> for and the engine has no case
+    /// for, so a flow written to wait runs straight past the wait.
+    /// </para>
+    /// <para>
+    /// <strong>Split severity: an error for <c>AwaitSignal</c>, a warning for the other
+    /// two.</strong> The line is between a construct the compiler <em>omits</em> and one it
+    /// <em>falsifies</em>. A dropped <c>Delay</c> leaves a plan that says less than the
+    /// source and nothing untrue — the category FLOWX1027 occupies, at the severity C#
+    /// gives <c>CS0162</c>. An <c>AwaitSignal</c> reaches the plan, the dispatcher and the
+    /// manifest carrying <c>TimeSpan.FromHours(1)</c>, a value no author wrote, in place of
+    /// one they did; and because the step model carries no timeout to put there instead —
+    /// that field is WP-63's — the only alternative to publishing a fabricated duration is
+    /// publishing no plan, which is what an error means here. Choosing severity per report
+    /// rather than per rule is what FLOWX1011 and FLOWX1025 already do.
+    /// </para>
+    /// <para>
+    /// <strong>Why not a warning throughout, which is FLOWX1028's answer to the same
+    /// shape.</strong> That rule's first argument — an error erases the declaration the
+    /// fixing phase needs to find — carries here, and is why <c>Delay</c> and
+    /// <c>OnTimeout</c> stay warnings. Its second does not: a <c>Streaming</c> flow runs,
+    /// and runs correctly wherever its invocations are genuinely independent, so "confirm
+    /// the flow is correct as it is" is a real remedy there. No flow is correct with a
+    /// seven-day wait compiled to no wait, so there is no confirmation to offer and no
+    /// legitimate program this half of the rule could be reporting on falsely.
+    /// </para>
+    /// <para>
+    /// <strong>The cost, stated rather than avoided.</strong> With
+    /// <see cref="AwaitSignalRequiresDurable"/> an error below <c>Durable</c> and this an
+    /// error at it, <c>AwaitSignal</c> has no profile it can legally declare, and
+    /// <c>AwaitSignalRequiresDurableCodeFixProvider</c> becomes a quick action whose result
+    /// is a different diagnostic. That quick action's premise is that "the author wrote
+    /// <c>AwaitSignal</c>, so the flow suspends"; it does not, and this rule is what makes
+    /// that visible. Weakening the rule so that the fix's output looks clean would restore
+    /// the silence the fix was walking the author into.
+    /// </para>
+    /// <para>
+    /// <strong>Deleted, not fixed, when WP-63 lands durable suspension and timers.</strong>
+    /// A rule that outlives the gap it describes is noise, and noise is what teaches people
+    /// to suppress a catalogue. The deletion table is on
+    /// <c>docs/diagnostics/FLOWX1031.md</c>, and
+    /// <c>TheAbsentHalfTests.AnAwaitSignalStepDoesNotWaitForAnything</c> is its executable
+    /// half.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor SuspensionIsNotHonoured = Create(
+        "FLOWX1031",
+        "Suspension construct is declared but not honoured by the compiler",
+        "Flow '{0}' declares '{1}', which this release cannot honour: {2}",
+        "AwaitSignal, Delay and OnTimeout express a flow that waits, and nothing implements " +
+        "waiting yet. Delay and OnTimeout compile to nothing — the call produces no step, " +
+        "and an OnTimeout block's steps are absent from the plan, from the generated " +
+        "dispatcher and from flowx.manifest.json. AwaitSignal compiles to a step the engine " +
+        "completes immediately, so a flow written to pause for a countersignature runs " +
+        "straight past the pause with a clean journal and a successful result, and the " +
+        "timeout it declared is replaced by a constant. Durable suspension and timers are " +
+        "WP-63, which has not started. Until it lands, express the wait outside the flow: " +
+        "split the process at the pause, trigger the second half from the arriving signal, " +
+        "and replace a Delay with a scheduled trigger. Do not delete the construct and ship " +
+        "the rest — a flow that needed to wait and now does not is the same defect with the " +
+        "evidence removed. This rule is deleted, not fixed, on the day WP-63 lands.",
+        DiagnosticSeverity.Warning);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -772,7 +842,8 @@ public static class FlowXDiagnostics
         TriggerDeclaresNoKind,
         StepIsUnreachableAfterFail,
         StepInputMappingHasWrongType,
-        ProfileIsNotHonouredByTheRuntime);
+        ProfileIsNotHonouredByTheRuntime,
+        SuspensionIsNotHonoured);
 
     private static DiagnosticDescriptor Create(
         string id,

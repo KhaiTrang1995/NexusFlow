@@ -1003,8 +1003,17 @@ public static class FlowEmitter
                 return "StepNode.ForEmit(" + step.Index + ", " + Quote(step.EventType!) + ")";
 
             case StepKindModel.AwaitSignal:
-                return "StepNode.ForAwaitSignal(" + step.Index + ", " + Quote(step.SignalType!) +
-                       ", TimeSpan.FromHours(1))";
+                // This arm used to write the author's signal and a hard-coded one-hour
+                // timeout, whatever duration they declared — so a flow written to wait seven
+                // days published a plan and a manifest saying one hour. The model carries no
+                // timeout to write instead: that field arrives with WP-63, which is also
+                // when the step gets a meaning. Until then FLOWX1031 is an error on every
+                // AwaitSignal, so no model containing one is ever emitted, and this arm
+                // states the invariant rather than inventing a value to satisfy it.
+                throw new System.InvalidOperationException(
+                    "AwaitSignal reaches no execution plan in this release: FLOWX1031 refuses " +
+                    "the flow, because the compiler has no timeout to emit but the one the " +
+                    "author wrote and no way to carry it. See docs/diagnostics/FLOWX1031.md.");
 
             case StepKindModel.Fail:
                 // No payload. The error is in `Failures` above, which is where a business
@@ -1017,9 +1026,91 @@ public static class FlowEmitter
                     : string.Empty;
 
                 return "StepNode.ForCapability(" + step.Index + ", Descriptors.Step" + step.Index +
-                       compensation + ")";
+                       compensation + PolicyArguments(step) + ")";
         }
     }
+
+    /// <summary>
+    /// The declared policy set, split into the chain that wraps the step and the chain that
+    /// wraps its compensation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Until this existed, <c>.WithPolicy(...)</c> reached the manifest and stopped.</strong>
+    /// Every node was emitted as <c>ForCapability(index, capability, compensation)</c>, so
+    /// <c>ExecutionPlan.HasCompensationPolicies</c> was false for every compiled flow and
+    /// <c>PolicySet.CompensationRetry</c> — the one policy this runtime executes — was
+    /// unreachable from the DSL. The document said the undo would be retried; the plan the
+    /// engine walked said it would be dispatched once.
+    /// </para>
+    /// <para>
+    /// <strong>The set is copied verbatim, for the reason <see cref="ParallelNodeExpression"/>
+    /// copies the merge.</strong> <c>PolicySet</c>'s composition is fixed at compile time and
+    /// its parameter <em>values</em> are not, so a set whose attempt count comes from
+    /// configuration has to compile into the plan as the author wrote it. Rebuilding it from
+    /// the kinds this layer read would freeze those values at build time and disagree with the
+    /// source for every expression the reader could not fold.
+    /// </para>
+    /// <para>
+    /// <strong>Nothing is emitted for a set the compiler could not read.</strong>
+    /// <c>StepModel.PolicyKinds</c> is empty exactly when <c>PolicySetReader</c> failed to
+    /// resolve the argument to a declared field or property initialiser — the same signal that
+    /// keeps FLOWX1014 from firing on a guess. An expression that could not be resolved is one
+    /// this emitter cannot promise will even bind inside a static initialiser in a file the
+    /// author did not write, and turning a working build into a compile error there is worse
+    /// than carrying nothing.
+    /// </para>
+    /// <para>
+    /// <strong>The split is by what a policy wraps, not by which stage it runs in.</strong>
+    /// <c>Audit</c> is a <c>Consistency</c> policy and stays on the step; only
+    /// <c>CompensationRetry</c> moves, because only it is checked against the compensating
+    /// capability's idempotency rather than the step's. That is what makes a non-idempotent
+    /// <c>payment.capture</c> carrying an idempotent <c>payment.refund</c> expressible at all.
+    /// </para>
+    /// </remarks>
+    private static string PolicyArguments(StepModel step)
+    {
+        if (step.PolicySetName is not { Length: > 0 } set || step.PolicyKinds.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var node = "Descriptors.Step" + step.Index;
+        var arguments = string.Empty;
+
+        // Nothing is emitted for a half the set is empty on, so a compensation-only set costs
+        // the forward node no call at all — the same reason a step with no set at all is left
+        // exactly as it was.
+        if (step.PolicyKinds.Any(static kind => kind != CompensationRetryKind))
+        {
+            arguments += ", policies: PolicyChain.ForStep(" + set + ", " + node + ")";
+        }
+
+        // A compensation chain with no compensation to wrap is refused by StepNode, and there
+        // is no compensating descriptor to check the retry's idempotency against in any case.
+        // Dropping it is a silent no-op that wants a diagnostic of its own; raising one is the
+        // analyzer's business, not this layer's.
+        if (step.IsCompensable && step.PolicyKinds.Contains(CompensationRetryKind))
+        {
+            arguments += ", compensationPolicies: PolicyChain.ForCompensation(" +
+                         set + ", " + node + "Compensation)";
+        }
+
+        return arguments;
+    }
+
+    /// <summary>
+    /// The one policy kind that wraps a step's compensation rather than the step.
+    /// </summary>
+    /// <remarks>
+    /// A literal rather than a reference to <c>CompensationPolicy.CompensationRetryKind</c>,
+    /// because this assembly targets netstandard2.0 and cannot link against
+    /// <c>FlowX.Core</c> — the same constraint that makes <c>ManifestWriter</c> keep its own
+    /// copy of the stage table. Public for the same reason
+    /// <c>ManifestWriter.KnownPolicyStages</c> is: so a fitness test can compare it with the
+    /// real constant, because an unpinned copy of a safety-relevant name drifts silently.
+    /// </remarks>
+    public const string CompensationRetryKind = "CompensationRetry";
 
     private static string DeadlineExpression(string? iso8601)
     {

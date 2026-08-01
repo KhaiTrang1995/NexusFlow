@@ -17,11 +17,18 @@ waiting.
 > ahead of its phase — it is a **proposal**, and reading it as anything else is
 > the mistake it invites.
 >
-> **There is no durable suspension.** The two members that *are* declared —
-> `AwaitSignal<TSignal>(TimeSpan)` and `Delay(TimeSpan)` — reach the plan, the
-> manifest and the diagram, and `FlowEngine` has no case for
-> `StepKind.AwaitSignal`. Nothing suspends, nothing registers a timer, nothing
-> wakes an instance up. The refusals around the gap are the parts that are real:
+> **There is no durable suspension**, and the two members that *are* declared no
+> longer pretend otherwise. `AwaitSignal<TSignal>(TimeSpan)` used to reach the plan,
+> the manifest and the diagram while `FlowEngine` had no case for
+> `StepKind.AwaitSignal`, so the step completed immediately — and the plan it reached
+> said `TimeSpan.FromHours(1)` however long the author had declared.
+> `Delay(TimeSpan)` reached nothing at all. Both were silent.
+> [`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) ended that: an **error** on
+> `AwaitSignal`, which now emits no plan rather than a fabricated one, and a
+> **warning** on `Delay` and `OnTimeout`, which produce no step. Nothing suspends,
+> nothing registers a timer, nothing wakes an instance up.
+>
+> The other refusals around the gap were already real:
 > [`FLOWX1017`](../../docs/diagnostics/FLOWX1017.md) is an **error** on
 > `AwaitSignal` outside the `Durable` profile, `ExecutionPlan` refuses the same
 > shape again at run time, and
@@ -170,8 +177,11 @@ public async Task Waits_four_hours_in_milliseconds_and_holds_no_resources()
    durability, because an in-memory wait cannot survive a deployment. *This one is
    half true today and worth being exact about: `FLOWX1017` is a shipped error and
    `AwaitSignalRequiresDurableCodeFixProvider` offers the fix — but it fires on
-   `AwaitSignal`, not on the `PollUntil` written above, and WP-63 records that the
-   quick action currently "buys nothing" because `Durable` does not yet suspend.*
+   `AwaitSignal`, not on the `PollUntil` written above, and the quick action's
+   destination is no longer clean. `Durable` does not suspend, so
+   [`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) is an error there too, and the
+   flow has no profile it can legally declare until WP-63 lands. That page argues why
+   that is the accurate description of the platform rather than a trap.*
 2. Deploy mid-wait (restart every node) — every suspended document resumes. *A
    killed node's instances **are** found and finished by another node's recovery
    scan today; what does not exist is the mid-wait to be killed in.*

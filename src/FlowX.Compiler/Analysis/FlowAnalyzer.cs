@@ -294,7 +294,17 @@ public static class FlowAnalyzer
                     break;
 
                 case "AwaitSignal":
-                    AddSignalStep(link, semanticModel, steps, ref nextIndex);
+                    AddSignalStep(link, semanticModel, diagnostics, steps, ref nextIndex);
+                    break;
+
+                case "Delay":
+                case "OnTimeout":
+                    // FLOWX1031. These two reach the `default:` arm below and are skipped,
+                    // which is the right treatment for a method the generator has not
+                    // learned — and the wrong silence for one the DSL already publishes.
+                    // Naming them here is the whole difference between the two cases: the
+                    // call is still not laid out, and the author is told it is not.
+                    ReportSuspension(link, diagnostics, DiagnosticSeverity.Warning, WhatIsLost(link.MethodName));
                     break;
 
                 case "Fail":
@@ -1469,6 +1479,7 @@ public static class FlowAnalyzer
     private static void AddSignalStep(
         ChainLink link,
         SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
         List<StepModel> steps,
         ref int nextIndex)
     {
@@ -1484,11 +1495,73 @@ public static class FlowAnalyzer
             return;
         }
 
+        // FLOWX1031, as an error — the one report in this rule that stops the build rather
+        // than annotating it, and the reason is not that suspension matters more than a
+        // timer. It is that this is the only one of the three that puts something into the
+        // plan. `Delay` and `OnTimeout` are dropped, so the emitted graph says less than the
+        // source and nothing untrue; this reaches the graph, the dispatcher and the manifest
+        // carrying a duration nobody wrote, because the step model has no field to carry the
+        // author's and `StepNode.ForAwaitSignal` demands one. Refusing the flow is what
+        // stops the fabrication: an error here leaves `IsSuccess` false, and
+        // `FlowPlanGenerator` emits neither the plan nor the manifest entry.
+        ReportSuspension(link, diagnostics, DiagnosticSeverity.Error, WhatIsLost(link.MethodName));
+
+        // The step is still modelled. FLOWX1017 reads the built steps to find a suspension
+        // point under the wrong profile, and dropping the model here would silently retire
+        // a shipped rule as a side effect of adding this one.
         steps.Add(StepModel.AwaitSignal(
             nextIndex++,
             ToEventIdentity(symbol.Name),
             FormatLocation(link.CallLocation)));
     }
+
+    /// <summary>
+    /// Reports FLOWX1031 against one call, at the severity that call has earned.
+    /// </summary>
+    /// <remarks>
+    /// One id for three constructs, because they are one fact — this release cannot honour a
+    /// flow that waits — and two ids would give a team two suppressions, two pages and two
+    /// expiry dates for one gap. The severity is chosen per report, which is what
+    /// FLOWX1011 and FLOWX1025 already do; <c>docs/diagnostics/FLOWX1031.md</c> is the
+    /// argument, and the short form is that an omission and a falsification are not the same
+    /// finding.
+    /// </remarks>
+    /// <param name="link">The offending call, whose name span the report points at.</param>
+    /// <param name="diagnostics">Collects everything worth reporting.</param>
+    /// <param name="severity">Error for a construct that fabricates, warning for one that is dropped.</param>
+    /// <param name="consequence">What the author loses, in the terms of this construct.</param>
+    private static void ReportSuspension(
+        ChainLink link,
+        List<Diagnostic> diagnostics,
+        DiagnosticSeverity severity,
+        string consequence) =>
+        diagnostics.Add(Diagnostic.Create(
+            FlowXDiagnostics.SuspensionIsNotHonoured,
+            link.CallLocation,
+            severity,
+            additionalLocations: null,
+            properties: null,
+            EnclosingFlowName(link),
+            link.MethodName,
+            consequence));
+
+    /// <summary>What each unhonoured construct costs, said in that construct's own terms.</summary>
+    /// <remarks>
+    /// Three sentences rather than one, because the three failures are not the same failure.
+    /// A message that said "this does not work" for all of them would leave the reader of an
+    /// <c>OnTimeout</c> report with no way to know that the steps inside the block are absent
+    /// from the manifest they are about to publish.
+    /// </remarks>
+    private static string WhatIsLost(string methodName) => methodName switch
+    {
+        "AwaitSignal" =>
+            "the step completes immediately, so the flow does not wait, and the plan would " +
+            "carry a one-hour timeout in place of the duration declared here",
+        "Delay" =>
+            "the call produces no step at all, so the flow continues without waiting",
+        _ =>
+            "the block is discarded, so its steps reach no plan, no dispatcher and no manifest",
+    };
 
     private static void AttachCompensation(ChainLink link, SemanticModel semanticModel, List<StepModel> steps)
     {
@@ -1550,8 +1623,12 @@ public static class FlowAnalyzer
         var argument = link.Invocation.ArgumentList.Arguments[0];
         var kinds = PolicySetReader.Read(argument.Expression, semanticModel);
 
+        // The expression, not the whole argument, as everywhere else in this file. The
+        // difference used to be invisible because nothing read the text back; the emitter now
+        // copies it into a call of its own, where the argument *name* of a named argument —
+        // `.WithPolicy(policy: Policies.Undo)` — cannot travel with it.
         var last = steps.Count - 1;
-        var step = steps[last].WithPolicy(argument.ToString(), kinds.ToArray());
+        var step = steps[last].WithPolicy(argument.Expression.ToString(), kinds.ToArray());
 
         ReportPolicyConflicts(step, link, diagnostics);
 

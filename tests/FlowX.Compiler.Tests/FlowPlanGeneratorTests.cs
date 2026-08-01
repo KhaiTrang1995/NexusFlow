@@ -497,6 +497,244 @@ public sealed class FlowPlanGeneratorTests
         run.Ids.ShouldNotContain("FLOWX1014", run.Describe());
     }
 
+    // ------------------------------------------------------- .WithPolicy reaches the plan
+
+    /// <summary>
+    /// The declared compensation retry arrives on the node the unwind reads.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the assertion that closes WP-57's named gap.</strong>
+    /// <c>PolicySet.CompensationRetry</c> shipped with an executor — <c>FlowEngine.UndoAsync</c>
+    /// honours attempts, backoff and retryable categories — and no way to reach it, because the
+    /// emitter passed no <c>PolicyChain</c> to <c>StepNode.ForCapability</c>. Every compiled
+    /// plan therefore reported <c>HasCompensationPolicies == false</c> and every failing undo
+    /// was dispatched exactly once, whatever the author wrote and whatever the manifest said.
+    /// </para>
+    /// <para>
+    /// The set is copied verbatim rather than reconstructed, for the reason a <c>merge:</c>
+    /// expression is: <c>PolicySet</c>'s composition is fixed at compile time but its parameter
+    /// <em>values</em> are not, so a set whose attempt count comes from configuration must
+    /// still compile into the plan as written.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ADeclaredCompensationRetryReachesThePlan()
+    {
+        var source = WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Undo = PolicySet
+                    .Named("inventory-undo")
+                    .CompensationRetry(attempts: 3);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>().CompensateWith<ReleaseInventory>()
+                        .WithPolicy(Policies.Undo)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """);
+
+        GeneratorHarness.GeneratedCompileErrorsIn(source).ShouldBeEmpty();
+
+        var run = GeneratorHarness.Run(source);
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+
+        run.Plan.ShouldContainText(
+            "compensationPolicies: PolicyChain.ForCompensation(Policies.Undo, Descriptors.Step0Compensation)",
+            "The chain wraps the compensating capability, so it is built against the " +
+            "compensation's descriptor and not the step's.");
+
+        run.Plan.ShouldNotContainText(
+            "policies: PolicyChain.ForStep(Policies.Undo",
+            "This set says nothing about the forward path, so nothing is emitted for it.");
+    }
+
+    /// <summary>The forward half of a set reaches the plan as well — carried, still not run.</summary>
+    /// <remarks>
+    /// Carrying it is not executing it. Nothing in <c>FlowEngine</c> reads
+    /// <c>StepNode.Policies</c>; the Policy Engine is P4, and the forward path executes zero
+    /// policies before and after this change. What changes is that the plan now says what the
+    /// manifest says, so the two artifacts stop disagreeing about the same source line.
+    /// </remarks>
+    [Fact]
+    public void TheForwardHalfOfASetReachesThePlanToo()
+    {
+        var source = WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Ledger = PolicySet
+                    .Named("ledger")
+                    .Timeout(System.TimeSpan.FromSeconds(5))
+                    .Audit("financial")
+                    .CompensationRetry(attempts: 5);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>().CompensateWith<ReleaseInventory>()
+                        .WithPolicy(Policies.Ledger)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """);
+
+        GeneratorHarness.GeneratedCompileErrorsIn(source).ShouldBeEmpty();
+
+        var run = GeneratorHarness.Run(source);
+
+        run.Plan.ShouldContainText(
+            "policies: PolicyChain.ForStep(Policies.Ledger, Descriptors.Step0)",
+            "Timeout and Audit wrap the step, and are checked against the step's capability.");
+
+        run.Plan.ShouldContainText(
+            "compensationPolicies: PolicyChain.ForCompensation(Policies.Ledger, Descriptors.Step0Compensation)",
+            "and the compensation retry wraps the undo, out of the same declared set.");
+    }
+
+    /// <summary>A step with no <c>.WithPolicy</c> emits no chain at all.</summary>
+    /// <remarks>
+    /// <c>ExecutionPlan.HasCompensationPolicies</c> exists so a flow that declares nothing pays
+    /// nothing — budget B2's hard zero on the ephemeral path is gated on it. An emitter that
+    /// passed <c>PolicyChain.Empty</c> everywhere would still be correct and would still cost a
+    /// call per node at type initialisation for a feature the flow does not use.
+    /// </remarks>
+    [Fact]
+    public void AStepWithNoDeclaredPolicyCarriesNoChain()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>().CompensateWith<ReleaseInventory>()
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Plan.ShouldContainText(
+            "StepNode.ForCapability(0, Descriptors.Step0, Descriptors.Step0Compensation),",
+            "The node the emitter has always produced, unchanged.");
+
+        run.Plan.ShouldNotContainText("PolicyChain", "Nothing declared, nothing carried.");
+    }
+
+    /// <summary>
+    /// A set the compiler could not read is not emitted, for the reason it is not diagnosed.
+    /// </summary>
+    /// <remarks>
+    /// <c>PolicySetReader</c> returns nothing for a set that is not a field or property
+    /// initialiser in source, which is what keeps FLOWX1014 from firing on a guess. The emitter
+    /// reads the same signal: an expression the compiler could not resolve to a declared set is
+    /// an expression it cannot promise will bind — or even be legal — inside a static
+    /// initialiser in the generated file, and emitting it would turn a working build into a
+    /// compile error in a file the author did not write.
+    /// </remarks>
+    [Fact]
+    public void APolicySetTheCompilerCouldNotReadIsNotEmitted()
+    {
+        var source = WithFlow("""
+            public static class Policies
+            {
+                public static PolicySet Build() => PolicySet.Named("x").CompensationRetry(3);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>().CompensateWith<ReleaseInventory>()
+                        .WithPolicy(Policies.Build())
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """);
+
+        GeneratorHarness.GeneratedCompileErrorsIn(source).ShouldBeEmpty();
+        GeneratorHarness.Run(source).Plan.ShouldNotContainText(
+            "PolicyChain",
+            "A set built at run time cannot be inspected at compile time, and a guess in a " +
+            "generated static initialiser is a build the author cannot fix.");
+    }
+
+    /// <summary>
+    /// A compensation retry on a step with no compensation is dropped rather than emitted.
+    /// </summary>
+    /// <remarks>
+    /// <c>StepNode.ForCapability</c> refuses a compensation chain with no compensation to
+    /// wrap — "a policy chain that wraps nothing is a promise the unwind cannot keep" — and
+    /// there is no compensating descriptor to validate the retry against in any case. So the
+    /// emitter leaves it out rather than producing a plan whose type initialiser throws.
+    /// <strong>This is a silent no-op, and it wants a diagnostic</strong>; raising one is
+    /// <c>FlowAnalyzer</c>'s business and is proposed rather than taken here.
+    /// </remarks>
+    [Fact]
+    public void ACompensationRetryOnAStepWithNoCompensationIsNotEmitted()
+    {
+        var source = WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Undo = PolicySet
+                    .Named("undo")
+                    .CompensationRetry(attempts: 3);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>().WithPolicy(Policies.Undo)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """);
+
+        GeneratorHarness.GeneratedCompileErrorsIn(source).ShouldBeEmpty();
+        GeneratorHarness.Run(source).Plan.ShouldNotContainText(
+            "PolicyChain",
+            "There is no compensation for the chain to wrap, and StepNode refuses one.");
+    }
+
+    /// <summary>The set is named where it was written, whatever the argument's spelling.</summary>
+    /// <remarks>
+    /// A named argument is legal C# — <c>.WithPolicy(policy: Policies.Undo)</c> — and the
+    /// emitter copies the expression into a call of its own, where the argument's <em>name</em>
+    /// is not a thing that can travel with it. Carrying the whole argument text would produce
+    /// <c>ForCompensation(policy: Policies.Undo, Descriptors.Step0Compensation)</c>, which is a
+    /// positional argument after a named one and does not compile.
+    /// </remarks>
+    [Fact]
+    public void ANamedArgumentCarriesTheExpressionAndNotTheArgumentName()
+    {
+        var source = WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Undo = PolicySet
+                    .Named("undo")
+                    .CompensationRetry(attempts: 3);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>().CompensateWith<ReleaseInventory>()
+                        .WithPolicy(policy: Policies.Undo)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """);
+
+        GeneratorHarness.GeneratedCompileErrorsIn(source).ShouldBeEmpty();
+
+        GeneratorHarness.Run(source).Plan.ShouldContainText(
+            "PolicyChain.ForCompensation(Policies.Undo, Descriptors.Step0Compensation)",
+            "The expression travels; the parameter name it was written against does not.");
+    }
+
     [Fact]
     public void ReadsAPolicySetDeclaredAsAnExpressionBodiedProperty()
     {

@@ -78,12 +78,17 @@ placement service. Correctness rests on two well-understood primitives:
 complexity that other runtimes take on — see
 [ADR-0006](adr/ADR-0006-journal-and-leases.md).
 
-Both of those stores are real: the journal and the lease store are
-`plugins/FlowX.Postgres` (WP-53). The outbox drawn beside them is a table in the same
-schema with no publisher behind it (WP-56), and the Redis lease store the diagram
-offers as the alternative is WP-54 and does not exist. What has never happened is the
-top half of the diagram — the three nodes are three hosts in one test process, and the
-deployment shape is still design.
+Both of those stores are real, and so is the alternative the diagram offers: the journal
+and a lease store are `plugins/FlowX.Postgres` (WP-53), and `plugins/FlowX.Redis` (WP-54)
+is a second lease store that passes the same conformance suite **unmodified**
+([ADR-0019](adr/ADR-0019-redis-lease-store.md)). The outbox drawn beside them has a
+publisher (WP-56) that drains it at-least-once in per-`partition_key` order; what it hands
+events to is an `IEventPublisher` with no broker implementation, so the arrow to the broker
+is the one edge in this diagram with nothing behind it.
+
+*This paragraph said the outbox had no publisher and that the Redis store did not exist.
+Both expired on 2026-07-31.* What has still never happened is the top half of the diagram —
+the three nodes are three hosts in one test process, and the deployment shape is design.
 
 ---
 
@@ -201,8 +206,11 @@ and they are corrected above rather than quietly redrawn
   expiry are an `UPDATE` to `expires_at`. See §3.
 
 `flow_signal` is the one entity above with no table behind it. Durable suspension and
-`AwaitSignal` are WP-63 ([`FLOWX1017`](diagnostics/FLOWX1017.md)), and a durable flow
-still runs to completion inside one invocation.
+`AwaitSignal` are WP-63, and a durable flow still runs to completion inside one
+invocation — so no instance is ever `Suspended` and no signal is ever delivered.
+[`FLOWX1017`](diagnostics/FLOWX1017.md) refuses `AwaitSignal` below the `Durable`
+profile, and [`FLOWX1031`](diagnostics/FLOWX1031.md) refuses it at that profile too:
+between them, no flow can declare a suspension point this schema has nowhere to record.
 
 | Property | Guarantee |
 |---|---|

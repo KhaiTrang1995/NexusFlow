@@ -143,7 +143,21 @@ error mapping and the idempotency filter.
 | `POST /api/v1/orders` | run `order.place` | Bearer (from capability stance) | `Idempotency-Key` **required** | 200 + result | 400 validation, 401, 403, 409 conflict, 429 quota, 503 unavailable |
 | `GET /api/v1/orders/{id}` | run `order.get` | Bearer | n/a (safe) | 200 | 404 |
 | `GET /api/v1/flows/{instanceId}` | instance status | operator scope | n/a | 200 | 404 |
-| `POST /api/v1/flows/{instanceId}/signals/{name}` | deliver a signal | Bearer | natural (state machine) | 202 | 404, 409 not suspended |
+| `POST /api/v1/flows/{instanceId}/signals/{name}` | deliver a signal — **design only, see below** | Bearer | natural (state machine) | 202 | 404, 409 not suspended |
+
+> [!WARNING]
+> **The signal row is a design, and nothing generates that endpoint.** No instance is
+> ever `Suspended`, because no flow can declare a suspension point:
+> [`FLOWX1031`](diagnostics/FLOWX1031.md) is an error on `AwaitSignal` and a warning on
+> `Delay` and `OnTimeout`, and
+> [06 §6](06-Execution-Engine.md#6-suspension-waiting-without-holding-resources) says
+> why. There is no signal table for a delivered signal to be appended to either.
+> Durable suspension is [WP-63](20-Roadmap.md#3-increment-detail), and this row lands
+> with it.
+>
+> The other three rows are real. Until WP-63, a process that has to wait for an external
+> party is expressed as two flows — the second one triggered by that party's own request —
+> which is what the trigger model already supports.
 
 ```jsonc
 // POST /api/v1/orders  → 200

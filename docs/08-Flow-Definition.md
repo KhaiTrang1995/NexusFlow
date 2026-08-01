@@ -120,11 +120,19 @@ allocates is the author's own.
 flow.Step<AssessRisk>()
     .When(ctx => ctx.Get<RiskScore>().Value > 80, high => high
         .Step<RequestManualReview>()
-        .AwaitSignal<ReviewDecision>(timeout: TimeSpan.FromHours(24)))
+        .Step<RecordReviewDecision>())
     .Otherwise(low => low
         .Step<AutoApprove>())
     .Step<NotifyApplicant>();
 ```
+
+> The high-risk arm used to read `.AwaitSignal<ReviewDecision>(TimeSpan.FromHours(24))`,
+> which is the honest shape for a review a person performs — and it does not compile:
+> [`FLOWX1031`](diagnostics/FLOWX1031.md) is an error on `AwaitSignal`, inside a
+> conditional block as much as at the top level. Until
+> [WP-63](20-Roadmap.md#3-increment-detail), a decision a person makes arrives with the
+> request or through a second flow the reviewer's action triggers, which is what the
+> step above records. See [§3.5](#35-waiting).
 
 Conditions may read **only** `ctx.State`, `ctx.Input` and prior step results
 (`FLOWX1011`). A condition that reads a clock, a static, or an external service
@@ -289,16 +297,34 @@ deliberately does not cover this one, exactly as it does not cover a fork.
 
 ### 3.5 Waiting
 
+> [!WARNING]
+> **None of this works, and the snippet below does not compile.** All three
+> constructs are reported by [`FLOWX1031`](diagnostics/FLOWX1031.md); durable
+> suspension and timers are [WP-63](20-Roadmap.md#3-increment-detail), which has not
+> started. The section stays because the shape is the one WP-63 builds, and deleting
+> it would leave the DSL publishing three methods no document describes.
+
 ```csharp
-flow.AwaitSignal<PaymentConfirmed>(timeout: TimeSpan.FromMinutes(30))
-        .OnTimeout(f => f.Step<CancelPendingOrder>())
-    .Delay(TimeSpan.FromHours(1))            // durable timer, holds no resources
+flow.AwaitSignal<PaymentConfirmed>(timeout: TimeSpan.FromMinutes(30))  // FLOWX1031, error
+        .OnTimeout(f => f.Step<CancelPendingOrder>())                  // FLOWX1031, warning
+    .Delay(TimeSpan.FromHours(1))            // FLOWX1031, warning — no step is produced
     .Step<SendFollowUp>();
 ```
 
-`AwaitSignal` and `Delay` are only available in `Durable` flows — using them in
-an `Ephemeral` flow is `FLOWX1017` (error), because an in-memory wait cannot
-survive a deployment.
+| Construct | Intended | What the compiler does with it today |
+|---|---|---|
+| `.AwaitSignal<T>(timeout)` | suspends until the signal arrives, holding no thread, no memory and no lease | Produced a step the engine completes immediately, in a plan carrying `TimeSpan.FromHours(1)` however long the author declared. Now an **error**, and no plan is emitted for the flow |
+| `.OnTimeout(block)` | the branch taken when the signal never arrives | The block is **discarded** — its steps reach no plan, no dispatcher and no `flowx.manifest.json`. A **warning** |
+| `.Delay(duration)` | a durable timer holding no resources while it waits | **No step at all**, so the flow continues without waiting. A **warning** |
+
+`AwaitSignal` and `Delay` are declared `Durable`-only, and using `AwaitSignal` in an
+`Ephemeral` flow is [`FLOWX1017`](diagnostics/FLOWX1017.md) (error), because an
+in-memory wait cannot survive a deployment. **`Durable` does not buy the wait
+either** — that is what `FLOWX1031` reports, and what
+[06 §6](06-Execution-Engine.md#6-suspension-waiting-without-holding-resources) now
+says. Until WP-63 lands, express the wait outside the flow: split the process at the
+pause and trigger the second half from the arriving signal, and replace a `Delay`
+with a scheduled trigger.
 
 ### 3.6 Emitting events
 
@@ -354,12 +380,17 @@ flow.Step<ValidateOrder>()
 
 `AwaitCompletion` is refused at build time under **every** profile. It needs a durable
 **suspension point**, and there is none: WP-52 gave the runtime a journal, but a durable
-flow still runs to completion inside one invocation — suspension is WP-63. And unlike
-`AwaitSignal` — which
-degenerates honestly into a step that completes — a sub-flow has no truthful degenerate
-form: running it inline instead would change the parent's deadline and failure semantics,
-and skipping it would drop business logic. [`FLOWX1026`](diagnostics/FLOWX1026.md) says so
-rather than the compiler guessing.
+flow still runs to completion inside one invocation — suspension is WP-63. A sub-flow has
+no truthful degenerate form either: running it inline instead would change the parent's
+deadline and failure semantics, and skipping it would drop business logic.
+[`FLOWX1026`](diagnostics/FLOWX1026.md) says so rather than the compiler guessing.
+
+> *This paragraph used to contrast `AwaitCompletion` with `AwaitSignal`, "which degenerates
+> honestly into a step that completes". It does not degenerate honestly — a flow written to
+> wait runs straight past the wait with a clean journal and a successful result, and the
+> plan carried a timeout the author never wrote. That is why `AwaitSignal` is now refused
+> too, by [`FLOWX1031`](diagnostics/FLOWX1031.md). The two constructs are in the same
+> position, not on opposite sides of a line.*
 
 **A sub-flow is one node, and the child's steps are not in the parent's graph.** The parent
 compiles to a single `StepKind.SubFlow` with no target; the child has its own
@@ -477,8 +508,8 @@ edge out of it.
 | `.SubFlow<TFlow>(map, mode)` | compose flows | all |
 | `.Emit<TEvent>(map)` | publish a domain event | all |
 | `.EmitOnFailure<TEvent>(map)` | publish on failure path | all |
-| `.AwaitSignal<T>(timeout).OnTimeout(b)` | external wait | Durable |
-| `.Delay(duration)` | durable timer | Durable |
+| `.AwaitSignal<T>(timeout).OnTimeout(b)` | external wait | Durable — but **not honoured**: [`FLOWX1031`](diagnostics/FLOWX1031.md), an error on the `AwaitSignal` and a warning on the `OnTimeout` |
+| `.Delay(duration)` | durable timer | Durable — but **not honoured**: [`FLOWX1031`](diagnostics/FLOWX1031.md) warns, and no step is produced |
 | `.Window(spec)` / `.Aggregate(...)` | stream windowing | Streaming |
 | [`.Fail(error)`](#38-failing) | terminate with a business error, unwinding what completed | all |
 | `.Return(projection)` | produce the flow output | all |

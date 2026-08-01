@@ -106,7 +106,7 @@ public sealed partial class ProvisionWorkspaceFlow : Flow<ProvisionWorkspace, Wo
 | `ForEach` | one item of kit at a time | `AnEmptyCollectionRunsTheBodyNotAtAll`, `EachElementTakesItsOwnArmOfTheConditionalInsideTheLoop` |
 | `When` / `Otherwise` | **inside the loop**, and again at the top level | the two loop tests above, `ScreeningRunsWhenTheOfferAsksForIt`, `ScreeningIsWaivedWhenTheOfferDoesNotAskForIt` |
 | `SubFlow` | `workspace.provision` | `SubFlowTests` (whole class) |
-| `WithPolicy` | `identity.create`, `workspace.allocate_desk` | `WithPolicyTests` — **and see [§3](#3-withpolicy-reaches-the-manifest-and-not-the-plan)** |
+| `WithPolicy` | `identity.create`, `workspace.allocate_desk` | `WithPolicyTests` — **and see [§3](#3-withpolicy-reaches-the-plan-one-of-its-policies-runs)** |
 | `Emit` | `employee.onboarded` | `ManifestTests.TheEventIsPublishedWithoutASuppression`, and the outbox row in [§5](#5-what-it-actually-does-when-you-run-it) |
 | `Durable` + `[FlowDeadline]` | both flows | `TimeoutTests`, `ResumeTests` |
 | `OnTimeout` | **absent** | [§2](#2-what-this-sample-does-not-do-and-why) |
@@ -159,7 +159,8 @@ flow.Step<ValidateOffer>()
     .Return(ctx => ctx.Get<Done>());
 ```
 
-That compiles with **0 errors and 0 warnings** under `Profile = Durable`, and produces:
+That **used to compile** with **0 errors and 0 warnings** under `Profile = Durable`, and
+produce:
 
 ```csharp
 // obj/generated/FlowX.Compiler/FlowX.Compiler.FlowPlanGenerator/…Flow.g.cs
@@ -200,6 +201,43 @@ and no timer, and it says so here rather than pretending the domain never needed
 `RecordEquipmentApproval` records an approval that arrived *with the request*, and is not a
 step that waits for a person.
 
+### What the compiler says now
+
+[`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) closed the silence. The same throwaway
+project, same profile, same three lines:
+
+```
+Flows.cs(29,10): error FLOWX1031: Flow 'AcceptOfferFlow' declares 'AwaitSignal', which this
+  release cannot honour: the step completes immediately, so the flow does not wait, and the
+  plan would carry a one-hour timeout in place of the duration declared here
+Flows.cs(30,14): warning FLOWX1031: Flow 'AcceptOfferFlow' declares 'OnTimeout', which this
+  release cannot honour: the block is discarded, so its steps reach no plan, no dispatcher
+  and no manifest
+Flows.cs(31,10): warning FLOWX1031: Flow 'AcceptOfferFlow' declares 'Delay', which this
+  release cannot honour: the call produces no step at all, so the flow continues without
+  waiting
+```
+
+**And there is no longer a generated plan for that flow at all.** The `AwaitSignal` report
+is an *error*, so the generator emits neither the plan nor the manifest entry — which is
+what removes the fourth failure above, the one that is not about suspension. `FlowEmitter`
+no longer contains `TimeSpan.FromHours(1)`: the compiler has no timeout to write but the one
+the author declared, and the model has nowhere to carry it until WP-63 adds the field. Given
+a choice between publishing a duration nobody wrote and publishing nothing, it publishes
+nothing.
+
+`Delay` and `OnTimeout` stay **warnings**, because dropping a call leaves a plan that says
+less than the source and nothing untrue — the category `FLOWX1027` occupies at the severity
+C# gives `CS0162`. The full argument, including why `FLOWX1028`'s "an error would erase the
+inventory" reasoning stops where it does, is on
+[the page](../../docs/diagnostics/FLOWX1031.md#why-awaitsignal-is-an-error-and-the-other-two-are-warnings).
+
+One consequence is worth stating plainly: with `FLOWX1017` an error below `Durable` and
+`FLOWX1031` an error at it, **`AwaitSignal` has no profile it can legally declare**, and
+`AwaitSignalRequiresDurableCodeFixProvider` is a quick action whose result is a different
+diagnostic. That is an accurate description of a platform with no suspension engine rather
+than a cost the rule imposes, and it is argued rather than assumed on the page.
+
 **The one timeout that does work is the flow's own deadline.** `[FlowDeadline("PT60S")]` is
 an absolute budget set when the flow starts, checked at every step boundary, and enforced by
 failing the flow and unwinding everything compensable — `TimeoutTests` moves the clock past
@@ -208,7 +246,7 @@ starts, and the saga unwinds.
 
 ---
 
-## 3. `WithPolicy` reaches the manifest and not the plan
+## 3. `WithPolicy` reaches the plan; one of its policies runs
 
 `docs/10-Policy-Framework.md` says exactly one policy is applied at run time —
 `CompensationRetry`, at stage 7 — and that on the forward path there is no policy execution
@@ -216,12 +254,12 @@ at all. The first half is true of the **engine**: `FlowEngine` reads
 `StepNode.CompensationRetry` and honours attempts, backoff and retryable categories, which
 `CompensationPolicyTests` proves against a hand-built plan.
 
-It is not true of a flow written in the DSL. `FlowX.Compiler`'s `FlowEmitter` emits no
-`PolicyChain` anywhere, so every generated `StepNode.ForCapability(...)` carries an id, a
-descriptor and at most a compensation — and `StepNode.Policies` and
-`StepNode.CompensationPolicies` are `PolicyChain.Empty` on every step of every compiled flow.
-`ManifestWriter` is a different class and does publish the set, so a reader of
-`flowx.manifest.json` sees this on `identity.create`:
+**It used not to be true of a flow written in the DSL.** `FlowX.Compiler`'s `FlowEmitter`
+emitted no `PolicyChain` anywhere, so every generated `StepNode.ForCapability(...)` carried an
+id, a descriptor and at most a compensation — and `StepNode.Policies` and
+`StepNode.CompensationPolicies` were `PolicyChain.Empty` on every step of every compiled flow.
+`ManifestWriter` is a different class and published the set regardless, so a reader of
+`flowx.manifest.json` saw this on `identity.create`:
 
 ```json
 "policies": [ { "kind": "CircuitBreaker", "stage": "Resilience" },
@@ -229,11 +267,28 @@ descriptor and at most a compensation — and `StepNode.Policies` and
               { "kind": "Timeout",        "stage": "Resilience" } ]
 ```
 
-…and nothing arms any of them. The sharper case is `Policies.FacilitiesUndo` on
-`workspace.allocate_desk`: `CompensationRetry` is the one policy kind the engine knows how to
-execute, attached to the one kind of step it applies to, and it still never arrives — so that
-desk's undo is a single attempt whatever the set says. `WithPolicyTests` asserts the
-publication and the emptiness as a pair; both invert the day the generator emits a chain.
+…and nothing armed any of them, nor could. The emitter now splits a declared set by **what
+each policy wraps** — `CompensationRetry` onto the compensation's chain, checked against the
+*compensating* capability's idempotency, everything else onto the step's — and passes both
+halves to `StepNode.ForCapability`:
+
+```csharp
+StepNode.ForCapability(7, Descriptors.Step7, Descriptors.Step7Compensation,
+    policies: PolicyChain.ForStep(Policies.DirectoryService, Descriptors.Step7)),
+```
+
+The three above are still armed by nothing: the Policy Engine is P4 and the forward path
+executes zero policies. What changed is that the plan now *states* what was declared, so a
+reader of the plan and a reader of the manifest stop disagreeing about the same source line.
+
+**The one that does run** is `Policies.FacilitiesUndo` on `workspace.allocate_desk`.
+`CompensationRetry` is the one policy kind the engine knows how to execute, attached to the
+one kind of step it applies to, and it now arrives: `ProvisionWorkspaceFlow.Plan
+.HasCompensationPolicies` is `true`, and a `workspace.release_desk` that fails with a
+retryable category is dispatched up to three times before the unwind gives up on it.
+`WithPolicyTests` asserts the publication, the plan and the retried dispatch together — and
+also that `employee.onboard`, which declares no compensation policy on any of its six
+compensable steps, keeps `HasCompensationPolicies == false` and pays nothing.
 
 What *is* real is the build-time half. `Policies.DirectoryService` declares a retry, and
 `FLOWX1014` refuses a retry on a capability that does not declare itself idempotent. That
@@ -469,11 +524,11 @@ after the three runs in §5 every row has `flow_instance.input IS NULL` and
 
 | Missing | Work package |
 |---|---|
-| `AwaitSignal` — a durable suspension point, a signal table, and a compiler that keeps the declared timeout | WP-63 |
-| `Delay` — a durable timer, and a `case` in `FlowAnalyzer` | WP-63 |
-| `OnTimeout` — a `case` in `FlowAnalyzer`, a layout for the branch, and something to time out of | WP-63 |
+| `AwaitSignal` — a durable suspension point, a signal table, and a compiler that keeps the declared timeout: a field on the step model, a parameter through `FlowEmitter`, a manifest column | WP-63 — and [`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) is deleted with it |
+| `Delay` — a durable timer, and a `case` in `FlowAnalyzer` that lays out a step rather than reporting one | WP-63 |
+| `OnTimeout` — a layout for the branch, and something to time out of | WP-63 |
 | A resumed flow that can bind step outputs (§7.1) | WP-59 |
-| A policy chain in the compiled plan (§3) | P4, and the generator half is unassigned |
+| A forward policy that *executes* — the chain is in the compiled plan (§3), and nothing arms it | P4 |
 | A per-branch context, so a fork replays (§6.1) | unassigned |
 | A resumed parent that rebuilds a child's unwind stack (§6.2) | unassigned; needs a journal or index contract change |
 

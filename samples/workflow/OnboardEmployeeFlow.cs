@@ -89,12 +89,13 @@ public sealed partial class OnboardEmployeeFlow : Flow<OnboardEmployee, Onboardi
                 // comes back on, and cannot tell a deliberate rejection from an accident.
                 .Default(unsupported => unsupported.Fail(OnboardingErrors.UnsupportedEmployment))
 
-            // The policy set reaches flowx.manifest.json and stops there. It does not reach
-            // the compiled plan: the generator emits no PolicyChain, so this step's
-            // StepNode.Policies is Empty and nothing arms the timeout, the retry or the
-            // breaker. What is real is the build-time check — the retry is only legal because
-            // identity.create declares Idempotent = true, and FLOWX1014 would refuse it
-            // otherwise. See Policies.cs, and WithPolicyTests, which pins the gap.
+            // The policy set reaches flowx.manifest.json and this step's StepNode.Policies,
+            // and stops there: the Policy Engine is P4, so nothing arms the timeout, the retry
+            // or the breaker. Carried is not run — what the plan now says is what was declared,
+            // which is the precondition for P4 executing it. What is real today is the
+            // build-time check: the retry is only legal because identity.create declares
+            // Idempotent = true, and FLOWX1014 would refuse it otherwise. See Policies.cs, and
+            // WithPolicyTests, which pins both halves.
             .Step<CreateIdentity>().CompensateWith<DisableIdentity>()
                 .WithPolicy(Policies.DirectoryService)
 

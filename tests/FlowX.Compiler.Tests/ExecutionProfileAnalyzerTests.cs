@@ -248,8 +248,20 @@ public sealed class ExecutionProfileAnalyzerTests
     /// </para>
     /// <para>
     /// Narrowing to <c>Streaming</c> retired the conflict outright rather than balancing it,
-    /// so the claim worth asserting is now the stronger one: the fix's output is clean.
-    /// The severity stays a Warning on its own merits, which the test above states.
+    /// so the claim worth asserting is now the stronger one: <em>this</em> rule is silent
+    /// about the fix's output. The severity stays a Warning on its own merits, which the
+    /// test above states.
+    /// </para>
+    /// <para>
+    /// <strong>"The fix's output is clean" is no longer true, and this test never asserted
+    /// it.</strong> It runs one analyzer, so it speaks only for <c>FLOWX1028</c>.
+    /// <c>FLOWX1031</c> is an error on <c>AwaitSignal</c> under every profile, <c>Durable</c>
+    /// included, because nothing implements suspension — so the quick action does land on a
+    /// different diagnostic, deliberately, and
+    /// <c>AwaitSignalRequiresDurableCodeFixTests.TheFixTradesFLOWX1017ForFLOWX1031BecauseDurableDoesNotSuspendEither</c>
+    /// asserts that rather than leaving it to be found in an editor. The principle in the
+    /// message below still holds; what changed is that the broken thing is the quick
+    /// action's premise, not the rule that exposes it.
     /// </para>
     /// </remarks>
     [Fact]
