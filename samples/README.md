@@ -4,13 +4,13 @@ Nine directories, each named for a claim in the specification it is meant to pro
 — not to demonstrate syntax. **One of them contains an application.**
 
 > [!WARNING]
-> **One of the nine has code.** This page used to open by saying *"every sample
+> **Three of the nine have code.** This page used to open by saying *"every sample
 > ships with tests, a benchmark where a budget applies, and a generated
 > architecture diagram"*, and to list nine applications as though they existed.
 > Eight of the nine directories were a `README.md` and nothing else, which
 > [PLAN §6a](../PLAN.md#6a-p4p9--what-this-plan-does-not-yet-contain) has recorded
 > as a finding since P1 closed. **`ecommerce` is the only one you can run today**,
-> and `banking` and `workflow` are under construction as this is written. The
+> and `banking` and `workflow` joined it on 2026-07-31. The
 > remaining six are specifications for samples, and each now says so in its own
 > first screenful — with the code blocks that would not compile marked as such,
 > rather than left for a reader to discover from the compiler.
@@ -26,8 +26,8 @@ Nine directories, each named for a claim in the specification it is meant to pro
 | Sample | Proves | Code? | What blocks it |
 |---|---|---|---|
 | [ecommerce](ecommerce/) | A three-step ephemeral saga with compensation behind one HTTP endpoint, in five files | **Yes** | Nothing. `dotnet run --project samples/ecommerce` serves an order; `tests/Ecommerce.Tests` covers the capabilities, the flow's failure path, the endpoint and the manifest |
-| [banking](banking/) | Deny-by-default authorisation, immutable audit, money movement safe under retry, replay and crash | **In progress** | Being built now. The policy engine it argues from is P4 — no policy executes on the forward path today |
-| [workflow](workflow/) | A multi-day human-in-the-loop process with signals, timers and reversible steps, in one readable file | **In progress** | Being built now. `AwaitSignal` reaches the plan and the manifest and nothing suspends: durable suspension is [WP-63](../PLAN.md#wp-63--should-awaitsignal-delay-timers), a P2 *Should*, not started |
+| [banking](banking/) | A durable transfer saga: compensation in strict reverse order, `[Sensitive]` redaction reaching a real outbox row, one event staged per instance | **Yes** | Nothing. Needs PostgreSQL. Its README states what it *cannot* prove — no declared policy runs, the journal holds no principal or input |
+| [workflow](workflow/) | Multi-step orchestration exercising the whole shipped DSL: `Switch`, `Parallel`, `ForEach` containing `When`, `SubFlow`, `Fail`, compensation at six sites | **Yes** | Nothing. Needs PostgreSQL. The human-approval half of its original claim needs WP-63 — `OnTimeout`, `Delay` and `AwaitSignal` do not work, and its README shows the generated output proving it |
 | [event-driven](event-driven/) | Transport portability: HTTP → Kafka → cron, zero logic changes (Q4, V2) | No | **No Kafka.** `[KafkaTrigger]` compiles and publishes `"kind": "Bus"`, and nothing serves it — `FlowX.Http` is the only transport plugin. WP-70 (conformance), WP-71 (the CI assertion this sample *is*), WP-72 (Kafka), P3 |
 | [scheduler](scheduler/) | Cron with leader election, overlap and missed-fire policies | No | **No scheduler.** `[CronTrigger]` compiles and publishes `"kind": "Schedule"`; four of its five options are not even read into the manifest. WP-75, P3 — leader election is a lease, which is why it follows P2 |
 | [polling](polling/) | Waiting costs one database row: 100 000 documents in flight, zero compute | No | **No durable suspension** — WP-63, P2. Also the only sample whose DSL does not exist: `PollUntil`, `RaceUntil` and `Backoff.Exponential(from:, to:)` appear nowhere but on its own page |
