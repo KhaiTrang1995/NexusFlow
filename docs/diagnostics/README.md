@@ -311,6 +311,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1036](FLOWX1036.md) | Policy set cannot be read at compile time | **A whole policy set reaching no plan, no manifest and none of `FLOWX1014`, `FLOWX1018`, `FLOWX1019`, `FLOWX1032` or `FLOWX1033` — a shared library's `CompensationRetry` not running, and a duplicate-charge rule with nothing to read** |
 | [FLOWX1037](FLOWX1037.md) | Authorisation stance is not enforced by the runtime | **A capability published as policy-protected, diffed as policy-protected, and dispatched with nothing consulting the policy — the one stance of the five the engine cannot decide** |
 | [FLOWX1038](FLOWX1038.md) | Scheduled flow cannot be fired | **A published `cron` with no schedule registered behind it: a flow that cannot bind the occurrence and is never started, or an ephemeral one started by every node in the fleet on every occurrence — with no error, no duplicate row and nothing anywhere to count** |
+| [FLOWX1039](FLOWX1039.md) | `Idempotency` is declared on a flow whose result cannot be recorded without redaction | **A replayed transfer answering with an IBAN of `[redacted]` and a `200`: the second caller's money moves to a placeholder, every step reports success, and nothing anywhere says a value was fabricated** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -491,7 +492,20 @@ whether a trigger attribute declares a kind the compiler can read, and this one 
 it does and asks whether anything can serve the address. It is not `FLOWX1017` either — that
 rule requires `Durable` for a construct in the flow's *body*, where this reads an attribute and
 has a second reason that has nothing to do with the profile.
-The next is `FLOWX1039`. The range is `FLOWX1001`–`FLOWX1099`.
+
+**`FLOWX1039` is claimed** — *`Idempotency` is declared on a flow whose result cannot be recorded
+without redaction*: stage 3 records the flow's state bag through `JournalPayload`, whose only exit
+replaces every `[Sensitive]`-named member at every depth, so a flow that marks one member records a
+document that is not what it produced — and replaying it hands a later step the literal
+`[redacted]` as if it were the value. It is none of the reservations, and it is not `FLOWX1032`:
+that rule says a stage is unimplemented, and this one presupposes the stage runs and reports a
+declaration it cannot serve. It is not `FLOWX1014` either — that rule asks whether a *capability*
+tolerates being called twice, and this asks whether the platform can record what the call produced.
+[ADR-0038](../adr/ADR-0038-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md) is the
+decision, and it is an **error** for [ADR-0030](../adr/ADR-0030-policy-stance-is-refused-at-build-time.md)'s
+reason: the alternative to the rule is not a policy that does less, it is a step that fails at run
+time on its first execution.
+The next is `FLOWX1040`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 
