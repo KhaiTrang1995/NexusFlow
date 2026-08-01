@@ -108,6 +108,22 @@ What changed is that it is no longer tracked as a blocker.*
       *Resolved:* `required` members on attribute classes compile and are
       observable via reflection — the construct flagged as highest-risk is sound.
       *Found and fixed by the first build:* see §8.
+- [ ] **B-4 · The `Benchmark budgets` job is blocking, red on `dev`, and has been since
+      2026-07-31.** It triggers on every push and pull request to `master` and `dev`.
+      Run #41 (`1c654eb`, 2026-07-31) already reported three blocking failures; runs #99
+      through **#106** — every push made on 2026-08-01, including all of today's — report
+      more. Sixty-odd pushes merged over a red merge-class gate, and
+      `EngineBenchmarks.SagaFailure` walked **40 B → 56 B** through it unseen, because a
+      fourth error line on an already-failing step is invisible and the two unit tests over
+      that path assert bands the whole movement fits inside.
+      *Partially resolved:* the two engine entries are bisected, attributed, restated in
+      `baseline.json` with the reason, and pinned exactly. The job still exits 1 on
+      `StepLoopBenchmarks.BuildPlan`, both `CompilerBenchmarks` allocation entries, and
+      B12's p95 ceiling — none of them re-recorded, because moving four baselines in one
+      commit to get a green tick is the behaviour that produced this finding.
+      **No row below may be read as gated by B1, B3 or B12 until this job is green or its
+      remaining failures are individually accepted with a recorded reason.**
+      See [benchmarks/README §5.2](docs/benchmarks/README.md)
 - [x] **B-3 · ~~Delete a stray tooling-prefixed branch from the remote.~~ RESOLVED.**
       Gone from the remote. History scan is clean: no commit in any branch has
       bot authorship, a generated-by footer, or a signature. *The branch name itself
@@ -1607,9 +1623,13 @@ noticing.
 | DAST findings | 0 | **wired, unrun** — the sample now exists; needs a CI run | WP-0 |
 | Vulnerable dependencies | 0 | **0 by construction** — zero dependencies | WP-1 |
 | Open debt entries | ≤ 20 | **1** — [DEBT-0001](docs/DEBT.md) | enforced by `SuppressionsAreAccountable` |
-| B1 flow overhead | ≤ 5 µs | **172.3 ns** ✅ | WP-11, real engine, 30 iterations |
-| B2 allocations per step | 0 B | **0 B** ✅ | gated as a unit test — **Release only**, see below |
-| B3 capability dispatch | ≤ 150 ns | **21.9 ns** ✅ | shared hardware, advisory |
+| B1 flow overhead | ≤ 5 µs | **172.3 ns** ✅ — *but the job that gates it is red; see **B-4*** | WP-11, real engine, 30 iterations |
+| B1 failure-path allocation | recorded, exact | **56 B** — was 40 B. Moved 8 B at `744b005` (WP-29) and 8 B at `16b6988` (WP-57) as `CompensationEntry` grew from 8 B to 24 B; still one object, still the `Unwind` iterator, because an iterator carries what it yields. Restated in `baseline.json` with the reason and now pinned **exactly** by `UnwindingAllocatesOneIteratorPerFailedFlow` instead of by a band | bisected over 304 commits; the compensation-identity fix measured clear at 56 B on both sides |
+| B2 allocations per step | 0 B | **0 B** ✅ — every success path measures exactly zero. The failure path above is not what B2 governs | gated as a unit test — **Release only**, see below |
+| B3 capability dispatch | ≤ 150 ns | **21.9 ns** ✅ — *same red job; see **B-4*** | shared hardware, advisory |
+| `Benchmark budgets` job | green | **red on `dev` since 2026-07-31** ❌ — 4 blocking failures remaining, none of them the engine. Blocking, and blocking nothing: no branch protection, no notification | **B-4** |
+| `StepLoopBenchmarks.BuildPlan` exact gate | reproducible | **not reproducible** ❌ — 520 B committed, 456 B at its own commit on this container, 464 B at `dev`, 528 B on the hosted runner, while every other entry agreed across both machines | [PLAN §9 item 15](PLAN.md#9-open-items-blocking-the-plan) |
+| `CompilerBenchmarks` allocation band | ≤ +15 % | **+41 % / +50 %** ❌ — `WithGenerator` also at 51.2 ms against a committed 11.2 ms, p95 crossing B12's 60 ms ceiling on some runs | compile-time cost — B12-scale's subject, not the engine's; not re-recorded |
 | B12 build overhead · **1 flow** | ≤ 8 % | **+0.4 %** ✅ | WP-14, like-for-like sample build |
 | B12 build overhead · **200 flows** — P1's exit criterion | ≤ 8 % | **+67.1 %** ❌ | WP-43. **Accepted exception; P1 closed over it.** 50 flows: +46.5 %. Growth linear, R² 0.994 |
 | Generator cost regression (relative, blocking) | ≤ +2 % | **green** ✅ | WP-31, deterministic allocation proxy. Prints `ABSOLUTE CRITERION — FAIL` on every run, so a pass here is not a met budget |

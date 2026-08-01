@@ -1339,6 +1339,52 @@ redaction is not generated and three of those four sinks do not exist.
 need P4's policy stages and P2/P5's journal and sinks. A test named after a gate is itself a
 claim of coverage.
 
+### A blocking gate that has been failing unread — found 2026-08-01, unnumbered
+
+| | |
+|---|---|
+| **Goal** | A red merge-class gate has a consequence, or stops being described as a gate |
+| **Why** | [WP-31](#wp-31--a-gate-that-catches-a-regression-while-the-budget-is-failing) below built a relative gate because the absolute one was already failing and therefore said nothing. **This is the next form of the same failure**, one level up: the *Benchmark budgets (B1, B3, B12 isolated)* job is blocking, triggers on every push and pull request to `master` and `dev`, and has been red on `dev` continuously since at least run #41 on 2026-07-31 — through sixty-odd pushes and four working packages. `EngineBenchmarks.SagaFailure` went 40 B → 48 B → 56 B underneath it, at `744b005` (WP-29) and `16b6988` (WP-57), and nothing said so: the error list already had three entries, so a fourth was invisible, and the two unit tests over that path assert *bands* (`> 0`, `< 256`, `< 2048`) that the whole movement fits inside |
+| **Deliverable** | The remaining failures resolved or individually accepted with a recorded reason; a red job that a merge cannot ignore |
+| **Exit** | `python3 scripts/check-benchmark-budgets.py BenchmarkDotNet.Artifacts` exits 0 on a full `--filter '*'` run, **and** a red *Benchmark budgets* job blocks a merge |
+| **Status** | **Partial.** The two engine entries are done; three failures remain and are deliberately not re-recorded |
+
+**Done.** `EngineBenchmarks.SagaFailure` 40 → 56 B and `StepLoopBenchmarks.CompensateAll`
+328 → 440 B are bisected over the 304 commits from the baseline's own commit, attributed to
+`CompensationEntry` growing from 8 B to 24 B — `FlowContext? Scope` at `744b005`, so a
+compensation inside a `ForEach` undoes the element its own step processed, and
+`StepScope JournalScope` at `16b6988`, so the compensation row for the third element is not
+keyed as the first. It is still **one** allocation, and still the `Unwind` iterator the
+baseline already named: an iterator's state machine carries the value it yields, so the
+entry growing by 16 B grew the iterator by 16 B. `baseline.json` restates both with the
+reason, and `UnwindingAllocatesOneIteratorPerFailedFlow` now pins **56 B exactly** instead
+of asserting a band — so the *Allocation budget (B2)* job, which is green and therefore
+read, catches the next byte on the commit that adds it.
+
+**The compensation-identity fix is measured clear**: 56 B on both sides of it. It costs
+nothing.
+
+**Not done, and deliberately not re-recorded** — moving four baselines in one commit to get
+a green tick is the behaviour that produced this finding:
+
+1. `StepLoopBenchmarks.BuildPlan` is gated at exactly 520 B and **does not reproduce** —
+   456 B at the commit that recorded it, on the recorded runtime and the recorded 10/30
+   configuration; 464 B at `dev` on the same container; 528 B on the hosted runner. Every
+   other allocation entry agreed across both machines in those same runs, `CompensateAll`
+   to the byte, so this is one entry rather than a broken harness. Open item 15.
+2. `CompilerBenchmarks.GeneratorOnly` and `.WithGenerator` sit outside their 15 % band, with
+   `WithGenerator` at 51.2 ms against a committed 11.2 ms and its p95 crossing B12's 60 ms
+   ceiling on some runs. That is compile-time cost, which [B12-scale](docs/benchmarks/B12-scale.md)
+   and the generator-cost gate already own; re-recording it here would erase the evidence of
+   a regression the project is tracking.
+3. **The process question, which is the one that matters.** Nothing tells anyone the job is
+   red: no branch protection requires it, no notification fires, and both `CHECKLIST §6` and
+   [21-Quality-Gates §7](docs/21-Quality-Gates.md) described it as *"runs"*. A merge-class
+   gate whose failure has no consequence is a nightly report with a red icon. Either its
+   failures are made consequential, or the rows claiming B1/B3/B12 are gated stop claiming it.
+
+---
+
 ### WP-31 — A gate that catches a regression while the budget is failing
 
 | | |
@@ -2267,6 +2313,7 @@ phase-level planning only.
 | 12 | **`IStepDispatcher.DescribeInput` is a defaulted interface member, and a decorator that forgets it is invisible.** The reasoning for defaulting to `JournalPayload.Empty` rather than throwing is written at the declaration and is defensible: a hand-written dispatcher is entitled to run under `Durable`, and an instance row without an input is what every release wrote until WP-59, so a default that threw would make such a dispatcher unusable. **The cost showed up inside WP-59 itself.** Both hand-written *decorating* dispatchers — `tests/Banking.Tests/TransferHarness.cs` and `tests/Workflow.Tests/OnboardingHarness.cs` — forward most members and silently inherited this one, putting `flow_instance.input` straight back to NULL while every other test went on passing; the author found and fixed both. **This is the second time a defaulted interface member has cost this repository the same way.** The contrast is in the tree: `CapabilityContext.CompensatingFor` — the member added when `ctx.CapabilityId` was found naming the step being *undone* — was declared **`abstract`**, so no implementation could quietly keep the old answer and the compiler listed every one that had to change. **Do not change the interface on this entry**; what is owed is a decision about which of the two shapes the durable dispatcher members take, and it is worth taking once for `DescribeStep`, `DescribeInput` and `RestoreState` together rather than three times | Nothing; a silent wrong journal | repository owner |
 | ~~13~~ | ~~**`src/FlowX.Compiler/Analysis/TriggerReader.cs` carries a stale remark that reads as a design statement.** Its class remarks say *"Nothing yet turns these attributes into endpoint registrations — the sample maps its route by hand in `Program.cs`"*.~~ **Corrected on 2026-08-01, the day it was raised**, once WP-59 released the file. Both halves of the quoted sentence were false: `EndpointEmitter` writes `FlowXEndpoints.g.cs` into the user's assembly and **all three** samples call the generated `app.MapFlowX()` — `samples/banking` and `samples/workflow` as well as `samples/ecommerce`. The paragraph now says which kinds are still declaration-only by their enum names — `Bus`, `Schedule`, `Stream`, `Change`, `Agent` — rather than claiming it of all of them, and splits the conclusion the raiser kept: the registration and the manifest's `triggers` block come from **one** reading of the attribute, so an HTTP route has no second copy to drift from; what remains unasserted is the *other* direction, a hand-written route reaching a flow at an address it never declared. Raised while writing [09-Trigger-Model](docs/09-Trigger-Model.md)'s status box | — | closed |
 | 14 | **ADR-0008 and ADR-0015 still record the payload writer and `FLOWX1006` as owed, one day after WP-59 shipped them.** ADR-0008's `[!IMPORTANT]` box says *"there is no `IPayloadSerializer` interface"* and that `FLOWX1006` *"does not exist — it is blocked on the generated payload writer (**WP-59**)"*; both are now false, as is its closing clause that *"the outbox and replay are still absent"* — WP-56 and WP-64. ADR-0015's *Still not in / Owed to* table carries the row *"The generated payload writer and `FLOWX1006` → WP-59"*, and its take-down list still says the fourth `06 §5` row *"waits on the payload writer (WP-59)"*. **Editing ADRs was out of scope for the commit that recorded WP-59**, which is why this is an item rather than a fix; ADR-0008 is the record a reader consults to learn whether AOT-safe serialisation is a convention or a compile error, and it currently answers the wrong way | Nothing; these mislead readers | repository owner |
+| 15 | **`StepLoopBenchmarks.BuildPlan`'s committed 520 B is not reproducible, and the gate treats allocation counts as exact and machine-independent.** Same commit, same runtime version, same warmup and iteration configuration: **456 B** on the container at `e6fcd37`, **464 B** on the container at `dev`, **528 B** on the GitHub runner at `dev`, **520 B** in the file. Every other allocation entry in those same runs agreed across both machines, `StepLoopBenchmarks.CompensateAll` to the byte at 440 B, so this is one entry rather than a broken harness — and `BuildPlan` builds a plan through Roslyn-adjacent machinery, which [WP-31](#wp-31--a-gate-that-catches-a-regression-while-the-budget-is-failing) already names the suspect shape for: *"Roslyn sizes some pools from `ProcessorCount`"*. Options: (a) find what makes it vary and remove it; (b) band it the way `CompilerBenchmarks` is banded, with the reason written down; (c) drop the entry. **Not (d)** — overwrite it with whichever machine ran last, which is what a green tick would cost | The *Benchmark budgets* job cannot go green honestly | repository owner |
 
 **Three items in this table are live: 12, 13 and 14, all opened on 2026-08-01, plus what is
 left of 11.** *This line read "**No item in this table is live**", which was already wrong
