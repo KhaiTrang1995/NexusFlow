@@ -65,6 +65,16 @@ internal static class Db
     public static NpgsqlParameter Interval(string name, TimeSpan value) =>
         new(name, NpgsqlDbType.Interval) { Value = value };
 
+    /// <summary>A <c>double precision</c> parameter.</summary>
+    /// <remarks>
+    /// For the rate limiter's arithmetic and nothing else so far. A token bucket refills
+    /// continuously — at twenty permits a second, one millisecond is a fiftieth of a token — so
+    /// an integral parameter would floor every partial refill to zero and a bucket under steady
+    /// load would never refill at all.
+    /// </remarks>
+    public static NpgsqlParameter Double(string name, double value) =>
+        new(name, NpgsqlDbType.Double) { Value = value };
+
     /// <summary>A <c>uuid[]</c> parameter, for an <c>= ANY(…)</c> over a known set of ids.</summary>
     /// <param name="name">The parameter name.</param>
     /// <param name="value">The ids.</param>
