@@ -351,4 +351,8 @@ jobs:
             .artifacts/chaos-qr2.json
             verdict.txt
             run.log
+          # Explicit rather than relying on the default: a night that failed early has a log
+          # and no results document, and the upload must still deliver the log rather than
+          # erroring over the file that is missing because the run went wrong.
+          if-no-files-found: warn
           retention-days: 90

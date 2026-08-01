@@ -376,12 +376,27 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    state = STATES.get(args.code, UNEXPECTED)
     document = load(args.results)
     verdict_text = read(args.verdict) or f"(the checker produced no output; exit {args.code})"
+
+    # An unhandled exception leaves Python with exit code 1, which is also FAIL. A rig that
+    # died mid-run and left half a JSON document behind would therefore be reported as a
+    # duplicate effect, and the issue would name a correctness defect that nobody observed.
+    # `gate-self-test` in performance.yml makes the same distinction for the benchmark gate,
+    # in its own words: the gate must reject a bad run "by reporting it rather than by
+    # crashing". A traceback is the checker breaking, not judging.
+    crashed = "Traceback (most recent call last)" in verdict_text
+
+    state = UNEXPECTED if crashed else STATES.get(args.code, UNEXPECTED)
     diagnosed = diagnostics(document, verdict_text, read(args.log), green=args.code == 0)
 
-    if args.code not in STATES:
+    if crashed:
+        diagnosed.insert(0, (
+            "**`check-chaos-qr2.py` raised rather than returned a verdict.** It did not "
+            "judge this run and this is not a FAIL, whatever the exit code says. The usual "
+            "cause is a results document the rig did not finish writing, so start with the "
+            "run's log and with whether the chaos coordinator reached the end."))
+    elif args.code not in STATES:
         diagnosed.insert(0, (
             f"**`check-chaos-qr2.py` exited {args.code}**, which is not one of its three "
             f"verdicts. The checker did not judge this run; it broke. Nothing about QR2 was "
