@@ -18,6 +18,46 @@ jobs:
   build:
     name: Build and test
     runs-on: ubuntu-latest
+
+    # WHY THESE EXIST. Until 2026-08-01 this job stood up nothing, and
+    # FLOWX_POSTGRES_CONNECTION and FLOWX_REDIS_CONNECTION were unset — so every test
+    # needing a real store skipped. Measured on the merged tree: **166 of 2180 skipped**,
+    # and they are not an edge: they are the journal, the fenced lease, the recovery scan,
+    # retention, the outbox publisher, the Redis lease store and stream publisher, the CLI's
+    # journal reader and both conformance suites. The subsystem this project exists to
+    # provide — durable execution against a real database — was verified by nobody on any
+    # pull request, while the run reported green.
+    #
+    # That is the shape of defect this repository keeps finding: not a gate that fails, a
+    # gate whose subject is absent. The suite could not go red over a broken journal,
+    # because it never opened one.
+    #
+    # Copied from chaos.yml's block, which was written to be the one the others copy:
+    # pinned major versions, a health check so the suite never races a server, and a
+    # password because the tests connect over TCP.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@v4
 
@@ -63,10 +103,51 @@ jobs:
         run: dotnet test tests/FlowX.Architecture.Tests --configuration Release --no-build --logger "console;verbosity=detailed"
 
       - name: Unit and integration tests
-        run: >
-          dotnet test FlowX.slnx --configuration Release --no-build
-          --filter "FullyQualifiedName!~Architecture"
-          --collect:"XPlat Code Coverage"
+        # Both connection strings are set, which is what makes the services above worth
+        # having. The suites' own three-way rule then does the rest of the work: unset
+        # means skip with a reason, and **set with no server reachable means FAIL, never
+        # skip** — so a service container that fails to start turns this job red instead of
+        # quietly returning it to the 166-skip state it was in before.
+        env:
+          FLOWX_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres"
+          FLOWX_REDIS_CONNECTION: "localhost:6379"
+        run: |
+          # pipefail explicitly: the default shell takes the exit status of the LAST
+          # command in a pipeline, so without it a failing test suite would be reported as
+          # a passing step because tee succeeded. performance.yml's build-overhead job
+          # carries the same line for the same reason.
+          set -o pipefail
+          dotnet test FlowX.slnx --configuration Release --no-build \
+            --filter "FullyQualifiedName!~Architecture" \
+            --collect:"XPlat Code Coverage" | tee /tmp/test-output.txt
+
+      - name: No suite silently skipped its subject
+        # The env vars above are one deletion away from being gone, and their absence is
+        # invisible: the suite still passes, just over less. This asserts the thing that
+        # would otherwise only be noticed by someone comparing test counts across runs.
+        #
+        # The threshold is deliberately loose. It is not "zero skips" — a suite is entitled
+        # to skip a case for a reason of its own — it is "not the ~166 that mean no store
+        # was reachable at all".
+        if: always()
+        run: |
+          # Reads the run that already happened rather than running the suite a second
+          # time — a guard that doubles the job's wall clock is a guard someone deletes.
+          if [ ! -s /tmp/test-output.txt ]; then
+            echo "::error::The test step produced no output to check."
+            exit 1
+          fi
+          skipped=$(grep -oE 'Skipped:[[:space:]]+[0-9]+' /tmp/test-output.txt \
+            | grep -oE '[0-9]+' | awk '{s+=$1} END {print s+0}')
+          echo "Skipped across the suite: $skipped"
+          if [ "$skipped" -gt 20 ]; then
+            echo "::error::$skipped tests skipped. Before 2026-08-01 that number was 166 and"
+            echo "::error::it meant no PostgreSQL and no Redis were reachable, so the journal,"
+            echo "::error::the lease, recovery, retention, the outbox and both conformance"
+            echo "::error::suites were never exercised on any pull request. Check the service"
+            echo "::error::containers and the two connection strings on the step above."
+            exit 1
+          fi
 
   template:
     name: dotnet new flowx
