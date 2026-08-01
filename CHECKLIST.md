@@ -1511,14 +1511,18 @@ adjacent to it shipped early and is recorded here rather than left to be redisco
       executed as "WP-74", which `PLAN.md` reserves for Azure Service Bus — the second
       work-package number collision this project has had, and the first to happen *after*
       the warning against it was written.
-      **One file has not heard.** `src/FlowX.Compiler/Analysis/TriggerReader.cs`'s class
-      remarks still say *"Nothing yet turns these attributes into endpoint registrations —
-      the sample maps its route by hand in `Program.cs`"*, which this row is the refutation
-      of. Its *conclusion* survives and is why the sentence matters rather than merely
-      being old: a flow may still be reachable at an address it does not declare and may
-      declare one nothing serves, because nothing asserts the generated route against the
-      manifest's. Found while writing `docs/09`'s status box and left unfixed because that
-      file was held — [PLAN open item 13](PLAN.md#9-open-items-blocking-the-plan)
+      **One file had not heard, and was corrected the day it was raised.**
+      `src/FlowX.Compiler/Analysis/TriggerReader.cs`'s class remarks said *"Nothing yet
+      turns these attributes into endpoint registrations — the sample maps its route by
+      hand in `Program.cs`"*, which this row is the refutation of. Both halves were false:
+      **all three** samples call the generated `app.MapFlowX()`, not one mapping by hand.
+      The paragraph now names the kinds that genuinely are declaration-only — `Bus`,
+      `Schedule`, `Stream`, `Change`, `Agent` — and splits what the raiser kept as a single
+      surviving conclusion: the registration and the manifest's `triggers` block come from
+      one reading of the attribute, so an HTTP route has no second copy to drift from;
+      a hand-written route reaching a flow at an address it never declared is the half that
+      is still unasserted. Raised while writing `docs/09`'s status box, fixed once WP-59
+      released the file — [PLAN open item ~~13~~](PLAN.md#9-open-items-blocking-the-plan)
 - [x] **A silent staleness bug in `templates/local-feed.sh`**, found by the same package
       rather than by a test. NuGet caches by id **and version**, so a rebuild at an
       unchanged version left `verify.sh` restoring the previous run's assemblies — the

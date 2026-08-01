@@ -50,12 +50,23 @@ namespace FlowX.Compiler.Analysis;
 /// declared marker, and says so.
 /// </para>
 /// <para>
-/// <strong>A declared trigger is not the same as a bound one.</strong> Nothing yet turns
-/// these attributes into endpoint registrations — the sample maps its route by hand in
-/// <c>Program.cs</c> — so a flow may be reachable at an address it does not declare, and
-/// may declare one nothing serves. The manifest publishes the declaration, which is the
-/// authored intent; that the two can disagree is a property of the current build, not of
-/// the model.
+/// <strong>A declared trigger is not the same as a bound one — for every kind but one.</strong>
+/// This paragraph said "nothing yet turns these attributes into endpoint registrations —
+/// the sample maps its route by hand in <c>Program.cs</c>". Both halves expired:
+/// <c>EndpointEmitter</c> turns each <c>[HttpTrigger]</c> into a registration in
+/// <c>FlowXEndpoints.g.cs</c>, and all three samples call the generated
+/// <c>app.MapFlowX()</c> rather than mapping a route themselves. The registration and the
+/// manifest's <c>triggers</c> block come from this one reading of the attribute, so for an
+/// HTTP flow there is no second copy of the route to drift from the declared one. What is
+/// still unasserted is the other direction: nothing stops a hand-written route reaching a
+/// flow at an address it never declared.
+/// <c>Bus</c>, <c>Schedule</c>, <c>Stream</c>, <c>Change</c> and <c>Agent</c> are still
+/// declaration only: nothing binds them, so a flow declaring one of those declares an
+/// address nothing serves. (<c>Manual</c> needs no binding, and <c>Cli</c>'s summary names
+/// <c>flowx run</c>, which is not one of the CLI's verbs.) The manifest publishes the
+/// declaration either way,
+/// because it is the authored intent; that it can outrun what is bound is a property of
+/// the current build, not of the model.
 /// </para>
 /// </remarks>
 public static class TriggerReader
