@@ -7,16 +7,31 @@ namespace Banking;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Read this before reading anything else in the file: five of the eight
-/// declarations below change what this flow does, and three do not.</strong> The policy
-/// engine executes <see cref="PolicyStage.Resilience"/> — so every <c>Timeout</c> here is
-/// armed, <see cref="ExternalRead"/>'s three attempts are made, and its breaker opens after
-/// a sustained outage at the screening provider — and it executes
-/// <see cref="PolicySet.CompensationRetry"/>, which it has since WP-57. What is still
-/// executed by nothing is <see cref="Admission"/>'s <c>RateLimit</c> and
-/// <c>Idempotency</c>, and the <c>Audit</c> on the three steps that declare one.
+/// <strong>Read this before reading anything else in the file: eight of the ten declarations
+/// below change what this flow does, and two do not.</strong> The policy engine executes
+/// <see cref="PolicyStage.Resilience"/> — so every <c>Timeout</c> here is armed,
+/// <see cref="ExternalRead"/>'s three attempts are made, and its breaker opens after a
+/// sustained outage at the screening provider — it executes
+/// <see cref="PolicySet.CompensationRetry"/>, which it has since WP-57, and it now executes
+/// stage 7's <c>Audit</c>: the three steps that declare one produce an immutable record
+/// naming the step, the principal that authorised it and the redacted document it carried.
+/// What is still executed by nothing is <see cref="Admission"/>'s <c>RateLimit</c> and
+/// <c>Idempotency</c> — stage 1 and stage 3.
 /// <a href="../../docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>
-/// argues each of the three skips separately rather than as one concession.
+/// argues each of the remaining two skips separately rather than as one concession;
+/// <a href="../../docs/adr/ADR-0035-an-audit-record-is-the-journals-payload-redacted-twice.md">ADR-0035</a>
+/// is the record that closed the third.
+/// </para>
+/// <para>
+/// <strong>"No financial audit record is written by a policy" was this file's most important
+/// true sentence, and it is now false.</strong> It is worth stating what replaced it, because
+/// the replacement is narrower than "the bank is audited". Three steps are recorded — the two
+/// ledger legs and the settlement write — and each record names one principal. A transfer that
+/// crosses no wait therefore has three records naming the same starter; a transfer that did
+/// would have records naming two people, and <c>AuditRecord.Authority</c> is what says which
+/// was which. This flow has no wait, so the second case is
+/// <c>AuditPolicyTests.TheTrailNamesTheStarterAndTheDelivererApart</c>'s rather than this
+/// sample's.
 /// </para>
 /// <para>
 /// <strong>The compensation retry reaches the engine from here.</strong> <c>FlowEngine</c>
@@ -46,16 +61,18 @@ namespace Banking;
 /// <strong>First: the line was never "stages 1–6", and it is not a range of stages
 /// now either.</strong> <see cref="LedgerPost"/>'s <c>Audit</c> is a
 /// <see cref="PolicyStage.Consistency"/> policy — stage 7, the same stage as
-/// <see cref="PolicySet.CompensationRetry"/>, which runs — so no line drawn by stage number
-/// separates the two. The cut is a list of kinds, and "no financial audit record is written
-/// by a policy" is still a true sentence about this bank.
+/// <see cref="PolicySet.CompensationRetry"/> — and both run, while
+/// <see cref="Admission"/>'s stage-1 <c>RateLimit</c> does not. The cut is a list of kinds,
+/// and after this release it is wrong in the opposite direction from the one it used to be
+/// wrong in: a reader drawing the line at "the later stages run" would now be as mistaken as
+/// the reader who drew it at "stages 1–6" was.
 /// </para>
 /// <para>
 /// <strong>Second: the prose was the only thing saying any of it.</strong>
 /// <a href="../../docs/diagnostics/FLOWX1032.md">FLOWX1032</a> reports it at build time — on
-/// four of this flow's seven <c>.WithPolicy(...)</c> calls, down from all seven — and
-/// <c>ExecuteTransferFlow</c> carries two narrow argued suppressions rather than one over the
-/// whole method. A paragraph can go stale; a build cannot.
+/// one of this flow's seven <c>.WithPolicy(...)</c> calls, down from four and from all seven
+/// before that — and <c>ExecuteTransferFlow</c> carries one narrow argued suppression where it
+/// used to carry two. A paragraph can go stale; a build cannot.
 /// </para>
 /// <para>
 /// <strong>Third: this file is one edit away from losing the one policy that runs, in three
@@ -131,6 +148,15 @@ public static class Policies
     /// applying the default <em>beside</em> this one would discard it, which is
     /// <a href="../../docs/diagnostics/FLOWX1034.md">FLOWX1034</a>.
     /// </para>
+    /// <para>
+    /// <strong>The <c>Audit</c>'s redact list is belt-and-braces here, and saying so is the
+    /// point.</strong> <c>DebtorIban</c> and <c>CreditorIban</c> are already
+    /// <c>[Sensitive]</c> on <see cref="ExecuteTransfer"/>, so the flow's own
+    /// <c>SensitiveMembers</c> array already strips them from every payload — the record, the
+    /// journal row and the emitted event alike. Naming them again costs nothing and removes
+    /// nothing that was not already gone, and it survives a future edit that unmarked the
+    /// contract. <see cref="SettlementRegister"/> is where the list does work no marker does.
+    /// </para>
     /// </remarks>
     public static readonly PolicySet LedgerPost = PolicySet.Named("ledger-post")
         .Timeout(TimeSpan.FromSeconds(5))
@@ -178,8 +204,24 @@ public static class Policies
     /// rule exists to catch, and it is why this set exists separately rather than being a
     /// second application of that one.
     /// </para>
+    /// <para>
+    /// <strong>This is the one <c>redact</c> list in the file that removes something no
+    /// contract marks.</strong> <c>DebitEntryId</c> and <c>CreditEntryId</c> are the core
+    /// ledger's own references. They are not sensitive in the <c>[Sensitive]</c> sense —
+    /// they identify no person and they belong in the journal, where an operator resolving an
+    /// incident needs them — but they are internal identifiers of a system this bank's external
+    /// auditors do not have and cannot resolve, and a <c>financial</c> record retained for the
+    /// statutory period is the wrong place to accumulate them. The transfer is identifiable
+    /// from <c>AuditRecord.IdempotencyKey</c>, which is the key the caller supplied and the one
+    /// both sides of an audit can agree on.
+    /// </para>
+    /// <para>
+    /// It is also the assertion that keeps <c>redact</c> from being decorative: strip the two
+    /// names from the call below and <c>TransferAuditTests</c> goes red, because the ledger
+    /// references reappear in a record nothing else would have removed them from.
+    /// </para>
     /// </remarks>
     public static readonly PolicySet SettlementRegister = PolicySet.Named("settlement-register")
         .Timeout(TimeSpan.FromSeconds(5))
-        .Audit("financial");
+        .Audit("financial", "DebitEntryId", "CreditEntryId");
 }

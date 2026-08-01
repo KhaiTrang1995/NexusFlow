@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json.Serialization;
+using FlowX;
 
 namespace Banking;
 
@@ -42,6 +43,16 @@ namespace Banking;
 [JsonSerializable(typeof(DebitPosted))]
 [JsonSerializable(typeof(CreditPosted))]
 [JsonSerializable(typeof(Settlement))]
+
+// The three step *inputs*, added when stage 7's Audit landed. An audit record carries a
+// composed request/result document, and the request is what the capability was handed — so a
+// financial record of a ledger post says which account and how much, not only which entry id
+// came back. Without these three lines the audit path degrades exactly as the journal did
+// before WP-59: the record exists, names the step and the principal, and is silent about what
+// the step carried.
+[JsonSerializable(typeof(DebitInstruction))]
+[JsonSerializable(typeof(CreditInstruction))]
+[JsonSerializable(typeof(SettlementInstruction))]
 internal sealed partial class BankingJsonContext : JsonSerializerContext;
 
 /// <summary>
@@ -193,6 +204,73 @@ internal sealed class InMemorySettlementRegister : ISettlementRegister
             _records[settlement.TransferId] = string.Create(
                 CultureInfo.InvariantCulture,
                 $"{instruction.DebitEntryId}|{instruction.CreditEntryId}|{instruction.Amount}");
+        }
+
+        return ValueTask.CompletedTask;
+    }
+}
+
+/// <summary>
+/// Where this bank's audit records go: an append-only list, in memory.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>In memory, and that is the sample being honest rather than the sample being
+/// lazy.</strong> An audit trail that does not survive a restart is not an audit trail, and a
+/// real deployment writes to an append-only table, a WORM bucket or a SIEM — which is a
+/// decision about a compliance regime rather than about FlowX, and is why
+/// <see cref="IAuditSink"/> is a seam with no default implementation. What this class
+/// demonstrates is the shape of the obligation: receive the record, do not lose it, and never
+/// reach past <see cref="AuditRecord.Payload"/> for a value.
+/// </para>
+/// <para>
+/// <strong>It stores <c>ToJson()</c> and never the payload object.</strong> That is not a
+/// convenience: <see cref="JournalPayload"/> has no accessor for its value and
+/// <see cref="JournalPayload.ToJson"/> is its only exit, so a sink cannot reach the object
+/// graph and cannot serialise around the redaction pass. The account numbers this bank marks
+/// <c>[Sensitive]</c>, and the ledger entry ids <c>Policies.SettlementRegister</c> asks to be
+/// dropped, are already <c>[redacted]</c> by the time this method is called.
+/// </para>
+/// <para>
+/// <strong>It does not throw, and a real one may.</strong> The engine treats a refusal here as
+/// a failure of the step it was describing — the transfer is reversed rather than left standing
+/// with nothing recording it — which is the one plugin seam on the step path that does not
+/// degrade. A sink that swallowed its own failures would turn that guarantee off.
+/// </para>
+/// </remarks>
+public sealed class InMemoryAuditTrail : IAuditSink
+{
+    private readonly Lock _sync = new();
+    private readonly List<AuditEntry> _entries = [];
+
+    /// <summary>One recorded step: the record's own fields, and the document it carried.</summary>
+    /// <param name="Record">What the engine described.</param>
+    /// <param name="Document">
+    /// <see cref="AuditRecord.Payload"/> as <see cref="JournalPayload.ToJson"/> wrote it —
+    /// redacted, stamped, and the only form this sink ever sees.
+    /// </param>
+    public readonly record struct AuditEntry(AuditRecord Record, string? Document);
+
+    /// <summary>Everything recorded so far, in the order the engine recorded it.</summary>
+    public IReadOnlyList<AuditEntry> Entries
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return [.. _entries];
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public ValueTask WriteAsync(AuditRecord record, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+
+        lock (_sync)
+        {
+            _entries.Add(new AuditEntry(record, record.Payload.ToJson()));
         }
 
         return ValueTask.CompletedTask;

@@ -76,6 +76,8 @@ public static class FlowEmitter
 
         var staged = StageableEvents(flow, jsonContexts);
         var journaled = JournaledContracts(flow, jsonContexts);
+        var audited = PayloadSteps(flow, jsonContexts, "Audit");
+        var cached = PayloadSteps(flow, jsonContexts, "Cache");
         var writer = new SourceWriter();
 
         writer.Line(Header.TrimEnd('\n'));
@@ -104,7 +106,7 @@ public static class FlowEmitter
             writer.OpenBrace();
         }
 
-        EmitFlowPartial(writer, flow, staged, journaled);
+        EmitFlowPartial(writer, flow, staged, journaled, audited, cached);
 
         if (hasNamespace)
         {
@@ -118,7 +120,9 @@ public static class FlowEmitter
         SourceWriter writer,
         FlowModel flow,
         IReadOnlyList<StagedEvent> staged,
-        IReadOnlyList<JournaledContract> journaled)
+        IReadOnlyList<JournaledContract> journaled,
+        List<PayloadStep> audited,
+        List<PayloadStep> cached)
     {
         writer.Line("/// <summary>Compiled plan and dispatcher for <c>" + flow.FlowId + "</c>.</summary>");
         writer.Line("partial class " + flow.TypeName);
@@ -139,7 +143,7 @@ public static class FlowEmitter
         EmitProjection(writer, flow);
         EmitSensitiveMembers(writer, flow);
         EmitStateBag(writer, journaled);
-        EmitDispatcher(writer, flow, staged, journaled);
+        EmitDispatcher(writer, flow, staged, journaled, audited, cached);
 
         writer.CloseBrace();
     }
@@ -588,6 +592,267 @@ public static class FlowEmitter
             writer.Line("return StepJournalEntry.Of(null, StateBag(ctx));");
         }
 
+        writer.CloseBrace();
+
+        writer.CloseBrace();
+        writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// One step that declares a policy needing a typed payload, with the metadata to write it.
+    /// </summary>
+    /// <remarks>
+    /// The audit and the cache both need the same two things about a step — what went in and
+    /// what came out, each with the generated context that serialises it — so they are resolved
+    /// once and read twice rather than being walked separately by two emitters that could
+    /// disagree about which steps qualify.
+    /// </remarks>
+    private sealed class PayloadStep
+    {
+        public PayloadStep(
+            StepModel step,
+            string? inputTypeName,
+            string? inputContext,
+            string? outputContext)
+        {
+            Step = step;
+            InputTypeName = inputTypeName;
+            InputContext = inputContext;
+            OutputContext = outputContext;
+        }
+
+        public StepModel Step { get; }
+
+        /// <summary>What the capability is handed: a mapping's result, or a bag contract.</summary>
+        public string? InputTypeName { get; }
+
+        /// <summary>The single generated context declaring the input, or <c>null</c>.</summary>
+        public string? InputContext { get; }
+
+        /// <summary>The single generated context declaring the output, or <c>null</c>.</summary>
+        public string? OutputContext { get; }
+
+        /// <summary>Whether either half can be written at all.</summary>
+        public bool HasAnything => InputContext is not null || OutputContext is not null;
+    }
+
+    /// <summary>
+    /// The capability steps declaring <paramref name="kind"/>, with their contracts' metadata.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Gated on the declared kind rather than emitted for every step.</strong> A flow
+    /// that declares no <c>Cache</c> gets no cache members at all, so the generated file stays
+    /// the size it was and nothing on the ephemeral path grows — the same bargain
+    /// <c>DescribeStep</c> strikes by being emitted only for a <c>Durable</c> flow.
+    /// </para>
+    /// <para>
+    /// <strong>A contract no single context declares is skipped rather than guessed at</strong>,
+    /// exactly as <see cref="JournaledContracts"/> skips one: <c>FLOWX1006</c> is the error that
+    /// reports it, and emitting a call naming metadata the compilation does not have would bury
+    /// that error under a cascade inside generated source. A step skipped here inherits
+    /// <c>IStepDispatcher</c>'s default — <c>JournalPayload.Empty</c> — which the engine reads
+    /// as "cannot be keyed" and "nothing to describe", so the policy degrades rather than
+    /// guessing.
+    /// </para>
+    /// </remarks>
+    private static List<PayloadStep> PayloadSteps(
+        FlowModel flow, IReadOnlyList<JsonContextModel> jsonContexts, string kind)
+    {
+        var steps = new List<PayloadStep>();
+
+        foreach (var step in flow.AllSteps
+            .Where(s => s.Kind == StepKindModel.Capability && s.PolicyKinds.Contains(kind))
+            .OrderBy(s => s.Index))
+        {
+            var inputTypeName = step.HasInputMapping ? step.StepInputTypeName : step.CapabilityInput;
+
+            var resolved = new PayloadStep(
+                step,
+                inputTypeName,
+                inputTypeName is null ? null : SingleContextFor(jsonContexts, inputTypeName),
+                string.IsNullOrEmpty(step.CapabilityOutput)
+                    ? null
+                    : SingleContextFor(jsonContexts, step.CapabilityOutput!));
+
+            if (resolved.HasAnything)
+            {
+                steps.Add(resolved);
+            }
+        }
+
+        return steps;
+    }
+
+    /// <summary>
+    /// Emits <c>DescribeAudit</c>: what an audited step carried, for the record's payload.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A composed <c>request</c> / <c>result</c> document, and the composition is
+    /// <c>JournalPayload.OfState</c>'s rather than this emitter's.</strong> A generated writer
+    /// that assembled the document itself would be a second exit from <c>JournalPayload</c> and
+    /// would need its own copy of the redaction pass — the failure mode that type's remarks are
+    /// written against. Handing in named values keeps one exit, one redaction and one stamp.
+    /// </para>
+    /// <para>
+    /// <strong>The redact list is unioned with <c>SensitiveMembers</c> and given to that one
+    /// pass.</strong> That is the whole of what <c>PolicySet.Audit(category, redact)</c>'s
+    /// second argument means: a longer list of names for the redaction the journal already
+    /// applies, matched case-insensitively at every depth. It can only ever remove, so an audit
+    /// record is never more revealing than the journal row for the same step.
+    /// </para>
+    /// <para>
+    /// <strong>The request is re-evaluated here, not captured at dispatch.</strong> A mapping is
+    /// pure and deterministic (<c>FLOWX1011</c>) and reads the scope the step ran under, so it
+    /// produces what the capability was handed — the same soundness argument the event factory
+    /// and the compensation's input mapping already rely on, and the reason neither has to be
+    /// remembered across the call.
+    /// </para>
+    /// </remarks>
+    private static void EmitDispatcherAudit(SourceWriter writer, List<PayloadStep> audited)
+    {
+        writer.Line("/// <inheritdoc />");
+        writer.Line(
+            "public JournalPayload DescribeAudit(int stepIndex, FlowContext ctx, " +
+            "System.Collections.Generic.IReadOnlyList<string> redact)");
+        writer.OpenBrace();
+        writer.Line("// The flow's own [Sensitive] members and the policy's redact list, in one");
+        writer.Line("// array, handed to the one redaction pass. redact can only add names to it.");
+        writer.Line("var withheld = new string[SensitiveMembers.Length + redact.Count];");
+        writer.Line();
+        writer.Line("SensitiveMembers.CopyTo(withheld, 0);");
+        writer.Line();
+        writer.Line("for (var i = 0; i < redact.Count; i++)");
+        writer.OpenBrace();
+        writer.Line("withheld[SensitiveMembers.Length + i] = redact[i];");
+        writer.CloseBrace();
+        writer.Line();
+        writer.Line("switch (stepIndex)");
+        writer.OpenBrace();
+
+        foreach (var audit in audited)
+        {
+            writer.Line("case " + audit.Step.Index + ":");
+            writer.OpenBrace();
+            writer.Line("return JournalPayload.OfState(");
+            writer.Line("    [");
+
+            if (audit.InputContext is not null)
+            {
+                writer.Line(
+                    "        JournalMember.Of(\"request\", " + InputExpression(audit.Step) +
+                    ", global::" + audit.InputContext + ".Default),");
+            }
+
+            if (audit.OutputContext is not null)
+            {
+                writer.Line(
+                    "        JournalMember.Of(\"result\", ctx.Get<" + audit.Step.CapabilityOutput +
+                    ">(), global::" + audit.OutputContext + ".Default),");
+            }
+
+            writer.Line("    ],");
+            writer.Line("    withheld);");
+            writer.CloseBrace();
+        }
+
+        writer.Line("default:");
+        writer.OpenBrace();
+        writer.Line("// A step this flow does not audit. The engine only asks for the ones it");
+        writer.Line("// does, so this is unreachable for a plan and a dispatcher from one build.");
+        writer.Line("return JournalPayload.Empty;");
+        writer.CloseBrace();
+
+        writer.CloseBrace();
+        writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// Emits <c>DescribeCacheKey</c> and <c>DescribeCacheEntry</c>: what a cached step is held
+    /// under, and what is held.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The entry is composed under the contract's simple name, which is what makes
+    /// <c>RestoreState</c> read it.</strong> A cache hit is put back into the state bag by the
+    /// method a resumed instance already uses, so there is exactly one deserialiser for a
+    /// stored contract value in this runtime and no second thing to keep in step with the
+    /// generated context.
+    /// </para>
+    /// <para>
+    /// <strong>Both carry <c>SensitiveMembers</c>, like every other payload, and that is what
+    /// stops a marked member reaching a store.</strong> The engine refuses a key document
+    /// carrying <c>JournalPayload.Redacted</c> — two inputs would collide on one key — and
+    /// refuses an entry carrying it, because a hit would restore <c>[redacted]</c> where a
+    /// capability's answer should be. Neither refusal is implemented here; both are consequences
+    /// of the payload going out through the one exit that redacts.
+    /// </para>
+    /// <para>
+    /// A step whose input the compilation cannot serialise emits no key case and is therefore
+    /// never cached, which is the conservative half: an unconsulted cache means the call
+    /// happens.
+    /// </para>
+    /// </remarks>
+    private static void EmitDispatcherCache(SourceWriter writer, List<PayloadStep> cached)
+    {
+        writer.Line("/// <inheritdoc />");
+        writer.Line("public JournalPayload DescribeCacheKey(int stepIndex, FlowContext ctx)");
+        writer.OpenBrace();
+        writer.Line("switch (stepIndex)");
+        writer.OpenBrace();
+
+        foreach (var step in cached.Where(s => s.InputContext is not null))
+        {
+            writer.Line("case " + step.Step.Index + ":");
+            writer.OpenBrace();
+            writer.Line("// What this step's answer depends on. The engine hashes it together");
+            writer.Line("// with the capability id, its version, the tenant and — under");
+            writer.Line("// CacheScope.Principal — the caller's permission set.");
+            writer.Line("return JournalPayload.Of(");
+            writer.Line("    " + InputExpression(step.Step) + ",");
+            writer.Line("    global::" + step.InputContext + ".Default,");
+            writer.Line("    SensitiveMembers);");
+            writer.CloseBrace();
+        }
+
+        writer.Line("default:");
+        writer.OpenBrace();
+        writer.Line("// Not cacheable: the engine dispatches rather than guessing at a key.");
+        writer.Line("return JournalPayload.Empty;");
+        writer.CloseBrace();
+
+        writer.CloseBrace();
+        writer.CloseBrace();
+        writer.Line();
+
+        writer.Line("/// <inheritdoc />");
+        writer.Line("public JournalPayload DescribeCacheEntry(int stepIndex, FlowContext ctx)");
+        writer.OpenBrace();
+        writer.Line("switch (stepIndex)");
+        writer.OpenBrace();
+
+        foreach (var step in cached.Where(s => s.OutputContext is not null))
+        {
+            writer.Line("case " + step.Step.Index + ":");
+            writer.OpenBrace();
+            writer.Line("// A one-member document under the contract's simple name — the shape");
+            writer.Line("// RestoreState reads, so a hit comes back through the code a resumed");
+            writer.Line("// instance already uses.");
+            writer.Line("return ctx.TryGet<" + step.Step.CapabilityOutput + ">(out var cached)");
+            writer.Line("    ? JournalPayload.OfState(");
+            writer.Line(
+                "        [JournalMember.Of(" +
+                Quote(FlowX.Compiler.Analysis.FlowAnalyzer.SimpleName(step.Step.CapabilityOutput!)) +
+                ", cached, global::" + step.OutputContext + ".Default)],");
+            writer.Line("        SensitiveMembers)");
+            writer.Line("    : JournalPayload.Empty;");
+            writer.CloseBrace();
+        }
+
+        writer.Line("default:");
+        writer.OpenBrace();
+        writer.Line("return JournalPayload.Empty;");
         writer.CloseBrace();
 
         writer.CloseBrace();
@@ -1569,7 +1834,9 @@ public static class FlowEmitter
         SourceWriter writer,
         FlowModel flow,
         IReadOnlyList<StagedEvent> staged,
-        IReadOnlyList<JournaledContract> journaled)
+        IReadOnlyList<JournaledContract> journaled,
+        List<PayloadStep> audited,
+        List<PayloadStep> cached)
     {
         writer.Line("/// <summary>Invokes the capability behind each step index.</summary>");
         writer.Line("/// <remarks>");
@@ -1604,12 +1871,67 @@ public static class FlowEmitter
         if (journaled.Count > 0)
         {
             writer.Line();
-            EmitDispatcherRestore(writer, journaled);
-            writer.Line();
             EmitDispatcherDescribeInput(writer, journaled);
         }
 
+        // The state-bag reader, and now also the cache's. A cached entry is a one-member
+        // state-bag document, so a flow that caches needs this method whether or not it
+        // journals — an Ephemeral flow with a Cache would otherwise inherit the interface's
+        // default, which throws, and every hit would degrade to a miss in silence.
+        var restorable = Restorable(journaled, cached);
+
+        if (restorable.Count > 0)
+        {
+            writer.Line();
+            EmitDispatcherRestore(writer, restorable);
+        }
+
+        if (audited.Count > 0)
+        {
+            writer.Line();
+            EmitDispatcherAudit(writer, audited);
+        }
+
+        if (cached.Count > 0)
+        {
+            writer.Line();
+            EmitDispatcherCache(writer, cached);
+        }
+
         writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// Every contract <c>RestoreState</c> has to be able to read back: the journal's, plus the
+    /// output of any step a cache may serve.
+    /// </summary>
+    /// <remarks>
+    /// The two overlap completely for a <c>Durable</c> flow — a cached step's output is in the
+    /// state bag by definition — so this adds nothing there. It exists for the
+    /// <c>Ephemeral</c> case, where the journaled list is empty by construction and the cache
+    /// still needs a reader.
+    /// </remarks>
+    private static List<JournaledContract> Restorable(
+        IReadOnlyList<JournaledContract> journaled, List<PayloadStep> cached)
+    {
+        var restorable = new List<JournaledContract>(journaled);
+
+        var known = new System.Collections.Generic.HashSet<string>(
+            journaled.Select(c => c.TypeName), System.StringComparer.Ordinal);
+
+        foreach (var step in cached.Where(s => s.OutputContext is not null))
+        {
+            if (known.Add(step.Step.CapabilityOutput!))
+            {
+                restorable.Add(new JournaledContract(
+                    step.Step.CapabilityOutput!,
+                    step.OutputContext!,
+                    isFlowInput: false,
+                    step.Step.Index));
+            }
+        }
+
+        return restorable;
     }
 
     /// <summary>

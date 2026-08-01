@@ -244,10 +244,10 @@ public sealed class ManifestTests
         var source = Flow.GetProperty("source").GetString().ShouldNotBeNull();
 
         // Moves whenever the file's header does — most recently when the flow's remarks
-        // stopped saying its policies were executed by nothing and started saying which four
-        // of them are. The number is the assertion, not an incidental: a source pointer that
+        // stopped saying its Audit was executed by nothing and started saying what the record
+        // carries. The number is the assertion, not an incidental: a source pointer that
         // drifts from the declaration it names is a pointer a reader follows to the wrong line.
-        source.ShouldBe("ExecuteTransferFlow.cs:53");
+        source.ShouldBe("ExecuteTransferFlow.cs:62");
         source.ShouldNotStartWith("/");
         source.ShouldNotContain(":\\");
     }

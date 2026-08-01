@@ -70,10 +70,20 @@ public static class FlowXServiceCollectionExtensions
         {
             var options = provider.GetRequiredService<IOptions<FlowXOptions>>().Value;
 
+            // The cache and the audit sink are resolved optionally, and the two absences mean
+            // different things by design. No IResultCache is a flow that dispatches, which is
+            // what it did before stage 5 existed; no IAuditSink is a flow that fails at its
+            // first audited step, because an unwritten audit record is a real loss rather than
+            // a conservative default (ADR-0025 §2.3 and §2.4, and ADR-0035 §2). Neither is
+            // registered by default: a cache needs a store and an audit sink needs somewhere a
+            // compliance regime accepts, and inventing an in-memory default for either would be
+            // a control that reads as configured and survives no restart.
             return new FlowEngine(
                 provider.GetRequiredService<IClock>(),
                 options.MaxPooledContexts,
-                provider.GetService<ICompensationAlertSink>());
+                provider.GetService<ICompensationAlertSink>(),
+                provider.GetService<IResultCache>(),
+                provider.GetService<IAuditSink>());
         });
 
         // The catalogue is registered whether or not anything is put in it. It is only read

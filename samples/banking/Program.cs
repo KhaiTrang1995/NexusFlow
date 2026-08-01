@@ -1,4 +1,5 @@
 using Banking;
+using FlowX;
 using FlowX.Generated;
 using FlowX.Hosting;
 using FlowX.Postgres;
@@ -35,6 +36,19 @@ builder.Services.AddSingleton<ILedger, InMemoryLedger>();
 builder.Services.AddSingleton<ISanctionsScreening, InMemorySanctionsScreening>();
 builder.Services.AddSingleton<ICorrespondentDirectory, InMemoryCorrespondentDirectory>();
 builder.Services.AddSingleton<ISettlementRegister, InMemorySettlementRegister>();
+
+// Where this bank's audit records go. Registered rather than defaulted, and the flow does not
+// start without it: three steps declare an Audit, and the engine refuses an audited step it
+// cannot record — an unwritten financial audit record is a real loss rather than a
+// conservative default. Deleting this line does not make the transfer cheaper; it makes it
+// fail at the debit and unwind, naming the missing sink.
+//
+// In memory, which no bank would ship. A real deployment writes to an append-only table, a
+// WORM bucket or a SIEM, and IAuditSink has no default implementation for exactly that reason:
+// where an audit record is kept is a decision about a compliance regime rather than about
+// FlowX, and a default would be a control that reads as configured and survives no restart.
+builder.Services.AddSingleton<InMemoryAuditTrail>();
+builder.Services.AddSingleton<IAuditSink>(sp => sp.GetRequiredService<InMemoryAuditTrail>());
 
 // The capabilities themselves. The generated dispatcher takes them as constructor
 // parameters, so a missing registration is a startup failure naming the type rather than a

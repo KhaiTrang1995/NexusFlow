@@ -211,28 +211,64 @@ narrower and this is the exact split:
 | `Timeout(PT3S)` · `Retry(3)` · `CircuitBreaker(0.5, PT30S)` | `ExternalRead` | **yes** — the screening call is bounded, retried and breakered |
 | `Timeout(PT5S)` | `LedgerPost`, `SettlementRegister` | **yes** — each ledger write and the settlement write is bounded |
 | `CompensationRetry(5)` | `LedgerPost` | **yes** — since WP-57 |
-| `Audit("financial", …)` | `LedgerPost`, `SettlementRegister` | no — **this bank writes no policy-driven audit record** |
+| `Audit("financial", …)` | `LedgerPost`, `SettlementRegister` | **yes** — three steps produce an immutable record naming the step, the principal that authorised it and a redacted request/result document |
 | `RateLimit(20, PT1S)` · `Idempotency(PT24H)` | `Admission` | no — nothing is counted, nothing is replayed |
 
-**The cut is a list of kinds, not a range of stages, and this section used to get
-that wrong in two different ways.** It once said "no *forward* policy runs", which
+**"This bank writes no policy-driven audit record" was this file's most important
+true sentence, and it is now false.** The row above it used to say so, and this
+paragraph is what replaced it rather than a quiet edit. Three steps are recorded — the
+two ledger legs and the settlement write — through `IAuditSink`, which
+`Program.cs` registers and without which every transfer fails at the debit and
+unwinds. `TransferAuditTests` reads the trail back off the sink and asserts what is in
+it and what is not.
+
+**The cut is a list of kinds, not a range of stages, and this section has now got that
+wrong in both available directions.** It once said "no *forward* policy runs", which
 was wrong because `Audit` is a stage-7 `Consistency` policy — the same stage as the
-`CompensationRetry` that does run. Now the reverse trap is available too: `RateLimit`
-is stage 1 and inert while `Timeout` is stage 4 and armed. No line drawn by stage
-number separates the two halves.
+`CompensationRetry` that runs. The reverse trap then became available: `RateLimit` is
+stage 1 and inert while `Timeout` is stage 4 and armed. Both traps are still open, and
+stage 7 now runs in full while stage 3 does not.
 
 **The compiler says all of this, and it is an error in this repository.**
 [FLOWX1032](../../docs/diagnostics/FLOWX1032.md) reports every declared policy the
 runtime does not apply. It reported all seven of this flow's `.WithPolicy(...)` calls
-when it was written; it reports four now, and the three that went quiet are the
-`ExternalRead` ones. `ExecuteTransferFlow.cs` carries two narrow argued pragmas rather
-than one over the whole method — one for the rate limit and the idempotency window,
-one for the audits — and the `Switch` in between carries none at all, which is the
-visible half of the change. Keeping the four declarations is the first of the three
-answers [the diagnostic's page](../../docs/diagnostics/FLOWX1032.md#how-to-fix-it)
-asks for: the limit belongs in front of the process, the endpoint is already
-`Idempotent = true` at the transport, and deleting the audits would delete the record
-the stage that implements them will need.
+when it was written, then four, and now **one** — `Policies.Admission` on the first
+step. `ExecuteTransferFlow.cs` carries one narrow argued pragma where it carried two:
+the pragma over the ledger and settlement steps went with the argument it made, which
+was that an unwritten financial audit record is a real loss. Keeping the two remaining
+declarations is the first of the three answers
+[the diagnostic's page](../../docs/diagnostics/FLOWX1032.md#how-to-fix-it) asks for:
+the limit belongs in front of the process, and the endpoint is already
+`Idempotent = true` at the transport.
+
+### What an audit record carries, and what `redact` means
+
+Each record names the flow, the instance, the step, the capability and its version,
+the correlation id and the caller's idempotency key, the tenant, the capability's
+declared authorisation stance and the permission it named — and:
+
+- **`Authority`** — `Starter`, `Deliverer`, `Platform` or `Anonymous`. This flow has
+  no wait, so all three of a transfer's records read `Starter`. A flow that waited
+  would have records reading `Deliverer` after it, which is
+  [ADR-0028](../../docs/adr/ADR-0028-identity-arrives-on-the-invocation.md)'s
+  "who authorised this transfer has two answers" made answerable rather than left to
+  be reconstructed.
+- **`Payload`** — a `JournalPayload` composing the step's `request` and `result`. It
+  is the journal's own payload type, so a sink has no accessor for the value and its
+  only exit is `ToJson()`, which redacts.
+
+`redact` is the list of member names stripped from that payload, unioned with the
+flow's `[Sensitive]` members and handed to the one redaction pass. In this sample:
+
+| Removed from | By | Because |
+|---|---|---|
+| `debtorIban`, `creditorIban` | `[Sensitive]` on `ExecuteTransfer` | the same marker that redacts them from the journal row and the emitted event |
+| `debitEntryId`, `creditEntryId` on the settlement record | `Policies.SettlementRegister`'s `redact` | core-ledger references an external auditor cannot resolve, in a record retained for the statutory period. The transfer stays identifiable by the caller's own key |
+
+`Policies.LedgerPost`'s `redact` names the two IBANs and is therefore belt-and-braces:
+they are already gone. `SettlementRegister`'s is the one that removes something no
+marker does, which is what stops `redact` being decorative — delete the two names and
+`TransferAuditTests` goes red.
 
 ### And a transfer that used to fail now settles
 
@@ -306,7 +342,7 @@ StepNode.ForCapability(8, Descriptors.Step8, Descriptors.Step8Compensation,
     compensationPolicies:  PolicyChain.ForCompensation(Policies.LedgerPost, Descriptors.Step8Compensation)),
 ```
 
-`Timeout` and `Audit` wrap `ledger.post_debit` — the timeout armed, the audit not —
+`Timeout` and `Audit` wrap `ledger.post_debit` — the timeout armed, the audit written —
 and `CompensationRetry` wraps
 `ledger.reverse_debit`, and is checked against *its* `Idempotent = true` — which is
 exactly why the reversals declare it. A reversal that fails with `Conflict`,
@@ -357,7 +393,7 @@ timestamp — immutable". Read back off a real instance row:
 
 | Claimed | Actually |
 |---|---|
-| principal | **absent** — `FlowInstanceRecord` has no member for one and `FlowInvocation` carries none |
+| principal | **absent from the journal row, and deliberately so** — `FlowInstanceRecord` has no member for one, because persisting claims would authorise Friday's payment with Monday's grant ([ADR-0028 §2.2](../../docs/adr/ADR-0028-identity-arrives-on-the-invocation.md)). *It is no longer absent from the record of the steps that matter*: an audit record names the principal and how its authority arrived, which is where "who moved this money" is now answered |
 | tenant | present, from validated claims only |
 | input hash | present as the input itself, since WP-59, with both IBANs `[redacted]`. *This row read "**absent — and so is the input**": `FlowHost.OpenAsync` passed the literal `input: null`, so `flow_instance.input` was NULL on every row ever written* |
 | outcome | present, per step and per attempt |
