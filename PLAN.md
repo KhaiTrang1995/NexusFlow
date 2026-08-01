@@ -1925,12 +1925,12 @@ becomes durable. That choice is worth a paragraph in this file, not a quiet edit
 > stronger property than the one it replaces, because the old one was enforced by nobody
 > having tried.
 >
-> **Owed, and named by ADR-0020 rather than by this file, so it is not lost:** renaming
-> `CliDependsOnNothingButTheManifest` to **`CliLinksNoFlowXAssembly`** — the name is now
-> further from the assertion than it was, since a second input has been added and the name
-> mentions one. Not done here: the rule lives in `tests/FlowX.Architecture.Tests`, this
-> package does not own that project, and the six documents that cite the rule by name have
-> to move with it.
+> **Owed here, named by ADR-0020 so it was not lost, and discharged on 2026-08-01:**
+> `CliDependsOnNothingButTheManifest` is now **`CliLinksNoFlowXAssembly`** — the name had
+> moved further from the assertion, since a second input was added and the name mentions
+> one. It was not done in this package because the rule lives in
+> `tests/FlowX.Architecture.Tests`, which WP-64 does not own, and because the six documents
+> citing it had to move with it. All six did.
 
 ---
 
@@ -1992,7 +1992,7 @@ for *"a wrong profile is a real bug class"*. An ADR's live mitigation being invi
 plan is the same class of gap as a work package with no exit criterion — the plan cannot
 tell you whether the thing an ADR depends on still works.
 
-It reads only the manifest, so it does not disturb `CliDependsOnNothingButTheManifest`.
+It reads only the manifest, so it does not disturb `CliLinksNoFlowXAssembly`.
 
 > **What this section claimed on 2026-07-31 and what WP-60 found by reading the check.**
 > It said the verb *"flags exactly the accident `FLOWX1012` would catch at build time"*, and

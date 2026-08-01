@@ -459,7 +459,7 @@ Three things changed as a result, and one thing deliberately did not:
 | §1's prose | widened. "Reads the manifest and nothing else" was already false of `flowx manifest --assembly`; it is now stated as *reads published contracts and links no FlowX assembly* |
 | Exit codes | gained `4`, because a store read can fail in a way a file read cannot |
 | A new assertion | `EveryVerbButReplayRunsWithNoStore`. "The CLI runs against an artifact with no database" was one of three properties resting on the rule's *name* and the only one it never asserted — true because no verb had needed a store. It is checked now |
-| The fitness function | **unchanged**. Its name overclaims and is now one step further from what it asserts; `CliLinksNoFlowXAssembly` is the name it should have, and renaming it is owed work recorded in ADR-0020 rather than smuggled in on a feature branch |
+| The fitness function | **unchanged in body, renamed since**. Its name overclaimed and WP-64 put it one step further from what it asserts; the rename to `CliLinksNoFlowXAssembly` was recorded as owed work in ADR-0020 rather than smuggled in on this feature branch, and was carried out on 2026-08-01 together with the six documents citing it |
 
 **What is not decided.** `simulate`, `resume` and `fork` all execute, and ADR-0020's
 argument reaches none of them — reading rows needs no engine and that is the whole of why

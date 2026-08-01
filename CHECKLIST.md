@@ -245,7 +245,7 @@ than only in a footnote.
 - [x] `EverySourceProjectIsCoveredByTheLayeringRule` — a rule with a hand-maintained
       subject list needs a rule about the list
 - [x] `RuntimeDoesNotReferenceAnyPlugin`
-- [x] `CliDependsOnNothingButTheManifest`
+- [x] `CliLinksNoFlowXAssembly` — called `CliDependsOnNothingButTheManifest` until 2026-08-01
 - [x] `RoslynComponentsReferenceNoRuntimeAssemblies`
 - [x] `EveryShippedRuntimeProjectIsAotAnalyzed` — exempts Roslyn components
 - [x] `RoslynComponentsTargetNetStandard20`
@@ -1344,10 +1344,10 @@ exists only in a closing summary is one nobody reads.
       `EveryVerbButReplayRunsWithNoStore` in `tests/FlowX.Cli.Tests` runs `graph`, `manifest`,
       `diff` and `verify` with no connection string in the environment. The old property was
       enforced by nobody having tried.
-      **Owed, and not done here:** renaming `CliDependsOnNothingButTheManifest` to
-      **`CliLinksNoFlowXAssembly`**, with the six documents that cite it by name. ADR-0020
-      records it as owed; it is mechanical, and it belongs to whoever next touches
-      `tests/FlowX.Architecture.Tests`. It is carried in the fitness-function list below so
+      **Owed when WP-64 shipped, done on 2026-08-01:** `CliDependsOnNothingButTheManifest`
+      is now **`CliLinksNoFlowXAssembly`**, with the six documents that cite it by name.
+      ADR-0020 recorded it as owed and its owed-work item is struck. It is carried in the
+      fitness-function list below so
       it is not lost
 
 **Fitness functions P2 changes, and one it does not:**
@@ -1362,12 +1362,14 @@ exists only in a closing summary is one nobody reads.
       It asserts what `CliDependsOnNothingButTheManifest`'s *name* implied and its body never
       checked: `graph`, `manifest`, `diff` and `verify` run with no connection string in the
       environment. Before WP-64 that held because no verb had needed a store
-- [ ] `CliDependsOnNothingButTheManifest` → **`CliLinksNoFlowXAssembly`** — **owed, not
-      done.** WP-64 widened the CLI's inputs without touching the rule, which stayed green
-      because it counts `ProjectReference` items and `Npgsql` is a `PackageReference`. The
-      name is now further from the assertion than it was, and
-      [ADR-0020](docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md) records the rename plus
-      the six documents that cite the rule by name as owed work. Mechanical; unscheduled
+- [x] `CliDependsOnNothingButTheManifest` → **`CliLinksNoFlowXAssembly`** — **done
+      2026-08-01.** WP-64 widened the CLI's inputs without touching the rule, which stayed
+      green because it counts `ProjectReference` items and `Npgsql` is a `PackageReference`,
+      leaving the name further from the assertion than it was. Renamed with the six
+      documents that cite it, and the rule's *failure message* now states that it counts
+      project links rather than package inputs — that message is what a future reader
+      believes, and it was the sentence that would have re-created the misreading.
+      ADR-0020's owed-work item is struck, not deleted
 
 ---
 
@@ -1515,7 +1517,7 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | **0014** catalogue vs budget | **Proposed** | **one of four FIRED** — the inner loop pays full derivation per edit, by construction. A second is **crossed, not fired**: withheld 42 % vs a 20 % trigger, on a corpus [B13 §2](docs/benchmarks/B13-error-catalogue-resolution.md) argues is inadmissible. *This cell said "two of four" and overstated it* | **corrected 2026-07-31.** The record headlined **+77.1 %** and claimed 200 flows had not been re-measured; [ADR-0014 §10](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) now states +67.1 % and which triggers fired |
 | 0015 journal schema | Accepted | cannot fire — keyed on B8, no harness | tracked well |
 | **0016** Postgres adapter | Accepted | not fired | *This cell said the record **has no `Negative` section**; it gained a Positive / Negative split on 2026-07-31 and the cell was not updated.* Its WP-56 purge-guard note and its Oracle `Root`-scope portability rule are still in neither planning file |
-| **0020** CLI reads the journal as rows | Accepted | not fired | **names its own owed work and nothing was tracking it**: rename `CliDependsOnNothingButTheManifest` to `CliLinksNoFlowXAssembly`, with the six documents citing it. Now carried in §5d's fitness-function list |
+| **0020** CLI reads the journal as rows | Accepted | not fired | *This cell said the record **names its own owed work and nothing was tracking it**.* Tracked, then discharged on 2026-08-01: `CliDependsOnNothingButTheManifest` is `CliLinksNoFlowXAssembly` and all six citing documents moved with it. The record's owed-work item is struck rather than deleted, and §1/§2 keep the old name where they *quote* it, because those sections are the argument about the name |
 
 ---
 
