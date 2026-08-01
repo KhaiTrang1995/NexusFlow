@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using FlowX.Conformance.InMemory;
 using FlowX.Runtime;
 using Shouldly;
 using Xunit;

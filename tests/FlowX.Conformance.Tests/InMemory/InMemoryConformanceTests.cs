@@ -1,4 +1,5 @@
 using FlowX.Conformance.InMemory;
+using Xunit;
 
 namespace FlowX.Conformance;
 
@@ -51,4 +52,51 @@ public sealed class InMemoryRecoveryIndexConformanceTests : RecoveryIndexConform
     /// <inheritdoc />
     protected override ValueTask<RecoveryStore> CreateStoreAsync() =>
         new(new InMemoryRecoveryStore());
+}
+
+/// <summary>
+/// Runs the whole publisher suite against the recording double.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>This is one of the two implementations
+/// <see href="../../../docs/adr/ADR-0018-outbox-publication-and-ordering.md">ADR-0018</see>
+/// named as the condition for the suite existing at all.</strong> The other is
+/// <c>RedisStreamPublisherConformanceTests</c>, in <c>tests/FlowX.Redis.Tests</c>. Neither
+/// derivation touches the suite, which is the finding that matters: a suite written against one
+/// implementation is a suite shaped like that implementation, and nobody can tell from inside it.
+/// </para>
+/// <para>
+/// The double is disposed with the class rather than per test, matching the other three suites
+/// here — it holds a list, so there is nothing to release, and the shape is kept uniform so a
+/// publisher author copying this file gets the pattern that works for a real client.
+/// </para>
+/// </remarks>
+public sealed class RecordingPublisherConformanceTests : PublisherConformance, IAsyncLifetime
+{
+    private readonly List<BrokerUnderTest> _brokers = [];
+
+    /// <inheritdoc />
+    protected override ValueTask<BrokerUnderTest> CreateBrokerAsync()
+    {
+        var broker = new RecordingBrokerUnderTest();
+
+        _brokers.Add(broker);
+
+        return new ValueTask<BrokerUnderTest>(broker);
+    }
+
+    /// <inheritdoc />
+    public ValueTask InitializeAsync() => ValueTask.CompletedTask;
+
+    /// <inheritdoc />
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var broker in _brokers)
+        {
+            await broker.DisposeAsync();
+        }
+
+        _brokers.Clear();
+    }
 }

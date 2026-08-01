@@ -1,3 +1,4 @@
+using FlowX.Conformance.InMemory;
 using Shouldly;
 using Xunit;
 

@@ -1,5 +1,6 @@
 using System.Globalization;
 using FlowX.Conformance;
+using FlowX.Conformance.InMemory;
 using Npgsql;
 using Shouldly;
 using Xunit;
