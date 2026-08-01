@@ -6,7 +6,7 @@ namespace Banking;
 /// <summary>Source-generated serialisation for everything this application writes down.</summary>
 /// <remarks>
 /// <para>
-/// Three groups of contracts, and they are here for three different reasons. The flow's
+/// Four groups of contracts, and they are here for four different reasons. The flow's
 /// input and output go on the wire, so the endpoint needs them. <see cref="TransferCompleted"/>
 /// goes into the outbox, and the generated <c>DescribeStep</c> will not compile without a
 /// context declaring it — <c>JournalPayload.Of</c> takes a <c>JsonTypeInfo&lt;T&gt;</c> and
@@ -14,6 +14,15 @@ namespace Banking;
 /// NativeAOT-safe (ADR-0008, ADR-0015 commitment 5). Exactly one context in the compilation
 /// may declare a given event contract; two would make the body's shape depend on file order,
 /// and the compiler reports FLOWX1024 rather than choosing.
+/// </para>
+/// <para>
+/// <strong>The fourth group is every step result, and it is <c>FLOWX1006</c> that put it
+/// here.</strong> This flow is <c>Durable</c>, so its journal records each step's result and
+/// the state bag after it, and each of those needs the same generated metadata for the same
+/// reason. Before WP-59 the list stopped at the event and the journal recorded no payloads at
+/// all: the step rows were truthful about <em>which</em> steps had run and silent about what
+/// they produced, so a resumed instance re-entered with an empty bag. Deleting a line below
+/// does not make the flow cheaper — it makes the build fail and names the line.
 /// </para>
 /// <para>
 /// The camelCase policy is not decoration. Without it the wire names are the C# ones, and a
@@ -27,6 +36,12 @@ namespace Banking;
 [JsonSerializable(typeof(ExecuteTransfer))]
 [JsonSerializable(typeof(TransferResult))]
 [JsonSerializable(typeof(TransferCompleted))]
+[JsonSerializable(typeof(ValidatedTransfer))]
+[JsonSerializable(typeof(ScreeningDecision))]
+[JsonSerializable(typeof(CorrespondentRoute))]
+[JsonSerializable(typeof(DebitPosted))]
+[JsonSerializable(typeof(CreditPosted))]
+[JsonSerializable(typeof(Settlement))]
 internal sealed partial class BankingJsonContext : JsonSerializerContext;
 
 /// <summary>

@@ -583,6 +583,41 @@ public static class FlowXDiagnostics
         "depends on it being delivered.",
         DiagnosticSeverity.Warning);
 
+    /// <summary>FLOWX1006 — a state-bag contract no generated JSON context declares.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Reserved since P0, and unraisable until WP-59.</strong> The rule checks
+    /// membership of the source-generated <c>System.Text.Json</c> context ADR-0008 chose, and
+    /// until a generated payload writer needed a <c>JsonTypeInfo&lt;T&gt;</c> for a state-bag
+    /// contract there was no membership to check — the shipped dispatchers described no
+    /// payloads, so the requirement was one nothing had.
+    /// </para>
+    /// <para>
+    /// <strong>An error, uniformly, and that is the determinism set's own rule applied rather
+    /// than an exception to it.</strong> That set is Warning by default and Error where the
+    /// compilation can prove the code is on a durable flow's replay path. This rule reports
+    /// only on a <c>Durable</c> flow, so its trigger <em>is</em> the proof and no case is left
+    /// to warn about. <c>FLOWX1012</c> reaches the opposite conclusion from the same rule for
+    /// the mirror-image reason: it fires because a flow is <em>not</em> durable.
+    /// </para>
+    /// <para>
+    /// What the message names is the contract, because the fix is one
+    /// <c>[JsonSerializable]</c> attribute and the only hard part of writing it is knowing
+    /// which type goes inside the parentheses.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor StateIsNotSerialisable = Create(
+        "FLOWX1006",
+        "State-bag contract is outside every generated JSON context",
+        "'{0}' is written into the state bag of durable flow '{1}', and {2}",
+        "A Durable flow journals its state bag and every step result, and a value reaches " +
+        "the journal only through JournalPayload, whose Of<T> requires the source-generated " +
+        "JsonTypeInfo<T> — there is no overload that reflects over a type, which is what " +
+        "keeps the write path NativeAOT- and trim-safe (constraint C2). A contract no " +
+        "JsonSerializerContext in this compilation declares is one the generated payload " +
+        "writer cannot name metadata for, so the journal would record nothing for it and a " +
+        "resumed instance would run the rest of the flow against values no step produced.");
+
     /// <summary>FLOWX1025 — a trigger attribute that declares no <c>[TriggerKind]</c>.</summary>
     /// <remarks>
     /// <para>
@@ -839,6 +874,7 @@ public static class FlowXDiagnostics
         CapabilityReferencesTransport,
         CapabilityInvokesCapability,
         FlowInheritsFlow,
+        StateIsNotSerialisable,
         ClockIsReadAmbiently,
         IdentityIsTakenAmbiently,
         MutableStateIsHeld,

@@ -75,6 +75,7 @@ public static class FlowEmitter
         }
 
         var staged = StageableEvents(flow, jsonContexts);
+        var journaled = JournaledContracts(flow, jsonContexts);
         var writer = new SourceWriter();
 
         writer.Line(Header.TrimEnd('\n'));
@@ -103,7 +104,7 @@ public static class FlowEmitter
             writer.OpenBrace();
         }
 
-        EmitFlowPartial(writer, flow, staged);
+        EmitFlowPartial(writer, flow, staged, journaled);
 
         if (hasNamespace)
         {
@@ -114,7 +115,10 @@ public static class FlowEmitter
     }
 
     private static void EmitFlowPartial(
-        SourceWriter writer, FlowModel flow, IReadOnlyList<StagedEvent> staged)
+        SourceWriter writer,
+        FlowModel flow,
+        IReadOnlyList<StagedEvent> staged,
+        IReadOnlyList<JournaledContract> journaled)
     {
         writer.Line("/// <summary>Compiled plan and dispatcher for <c>" + flow.FlowId + "</c>.</summary>");
         writer.Line("partial class " + flow.TypeName);
@@ -134,7 +138,8 @@ public static class FlowEmitter
         writer.Line();
         EmitProjection(writer, flow);
         EmitSensitiveMembers(writer, flow);
-        EmitDispatcher(writer, flow, staged);
+        EmitStateBag(writer, journaled);
+        EmitDispatcher(writer, flow, staged, journaled);
 
         writer.CloseBrace();
     }
@@ -302,6 +307,102 @@ public static class FlowEmitter
         return staged;
     }
 
+    /// <summary>A contract this flow's journal writes, and the context that writes it.</summary>
+    /// <remarks>
+    /// The state bag's membership, resolved once. <c>Role</c> distinguishes the flow's input —
+    /// which the engine puts in the bag before the first step and which the host also records
+    /// on the instance row — from a step result, which only the bag holds.
+    /// </remarks>
+    private sealed class JournaledContract
+    {
+        public JournaledContract(string typeName, string jsonContextTypeName, bool isFlowInput, int stepIndex)
+        {
+            TypeName = typeName;
+            JsonContextTypeName = jsonContextTypeName;
+            IsFlowInput = isFlowInput;
+            StepIndex = stepIndex;
+        }
+
+        /// <summary>The contract, fully qualified.</summary>
+        public string TypeName { get; }
+
+        /// <summary>The single serialiser context declaring it.</summary>
+        public string JsonContextTypeName { get; }
+
+        /// <summary>Whether this is the flow's own input contract.</summary>
+        public bool IsFlowInput { get; }
+
+        /// <summary>The step that produces it, or <c>-1</c> for the flow input.</summary>
+        public int StepIndex { get; }
+
+        /// <summary>The key the composed state bag holds it under: the contract's simple name.</summary>
+        public string MemberName => FlowX.Compiler.Analysis.FlowAnalyzer.SimpleName(TypeName);
+    }
+
+    /// <summary>
+    /// The contracts a <c>Durable</c> flow's journal has to write, ascending by step.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>What is in the state bag, and why it is exactly this.</strong> The flow's input,
+    /// which the engine puts there before the first step, and the output of every capability
+    /// step, which the dispatcher writes back with <c>ctx.Set</c>. A mapped step's input is
+    /// not: it goes straight to the capability and is never written into the bag, which is
+    /// what lets two mapped steps of one type coexist.
+    /// </para>
+    /// <para>
+    /// <strong>Nothing at all for an <c>Ephemeral</c> flow.</strong> The engine never calls
+    /// <c>DescribeStep</c> under that profile, so a writer would be unreachable code — but it
+    /// would still put a candidate list, a <c>TryGet</c> chain and a member array into a type
+    /// every ephemeral flow loads, and budget B2 is a hard zero on that path.
+    /// </para>
+    /// <para>
+    /// <strong>A contract no single context declares is skipped, not guessed at.</strong>
+    /// <c>FLOWX1006</c> is the error that reports it, raised by analysis and settled by
+    /// <c>FlowPlanGenerator.Produce</c> against these same contexts. Emitting a call that
+    /// names metadata the compilation does not have would bury that error under a cascade of
+    /// "type not found" inside generated source.
+    /// </para>
+    /// </remarks>
+    private static List<JournaledContract> JournaledContracts(
+        FlowModel flow, IReadOnlyList<JsonContextModel> jsonContexts)
+    {
+        var journaled = new List<JournaledContract>();
+
+        if (!string.Equals(flow.Profile, "Durable", System.StringComparison.Ordinal))
+        {
+            return journaled;
+        }
+
+        var seen = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
+
+        void Add(string contract, bool isFlowInput, int stepIndex)
+        {
+            if (!seen.Add(contract))
+            {
+                return;
+            }
+
+            var context = SingleContextFor(jsonContexts, contract);
+
+            if (context is not null)
+            {
+                journaled.Add(new JournaledContract(contract, context, isFlowInput, stepIndex));
+            }
+        }
+
+        Add(flow.InputTypeName, isFlowInput: true, stepIndex: -1);
+
+        foreach (var step in flow.AllSteps
+            .Where(s => s.Kind == StepKindModel.Capability && !string.IsNullOrEmpty(s.CapabilityOutput))
+            .OrderBy(s => s.Index))
+        {
+            Add(step.CapabilityOutput!, isFlowInput: false, step.Index);
+        }
+
+        return journaled;
+    }
+
     /// <summary>The single serialiser context declaring a contract, or <c>null</c>.</summary>
     internal static string? SingleContextFor(
         IReadOnlyList<JsonContextModel> jsonContexts, string contractTypeName)
@@ -401,8 +502,12 @@ public static class FlowEmitter
     /// </para>
     /// </remarks>
     private static void EmitDispatcherDescribe(
-        SourceWriter writer, IReadOnlyList<StagedEvent> staged)
+        SourceWriter writer,
+        IReadOnlyList<StagedEvent> staged,
+        IReadOnlyList<JournaledContract> journaled)
     {
+        var results = journaled.Where(c => !c.IsFlowInput).ToList();
+
         writer.Line("/// <inheritdoc />");
         writer.Line("public StepJournalEntry DescribeStep(int stepIndex, FlowContext ctx)");
         writer.OpenBrace();
@@ -432,15 +537,236 @@ public static class FlowEmitter
             writer.CloseBrace();
         }
 
+        foreach (var contract in results)
+        {
+            writer.Line("case " + contract.StepIndex + ":");
+            writer.OpenBrace();
+            writer.Line("// What the step produced, and the bag as it now stands. Both are");
+            writer.Line("// JournalPayloads carrying SensitiveMembers, so neither can leave");
+            writer.Line("// except through ToJson, which redacts (ADR-0015, commitment 5).");
+            writer.Line("//");
+            writer.Line("// TryGet, not Get: a step that succeeded without writing its result");
+            writer.Line("// journals no result rather than failing the flow. Describing runs");
+            writer.Line("// after the step and inside the commit, so a throw here would");
+            writer.Line("// unwind work that had already succeeded.");
+            writer.Line("return StepJournalEntry.Of(");
+            writer.Line("    ctx.TryGet<" + contract.TypeName + ">(out var described)");
+            writer.Line("        ? JournalPayload.Of(");
+            writer.Line("            described,");
+            writer.Line("            global::" + contract.JsonContextTypeName + ".Default,");
+            writer.Line("            SensitiveMembers)");
+            writer.Line("        : null,");
+            writer.Line("    StateBag(ctx));");
+            writer.CloseBrace();
+        }
+
         writer.Line("default:");
         writer.OpenBrace();
-        writer.Line("// Every other step describes nothing: no payload writer exists yet, and");
-        writer.Line("// a journal of step boundaries without payloads is truthful and resumable.");
-        writer.Line("return StepJournalEntry.Nothing;");
+
+        if (journaled.Count == 0)
+        {
+            writer.Line("// Every other step describes nothing: this flow journals no contract");
+            writer.Line("// the compilation can serialise, and a journal of step boundaries");
+            writer.Line("// without payloads is truthful and resumable.");
+            writer.Line("return StepJournalEntry.Nothing;");
+        }
+        else
+        {
+            writer.Line("// A step that produced no contract of its own still moves the bag");
+            writer.Line("// forward — a branch, a switch or a join — so the snapshot is what");
+            writer.Line("// it has to say, and a resume reads it rather than the step count.");
+            writer.Line("return StepJournalEntry.Of(null, StateBag(ctx));");
+        }
+
         writer.CloseBrace();
 
         writer.CloseBrace();
         writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// Emits <c>RestoreState</c>: the mirror of the state-bag snapshot.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The only code that can turn the stored document back into typed values.</strong>
+    /// The engine holds a <c>Dictionary&lt;Type, object&gt;</c> and no contract types, so it
+    /// cannot read a bag back for the same reason it cannot write one. Reached once, before
+    /// the first step of a resumed execution.
+    /// </para>
+    /// <para>
+    /// <strong>An unknown member is ignored, deliberately.</strong> The bag's membership is the
+    /// flow's shape, and a row written months ago by a build whose flow had one more step is a
+    /// row this build must still be able to resume from — that is the retention window ADR-0008
+    /// commits to. The <c>schemaVersion</c> stamp is the everyday case of it.
+    /// </para>
+    /// <para>
+    /// <strong>A marked member comes back redacted, and nothing pretends otherwise.</strong>
+    /// The stored value is <c>[redacted]</c>, because there is no read path that could put the
+    /// original back — the journal never had it. <c>IStepDispatcher.RestoreState</c> says so on
+    /// its own contract.
+    /// </para>
+    /// </remarks>
+    private static void EmitDispatcherRestore(
+        SourceWriter writer, IReadOnlyList<JournaledContract> journaled)
+    {
+        writer.Line("/// <inheritdoc />");
+        writer.Line("public void RestoreState(FlowContext ctx, string stateBagJson)");
+        writer.OpenBrace();
+        writer.Line("using var document = System.Text.Json.JsonDocument.Parse(stateBagJson);");
+        writer.Line();
+        writer.Line("foreach (var member in document.RootElement.EnumerateObject())");
+        writer.OpenBrace();
+        writer.Line("switch (member.Name)");
+        writer.OpenBrace();
+
+        foreach (var contract in journaled)
+        {
+            writer.Line("case " + Quote(contract.MemberName) + ":");
+            writer.OpenBrace();
+            writer.Line(
+                "ctx.Set(JournalState.Read<" + contract.TypeName + ">(" +
+                "member.Value, global::" + contract.JsonContextTypeName + ".Default));");
+            writer.Line("break;");
+            writer.CloseBrace();
+        }
+
+        writer.Line("default:");
+        writer.OpenBrace();
+        writer.Line("// A member this build does not know: the schemaVersion stamp, or a");
+        writer.Line("// contract a previous version of this flow wrote. Both are rows that");
+        writer.Line("// must still resume, so neither is an error.");
+        writer.Line("break;");
+        writer.CloseBrace();
+
+        writer.CloseBrace();
+        writer.CloseBrace();
+        writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// Emits <c>DescribeInput</c>: the trigger input as the instance row records it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is what closes <c>FlowHost</c>'s <c>input: null</c>.</strong> The host had
+    /// no way to name a <c>JsonTypeInfo</c> for a flow's input contract, so every
+    /// <c>flow_instance.input</c> ever written was NULL — a replay could not reconstruct what
+    /// was requested, the audit trail had no record of it, and <c>[Sensitive]</c> on an input
+    /// contract protected nothing because nothing was stored. The host now asks the
+    /// dispatcher, which is the only code that can answer.
+    /// </para>
+    /// <para>
+    /// <c>object?</c> rather than a generic, because the host reaches the dispatcher through
+    /// <c>IStepDispatcher</c> and the interface cannot carry the flow's input type. The boxing
+    /// is on the durable start path, which already takes a lease and a store round trip;
+    /// budget B2 measures the ephemeral loop, which never reaches this.
+    /// </para>
+    /// <para>
+    /// A value of another type is <c>Empty</c> rather than a throw. The engine refuses a
+    /// mismatched input long before the journal would see it, and a start that failed on a
+    /// cast inside generated code would report the wrong cause.
+    /// </para>
+    /// </remarks>
+    private static void EmitDispatcherDescribeInput(
+        SourceWriter writer, IReadOnlyList<JournaledContract> journaled)
+    {
+        var input = journaled.FirstOrDefault(c => c.IsFlowInput);
+
+        writer.Line("/// <inheritdoc />");
+        writer.Line("public JournalPayload DescribeInput(object? input)");
+        writer.OpenBrace();
+
+        if (input is null)
+        {
+            writer.Line("// No serialiser context in this compilation declares this flow's input");
+            writer.Line("// contract, which FLOWX1006 reports. The instance row records nothing.");
+            writer.Line("return JournalPayload.Empty;");
+        }
+        else
+        {
+            writer.Line("return input is " + input.TypeName + " typed");
+            writer.Line("    ? JournalPayload.Of(typed, global::" + input.JsonContextTypeName +
+                ".Default, SensitiveMembers)");
+            writer.Line("    : JournalPayload.Empty;");
+        }
+
+        writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// Emits <c>StateBag</c>: the snapshot, composed by <c>JournalPayload</c> and not here.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The single most consequential line in this file is the one that is missing.</strong>
+    /// This method hands named values to <c>JournalPayload.OfState</c> and never writes a
+    /// document itself. A generated writer that reached for a <c>Utf8JsonWriter</c> would be a
+    /// second exit from <c>JournalPayload</c> and would need its own copy of the redaction
+    /// pass — which is precisely the arrangement <c>JournalPayload</c>'s own remarks were
+    /// written to make unreachable, and which would put a <c>[Sensitive]</c> account number
+    /// into a table retained for months. Composition happens inside the payload, so the bag
+    /// leaves through the one <c>ToJson</c> that redacts.
+    /// </para>
+    /// <para>
+    /// <strong>Present members only.</strong> A flow's bag holds what has actually been set:
+    /// a branch not taken produced no result, and a snapshot claiming a member the flow never
+    /// had would be rehydrated into a resumed run as a value no step made.
+    /// </para>
+    /// <para>
+    /// The list is allocated per call, on the durable path only. That is the same bargain the
+    /// commit itself makes — a store round trip is already happening — and the ephemeral loop
+    /// never reaches this method, so budget B2's hard zero is untouched.
+    /// </para>
+    /// </remarks>
+    private static void EmitStateBag(SourceWriter writer, IReadOnlyList<JournaledContract> journaled)
+    {
+        if (journaled.Count == 0)
+        {
+            return;
+        }
+
+        writer.Line("/// <summary>The flow's state bag as the journal records it.</summary>");
+        writer.Line("/// <remarks>");
+        writer.Line("/// Named values handed to <c>JournalPayload.OfState</c>, which composes the");
+        writer.Line("/// document and redacts it. This method writes no JSON, so there is no second");
+        writer.Line("/// exit from the payload and no second copy of the redaction rule.");
+        writer.Line("/// </remarks>");
+        writer.Line("private static JournalPayload StateBag(FlowContext ctx)");
+        writer.OpenBrace();
+        writer.Line(
+            "var members = new System.Collections.Generic.List<JournalMember>(" +
+            journaled.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) + ");");
+        writer.Line();
+
+        foreach (var contract in journaled)
+        {
+            writer.Line(
+                "if (ctx.TryGet<" + contract.TypeName + ">(out var " +
+                LocalNameFor(contract) + "))");
+            writer.OpenBrace();
+            writer.Line(
+                "members.Add(JournalMember.Of(" + Quote(contract.MemberName) + ", " +
+                LocalNameFor(contract) + ", global::" + contract.JsonContextTypeName + ".Default));");
+            writer.CloseBrace();
+            writer.Line();
+        }
+
+        writer.Line("return JournalPayload.OfState(members, SensitiveMembers);");
+        writer.CloseBrace();
+        writer.Line();
+    }
+
+    /// <summary>A local name for a journaled contract, unique within <c>StateBag</c>.</summary>
+    /// <remarks>
+    /// Derived from the contract's simple name rather than from the step index, because the
+    /// same contract can be produced by two steps and is one member of the bag either way.
+    /// </remarks>
+    private static string LocalNameFor(JournaledContract contract)
+    {
+        var name = contract.MemberName;
+
+        return char.ToLowerInvariant(name[0]) + name.Substring(1) + "State";
     }
 
     /// <summary>
@@ -1137,7 +1463,10 @@ public static class FlowEmitter
     }
 
     private static void EmitDispatcher(
-        SourceWriter writer, FlowModel flow, IReadOnlyList<StagedEvent> staged)
+        SourceWriter writer,
+        FlowModel flow,
+        IReadOnlyList<StagedEvent> staged,
+        IReadOnlyList<JournaledContract> journaled)
     {
         writer.Line("/// <summary>Invokes the capability behind each step index.</summary>");
         writer.Line("/// <remarks>");
@@ -1163,10 +1492,18 @@ public static class FlowEmitter
         writer.Line();
         EmitDispatcherSubFlow(writer, flow);
 
-        if (staged.Count > 0)
+        if (staged.Count > 0 || journaled.Count > 0)
         {
             writer.Line();
-            EmitDispatcherDescribe(writer, staged);
+            EmitDispatcherDescribe(writer, staged, journaled);
+        }
+
+        if (journaled.Count > 0)
+        {
+            writer.Line();
+            EmitDispatcherRestore(writer, journaled);
+            writer.Line();
+            EmitDispatcherDescribeInput(writer, journaled);
         }
 
         writer.CloseBrace();

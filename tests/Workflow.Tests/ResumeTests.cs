@@ -17,18 +17,20 @@ namespace Workflow.Tests;
 /// the property <c>ADR-0015</c> is about, and it holds.
 /// </para>
 /// <para>
-/// What does not hold is that the resumed steps can do anything. No state bag is journaled
-/// yet: the generated dispatcher emits <c>DescribeStep</c> only for <c>Emit</c> steps, so
-/// <c>flow_instance.state_bag_json</c> stays null and <c>RestoreState</c> is never called. A
-/// resumed instance therefore re-enters with an empty context, holding only the input the
-/// trigger re-seeds — and the first step past the frontier that binds a value an earlier step
-/// produced fails.
+/// <strong>Since WP-59 the resumed steps can also do something, which is the half this file
+/// used to record as absent.</strong> The generated dispatcher describes a state bag at every
+/// step boundary and restores it before the first resumed step, so an instance taken over by a
+/// second node re-enters holding the values its earlier steps produced. Before that, the
+/// dispatcher described only <c>Emit</c> steps, <c>flow_instance.state_bag</c> stayed null,
+/// <c>RestoreState</c> was never called, and the first step past the frontier that bound an
+/// earlier step's output failed — which is what
+/// <see cref="AResumedStepBindsTheValueAnEarlierStepProduced"/> was written to assert and now
+/// asserts the opposite of.
 /// </para>
 /// <para>
-/// <strong>This is not a property of this sample.</strong> Any flow whose steps pass values to
-/// each other has it, which is every flow the DSL is for — <c>samples/ecommerce</c>'s
-/// <c>inventory.reserve</c> binds a <c>ValidatedOrder</c> the same way. So "resumes on another
-/// node" is true of the loop and not yet true of a flow.
+/// <strong>This was never a property of this sample.</strong> Any flow whose steps pass values
+/// to each other had it, which is every flow the DSL is for. So "resumes on another node" was
+/// true of the loop and not of a flow; it is now true of both.
 /// </para>
 /// </remarks>
 public sealed class ResumeTests
@@ -60,37 +62,43 @@ public sealed class ResumeTests
     }
 
     /// <summary>
-    /// And the first resumed step that needs a value an earlier step produced cannot find it.
+    /// And the first resumed step that needs a value an earlier step produced finds it.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <c>screening.waive</c> binds an <c>Identity</c>, which <c>identity.create</c> produced
-    /// on the node that died. The row recording that step is committed — which is why the step
-    /// is stepped over — and the value it produced is nowhere, because no state bag is written.
+    /// <c>screening.waive</c> binds an <c>Identity</c>, which <c>identity.create</c> produced on
+    /// the node that died. The row recording that step is committed — which is why the step is
+    /// stepped over — and since WP-59 the value it produced is in the state-bag snapshot the
+    /// same commit wrote, so the resumed dispatcher puts it back.
     /// </para>
     /// <para>
-    /// <strong>Red when WP-59 lands.</strong> A dispatcher that describes its state bag and
-    /// restores it makes this flow resume, and this assertion becomes the wrong one.
+    /// <strong>This test asserted the opposite until WP-59, deliberately.</strong> It read
+    /// "red when WP-59 lands", and it went red on the day the generated payload writer landed.
+    /// The flow now finishes on the second node: it waives the check, sends the welcome pack
+    /// and stages the event, with no substitution propping anything up.
+    /// </para>
+    /// <para>
+    /// What a resumed flow does <em>not</em> get back is a <c>[Sensitive]</c> member's value.
+    /// The snapshot stored <c>[redacted]</c>, because the journal never held anything else —
+    /// see <c>OnboardingJournalTests</c>. A flow that needs a secret after a resume must fetch
+    /// it, not remember it.
     /// </para>
     /// </remarks>
     [Fact]
-    public async Task AResumedStepCannotBindAValueAnEarlierStepProduced()
+    public async Task AResumedStepBindsTheValueAnEarlierStepProduced()
     {
         var (_, second, finished) = await ResumeAfterTheChildAsync(substitute: null);
 
-        finished.IsSuccess.ShouldBeFalse(second.ToString());
-
-        finished.Error!.Code.ShouldBe(
-            "capability.unhandled",
-            "The step was dispatched and threw looking for a contract nothing put back. " +
+        finished.IsSuccess.ShouldBeTrue(
+            "the state bag committed with the step that produced it is restored before the " +
+            "first resumed step, so screening.waive binds the Identity identity.create made. " +
             second);
 
-        // And the error names the step that could not bind, which is the one useful thing
-        // about it.
-        finished.Error.Message.Contains("screening.waive", StringComparison.Ordinal)
-            .ShouldBeTrue(finished.Error.Message);
-
-        second.Executed.ShouldBe(["screening.waive"], second.ToString());
+        second.Executed.ShouldBe(
+            ["screening.waive", "welcome.send", "emit:employee.onboarded"],
+            "and the flow runs to its end on the second node — the announcement included — " +
+            "skipping every step that committed before the node died. " +
+            second);
     }
 
     /// <summary>

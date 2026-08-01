@@ -207,4 +207,9 @@ public sealed partial class OrderFlow : Flow<PlaceOrder, OrderPlacedResult>
 [JsonSerializable(typeof(PlaceOrder))]
 [JsonSerializable(typeof(OrderPlaced))]
 [JsonSerializable(typeof(OrderPlacedResult))]
+
+// The step's result, which the flow being Durable makes a journal payload and FLOWX1006
+// makes a build requirement. Omitting it does not produce a smaller journal; it produces a
+// build that names the line.
+[JsonSerializable(typeof(Reservation))]
 public sealed partial class OrderJson : JsonSerializerContext;

@@ -23,7 +23,29 @@ public sealed class AnalysisResult
     public IReadOnlyList<Diagnostic> Diagnostics { get; }
 
     /// <summary>True when a model was produced and nothing blocking was found.</summary>
-    public bool IsSuccess => Model is not null && !Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
+    /// <remarks>
+    /// <para>
+    /// An error normally stops the plan being emitted, because emitting a partial plan on top
+    /// of one buries the real error under a cascade of "type not found".
+    /// </para>
+    /// <para>
+    /// <strong><c>FLOWX1006</c> is the exception, and it has to be.</strong> It is raised
+    /// provisionally — analysis cannot see whether the compilation declares a serialiser
+    /// context for the contract, so <c>FlowPlanGenerator.Produce</c> either drops it or
+    /// restates it — and a provisional that blocked emission would delete the flow's whole
+    /// plan for a finding that settles to nothing. Even when it settles to an error there is
+    /// no cascade to avoid: the emitter simply leaves that contract out of the state bag, so
+    /// the plan it produces is valid and the journal is the only thing missing something.
+    /// Withholding the plan instead would replace one accurate error with a page of
+    /// "PlaceOrderFlow does not contain a definition for Plan".
+    /// </para>
+    /// </remarks>
+    public bool IsSuccess => Model is not null && !Diagnostics.Any(IsBlocking);
+
+    /// <summary>Whether a diagnostic stops the plan being emitted.</summary>
+    private static bool IsBlocking(Diagnostic diagnostic) =>
+        diagnostic.Severity == DiagnosticSeverity.Error &&
+        !diagnostic.Properties.ContainsKey(StateBagReasons.ContractProperty);
 
     internal static AnalysisResult Success(FlowModel model, IReadOnlyList<Diagnostic> diagnostics) =>
         new AnalysisResult(model, diagnostics);
@@ -160,7 +182,83 @@ public static class FlowAnalyzer
             returnLocation: returnClause?.Location,
             usings: ReadUsings(declaration));
 
+        AddStateBagDiagnostics(model, declaration, diagnostics);
+
         return AnalysisResult.Success(model, diagnostics);
+    }
+
+    /// <summary>
+    /// Raises one provisional <c>FLOWX1006</c> per contract this flow's journal has to write.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>What is in the state bag.</strong> The flow's input, which the engine puts
+    /// there before the first step — that is how <c>ctx.Get&lt;TIn&gt;()</c> resolves inside a
+    /// generated dispatcher — and the output contract of every capability step, which the
+    /// dispatcher writes back with <c>ctx.Set</c>. A mapped step's <em>input</em> is not in the
+    /// bag and is deliberately not checked: it is a local at the call site and no journal row
+    /// holds it.
+    /// </para>
+    /// <para>
+    /// <strong>Raised only for a <c>Durable</c> flow.</strong> An ephemeral flow keeps no
+    /// journal, so nothing serialises its bag and the rule protects nothing there. That is
+    /// unlike <c>FLOWX1024</c>, whose provisional is raised under both profiles because "the
+    /// flow is <c>Ephemeral</c>" is one of <em>its</em> two reasons; here the profile is not a
+    /// reason, it is the trigger.
+    /// </para>
+    /// <para>
+    /// Located at the flow's declaration rather than at each step, and that is a choice worth
+    /// stating: the finding is about this flow's journal and the repair is one attribute on a
+    /// serialiser context somewhere else entirely, so a caret on the step would point at the
+    /// one place the fix does not go. It also means a single <c>#pragma</c> around the flow
+    /// suppresses the set, which is the unit a reader would want.
+    /// </para>
+    /// </remarks>
+    private static void AddStateBagDiagnostics(
+        FlowModel model, ClassDeclarationSyntax declaration, List<Diagnostic> diagnostics)
+    {
+        if (!string.Equals(model.Profile, "Durable", System.StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var contracts = new List<string> { model.InputTypeName };
+
+        foreach (var step in model.AllSteps)
+        {
+            if (step.Kind == StepKindModel.Capability && step.CapabilityOutput is { Length: > 0 } output)
+            {
+                contracts.Add(output);
+            }
+        }
+
+        var location = declaration.Identifier.GetLocation();
+
+        foreach (var contract in contracts
+            .Distinct(System.StringComparer.Ordinal)
+            .OrderBy(static c => c, System.StringComparer.Ordinal))
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.StateIsNotSerialisable,
+                location,
+                System.Collections.Immutable.ImmutableDictionary<string, string?>.Empty
+                    .Add(StateBagReasons.ContractProperty, contract)
+                    .Add(StateBagReasons.NameProperty, SimpleName(contract))
+                    .Add(StateBagReasons.FlowProperty, model.FlowId),
+                SimpleName(contract),
+                model.FlowId,
+                StateBagReasons.Provisional));
+        }
+    }
+
+    /// <summary>The last segment of a fully qualified name — what a reader calls the type.</summary>
+    internal static string SimpleName(string qualified)
+    {
+        var separator = qualified.LastIndexOf('.');
+
+        return separator >= 0 && separator < qualified.Length - 1
+            ? qualified.Substring(separator + 1)
+            : qualified;
     }
 
     /// <summary>

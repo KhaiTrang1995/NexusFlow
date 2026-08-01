@@ -140,13 +140,31 @@ public sealed class EmitStagingTests
             "join. Describing one anyway would be a promise the engine cannot keep.");
     }
 
+    /// <summary>
+    /// A contract no context declares stages no event — and, since WP-59, still journals.
+    /// </summary>
+    /// <remarks>
+    /// The assertion moved from "there is no <c>DescribeStep</c>" to "there is no
+    /// <c>OutboxWrite</c> in it", and the difference is the whole of the payload writer. A
+    /// durable flow describes every step boundary now, so the dispatcher has a
+    /// <c>DescribeStep</c> whether or not any event can be staged; what an undeclarable event
+    /// contract costs is the outbox row, and only that.
+    /// </remarks>
     [Fact]
     public void AContractNoContextDeclaresDescribesNoEvent()
     {
-        FlowEmitter.Emit(Emitting(), [Unrelated]).ShouldNotContainText(
-            "DescribeStep",
+        var source = FlowEmitter.Emit(Emitting(), [Unrelated]);
+
+        source.ShouldNotContainText(
+            "OutboxWrite",
             "JournalPayload.Of takes a JsonTypeInfo and has no overload that reflects over a " +
             "type. Without a declaring context there is nothing that could write the body.");
+
+        source.ShouldContainText(
+            "StateBag(ctx)",
+            "the step boundary is still journaled: the flow is Durable and the state bag's " +
+            "own contracts are declared, so the row that cannot carry an event still carries " +
+            "everything else.");
     }
 
     /// <summary>Two contexts declaring the contract is the same answer as none.</summary>
@@ -160,17 +178,29 @@ public sealed class EmitStagingTests
         var second = new JsonContextModel("Sample.SecondJson", [Contract]);
 
         FlowEmitter.Emit(Emitting(), [Declaring, second]).ShouldNotContainText(
-            "DescribeStep",
+            "OutboxWrite",
             "None and several are the same answer, and for the same reason.");
     }
 
+    /// <summary>A flow with no emit step stages nothing, and journals its bag.</summary>
+    /// <remarks>
+    /// <c>Models.LinearQuery</c> is <c>Durable</c>, so before WP-59 it produced a dispatcher
+    /// with no <c>DescribeStep</c> at all and inherited the interface's default — a journal of
+    /// step boundaries with no payloads. It now describes its state bag. The event half is
+    /// what this test is about, and that half is unchanged.
+    /// </remarks>
     [Fact]
     public void AFlowWithNoEmitStepDescribesNothing()
     {
-        FlowEmitter.Emit(Models.LinearQuery(), [Declaring]).ShouldNotContainText(
-            "DescribeStep",
-            "A dispatcher that describes nothing inherits the interface's default, which is " +
-            "a truthful journal of step boundaries without payloads.");
+        var source = FlowEmitter.Emit(Models.LinearQuery(), [Declaring]);
+
+        source.ShouldNotContainText(
+            "OutboxWrite",
+            "There is no emit step, so there is no event to stage.");
+
+        source.ShouldContainText(
+            "JournalPayload.OfState(",
+            "and what it does describe is the bag, which is what makes it resumable.");
     }
 
     // ---------------------------------------------------------------------------------
@@ -188,9 +218,27 @@ public sealed class EmitStagingTests
         }
         """;
 
+    /// <summary>A context declaring the event body and every contract the journal writes.</summary>
+    /// <remarks>
+    /// The last two lines are WP-59's: the flow is <c>Durable</c>, so its input and its step's
+    /// result are journal payloads and <c>FLOWX1006</c> requires the same metadata for them.
+    /// Without them these tests would report two findings and be about neither.
+    /// </remarks>
     private const string SerialiserContext = """
 
         [System.Text.Json.Serialization.JsonSerializable(typeof(OrderPlaced))]
+        [System.Text.Json.Serialization.JsonSerializable(typeof(PlaceOrder))]
+        [System.Text.Json.Serialization.JsonSerializable(typeof(Reservation))]
+        public sealed partial class SampleJson : System.Text.Json.Serialization.JsonSerializerContext
+        {
+        }
+        """;
+
+    /// <summary>The same, minus the event contract. The one condition under test.</summary>
+    private const string ContextWithoutTheEvent = """
+
+        [System.Text.Json.Serialization.JsonSerializable(typeof(PlaceOrder))]
+        [System.Text.Json.Serialization.JsonSerializable(typeof(Reservation))]
         public sealed partial class SampleJson : System.Text.Json.Serialization.JsonSerializerContext
         {
         }
@@ -219,7 +267,8 @@ public sealed class EmitStagingTests
     [Fact]
     public void AnEmitWhoseContractNoContextDeclaresIsReportedAndSaysSo()
     {
-        var run = GeneratorHarness.Run(FlowPlanGeneratorTests.WithFlow(DurableEmittingFlow));
+        var run = GeneratorHarness.Run(
+            FlowPlanGeneratorTests.WithFlow(DurableEmittingFlow + ContextWithoutTheEvent));
 
         run.Ids.ShouldBe(["FLOWX1024"], run.Describe());
         run.Describe().ShouldContainText("JsonSerializable",

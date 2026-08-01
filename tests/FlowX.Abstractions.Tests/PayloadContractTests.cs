@@ -206,7 +206,10 @@ public sealed class PayloadContractTests
     [Fact]
     public void AMemberWithoutGeneratedMetadataIsRefused() =>
         Should.Throw<ArgumentNullException>(
-            () => JournalMember.Of<Order>("Order", new Order("order-1", Secret, new Customer("Ada", Secret)), null!));
+            () => JournalMember.Of(
+                "Order",
+                new Order("order-1", Secret, new Customer("Ada", Secret)),
+                (System.Text.Json.Serialization.Metadata.JsonTypeInfo<Order>)null!));
 
     /// <summary>A serialiser that captures what it was handed. The hostile plugin.</summary>
     private sealed class CapturingSerializer : IPayloadSerializer

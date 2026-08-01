@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 
 namespace FlowX;
@@ -69,6 +70,49 @@ public readonly struct JournalMember : IEquatable<JournalMember>
     {
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(typeInfo);
+
+        return new JournalMember(name, value, typeInfo);
+    }
+
+    /// <summary>
+    /// Names a value for a composed payload, taking its metadata out of a generated context.
+    /// </summary>
+    /// <typeparam name="T">The contract type. Must be declared by <paramref name="context"/>.</typeparam>
+    /// <param name="name">The key the composed document holds it under.</param>
+    /// <param name="value">The value to record.</param>
+    /// <param name="context">
+    /// The generated context declaring <typeparamref name="T"/>, e.g. <c>MyJsonContext.Default</c>.
+    /// </param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="name"/> or <paramref name="context"/> is null.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The context does not declare <typeparamref name="T"/>.
+    /// </exception>
+    /// <remarks>
+    /// <strong>The overload the generator actually calls, and it exists for a reason worth
+    /// keeping.</strong> Generated code can name a context <em>type</em> — the compiler reads
+    /// it off the author's <c>[JsonSerializable]</c> attributes — but it cannot name the
+    /// property <c>System.Text.Json</c>'s own generator produces for each contract, because
+    /// one source generator does not see another's output. <c>JournalPayload.Of</c> carries
+    /// the same pair of overloads for the same reason.
+    /// <para>
+    /// <c>GetTypeInfo</c> on a source-generated context is a switch over the types its
+    /// attributes named, so this is a lookup and not a discovery: the write path stays trim-
+    /// and NativeAOT-safe (constraint C2).
+    /// </para>
+    /// </remarks>
+    public static JournalMember Of<T>(string name, T value, JsonSerializerContext context)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        ArgumentNullException.ThrowIfNull(context);
+
+        if (context.GetTypeInfo(typeof(T)) is not JsonTypeInfo<T> typeInfo)
+        {
+            throw new InvalidOperationException(
+                $"'{context.GetType().Name}' does not declare [JsonSerializable(typeof({typeof(T).Name}))], " +
+                "so it cannot write this state-bag member. Add the attribute to the context.");
+        }
 
         return new JournalMember(name, value, typeInfo);
     }

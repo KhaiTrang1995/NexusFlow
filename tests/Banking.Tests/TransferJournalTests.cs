@@ -18,9 +18,10 @@ namespace Banking.Tests;
 /// that wrote to it.
 /// </para>
 /// <para>
-/// The third claim — an immutable audit trail — is where this file is deliberately most
-/// specific about what the journal does <em>not</em> hold. See
-/// <see cref="TheInstanceRowHoldsNoInputAndNoPrincipal"/>.
+/// The third claim — an immutable audit trail — is the one WP-59 made true. Until then the
+/// instance row recorded no input at all and no step recorded a payload, so "immutable audit
+/// trail" described a table of step boundaries. See
+/// <see cref="TheInstanceRowHoldsTheRequestAndStillNoPrincipal"/>.
 /// </para>
 /// </remarks>
 public sealed class TransferJournalTests
@@ -103,9 +104,12 @@ public sealed class TransferJournalTests
     /// event body is redacted — the generated <c>DescribeStep</c> builds a
     /// <c>JournalPayload</c> carrying <c>ExecuteTransferFlow.SensitiveMembers</c>, and a
     /// <c>JournalPayload</c>'s only exit is <c>ToJson</c>, which replaces every matching
-    /// member. The step rows and the instance row are clean for a weaker reason: nothing
-    /// writes a payload into them at all. See
-    /// <see cref="TheInstanceRowHoldsNoInputAndNoPrincipal"/>.
+    /// member. <strong>Until WP-59 the step rows and the instance row were clean for a much
+    /// weaker reason: nothing wrote a payload into them at all.</strong> They now carry the
+    /// input, the state bag and every step result, and they are clean for the same reason the
+    /// event is — which is what
+    /// <see cref="ASensitiveMemberIsRedactedInTheInputTheStateBagAndEveryStepResult"/>
+    /// asserts from the other side.
     /// </para>
     /// </remarks>
     [Fact]
@@ -181,32 +185,29 @@ public sealed class TransferJournalTests
         ExecuteTransferFlow.SensitiveMembers.ShouldBe(["CreditorIban", "DebtorIban"]);
 
     /// <summary>
-    /// What the instance row does <em>not</em> record, which is most of an audit trail.
+    /// What the instance row records, and the one thing it still does not.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The README this sample replaced claimed the journal carries "principal, tenant, input
-    /// hash, outcome, timestamp — immutable". Two of those five are true here and one is
-    /// true only because the harness supplies it.
+    /// <strong>This test asserted the opposite until WP-59, on purpose.</strong> It read
+    /// "the day a trigger starts journaling its input, this file goes red", and it did.
+    /// <c>FlowHost.OpenAsync</c> passed the literal <c>input: null</c> to
+    /// <c>BeginAsync</c>, so <c>flow_instance.input</c> was NULL on every row ever written:
+    /// a replay could not reconstruct what was requested, the audit trail had no record of
+    /// it, and <c>[Sensitive]</c> on an input contract protected nothing, because nothing
+    /// was stored. It was not fixable in the host — recording an input needs a
+    /// <c>JsonTypeInfo&lt;TIn&gt;</c> and only generated code can name one — so the host now
+    /// asks the dispatcher, through <c>IStepDispatcher.DescribeInput</c>.
     /// </para>
     /// <para>
-    /// <strong>There is no input.</strong> <c>FlowHost.OpenAsync</c> calls
-    /// <c>lease.BeginAsync(journal, plan, invocation, input: null, ct)</c> — the literal
-    /// <c>null</c> is in the source — so an instance started through <c>MapFlow</c>, which is
-    /// how this sample is actually triggered, records no request body and no hash of one.
-    /// <c>DurableExecution.BeginAsync</c> accepts a payload and the HTTP path never supplies
-    /// one. This test asserts the gap rather than describing it, so that the day a trigger
-    /// starts journaling its input, this file goes red and the README gets corrected.
-    /// </para>
-    /// <para>
-    /// <strong>There is no principal.</strong> <c>FlowInstanceRecord</c> has no member for
-    /// one and <c>FlowInvocation</c> carries none, so "who asked for this transfer" is not in
-    /// the journal at all. The tenant and the correlation id are, and they are what an
+    /// <strong>There is still no principal.</strong> <c>FlowInstanceRecord</c> has no member
+    /// for one and <c>FlowInvocation</c> carries none, so "who asked for this transfer" is
+    /// not in the journal. The tenant and the correlation id are, and they are what an
     /// investigator actually has.
     /// </para>
     /// </remarks>
     [Fact]
-    public async Task TheInstanceRowHoldsNoInputAndNoPrincipal()
+    public async Task TheInstanceRowHoldsTheRequestAndStillNoPrincipal()
     {
         var harness = new TransferHarness();
 
@@ -214,13 +215,19 @@ public sealed class TransferJournalTests
 
         var instance = harness.Instances.ShouldHaveSingleItem();
 
-        instance.InputJson.ShouldBeNull(
-            "FlowHost starts a durable instance with input: null, so nothing about the " +
-            "request itself is in the journal — see this test's remarks.");
+        using var input = JsonDocument.Parse(instance.InputJson.ShouldNotBeNull(
+            "the request a durable instance was started with is what a replay reconstructs " +
+            "from and what an audit trail is."));
 
-        instance.StateBagJson.ShouldBeNull(
-            "the generated DescribeStep writes an event and no state bag, so a resumed " +
-            "instance re-enters with an empty bag and re-runs from its first uncommitted step.");
+        // What was asked for, minus the two things that must never be written down.
+        input.RootElement.GetProperty("amount").GetDecimal().ShouldBe(120m);
+        input.RootElement.GetProperty("currency").GetString().ShouldBe("EUR");
+        input.RootElement.GetProperty("debtorIban").GetString().ShouldBe(JournalPayload.Redacted);
+        input.RootElement.GetProperty("creditorIban").GetString().ShouldBe(JournalPayload.Redacted);
+
+        instance.StateBagJson.ShouldNotBeNull(
+            "and the generated DescribeStep snapshots the bag at every step boundary, which " +
+            "is what lets another node resume this instance rather than restart it.");
 
         // What the row does hold, and what an investigation actually gets.
         instance.FlowId.ShouldBe("transfer.execute");
@@ -228,6 +235,113 @@ public sealed class TransferJournalTests
         instance.TenantId.ShouldBe("tenant-1");
         instance.CorrelationId.ShouldBe("corr-j-5");
         instance.State.ShouldBe(FlowInstanceState.Completed);
+    }
+
+    /// <summary>
+    /// Every stored payload carries the envelope version that wrote it, and it is readable.
+    /// </summary>
+    /// <remarks>
+    /// ADR-0008's Decision — "every persisted payload carries <c>schemaVersion</c>" — had no
+    /// producer until WP-59. It versions the envelope this row was written by, not the
+    /// contract: the contract's version is the <c>flow_version</c> and
+    /// <c>capability_version</c> beside it, and inventing a second one here is what ADR-0017's
+    /// criterion F2 refuses.
+    /// </remarks>
+    [Fact]
+    public async Task EveryStoredPayloadIsStampedWithTheEnvelopeThatWroteIt()
+    {
+        var harness = new TransferHarness();
+
+        await harness.RunAsync(Transfer(120m), "j-7", Cancellation);
+
+        var instance = harness.Instances.ShouldHaveSingleItem();
+        var steps = await harness.StepsAsync(instance.InstanceId, Cancellation);
+        var outbox = await harness.OutboxAsync(instance.InstanceId, Cancellation);
+
+        var stored = new List<string?> { instance.InputJson, instance.StateBagJson };
+
+        stored.AddRange(steps.Select(s => s.ResultJson));
+        stored.AddRange(outbox.Select(o => o.PayloadJson));
+
+        var documents = stored.Where(json => json is not null).ToList();
+
+        documents.Count.ShouldBeGreaterThan(
+            6, "an assertion over an empty set of rows would pass for the wrong reason.");
+
+        foreach (var json in documents)
+        {
+            using var document = JsonDocument.Parse(json!);
+
+            document.RootElement.GetProperty(JournalPayload.SchemaVersionMember).GetString()
+                .ShouldBe(JournalPayload.SchemaVersion, json);
+        }
+    }
+
+    /// <summary>
+    /// A <c>[Sensitive]</c> member is redacted in the stored input, the stored state bag and
+    /// every stored step result.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="NoAccountNumberAppearsInAnyJournalRow"/> asserts the absence of the value.
+    /// This asserts the presence of the placeholder, in each of the three sinks the payload
+    /// writer opened, because "the account number is not there" is also true of a row that
+    /// stores nothing — which is exactly what the journal did before WP-59, and why the
+    /// stronger test passed while the property was untested.
+    /// </para>
+    /// <para>
+    /// <strong>All three hold for one reason.</strong> The writer never composes a document:
+    /// it hands values to <c>JournalPayload</c> and every one of them leaves through
+    /// <c>ToJson</c>, which redacts by name at every depth. There is no second exit and
+    /// therefore no second copy of the rule that could drift from this one.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ASensitiveMemberIsRedactedInTheInputTheStateBagAndEveryStepResult()
+    {
+        var harness = new TransferHarness();
+
+        await harness.RunAsync(Transfer(120m), "j-8", Cancellation);
+
+        var instance = harness.Instances.ShouldHaveSingleItem();
+        var steps = await harness.StepsAsync(instance.InstanceId, Cancellation);
+
+        // The input: the request itself, with the two accounts withheld.
+        RedactsBothAccounts(instance.InputJson, "the stored trigger input");
+
+        // The state bag: the snapshot a resumed node rehydrates from. The marked members are
+        // matched at every depth, so a nested ValidatedTransfer is no less protected for
+        // being one level down.
+        RedactsBothAccounts(instance.StateBagJson, "the stored state bag");
+
+        // Every step result that stored one. ValidatedTransfer carries both accounts and is
+        // the row this would leak through if the writer had composed its own document.
+        var results = steps
+            .Select(step => step.ResultJson)
+            .Where(json => json is not null && json.Contains("Iban", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        results.ShouldNotBeEmpty(
+            "no stored step result mentions an account at all, so this test would be " +
+            "asserting nothing.");
+
+        foreach (var result in results)
+        {
+            RedactsBothAccounts(result, "a stored step result");
+        }
+    }
+
+    /// <summary>Asserts a stored document withholds both accounts and says it withheld them.</summary>
+    private static void RedactsBothAccounts(string? json, string what)
+    {
+        json.ShouldNotBeNull(what + " is missing, so nothing about redaction can be read off it.");
+
+        json.ShouldNotContain(Debtor, Case.Sensitive, what + " carries the debtor's account.");
+        json.ShouldNotContain(Creditor, Case.Sensitive, what + " carries the creditor's account.");
+
+        json.ShouldContain(JournalPayload.Redacted, Case.Sensitive,
+            what + " withheld the accounts without saying so. An operator reading this row " +
+            "during an incident would conclude the flow never received them.");
     }
 
     /// <summary>
