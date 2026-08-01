@@ -1,7 +1,54 @@
 # 09 — Trigger Model
 
-> **Status:** Accepted · **Audience:** application engineers, plugin authors
+> **Status:** Accepted · **one transport is served; the rest are an attribute or nothing** ·
+> **Audience:** application engineers, plugin authors
 > **Answers:** how does one abstraction serve HTTP, brokers, cron, streams and agents?
+
+> [!WARNING]
+> **[ADR-0004](adr/ADR-0004-universal-trigger-model.md)'s "one trigger abstraction for
+> every transport" is true of the *declaration* and, so far, of nothing else.** Five
+> trigger attributes ship in `FlowX.Abstractions`, the compiler reads all five into
+> `flowx.manifest.json`, and **one of them reaches a running transport.** There is no
+> Trigger Engine: no type under `src/` or `plugins/` normalises, admits, dedupes or binds,
+> and §11's `ITriggerSource` / `ITriggerSink` are declared nowhere.
+>
+> | Transport | What exists |
+> |---|---|
+> | **HTTP** ([§6](#6-http-trigger)) | **served, and generated.** `[HttpTrigger]` → `TriggerReader` → `EndpointEmitter` → `FlowXEndpoints.g.cs` → `plugins/FlowX.Http`. Route, body binding, `Idempotency-Key` enforcement when `Idempotent = true`, and RFC 7807 with `[Sensitive]` redaction are all real; `samples/ecommerce` and `samples/workflow` call the generated `app.MapFlowX()`. **The OpenAPI operation is not generated** — nothing in this repository writes an OpenAPI document, and `Version` is dropped by the reader rather than published, despite §6's *"Generated: … the OpenAPI operation"* and the same claim on `HttpTriggerAttribute` itself. §6's own box covers the signal row |
+> | **Bus** ([§7](#7-bus-trigger)) | **attribute only.** `[KafkaTrigger]` compiles and publishes `kind`, `transport`, `topic` and `group`; `MaxInFlight` and `DeadLetter` reach no artifact. There is no `FlowX.Kafka` — `plugins/` holds `FlowX.Http`, `FlowX.Postgres` and `FlowX.Redis` — so nothing consumes a topic, commits an offset or dead-letters, and §7's sequence diagram is specification. **WP-72**, P3 |
+> | **Schedule** ([§8](#8-schedule-trigger)) | **attribute only.** `[CronTrigger]` publishes `cron` and `timeZone`. `Overlap`, `MissedFire`, `Jitter` and `PerTenant` reach nothing at all: the manifest schema's `trigger` object has no property for them and no code reads them. Nothing fires a schedule, so "leader-elected, never double-fires" is a design — the lease store it names is real (`ILeaseStore`, both adapters), the scheduler that would take the lease is **WP-63** |
+> | **Stream** ([§9](#9-stream-trigger)) | **attribute only, over an unbuilt profile.** `[StreamTrigger]` publishes its source; `Window`, `Lateness`, `Checkpoint` and `Parallelism` are dropped. `ExecutionProfile.Streaming` is an enum member no code branches on, and `.Window(…)` / `.Aggregate(…)` are not members of `IFlowBuilder<TIn, TOut>` — **§9's example does not compile.** Streaming is **P7** |
+> | **Agent** ([§10](#10-agent-trigger)) | **attribute only.** `[AgentTrigger]` publishes `description` and `confirmation`. There is no MCP server, no tool descriptor and no JSON Schema generation; `MCP` occurs under `src/` only inside doc comments. §10's two properties are consequences of a surface nothing serves. **P8** — see [13-AI-Native](13-AI-Native.md), which states the same thing about `AgentTriggerAttribute` |
+> | **Change**, **Cli**, **Manual** | **kinds with no attribute.** All three are `TriggerKind` members and values of the manifest schema's closed `kind` enum, so a third-party `TriggerAttribute` carrying `[TriggerKind]` can declare one and reach the manifest with it. `FlowX.Abstractions` ships nothing that does, and `TriggerKind.Cli`'s summary names `flowx run`, which is not one of the CLI's five verbs ([22-CLI](22-CLI.md)) |
+> | **gRPC** | **does not exist, at any level.** [§4](#4-trigger-kinds-and-their-semantics) gives `Grpc` its own row with its own delivery, reply and ordering semantics. There is no `Grpc` member of `TriggerKind`, no such value in the schema's `kind` enum and no attribute; `TriggerKind.Http` folds *"REST, gRPC, GraphQL, webhook"* into one kind. Read that row as a ninth kind that was never declared rather than a declared one that is unimplemented — it is the reason this box is here |
+>
+> **§2's envelope is a type, not a value.** `TriggerEnvelope` and `TriggerHeaders` are
+> declared exactly as printed and `FlowContext.Trigger` exposes one, but nothing outside
+> `FlowX.Testing` and the test projects ever constructs one.
+> `FlowExecutionContext.Trigger` is never assigned, so every running flow reads `default`
+> — `Kind = Manual`, no source, no body, no headers. What the HTTP plugin actually
+> produces is a `FlowInvocation` (correlation id, idempotency key, tenant, deadline), and
+> that is what the engine reads. So the uniform-header claim holds for those four fields
+> and for nothing else; `TraceParent` is neither populated nor read, which §2's own note
+> already says.
+>
+> **§5's admission sequence is a diagram and four of its nine decisions.** Enforced today,
+> on HTTP only: a missing `Idempotency-Key` is rejected when the trigger declares
+> `Idempotent = true`; the tenant is resolved from validated claims and never from a
+> header or body; the body binds and validates to a 400 RFC 7807. Enforced by nothing:
+> payload size limits, tenant quota and rate limit — `RateLimit` is a `PolicySet` entry at
+> stage `Admission` and [10-Policy-Framework](10-Policy-Framework.md) records that no
+> policy runs on the forward path — idempotency *replay* (the key is required and
+> propagated; no store holds a recorded result to return), and the
+> `flowx_trigger_unbound_total` counter, which is one of the metrics
+> [12-Observability](12-Observability.md) does not emit.
+>
+> **What is genuinely load-bearing** is the declaration path, and it is checked: `[TriggerKind]`
+> is what the compiler can read out of a referenced assembly, `FLOWX1025` reports a trigger
+> attribute that omits it, and `EveryTriggerKindHasAManifestNameTheSchemaAccepts` and
+> `EveryTriggerAttributeTheAbstractionShipsHasAKnownShape` keep the enum, the reader and the
+> schema from drifting apart. A third-party transport can therefore publish itself into the
+> manifest today. It just has nothing to derive from at run time — see [§11](#11-writing-a-trigger-plugin).
 
 ---
 
