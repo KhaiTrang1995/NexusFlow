@@ -2284,6 +2284,55 @@ hand once per transport. Whether the same emitter generalises to Kafka and Servi
 
 ---
 
+## 6b. What is built, and what is planned next
+
+*Added 2026-08-01, because this plan could say what each phase owed and could not say what
+the platform did. Three subsystems were found in one week that were declared, published and
+diffed while nothing executed them — so the only useful question is which subsystems **run**.
+[CHECKLIST §5e2](CHECKLIST.md#5e2-platform-subsystems--what-runs-what-is-declared-what-is-absent)
+carries the full table and its evidence; this carries the ordering argument.*
+
+**Running:** compile-time orchestration · ephemeral execution · durable execution, suspension
+and timers · compensation · the transactional outbox and broker publication · HTTP and
+schedule triggers · policy stage 4 · authorisation (two stances refuse) · the manifest ·
+traces and metrics.
+
+**Declared and inert:** four policy kinds · four trigger kinds.
+**Absent:** logs · multi-tenancy · the stream engine · the AI surface · Studio.
+
+### The order, and why it is not the phase order
+
+1. **The four inert policy kinds** — `RateLimit`, `Idempotency`, `Cache`, `Audit`. First
+   because it is the only item that **deletes a diagnostic**: `FLOWX1032` exists solely to
+   tell a user their declaration does nothing, and every release that ships it ships an
+   admission. `Audit` also closes a hole this week's own work opened and named in
+   [ADR-0028](docs/adr/ADR-0028-identity-arrives-on-the-invocation.md): *who authorised a step
+   has two answers across a wait, and no audit event records either.* **`RateLimit` needs a
+   distributed store, not a process-local one** — a process-local limiter admits n× the
+   declared rate across n nodes, where a process-local breaker is merely slower to protect and
+   never wrong. That asymmetry is why a rate limiter was started and abandoned rather than
+   shipped.
+2. **`Bus`, the third transport.** `KafkaTriggerAttribute` exists and
+   `RedisStreamEventPublisher` proves the output half against a real broker; the input half is
+   unbound, so **a flow can publish to a broker and cannot be started by one**. It is also the
+   kind that tests [ADR-0004](docs/adr/ADR-0004-universal-trigger-model.md) hardest: at-least-once
+   delivery, which HTTP and cron both avoid — cron by deriving an id every node agrees on, HTTP
+   by making the caller retry.
+3. **Multi-tenancy.** The largest wholly-unbuilt subsystem with a real specification behind it
+   ([16](docs/16-Multi-Tenant.md) gives `ITenantResolver`'s signature, four isolation levels,
+   six fairness mechanisms and RLS as worked DDL). §6a's P6 cell already names the one part
+   that would be **invented** — journal partitioning — so the tractable scope is resolution,
+   fairness and RLS.
+4. **Logs**, once the abstraction question is decided: `AbstractionsHasNoDependencies` forbids
+   a package reference, `DiagnosticSource` is in the shared framework and
+   `Microsoft.Extensions.Logging.Abstractions` is not. That is a decision, not effort, which is
+   why it sits behind three things that are effort.
+
+**Not next, and deliberately:** the stream engine (P7 is the least specified phase — nothing
+defines the checkpoint format, watermark generation or how window state is journaled, so it
+would be invention rather than implementation) and Studio (sixteen one-line mentions and no
+design at all).
+
 ## 6a. P4–P9 — what this plan does not yet contain
 
 **Six of ten phases have no work packages here, and that is a decision rather than an

@@ -1606,6 +1606,52 @@ adjacent to it shipped early and is recorded here rather than left to be redisco
 
 ---
 
+## 5e2. Platform subsystems · what runs, what is declared, what is absent
+
+*Added 2026-08-01. This section exists because the question "is the platform built?" was
+being answered by reading twenty package rows, and three subsystems were found in one week
+that were **declared, published, diffed and never executed** — the manifest carried them, a
+`flowx diff` rule could break a build over them, and no code path read them at run time. That
+is the failure mode this table is shaped to expose: a row is **runs** only when something
+executes it, not when something publishes it.*
+
+| Subsystem | State | Evidence, or what is missing |
+|---|---|---|
+| Compile-time orchestration | **runs** | `FlowPlanGenerator`; 36 diagnostics; no runtime reflection |
+| Ephemeral execution | **runs** | B2 hard zero, gated by `EngineAllocationTests` on every PR |
+| Durable execution | **runs** | journal, fenced lease, recovery scan, resume from a derived frontier — against real PostgreSQL |
+| Durable suspension | **runs** | `.AwaitSignal<T>` parks the instance; `SignalAsync` resumes through the same engine entry |
+| Durable timers | **runs** | `.Delay`, `.OnTimeout`, and the declared wait armed; `wake_at` on the instance row |
+| Compensation | **runs** | unwind rebuilt from the journal, with its own retry policy |
+| Transactional outbox | **runs** | staged in the step's transaction; `PostgresOutboxPublisher` drains it |
+| Broker publication | **runs** | `RedisStreamEventPublisher`, one stream per `partition_key`; `PublisherConformance` holds two implementations |
+| HTTP trigger | **runs** | `EndpointEmitter`; `202` for a flow that suspends; generated signal routes |
+| Schedule trigger | **runs** | `ScheduleEmitter`; one instance per occurrence across a fleet, no leader |
+| **Policy engine · stage 4** | **runs** | `Timeout`, `Retry`, `CircuitBreaker`, `Bulkhead` |
+| **Policy engine · stages 1, 3, 5, 7** | **declared, inert** | `RateLimit`, `Idempotency`, `Cache`, `Audit` — `FLOWX1032` reports all four at build time |
+| **Authorisation** | **runs, partly** | `Authenticated` and `Permission` refuse; `Public` and `Internal` permit; `Policy` refused at build time (`FLOWX1037`) |
+| Manifest | **runs** | a build artifact, byte-pinned, diffed by 40-odd rules |
+| Telemetry · traces and metrics | **runs** | 11 of 13 metrics, 10 of 13 attributes; B6's allocation half gated |
+| **Telemetry · logs** | **absent** | [12 §4](docs/12-Observability.md#4-logs) is unbuilt, and blocked on a decision: `AbstractionsHasNoDependencies` forbids a package reference and `Microsoft.Extensions.Logging.Abstractions` is one |
+| **Bus / Stream / Change / Agent triggers** | **declared, unbound** | four of eight `TriggerKind` members; a flow declaring one declares an address nothing serves |
+| **Multi-tenancy** | **absent** | `ITenantResolver`, four isolation levels and RLS are specified in [16](docs/16-Multi-Tenant.md) and implemented by nothing |
+| **Stream engine** | **absent** | no checkpoint format, no watermark, no windowing — P7, and the least specified phase |
+| **AI surface / MCP** | **absent** | [13](docs/13-AI-Native.md) specifies the tool descriptor and the `tools/call` sequence; nothing serves it |
+| **Studio** | **absent** | sixteen one-line mentions and no design |
+
+**What is planned next**, in the order the gaps argue for rather than by phase number:
+
+1. **The four inert policy kinds**, which deletes `FLOWX1032`. `Audit` also closes the hole
+   this week's authorisation work opened and named: *who authorised a step now has two
+   answers across a wait, and no audit event records either.* `RateLimit` needs a
+   **distributed** store — a process-local limiter admits n× the declared rate across n
+   nodes, which is worse than none.
+2. **A third transport (`Bus`).** `KafkaTriggerAttribute` exists and `RedisStreamEventPublisher`
+   proves the output half; the input half is unbound, so a flow can publish to a broker and
+   cannot be started by one.
+3. **Multi-tenancy.** The largest wholly-unbuilt subsystem with a real specification behind it.
+4. **Logs**, once the abstraction question is decided.
+
 ## 5f. The vision's success criteria · current state
 
 [PLAN §1.1](PLAN.md#11-what-this-plan-is-held-to) carries the static mapping — which package
