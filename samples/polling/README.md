@@ -1,7 +1,45 @@
 # Sample — Polling a slow external system
 
-**Claim proved:** waiting costs **one database row**, not a thread, a timer or a
-container. 100 000 documents in flight consume zero compute while waiting.
+**Claim it is meant to prove:** waiting costs **one database row**, not a thread,
+a timer or a container. 100 000 documents in flight consume zero compute while
+waiting.
+
+> [!WARNING]
+> **This sample has no code, and it is the one whose DSL does not exist either.**
+> `samples/polling/` is this file and nothing else. `PollUntil`, `RaceUntil` and
+> `Backoff.Exponential(from:, to:)` appear **nowhere in this repository except on
+> this page** — not on `IFlowBuilder`, not in
+> [08 §4](../../docs/08-Flow-Definition.md#4-the-full-builder-surface)'s builder
+> table, not in any plan, roadmap or ADR entry.
+> [realtime-stream](../realtime-stream/) also writes DSL that does not compile, and
+> the difference matters: `.Window` and `.Aggregate` are at least in that table,
+> waiting on P7. These two are in no document at all, so this page is not a sample
+> ahead of its phase — it is a **proposal**, and reading it as anything else is
+> the mistake it invites.
+>
+> **There is no durable suspension.** The two members that *are* declared —
+> `AwaitSignal<TSignal>(TimeSpan)` and `Delay(TimeSpan)` — reach the plan, the
+> manifest and the diagram, and `FlowEngine` has no case for
+> `StepKind.AwaitSignal`. Nothing suspends, nothing registers a timer, nothing
+> wakes an instance up. The refusals around the gap are the parts that are real:
+> [`FLOWX1017`](../../docs/diagnostics/FLOWX1017.md) is an **error** on
+> `AwaitSignal` outside the `Durable` profile, `ExecutionPlan` refuses the same
+> shape again at run time, and
+> [`FLOWX1026`](../../docs/diagnostics/FLOWX1026.md) refuses
+> `SubFlowMode.AwaitCompletion` under *every* profile *"because there is no
+> suspension point to suspend into"* — a diagnostic that names the missing
+> feature is more use than a member that quietly did the wrong thing.
+>
+> | What has to exist first | Where it comes from |
+> |---|---|
+> | Suspension and resumption through the journal, timers, the signal endpoint | [**WP-63**](../../PLAN.md#wp-63--should-awaitsignal-delay-timers), a **P2** *Should*, not started. Its exit is *one row and zero compute across 10 000 suspended flows* — the claim at the top of this page |
+> | A scheduler to fire the timers | **WP-63** for the timer half; the cron half is **WP-75** ([scheduler](../scheduler/)) |
+> | `PollUntil` / `RaceUntil` as DSL at all | **Nothing.** No work package, no document, no reserved number, no ADR. Calling it anything more definite than a proposal would be inventing a plan |
+> | A poll interval type | `Backoff` exists in `FlowX.Abstractions/Policies/`, takes `TimeSpan?` rather than ISO-8601 strings, and is a *retry* backoff for a policy — not a wait schedule for a loop |
+>
+> The journal underneath all of this is built and runs against PostgreSQL
+> ([11 §2](../../docs/11-Distributed-Runtime.md#2-the-journal)), which is why this
+> sample is nearer than the streaming one. Read the rest as design.
 
 ## The problem
 
@@ -15,6 +53,13 @@ between 30 seconds and 4 hours. The usual implementations are all bad:
 | Webhook only | breaks when the provider's webhook fails, with no fallback |
 
 ## The FlowX shape
+
+> **Does not compile.** `.PollUntil(...)` is not a member of `IFlowBuilder<,>`,
+> `Backoff.Exponential` does not take strings or those parameter names, and
+> `.OnTimeout(...)` hangs off `IAwaitBuilder` — the result of `AwaitSignal`, which
+> is not what `PollUntil` would return. A reader who pastes this gets a page of
+> `CS1061`s, and finding that out from the compiler instead of from this line is
+> exactly the experience this repository exists to prevent.
 
 ```csharp
 [Flow("document.process", Profile = ExecutionProfile.Durable)]
@@ -37,6 +82,8 @@ public sealed partial class ProcessDocumentFlow : Flow<ProcessDocument, Document
 
 `PollUntil` is a durable timer loop: between attempts the instance is
 **suspended** — no lease held, no memory, no thread anywhere in the cluster.
+*Would be. A durable flow today runs to completion inside a single invocation and
+holds its lease for the whole of it.*
 
 ## What "waiting costs nothing" means
 
@@ -73,6 +120,10 @@ sequenceDiagram
 
 ## Webhook fast path, polling as the safety net
 
+> **Does not compile, and there is no signal endpoint either.** `RaceUntil` is not
+> a member; `AwaitSignal` is, and nothing delivers a signal to a waiting instance
+> because nothing waits.
+
 ```csharp
 .RaceUntil(
     signal: r => r.AwaitSignal<OcrCompleted>(),              // provider webhook, when it works
@@ -84,6 +135,14 @@ Whichever arrives first wins; the loser is cancelled. Webhook latency with
 polling reliability, expressed once.
 
 ## Tests
+
+> **Does not compile.** `FlowTestHost` is real and shipped, and this is not its
+> shape: the builder offers `WithClock(IClock)` rather than `WithVirtualTime()`,
+> substitution is by **capability id** rather than by type, and there is no
+> `Sequence.Of`, no `VirtualClock`, no `PeakLeasesHeld` and no
+> `Trace.PollAttempts`. `host.PeakLeasesHeld.Should().Be(0)` is the assertion the
+> page calls *the point of the sample*, and it is the one WP-63's exit criterion
+> has to make writable.
 
 ```csharp
 [Fact]
@@ -105,8 +164,16 @@ public async Task Waits_four_hours_in_milliseconds_and_holds_no_resources()
 
 ## Things to try
 
+*None of these can be tried yet. Kept as the acceptance list WP-63 is written to.*
+
 1. Change `Profile` to `Ephemeral` — build fails with `FLOWX1017`: timers require
-   durability, because an in-memory wait cannot survive a deployment.
-2. Deploy mid-wait (restart every node) — every suspended document resumes.
+   durability, because an in-memory wait cannot survive a deployment. *This one is
+   half true today and worth being exact about: `FLOWX1017` is a shipped error and
+   `AwaitSignalRequiresDurableCodeFixProvider` offers the fix — but it fires on
+   `AwaitSignal`, not on the `PollUntil` written above, and WP-63 records that the
+   quick action currently "buys nothing" because `Durable` does not yet suspend.*
+2. Deploy mid-wait (restart every node) — every suspended document resumes. *A
+   killed node's instances **are** found and finished by another node's recovery
+   scan today; what does not exist is the mid-wait to be killed in.*
 3. Set the OCR provider to never complete — the 4-hour timeout fires and
    `EscalateToManualReview` runs, exactly as drawn.
