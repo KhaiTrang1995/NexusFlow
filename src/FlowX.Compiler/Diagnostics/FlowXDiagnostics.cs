@@ -1167,6 +1167,62 @@ public static class FlowXDiagnostics
         "suppression buys is a manifest publishing a schedule and a host that fires nothing.",
         DiagnosticSeverity.Error);
 
+
+    /// <summary>
+    /// FLOWX1039: a flow declares a bus trigger that nothing could consume.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><see cref="ScheduledFlowCannotBeFired"/>'s rule, one transport over</strong>, and
+    /// it exists for the reason that one does: a <c>[BusTrigger]</c> or <c>[KafkaTrigger]</c> is
+    /// turned into a subscription registration by the same reading of the attribute that produces
+    /// the manifest's <c>triggers</c> block, so an address published and an address served cannot
+    /// disagree — but only for a flow the host can actually start. Skipping the rest silently
+    /// would publish a subscription nothing serves, which is exactly the
+    /// documented-but-not-produced claim the manifest exists to eliminate.
+    /// </para>
+    /// <para>
+    /// <strong>Two reasons, and they fail in opposite directions.</strong> A flow whose input is
+    /// not <c>BusMessage</c> cannot be started at all: the consumer hands over the message, and
+    /// it hands the message over <em>undeserialised</em>, because turning a body into a typed
+    /// contract needs a <c>JsonTypeInfo</c> only generated code can name and the host has none —
+    /// which constraint C2 makes a hard rule rather than a preference, since
+    /// <c>samples/ecommerce</c> is published NativeAOT. An <c>Ephemeral</c> flow, by contrast,
+    /// would start perfectly well — and would start again on every redelivery, because the
+    /// instance id a delivery derives
+    /// (<a href="../adr/ADR-0035-a-delivery-names-the-instance-it-starts.md">ADR-0035</a>) is
+    /// inert without a journal to refuse the second one. At-least-once delivery would then be
+    /// at-least-once <em>execution</em>, with no error, no duplicate row and nothing anywhere to
+    /// count.
+    /// </para>
+    /// <para>
+    /// <strong>An error, not a warning</strong>, on
+    /// <see cref="ScheduledFlowCannotBeFired"/>'s argument unchanged: neither case has a
+    /// deployment, configuration or later release under which it becomes correct, and both
+    /// present as work that silently does not happen or silently happens <em>n</em> times.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor BusFlowCannotBeConsumed = Create(
+        "FLOWX1039",
+        "Bus-triggered flow cannot be consumed",
+        "Flow '{0}' declares a bus trigger and no subscription is registered for it: {1}",
+        "A [BusTrigger] or [KafkaTrigger] is turned into a subscription registration by the " +
+        "same reading of the attribute that produces the manifest's triggers block, so a " +
+        "declared subscription and a served one cannot disagree — but only for a flow the host " +
+        "can actually start. Two things stop it. A flow whose input contract is not " +
+        "FlowX.BusMessage has nothing to bind: the consumer hands over the message the broker " +
+        "delivered, body included but not deserialised, because turning that body into a typed " +
+        "contract needs a JsonTypeInfo only generated code can name. Declare the flow as " +
+        "Flow<BusMessage, TOut> and deserialise the payload in a capability, where a serialiser " +
+        "context is in scope and the failure is a Result. And a flow that does not declare " +
+        "ExecutionProfile.Durable journals no instance, so the instance id a delivery derives " +
+        "is inert and there is no primary key to refuse a redelivery: one message starts one " +
+        "flow per delivery, with no error, no duplicate row and nothing anywhere to count. " +
+        "Declare Profile = ExecutionProfile.Durable. There is no suppression that makes either " +
+        "work — the generator emits no registration either way, so what a suppression buys is a " +
+        "manifest publishing a subscription and a host that consumes nothing.",
+        DiagnosticSeverity.Error);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1203,7 +1259,8 @@ public static class FlowXDiagnostics
         StepDeclaresMoreThanOnePolicySet,
         CompensationRetryRetriesNothing,
         PolicySetCannotBeRead,
-        ScheduledFlowCannotBeFired);
+        ScheduledFlowCannotBeFired,
+        BusFlowCannotBeConsumed);
 
     private static DiagnosticDescriptor Create(
         string id,

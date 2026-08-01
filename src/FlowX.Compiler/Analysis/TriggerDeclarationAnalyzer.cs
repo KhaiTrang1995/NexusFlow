@@ -53,13 +53,31 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
 
     private const string ScheduledFireName = "FlowX.ScheduledFire";
 
+    /// <summary>The two attributes a subscription is declared with, and the input one can give.</summary>
+    /// <remarks>
+    /// Matched by name rather than by <c>[TriggerKind(TriggerKind.Bus)]</c>, and the difference
+    /// matters. A third-party bus attribute reaching the manifest with its kind produces no
+    /// registration either — <c>TriggerReader</c> has no shape for its arguments, so there is no
+    /// topic to read — and reporting FLOWX1039 on it would tell an author their flow is wrong
+    /// when what is missing is a shape this build does not know. FLOWX1025 is the rule that
+    /// covers a plugin attribute, and it says something an author can act on.
+    /// </remarks>
+    private static readonly string[] BusTriggerAttributeNames =
+    [
+        "FlowX.BusTriggerAttribute",
+        "FlowX.KafkaTriggerAttribute",
+    ];
+
+    private const string BusMessageName = "FlowX.BusMessage";
+
     private const string FlowBaseName = "FlowX.Flow";
 
     /// <inheritdoc />
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } =
         ImmutableArray.Create(
             FlowXDiagnostics.TriggerDeclaresNoKind,
-            FlowXDiagnostics.ScheduledFlowCannotBeFired);
+            FlowXDiagnostics.ScheduledFlowCannotBeFired,
+            FlowXDiagnostics.BusFlowCannotBeConsumed);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -112,7 +130,85 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
         }
 
         ReportUnfireableSchedules(context, type, attributes);
+        ReportUnconsumableSubscriptions(context, type, attributes);
     }
+
+    /// <summary>
+    /// Reports FLOWX1039 on each bus trigger the host would have nothing to do with.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ReportUnfireableSchedules"/>'s shape and its reasons: the analyzer has the
+    /// attribute's own span where the generator has a collected model and nothing to point at,
+    /// and one report per attribute rather than one per flow makes "remove this or fix the flow"
+    /// a decision the author can take per line.
+    /// </remarks>
+    private static void ReportUnconsumableSubscriptions(
+        SymbolAnalysisContext context, INamedTypeSymbol type, ImmutableArray<AttributeData> attributes)
+    {
+        var reason = UnconsumableReason(type, attributes);
+
+        if (reason is null)
+        {
+            return;
+        }
+
+        foreach (var attribute in attributes)
+        {
+            if (!IsBusTrigger(attribute))
+            {
+                continue;
+            }
+
+            context.ReportDiagnostic(Diagnostic.Create(
+                FlowXDiagnostics.BusFlowCannotBeConsumed,
+                LocationOf(attribute, type, context.CancellationToken),
+                FlowIdOf(type, attributes),
+                reason));
+        }
+    }
+
+    /// <summary>
+    /// Why nothing could consume this flow's subscriptions, or <c>null</c> when something can.
+    /// </summary>
+    /// <remarks>
+    /// The two reasons are checked in the order an author would repair them, for
+    /// <see cref="UnfireableReason"/>'s reason: a flow whose input is wrong cannot be started at
+    /// all, and a flow whose profile is wrong would be started once per delivery.
+    /// </remarks>
+    private static string? UnconsumableReason(
+        INamedTypeSymbol type, ImmutableArray<AttributeData> attributes)
+    {
+        if (!attributes.Any(IsBusTrigger))
+        {
+            return null;
+        }
+
+        if (InputOf(type) is not { } input)
+        {
+            // The base type did not resolve, so C# is already reporting something more useful
+            // about the same span and this rule would be piling on.
+            return null;
+        }
+
+        if (input.ToDisplayString() != BusMessageName)
+        {
+            return
+                $"its input contract is '{input.ToDisplayString()}' and a delivery has only the " +
+                "message to give it — declare it as Flow<BusMessage, TOut> and deserialise the " +
+                "payload in a capability";
+        }
+
+        return IsDurable(attributes)
+            ? null
+            : "it does not declare ExecutionProfile.Durable, so nothing journals its instances, " +
+              "the instance id a delivery derives is inert, and one message would start one flow " +
+              "per delivery — declare Profile = ExecutionProfile.Durable";
+    }
+
+    /// <summary>Whether this attribute is one of the two bus triggers this build has a shape for.</summary>
+    private static bool IsBusTrigger(AttributeData attribute) =>
+        attribute.AttributeClass?.ToDisplayString() is { } name &&
+        System.Array.IndexOf(BusTriggerAttributeNames, name) >= 0;
 
     /// <summary>
     /// Reports FLOWX1038 on each <c>[CronTrigger]</c> the host would have nothing to do with.
