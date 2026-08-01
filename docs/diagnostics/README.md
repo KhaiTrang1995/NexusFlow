@@ -53,8 +53,12 @@ the stance to be revisited **as a set** once the journal exists — "`FLOWX1011`
 included, rather than one row at a time". WP-52 gave the runtime a journal and WP-58 raised
 `FLOWX1007`–`FLOWX1009`. This is that revisit, and this section is its record.
 
-**The set:** `FLOWX1007`, `FLOWX1008`, `FLOWX1009`, `FLOWX1011`. `FLOWX1006` joins it when
-WP-59 lands and should take the same shape.
+**The set:** `FLOWX1006`, `FLOWX1007`, `FLOWX1008`, `FLOWX1009`, `FLOWX1011`. **`FLOWX1006`
+joined it in WP-59**, and applying the rule below to it yields an **Error uniformly** rather
+than a split: the rule reports only on a `Durable` flow, so its trigger *is* the escalation
+condition and there is no case left to warn about. That is `FLOWX1012`'s mutual exclusivity
+read from the other end — that rule fires *because* a flow is not durable and so can never
+escalate; this one fires *because* it is and so can never fail to.
 
 ### The decision
 
@@ -229,6 +233,7 @@ description of a platform with no suspension engine.
 | [FLOWX1003](FLOWX1003.md) | Capability references a transport | Losing quality goal Q4 — the same flow behind any transport |
 | [FLOWX1004](FLOWX1004.md) | Capability invokes another capability | Turning the capability set back into a call graph |
 | [FLOWX1005](FLOWX1005.md) | Flow inherits from another flow | Control flow invisible to the graph and the manifest |
+| [FLOWX1006](FLOWX1006.md) | State-bag contract is outside every generated JSON context | **A durable flow whose journal records nothing for one of its contracts, and a resume that runs the rest of the flow against values no step produced** |
 | [FLOWX1007](FLOWX1007.md) | Time is read from the ambient clock rather than the context | A replay reproducing a different instant from the one the journal captured |
 | [FLOWX1008](FLOWX1008.md) | Identity or randomness is taken outside the context | **A duplicate charge on a retried step, and a replay minting an id the journal never saw** |
 | [FLOWX1009](FLOWX1009.md) | Capability or flow holds mutable state | **Two concurrent invocations of one singleton capability racing on a field** |
@@ -281,7 +286,6 @@ description of a platform with no suspension engine.
 The catalogue is deliberately smaller than the numbering suggests. Codes appear here
 only once the compiler actually reports them — a documented diagnostic that nothing
 raises is a promise the compiler is not keeping. Reserved for later phases:
-`FLOWX1006` (state must be serialisable) and
 `FLOWX1022` (contract compatibility **across versions** — the analyzer counterpart
 of `flowx diff`, distinct from `FLOWX1020`, which checks one flow's steps against
 each other). `FLOWX1021` left this list when sub-flows landed; `FLOWX1016` and
@@ -291,6 +295,11 @@ each other). `FLOWX1021` left this list when sub-flows landed; `FLOWX1016` and
 already gave them: ambient clock, ambient identity and randomness, and mutable state on a
 capability or a flow. **`FLOWX1012` left it in WP-60**, with the meaning every other
 document already gave it too: `.CompensateWith` on a flow whose profile is not `Durable`.
+**`FLOWX1006` left it in WP-59**, with the meaning ADR-0008 and ADR-0015's commitment 5 both
+gave it: membership of a source-generated `JsonSerializerContext`, checked against the
+contracts a `Durable` flow's journal has to write. It was blocked on there being no generated
+payload writer to make membership a real requirement, and the row that used to sit below said
+so; WP-59 emitted the writer, so the requirement is now one a build can fail on.
 It was reserved for longer than any of them, and the row that used to sit below said why
 — its remedy. That remedy is now real in both halves: WP-52 made the runtime read
 `ExecutionProfile`, and WP-53 and WP-55 gave a host a journal and a lease store to
@@ -303,7 +312,6 @@ quietly become "forgotten":
 
 | Id | Blocked on |
 |---|---|
-| `FLOWX1006` | The generated `System.Text.Json` context [ADR-0008](../adr/ADR-0008-serialization-and-schema.md) chose. Nothing generates one and `IPayloadSerializer` does not exist, so there is no membership the rule could check a contract against. *This cell also said `ctx.State` is serialised nowhere. Since WP-52 there is a path — the journal's state-bag snapshot — but it runs through `JournalPayload.Of<T>`, which requires a `JsonTypeInfo<T>` the caller must already have, and no generator emits one: the shipped dispatchers describe no payloads. The generated payload writer is WP-59, and this rule lands with it.* Checking "is this type serialisable in principle" instead would be a different, weaker rule under a number already spoken for |
 | `FLOWX1022` | `flowx diff`'s question, asked of two manifests. An analyzer sees one compilation and cannot see the previous version's contracts at all |
 
 **A new rule takes the next id above the catalogue, never a reserved one.** Each
