@@ -100,6 +100,21 @@ public static class FlowXServiceCollectionExtensions
                 ResolveTimerScan(provider),
                 provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
 
+        // Registered whether or not anything is put in it, for FlowCatalog's reason: the sweep
+        // over an empty catalogue is not enabled, which is the same answer as a node that fires
+        // nothing and needs no branch.
+        services.TryAddSingleton<FlowScheduleCatalog>();
+
+        // A third loop, and not a query on either of the first two. A schedule occurrence is
+        // computed rather than read off a row, so this sweep touches no index at all — folding
+        // it into FlowTimerService would mean one loop whose interval means two different
+        // things, and a deployment that wants schedules at one-second resolution and durable
+        // timers at ten cannot say so.
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowScheduleService>(
+            static provider => new FlowScheduleService(
+                ResolveScheduleScan(provider),
+                provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
+
         services.TryAddSingleton<FlowXHealthCheck>();
 
         // Registering the type is not the same as registering the check. Before this,
@@ -191,6 +206,101 @@ public static class FlowXServiceCollectionExtensions
             durability,
             provider.GetRequiredService<IOptions<FlowXOptions>>().Value,
             provider.GetRequiredService<IClock>());
+    }
+
+    /// <summary>The schedule sweep, or null when this host has no journal to fire into.</summary>
+    /// <remarks>
+    /// <para>
+    /// Null when nothing registered a journal, which for a schedule is not a supported
+    /// configuration in the way it is for a timer: without a primary key to refuse a second
+    /// node's firing, a schedule fires once per node per occurrence and nothing records that it
+    /// did. A host in that state fires nothing, and <c>FlowScheduleCatalog.Add</c> is where an
+    /// application that meant to schedule something finds out.
+    /// </para>
+    /// <para>
+    /// <strong>Whether anything is registered is deliberately not decided here.</strong>
+    /// Schedules reach the catalogue from the composition root <em>after</em> the container is
+    /// built, by the generated <c>AddFlowXSchedules</c>, exactly as a flow reaches
+    /// <see cref="FlowCatalog"/>. So the sweep is constructed over a catalogue that may still be
+    /// empty and reads <see cref="FlowScheduleScan.IsEnabled"/> at each tick.
+    /// </para>
+    /// </remarks>
+    private static FlowScheduleScan? ResolveScheduleScan(IServiceProvider provider)
+    {
+        if (ResolveDurability(provider) is not { } durability)
+        {
+            return null;
+        }
+
+        return new FlowScheduleScan(
+            provider.GetRequiredService<FlowHost>(),
+            provider.GetRequiredService<FlowScheduleCatalog>(),
+            durability,
+            provider.GetRequiredService<IOptions<FlowXOptions>>().Value,
+            provider.GetRequiredService<IClock>());
+    }
+}
+
+/// <summary>
+/// What generated schedule registration code calls, and the only thing it knows about this
+/// assembly.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>A named type with a stable signature, for <c>FlowEndpointExtensions</c>'s
+/// reason.</strong> The generator links against nothing — it is a netstandard2.0 analyzer —
+/// and knows this transport only as the string
+/// <c>"FlowX.Hosting.FlowScheduleRegistration"</c>, which it looks up in the user's own
+/// compilation before emitting anything. An application that does not reference
+/// <c>FlowX.Hosting</c> gets no file, no type and no IL.
+/// </para>
+/// <para>
+/// <strong>It takes primitives and not a <see cref="FlowSchedule"/>.</strong> The generated
+/// call site is C# the compiler writes from attribute data, and attribute data is strings and
+/// enum members; asking it to construct a parsed schedule would mean emitting the parse, which
+/// belongs here where it can fail loudly at startup.
+/// </para>
+/// </remarks>
+public static class FlowScheduleRegistration
+{
+    /// <summary>Registers one declared schedule on this node.</summary>
+    /// <param name="services">The built container, which is where the dispatcher comes from.</param>
+    /// <param name="plan">The compiled flow.</param>
+    /// <param name="dispatcher">Resolves the flow's generated dispatcher.</param>
+    /// <param name="cron">The five-field expression, exactly as the manifest published it.</param>
+    /// <param name="timeZone">The IANA zone the expression is read in.</param>
+    /// <param name="missedFire">Behaviour after downtime.</param>
+    /// <returns>The same provider, so registrations chain.</returns>
+    /// <exception cref="ArgumentException">
+    /// The expression or the zone could not be read, or the flow does not declare
+    /// <c>Durable</c>. Both are startup failures on purpose — see
+    /// <see cref="FlowScheduleCatalog.Add"/>.
+    /// </exception>
+    public static IServiceProvider Add(
+        IServiceProvider services,
+        ExecutionPlan plan,
+        Func<IServiceProvider, IStepDispatcher> dispatcher,
+        string cron,
+        string timeZone,
+        MissedFirePolicy missedFire)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(dispatcher);
+
+        services.GetRequiredService<FlowScheduleCatalog>().Add(
+            FlowSchedule.Create(plan.Flow.Id, plan.Flow.Version, cron, timeZone, missedFire),
+            plan,
+            dispatcher(services));
+
+        // A scheduled instance is a durable instance like any other: a node that dies holding
+        // one has abandoned it, and a recovery sweep can only take it over if this node can
+        // turn its (flow_id, flow_version) back into a plan. Registering here rather than
+        // asking the application to remember means a fired schedule is recoverable by
+        // construction.
+        services.GetRequiredService<FlowCatalog>().Add(plan, dispatcher(services));
+
+        return services;
     }
 }
 
