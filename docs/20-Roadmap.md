@@ -76,12 +76,13 @@ gantt
 > reads as a promise about ids nobody has allocated; each reservation is now
 > listed with what blocks it in
 > [the diagnostics index](diagnostics/README.md).
-> *Four of those five have since been raised in P2, where they always belonged:
-> `FLOWX1007`–`FLOWX1009` at WP-58, and
-> [`FLOWX1012`](diagnostics/FLOWX1012.md) at WP-60 once a host could register the
-> journal its fix recommends. `FLOWX1006` waits on the generated payload writer
-> and `FLOWX1022` on a second manifest, so the reservation table is down to two
-> rows.*
+> *All five have since been raised in P2, where they always belonged:
+> `FLOWX1007`–`FLOWX1009` at WP-58, [`FLOWX1012`](diagnostics/FLOWX1012.md) at WP-60
+> once a host could register the journal its fix recommends, and
+> [`FLOWX1006`](diagnostics/FLOWX1006.md) at WP-59 once a generated payload writer
+> made membership of a serialiser context a requirement something actually had.
+> `FLOWX1022` waits on a second manifest, so the reservation table is down to one
+> row.*
 >
 > **The "Done when" is not met, and it is the one criterion that is failing on a
 > measurement rather than on an absence.** The 200-flow solution builds at

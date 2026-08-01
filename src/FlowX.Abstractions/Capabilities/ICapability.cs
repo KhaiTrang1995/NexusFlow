@@ -13,8 +13,9 @@ namespace FlowX;
 /// `FlowXDiagnostics` deliberately does not stub a reserved code, on the grounds that
 /// "a descriptor nothing raises is a promise the compiler is not keeping"; a doc comment
 /// naming one is the same promise made somewhere the compiler cannot see it. Three of those
-/// four have since been built, which is the reason the split below is now four-to-one
-/// rather than five-to-three.
+/// four have since been built, and the fourth at WP-59 — which is the reason the split below
+/// is now eight-to-nothing on enforcement, and why the one remaining gap is half a rule
+/// rather than a whole one.
 /// </para>
 /// <para><strong>Enforced at build time:</strong></para>
 /// <list type="number">
@@ -26,6 +27,8 @@ namespace FlowX;
 ///   <item>A capability is stateless: no mutable instance or static fields (FLOWX1009).</item>
 ///   <item>Time, identifiers and randomness come from <see cref="CapabilityContext"/> only
 ///     (FLOWX1007, FLOWX1008).</item>
+///   <item>A contract a <c>Durable</c> flow's journal must write is declared by a generated
+///     <c>System.Text.Json</c> context (FLOWX1006).</item>
 /// </list>
 /// <para>
 /// The last three shipped at WP-58, after being blocked on severity rather than on
@@ -35,11 +38,13 @@ namespace FlowX;
 /// have shipped saying nothing in nearly every build.
 /// </para>
 /// <para>
-/// <strong>Required, and not enforced — one rule.</strong>
+/// <strong>Required, and not enforced — half of one rule.</strong>
 /// </para>
 /// <list type="number">
-///   <item>Contract types are immutable records serialisable by a generated context
-///     (would be FLOWX1006, blocked on the generated payload writer — WP-59).</item>
+///   <item>Contract types are <em>immutable</em> records. The serialisable half of this rule
+///     is FLOWX1006, raised at WP-59 once the generated payload writer gave it something to
+///     check; nothing refuses a mutable contract, and the two halves were only ever one rule
+///     because a record with init-only members usually satisfies both at once.</item>
 /// </list>
 /// <para>
 /// Rule 3 is the load-bearing one: because capabilities cannot call each other, the

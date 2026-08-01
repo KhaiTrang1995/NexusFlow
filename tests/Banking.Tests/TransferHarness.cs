@@ -184,10 +184,15 @@ internal sealed class TransferHarness
         public StepJournalEntry DescribeStep(int stepIndex, FlowContext ctx) =>
             _inner.DescribeStep(stepIndex, ctx);
 
-        // RestoreState is not forwarded: the generated dispatcher does not implement it,
-        // because this flow's DescribeStep writes no state bag. The interface's default
-        // throws, which is the correct answer — a bag that was never committed cannot be
-        // asked for, and a resumed instance therefore re-enters with an empty one.
+        // Forwarded, and this line is the whole of what the host needs to record a request:
+        // FlowHost asks the dispatcher for the input because it cannot name a JsonTypeInfo
+        // for the flow's contract itself. A decorator that stopped here and inherited the
+        // interface's default would silently put flow_instance.input back to NULL — which is
+        // exactly the state WP-59 found it in — while every other test went on passing.
+        public JournalPayload DescribeInput(object? input) => _inner.DescribeInput(input);
+
+        public void RestoreState(FlowContext ctx, string stateBagJson) =>
+            _inner.RestoreState(ctx, stateBagJson);
 
         /// <summary>
         /// The same name <c>FlowTestTrace</c> uses: the capability id verbatim, and a

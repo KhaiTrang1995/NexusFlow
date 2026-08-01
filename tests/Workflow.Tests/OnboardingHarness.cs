@@ -482,6 +482,9 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     /// <inheritdoc />
     public void RestoreState(FlowContext ctx, string stateBagJson) => _inner.RestoreState(ctx, stateBagJson);
 
+    /// <inheritdoc />
+    public JournalPayload DescribeInput(object? input) => _inner.DescribeInput(input);
+
     private static string StepName(StepNode step) => step.Kind switch
     {
         StepKind.Capability => step.Capability!.Id,

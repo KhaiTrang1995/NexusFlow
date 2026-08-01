@@ -57,6 +57,9 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     /// <summary>The id whose reporting this class decides rather than passes through.</summary>
     private static readonly string EmitDiagnosticId = FlowXDiagnostics.EmitIsNotYetPublished.Id;
 
+    /// <summary>The second such id, and it is settled the same way for the same reason.</summary>
+    private static readonly string StateDiagnosticId = FlowXDiagnostics.StateIsNotSerialisable.Id;
+
     /// <inheritdoc />
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -503,18 +506,19 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
 
         foreach (var diagnostic in result.Diagnostics)
         {
-            if (!string.Equals(diagnostic.Id, EmitDiagnosticId, StringComparison.Ordinal))
+            if (string.Equals(diagnostic.Id, EmitDiagnosticId, StringComparison.Ordinal))
             {
-                production.ReportDiagnostic(diagnostic);
+                Report(production, SettleEmitDiagnostic(diagnostic, contexts, durable));
                 continue;
             }
 
-            var settled = SettleEmitDiagnostic(diagnostic, contexts, durable);
-
-            if (settled is not null)
+            if (string.Equals(diagnostic.Id, StateDiagnosticId, StringComparison.Ordinal))
             {
-                production.ReportDiagnostic(settled);
+                Report(production, SettleStateDiagnostic(diagnostic, contexts));
+                continue;
             }
+
+            production.ReportDiagnostic(diagnostic);
         }
 
         if (!result.IsSuccess || result.Model is null)
@@ -568,4 +572,53 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
             provisional.Properties,
             name ?? "TEvent",
             reason);
+
+    /// <summary>
+    /// Turns one provisional <c>FLOWX1006</c> into the diagnostic to report, or into nothing.
+    /// </summary>
+    /// <returns>
+    /// <c>null</c> when exactly one serialiser context declares the contract, so the generated
+    /// payload writer can name metadata for it and there is nothing to report.
+    /// </returns>
+    /// <remarks>
+    /// The profile is not re-read here, unlike <c>FLOWX1024</c>'s settlement: analysis raises
+    /// this provisional only for a <c>Durable</c> flow, because an ephemeral one keeps no
+    /// journal and the rule protects nothing there.
+    /// </remarks>
+    private static Diagnostic? SettleStateDiagnostic(
+        Diagnostic provisional, List<JsonContextModel> contexts)
+    {
+        provisional.Properties.TryGetValue(StateBagReasons.ContractProperty, out var contract);
+        provisional.Properties.TryGetValue(StateBagReasons.NameProperty, out var name);
+        provisional.Properties.TryGetValue(StateBagReasons.FlowProperty, out var flowId);
+
+        if (contract is null)
+        {
+            // The contract did not resolve, so analysis produced no usable name either. C# is
+            // already reporting something more useful about the same span.
+            return null;
+        }
+
+        return FlowEmitter.SingleContextFor(contexts, contract) is null
+            ? Diagnostic.Create(
+                FlowXDiagnostics.StateIsNotSerialisable,
+                provisional.Location,
+                provisional.Properties,
+                name ?? contract,
+                flowId ?? string.Empty,
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    StateBagReasons.NoSerializerContextFormat,
+                    contract))
+            : null;
+    }
+
+    /// <summary>Reports a settled diagnostic, or nothing when it settled to nothing.</summary>
+    private static void Report(SourceProductionContext production, Diagnostic? settled)
+    {
+        if (settled is not null)
+        {
+            production.ReportDiagnostic(settled);
+        }
+    }
 }

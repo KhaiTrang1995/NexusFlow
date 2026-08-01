@@ -304,13 +304,57 @@ public interface IStepDispatcher
     /// <para>
     /// Defaulted to <see cref="StepJournalEntry.Nothing"/> rather than to a throw, unlike
     /// <see cref="BeginSubFlow"/>. A dispatcher that describes nothing produces a journal
-    /// with the step boundaries and without the payloads, which is a truthful, resumable
-    /// record — the generated payload writer and <c>FLOWX1006</c> are WP-59's, and a default
-    /// that threw would make every hand-written dispatcher unusable under a profile it is
-    /// entitled to run.
+    /// with the step boundaries and without the payloads, which is a truthful record and a
+    /// resumable one only in the weak sense — the resumed loop skips what committed and
+    /// re-enters with an empty bag. WP-59 made the generated dispatcher describe both
+    /// payloads at every step boundary, so that is no longer what a compiled flow does; the
+    /// default stays because a hand-written dispatcher is entitled to run under
+    /// <c>Durable</c>, and a default that threw would make it unusable.
     /// </para>
     /// </remarks>
     StepJournalEntry DescribeStep(int stepIndex, FlowContext ctx) => StepJournalEntry.Nothing;
+
+    /// <summary>
+    /// Describes the trigger input for the instance row, before the first step runs.
+    /// </summary>
+    /// <param name="input">
+    /// The value the flow was started with, or <c>null</c> when it was started without one.
+    /// </param>
+    /// <returns>
+    /// The payload to record on <c>flow_instance.input</c>, or
+    /// <see cref="JournalPayload.Empty"/> when there is nothing to record.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>This exists because <c>FlowHost</c> could not write an input and the defect was
+    /// invisible.</strong> <c>OpenAsync</c> passed the literal <c>input: null</c> to
+    /// <c>DurableExecution.BeginAsync</c>, so <c>flow_instance.input</c> was NULL on every row
+    /// ever written: a replay could not reconstruct what was requested, the audit trail had no
+    /// record of it, and <c>[Sensitive]</c> on an input contract protected nothing, because
+    /// nothing was stored. It was not fixable in the host — journaling an input needs a
+    /// <c>JsonTypeInfo&lt;TIn&gt;</c> and only generated code can name one, which is the same
+    /// reason <see cref="DescribeStep"/> is here.
+    /// </para>
+    /// <para>
+    /// <strong>The stored input is redacted, like every other payload.</strong> What comes
+    /// back is a <see cref="JournalPayload"/> carrying the flow's <c>SensitiveMembers</c>, so a
+    /// marked member of the input contract is <see cref="JournalPayload.Redacted"/> in the row
+    /// — which is the point of storing the input at all rather than an argument against it.
+    /// </para>
+    /// <para>
+    /// <c>object?</c> rather than a generic, because the host holds the dispatcher through this
+    /// interface and the interface cannot carry the flow's input type. The boxing is on the
+    /// durable start path, which is already taking a lease and a store round trip; the
+    /// ephemeral loop budget B2 measures never reaches this call.
+    /// </para>
+    /// <para>
+    /// Defaulted to <see cref="JournalPayload.Empty"/> rather than to a throw, for
+    /// <see cref="DescribeStep"/>'s reason: a hand-written dispatcher is entitled to run under
+    /// <c>Durable</c>, and an instance row without an input is the record this release wrote
+    /// for every flow until WP-59.
+    /// </para>
+    /// </remarks>
+    JournalPayload DescribeInput(object? input) => JournalPayload.Empty;
 
     /// <summary>
     /// Rehydrates a resumed flow's state bag from the snapshot the journal committed.

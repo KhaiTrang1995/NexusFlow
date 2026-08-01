@@ -13,6 +13,15 @@ namespace Workflow;
 /// NativeAOT-safe.
 /// </para>
 /// <para>
+/// <strong>The contracts below <see cref="EmployeeOnboarded"/> are here for a third reason:
+/// <c>FLOWX1006</c>.</strong> Both flows in this sample are <c>Durable</c>, so each step's
+/// result and the state bag after it are journaled, and every one of those needs the same
+/// generated metadata for the same reason the event body does. Before WP-59 the journal
+/// recorded no payloads at all — truthful about which steps had run, silent about what they
+/// produced — so a resumed instance re-entered with an empty bag and re-ran everything after
+/// the frontier. The list is not maintained by hand: the compiler names the missing contract.
+/// </para>
+/// <para>
 /// The camelCase policy is not decoration. Without it the wire names are the C# ones, and a
 /// client sending the conventional <c>"candidateId"</c> gets a <c>CandidateId</c> of null —
 /// a missing member deserialises to <c>default</c>. Here <c>offer.validate</c> rejects it,
@@ -23,6 +32,21 @@ namespace Workflow;
 [JsonSerializable(typeof(OnboardEmployee))]
 [JsonSerializable(typeof(OnboardingResult))]
 [JsonSerializable(typeof(EmployeeOnboarded))]
+[JsonSerializable(typeof(ValidatedOffer))]
+[JsonSerializable(typeof(PayrollRecord))]
+[JsonSerializable(typeof(SupplierAgreement))]
+[JsonSerializable(typeof(Identity))]
+[JsonSerializable(typeof(LaptopOrder))]
+[JsonSerializable(typeof(AccessGrant))]
+[JsonSerializable(typeof(ApprovedEquipment))]
+[JsonSerializable(typeof(EquipmentAssignment))]
+[JsonSerializable(typeof(BackgroundCheck))]
+[JsonSerializable(typeof(CheckWaiver))]
+[JsonSerializable(typeof(WelcomePack))]
+[JsonSerializable(typeof(InductionBooking))]
+[JsonSerializable(typeof(ProvisionWorkspace))]
+[JsonSerializable(typeof(DeskAllocation))]
+[JsonSerializable(typeof(BuildingPass))]
 internal sealed partial class WorkflowJsonContext : JsonSerializerContext;
 
 /// <summary>People records, in memory.</summary>

@@ -272,9 +272,11 @@ reaches a build log, and `Ephemeral` is the *default* profile, so an information
 would do nothing in nearly every build — which is precisely the state that kept all four
 ids unraised through two phases. They ship **Warning by default, and Error where the
 compilation can prove the code is on a durable flow's replay path**, so `FLOWX1011`'s
-deviation stopped being an exception and became the rule. `FLOWX1006` is the one of the
-five still unwritten, and it was never a severity question — it waits on the generated
-payload writer (WP-59). See
+deviation stopped being an exception and became the rule. `FLOWX1006` was the one of the
+five still unwritten, and it was never a severity question — it waited on the generated
+payload writer, which **WP-59** emitted. It ships an **error uniformly**: it reports only
+on a `Durable` flow, so the condition the rest of the set escalates on is the condition it
+fires on. See
 [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) and risk R2 in
 [05 §11](05-Architecture.md#11-risks-and-technical-debt), which carried the same
 claim as a *mitigation* and has now been corrected to say so.

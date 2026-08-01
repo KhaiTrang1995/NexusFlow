@@ -114,7 +114,7 @@ public sealed class FlowHost
                 return await _engine.ExecuteAsync(plan, dispatcher, invocation, ct).ConfigureAwait(false);
             }
 
-            var opened = await OpenAsync(plan, invocation, ct).ConfigureAwait(false);
+            var opened = await OpenAsync(plan, dispatcher, invocation, input: null, ct).ConfigureAwait(false);
 
             if (opened.IsFailure)
             {
@@ -166,7 +166,7 @@ public sealed class FlowHost
                     .ConfigureAwait(false);
             }
 
-            var opened = await OpenAsync(plan, invocation, ct).ConfigureAwait(false);
+            var opened = await OpenAsync(plan, dispatcher, invocation, input, ct).ConfigureAwait(false);
 
             if (opened.IsFailure)
             {
@@ -225,7 +225,7 @@ public sealed class FlowHost
                     .ConfigureAwait(false);
             }
 
-            var opened = await OpenAsync(plan, invocation, ct).ConfigureAwait(false);
+            var opened = await OpenAsync(plan, dispatcher, invocation, input, ct).ConfigureAwait(false);
 
             if (opened.IsFailure)
             {
@@ -450,10 +450,17 @@ public sealed class FlowHost
     /// to be idempotent supplies its own id through <c>DurableExecution.BeginAsync</c>; this
     /// path is for a caller that has none to offer, and minting one per invocation is the
     /// honest behaviour for that case.
+    /// <para>
+    /// The dispatcher is taken as a parameter for one reason: it is the only code that can
+    /// name a <c>JsonTypeInfo</c> for the flow's input contract, and therefore the only code
+    /// that can put the request into the instance row.
+    /// </para>
     /// </remarks>
     private async ValueTask<Result<Session>> OpenAsync(
         ExecutionPlan plan,
+        IStepDispatcher dispatcher,
         FlowInvocation invocation,
+        object? input,
         CancellationToken ct)
     {
         var durability = _durability!;
@@ -475,8 +482,17 @@ public sealed class FlowHost
         // The token the lease just issued becomes the instance's opening fence, because
         // StartAsync carries it. There is no window in which the row exists at a fence lower
         // than the lease that created it.
+        //
+        // The input is asked of the dispatcher rather than serialised here, and until WP-59
+        // this line passed the literal `input: null`. That made flow_instance.input NULL on
+        // every row ever written — a replay could not reconstruct what was requested, the
+        // audit trail had no record of it, and [Sensitive] on an input contract protected
+        // nothing because nothing was stored. The host cannot fix that itself: recording an
+        // input needs a JsonTypeInfo<TIn> and only generated code can name one. What comes
+        // back is a JournalPayload carrying the flow's SensitiveMembers, so the stored input
+        // is redacted by the same single exit as every other payload.
         var begun = await lease
-            .BeginAsync(durability.Journal, plan, invocation, input: null, ct)
+            .BeginAsync(durability.Journal, plan, invocation, dispatcher.DescribeInput(input), ct)
             .ConfigureAwait(false);
 
         if (begun.IsFailure)

@@ -137,11 +137,15 @@ public sealed record TicketOpened(string TicketId, string Subject);
 ```
 
 `[Sensitive]` is not a comment. The member is listed under the contract's `sensitive` array
-in the manifest, and the generated HTTP endpoint strips it out of error responses. It is
-also *narrower than it sounds*: a Problem Details body is the only sink this release
-redacts, so nothing stops your own code writing the value somewhere the platform does not
-see. [`SensitiveAttribute`](../src/FlowX.Abstractions/Capabilities/CapabilityAttribute.cs)
-says so at the declaration.
+in the manifest, and it is redacted in every sink the platform owns: the generated HTTP
+endpoint strips it out of error responses, and — for a `Durable` flow — it is `[redacted]` in
+the stored input, in every step result, in the state-bag snapshot and in an emitted event
+body. That last group is one mechanism, not four: a value reaches a store only as a
+`JournalPayload`, which has no accessor for what it holds and one exit that redacts.
+It is still *narrower than it sounds*, in the direction that matters: nothing stops your own
+code writing the value somewhere the platform does not see.
+[`SensitiveAttribute`](../src/FlowX.Abstractions/Capabilities/CapabilityAttribute.cs) says so
+at the declaration.
 
 ### The error catalogue
 
@@ -507,12 +511,12 @@ decision, not a default.
 
 ## 8. Going `Durable`
 
-Two halves, and **the attribute on its own makes things worse**, so change both in the same
-commit.
+Three parts, and **the attribute on its own makes things worse**, so change all three in the
+same commit.
 
-### Half one — the flow
+### Part one — the flow
 
-<!-- verify: compiles -->
+<!-- verify: reports FLOWX1006 -->
 ```csharp
 [Flow("ticket.open", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "support")]
 [FlowDeadline("PT10S")]
@@ -531,9 +535,58 @@ public sealed partial class OpenTicketFlow : Flow<OpenTicket, TicketOpened>
 }
 ```
 
-That block is silent: `FLOWX1012` is gone.
+`FLOWX1012` is gone, and something else has appeared in its place.
 
-### Half two — the host
+**`FLOWX1006` — a state-bag contract is outside every generated JSON context.** A `Durable`
+flow journals what each step produced and the flow's state bag as it stands after it, and a
+value reaches the journal only through `JournalPayload`, whose `Of<T>` requires the
+source-generated `JsonTypeInfo<T>` — there is no overload that reflects over a type, which is
+what keeps the write path trim- and AOT-safe. So every contract the bag holds needs the same
+`[JsonSerializable]` declaration an emitted event needs, and the compiler names the ones it
+cannot find. That is part two.
+
+The block above reports it because these snippets are compiled on their own, with no
+serialiser context anywhere in the compilation. In a real project the context is the one the
+template already generates.
+
+### Part two — the contracts
+
+Everything in the state bag: the flow's input, which the engine puts there before the first
+step, and the output of every capability step. `samples/banking` is the shape to copy —
+`ExecuteTransfer` and `TransferResult` are on the wire, `TransferCompleted` is the event, and
+the six below are the step results the journal has to write:
+
+<!-- verify: excerpt samples/banking/Infrastructure.cs -->
+```csharp
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(ExecuteTransfer))]
+[JsonSerializable(typeof(TransferResult))]
+[JsonSerializable(typeof(TransferCompleted))]
+[JsonSerializable(typeof(ValidatedTransfer))]
+[JsonSerializable(typeof(ScreeningDecision))]
+[JsonSerializable(typeof(CorrespondentRoute))]
+[JsonSerializable(typeof(DebitPosted))]
+[JsonSerializable(typeof(CreditPosted))]
+[JsonSerializable(typeof(Settlement))]
+internal sealed partial class BankingJsonContext : JsonSerializerContext;
+```
+
+For the ticket flow that is `OpenTicket`, `ValidatedTicket`, `TicketOpened` and
+`NotificationSent` on `AppJsonContext`. The list is not maintained by reading the flow: add
+the attribute the compiler names, rebuild, repeat until it stops naming one.
+
+**This is what makes a resume work rather than merely happen.** Without it the journal records
+which steps ran and nothing about what they produced, so a second node re-enters the loop with
+an empty state bag and the first step past the frontier that binds an earlier step's output
+fails. With it, the snapshot committed alongside each step is restored before the resumed loop
+starts.
+
+**A `[Sensitive]` member does not come back.** It is stored as `[redacted]`, because the
+journal never held anything else: the writer hands values to `JournalPayload`, whose only
+exit replaces every declared member by name at every depth. A flow that needs a secret after
+a resume has to fetch it, not remember it.
+
+### Part three — the host
 
 A `Durable` flow on a host that registered no journal is **refused before its first step**,
 with the error `flow.durability_not_configured`. Not run ephemerally — refused. Running it
@@ -603,7 +656,7 @@ the step is durable.
 
 Add one to the durable flow, and the compiler has something to say:
 
-<!-- verify: reports FLOWX1024 -->
+<!-- verify: reports FLOWX1006 FLOWX1024 -->
 ```csharp
 public sealed record TicketRaised(string TicketId, string Reporter);
 
@@ -625,6 +678,10 @@ public sealed partial class OpenTicketFlow : Flow<OpenTicket, TicketOpened>
     }
 }
 ```
+
+`FLOWX1006` is [§8](#part-two--the-contracts)'s and is here for the same reason it was there:
+these blocks compile with no serialiser context in the compilation. `FLOWX1024` is the new
+one, and it is the same requirement reaching a different payload.
 
 **`FLOWX1024` — the emit step stages no event.** The event body is written through a
 source-generated `JsonSerializerContext`; `JournalPayload.Of` takes a `JsonTypeInfo<T>` and
@@ -722,9 +779,9 @@ journal, `AwaitSignal` or `AwaitCompletion`.
 
 ---
 
-## 11. The five diagnostics you will meet first
+## 11. The six diagnostics you will meet first
 
-The compiler is the framework teaching you. These five are the ones a newcomer hits in the
+The compiler is the framework teaching you. These six are the ones a newcomer hits in the
 first hour, in roughly that order. Every one has a page under
 [docs/diagnostics](diagnostics/README.md) arguing the case; this is the one-line version.
 
@@ -735,6 +792,7 @@ first hour, in roughly that order. Every one has a page under
 | [FLOWX1014](diagnostics/FLOWX1014.md) | a retry policy on a capability that is not `Idempotent` | make it idempotent and declare it, or handle the failure in the flow |
 | [FLOWX1012](diagnostics/FLOWX1012.md) | `.CompensateWith<T>()` on a flow that is not `Durable` | `Profile = ExecutionProfile.Durable` **and** register a journal |
 | [FLOWX1024](diagnostics/FLOWX1024.md) | `.Emit<T>()` whose event no `JsonSerializerContext` declares | `[JsonSerializable(typeof(T))]` on one context |
+| [FLOWX1006](diagnostics/FLOWX1006.md) | a `Durable` flow's state bag holds a contract no `JsonSerializerContext` declares | the same attribute, for the contract the message names — see [§8](#part-two--the-contracts) |
 
 ### FLOWX1010 — a capability must declare an authorisation stance
 
