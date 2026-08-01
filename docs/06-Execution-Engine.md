@@ -105,7 +105,7 @@ Three properties this shape guarantees:
 1. **Resumability** — re-entering this loop is the only difference between a fresh
    run and a recovery. There is no separate recovery code path to rot. *The sketch
    shows a scalar `ctx.ResumeFromStep`; the shipped seam does not use one.*
-   [ADR-0015 commitment 2](adr/ADR-0015-journal-schema-and-durable-execution.md)
+   [ADR-0015 commitment 2](adr/ADR-0015-journal-schema-and-durable-execution.md))
    derives the position by asking the committed journal rows whether a
    `(scope, step)` is done, because a scalar cursor cannot describe a
    half-completed `Parallel` fork — a shape the DSL shipped in P1. The loop still
@@ -176,7 +176,7 @@ flowchart TD
 > **Default is `Ephemeral`.** Durability is a cost you opt into, per flow. This
 > is the main architectural difference from Temporal-style engines, which make
 > everything durable and charge everything for it. See
-> [ADR-0003](adr/ADR-0003-execution-profiles.md).
+> [ADR-0003](adr/ADR-0003-execution-profiles.md)).
 
 > [!WARNING]
 > **The `Durable` column now describes something that runs, one cell excepted; the
@@ -215,8 +215,8 @@ flowchart TD
 > statement about a host that registered no stores rather than about the platform —
 > a host with a journal and a lease store runs durable flows; one with neither
 > refuses them, which is the right answer for an unconfigured deployment. See
-> [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md#what-wp-52-landed-and-what-it-did-not)
-> for the in/out list, [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md) for what
+> [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md)#what-wp-52-landed-and-what-it-did-not)
+> for the in/out list, [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md)) for what
 > the schema looked like against a real database,
 > [§5](#5-the-determinism-boundary) for what it means for replay, and
 > [20-Roadmap](20-Roadmap.md) for the phases.
@@ -262,14 +262,14 @@ flowchart LR
 
 *Outside a durable flow they are **Warnings**, not Info.* This paragraph said they
 "drop to Info — there is no replay, so there is no determinism obligation", which is
-[ADR-0003](adr/ADR-0003-execution-profiles.md)'s clause repeated, and it is the clause
+[ADR-0003](adr/ADR-0003-execution-profiles.md))'s clause repeated, and it is the clause
 the set was re-decided against. The decision is **Warning by default, Error where the
 compilation can prove the code is on a durable flow's replay path, never
 informational** — for a flow that is its own `Profile`; for a capability, which has no
 profile, it is a `Durable` flow *in this compilation* naming it as a step, directly or
 through a sub-flow. The reasoning is written once, on
 [the diagnostics index](diagnostics/README.md#the-severity-of-the-determinism-set), and
-[ADR-0003's determinism bullet](adr/ADR-0003-execution-profiles.md) records that its own
+[ADR-0003's determinism bullet](adr/ADR-0003-execution-profiles.md)) records that its own
 wording is superseded. Repeating it here is what let the two disagree for two phases, so
 it is not repeated again.
 
@@ -282,7 +282,7 @@ rules: `DeterminismAnalyzer` and `AmbientReads` in `src/FlowX.Compiler/Analysis/
 both directions pinned by `DeterminismAnalyzerTests`. **`FLOWX1006` was the row that stayed
 `no` longest**, and it was never blocked on severity: it checks membership in the generated
 `System.Text.Json` context that
-[ADR-0015 commitment 5](adr/ADR-0015-journal-schema-and-durable-execution.md) requires
+[ADR-0015 commitment 5](adr/ADR-0015-journal-schema-and-durable-execution.md)) requires
 payloads to be written through, and until **WP-59** emitted that writer there was no
 membership to check. It is an **error uniformly** rather than Warning-then-escalate,
 because it reports only on a `Durable` flow and so cannot fire where the set would warn.
@@ -307,7 +307,7 @@ instance of it. See
 
 **`FLOWX1011` also carries more weight than it did.** ADR-0015 originally said the
 journal must record the branch a `Switch` took; it has no field for one, and
-[the amendment](adr/ADR-0015-journal-schema-and-durable-execution.md#amendments-the-first-implementation-forced-wp-52)
+[the amendment](adr/ADR-0015-journal-schema-and-durable-execution.md)#amendments-the-first-implementation-forced-wp-52)
 resolved it by replaying the selector against the restored state bag instead. Replay
 of control flow now *depends* on this rule's purity guarantee — and the rule is a
 Warning, and says nothing about capability bodies.
@@ -357,7 +357,7 @@ byte-identical step inputs and identical control flow.
 >
 > 1. **A `Parallel` whose branches genuinely overlap does not replay.** One pooled
 >    context is shared by every branch, so a capture can land on a sibling's row —
->    [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md#what-wp-52-landed-and-what-it-did-not)
+>    [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md)#what-wp-52-landed-and-what-it-did-not)
 >    called this best-effort attribution and said WP-61 needed a per-branch context
 >    before it was safe. **WP-61 did not buy one.** It pinned the exact interleaving
 >    with a rendezvous instead, so the misattribution is reproduced on every run rather
@@ -443,7 +443,7 @@ byte-identical step inputs and identical control flow.
 > answers `202` with the instance and where to continue it, and the compiler generates
 > one delivery route per signal — `POST {flow route}/{instanceId}/signals/{identity}`,
 > which is the arrow drawn in the diagram below
-> ([ADR-0022](adr/ADR-0022-http-shape-of-a-suspending-flow.md)).
+> ([ADR-0022](adr/ADR-0022-http-shape-of-a-suspending-flow.md))).
 
 ```csharp
 protected override void Define(IFlowBuilder<OnboardCustomer, OnboardResult> flow) => flow
@@ -551,7 +551,7 @@ Rules:
    stack is a field of an in-memory context and nothing writes it down.
    **[`FLOWX1012`](diagnostics/FLOWX1012.md) says so at build time since WP-60**,
    as a warning — *this rule was specified alongside `FLOWX1017` in
-   [ADR-0003](adr/ADR-0003-execution-profiles.md), only one of the pair was built,
+   [ADR-0003](adr/ADR-0003-execution-profiles.md)), only one of the pair was built,
    and for two phases a compensable `Ephemeral` flow compiled in silence.* It fires
    on the default profile as well as on a declared `Ephemeral` one, which is the
    whole reason it is not an error; its page carries that argument and the
@@ -564,7 +564,7 @@ Rules:
    and moving the instance to `Compensating` — and a resumed instance does not
    repeat an undo whose row already committed. Two gaps remain, both named rather
    than papered over: an undo whose row never landed re-runs, which is the same
-   honest limit [ADR-0006](adr/ADR-0006-journal-and-leases.md) states for a
+   honest limit [ADR-0006](adr/ADR-0006-journal-and-leases.md)) states for a
    forward effect that landed before its commit; and a **composed child that
    already succeeded** records nothing, because its instance was sealed
    `Completed` and a journal correctly refuses a write to a finished instance.
@@ -750,7 +750,7 @@ omission: the branches share the fork's cursor, their spans are disjoint, so
 "branch A done, branch B stopped at step 12" purely from which rows exist. A merge
 checkpoint would be a second place the same fact is written, and the stored copy would be
 the one nothing checks — the same argument
-[ADR-0015 commitment 2](adr/ADR-0015-journal-schema-and-durable-execution.md) makes for
+[ADR-0015 commitment 2](adr/ADR-0015-journal-schema-and-durable-execution.md)) makes for
 deriving the resume position instead of remembering it.
 
 ---

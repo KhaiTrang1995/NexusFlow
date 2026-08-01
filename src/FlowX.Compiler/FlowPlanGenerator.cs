@@ -205,7 +205,7 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     /// <para>
     /// <strong>A flow this host could not fire is skipped here and reported by
     /// <c>TriggerDeclarationAnalyzer</c>, not by both.</strong> The two conditions are the same
-    /// two <c>FLOWX1037</c> names — an input contract that is not <c>ScheduledFire</c>, and a
+    /// two <c>FLOWX1038</c> names — an input contract that is not <c>ScheduledFire</c>, and a
     /// profile that is not <c>Durable</c> — and the analyzer has the attribute's own span to
     /// point at where this has a collected model and nothing else. Reporting from both would put
     /// the same defect in the build log twice, in one case with no file name.
@@ -266,7 +266,7 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
 
     /// <summary>Whether a firing of this flow could be started, and started once.</summary>
     /// <remarks>
-    /// The two conditions <c>FLOWX1037</c> reports, restated as a predicate: a cron firing has no
+    /// The two conditions <c>FLOWX1038</c> reports, restated as a predicate: a cron firing has no
     /// body, so the flow has to bind the occurrence; and an ephemeral flow journals no instance,
     /// so nothing would refuse a second node's firing of the same occurrence.
     /// </remarks>

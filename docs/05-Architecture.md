@@ -51,7 +51,7 @@ them away, an ADR must record it.
 | C3 | Must host inside ASP.NET Core | Technical | Cannot own the process lifecycle or the DI container |
 | C4 | No 2-phase commit | Technical | Consistency is saga-based; outbox for atomic publish. **The constraint now describes the system.** `.Emit<T>()` on a `Durable` flow stages its event in the same transaction as the step row, a refused commit discards it, and `PostgresOutboxPublisher` delivers it at-least-once in per-`partition_key` order. The far end is no longer missing: `plugins/FlowX.Redis` implements `IEventPublisher` over Redis Streams (WP-56b), one stream per `partition_key`, and `PublisherConformance` holds it and the recording double to one contract. [FLOWX1024](diagnostics/FLOWX1024.md) survives, narrowed to an `Ephemeral` flow and to a contract no serialiser context declares |
 | C5 | OpenTelemetry is the only telemetry API | Technical | No proprietary metrics interface |
-| C6 | Apache-2.0, no copyleft dependencies | Legal | Vets every transitive dependency ([ADR-0012](adr/ADR-0012-apache-2-license.md)) |
+| C6 | Apache-2.0, no copyleft dependencies | Legal | Vets every transitive dependency ([ADR-0012](adr/ADR-0012-apache-2-license.md))) |
 | C7 | Public contracts follow SemVer with a 2-minor deprecation window | Organisational | Breaking changes are batched into majors |
 | C8 | Documentation-first: no feature merges without its doc section and ADR | Organisational | This repository is the spec |
 
@@ -117,13 +117,13 @@ flowchart LR
 
 | Quality goal | Strategy | Where |
 |---|---|---|
-| Q1 latency | Compile the flow graph into a static execution plan; pooled context; struct step frames; listener-gated telemetry | [ADR-0002](adr/ADR-0002-compile-time-orchestration.md), [06](06-Execution-Engine.md) |
-| Q2 durability | Per-flow execution profile; append-only journal with step-boundary checkpoints; lease-based ownership; deterministic replay | [ADR-0003](adr/ADR-0003-execution-profiles.md), [ADR-0006](adr/ADR-0006-journal-and-leases.md), [11](11-Distributed-Runtime.md) |
-| Q3 knowability | Source generator emits `flowx.manifest.json`; `flowx diff` gates CI; architecture fitness tests | [ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md), [13](13-AI-Native.md) |
-| Q4 portability | Trigger attributes are metadata only; flows are transport-free by analyzer rule | [ADR-0004](adr/ADR-0004-universal-trigger-model.md), [09](09-Trigger-Model.md) |
+| Q1 latency | Compile the flow graph into a static execution plan; pooled context; struct step frames; listener-gated telemetry | [ADR-0002](adr/ADR-0002-compile-time-orchestration.md)), [06](06-Execution-Engine.md) |
+| Q2 durability | Per-flow execution profile; append-only journal with step-boundary checkpoints; lease-based ownership; deterministic replay | [ADR-0003](adr/ADR-0003-execution-profiles.md)), [ADR-0006](adr/ADR-0006-journal-and-leases.md)), [11](11-Distributed-Runtime.md) |
+| Q3 knowability | Source generator emits `flowx.manifest.json`; `flowx diff` gates CI; architecture fitness tests | [ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md)), [13](13-AI-Native.md) |
+| Q4 portability | Trigger attributes are metadata only; flows are transport-free by analyzer rule | [ADR-0004](adr/ADR-0004-universal-trigger-model.md)), [09](09-Trigger-Model.md) |
 | Q5 uniformity | Runtime owns spans/metrics because it owns the graph; replay from journal | [12](12-Observability.md) |
-| Q6 extensibility | Everything above `FlowX.Core` is a plugin against published contracts | [ADR-0009](adr/ADR-0009-plugin-contracts.md), [17](17-Plugin-System.md) |
-| Q7 startup | Zero reflection; generated registration; AOT smoke test in CI | [ADR-0002](adr/ADR-0002-compile-time-orchestration.md) |
+| Q6 extensibility | Everything above `FlowX.Core` is a plugin against published contracts | [ADR-0009](adr/ADR-0009-plugin-contracts.md)), [17](17-Plugin-System.md) |
+| Q7 startup | Zero reflection; generated registration; AOT smoke test in CI | [ADR-0002](adr/ADR-0002-compile-time-orchestration.md)) |
 | Q8 isolation | Tenant is ambient in context; admission-stage quotas; partitioned durable state | [16](16-Multi-Tenant.md) |
 
 **The one-sentence strategy:** *move orchestration from run time to build time, and
@@ -316,7 +316,7 @@ tests/
 > [!IMPORTANT]
 > **This tree put `IFlowJournal` and `ILeaseStore` in `FlowX.Runtime.Durable`, and that
 > was wrong — not merely out of date.** It contradicted
-> [ADR-0009](adr/ADR-0009-plugin-contracts.md): a plugin may reference
+> [ADR-0009](adr/ADR-0009-plugin-contracts.md)): a plugin may reference
 > `FlowX.Abstractions` and nothing else, so a store author who can only see
 > `FlowX.Abstractions` could not have implemented a contract declared one layer up.
 > Either the contracts move down or the plugin rule is a fiction. The contracts shipped
@@ -535,7 +535,7 @@ flowchart TB
 | Rule | Reason |
 |---|---|
 | API and worker are separate deployments of the *same* image | Different scaling signals; identical code and manifest |
-| ~~Scheduler runs leader-elected, replica ≥ 2~~ **A scheduled flow needs no separate deployment and no leader.** Every replica sweeps; a firing is named by its occurrence, so the lease store and the journal's primary key make it exclusive ([ADR-0026](adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md)) | *The rule as written was a design, and its second clause did not follow from its first: a leader that has lost its lease and not noticed fires anyway, and a leader that dies at 01:59 takes the 02:00 firing with it until a successor is elected. The `order-scheduler` box above remains a legitimate deployment shape — a schedule that fires heavy work is worth isolating — but it is a **capacity** decision now, not a correctness one, and `replica ≥ 2` buys availability rather than exclusivity* |
+| ~~Scheduler runs leader-elected, replica ≥ 2~~ **A scheduled flow needs no separate deployment and no leader.** Every replica sweeps; a firing is named by its occurrence, so the lease store and the journal's primary key make it exclusive ([ADR-0031](adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md))) | *The rule as written was a design, and its second clause did not follow from its first: a leader that has lost its lease and not noticed fires anyway, and a leader that dies at 01:59 takes the 02:00 firing with it until a successor is elected. The `order-scheduler` box above remains a legitimate deployment shape — a schedule that fires heavy work is worth isolating — but it is a **capacity** decision now, not a correctness one, and `replica ≥ 2` buys availability rather than exclusivity* |
 | `terminationGracePeriodSeconds` ≥ max flow step budget + 10 s | Graceful drain: stop accepting, finish in-flight, release leases |
 | Journal DB is regional, not global | Cross-region durable flows need explicit design ([11](11-Distributed-Runtime.md)) |
 | Manifest is published at deploy, not at build | The registry records what is *running*, not what was compiled |
@@ -553,7 +553,7 @@ Rollout strategy, KEDA scalers and drain semantics in
 | **Validation** | Input validation is stage 3 (Integrity), generated from contract annotations; business rules are the first flow step | [10](10-Policy-Framework.md) |
 | **Logging** | Structured only. Data as fields, never interpolated. `flow.id`, `flow.instance_id`, `step.id`, `capability.id`, `tenant.id`, `trace_id` on every record | [12](12-Observability.md) |
 | **Persistence** | FlowX owns only journal + outbox + idempotency store. Business persistence is inside capabilities and is none of FlowX's business | [11](11-Distributed-Runtime.md) |
-| **Serialisation** | `System.Text.Json` source-generated contexts only (C2 AOT). Journal payloads carry a schema version | [ADR-0008](adr/ADR-0008-serialization-and-schema.md) |
+| **Serialisation** | `System.Text.Json` source-generated contexts only (C2 AOT). Journal payloads carry a schema version | [ADR-0008](adr/ADR-0008-serialization-and-schema.md)) |
 | **Time** | Capabilities must obtain time from `ctx.UtcNow`, never `DateTime.UtcNow` — replay determinism. **Enforced since WP-58** by [`FLOWX1007`](diagnostics/FLOWX1007.md): Warning, and Error where the compilation shows the code on a durable flow's replay path. *This row read "**Unenforced:** `FLOWX1007` does not exist".* The property name is `UtcNow`, not `Clock` | [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) |
 | **Randomness / IDs** | `ctx.NewId()` and `ctx.Random` are journaled on first use so replay reproduces them. **The journalling exists since WP-52 and is persisted since WP-53; the rule exists since WP-58.** A `Durable` flow captures the ids minted and `Random`'s seed per step boundary, and [`FLOWX1008`](diagnostics/FLOWX1008.md) reports the ambient alternatives. *This row said `FLOWX1008` did not exist and that no store persisted a capture; both have expired.* What still holds: nothing replays a capture back into execution (WP-61), so the reproduction is specified and unproven | [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) |
 | **Configuration** | Selects adapters and tunes policy *parameters*. It can never change the graph | Manifesto §"What we refuse" |
@@ -567,20 +567,20 @@ Rollout strategy, KEDA scalers and drain semantics in
 
 | ADR | Decision | Status |
 |---|---|---|
-| [0001](adr/ADR-0001-flow-and-capability-as-primitives.md) | Flow + Capability as the only two user primitives | Accepted |
-| [0002](adr/ADR-0002-compile-time-orchestration.md) | Compile-time orchestration via Roslyn generators, no runtime reflection | Accepted |
-| [0003](adr/ADR-0003-execution-profiles.md) | Per-flow execution profiles instead of always-durable | Accepted |
-| [0004](adr/ADR-0004-universal-trigger-model.md) | One trigger abstraction for all transports | Accepted |
-| [0005](adr/ADR-0005-manifest-as-build-artifact.md) | Manifest is a first-class build artifact | Accepted |
-| [0006](adr/ADR-0006-journal-and-leases.md) | Journal + fenced leases for durable execution | Accepted |
-| [0007](adr/ADR-0007-result-over-exceptions.md) | `Result<T>` for business outcomes, exceptions for defects | Accepted |
-| [0008](adr/ADR-0008-serialization-and-schema.md) | Source-generated STJ + versioned schemas | Accepted |
-| [0009](adr/ADR-0009-plugin-contracts.md) | Plugins depend only on `FlowX.Abstractions`, with a conformance suite | Accepted |
-| [0010](adr/ADR-0010-csharp-dsl-over-yaml.md) | C# fluent DSL as the source of truth; YAML is export only | Accepted |
-| [0011](adr/ADR-0011-fixed-policy-stage-order.md) | Fixed policy stage order, not user-composed pipelines | Accepted |
-| [0012](adr/ADR-0012-apache-2-license.md) | Apache-2.0 licence | Accepted |
-| [0013](adr/ADR-0013-dsl-vocabulary-over-ca1716.md) | DSL vocabulary takes precedence over CA1716 | Accepted |
-| [0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) | Keep the derived error catalogue; re-express the build-overhead budget | **Proposed** |
+| [0001](adr/ADR-0001-flow-and-capability-as-primitives.md)) | Flow + Capability as the only two user primitives | Accepted |
+| [0002](adr/ADR-0002-compile-time-orchestration.md)) | Compile-time orchestration via Roslyn generators, no runtime reflection | Accepted |
+| [0003](adr/ADR-0003-execution-profiles.md)) | Per-flow execution profiles instead of always-durable | Accepted |
+| [0004](adr/ADR-0004-universal-trigger-model.md)) | One trigger abstraction for all transports | Accepted |
+| [0005](adr/ADR-0005-manifest-as-build-artifact.md)) | Manifest is a first-class build artifact | Accepted |
+| [0006](adr/ADR-0006-journal-and-leases.md)) | Journal + fenced leases for durable execution | Accepted |
+| [0007](adr/ADR-0007-result-over-exceptions.md)) | `Result<T>` for business outcomes, exceptions for defects | Accepted |
+| [0008](adr/ADR-0008-serialization-and-schema.md)) | Source-generated STJ + versioned schemas | Accepted |
+| [0009](adr/ADR-0009-plugin-contracts.md)) | Plugins depend only on `FlowX.Abstractions`, with a conformance suite | Accepted |
+| [0010](adr/ADR-0010-csharp-dsl-over-yaml.md)) | C# fluent DSL as the source of truth; YAML is export only | Accepted |
+| [0011](adr/ADR-0011-fixed-policy-stage-order.md)) | Fixed policy stage order, not user-composed pipelines | Accepted |
+| [0012](adr/ADR-0012-apache-2-license.md)) | Apache-2.0 licence | Accepted |
+| [0013](adr/ADR-0013-dsl-vocabulary-over-ca1716.md)) | DSL vocabulary takes precedence over CA1716 | Accepted |
+| [0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)) | Keep the derived error catalogue; re-express the build-overhead budget | **Proposed** |
 
 *This index stopped at 0012 while two more ADRs were written. The authoritative
 list, with each record's "Revisit when", is [adr/README.md](adr/README.md); this
@@ -613,7 +613,7 @@ agree.*
 | R2 | **Determinism leaks in durable flows** — a capability uses `DateTime.UtcNow`, `Guid.NewGuid()` or ambient statics, so replay diverges | High | High | **Live since WP-52, and mitigated since WP-61 — see below.** All three named mitigations now exist: the journal records non-deterministic values on first use, `FLOWX1007/1008/1009` are raised, and `ReplayDeterminismTests` replays a corpus of eight shapes against their own journals and compares them row for row. **Three residual gaps are measured rather than assumed**, each pinned by a test that goes red when it is closed: an overlapping `Parallel` does not replay, a compensation's ambient reads are captured by nothing, and the engine's own deadline check is not replayed. Replay of *control flow* still rests additionally on `FLOWX1011`'s coverage | Runtime team |
 | R3 | **Abstraction leak under real transports** — a universal trigger model cannot express Kafka rebalance, HTTP streaming, MQTT QoS | Medium | High | **Untested: there is one transport.** Planned escape hatch: `ITriggerSource` exposes transport-specific options *outside* the flow — *the interface is not declared anywhere in `src/`* — plus a conformance suite defining the minimum semantics. A conformance *project* now exists (WP-51), but its three suites — `JournalConformance`, `LeaseStoreConformance`, `RecoveryIndexConformance` — are all durability contracts and none is a trigger suite, so this mitigation is untouched. What holds today: documented non-goals per transport ([09 §12](09-Trigger-Model.md#12-known-limits-of-the-abstraction)). The risk cannot be evaluated until P3 adds a second transport | Plugin team |
 | R4 | **Adoption cliff** — teams must rewrite to gain value | High | Medium | Incremental adoption path: FlowX hosts inside existing ASP.NET Core apps; a capability can wrap an existing service; `MediatR` bridge plugin for step-by-step migration | DevRel |
-| R5 | **Journal becomes the bottleneck** at high durable throughput | High | Medium | **Reachable since WP-53, and unmeasured.** `Ephemeral` remains the default, so durability is opt-in, and that is the only one of these mitigations that exists. `plugins/FlowX.Postgres` writes one step row, one instance update and its outbox rows in one transaction per step, with **no** group commit and no partitioning; the benchmark gate QR2 is B7, which has no harness (WP-50), so the ceiling quoted in [14 §5](14-Performance.md#5-scaling-characteristics) and [ADR-0006](adr/ADR-0006-journal-and-leases.md) is still a literature figure | Runtime team |
+| R5 | **Journal becomes the bottleneck** at high durable throughput | High | Medium | **Reachable since WP-53, and unmeasured.** `Ephemeral` remains the default, so durability is opt-in, and that is the only one of these mitigations that exists. `plugins/FlowX.Postgres` writes one step row, one instance update and its outbox rows in one transaction per step, with **no** group commit and no partitioning; the benchmark gate QR2 is B7, which has no harness (WP-50), so the ceiling quoted in [14 §5](14-Performance.md#5-scaling-characteristics) and [ADR-0006](adr/ADR-0006-journal-and-leases.md)) is still a literature figure | Runtime team |
 | R6 | **Fixed policy stage order is too rigid** for a legitimate case | Medium | Medium | Documented escape: a capability may declare `PolicyStage.Custom` handlers within its own stage; revisit ADR-0011 after 3 real counterexamples | Architecture |
 | R7 | **Manifest drift between build and deploy** (config changes behaviour) | Medium | Low | Configuration is structurally forbidden from changing the graph; control plane records the deployed manifest hash; `flowx verify --runtime` compares | Platform |
 | R8 | **Ecosystem thinness** — a platform is only as good as its plugins | High | Medium | Ship 8 first-party plugins at v1; publish the conformance suite as a NuGet package so third parties can self-certify. **Begun, and not yet a mitigation:** two of the six suites are written, and WP-53 showed the mechanism travels — `tests/FlowX.Postgres.Tests` inherits both unmodified from another assembly and runs them against PostgreSQL 16.13. The project is still deliberately **not packable**: *this cell gave the condition as "until a second store exists", and that store now does*; the csproj's condition is the second **and** third (WP-53, WP-54), one adapter's push-back not being agreement. So there is still nothing published and nothing outside this repository can self-certify against anything | DevRel |
@@ -652,7 +652,7 @@ agree.*
 > driver could use. Each is pinned by a test that goes red the day it is closed, which
 > is the only form of "known limitation" note that survives contact with a codebase.
 > The first is the per-branch context
-> [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md#what-wp-52-landed-and-what-it-did-not)
+> [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md)#what-wp-52-landed-and-what-it-did-not)
 > named as WP-61's to buy; WP-61 measured its absence instead, and said so.
 >
 > The analyzers were
@@ -675,7 +675,7 @@ agree.*
 > the flow context, the flow input and prior step results. **It carries more
 > weight than it was designed for.** ADR-0015 originally required the journal to
 > record the branch a `Switch` took; it has no field for one, and
-> [the amendment](adr/ADR-0015-journal-schema-and-durable-execution.md#amendments-the-first-implementation-forced-wp-52)
+> [the amendment](adr/ADR-0015-journal-schema-and-durable-execution.md)#amendments-the-first-implementation-forced-wp-52)
 > resolved that by replaying the selector against the restored state bag —
 > so replay of control flow rests on this rule. *This paragraph said it was
 > "specified to become an Error under `Durable` at WP-58"; what WP-58 decided is that
@@ -714,7 +714,7 @@ reader who saw the name stopped looking for the rule.
 | `ManifestIsComplete` | Q3 | a declared flow or capability is missing from the manifest, or a step names one the manifest never describes | `PublishedContractTests` |
 | `PluginsPassConformance` | Q6 | a plugin fails the shared conformance suite | **not written — see below.** A conformance project now exists; it has no trigger suite |
 | `SuppressionsAreAccountable` | §6.1 | a suppression cites no registered, unexpired `FLOWX-DEBT` id | `DebtAccountabilityTests` |
-| `DependencyLicencesAreCompatible` | C6 | a declared or resolved package has no row in the [dependency licence register](DEPENDENCIES.md), or carries a licence Apache-2.0 redistribution does not permit ([ADR-0012](adr/ADR-0012-apache-2-license.md)) | `DependencyLicenceTests` |
+| `DependencyLicencesAreCompatible` | C6 | a declared or resolved package has no row in the [dependency licence register](DEPENDENCIES.md), or carries a licence Apache-2.0 redistribution does not permit ([ADR-0012](adr/ADR-0012-apache-2-license.md))) | `DependencyLicenceTests` |
 | `EveryDiagnosticIsHelpful` | P12 | a `FLOWX*` diagnostic lacks title, fix, or help URI | `FlowX.Compiler.Tests` |
 | *(job, not a test)* | Q1, Q7 | > 5 % regression against `baseline.json` — B1, B3 and B12 in isolation | *Benchmark budgets* job, `performance.yml` |
 | `AllocationBudgetTests`, `EngineAllocationTests` | Q7 | any allocation on the linear, conditional or switch path | *Allocation budget (B2)* job, `performance.yml` |
@@ -746,7 +746,7 @@ seven policy sets, so the emission path runs against a shipped assembly on every
 `Retry` makes its attempts, a `CircuitBreaker` opens and a `Bulkhead` counts. What is left is
 narrower: four declarable kinds are still applied by nothing — `RateLimit`, `Idempotency`,
 `Cache` and `Audit` — which [`FLOWX1032`](diagnostics/FLOWX1032.md) reports and
-[ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) argues.
+[ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)) argues.
 
 **`events` is no longer the same case, and that is the change worth stating.** `.Emit<T>()`
 reaches the plan, the manifest *and* the outbox: a `Durable` flow's emitted event is staged

@@ -22,18 +22,18 @@ namespace FlowX;
 /// committed. A scheduled flow therefore cannot ask what time it is — and "what time is it"
 /// is the only thing a cron fire has to say. So the occurrence arrives as input, is journalled
 /// on <c>flow_instance.input</c> like any other trigger's body, and is read back verbatim on a
-/// resume (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0028-a-scheduled-flows-input-is-its-occurrence.md">ADR-0028</a>).
+/// resume (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md">ADR-0028</a>).
 /// </para>
 /// <para>
 /// <strong>It is also the instance's identity, one derivation away.</strong> The id every node
 /// derives for a firing is derived from these three values and the flow's own id and version
-/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>),
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>),
 /// which is why the expression and the zone are carried rather than only the instant: an
 /// operator reading a journal row can reconstruct why that row has that primary key.
 /// </para>
 /// <para>
 /// <strong>A flow declaring <c>[CronTrigger]</c> must take this as its input</strong>, and
-/// <c>FLOWX1037</c> reports one that does not. The alternative — letting a scheduled flow
+/// <c>FLOWX1038</c> reports one that does not. The alternative — letting a scheduled flow
 /// declare any input and starting it with a default — would journal an instance whose recorded
 /// request is a value nobody sent.
 /// </para>

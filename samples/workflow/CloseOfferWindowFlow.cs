@@ -25,7 +25,7 @@ namespace Workflow;
 /// durable flow reading an ambient clock at all, because a value taken that way is in none of
 /// the fields a replay reconstructs — so a resumed instance would compute a different answer
 /// from the one it committed
-/// (<c>docs/adr/ADR-0028-a-scheduled-flows-input-is-its-occurrence.md</c>).
+/// (<c>docs/adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md</c>).
 /// </para>
 /// <para>
 /// <strong><c>Durable</c> is load-bearing here in a way it is not on <c>offer.accept</c>.</strong>
@@ -33,8 +33,8 @@ namespace Workflow;
 /// derives for a firing is only exclusive if something refuses the second start — and what
 /// refuses it is <c>flow_instance</c>'s primary key. An ephemeral flow with this attribute would
 /// run once per replica, every night, with nothing anywhere recording that it had;
-/// <c>FLOWX1037</c> is what stops that being writable
-/// (<c>docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md</c>).
+/// <c>FLOWX1038</c> is what stops that being writable
+/// (<c>docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md</c>).
 /// </para>
 /// <para>
 /// <strong>The declared window is the business number, and the demonstration overrides it.</strong>

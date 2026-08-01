@@ -6,7 +6,7 @@ namespace FlowX.Cli.Replay;
 /// A separate set of types from the ones <c>FlowX.Postgres</c> writes, for the same reason
 /// <c>ManifestDocument</c> is separate from the compiler's model: the CLI is a consumer, and
 /// modelling the read independently is what keeps
-/// [ADR-0020](../../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md) honest. If these
+/// [ADR-0020](../../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md)) honest. If these
 /// types ever have to import something from a FlowX assembly, the journal has stopped being
 /// readable from outside this repository and the decision has to be re-argued.
 /// </para>

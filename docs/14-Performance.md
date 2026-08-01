@@ -26,7 +26,7 @@ pull request, and fails the build on regression. Nothing here is aspirational.
 | B9 | HTTP trigger end-to-end (trivial flow, localhost) | p99 | **1.2 ms** | nightly |
 | B10 | Cold start, NativeAOT, ready-to-serve | — | **200 ms** | CI |
 | B11 | Idle RSS, 100 flows registered | — | **60 MB** | CI |
-| B12 | Build overhead vs identical non-FlowX code | **+46.5 %** at 50 flows · **+67.1 %** [+61.9, +73.6] at 200 — [B12-scale.md §8](benchmarks/B12-scale.md). *This row carried the superseded **+77 %** until 2026-07-31; WP-43 re-measured after the duplicated-bind fix* | **+8 %** | **FAILING.** The job measuring this budget is **advisory** by [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) §4(4); the blocking gate in [generator-cost-gate.md](benchmarks/generator-cost-gate.md) is *relative* and answers a different question |
+| B12 | Build overhead vs identical non-FlowX code | **+46.5 %** at 50 flows · **+67.1 %** [+61.9, +73.6] at 200 — [B12-scale.md §8](benchmarks/B12-scale.md). *This row carried the superseded **+77 %** until 2026-07-31; WP-43 re-measured after the duplicated-bind fix* | **+8 %** | **FAILING.** The job measuring this budget is **advisory** by [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)) §4(4); the blocking gate in [generator-cost-gate.md](benchmarks/generator-cost-gate.md) is *relative* and answers a different question |
 | B13 | Streaming throughput, 1 KB records, 8 partitions | sustained | **250 000 rec/s/node** | nightly |
 
 > [!IMPORTANT]
@@ -49,7 +49,7 @@ pull request, and fails the build on regression. Nothing here is aspirational.
 > About 90.5 % of the per-flow cost is `FlowPlanGenerator`, and
 > the bulk of that is `SemanticModel.GetTypeInfo` calls made by
 > `ErrorCatalogueReader`: deriving the `errors` field means binding the code it
-> is derived from. [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)
+> is derived from. [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md))
 > is the open decision about which of the two — the field or the budget — gives
 > way.
 >
@@ -120,7 +120,7 @@ flowchart LR
 
 The dominant term in a durable flow is the journal write — four orders of
 magnitude above everything else. This is why execution profiles exist
-([ADR-0003](adr/ADR-0003-execution-profiles.md)): making every flow durable makes
+([ADR-0003](adr/ADR-0003-execution-profiles.md))): making every flow durable makes
 every flow pay a millisecond-scale tax it usually does not need.
 
 ### The optimisation ladder, applied
@@ -211,7 +211,7 @@ Horizontal scaling is linear for ephemeral flows because nodes share nothing.
 Durable flows scale linearly until the journal saturates — which is a documented
 boundary (risk R5), not a surprise. *It is not a **measured** one, and this sentence
 claimed it was.* The `~20–50k commits/s` in the row above is the same
-literature figure [ADR-0006](adr/ADR-0006-journal-and-leases.md) carries and flags:
+literature figure [ADR-0006](adr/ADR-0006-journal-and-leases.md)) carries and flags:
 `plugins/FlowX.Postgres` is now a store this could be measured against, and B7 is the
 budget that would say, but no harness runs it (WP-50). Nor is it monitored — nothing
 emits a metric yet (P5).
@@ -280,7 +280,7 @@ transaction per step and batches nothing, so a harness pointed at it today would
 the ungrouped shape. The entry stands anyway, and only the reason has changed — the package that was to build the harness **before** the journal
 (WP-50) has not started, so these two are now the last entries on this list rather than
 the first, and B7's ceiling remains a literature figure rather than a FlowX measurement
-([ADR-0006](adr/ADR-0006-journal-and-leases.md))* — no
+([ADR-0006](adr/ADR-0006-journal-and-leases.md)))* — no
 `EndToEndHttpBenchmarks` (B9), no `StartupBenchmarks` (B10, B11) and no
 `StreamingBenchmarks` (B13). `EphemeralDispatchBenchmarks` was never the name;
 the file that measures B1/B2 is `EngineBenchmarks.cs`, and `Budgets.cs` carries

@@ -19,7 +19,7 @@ namespace FlowX.Compiler.Tests;
 /// generated registration, so there is no second copy of the cron expression for a schedule
 /// to drift from what the manifest published — and the expression is what the instance id is
 /// derived from
-/// (<a href="../../docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>),
+/// (<a href="../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>),
 /// so a drift would not merely mislead a reader, it would split one schedule into two.
 /// </para>
 /// <para>
@@ -129,7 +129,7 @@ public sealed class ScheduleGenerationTests
     /// <remarks>
     /// It is the one property of the six that decides whether work happens, so it is the one
     /// the runtime reads — and it reaches the registration rather than the manifest
-    /// (<a href="../../docs/adr/ADR-0029-the-manifest-publishes-a-schedules-address.md">ADR-0029</a>).
+    /// (<a href="../../docs/adr/ADR-0034-the-manifest-publishes-a-schedules-address.md">ADR-0029</a>).
     /// </remarks>
     [Fact]
     public void TheDeclaredMissedFirePolicyReachesTheRegistration()
@@ -157,7 +157,7 @@ public sealed class ScheduleGenerationTests
     {
         var source = Scheduled.Replace("ScheduledFire", "ReconciliationDone", StringComparison.Ordinal);
 
-        GeneratorHarness.Analyze(source, new TriggerDeclarationAnalyzer()).ShouldContain("FLOWX1037");
+        GeneratorHarness.Analyze(source, new TriggerDeclarationAnalyzer()).ShouldContain("FLOWX1038");
         SchedulesIn(RunOn(source, HostingStub))
             .ShouldBeNull("a flow that cannot bind an occurrence gets no registration");
     }
@@ -173,7 +173,7 @@ public sealed class ScheduleGenerationTests
         var source = Scheduled.Replace(
             ", Profile = ExecutionProfile.Durable", string.Empty, StringComparison.Ordinal);
 
-        GeneratorHarness.Analyze(source, new TriggerDeclarationAnalyzer()).ShouldContain("FLOWX1037");
+        GeneratorHarness.Analyze(source, new TriggerDeclarationAnalyzer()).ShouldContain("FLOWX1038");
         SchedulesIn(RunOn(source, HostingStub)).ShouldBeNull();
     }
 
@@ -184,7 +184,7 @@ public sealed class ScheduleGenerationTests
         var source = Scheduled.Replace(
             "[CronTrigger(\"0 2 * * *\", TimeZone = \"Europe/Berlin\")]", string.Empty, StringComparison.Ordinal);
 
-        GeneratorHarness.Analyze(source, new TriggerDeclarationAnalyzer()).ShouldNotContain("FLOWX1037");
+        GeneratorHarness.Analyze(source, new TriggerDeclarationAnalyzer()).ShouldNotContain("FLOWX1038");
         SchedulesIn(RunOn(source, HostingStub)).ShouldBeNull();
     }
 }

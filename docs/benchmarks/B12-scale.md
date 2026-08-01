@@ -804,7 +804,7 @@ gated. Since the last end-to-end number was recorded, WP-28 removed a duplicated
 bind, **WP-37 rewrote the error-catalogue reader outright**, WP-27's analyzer cut landed,
 and `Switch`, `Parallel`, `ForEach`, `SubFlow`, `Fail`, the `FlowContext<TIn>` view and
 five new analyzers all shipped. Nobody knew the current figure, and
-[ADR-0014](../adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) was quoting numbers
+[ADR-0014](../adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)) was quoting numbers
 taken before two of the three optimisations.
 
 #### The criterion
@@ -1022,7 +1022,7 @@ project big enough to notice.
 
 ## 8. Consequences
 
-[ADR-0002](../adr/ADR-0002-compile-time-orchestration.md)'s revisit clause names this
+[ADR-0002](../adr/ADR-0002-compile-time-orchestration.md))'s revisit clause names this
 threshold:
 
 > **Revisit when:** generator maintenance cost exceeds its benefit (measured as > 3
@@ -1194,5 +1194,5 @@ The third one is the point of this package.
 
 ---
 
-**See also:** [B12 at one flow](B12.md) · [ADR-0002](../adr/ADR-0002-compile-time-orchestration.md) ·
+**See also:** [B12 at one flow](B12.md) · [ADR-0002](../adr/ADR-0002-compile-time-orchestration.md)) ·
 [Benchmark harness](README.md) · [Roadmap P1](../20-Roadmap.md) · [Plan](../../PLAN.md)

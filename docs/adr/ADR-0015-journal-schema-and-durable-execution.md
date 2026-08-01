@@ -3,10 +3,10 @@
 **Status:** Accepted
 **Date:** 2026-07-31 (Proposed) · 2026-07-31 (Accepted, at WP-53)
 **Deciders:** Runtime team, Platform architecture
-**Amended by:** [ADR-0016](ADR-0016-postgres-journal-adapter.md)
+**Amended by:** [ADR-0016](ADR-0016-postgres-journal-adapter.md))
 
 > **Held Proposed for two work packages, and deliberately.**
-> [ADR-0006](ADR-0006-journal-and-leases.md) was accepted before anything met it, and its
+> [ADR-0006](ADR-0006-journal-and-leases.md)) was accepted before anything met it, and its
 > own warning box records the price: every consequence in it was "a prediction about a
 > system that has not been written", including a "measured ceiling" that was never measured
 > here. This record is one layer more concrete — it fixes a table shape and a primary key —
@@ -33,7 +33,7 @@
 > not survive — two of them in the ERD this record already declared superseded, one an
 > inconsistency inside this record itself — and they are
 > [amended below](#amendments-the-implementations-forced-wp-52-wp-53) rather than quietly
-> corrected. [ADR-0016](ADR-0016-postgres-journal-adapter.md) is the full account.
+> corrected. [ADR-0016](ADR-0016-postgres-journal-adapter.md)) is the full account.
 >
 > **What Accepted does not mean here.** Budgets **B7 and B8 are unreported**, not passed:
 > WP-50, the benchmark harness they are measured against, has not started. The read cost
@@ -44,8 +44,8 @@
 
 ## Context
 
-[ADR-0006](ADR-0006-journal-and-leases.md) chose the two primitives — an append-only
-journal and fenced leases — and [ADR-0003](ADR-0003-execution-profiles.md) chose to make
+[ADR-0006](ADR-0006-journal-and-leases.md)) chose the two primitives — an append-only
+journal and fenced leases — and [ADR-0003](ADR-0003-execution-profiles.md)) chose to make
 durability a per-flow declaration. Neither says **what a journal record is**, **when it is
 written**, or **how the engine that exists today gets from the ephemeral path to a durable
 one**. That gap is the whole of P2, and it is why the following is true:
@@ -149,7 +149,7 @@ describe cannot hold today ([CHECKLIST §2](../../CHECKLIST.md)). The seed becom
 journaled value, which is the only construction under which those remarks are true.
 
 **5. Payloads are written through the generated `System.Text.Json` context**
-[ADR-0008](ADR-0008-serialization-and-schema.md) chose. Membership in that context is
+[ADR-0008](ADR-0008-serialization-and-schema.md)) chose. Membership in that context is
 precisely what `FLOWX1006` was reserved to check, which is why that diagnostic is blocked
 on P2 and not on anyone's analysis. *Delivered at WP-59, and by a narrower construction
 than this commitment states:* the generated writer does not route a payload through a
@@ -252,7 +252,7 @@ before any history is read.
 ### From WP-53 — the first real store
 
 These three are the ones a dictionary could not have found. Each is stated in full in
-[ADR-0016](ADR-0016-postgres-journal-adapter.md); the summaries here exist so that a reader
+[ADR-0016](ADR-0016-postgres-journal-adapter.md)); the summaries here exist so that a reader
 of *this* record is not left believing a clause that a database refused.
 
 **4. Commitment 5 is false against `jsonb` — 2026-07-31.** [11 §2](../11-Distributed-Runtime.md#2-the-journal)'s
@@ -461,10 +461,10 @@ scaffold it was written to remove.
 | `src/FlowX.Compiler/Analysis/ExecutionProfileAnalyzer.cs` — **narrowed to `Streaming`**, not deleted | `Durable` becomes implemented; `Streaming` does not until P7. Deleting it outright would hand `Streaming` the silence `Durable` had. [FLOWX1028's own deletion table](../diagnostics/FLOWX1028.md#when-this-rule-is-deleted) says the same | **done** — WP-52 |
 | `FLOWX1028`'s `Durable` half: its message, its descriptor text in `FlowXDiagnostics.cs`, its row in `AnalyzerReleases.Unshipped.md`, its tests, and the `Durable` column of `docs/diagnostics/FLOWX1028.md` | Same reason. The page keeps its `Streaming` half and its deletion table | **done** — WP-52 |
 | The `[!WARNING]` box in [06 §4](../06-Execution-Engine.md#4-execution-profiles--the-central-trade-off) — "only the `Ephemeral` column describes something that runs" | The middle column starts describing something that runs. The `Streaming` sentence stays | **done** — WP-54. Replaced, not removed: the middle column now runs *partly*, and the box says which cells are still design |
-| The closing note in [06 §5](../06-Execution-Engine.md#5-the-determinism-boundary) — "`ReplayDeterminismTest` does not exist" and "`FlowX.Runtime` never reads `ExecutionProfile`" — plus the four **no — P2** rows in its table | The test exists at WP-61; the rows are raised at WP-58 and WP-59. The severity paragraph is re-decided **as a set**, including `FLOWX1011`'s deliberate Warning deviation | **three quarters.** The profile sentence went at WP-52. **WP-58 raised `FLOWX1007`–`FLOWX1009` and re-decided the severity stance as a set** — Warning by default, Error where the compilation can prove the code is on a durable flow's replay path; Info rejected outright, [reasoned in ADR-0003](ADR-0003-execution-profiles.md). The fourth row, `FLOWX1006`, ~~waits on the payload writer (WP-59)~~ **landed with it on 2026-08-01, so `06 §5`'s table now has no `no — P2` row left**. **WP-61 landed the test on 2026-07-31**, as `ReplayDeterminismTests`, and rewrote that closing note: eight shapes replayed against their own journals, with three residual fidelity limits measured rather than assumed |
-| The header `[!WARNING]` in [11-Distributed-Runtime](../11-Distributed-Runtime.md) — "nothing in this document is implemented" | Section by section, as each lands. It is not removed wholesale on the first commit | **partial, as designed.** §2 (the journal), §3 (resume) and the lease and recovery halves of §4 have an implementation, and §2's ERD is [amended by ADR-0016](ADR-0016-postgres-journal-adapter.md) rather than merely annotated. The outbox and the multi-node sections do not. The box says so per section |
-| The `[!WARNING]` in [ADR-0006](ADR-0006-journal-and-leases.md) — "Accepted, not implemented" — and its literature-derived "measured ceiling", replaced by B7's real number | The record stops being a prediction | **half, and the same half.** "No `IFlowJournal` anywhere in `src/`" and "the runtime does not read `ExecutionProfile`" were corrected at WP-54, and WP-53 makes them false a second way — a store now exists outside the test assembly. The **measured ceiling is still a literature figure**, and WP-53 did not move it: B7 has no harness (WP-50), so a real database has been made *correct* here without ever being made *fast* |
-| [ADR-0003](ADR-0003-execution-profiles.md)'s negative bullet "The asymmetry is currently theoretical in one direction", and the `FLOWX1012` sentence in the bullet above it | Both describe the gap this ADR closes | **done, and finished at WP-60.** The asymmetry bullet was rewritten at WP-54, when `FLOWX1012`'s sentence kept "never built" and lost "its fix would change nothing". `FLOWX1012` is now built, so the sentence is gone entirely: the bullet names both of the rules it specified, and records why the second is a Warning |
+| The closing note in [06 §5](../06-Execution-Engine.md#5-the-determinism-boundary) — "`ReplayDeterminismTest` does not exist" and "`FlowX.Runtime` never reads `ExecutionProfile`" — plus the four **no — P2** rows in its table | The test exists at WP-61; the rows are raised at WP-58 and WP-59. The severity paragraph is re-decided **as a set**, including `FLOWX1011`'s deliberate Warning deviation | **three quarters.** The profile sentence went at WP-52. **WP-58 raised `FLOWX1007`–`FLOWX1009` and re-decided the severity stance as a set** — Warning by default, Error where the compilation can prove the code is on a durable flow's replay path; Info rejected outright, [reasoned in ADR-0003](ADR-0003-execution-profiles.md)). The fourth row, `FLOWX1006`, ~~waits on the payload writer (WP-59)~~ **landed with it on 2026-08-01, so `06 §5`'s table now has no `no — P2` row left**. **WP-61 landed the test on 2026-07-31**, as `ReplayDeterminismTests`, and rewrote that closing note: eight shapes replayed against their own journals, with three residual fidelity limits measured rather than assumed |
+| The header `[!WARNING]` in [11-Distributed-Runtime](../11-Distributed-Runtime.md) — "nothing in this document is implemented" | Section by section, as each lands. It is not removed wholesale on the first commit | **partial, as designed.** §2 (the journal), §3 (resume) and the lease and recovery halves of §4 have an implementation, and §2's ERD is [amended by ADR-0016](ADR-0016-postgres-journal-adapter.md)) rather than merely annotated. The outbox and the multi-node sections do not. The box says so per section |
+| The `[!WARNING]` in [ADR-0006](ADR-0006-journal-and-leases.md)) — "Accepted, not implemented" — and its literature-derived "measured ceiling", replaced by B7's real number | The record stops being a prediction | **half, and the same half.** "No `IFlowJournal` anywhere in `src/`" and "the runtime does not read `ExecutionProfile`" were corrected at WP-54, and WP-53 makes them false a second way — a store now exists outside the test assembly. The **measured ceiling is still a literature figure**, and WP-53 did not move it: B7 has no harness (WP-50), so a real database has been made *correct* here without ever being made *fast* |
+| [ADR-0003](ADR-0003-execution-profiles.md))'s negative bullet "The asymmetry is currently theoretical in one direction", and the `FLOWX1012` sentence in the bullet above it | Both describe the gap this ADR closes | **done, and finished at WP-60.** The asymmetry bullet was rewritten at WP-54, when `FLOWX1012`'s sentence kept "never built" and lost "its fix would change nothing". `FLOWX1012` is now built, so the sentence is gone entirely: the bullet names both of the rules it specified, and records why the second is a Warning |
 | Risk **R2** in [05 §11](../05-Architecture.md#11-risks-and-technical-debt) | It stops being *unreachable* and becomes live-and-mitigated, with WP-61 as the mitigation actually named | **live, and mitigated.** R2 went live at WP-52 with nothing standing behind it. WP-58 built three of its four named analyzers, so ambient reads on a replay path are a build error where the compilation can prove the path. *This cell then said what was still missing was "the one that would demonstrate replay rather than forbid the ways it breaks".* **WP-61 built it** — `ReplayDeterminismTests`, a corpus of eight shapes each replayed against its own journal — and added the read half of the capture (`FlowExecutionContext.ReplayNondeterminism`) that made demonstrating anything possible. What remains is three measured gaps, each with a test that goes red when it closes: an overlapping fork, a compensation's ambient reads, and the engine's own deadline check — plus the dependency amendment 1 added on `FLOWX1011`'s coverage, which a corpus narrows but cannot discharge |
 | The blocked row for `CrossTenantAccessIsDenied` in [CHECKLIST §4](../../CHECKLIST.md) loses **half** its blocker | "there is no journal, so there is no audit event to assert" ceases to be true. It stays blocked on P4's policy execution, and the row must say so rather than being ticked | **done** — WP-54. Half struck, row still `[ ]`, blocked on P4 (policy execution) and P3 ("every trigger kind") |
 | `JournalBenchmarks` absent from [14 §8](../14-Performance.md#8-benchmark-suite-and-ci-gating), and the "not written — no journal, no second node" chaos row in [21 §7](../21-Quality-Gates.md) | WP-50 writes the harness *before* the journal, so these two are the **first** entries removed, not the last | **not yet, and the prediction inverted.** WP-50 has not started, so both entries stand — but their stated reason ("there is no journal") has stopped being true. They are the *last* entries removed, not the first, and the reason is corrected in both files rather than the state |

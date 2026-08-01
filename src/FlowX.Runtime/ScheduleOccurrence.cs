@@ -17,7 +17,7 @@ namespace FlowX.Runtime;
 /// primitives the runtime already has settle it: <c>ILeaseStore.AcquireAsync</c> refuses nine
 /// of them while the winner holds the lease, and <c>IFlowJournal.StartAsync</c> refuses them
 /// with <c>journal.instance_exists</c> for ever afterwards
-/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
 /// </para>
 /// <para>
 /// <strong>The lease is the fast answer and the journal is the true one.</strong> A lease has

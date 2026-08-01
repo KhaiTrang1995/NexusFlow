@@ -31,7 +31,7 @@ repair is to delete the declaration P2 will need to find. [FLOWX1027](FLOWX1027.
 has no effect rather than code that is wrong, which is exactly what C#'s own
 `CS0162` is and exactly the severity C# gives it. [FLOWX1011](FLOWX1011.md) is an error in `Durable`
 flows and a warning in `Ephemeral` ones, which is the asymmetry
-[ADR-0003](../adr/ADR-0003-execution-profiles.md) ratified for the determinism rules:
+[ADR-0003](../adr/ADR-0003-execution-profiles.md)) ratified for the determinism rules:
 a durable flow is replayed and must take the branch it took the first time, an
 ephemeral one is not replayed at all.
 [FLOWX1012](FLOWX1012.md) is the one rule here whose remedy has a prerequisite outside the
@@ -48,7 +48,7 @@ where the two rules' reasoning is the same and where this one has to make its ow
 
 ## The severity of the determinism set
 
-[ADR-0003](../adr/ADR-0003-execution-profiles.md) says the determinism rules are **errors
+[ADR-0003](../adr/ADR-0003-execution-profiles.md)) says the determinism rules are **errors
 under `Durable` and informational under `Ephemeral`**.
 [06 §5](../06-Execution-Engine.md#5-the-determinism-boundary) repeats it, and then asks for
 the stance to be revisited **as a set** once the journal exists — "`FLOWX1011`'s deviation
@@ -159,7 +159,7 @@ strength of a profile that does not reach the thing being escalated about.
 
 1. **The source is not wrong.** A compensable `Ephemeral` flow compensates correctly on
    every ordinary failure — the capture declines, the unwind runs, the reservation comes
-   back. What it loses is the crash window. [ADR-0003](../adr/ADR-0003-execution-profiles.md)
+   back. What it loses is the crash window. [ADR-0003](../adr/ADR-0003-execution-profiles.md))
    records that trade deliberately, and `docs/DEBT.md` names it as the example of a
    *decision* rather than debt. An error would make a decision the ADR ratified
    inexpressible.
@@ -309,7 +309,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1034](FLOWX1034.md) | Step declares more than one policy set | **A declared timeout, breaker or audit deleted before the plan and the manifest are written, because the second `.WithPolicy(...)` on a step replaces the first rather than adding to it** |
 | [FLOWX1035](FLOWX1035.md) | `CompensationRetry` declares a single attempt | A manifest entry that says the undo is retried, over an undo dispatched exactly once — `IsRetrying` is `Attempts > 1`, so one attempt leaves `HasCompensationPolicies` false and the engine takes `CompensationPolicy.None` |
 | [FLOWX1036](FLOWX1036.md) | Policy set cannot be read at compile time | **A whole policy set reaching no plan, no manifest and none of `FLOWX1014`, `FLOWX1018`, `FLOWX1019`, `FLOWX1032` or `FLOWX1033` — a shared library's `CompensationRetry` not running, and a duplicate-charge rule with nothing to read** |
-| [FLOWX1037](FLOWX1037.md) | Scheduled flow cannot be fired | **A published `cron` with no schedule registered behind it: a flow that cannot bind the occurrence and is never started, or an ephemeral one started by every node in the fleet on every occurrence — with no error, no duplicate row and nothing anywhere to count** |
+| [FLOWX1038](FLOWX1038.md) | Scheduled flow cannot be fired | **A published `cron` with no schedule registered behind it: a flow that cannot bind the occurrence and is never started, or an ephemeral one started by every node in the fleet on every occurrence — with no error, no duplicate row and nothing anywhere to count** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -469,7 +469,7 @@ is not an unchecked policy but an absent one. It is none of the reservations, an
 `FLOWX1032`: that rule names the kinds a set declares and says they do not execute, and this
 one fires precisely because there are no kinds to name.
 
-**`FLOWX1037` is claimed** — *scheduled flow cannot be fired*: a `[CronTrigger]` the generator
+**`FLOWX1038` is claimed** — *scheduled flow cannot be fired*: a `[CronTrigger]` the generator
 cannot turn into a registration, because the flow's input contract is not `ScheduledFire` — a
 firing has no body and only an occurrence to give — or because the flow is not `Durable`, whose
 consequence is not that nothing runs but that every node in the fleet runs it, with nothing

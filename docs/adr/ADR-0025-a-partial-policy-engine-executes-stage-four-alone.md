@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-08-01
 **Deciders:** Repository owner · Platform architecture
-**Amends:** [ADR-0011](ADR-0011-fixed-policy-stage-order.md)
+**Amends:** [ADR-0011](ADR-0011-fixed-policy-stage-order.md))
 
 > **ADR-0011 makes the stage order the safety property.** *"The order is not configurable…
 > each of these is a real production incident, and each becomes unexpressible."* A policy
@@ -50,7 +50,7 @@ That reduces the question to the nine kinds an author can write:
 It is the only stage whose kinds need nothing FlowX does not already have. `Timeout`, `Retry`,
 `CircuitBreaker` and `Bulkhead` need a clock and a counter; the engine holds an `IClock`
 already, for the deadline and for the compensation backoff. `RateLimit`, `Idempotency` and
-`Cache` each need a store, and a store is a plugin contract — [ADR-0009](ADR-0009-plugin-contracts.md)
+`Cache` each need a store, and a store is a plugin contract — [ADR-0009](ADR-0009-plugin-contracts.md))
 territory, decided per contract rather than in passing. `Audit` needs a record schema and a
 sink.
 
@@ -131,7 +131,7 @@ written by a policy.
 
 **A stage added later must not be able to run after stage 4.** The engine reaches stages in
 one place — the step loop, in the nesting
-[ADR-0024](ADR-0024-stage-four-is-a-fixed-nesting.md) fixes — so adding stage 3 means adding
+[ADR-0024](ADR-0024-stage-four-is-a-fixed-nesting.md)) fixes — so adding stage 3 means adding
 it *outside* the retry loop, and adding stage 5 means adding it outside the dispatch and
 inside stage 4. Neither is a rearrangement of what this package built; both are an
 insertion at a point ADR-0011 already names.
@@ -182,8 +182,8 @@ mechanisms and re-open ADR-0011's duplicate-charge row for real.
 
 ---
 
-**See also:** [ADR-0011](ADR-0011-fixed-policy-stage-order.md) ·
-[ADR-0023](ADR-0023-policy-stages-hook-through-the-plan.md) ·
-[ADR-0024](ADR-0024-stage-four-is-a-fixed-nesting.md) ·
+**See also:** [ADR-0011](ADR-0011-fixed-policy-stage-order.md)) ·
+[ADR-0023](ADR-0023-policy-stages-hook-through-the-plan.md)) ·
+[ADR-0024](ADR-0024-stage-four-is-a-fixed-nesting.md)) ·
 [FLOWX1032](../diagnostics/FLOWX1032.md) · [FLOWX1014](../diagnostics/FLOWX1014.md) ·
 [10 — Policy Framework](../10-Policy-Framework.md)

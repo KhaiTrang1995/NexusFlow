@@ -251,11 +251,11 @@ public sealed class TriggerDeclarationAnalyzerTests
     /// <strong>This test asserted an empty list until the schedule trigger was bound, and the
     /// difference is a real limit rather than a rule being noisy.</strong> A schedule's flow must
     /// take <c>ScheduledFire</c>, because a firing has no body and the flow may not read a clock
-    /// (<a href="../../docs/adr/ADR-0028-a-scheduled-flows-input-is-its-occurrence.md">ADR-0028</a>),
+    /// (<a href="../../docs/adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md">ADR-0028</a>),
     /// and an HTTP endpoint binds a request body into whatever the flow declares. So one flow
     /// cannot serve both — <c>09 §3</c>'s "four transports, zero changes to the flow body" holds
     /// for the four whose payload the caller supplies, and stops at the one whose payload the
-    /// platform supplies. FLOWX1037 is what says so.
+    /// platform supplies. FLOWX1038 is what says so.
     /// </remarks>
     [Fact]
     public void AllFiveTogetherAreSilent()
@@ -268,7 +268,7 @@ public sealed class TriggerDeclarationAnalyzerTests
             [StreamTrigger("orders.stream", Window = "tumbling:1m")]
             [AgentTrigger(Description = "Place a customer order", Confirmation = ConfirmationMode.Always)]
             """))
-            .ShouldBe(["FLOWX1037"], "no trigger here fails to declare its kind");
+            .ShouldBe(["FLOWX1038"], "no trigger here fails to declare its kind");
     }
 
     [Fact]
@@ -330,7 +330,7 @@ public sealed class TriggerDeclarationAnalyzerTests
     {
         new TriggerDeclarationAnalyzer().SupportedDiagnostics
             .Select(static d => d.Id)
-            .ShouldBe(["FLOWX1025", "FLOWX1037"]);
+            .ShouldBe(["FLOWX1025", "FLOWX1038"]);
     }
 
     /// <summary>

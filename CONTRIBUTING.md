@@ -167,7 +167,7 @@ Third-party plugins live in their own repositories. To be listed as compatible:
 
 *`FlowX.Conformance.Tests` **does not exist**, so the second bullet is a
 requirement nobody can meet yet. It is a **P3** deliverable
-([09 §8](docs/09-Trigger-Model.md), [ADR-0009](docs/adr/ADR-0009-plugin-contracts.md)),
+([09 §8](docs/09-Trigger-Model.md), [ADR-0009](docs/adr/ADR-0009-plugin-contracts.md))),
 and the fitness function that would check it — `PluginsPassConformance` — is
 recorded as blocked rather than overlooked in
 [21 §2.4](docs/21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced).

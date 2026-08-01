@@ -115,7 +115,7 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
     }
 
     /// <summary>
-    /// Reports FLOWX1037 on each <c>[CronTrigger]</c> the host would have nothing to do with.
+    /// Reports FLOWX1038 on each <c>[CronTrigger]</c> the host would have nothing to do with.
     /// </summary>
     /// <remarks>
     /// <para>

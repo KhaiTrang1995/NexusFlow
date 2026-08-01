@@ -3,10 +3,10 @@
 **Status:** Accepted
 **Date:** 2026-07-31
 **Deciders:** Runtime team, Platform architecture
-**Amends:** [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md) ·
+**Amends:** [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md)) ·
 [11 §2](../11-Distributed-Runtime.md#2-the-journal)
 
-> This record exists because [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md)
+> This record exists because [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md))
 > asked for it. Its own header says the status "is decided" at WP-53, against Postgres,
 > because everything it commits to is *storage* and the in-memory reference "cannot disagree
 > with a single clause". This is what disagreed.
@@ -190,7 +190,7 @@ the purge needs a guard against removing a pending event. This is a note for WP-
 defect in it.
 
 > **WP-56 landed the publisher and the guard with it**
-> ([ADR-0018](ADR-0018-outbox-publication-and-ordering.md), decision 5). Both purges carry a
+> ([ADR-0018](ADR-0018-outbox-publication-and-ordering.md)), decision 5). Both purges carry a
 > `NOT EXISTS` over unpublished events, unscoped by any window, and
 > `RetentionSweep.HeldForPendingEvents` counts what they withheld — because the guard's own
 > failure mode, a deployment that stages events and never publishes them, is otherwise
@@ -253,7 +253,7 @@ section it comes from.*
   to it, so "which states count as abandoned" is an assertion rather than two comments. It
   immediately earned its keep: the two disagreed on a limit of zero or less — this adapter
   short-circuits to an empty success and the in-memory reference threw — and the adapter's
-  behaviour was the correct one, because [ADR-0007](ADR-0007-result-over-exceptions.md)
+  behaviour was the correct one, because [ADR-0007](ADR-0007-result-over-exceptions.md))
   makes an exception from a store mean the store could not be reached.* What remains open is
   the second: `CompleteAsync` on an already-terminal instance is undefined by ADR-0015 *and*
   by the suite, so this adapter's rule — an identical repeat allowed, a different terminal
@@ -285,5 +285,5 @@ likely answer, not `jsonb`.
 
 ---
 
-**Back to:** [ADR index](README.md) · [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md) ·
+**Back to:** [ADR index](README.md) · [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md)) ·
 [11 — Distributed Runtime](../11-Distributed-Runtime.md)

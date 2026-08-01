@@ -11,14 +11,14 @@ namespace FlowX.Compiler.Model;
 /// the arrangement <see cref="HttpEndpointModel"/> has with a route, and it matters more here:
 /// the expression and the zone are two of the five values every node derives the instance id
 /// from
-/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>),
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>),
 /// so a registration carrying a different string from the manifest's would not merely mislead a
 /// reader — it would split one schedule into two that never see each other's firings.
 /// </para>
 /// <para>
 /// <strong><see cref="MissedFire"/> is the one field read from the attribute directly</strong>,
 /// because the manifest deliberately does not publish it
-/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0029-the-manifest-publishes-a-schedules-address.md">ADR-0029</a>):
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0034-the-manifest-publishes-a-schedules-address.md">ADR-0029</a>):
 /// it decides what this deployment does about work that is late, which is not a promise to
 /// anyone outside the application. It is not an address, so reading it separately cannot
 /// desynchronise one.

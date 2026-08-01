@@ -157,7 +157,7 @@ is not merely uncounted, it does not occur.
 > said "nothing in the store could compute it": `outbox_event` carries exactly one timestamp,
 > `published_at`, `NULL` for precisely the rows the gauge is about; migration `0004`'s
 > `staged_seq` is an ordering sequence and deliberately not a clock; and
-> [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md) considered a staging timestamp
+> [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)) considered a staging timestamp
 > and rejected it. **Every one of those statements is true and the conclusion does not
 > follow**, because the staging instant is not stored on `outbox_event` — it is stored on the
 > step row that staged it.
@@ -250,7 +250,7 @@ occurrence rather than on a rate.
 > the vocabulary.
 >
 > **What it is blocked on is a decision, not effort.** `FlowX.Abstractions` has zero package
-> references by [ADR-0009](adr/ADR-0009-plugin-contracts.md), enforced by
+> references by [ADR-0009](adr/ADR-0009-plugin-contracts.md)), enforced by
 > `AbstractionsHasNoDependencies` — and `Microsoft.Extensions.Logging.Abstractions` is a package.
 > `ActivitySource` and `Meter` were free because `System.Diagnostics.DiagnosticSource` is in the
 > `net10.0` shared framework; `ILogger` is not, so the pillar that looks cheapest is the one that
@@ -348,7 +348,7 @@ failure locally, with the exact inputs, without touching any production system.
 
 > **`inspect` is built and the other three are not, and the split is not about effort.**
 > `inspect` renders and runs nothing, which is the only reason the CLI is allowed to read a
-> journal at all: [ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md) permits the verb
+> journal at all: [ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md)) permits the verb
 > *because* reading rows needs no engine, and it says in as many words that its argument
 > does **not** reach the three modes that execute. Those are blocked on a decision — an
 > out-of-process engine the CLI shells to, or the conclusion that they are not CLI verbs at
@@ -462,7 +462,7 @@ approach that stays true.
 > [20-Roadmap](20-Roadmap.md) — and, unlike the emitter, it is now unblocked: the metric names
 > are frozen *and* produced, the flow's deadline and its steps are in the manifest, and
 > `flowx graph` already proves the CLI can render a manifest without linking a FlowX assembly
-> ([ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md)).
+> ([ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md))).
 
 ---
 

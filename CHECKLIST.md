@@ -17,7 +17,7 @@
 > lease expired. WP-53 added `plugins/FlowX.Postgres`, which passes the WP-51 conformance
 > suite unmodified from a different assembly against PostgreSQL 16.13 — and found three
 > clauses of ADR-0015 that a dictionary could not have,
-> [ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md).
+> [ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md)).
 >
 > **A rig has now killed real processes, and it is not a gate.** WP-50 built
 > `tests/FlowX.Chaos`: worker processes `SIGKILL`ed at a step boundary chosen so a step's
@@ -141,7 +141,7 @@ What changed is that it is no longer tracked as a blocker.*
       and ADR-0015 became **Accepted** at WP-53 — which this file records correctly 800 lines
       further down. A count and a status, both wrong, both ticked `[x]`. It then read "16"
       through ADR-0017, ADR-0018, ADR-0019 and ADR-0020; a count that is only corrected when
-      somebody notices is not a count.* **[ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)
+      somebody notices is not a count.* **[ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md))
       is the only one still Proposed**, and it is `[~]` rather than `[x]` because **one** of
       the twenty does not meet the [index's own template rule](docs/adr/README.md):
       **ADR-0014** has no `Context` heading — its §1 does that work under another name.
@@ -546,7 +546,7 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
 
 | Criterion | Verdict |
 |---|---|
-| 200-flow solution builds with ≤ 8 % overhead | **FAIL at +67.1 %** [+61.9, +73.6]; 50 flows +46.5 %. **Accepted as an exception; the phase closed over it.** `FlowPlanGenerator` is 90.5 % of the marginal cost and would need an ~8× cut. [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) is the open decision and is still **Proposed** |
+| 200-flow solution builds with ≤ 8 % overhead | **FAIL at +67.1 %** [+61.9, +73.6]; 50 flows +46.5 %. **Accepted as an exception; the phase closed over it.** `FlowPlanGenerator` is 90.5 % of the marginal cost and would need an ~8× cut. [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)) is the open decision and is still **Proposed** |
 | every diagnostic passes `EveryDiagnosticIsHelpful` | **PASS** — `FlowX.Compiler.Tests.CompilerFitnessTests.EveryDiagnosticIsHelpful`, green in this working tree |
 | emitted code is breakpoint-able | **PASS** — `FlowPlanGeneratorTests.EachStepGetsItsOwnLineDirective` plus five further line-directive tests across the emitter, `Fail` and step-input mapping, all green |
 
@@ -889,7 +889,7 @@ which is the exact failure mode P1 exists to remove:
       in `FlowX.Architecture.Tests` fails on the day the runtime reads a profile, so the
       scaffold gets taken down rather than left to rot. This box is ticked by P2 —
       specifically by **WP-52**, whose design is
-      [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md) and whose exit
+      [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md)) and whose exit
       criterion is that every row of that record's take-down table is discharged in the same
       package: the fitness test **deleted** rather than skipped, `FLOWX1028` narrowed to
       `Streaming`, and the warning boxes in `06 §4`, `06 §5`, `11`, ADR-0003 and ADR-0006
@@ -1049,8 +1049,8 @@ Three more surfaced while getting the suite green:
 ## 5d. P2 · Durable execution — **nearly complete; QR2 measured on demand, B7 and B8 not at all**
 
 Work packages in [PLAN.md §5](PLAN.md#5-p2--durable-execution); the design they are held
-to is [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md), **Accepted at
-WP-53** and [amended by ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md). It is
+to is [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md)), **Accepted at
+WP-53** and [amended by ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md)). It is
 listed in full because P1 handed each item over with a named blocker, and an inventory that
 exists only in a closing summary is one nobody reads.
 
@@ -1226,7 +1226,7 @@ exists only in a closing summary is one nobody reads.
       arrangement `17 §5` describes for a third party claiming conformance — and 45
       conformance assertions plus 18 adapter tests are green against PostgreSQL 16.13.
       **Three ADR-0015 clauses failed contact** and are amended in
-      [ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md): payload columns are `json`
+      [ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md)): payload columns are `json`
       because `jsonb` reorders keys and breaks commitment 5; `flow_lease` carries no foreign
       key to `flow_instance`, because the lease precedes the instance row; and
       `flow_instance.state_bag_sequence` was added in migration `0002` to give B8's
@@ -1262,7 +1262,7 @@ exists only in a closing summary is one nobody reads.
       complete against their own exit criteria, and the gap was *between* them. A separate
       class rather than a second interface on `PostgresFlowJournal`, because a scan is not
       part of executing an instance and the type every durable write passes through should
-      not carry a member no write uses ([ADR-0016 decision 4](docs/adr/ADR-0016-postgres-journal-adapter.md)).
+      not carry a member no write uses ([ADR-0016 decision 4](docs/adr/ADR-0016-postgres-journal-adapter.md))).
       **Migration `0003` adds the index the query needs, and `0002`'s was the wrong shape:**
       with `state` leading, `ORDER BY updated_at` inherits no ordering — 1 748 buffers and a
       top-N sort on 200 000 rows, against 4 with `(updated_at)` partial. `0002`'s index is
@@ -1287,7 +1287,7 @@ exists only in a closing summary is one nobody reads.
       ADR-0015's portability note at the key space — and the fold turned out to be at the
       *client*, not the server: Redis keeps `''` distinct from a missing field, but both
       arrive as values whose `IsNullOrEmpty` agrees.
-      [ADR-0019](docs/adr/ADR-0019-redis-lease-store.md). **One operational requirement is
+      [ADR-0019](docs/adr/ADR-0019-redis-lease-store.md)). **One operational requirement is
       load-bearing:** the key space must not be under an `allkeys-*` eviction policy, since
       eviction is deletion by another name and would silently restore the reset counter
 - [x] **WP-55** Resume: lease acquisition, recovery scan, re-entry into the same step loop.
@@ -1328,7 +1328,7 @@ exists only in a closing summary is one nobody reads.
       suppressed project-wide. ~~So "reaches a broker" is still met as "reaches a publisher"~~
       — **a third half landed 2026-08-01 and it reaches a broker.** `RedisStreamEventPublisher`
       (`plugins/FlowX.Redis`) publishes each staged event to **one Redis stream per
-      `partition_key`**, which *is* [ADR-0018](docs/adr/ADR-0018-outbox-publication-and-ordering.md)'s
+      `partition_key`**, which *is* [ADR-0018](docs/adr/ADR-0018-outbox-publication-and-ordering.md))'s
       decision 3 rather than an implementation of it: a Redis stream is totally ordered, so
       per-key streams offer per-key order and nothing across keys. One stream for everything
       would have offered the global order the record refuses. **No new project and no new
@@ -1435,7 +1435,7 @@ exists only in a closing summary is one nobody reads.
       **Two measurements it did not move.** `samples/ecommerce` is `Ephemeral`, so no writer
       is emitted for it and `flowx.manifest.baseline.json` did not change; and the
       `schemaVersion` stamp is a field of a stored payload row, not a manifest field, so
-      [ADR-0017](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md)'s **F1** stays at twelve
+      [ADR-0017](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md))'s **F1** stays at twelve
       schema-declared fields nothing writes.
       **What it found and did not fix:** `IStepDispatcher.DescribeInput` is a *defaulted*
       interface member, and both hand-written decorating dispatchers inherited the default and
@@ -1518,7 +1518,7 @@ exists only in a closing summary is one nobody reads.
       durable instance from the journal, reading it **as rows** over the published migration
       contract through `Npgsql` and joining it against the manifest, which publishes the plan
       a `step_id` is meaningless without.
-      [ADR-0020](docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md) is the decision, and it
+      [ADR-0020](docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md)) is the decision, and it
       **declines to publish `flowx.journal.schema.json`** on three grounds: nothing writes a
       journal *document*, so the schema would describe a file that does not exist; a manifest
       freeze is a promise about *code* regenerated on every build while a journal schema is a
@@ -1725,7 +1725,7 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | **0009** plugin contracts | Accepted | reviewed "each phase gate" — **no record of a review at P1's gate** | ~~Its warning box is **false since WP-53**: still says "no store has ever run against a real database".~~ **Discharged.** The box now records those three clauses as expired and names `plugins/FlowX.Postgres` as the second plugin that ran the suite unmodified from another assembly. Struck rather than deleted: this is the record a plugin author reads, and what it used to say is why the row existed |
 | **0011** policy stage order | Accepted | needs three counterexamples collected — **nothing collects them**, so it cannot be revisited | the counterexample register does not exist |
 | **0013** DSL vocabulary | Accepted | ~~**has no `Revisit when`**~~ — gained one on 2026-07-31 | ~~violates the index's own rule~~ **Discharged**, and this cell said so nowhere while §1 above already recorded the fix. A row that contradicts a row 1 400 lines earlier is the drift this file exists to remove |
-| **0014** catalogue vs budget | **Proposed** | **one of four FIRED** — the inner loop pays full derivation per edit, by construction. A second is **crossed, not fired**: withheld 42 % vs a 20 % trigger, on a corpus [B13 §2](docs/benchmarks/B13-error-catalogue-resolution.md) argues is inadmissible. *This cell said "two of four" and overstated it* | **corrected 2026-07-31.** The record headlined **+77.1 %** and claimed 200 flows had not been re-measured; [ADR-0014 §10](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) now states +67.1 % and which triggers fired |
+| **0014** catalogue vs budget | **Proposed** | **one of four FIRED** — the inner loop pays full derivation per edit, by construction. A second is **crossed, not fired**: withheld 42 % vs a 20 % trigger, on a corpus [B13 §2](docs/benchmarks/B13-error-catalogue-resolution.md) argues is inadmissible. *This cell said "two of four" and overstated it* | **corrected 2026-07-31.** The record headlined **+77.1 %** and claimed 200 flows had not been re-measured; [ADR-0014 §10](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)) now states +67.1 % and which triggers fired |
 | **0015** journal schema | Accepted | cannot fire — keyed on B8, no harness | *This cell read "tracked well", then recorded that the **Still not in / Owed to** table carried "The generated payload writer and `FLOWX1006` → WP-59" a day after both shipped.* **Struck on 2026-08-01**, with the construction that actually shipped: the writer meets commitment 5 by a **narrower** route than the commitment states — it hands named values to `JournalPayload` rather than routing them through a FlowX-owned STJ context — so redaction stayed structural. Its `06 §5` take-down line is struck too, and verified: `docs/06` now has **zero** `no — P2` rows | [PLAN open item ~~14~~](PLAN.md#9-open-items-blocking-the-plan) |
 | **0016** Postgres adapter | Accepted | not fired | *This cell said the record **has no `Negative` section**; it gained a Positive / Negative split on 2026-07-31 and the cell was not updated.* Its WP-56 purge-guard note and its Oracle `Root`-scope portability rule are still in neither planning file |
 | **0020** CLI reads the journal as rows | Accepted | not fired | *This cell said the record **names its own owed work and nothing was tracking it**.* Tracked, then discharged on 2026-08-01: `CliDependsOnNothingButTheManifest` is `CliLinksNoFlowXAssembly` and all six citing documents moved with it. The record's owed-work item is struck rather than deleted, and §1/§2 keep the old name where they *quote* it, because those sections are the argument about the name |
@@ -1806,7 +1806,7 @@ claim than the truth, and a less useful one.
 
 | Finding | Count | Resolution |
 |---|---|---|
-| `CA1716` — identifier matches a reserved keyword | 14 | The rule fires on `Step`, `Return`, `When`, `Then`, `Error`, `Get`, `Set` — the DSL's entire vocabulary. Disabled repo-wide with [ADR-0013](docs/adr/ADR-0013-dsl-vocabulary-over-ca1716.md). A decision, not debt. |
+| `CA1716` — identifier matches a reserved keyword | 14 | The rule fires on `Step`, `Return`, `When`, `Then`, `Error`, `Get`, `Set` — the DSL's entire vocabulary. Disabled repo-wide with [ADR-0013](docs/adr/ADR-0013-dsl-vocabulary-over-ca1716.md)). A decision, not debt. |
 | `IDE0040` — accessibility modifiers required | 15 | Our own `.editorconfig` defect: `always` demands `public` on interface members, which no C# codebase writes. Changed to `for_non_interface_members`. |
 | `IL2026` — trim analyzer on `GetExportedTypes()` | 1 | Trim analyzers were enabled on test projects, which reflect by design. Disabled for `tests/` only; `EveryShippedProjectIsAotAnalyzed` still guards `src/`. |
 | `CA1859` — return concrete type for perf | 1 | Legitimate. Private helper changed from `IReadOnlyList<string>` to `List<string>`. |

@@ -3,9 +3,9 @@
 **Status:** Accepted
 **Date:** 2026-07-30
 **Deciders:** Platform architecture, Plugin team
-**Amended by:** [ADR-0022](ADR-0022-http-shape-of-a-suspending-flow.md) ·
-[ADR-0026](ADR-0026-an-occurrence-names-the-instance-it-starts.md) ·
-[ADR-0027](ADR-0027-a-missed-schedule-fires-late.md)
+**Amended by:** [ADR-0022](ADR-0022-http-shape-of-a-suspending-flow.md)) ·
+[ADR-0031](ADR-0031-an-occurrence-names-the-instance-it-starts.md)) ·
+[ADR-0032](ADR-0032-a-missed-schedule-fires-late.md))
 
 ## Context
 
@@ -44,10 +44,10 @@ Supporting rule: no flow or capability may reference a transport assembly
 **Positive**
 - Q4 is met: one flow serves HTTP, Kafka, cron and an AI agent simultaneously.
   *That last claim is now known to be false for one of the four, and the correction is
-  [ADR-0028](ADR-0028-a-scheduled-flows-input-is-its-occurrence.md) §4. A cron firing carries no
+  [ADR-0033](ADR-0033-a-scheduled-flows-input-is-its-occurrence.md)) §4. A cron firing carries no
   body and the flow may not read a clock, so a scheduled flow's input contract is fixed by the
   platform — `Flow<ScheduledFire, TOut>` — while an HTTP endpoint binds a request body into
-  whatever the flow declares. **One flow cannot serve both**, and `FLOWX1037` reports the
+  whatever the flow declares. **One flow cannot serve both**, and `FLOWX1038` reports the
   attempt. What survives is the sentence this bullet was written to make: the flow **body** is
   unchanged across transports, and a capability never learns which one started it. What does not
   compose is two inbound contracts on one flow.*
@@ -79,7 +79,7 @@ suspends had no HTTP shape: the generated endpoint answers `200` with the flow's
 output, and a suspended flow has none, so `samples/workflow`'s `offer.accept` declared no
 `[HttpTrigger]` and mapped its routes by hand — this record's rejected option **B**, arrived
 at by the transport having no answer rather than by anyone choosing it.
-[ADR-0022](ADR-0022-http-shape-of-a-suspending-flow.md) gives it one — `202` with where to
+[ADR-0022](ADR-0022-http-shape-of-a-suspending-flow.md)) gives it one — `202` with where to
 continue the flow, and a generated signal endpoint — without touching the decision above: the
 flow still declares an attribute the body cannot observe, and the transport still contributes
 translation and nothing else.*

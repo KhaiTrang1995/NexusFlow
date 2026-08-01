@@ -117,7 +117,7 @@ and the only place a kill can be aimed at it is inside the dispatcher. The rig h
 | **`after-commit`** | on entry to the next step, before its ledger row | the previous step's row **is** in the journal and this step's effect has not happened |
 
 The first arm is aimed straight at the hole
-[ADR-0006](../adr/ADR-0006-journal-and-leases.md) names in its own consequences:
+[ADR-0006](../adr/ADR-0006-journal-and-leases.md)) names in its own consequences:
 
 > A capability that is genuinely non-idempotent can still execute twice if the process dies
 > after the effect but before the commit. We state this honestly rather than claim
@@ -316,7 +316,7 @@ finishes the instant a node picks it up, and everything before that is *detectio
 to be idle for a lease TTL before `AbandonedInstanceQuery.IdleBefore` will consider it, and
 then a sweep has to come round. With `LeaseTtl = 30 s` and a 3 s jittered interval, 30.7 s at
 the median and 33.1 s at the maximum is that arithmetic and nothing else.
-[ADR-0006](../adr/ADR-0006-journal-and-leases.md) says so in advance — *"recovery latency is
+[ADR-0006](../adr/ADR-0006-journal-and-leases.md)) says so in advance — *"recovery latency is
 bounded by the lease TTL (~30 s default)"* — and this is the first measurement of it.
 **The 45 s budget therefore has about 15 s of headroom over a setting, not over an
 implementation**, and any deployment that raises `LeaseTtl` above 45 s fails QR2 by

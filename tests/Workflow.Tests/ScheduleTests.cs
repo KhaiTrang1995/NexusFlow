@@ -37,7 +37,7 @@ public sealed class ScheduleTests
     /// <remarks>
     /// A cron firing has no body, and <c>FLOWX1007</c> forbids the flow reading a clock to work
     /// out which occurrence it is, so this is not a stylistic choice — see
-    /// <c>docs/adr/ADR-0028-a-scheduled-flows-input-is-its-occurrence.md</c>. Asserted off the
+    /// <c>docs/adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md</c>. Asserted off the
     /// compiled plan rather than the source, so a signature change fails here.
     /// </remarks>
     [Fact]

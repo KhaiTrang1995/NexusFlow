@@ -9,7 +9,7 @@ namespace FlowX.Cli.Replay;
 /// <para>
 /// A journal row's <c>step_id</c> means nothing on its own — it is an index into a compiled
 /// plan. The manifest publishes that plan, which is why
-/// [ADR-0020](../../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md) can describe
+/// [ADR-0020](../../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md)) can describe
 /// <c>inspect</c> as a join between two published contracts rather than as a read of an
 /// internal.
 /// </para>

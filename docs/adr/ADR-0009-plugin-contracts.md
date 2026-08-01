@@ -63,8 +63,8 @@ compatibility obligation held forever.
 > performed for the first time, and it is the first evidence that this decision's central
 > mechanism works on something other than the reference implementation.
 > The suite also *disagreed* with a real store where a document was wrong: three clauses of
-> [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md) did not survive it, recorded
-> in [ADR-0016](ADR-0016-postgres-journal-adapter.md). **A conformance suite that has never
+> [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md)) did not survive it, recorded
+> in [ADR-0016](ADR-0016-postgres-journal-adapter.md)). **A conformance suite that has never
 > failed a real implementation has not been tested either**, which is why that matters as
 > much as the passes.
 >
@@ -106,7 +106,7 @@ compatibility obligation held forever.
   `plugins/FlowX.Postgres` needed nothing outside `FlowX.Abstractions`, and building it
   found three schema clauses wrong and one shipped extension point that no production
   implementation registered — defects discovered by us, in the shape this bullet says they
-  arrive ([ADR-0016](ADR-0016-postgres-journal-adapter.md)).*
+  arrive ([ADR-0016](ADR-0016-postgres-journal-adapter.md))).*
 - Third parties can self-certify by running `dotnet test`; no gatekeeping
   committee, and the standard is machine-checkable. *Not yet available to a third
   party: the three suites that exist live in a test project that is not packable, so

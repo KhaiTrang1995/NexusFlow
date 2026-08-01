@@ -10,7 +10,7 @@ namespace FlowX.Hosting;
 /// <param name="Cron">The parsed expression and the zone it is read in.</param>
 /// <param name="MissedFire">
 /// What to do about occurrences that fell due while nothing was there to take them
-/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0027-a-missed-schedule-fires-late.md">ADR-0027</a>).
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0032-a-missed-schedule-fires-late.md">ADR-0027</a>).
 /// </param>
 /// <remarks>
 /// <para>
@@ -154,7 +154,7 @@ public sealed class FlowScheduleCatalog
     /// <c>FlowHost</c> takes no lease, writes no row, and every node in the fleet runs the
     /// firing. That is the "fires once per node" failure with no symptom at all — no error, no
     /// duplicate-key refusal, nothing in the journal to count. Refusing here turns it into a
-    /// pod that never becomes ready. <c>FLOWX1037</c> is the earlier half of the same rule and
+    /// pod that never becomes ready. <c>FLOWX1038</c> is the earlier half of the same rule and
     /// catches it at compile time; this one catches a hand-written registration and a plan that
     /// changed profile after the code that registers it was generated.
     /// </para>

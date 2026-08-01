@@ -218,4 +218,4 @@ kinds execute and FLOWX1032 is deleted, this rule stays.
 **Back to:** [diagnostics index](README.md) · [FLOWX1032](FLOWX1032.md) ·
 [FLOWX1014](FLOWX1014.md) · [FLOWX1012](FLOWX1012.md) ·
 [Execution engine §7](../06-Execution-Engine.md) ·
-[ADR-0011](../adr/ADR-0011-fixed-policy-stage-order.md)
+[ADR-0011](../adr/ADR-0011-fixed-policy-stage-order.md))

@@ -1,7 +1,7 @@
 # B13 — how often the derived error catalogue can actually be read
 
 > **This is evidence for a decision, not a decision.**
-> [ADR-0014](../adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) §6 lists four
+> [ADR-0014](../adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)) §6 lists four
 > things nobody knows and says the decision turns on them. Three are measured here. The
 > ADR's recommendation is deliberately left as it stands; §8 below states what this
 > evidence would change if the owner agrees with it, as a recommendation and not as an
@@ -686,5 +686,5 @@ python3 scripts/measure-catalogue-shape.py --json /tmp/shape.json
 ```
 
 **Back to:** [Benchmarks](README.md) · [B12 at scale](B12-scale.md) ·
-[ADR-0014](../adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) ·
+[ADR-0014](../adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)) ·
 [Capability model](../07-Capability-Model.md) · [Roadmap](../20-Roadmap.md)

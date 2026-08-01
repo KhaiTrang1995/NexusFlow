@@ -21,7 +21,7 @@ namespace FlowX.Hosting;
 /// <para>
 /// <strong>There is no leader and no election.</strong> Ten nodes computing one occurrence
 /// derive one instance id from it
-/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>),
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>),
 /// so the race is settled by the two primitives the runtime already had: the lease store
 /// refuses nine of them while the winner is running, and the journal's primary key refuses
 /// them for ever afterwards. A leader would have to be elected, be detected as dead, and hand
@@ -159,7 +159,7 @@ public sealed class FlowScheduleScan
     /// <para>
     /// <strong>The floor is the whole of the missed-fire decision, and it comes from one of
     /// three places</strong>
-    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0027-a-missed-schedule-fires-late.md">ADR-0027</a>).
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0032-a-missed-schedule-fires-late.md">ADR-0027</a>).
     /// </para>
     /// <list type="number">
     /// <item><description>

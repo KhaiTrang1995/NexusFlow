@@ -396,5 +396,5 @@ defect rather than a measurement.
 ---
 
 **See also:** [B12 at scale](B12-scale.md) · [B12 at one flow](B12.md) ·
-[Benchmark harness](README.md) · [ADR-0002](../adr/ADR-0002-compile-time-orchestration.md) ·
+[Benchmark harness](README.md) · [ADR-0002](../adr/ADR-0002-compile-time-orchestration.md)) ·
 [Roadmap P1](../20-Roadmap.md)

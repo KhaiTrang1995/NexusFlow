@@ -22,7 +22,7 @@
 >
 > **`IEventPublisher` was on the undeclared list until WP-56 and is now in
 > `src/FlowX.Abstractions/Events/`**
-> ([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)). *This paragraph
+> ([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md))). *This paragraph
 > said it was "the first contract here declared with nothing implementing it",
 > that "the only implementation anywhere is a recording test double in
 > `tests/FlowX.Postgres.Tests`", and that `PublisherConformance` "stays unwritten
@@ -57,7 +57,7 @@
 >
 > `plugins/FlowX.Redis` (WP-54) implements `ILeaseStore` and passes
 > `LeaseStoreConformance` **unmodified**, inherited across an assembly boundary
-> ([ADR-0019](adr/ADR-0019-redis-lease-store.md)).
+> ([ADR-0019](adr/ADR-0019-redis-lease-store.md))).
 >
 > *This box said "one plugin", then "two", and said the supporting claim survived
 > because there was still one implementation per abstraction.* **That is no longer
@@ -92,7 +92,7 @@
 > `plugins/FlowX.Postgres` inherits both suites **unmodified, from a different
 > assembly** — the exact arrangement §5 describes — and passes them against a
 > real PostgreSQL 16.13. It found three clauses of
-> [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md) wrong, which
+> [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md)) wrong, which
 > is the strongest evidence available that the suite is worth publishing: a
 > conformance suite that cannot fail a real implementation has not been tested
 > either. What is still unproved is the *second* implementation — one store is
@@ -372,7 +372,7 @@ id inside another owner's namespace.
 
 | Not extensible | Why | If you need it |
 |---|---|---|
-| Policy **stage order** | the ordering guarantees are the safety property ([ADR-0011](adr/ADR-0011-fixed-policy-stage-order.md)) | `PolicyStage.Custom` within a stage |
+| Policy **stage order** | the ordering guarantees are the safety property ([ADR-0011](adr/ADR-0011-fixed-policy-stage-order.md))) | `PolicyStage.Custom` within a stage |
 | The flow state machine | replay and observability depend on a fixed, known lifecycle | model your states as flow steps |
 | `Result<T>` / `ErrorCategory` | the transport mapping table depends on a closed set | add error **codes**, not categories |
 | The manifest schema | consumers pin a major version | `extensions` field for custom metadata |

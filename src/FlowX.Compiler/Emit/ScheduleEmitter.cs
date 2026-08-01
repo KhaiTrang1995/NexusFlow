@@ -17,7 +17,7 @@ namespace FlowX.Compiler.Emit;
 /// The expression and the zone are copied off the <see cref="TriggerModel"/> the manifest
 /// published, so there is no second copy of the schedule to drift — and every node derives the
 /// instance id from that expression
-/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>),
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>),
 /// so two copies would not be a documentation defect but two schedules that never see each
 /// other's firings.
 /// </para>

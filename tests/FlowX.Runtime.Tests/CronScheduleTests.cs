@@ -12,7 +12,7 @@ namespace FlowX.Runtime.Tests;
 /// <strong>A schedule is a function from an instant to a set of instants, and nothing
 /// else.</strong> It holds no state, starts no timer and knows nothing about a node — which
 /// is what lets every node in a fleet compute the same occurrence and agree without talking
-/// (<a href="../../docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
+/// (<a href="../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
 /// Every test here is therefore a pure evaluation.
 /// </para>
 /// <para>

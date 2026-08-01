@@ -181,7 +181,7 @@ public sealed class FlowHost
     /// <param name="instanceId">
     /// The id this delivery names. Derived from something the sender and every receiver agree
     /// on — for a schedule, the occurrence
-    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>)
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>)
     /// — never minted here.
     /// </param>
     /// <param name="ct">The caller's cancellation token.</param>
@@ -210,7 +210,7 @@ public sealed class FlowHost
     /// <c>Ephemeral</c> plan journals nothing, so there is no primary key to refuse the second
     /// delivery and the id is inert — the flow simply runs, once per delivery. Whoever
     /// registers a schedule refuses an ephemeral flow at registration
-    /// (<c>FlowScheduleCatalog.Add</c>), and <c>FLOWX1037</c> refuses one at compile time.
+    /// (<c>FlowScheduleCatalog.Add</c>), and <c>FLOWX1038</c> refuses one at compile time.
     /// </para>
     /// </remarks>
     public ValueTask<FlowExecutionResult> RunAsync<TIn>(
@@ -655,7 +655,7 @@ public sealed class FlowHost
     /// version 7, so a journal's primary key is time-ordered rather than scattered across its
     /// index. A trigger that wants a redelivery to be idempotent supplies its own — a schedule
     /// derives one from the occurrence
-    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>)
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>)
     /// — and minting one per invocation is the honest behaviour for a caller with none to
     /// offer.
     /// <para>

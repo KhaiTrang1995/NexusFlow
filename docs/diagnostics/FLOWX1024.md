@@ -23,7 +23,7 @@ says which:
 | Reason | What is missing | Fix |
 |---|---|---|
 | `Profile = Ephemeral` | An ephemeral execution keeps no journal, so there is no transaction for the event to be part of. Staging it anywhere else would be the dual write the outbox exists to remove | Declare `Profile = Durable` on the flow |
-| No serialiser context declares `TEvent` | The body is written through a source-generated `JsonSerializerContext`. `JournalPayload.Of` takes a `JsonTypeInfo<T>` and has no overload that reflects over a type, which is what keeps the write path trim- and NativeAOT-safe (constraint C2, [ADR-0008](../adr/ADR-0008-serialization-and-schema.md)) | Add `[JsonSerializable(typeof(TEvent))]` to one context |
+| No serialiser context declares `TEvent` | The body is written through a source-generated `JsonSerializerContext`. `JournalPayload.Of` takes a `JsonTypeInfo<T>` and has no overload that reflects over a type, which is what keeps the write path trim- and NativeAOT-safe (constraint C2, [ADR-0008](../adr/ADR-0008-serialization-and-schema.md))) | Add `[JsonSerializable(typeof(TEvent))]` to one context |
 
 **Exactly one context, not at least one.** Two contexts declaring the same
 contract is the same answer as none: picking the first would make the event's wire
@@ -55,7 +55,7 @@ visible rather than being quietly overwritten.
 under it called `IEventPublisher` "a declared contract with a recording test
 double behind it".* `plugins/FlowX.Redis` now implements it over Redis Streams,
 one stream per `partition_key`, and `PublisherConformance` holds it and the double
-to one contract ([ADR-0018](../adr/ADR-0018-outbox-publication-and-ordering.md)).
+to one contract ([ADR-0018](../adr/ADR-0018-outbox-publication-and-ordering.md))).
 The **first** column is still **no**, and it is still not what this diagnostic
 reports: what this rule is about is a flow that cannot stage, and which broker a
 deployment wires behind the seam is a composition decision, not something the

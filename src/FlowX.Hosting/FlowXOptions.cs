@@ -142,7 +142,7 @@ public sealed class FlowXOptions
     /// it late when it comes back; a fleet that was down for longer than this loses the
     /// occurrences that fell outside the window — silently, because there is nothing to report
     /// a firing that nothing was there to observe
-    /// (<c>docs/adr/ADR-0027-a-missed-schedule-fires-late.md</c>).
+    /// (<c>docs/adr/ADR-0032-a-missed-schedule-fires-late.md</c>).
     /// </para>
     /// <para>
     /// A day by default, which covers a rolling deploy, a node outage and a night. Raise it to

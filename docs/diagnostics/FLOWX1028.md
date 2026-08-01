@@ -15,7 +15,7 @@
 > declaration is honoured, so warning about it would now be false. The rule was narrowed
 > rather than deleted, because deleting it would have handed `Streaming` exactly the
 > silence `Durable` was rescued from — the reasoning is
-> [ADR-0015's](../adr/ADR-0015-journal-schema-and-durable-execution.md#what-lands-with-this-and-what-is-deleted).
+> [ADR-0015's](../adr/ADR-0015-journal-schema-and-durable-execution.md)#what-lands-with-this-and-what-is-deleted).
 
 ## What it means
 
@@ -70,7 +70,7 @@ profiles the runtime implements.
 
 **Not by changing the profile.** `Profile = Ephemeral` would silence this warning
 and change nothing about how the flow runs; it would only delete the record of
-what this flow needs. [ADR-0003](../adr/ADR-0003-execution-profiles.md) calls the
+what this flow needs. [ADR-0003](../adr/ADR-0003-execution-profiles.md)) calls the
 profile the single most consequential decision a flow author makes and lists its
 greppability as a positive consequence of the design — `Profile = Streaming`
 visible in the code, the manifest and the diagram is how P7 will find the flows it
@@ -134,7 +134,7 @@ manifest promises and what the build can deliver, not a mistake in the code. The
 flow is written correctly for a platform that has the feature.
 
 Info was the other candidate, and it is the option
-[ADR-0003](../adr/ADR-0003-execution-profiles.md) already rejected once — for
+[ADR-0003](../adr/ADR-0003-execution-profiles.md)) already rejected once — for
 `FLOWX1011`, on the grounds that an Info diagnostic never reaches a build log and
 would ship doing nothing. Shipping a rule that does nothing is the precise defect
 this diagnostic was written to correct; repeating it here would be an unusually
@@ -161,7 +161,7 @@ owner and an expiry attached.
 A fair question, and the answer is deliberate: **the manifest records what was
 declared, and `Streaming` was declared.**
 
-[ADR-0005](../adr/ADR-0005-manifest-as-build-artifact.md) makes the manifest a
+[ADR-0005](../adr/ADR-0005-manifest-as-build-artifact.md)) makes the manifest a
 document containing only declared facts — the same principle that stops
 [FLOWX1025](FLOWX1025.md) inventing a trigger kind it cannot read. The `profile`
 field is a faithful record of the attribute. What is untrue is not the field but
@@ -210,5 +210,5 @@ names it.
 
 **Back to:** [diagnostics index](README.md) ·
 [Execution engine §4](../06-Execution-Engine.md#4-execution-profiles--the-central-trade-off) ·
-[ADR-0003](../adr/ADR-0003-execution-profiles.md) ·
-[ADR-0015](../adr/ADR-0015-journal-schema-and-durable-execution.md) · [Roadmap](../20-Roadmap.md)
+[ADR-0003](../adr/ADR-0003-execution-profiles.md)) ·
+[ADR-0015](../adr/ADR-0015-journal-schema-and-durable-execution.md)) · [Roadmap](../20-Roadmap.md)

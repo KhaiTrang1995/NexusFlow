@@ -143,7 +143,7 @@ public sealed class TriggerModel : IEquatable<TriggerModel>
 /// Separate from <see cref="TriggerModel"/> because that model is address and admission only,
 /// and a missed-fire policy is neither: it decides what this deployment does about work that is
 /// late, which is a run-time behaviour rather than a promise to a caller
-/// (<a href="../../../docs/adr/ADR-0029-the-manifest-publishes-a-schedules-address.md">ADR-0029</a>).
+/// (<a href="../../../docs/adr/ADR-0034-the-manifest-publishes-a-schedules-address.md">ADR-0029</a>).
 /// Folding it onto <see cref="TriggerModel"/> would have put a value in the model whose own
 /// remarks say operational tuning is deliberately absent, one field away from
 /// <c>ManifestWriter</c> writing it.

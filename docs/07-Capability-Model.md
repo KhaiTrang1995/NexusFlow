@@ -136,7 +136,7 @@ determinism set re-decided at once —
 [the diagnostics index](diagnostics/README.md#the-severity-of-the-determinism-set) is
 the record. Rule 8 was never a severity question: `FLOWX1006` checks membership in
 the generated `System.Text.Json` context that
-[ADR-0015 commitment 5](adr/ADR-0015-journal-schema-and-durable-execution.md) requires
+[ADR-0015 commitment 5](adr/ADR-0015-journal-schema-and-durable-execution.md)) requires
 journal payloads to be written through, and there was no writer to make the requirement
 real. **WP-59 emitted one**, and the rule landed with it as an **error uniformly** rather
 than with the set's split severity — it reports only on a `Durable` flow, so its trigger
@@ -189,7 +189,7 @@ public static class PaymentErrors
 > **syntax**. A symbol with no `DeclaringSyntaxReferences` — which is every
 > symbol in a *referenced assembly* — ends the trail, and the reader then marks
 > the catalogue incomplete. An incomplete catalogue is not published at all
-> ([ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md); absent is
+> ([ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)); absent is
 > a state a consumer can see, short is not).
 >
 > So a team that puts `PaymentErrors` in `<App>.Contracts` and the capability in

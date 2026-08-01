@@ -5,7 +5,7 @@ namespace FlowX.Cli.Tests;
 
 /// <summary>
 /// The <c>replay</c> verb's command-line surface, and the store dependency
-/// [ADR-0020](../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md) introduced.
+/// [ADR-0020](../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md)) introduced.
 /// </summary>
 /// <remarks>
 /// Nothing here needs a database. That is the point of most of it: the interesting
@@ -148,7 +148,7 @@ public sealed class ReplayUsageTests : IDisposable
     /// <remarks>
     /// <para>
     /// <strong>This is the compensating control
-    /// [ADR-0020](../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md) §3 commits
+    /// [ADR-0020](../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md)) §3 commits
     /// to.</strong> "The CLI is runnable against an artifact with no database" was one of
     /// three properties resting on <c>CliLinksNoFlowXAssembly</c>, and the only one
     /// that rule never asserted. It was true because no verb had needed a store. The moment

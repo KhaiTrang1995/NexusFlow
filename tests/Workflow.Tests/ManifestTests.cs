@@ -120,7 +120,7 @@ public sealed class ManifestTests
     /// The schema declared <c>cron</c> and <c>timeZone</c>, <c>ManifestWriter</c> wrote them and
     /// <c>flowx diff</c> classified changes to both — and until this flow existed, nothing in the
     /// repository produced one, so all of that was a producer on paper
-    /// (<a href="../../docs/adr/ADR-0029-the-manifest-publishes-a-schedules-address.md">ADR-0029</a>
+    /// (<a href="../../docs/adr/ADR-0034-the-manifest-publishes-a-schedules-address.md">ADR-0029</a>
     /// §1.1).
     /// </para>
     /// <para>

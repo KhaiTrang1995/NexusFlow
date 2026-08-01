@@ -1,11 +1,11 @@
-# ADR-0029: The manifest publishes a schedule's address and not its firing policy
+# ADR-0034: The manifest publishes a schedule's address and not its firing policy
 
 **Status:** Accepted
 **Date:** 2026-08-01
 **Deciders:** Repository owner · Platform architecture
-**Amends:** [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md)
+**Amends:** [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md))
 
-> **[ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md)'s third Revisit-when reads: *"the schema
+> **[ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md))'s third Revisit-when reads: *"the schema
 > gains a field before the freeze — every addition re-opens F1 and F5 for that field"*. Binding
 > a transport is exactly the moment somebody proposes one.** `[CronTrigger]` declares six
 > properties; the manifest carries two; four now reach running code or a diagnostic for the first
@@ -16,7 +16,7 @@
 > `cron` and `timeZone` were declared in the schema, written by `ManifestWriter` and classified
 > by `flowx diff` before anything fired them. What this change did was give them their first
 > producer in a real compilation — which is a different thing from a schema addition and needs
-> saying, because [ADR-0021](ADR-0021-manifest-publishes-the-wait.md) set the precedent that a
+> saying, because [ADR-0021](ADR-0021-manifest-publishes-the-wait.md)) set the precedent that a
 > field arrives with its producer *and* its rule in one commit, and a reader is entitled to check
 > that this one did too.
 
@@ -66,7 +66,7 @@ NEUTRAL (1)
 ```
 
 That is F5's question answered for these two fields by a command with an exit code, which is the
-standard [ADR-0021 §4](ADR-0021-manifest-publishes-the-wait.md#4-how-adr-0017s-criteria-move) set
+standard [ADR-0021 §4](ADR-0021-manifest-publishes-the-wait.md)#4-how-adr-0017s-criteria-move) set
 and the standard F5 itself says a human reading two files cannot sustain.
 
 ### 1.2 What is newly readable and might therefore be published
@@ -76,8 +76,8 @@ have:
 
 | Property | Status after this change |
 |---|---|
-| `Cron`, `TimeZone` | published; the instance id is derived from both ([ADR-0026](ADR-0026-an-occurrence-names-the-instance-it-starts.md)) |
-| `MissedFire` | **executes** — three values, three behaviours ([ADR-0027](ADR-0027-a-missed-schedule-fires-late.md)) |
+| `Cron`, `TimeZone` | published; the instance id is derived from both ([ADR-0031](ADR-0031-an-occurrence-names-the-instance-it-starts.md))) |
+| `MissedFire` | **executes** — three values, three behaviours ([ADR-0032](ADR-0032-a-missed-schedule-fires-late.md))) |
 | `Overlap`, `Jitter`, `PerTenant` | still reach nothing at all |
 
 `MissedFire` is the live question. It is no longer inert, it changes whether work happens, and
@@ -111,7 +111,7 @@ these records use is: *is this the string somebody else uses to reach the flow?*
 
 `cron` passes. It is a schedule's whole address — the answer to "when can I expect this to have
 run", which a downstream team plans around exactly as they plan around a route. It is also, since
-[ADR-0026](ADR-0026-an-occurrence-names-the-instance-it-starts.md), the string the instance id is
+[ADR-0031](ADR-0031-an-occurrence-names-the-instance-it-starts.md)), the string the instance id is
 derived from, so it is the one value that lets an operator reconstruct a primary key.
 
 `MissedFire` fails it, and the reason is that **nobody outside can act on the answer.** A
@@ -144,7 +144,7 @@ bound — which now names all three and says what each would do.
 
 `Overlap` is the one worth watching. Its default is `Skip` and it reads as though it prevented
 a catch-up under `RunAll` from running its firings concurrently; it does not, and
-[ADR-0027 §4](ADR-0027-a-missed-schedule-fires-late.md#4-consequences) records that as an
+[ADR-0032 §4](ADR-0032-a-missed-schedule-fires-late.md)#4-consequences) records that as an
 accepted negative.
 
 ---
@@ -160,14 +160,14 @@ accepted negative.
 - **B. Publish all six, and let consumers ignore what they do not need.** *Rejected:* it adds
   three fields nothing writes on the same day, which is ADR-0017's F1 moving from twelve to
   fifteen while the freeze is being counted down to. It is also the trade
-  [ADR-0021 §3](ADR-0021-manifest-publishes-the-wait.md#3-options-rejected)'s option E refuses by
+  [ADR-0021 §3](ADR-0021-manifest-publishes-the-wait.md)#3-options-rejected)'s option E refuses by
   name.
 - **C. Publish nothing at all for a schedule — drop `cron` and `timeZone`.** *Rejected,* though
   F1 explicitly allows deletion as a way to close a criterion. A schedule would then be the one
   trigger kind whose manifest entry is a bare `"kind": "Schedule"`, so two flows with different
   schedules would be indistinguishable and `flowx diff` could not report a nightly job becoming
   an hourly one. That is
-  [ADR-0021 §1](ADR-0021-manifest-publishes-the-wait.md#1-context)'s "two waiting flows are
+  [ADR-0021 §1](ADR-0021-manifest-publishes-the-wait.md)#1-context)'s "two waiting flows are
   indistinguishable" defect, reintroduced deliberately.
 - **D. Publish `cron` as a normalised or expanded form — the next occurrence, say.**
   *Rejected* twice over. A next-occurrence timestamp is a value computed at build time about a
@@ -246,15 +246,15 @@ cost; this one adds nothing at all.
   about how the platform paces it, and §2.2's test would pass;
 - **`flowx diff` gains a schedule-specific rule** — a "fires more often than it did" finding, say
   — which would need more than `cron` to compute and would reopen which fields feed it;
-- **the freeze ([ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md)) closes** with `cron` or
+- **the freeze ([ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md))) closes** with `cron` or
   `timeZone` unclassified, which §4 says cannot happen and which F5's unwritten instrument is the
   reason nobody can yet prove.
 
 ---
 
-**Back to:** [ADR index](README.md) · [ADR-0005](ADR-0005-manifest-as-build-artifact.md) ·
-[ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md) ·
-[ADR-0021](ADR-0021-manifest-publishes-the-wait.md) ·
-[ADR-0026](ADR-0026-an-occurrence-names-the-instance-it-starts.md) ·
-[ADR-0027](ADR-0027-a-missed-schedule-fires-late.md) · [22-CLI](../22-CLI.md) ·
+**Back to:** [ADR index](README.md) · [ADR-0005](ADR-0005-manifest-as-build-artifact.md)) ·
+[ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md)) ·
+[ADR-0021](ADR-0021-manifest-publishes-the-wait.md)) ·
+[ADR-0031](ADR-0031-an-occurrence-names-the-instance-it-starts.md)) ·
+[ADR-0032](ADR-0032-a-missed-schedule-fires-late.md)) · [22-CLI](../22-CLI.md) ·
 [09 §8](../09-Trigger-Model.md#8-schedule-trigger)

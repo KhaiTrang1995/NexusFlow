@@ -20,7 +20,7 @@ has.
 The number that matters more than either is the **shape**: cost is **linear** in flow
 count — `flows^0.91`, CI [0.82, 1.08], or about **9.5 ms of build time per flow with no
 fixed term**. A superlinear generator would have put
-[ADR-0002](../adr/ADR-0002-compile-time-orchestration.md) itself in question; a linear one
+[ADR-0002](../adr/ADR-0002-compile-time-orchestration.md)) itself in question; a linear one
 is a constant factor with an owner. Roughly 62 % of it is `FlowPlanGenerator` and 37 % is
 `StepBindingAnalyzer`.
 
@@ -49,7 +49,7 @@ The finding that does not depend on the sample and did survive WP-37: the projec
 [07-Capability-Model §4](../07-Capability-Model.md) prescribes — contracts and their static
 error class in a separate assembly — produces **no catalogue at all**, because the reader
 needs a syntax body it cannot get from a referenced assembly. It is the evidence half of
-[ADR-0014](../adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) §6, and it decides
+[ADR-0014](../adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)) §6, and it decides
 nothing.
 
 **None of that caught a 4.9× generator regression, and §5.1 is why.** A gate against a
@@ -66,7 +66,7 @@ instances**. Its scope is deliberately narrower than the working package it belo
 WP-50 is *"B7, B8 and the QR2 chaos rig"* and **only the rig is built**.
 
 Two of its numbers should always be quoted together. The exposure the rig *does* find is
-[ADR-0006](../adr/ADR-0006-journal-and-leases.md)'s documented one — an effect that happened
+[ADR-0006](../adr/ADR-0006-journal-and-leases.md))'s documented one — an effect that happened
 with no commit to record it — and at concurrency 1 it is exactly one duplicate per kill, and
 exactly zero when the kill moves to the other side of the commit. And the resume p99 is
 **measured and not gated**: **32.9 s against QR2's 45 s** on the recorded run, **48.1 s** and
@@ -117,7 +117,7 @@ Budget: **p99 ≤ 150 ns**.
 Interface dispatch is not meaningfully slower than a direct call — the JIT
 devirtualises a sealed, monomorphic call site. So "compile-time dispatch avoids a
 virtual call" is **not** an argument for
-[ADR-0002](../adr/ADR-0002-compile-time-orchestration.md), and it is not made.
+[ADR-0002](../adr/ADR-0002-compile-time-orchestration.md)), and it is not made.
 
 The argument that holds is the last column. Reflection allocates 48 B per dispatch;
 a four-step flow allocates ~192 B before any business object exists. That does not

@@ -3,11 +3,11 @@
 **Status:** Accepted
 **Date:** 2026-08-01
 **Deciders:** Repository owner · Platform architecture · Plugin team
-**Amends:** [ADR-0004](ADR-0004-universal-trigger-model.md) ·
+**Amends:** [ADR-0004](ADR-0004-universal-trigger-model.md)) ·
 [09 §6](../09-Trigger-Model.md#6-http-trigger) ·
 [08 §3.5](../08-Flow-Definition.md#35-waiting)
 
-> **[ADR-0004](ADR-0004-universal-trigger-model.md) says a flow's transport is an attribute
+> **[ADR-0004](ADR-0004-universal-trigger-model.md)) says a flow's transport is an attribute
 > and nothing else. Since WP-63 that has been false for exactly one kind of flow: the one
 > durable execution exists for.**
 >
@@ -42,7 +42,7 @@ an HTTP request and that call: parsing the instance id, matching the identity, d
 the payload into the contract the flow declared, and turning the outcome into a status code.
 `samples/workflow` writes about fifty lines of it. Every application that waits would write
 the same fifty lines, differing only in three type names — which is
-[ADR-0004](ADR-0004-universal-trigger-model.md)'s rejected option **B**, *"adapters written by
+[ADR-0004](ADR-0004-universal-trigger-model.md))'s rejected option **B**, *"adapters written by
 users … leaves the boilerplate we set out to delete"*.
 
 **Constraint C2 is why the sample used `RequestDelegate`, and it still applies.**
@@ -90,7 +90,7 @@ The `202` body is the smallest thing a caller needs to act:
   nothing gave it back before.
 * **`awaiting`** is read off the **compiled plan**, not guessed: every `StepKind.AwaitSignal`
   node in `plan.Graph.Steps` carries a `SignalType`. It is therefore the same set of identities
-  the manifest publishes ([ADR-0021](ADR-0021-manifest-publishes-the-wait.md)) and the same set
+  the manifest publishes ([ADR-0021](ADR-0021-manifest-publishes-the-wait.md))) and the same set
   the generator emitted routes for — one reading, three consumers.
 * **`deliverTo`** is composed at run time from the request's own path and the instance id, so
   it is correct under a path base, a reverse proxy prefix and a parameterised route without the
@@ -258,7 +258,7 @@ new error catalogue.
 
 ---
 
-**Back to:** [ADR index](README.md) · [ADR-0004](ADR-0004-universal-trigger-model.md) ·
-[ADR-0021](ADR-0021-manifest-publishes-the-wait.md) ·
+**Back to:** [ADR index](README.md) · [ADR-0004](ADR-0004-universal-trigger-model.md)) ·
+[ADR-0021](ADR-0021-manifest-publishes-the-wait.md)) ·
 [09 — Trigger Model](../09-Trigger-Model.md) · [08 §3.5](../08-Flow-Definition.md#35-waiting) ·
 [06 §6](../06-Execution-Engine.md#6-suspension-waiting-without-holding-resources)

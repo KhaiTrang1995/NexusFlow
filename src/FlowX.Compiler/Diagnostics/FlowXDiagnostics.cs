@@ -1079,7 +1079,7 @@ public static class FlowXDiagnostics
         "values are runtime-configurable.",
         DiagnosticSeverity.Warning);
 
-    /// <summary>FLOWX1037 — a scheduled flow nothing can fire.</summary>
+    /// <summary>FLOWX1038 — a scheduled flow nothing can fire.</summary>
     /// <remarks>
     /// <para>
     /// <strong>This rule exists because the alternative is the defect the schedule trigger was
@@ -1094,12 +1094,12 @@ public static class FlowXDiagnostics
     /// is not <c>ScheduledFire</c> cannot be started at all: a cron firing has no body, and the
     /// occurrence is the only fact there is to hand it — which it has to be handed, because
     /// <see cref="ClockIsReadAmbiently"/> forbids it asking
-    /// (<a href="../adr/ADR-0028-a-scheduled-flows-input-is-its-occurrence.md">ADR-0028</a>).
+    /// (<a href="../adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md">ADR-0028</a>).
     /// An <c>Ephemeral</c> flow, by contrast, would start perfectly well — and would start on
     /// every node in the fleet, every occurrence, because nothing journals an ephemeral instance
     /// and the duplicate refusal that makes a schedule fire once is a primary key it never
     /// writes
-    /// (<a href="../adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
+    /// (<a href="../adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
     /// </para>
     /// <para>
     /// <strong>An error, not a warning.</strong> Neither case has a deployment, configuration
@@ -1111,7 +1111,7 @@ public static class FlowXDiagnostics
     /// </para>
     /// </remarks>
     public static readonly DiagnosticDescriptor ScheduledFlowCannotBeFired = Create(
-        "FLOWX1037",
+        "FLOWX1038",
         "Scheduled flow cannot be fired",
         "Flow '{0}' declares a [CronTrigger] and no schedule is registered for it: {1}",
         "A [CronTrigger] is turned into a registration by the same reading of the attribute " +

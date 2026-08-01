@@ -71,9 +71,9 @@ namespace FlowX.Compiler.Analysis;
 /// is stricter here than for a route: the expression and the zone are taken off the
 /// <see cref="TriggerModel"/> this reader produced for the manifest, because they are two of
 /// the five values every node derives the instance id from
-/// (<a href="../../../docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>)
+/// (<a href="../../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>)
 /// — a second copy would not mislead a reader, it would split one schedule into two.
-/// <c>FLOWX1037</c> refuses the two declarations that could not be fired.
+/// <c>FLOWX1038</c> refuses the two declarations that could not be fired.
 /// </para>
 /// <para>
 /// <c>Bus</c>, <c>Stream</c>, <c>Change</c> and <c>Agent</c> are still declaration only:
@@ -156,7 +156,7 @@ public static class TriggerReader
     /// the registration takes its expression and its zone from that model — the arrangement
     /// <c>EndpointEmitter</c> has with a route, and the arrangement that makes a declared
     /// schedule and a fired one the same declaration
-    /// (<a href="../../../docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
+    /// (<a href="../../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
     /// </para>
     /// <para>
     /// <c>MissedFire</c> is the only property here because it is the only one this release's

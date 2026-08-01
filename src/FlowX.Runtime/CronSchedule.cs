@@ -13,7 +13,7 @@ namespace FlowX.Runtime;
 /// expression against the same clock and arrives at the same set of instants, so agreement
 /// costs no coordination — and an occurrence, being a value both nodes computed, can name the
 /// instance it starts
-/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
 /// A scheduler built on a leader and a timer would have to agree about who the leader is; this
 /// one has nothing to agree about.
 /// </para>

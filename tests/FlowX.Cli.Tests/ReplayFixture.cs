@@ -13,7 +13,7 @@ namespace FlowX.Cli.Tests;
 /// <strong>Every row goes in through <see cref="PostgresFlowJournal"/>, never through raw
 /// <c>INSERT</c>.</strong> The whole point of these tests is that
 /// <c>src/FlowX.Cli/Replay</c> reads the shape the adapter writes — the accepted cost in
-/// [ADR-0020](../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md) — and a test that
+/// [ADR-0020](../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md)) — and a test that
 /// hand-wrote its own rows could pass against a shape the adapter never produces. That is
 /// the same argument <c>PostgresTestSchema</c> makes for the same reason.
 /// </para>

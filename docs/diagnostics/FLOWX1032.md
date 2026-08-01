@@ -56,9 +56,9 @@ rule carries an enumerated set, `DeclaredPolicyAnalyzer.ExecutedKinds`, pinned a
 `StepPolicy`'s and `CompensationPolicy`'s own constants by `PolicyStageFitnessTests`.
 
 **Why stage 4 could be executed while stages 1, 3 and 5 were not** is
-[ADR-0025](../adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md), which
+[ADR-0025](../adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)), which
 argues each skip separately rather than as one concession — including the one that looks
-like a breach of [ADR-0011](../adr/ADR-0011-fixed-policy-stage-order.md)'s own
+like a breach of [ADR-0011](../adr/ADR-0011-fixed-policy-stage-order.md))'s own
 "retry outside idempotency → duplicate charges" row.
 
 ### What a declared policy still does
@@ -66,7 +66,7 @@ like a breach of [ADR-0011](../adr/ADR-0011-fixed-policy-stage-order.md)'s own
 Not nothing — which is why the remedy below is *keep it*, and why this page is careful not
 to say the declarations are worthless:
 
-- **It is published.** Each kind and its fixed [ADR-0011](../adr/ADR-0011-fixed-policy-stage-order.md)
+- **It is published.** Each kind and its fixed [ADR-0011](../adr/ADR-0011-fixed-policy-stage-order.md))
   stage reach the `policies` array of `flowx.manifest.json`, where a reviewer, a
   `flowx diff` and an agent can read what this step is *supposed* to be wrapped in.
 - **It is carried into the plan.** `StepNode.Policies` holds the resolved, stage-ordered
@@ -79,7 +79,7 @@ to say the declarations are worthless:
 - **It is read at build time by [FLOWX1019](FLOWX1019.md).** That rule multiplies a set's
   `Timeout` by its `Retry(attempts)` and checks the total against the flow's
   `[FlowDeadline]` — arithmetic that is now true of the running program rather than of a
-  hypothetical one, because [ADR-0024](../adr/ADR-0024-stage-four-is-a-fixed-nesting.md) puts
+  hypothetical one, because [ADR-0024](../adr/ADR-0024-stage-four-is-a-fixed-nesting.md)) puts
   the retry outside the timeout.
 
 What none of that amounts to, for the four kinds this rule still names, is **behaviour**. A
@@ -240,7 +240,7 @@ line in `.editorconfig`, in the repository that took the decision, instead of a 
 can adopt incrementally.
 
 **`Info` was not a candidate**, for the reason
-[ADR-0003](../adr/ADR-0003-execution-profiles.md) has now been overruled on three times: an
+[ADR-0003](../adr/ADR-0003-execution-profiles.md)) has now been overruled on three times: an
 `Info` diagnostic never appears in a build log, `dotnet build` does not print it and no gate
 in [21-Quality-Gates](../21-Quality-Gates.md) notices it. Shipping this rule as `Info` would
 ship a rule that does nothing — a precise description of the state it was written to end.
@@ -289,4 +289,4 @@ the first sort went red, which is what they are for.
 **Back to:** [diagnostics index](README.md) · [FLOWX1033](FLOWX1033.md) ·
 [FLOWX1014](FLOWX1014.md) · [FLOWX1028](FLOWX1028.md) ·
 [Policy framework](../10-Policy-Framework.md) ·
-[ADR-0011](../adr/ADR-0011-fixed-policy-stage-order.md)
+[ADR-0011](../adr/ADR-0011-fixed-policy-stage-order.md))

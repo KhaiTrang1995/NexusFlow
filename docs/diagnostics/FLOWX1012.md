@@ -46,7 +46,7 @@ first evidence is inventory that does not add up.
 
 ### `flowx verify --cost` does not cover this, and several documents said it did
 
-[ADR-0003](../adr/ADR-0003-execution-profiles.md) named `flowx verify --cost` as the
+[ADR-0003](../adr/ADR-0003-execution-profiles.md)) named `flowx verify --cost` as the
 standing mitigation for "a wrong profile is a real bug class" and stated that it *"flags
 exactly the accident `FLOWX1012` would have caught at build time — from the manifest rather
 than the source, and after the build rather than during it"*. **That is not what the check
@@ -102,7 +102,7 @@ until someone notices.
 // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ FLOWX1012 — the default is Ephemeral
 ```
 
-[ADR-0003](../adr/ADR-0003-execution-profiles.md) makes durability something you opt into,
+[ADR-0003](../adr/ADR-0003-execution-profiles.md)) makes durability something you opt into,
 so silence means `Ephemeral`. This is the one rule in the catalogue whose subject is the
 default: every other profile rule is quiet about it and speaks up about a declaration.
 
@@ -227,7 +227,7 @@ Three reasons, and the first two are about truth rather than about adoption.
 
 **The source is not wrong.** A compensable `Ephemeral` flow compensates correctly on every
 failure that is not a crash. What it loses is one window, and losing it is a trade
-[ADR-0003](../adr/ADR-0003-execution-profiles.md) ratified — the profile is a per-flow
+[ADR-0003](../adr/ADR-0003-execution-profiles.md)) ratified — the profile is a per-flow
 decision precisely so that a flow may decline durability. An error would make a decision the
 architecture record ratified inexpressible, which is not a compiler's job.
 
@@ -309,5 +309,5 @@ never has"* — is likewise no longer true and has been rewritten.
 
 **Back to:** [diagnostics index](README.md) ·
 [Execution engine §7](../06-Execution-Engine.md) ·
-[ADR-0003](../adr/ADR-0003-execution-profiles.md) ·
+[ADR-0003](../adr/ADR-0003-execution-profiles.md)) ·
 [FLOWX1017](FLOWX1017.md) · [FLOWX1028](FLOWX1028.md) · [DEBT register](../DEBT.md)

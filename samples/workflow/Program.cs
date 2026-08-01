@@ -155,7 +155,7 @@ app.Services.GetRequiredService<FlowCatalog>().Add(
 // node running this application sweeps for it, every node computes the same occurrence, and
 // every node derives the same instance id from it — so the fire happens once, and the eight
 // replicas that lost the race are refused by the lease store and then by the journal's primary
-// key (docs/adr/ADR-0026-an-occurrence-names-the-instance-it-starts.md).
+// key (docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md).
 //
 // It also puts `offer.window.close` in the FlowCatalog, so a node that dies mid-firing leaves an
 // instance the recovery sweep can take over. That is done inside the registration rather than
