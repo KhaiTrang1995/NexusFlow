@@ -84,15 +84,24 @@ Budget: **p99 ≤ 5 000 ns** for a four-step ephemeral flow.
 |---|---:|---:|---:|---:|
 | 4 steps, no compensation | 169 ns | 174 ns | **0 B** | 3.5 % |
 | 4 steps, two compensable, success | 216 ns | 218 ns | **0 B** | 4.4 % |
-| 4 steps, failure + full unwind | 267 ns | 270 ns | 40 B | 5.4 % |
+| 4 steps, failure + full unwind | 267 ns | 270 ns | 56 B | 5.4 % |
 
 **Zero allocations on the success path**, which is WP-4's exit criterion and budget
 B2. The engine spends about 3.5 % of its latency budget; policies, telemetry,
 durability and the transport layer have the remaining 96 % to spend.
 
-The 40 B on the failure path is one iterator object from `CompensationStack.Unwind`,
+The 56 B on the failure path is one iterator object from `CompensationStack.Unwind`,
 allocated once per *failed* flow on a path that is about to make a network call
 anyway. Deliberately not optimised — see §4.
+
+**It was 40 B when this was first recorded, and the 16 B is not a defect.** An
+iterator's state machine carries the value it yields, so its size is a fact about
+that value. `Unwind` used to yield a bare `StepNode`; it now yields
+`CompensationEntry`, which gained a reference field twice — `FlowContext? Scope` in
+WP-29 so a compensation inside a `ForEach` undoes the element its own step processed,
+and `StepScope JournalScope` in WP-57 so the compensation row for the third element is
+keyed as the third element. Both are correctness. Getting back to 40 B means giving
+one of them up, so the budget moved instead. §4 records what the number is made of.
 
 ## 2. Budget B3 — capability dispatch
 
@@ -139,12 +148,21 @@ suspension fails loudly.
 
 | Cost | Size | Why it stays |
 |---|---:|---|
-| `CompensationStack.Unwind` iterator | 40 B | Once per *failed* flow, immediately before a compensation makes a network call. Hand-rolling a struct enumerator would trade real readability for an allocation nobody will profile. |
+| `CompensationStack.Unwind` iterator | 56 B | Once per *failed* flow, immediately before a compensation makes a network call. Hand-rolling a struct enumerator would trade real readability for an allocation nobody will profile. 16 B of object header and method table, 4 B of iterator state, 4 B of thread id, 8 B for the stack it drains, and 24 B for the `CompensationEntry` it yields — `StepNode`, `FlowContext? Scope`, `StepScope JournalScope`, one reference each. |
 | `ExecutionPlan` construction | 520 B | Once per flow at **startup**, not per execution. Measured so a validation rule added later cannot quietly turn a fast build into a slow one. |
 
 Both are asserted by tests that require them to be *greater than zero*. If either
 becomes free, the test fails — which is the cheapest way to notice that a comment
 about a trade-off has stopped being true.
+
+**"Greater than zero" was not enough, and the unwind iterator is how we found out.**
+It walked 40 B → 48 B → 56 B across two working packages while that assertion and its
+`< 256` ceiling stayed green, because a band cannot see a number move inside it. The
+only thing that objected was the benchmark gate, on a job that was already failing for
+other reasons and that nobody was reading. `UnwindingAllocatesOneIteratorPerFailedFlow`
+now pins **56 B exactly**, in the same commit as the figure above and the one in
+`baseline.json`, so the three cannot drift and the next byte fails a unit test on the
+pull request that adds it.
 
 ## 5. Gate design — and a claim WP-3 got wrong
 
@@ -219,6 +237,57 @@ is rejected in CI (`generator-cost-self-test`), and the real commit `c7ae70a` fa
 gate at **+102 %**. **P1's +8 % criterion is untouched by all of this and is still
 failing** — `scripts/check-generator-cost.py` reprints it on every run, including passing
 ones, so that a green relative gate cannot be read as a budget that is met.
+
+### 5.2 The gate above has been red on `dev`, and that is why 16 bytes got in
+
+§5.1 says a gate against a budget you are already failing *"reads the same before the
+regression as after it"*. The **Benchmark budgets** job is the same failure in a second
+form: not a gate too loose to fire, but a gate already firing for reasons nobody was
+acting on, so one more error line changed nothing anybody could see.
+
+It triggers on every push and pull request to `master` and `dev`, it is blocking, and it
+has been failing on `dev` continuously since at least run **#41** (2026-07-31 01:18,
+commit `1c654eb`) — sixty-odd consecutive pushes. That run named **three** blocking
+failures, and the failure path was not among them:
+
+```
+::error::StepLoopBenchmarks.BuildPlan: allocated 528 B, baseline 520 B (allocation counts are exact)
+::error::CompilerBenchmarks.GeneratorOnly: allocated 770994 B, more than 15% above the baseline 588937 B
+::error::CompilerBenchmarks.WithGenerator: allocated 1800422 B, more than 15% above the baseline 1508524 B
+```
+
+`EngineBenchmarks.SagaFailure` then went 40 B → 48 B → 56 B across WP-29 and WP-57, and
+`StepLoopBenchmarks.CompensateAll` went 328 B → 440 B behind it. By run **#104**
+(2026-08-01, commit `386a1a3`) the same step reports **five** blocking failures instead
+of three — two more error lines on a job that had been red for two days, which is no more
+visible than three. **Nothing else objected**: the two unit tests over this path assert
+`> 0` with a ceiling of 256 B and 2 048 B, and a band cannot see a number move inside it.
+
+What this commit closes, and what it deliberately does not:
+
+| Gate failure | Status |
+|---|---|
+| `EngineBenchmarks.SagaFailure` 40 → 56 B | **Resolved.** Cause bisected to `744b005` and `16b6988`, baseline restated above with the reason, and `UnwindingAllocatesOneIteratorPerFailedFlow` now pins the exact figure so the *Allocation budget (B2)* job — which is green and read — catches the next byte. |
+| `StepLoopBenchmarks.CompensateAll` 328 → 440 B | **Resolved.** Same root cause, same commit; 328 B reproduces exactly at `e6fcd37` and at `1c654eb`, and the new 440 B is reported by the container and by the hosted runner alike (run #104). |
+| `StepLoopBenchmarks.BuildPlan` 520 B committed | **Open, and not re-recorded.** It does not reproduce at its own commit, and it does not reproduce across machines: **456 B** at `e6fcd37` here on the recorded runtime with the recorded 10 warmups and 30 iterations, **464 B** here at `dev`, **528 B** on the hosted runner at `dev` — against **520 B** in the file. In the very same runs `CompensateAll` agreed to the byte on both machines, so this is one entry rather than a broken harness. An exact gate on a figure that is not reproducible is gating something other than the code, and the fix is to establish which of the four numbers is the subject — not to overwrite the baseline with whichever machine ran last. |
+| `CompilerBenchmarks.GeneratorOnly` / `.WithGenerator` over their 15 % band | **Open, and not re-recorded.** These measure Roslyn plus the generator: **827 906 B** against a committed 588 937 B, and **2 257 176 B** against 1 508 524 B, with `WithGenerator` at **51.2 ms against a committed 11.2 ms**. That is compile-time cost, which is [B12-scale.md](B12-scale.md) §5.2's subject and `generator-cost`'s; re-recording it here would erase the evidence of a regression the project is tracking. |
+| `CompilerBenchmarks.WithGenerator` p95 over budget **B12** | **Open, and it is the budget ceiling rather than an allocation.** p95 **61.97 ms** against 60 ms — 3 % over, and it does not fire every run: the previous full run on the same commit and the same container measured 58.03 ms. It is the only blocking check here that is a timing check, and it sits close enough to its ceiling that this container decides it. Same subject as the row above. |
+
+So the job still exits 1, on failures that predate the failure-path allocation and have
+nothing to do with it — three allocation entries, plus a B12 p95 ceiling that this
+container crosses on some runs and not others. **Recorded rather than papered over** — the
+alternative on offer was to move four baselines in one commit and call the gate green,
+which is the behaviour that produced this section.
+
+Measured on the container this baseline was recorded on, Release, .NET 10.0.10, x64,
+after the two entries above were restated:
+
+```
+EngineBenchmarks.Query            235.24 ns     0 B
+EngineBenchmarks.SagaSuccess      309.07 ns     0 B
+EngineBenchmarks.SagaFailure      418.86 ns    56 B    <- gate accepts
+StepLoopBenchmarks.CompensateAll  224.52 ns   440 B    <- gate accepts
+```
 
 ## 6. Caveats
 

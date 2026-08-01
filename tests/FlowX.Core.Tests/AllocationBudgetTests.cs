@@ -22,6 +22,17 @@ namespace FlowX.Core.Tests;
 /// </remarks>
 public sealed class AllocationBudgetTests
 {
+    /// <summary>
+    /// Bytes one <c>CompensationStack.Unwind</c> enumeration allocates on a 64-bit
+    /// runtime, and the figure <c>docs/benchmarks/baseline.json</c> gates
+    /// <c>EngineBenchmarks.SagaFailure</c> on.
+    /// </summary>
+    /// <remarks>
+    /// See <see cref="UnwindingAllocatesOneIteratorPerFailedFlow"/> for where the bytes
+    /// go and for what has to be restated alongside this constant when it changes.
+    /// </remarks>
+    private const long UnwindIteratorBytes = 56;
+
     private static readonly ExecutionPlan Plan = ExecutionPlan.Create(
         Fixtures.PlaceOrder,
         StepGraph.Create([
@@ -218,14 +229,45 @@ public sealed class AllocationBudgetTests
     }
 
     /// <summary>
-    /// <c>Unwind</c> is an iterator, so enumerating it allocates a state machine.
+    /// The exact size of the one object a failed flow allocates:
+    /// <strong>56 B</strong>, x64, and the same figure
+    /// <c>docs/benchmarks/baseline.json</c> gates <c>EngineBenchmarks.SagaFailure</c> on.
     /// </summary>
     /// <remarks>
-    /// Deliberately not fixed. It costs one small object per <em>failed</em> flow, on a
-    /// path where a compensation is about to make a network call anyway; converting the
-    /// iterator into a hand-rolled struct enumerator would trade real readability for
-    /// an allocation nobody will ever profile. Recorded so the trade is a decision
-    /// rather than an oversight.
+    /// <para>
+    /// <c>Unwind</c> is an iterator, so enumerating it allocates a state machine. That is
+    /// deliberately not fixed: one small object per <em>failed</em> flow, on a path where a
+    /// compensation is about to make a network call anyway, and hand-rolling a struct
+    /// enumerator would trade real readability for an allocation nobody will ever profile.
+    /// Recorded so the trade is a decision rather than an oversight.
+    /// </para>
+    /// <para>
+    /// <strong>What is asserted is the number, not a band, and the band is why.</strong>
+    /// This test used to say <c>&gt; 0</c> and <c>&lt; 256</c>. Under that pair the figure
+    /// walked 40 B → 48 B → 56 B across two working packages without a single test
+    /// objecting, because a range cannot see a value move inside it. The only thing that
+    /// did object was the benchmark gate — on a job that was already red for unrelated
+    /// reasons, which is how sixteen bytes crossed <c>dev</c> unnoticed.
+    /// </para>
+    /// <para>
+    /// <strong>Where the 56 B goes.</strong> 16 B of object header and method table, 4 B of
+    /// iterator state, 4 B of captured thread id, 8 B for the <see cref="CompensationStack"/>
+    /// it drains, and 24 B for the <see cref="CompensationEntry"/> it yields — an iterator's
+    /// state machine carries the value it yields, so this number is a fact about that record.
+    /// The record holds three references: the <see cref="StepNode"/>, the
+    /// <c>FlowContext?</c> scope the step completed under, and the <c>StepScope</c> the
+    /// journal keys its undo by. Both of the latter two are correctness — without the scope a
+    /// compensation inside a <c>ForEach</c> undoes whichever element the loop ended on, and
+    /// without the journal scope the row for the third element collides with the first — so
+    /// there is no way back to 40 B that is not a regression.
+    /// </para>
+    /// <para>
+    /// <strong>Change it and three things must change together</strong>: this literal, the
+    /// table in <c>docs/benchmarks/README.md</c> §4, and <c>allocatedBytes</c> for
+    /// <c>EngineBenchmarks.SagaFailure</c> in <c>docs/benchmarks/baseline.json</c>. Failing
+    /// here rather than only in a nightly benchmark is the point: this runs in the
+    /// <em>Allocation budget (B2)</em> job, on every pull request.
+    /// </para>
     /// </remarks>
     [Fact]
     public void UnwindingAllocatesOneIteratorPerFailedFlow()
@@ -243,7 +285,11 @@ public sealed class AllocationBudgetTests
             }
         });
 
-        allocated.ShouldBeGreaterThan(0);
-        allocated.ShouldBeLessThan(256, "One iterator, not a data structure.");
+        allocated.ShouldBe(
+            UnwindIteratorBytes,
+            $"Measured {allocated} B for one Unwind enumeration, against {UnwindIteratorBytes} B " +
+            "committed. Either the iterator gained state, or CompensationEntry gained a " +
+            "field — and EngineBenchmarks.SagaFailure in docs/benchmarks/baseline.json now " +
+            "disagrees with this measurement. Restate both, in this commit, with the reason.");
     }
 }

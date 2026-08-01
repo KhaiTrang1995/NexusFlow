@@ -74,10 +74,10 @@
     "EngineBenchmarks.SagaFailure": {
       "absoluteNs": 201.68,
       "ratioToBaseline": 1.557,
-      "allocatedBytes": 40,
+      "allocatedBytes": 56,
       "budget": "B1",
       "budgetNs": 5000,
-      "note": "Failure path with a full unwind. The 40 B is the Unwind iterator."
+      "note": "Failure path with a full unwind. Still one object, and still the Unwind iterator -- what moved is its size, from 40 B to 56 B. An iterator's state machine carries the value it yields, and CompensationStack.Unwind stopped yielding a bare StepNode: it now yields CompensationEntry, which grew from 8 B to 24 B over two commits. 744b005 (WP-29 ForEach) added FlowContext? Scope, so a compensation inside a loop undoes the element its own step processed rather than whichever one the loop ended on. 16b6988 (WP-57 compensation policies) added StepScope JournalScope, so the compensation row written for the third element is keyed as the third element instead of colliding with the first. Both are correctness, neither is removable, and 40 B is therefore not reachable without giving one of them up. The iterator itself stays for the reason AllocationBudgetTests.UnwindingAllocatesOneIteratorPerFailedFlow already records: once per FAILED flow, immediately before a compensation makes a network call. That test now pins 56 B exactly, so the next byte is caught by the unit-test job rather than only here."
     },
     "StepLoopBenchmarks.WalkPlan": {
       "absoluteNs": 3.03,
@@ -96,10 +96,10 @@
     "StepLoopBenchmarks.CompensateAll": {
       "absoluteNs": 89.76,
       "ratioToBaseline": 29.624,
-      "allocatedBytes": 328,
+      "allocatedBytes": 440,
       "budget": "none",
       "budgetNs": 5000,
-      "note": "Constructs a stack per call; the engine reuses a pooled one instead."
+      "note": "Constructs a stack per call; the engine reuses a pooled one instead. Moved from 328 B to 440 B for the same reason EngineBenchmarks.SagaFailure moved, and in the same commit: CompensationEntry grew from 8 B to 24 B, so the Stack<CompensationEntry> this benchmark fills with four entries grew with it, and the duplicate check's key went from int to (int, FlowContext?). Verified rather than assumed -- 328 B reproduces exactly at e6fcd37, the commit that recorded this baseline, and at 1c654eb, the commit before WP-29."
     },
     "StepLoopBenchmarks.BuildPlan": {
       "absoluteNs": 164.07,
