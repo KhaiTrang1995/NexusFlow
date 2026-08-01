@@ -33,7 +33,7 @@
 > **Two records now disagree about whether one of the mitigations below binds, and this note
 > does not settle it.** The mitigation list in the first negative is declared *"all
 > mandatory"* and its fourth item is *"gate build overhead at ≤ 8 % (budget B12)"*.
-> [ADR-0014 §4(4)](ADR-0014-derived-error-catalogue-vs-build-budget.md#4-decision) has since
+> [ADR-0014 §4(4)](ADR-0014-derived-error-catalogue-vs-build-budget.md)#4-decision) has since
 > committed the opposite: the `scale-overhead` job that measures it *"stays advisory until a
 > pass is recorded"*, and `.github/workflows/performance.yml` carries `continue-on-error:
 > true` on that job, with the reasoning attached. So a mitigation this record calls mandatory

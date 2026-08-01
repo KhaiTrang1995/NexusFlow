@@ -50,7 +50,7 @@ namespace FlowX.Compiler.Analysis;
 /// declared marker, and says so.
 /// </para>
 /// <para>
-/// <strong>A declared trigger is not the same as a bound one — for every kind but one.</strong>
+/// <strong>A declared trigger is not the same as a bound one — for every kind but two.</strong>
 /// This paragraph said "nothing yet turns these attributes into endpoint registrations —
 /// the sample maps its route by hand in <c>Program.cs</c>". Both halves expired:
 /// <c>EndpointEmitter</c> turns each <c>[HttpTrigger]</c> into a registration in
@@ -60,9 +60,25 @@ namespace FlowX.Compiler.Analysis;
 /// HTTP flow there is no second copy of the route to drift from the declared one. What is
 /// still unasserted is the other direction: nothing stops a hand-written route reaching a
 /// flow at an address it never declared.
-/// <c>Bus</c>, <c>Schedule</c>, <c>Stream</c>, <c>Change</c> and <c>Agent</c> are still
-/// declaration only: nothing binds them, so a flow declaring one of those declares an
-/// address nothing serves. (<c>Manual</c> needs no binding, and <c>Cli</c>'s summary names
+/// </para>
+/// <para>
+/// <strong><c>Schedule</c> is the second, and it is bound the same way.</strong> <em>This
+/// paragraph named it among the five that were declaration only, and said in those words
+/// that "a flow declaring one of those declares an address nothing serves". That expired on
+/// 2026-08-01.</em> <c>ScheduleEmitter</c> turns each <c>[CronTrigger]</c> into a
+/// registration in <c>FlowXSchedules.g.cs</c>, <c>samples/workflow</c> calls the generated
+/// <c>services.AddFlowXSchedules()</c>, and <c>FlowScheduleScan</c> fires it. The copy rule
+/// is stricter here than for a route: the expression and the zone are taken off the
+/// <see cref="TriggerModel"/> this reader produced for the manifest, because they are two of
+/// the five values every node derives the instance id from
+/// (<a href="../../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>)
+/// — a second copy would not mislead a reader, it would split one schedule into two.
+/// <c>FLOWX1038</c> refuses the two declarations that could not be fired.
+/// </para>
+/// <para>
+/// <c>Bus</c>, <c>Stream</c>, <c>Change</c> and <c>Agent</c> are still declaration only:
+/// nothing binds them, so a flow declaring one of those declares an address nothing serves.
+/// (<c>Manual</c> needs no binding, and <c>Cli</c>'s summary names
 /// <c>flowx run</c>, which is not one of the CLI's verbs.) The manifest publishes the
 /// declaration either way,
 /// because it is the authored intent; that it can outrun what is bound is a property of
@@ -127,6 +143,74 @@ public static class TriggerReader
         }
 
         return triggers;
+    }
+
+    /// <summary>
+    /// What each <c>[CronTrigger]</c> on the type declares that the manifest does not carry.
+    /// </summary>
+    /// <param name="flow">The flow's class symbol.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>This reads no address.</strong> The cron expression comes back only as the key
+    /// that joins one of these to the <see cref="TriggerModel"/> <see cref="Read"/> produced, and
+    /// the registration takes its expression and its zone from that model — the arrangement
+    /// <c>EndpointEmitter</c> has with a route, and the arrangement that makes a declared
+    /// schedule and a fired one the same declaration
+    /// (<a href="../../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
+    /// </para>
+    /// <para>
+    /// <c>MissedFire</c> is the only property here because it is the only one this release's
+    /// runtime reads. <c>Overlap</c>, <c>Jitter</c> and <c>PerTenant</c> are declared on the same
+    /// attribute and reach nothing, which <c>docs/09-Trigger-Model.md §8</c> records rather than
+    /// this method pretending otherwise.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<ScheduleDeclaration> ReadSchedules(INamedTypeSymbol? flow)
+    {
+        if (flow is null)
+        {
+            return System.Array.Empty<ScheduleDeclaration>();
+        }
+
+        var schedules = new List<ScheduleDeclaration>();
+
+        foreach (var attribute in flow.GetAttributes())
+        {
+            if (attribute.AttributeClass?.ToDisplayString() != "FlowX.CronTriggerAttribute" ||
+                Positional(attribute, 0) is not { } cron)
+            {
+                continue;
+            }
+
+            schedules.Add(new ScheduleDeclaration(cron, MissedFireName(attribute)));
+        }
+
+        return schedules;
+    }
+
+    /// <summary>
+    /// Maps <c>MissedFirePolicy</c>'s underlying value back to its name.
+    /// </summary>
+    /// <remarks>
+    /// Spelled out rather than derived, for the reason <see cref="KindName"/> gives: reordering
+    /// the enum is a breaking change the compiler cannot see here, and it should surface as a
+    /// failing test rather than as generated code that registers the wrong behaviour. The
+    /// default matches the attribute's own — <c>RunOnce</c> — so omitting the argument and
+    /// writing it produce the same registration.
+    /// </remarks>
+    private static string MissedFireName(AttributeData attribute)
+    {
+        var declared = attribute.NamedArguments
+            .Where(pair => pair.Key == "MissedFire")
+            .Select(pair => pair.Value.Value)
+            .FirstOrDefault();
+
+        return declared switch
+        {
+            0 => "Skip",
+            2 => "RunAll",
+            _ => "RunOnce",
+        };
     }
 
     /// <summary>Whether an attribute derives from <c>FlowX.TriggerAttribute</c>.</summary>

@@ -310,6 +310,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1035](FLOWX1035.md) | `CompensationRetry` declares a single attempt | A manifest entry that says the undo is retried, over an undo dispatched exactly once — `IsRetrying` is `Attempts > 1`, so one attempt leaves `HasCompensationPolicies` false and the engine takes `CompensationPolicy.None` |
 | [FLOWX1036](FLOWX1036.md) | Policy set cannot be read at compile time | **A whole policy set reaching no plan, no manifest and none of `FLOWX1014`, `FLOWX1018`, `FLOWX1019`, `FLOWX1032` or `FLOWX1033` — a shared library's `CompensationRetry` not running, and a duplicate-charge rule with nothing to read** |
 | [FLOWX1037](FLOWX1037.md) | Authorisation stance is not enforced by the runtime | **A capability published as policy-protected, diffed as policy-protected, and dispatched with nothing consulting the policy — the one stance of the five the engine cannot decide** |
+| [FLOWX1038](FLOWX1038.md) | Scheduled flow cannot be fired | **A published `cron` with no schedule registered behind it: a flow that cannot bind the occurrence and is never started, or an ephemeral one started by every node in the fleet on every occurrence — with no error, no duplicate row and nothing anywhere to count** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -481,7 +482,16 @@ It is `FLOWX1032`'s shape one concept across — a declaration the runtime does 
 and it is an **error** rather than that rule's warning, for the reason
 [ADR-0030](../adr/ADR-0030-policy-stance-is-refused-at-build-time.md) gives.
 
-The next is `FLOWX1038`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1038` is claimed** — *scheduled flow cannot be fired*: a `[CronTrigger]` the generator
+cannot turn into a registration, because the flow's input contract is not `ScheduledFire` — a
+firing has no body and only an occurrence to give — or because the flow is not `Durable`, whose
+consequence is not that nothing runs but that every node in the fleet runs it, with nothing
+journalled to say so. It is none of the reservations, and it is not `FLOWX1025`: that rule asks
+whether a trigger attribute declares a kind the compiler can read, and this one presupposes that
+it does and asks whether anything can serve the address. It is not `FLOWX1017` either — that
+rule requires `Durable` for a construct in the flow's *body*, where this reads an attribute and
+has a second reason that has nothing to do with the profile.
+The next is `FLOWX1039`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

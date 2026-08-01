@@ -15,7 +15,7 @@
 > declaration is honoured, so warning about it would now be false. The rule was narrowed
 > rather than deleted, because deleting it would have handed `Streaming` exactly the
 > silence `Durable` was rescued from — the reasoning is
-> [ADR-0015's](../adr/ADR-0015-journal-schema-and-durable-execution.md#what-lands-with-this-and-what-is-deleted).
+> [ADR-0015's](../adr/ADR-0015-journal-schema-and-durable-execution.md)#what-lands-with-this-and-what-is-deleted).
 
 ## What it means
 

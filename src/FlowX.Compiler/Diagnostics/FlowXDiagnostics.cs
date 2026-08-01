@@ -1116,6 +1116,57 @@ public static class FlowXDiagnostics
         "values are runtime-configurable.",
         DiagnosticSeverity.Warning);
 
+    /// <summary>FLOWX1038 — a scheduled flow nothing can fire.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This rule exists because the alternative is the defect the schedule trigger was
+    /// bound to remove.</strong> A <c>[CronTrigger]</c> the generator cannot turn into a
+    /// registration is a flow declaring an address nothing serves — which is what
+    /// <c>TriggerReader</c>'s remarks said about <c>Schedule</c> as a whole until this release.
+    /// Skipping it silently, the way an <c>[HttpTrigger]</c> on a flow with no <c>.Return</c>
+    /// is skipped, would leave the same hole one layer down and with no message at all.
+    /// </para>
+    /// <para>
+    /// <strong>Two reasons, and they fail in opposite directions.</strong> A flow whose input
+    /// is not <c>ScheduledFire</c> cannot be started at all: a cron firing has no body, and the
+    /// occurrence is the only fact there is to hand it — which it has to be handed, because
+    /// <see cref="ClockIsReadAmbiently"/> forbids it asking
+    /// (<a href="../adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md">ADR-0028</a>).
+    /// An <c>Ephemeral</c> flow, by contrast, would start perfectly well — and would start on
+    /// every node in the fleet, every occurrence, because nothing journals an ephemeral instance
+    /// and the duplicate refusal that makes a schedule fire once is a primary key it never
+    /// writes
+    /// (<a href="../adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
+    /// </para>
+    /// <para>
+    /// <strong>An error, not a warning.</strong> Neither case has a deployment, configuration
+    /// or later release under which it becomes correct, and both present as work that silently
+    /// does not happen or silently happens <em>n</em> times. That is
+    /// <see cref="CompensationRetryHasNoCompensation"/>'s bar rather than
+    /// <see cref="PolicyIsNotExecutedByTheRuntime"/>'s: the source is wrong, not merely ahead of
+    /// the runtime.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor ScheduledFlowCannotBeFired = Create(
+        "FLOWX1038",
+        "Scheduled flow cannot be fired",
+        "Flow '{0}' declares a [CronTrigger] and no schedule is registered for it: {1}",
+        "A [CronTrigger] is turned into a registration by the same reading of the attribute " +
+        "that produces the manifest's triggers block, so a declared schedule and a fired one " +
+        "cannot disagree — but only for a flow the host can actually start. Two things stop " +
+        "it. A flow whose input contract is not FlowX.ScheduledFire has nothing to bind: a " +
+        "cron firing carries no body, and the occurrence is the only fact a schedule has to " +
+        "give — which it must give, because FLOWX1007 and FLOWX1011 forbid the flow reading a " +
+        "clock, so an instance that had to work out which occurrence it was could not. Declare " +
+        "the flow as Flow<ScheduledFire, TOut> and take whatever else it needs from a " +
+        "capability. And a flow that does not declare ExecutionProfile.Durable journals no " +
+        "instance, so there is no primary key to refuse a second node's firing: every node in " +
+        "the fleet runs every occurrence, with no error, no duplicate row and nothing anywhere " +
+        "to count. Declare Profile = ExecutionProfile.Durable. There is no suppression that " +
+        "makes either work — the generator emits no registration either way, so what a " +
+        "suppression buys is a manifest publishing a schedule and a host that fires nothing.",
+        DiagnosticSeverity.Error);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1151,7 +1202,8 @@ public static class FlowXDiagnostics
         CompensationRetryHasNoCompensation,
         StepDeclaresMoreThanOnePolicySet,
         CompensationRetryRetriesNothing,
-        PolicySetCannotBeRead);
+        PolicySetCannotBeRead,
+        ScheduledFlowCannotBeFired);
 
     private static DiagnosticDescriptor Create(
         string id,

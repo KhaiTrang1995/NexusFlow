@@ -111,6 +111,41 @@ public sealed class ManifestTests
         trigger.GetProperty("route").GetString().ShouldBe("/api/v1/offers");
     }
 
+    /// <summary>
+    /// The flow nobody calls publishes its address too, and it is a cron expression.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The first manifest in this repository to carry a <c>Schedule</c> trigger.</strong>
+    /// The schema declared <c>cron</c> and <c>timeZone</c>, <c>ManifestWriter</c> wrote them and
+    /// <c>flowx diff</c> classified changes to both — and until this flow existed, nothing in the
+    /// repository produced one, so all of that was a producer on paper
+    /// (<a href="../../docs/adr/ADR-0034-the-manifest-publishes-a-schedules-address.md">ADR-0029</a>
+    /// §1.1).
+    /// </para>
+    /// <para>
+    /// <strong>The expression asserted here is the one the schedule actually fires on.</strong>
+    /// It is derived from one reading of the attribute — the manifest and
+    /// <c>FlowXSchedules.g.cs</c> are two writers of it, not two readings — and it is one of the
+    /// five values every node derives the instance id from, so a drift between them would split
+    /// one schedule into two rather than merely mislead a reader.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheFlowNobodyCallsPublishesItsSchedule()
+    {
+        var trigger = Flow("offer.window.close").GetProperty("triggers").EnumerateArray().Single();
+
+        trigger.GetProperty("kind").GetString().ShouldBe("Schedule");
+        trigger.GetProperty("cron").GetString().ShouldBe("0 2 * * *");
+        trigger.GetProperty("timeZone").GetString().ShouldBe("Europe/Berlin");
+
+        trigger.TryGetProperty("missedFire", out _).ShouldBeFalse(
+            "MissedFire executes and is deliberately not published: it is this deployment's " +
+            "tolerance for late work rather than a promise to anyone outside, and its effect " +
+            "is bounded by a host option the manifest does not carry either (ADR-0029 §2.2).");
+    }
+
     /// <summary>The output contract has no secrets.</summary>
     [Fact]
     public void TheOutputContractHasNoSecrets() =>

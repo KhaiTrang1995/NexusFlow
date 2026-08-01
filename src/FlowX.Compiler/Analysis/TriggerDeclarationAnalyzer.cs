@@ -48,9 +48,18 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
 {
     private const string FlowAttributeName = "FlowX.FlowAttribute";
 
+    /// <summary>The attribute a schedule is declared with, and the input a schedule can give.</summary>
+    private const string CronTriggerAttributeName = "FlowX.CronTriggerAttribute";
+
+    private const string ScheduledFireName = "FlowX.ScheduledFire";
+
+    private const string FlowBaseName = "FlowX.Flow";
+
     /// <inheritdoc />
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } =
-        ImmutableArray.Create(FlowXDiagnostics.TriggerDeclaresNoKind);
+        ImmutableArray.Create(
+            FlowXDiagnostics.TriggerDeclaresNoKind,
+            FlowXDiagnostics.ScheduledFlowCannotBeFired);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -101,7 +110,126 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
                 attribute.AttributeClass!.Name,
                 type.Name));
         }
+
+        ReportUnfireableSchedules(context, type, attributes);
     }
+
+    /// <summary>
+    /// Reports FLOWX1038 on each <c>[CronTrigger]</c> the host would have nothing to do with.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Here rather than in the generator, for the reason FLOWX1025 is here.</strong>
+    /// The generator's schedule pipeline works from collected models with no syntax attached, so
+    /// it has nowhere to point; the analyzer has the attribute's own span. It is also the
+    /// question worth answering on the keystroke that applies the attribute rather than when the
+    /// generator next runs — the whole failure mode is a declaration that looks right.
+    /// </para>
+    /// <para>
+    /// <strong>One report per attribute, not one per flow.</strong> A flow may declare several
+    /// schedules and every one of them is unfireable for the same reason, so pointing at each is
+    /// what makes "remove this or fix the flow" a decision the author can take per line.
+    /// </para>
+    /// </remarks>
+    private static void ReportUnfireableSchedules(
+        SymbolAnalysisContext context, INamedTypeSymbol type, ImmutableArray<AttributeData> attributes)
+    {
+        var reason = UnfireableReason(type, attributes);
+
+        if (reason is null)
+        {
+            return;
+        }
+
+        foreach (var attribute in attributes)
+        {
+            if (attribute.AttributeClass?.ToDisplayString() != CronTriggerAttributeName)
+            {
+                continue;
+            }
+
+            context.ReportDiagnostic(Diagnostic.Create(
+                FlowXDiagnostics.ScheduledFlowCannotBeFired,
+                LocationOf(attribute, type, context.CancellationToken),
+                FlowIdOf(type, attributes),
+                reason));
+        }
+    }
+
+    /// <summary>
+    /// Why nothing could fire this flow's schedules, or <c>null</c> when something can.
+    /// </summary>
+    /// <remarks>
+    /// The two reasons are checked in the order an author would repair them: a flow whose input
+    /// is wrong cannot be started at all, and a flow whose profile is wrong would be started too
+    /// often. Reporting both at once would give one line two fixes, and the first is the one
+    /// that changes the flow's signature.
+    /// </remarks>
+    private static string? UnfireableReason(
+        INamedTypeSymbol type, ImmutableArray<AttributeData> attributes)
+    {
+        if (!attributes.Any(static a => a.AttributeClass?.ToDisplayString() == CronTriggerAttributeName))
+        {
+            return null;
+        }
+
+        if (InputOf(type) is not { } input)
+        {
+            // The base type did not resolve, so C# is already reporting something more useful
+            // about the same span and this rule would be piling on.
+            return null;
+        }
+
+        if (input.ToDisplayString() != ScheduledFireName)
+        {
+            return
+                $"its input contract is '{input.ToDisplayString()}' and a schedule has only an " +
+                "occurrence to give it — declare it as Flow<ScheduledFire, TOut>";
+        }
+
+        return IsDurable(attributes)
+            ? null
+            : "it does not declare ExecutionProfile.Durable, so nothing journals its instances " +
+              "and every node in the fleet would run every occurrence — declare " +
+              "Profile = ExecutionProfile.Durable";
+    }
+
+    /// <summary>The <c>TIn</c> of the <c>Flow&lt;TIn, TOut&gt;</c> this type derives from.</summary>
+    private static ITypeSymbol? InputOf(INamedTypeSymbol type)
+    {
+        for (var candidate = type.BaseType; candidate is not null; candidate = candidate.BaseType)
+        {
+            if (candidate.ConstructedFrom?.ToDisplayString() is { } name &&
+                name.StartsWith(FlowBaseName + "<", System.StringComparison.Ordinal) &&
+                candidate.TypeArguments.Length == 2)
+            {
+                return candidate.TypeArguments[0] is IErrorTypeSymbol ? null : candidate.TypeArguments[0];
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Whether <c>[Flow]</c> names <c>Durable</c>.</summary>
+    /// <remarks>
+    /// <c>ExecutionProfile.Durable</c> is <c>1</c>. Compared as the underlying value rather than
+    /// by name because that is all attribute data carries, and spelled out here rather than
+    /// derived for the reason <c>TriggerReader.ManifestKindName</c> gives about its own map:
+    /// reordering the enum is a breaking change the compiler cannot see, and it should surface
+    /// as a failing test rather than as a rule that quietly stops firing.
+    /// </remarks>
+    private static bool IsDurable(ImmutableArray<AttributeData> attributes) => attributes
+        .Where(static a => a.AttributeClass?.ToDisplayString() == FlowAttributeName)
+        .SelectMany(static a => a.NamedArguments)
+        .Any(static pair => pair.Key == "Profile" && pair.Value.Value is int profile && profile == 1);
+
+    /// <summary>The flow's declared id, or its type name when the attribute carries none.</summary>
+    private static string FlowIdOf(INamedTypeSymbol type, ImmutableArray<AttributeData> attributes) =>
+        attributes
+            .Where(static a => a.AttributeClass?.ToDisplayString() == FlowAttributeName)
+            .Where(static a => a.ConstructorArguments.Length > 0)
+            .Select(static a => a.ConstructorArguments[0].Value as string)
+            .FirstOrDefault(static id => !string.IsNullOrEmpty(id)) ?? type.Name;
 
     /// <summary>How loud to be, given who can fix it.</summary>
     /// <remarks>

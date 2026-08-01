@@ -3,7 +3,9 @@
 **Status:** Accepted
 **Date:** 2026-07-30
 **Deciders:** Platform architecture, Plugin team
-**Amended by:** [ADR-0022](ADR-0022-http-shape-of-a-suspending-flow.md)
+**Amended by:** [ADR-0022](ADR-0022-http-shape-of-a-suspending-flow.md) ·
+[ADR-0031](ADR-0031-an-occurrence-names-the-instance-it-starts.md) ·
+[ADR-0032](ADR-0032-a-missed-schedule-fires-late.md)
 
 ## Context
 
@@ -41,6 +43,14 @@ Supporting rule: no flow or capability may reference a transport assembly
 
 **Positive**
 - Q4 is met: one flow serves HTTP, Kafka, cron and an AI agent simultaneously.
+  *That last claim is now known to be false for one of the four, and the correction is
+  [ADR-0033](ADR-0033-a-scheduled-flows-input-is-its-occurrence.md) §4. A cron firing carries no
+  body and the flow may not read a clock, so a scheduled flow's input contract is fixed by the
+  platform — `Flow<ScheduledFire, TOut>` — while an HTTP endpoint binds a request body into
+  whatever the flow declares. **One flow cannot serve both**, and `FLOWX1038` reports the
+  attempt. What survives is the sentence this bullet was written to make: the flow **body** is
+  unchanged across transports, and a capability never learns which one started it. What does not
+  compose is two inbound contracts on one flow.*
 - Header semantics (trace context, tenant, principal, idempotency key, deadline)
   are mapped once, in the platform, instead of once per team per transport.
 - Admission control, quotas and authorisation apply uniformly to every ingress —
