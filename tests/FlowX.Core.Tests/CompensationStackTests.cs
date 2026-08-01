@@ -135,6 +135,8 @@ public sealed class CompensationStackTests
 
         public override string CapabilityId => string.Empty;
 
+        public override string? CompensatingFor => null;
+
         public override string? TenantId => null;
 
         public override string IdempotencyKey => string.Empty;

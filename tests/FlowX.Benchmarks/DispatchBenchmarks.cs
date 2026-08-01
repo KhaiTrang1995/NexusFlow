@@ -102,6 +102,9 @@ public sealed class StubContext : CapabilityContext
     public override string CapabilityId => "bench.echo";
 
     /// <inheritdoc />
+    public override string? CompensatingFor => null;
+
+    /// <inheritdoc />
     public override string? TenantId => null;
 
     /// <inheritdoc />

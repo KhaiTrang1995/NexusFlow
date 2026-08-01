@@ -36,6 +36,10 @@ public sealed class TestCapabilityContext : CapabilityContext
     /// <param name="correlationId">Correlates the operation's records.</param>
     /// <param name="tenantId">Resolved from validated claims in production; here, whatever you say.</param>
     /// <param name="capabilityId">Identity of the capability under test.</param>
+    /// <param name="compensatingFor">
+    /// The capability this one is undoing, when the capability under test is being run as
+    /// somebody else's compensation. <c>null</c> — the default — is the forward path.
+    /// </param>
     /// <param name="flowInstanceId">Durable instance id, or <c>null</c> for an ephemeral flow.</param>
     /// <param name="utcNow">The clock. Defaults to <see cref="DateTimeOffset.UnixEpoch"/>.</param>
     /// <param name="budget">Time until the deadline. Defaults to one minute.</param>
@@ -46,6 +50,7 @@ public sealed class TestCapabilityContext : CapabilityContext
         string correlationId = "test-correlation-id",
         string? tenantId = null,
         string capabilityId = "test.capability",
+        string? compensatingFor = null,
         string? flowInstanceId = null,
         DateTimeOffset? utcNow = null,
         TimeSpan? budget = null,
@@ -57,6 +62,7 @@ public sealed class TestCapabilityContext : CapabilityContext
             correlationId,
             tenantId,
             capabilityId,
+            compensatingFor,
             flowInstanceId,
             utcNow,
             budget,
@@ -72,6 +78,9 @@ public sealed class TestCapabilityContext : CapabilityContext
 
     /// <inheritdoc />
     public override string CapabilityId => _values.CapabilityId;
+
+    /// <inheritdoc />
+    public override string? CompensatingFor => _values.CompensatingFor;
 
     /// <inheritdoc />
     public override string? TenantId => _values.TenantId;

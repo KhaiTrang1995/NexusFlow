@@ -492,6 +492,22 @@ Rules:
    forward effect that landed before its commit; and a **composed child that
    already succeeded** records nothing, because its instance was sealed
    `Completed` and a journal correctly refuses a write to a finished instance.
+6. **A compensation runs under its own identity.** `ctx.CapabilityId` is the
+   *compensating* capability — `payment.refund`, not the `payment.capture` being
+   reversed — and the step being undone is `ctx.CompensatingFor`, `null` on the forward
+   path. *This rule is here because the engine got it wrong.* It entered a compensation
+   with the forward step node, so an undo deriving an idempotency key from
+   `ctx.CapabilityId` — which is what [19 §1](19-SDK.md) shows and what the reference
+   sample did — produced the forward step's key byte for byte. Any store honouring that
+   key deduplicated the contra write away, the capability returned success, and the
+   engine recorded `CompensationOutcome.Succeeded` over an effect that never happened.
+   The journal row was right throughout, which is exactly what made it invisible: the
+   audit trail named the compensation while the code that ran named the step. Both facts
+   are on `CapabilityContext` now, because both have readers and neither is derivable
+   from the other at the point of use — a compensator needs its own identity to key a
+   write, an operator reading a trace needs to know what is being reversed. The two ids
+   come from `StepNode.Identity` and `StepNode.CompensationIdentity`, one expression
+   each, so the row and the context cannot drift apart again.
 
 ---
 

@@ -1093,7 +1093,7 @@ public sealed class FlowEngine
             Key = new StepKey(
                 run.InstanceId, cursor.Scope, step.Index, run.NextAttempt(cursor.Scope, step.Index)),
             Token = run.Token,
-            CapabilityId = JournalIdentity(step),
+            CapabilityId = step.Identity,
             CapabilityVersion = capabilityVersion ?? step.Capability?.Version ?? plan.Flow.Version,
             Outcome = failure is null ? JournalOutcome.Success : JournalOutcome.Failure,
             Result = entry.Result,
@@ -1117,15 +1117,6 @@ public sealed class FlowEngine
 
         return committed.IsSuccess ? null : committed.Error;
     }
-
-    /// <summary>What the journal records a step as having invoked.</summary>
-    /// <remarks>
-    /// The same expression <see cref="FlowExecutionContext.EnterStep"/> uses, so a row's
-    /// <c>capability_id</c> and the identity a failure is reported against can never disagree
-    /// about the same step.
-    /// </remarks>
-    private static string JournalIdentity(StepNode step) =>
-        step.Capability?.Id ?? step.EventType ?? step.SignalType ?? step.SubFlowId ?? string.Empty;
 
     /// <summary>
     /// Runs every branch of a fork and applies its merge strategy.
@@ -2195,7 +2186,10 @@ public sealed class FlowEngine
 
         foreach (var entry in compensations.Unwind())
         {
-            _ = context.EnterStep(entry.Step);
+            // EnterCompensation, not EnterStep: what is about to run is the step's inverse,
+            // and a context that named the step being reversed would hand every compensator
+            // the forward step's identity to key its writes on.
+            _ = context.EnterCompensation(entry.Step);
 
             if (entry.Step.Kind == StepKind.SubFlow)
             {
@@ -2339,7 +2333,7 @@ public sealed class FlowEngine
 #pragma warning disable CA1031 // Same reasoning as the step loop: a throwing compensation is a
         catch (Exception exception)  //   defect, and one broken undo must not abandon the others.
         {
-            return FlowErrors.Unhandled(entry.Step.Compensation?.Id ?? context.CapabilityId, exception);
+            return FlowErrors.Unhandled(entry.Step.CompensationIdentity, exception);
         }
 #pragma warning restore CA1031
     }
@@ -2392,7 +2386,7 @@ public sealed class FlowEngine
                 entry.Index,
                 run.NextAttempt(entry.JournalScope, entry.Index) + attempt),
             Token = run.Token,
-            CapabilityId = entry.Step.Compensation?.Id ?? string.Empty,
+            CapabilityId = entry.Step.CompensationIdentity,
             CapabilityVersion = entry.Step.Compensation?.Version ?? context.FlowVersion,
             Outcome = failure is null ? JournalOutcome.Compensated : JournalOutcome.Failure,
             State = FlowInstanceState.Compensating,
@@ -2434,7 +2428,7 @@ public sealed class FlowEngine
             context.FlowVersion,
             run?.InstanceId,
             entry.Index,
-            entry.Step.Compensation?.Id ?? string.Empty,
+            entry.Step.CompensationIdentity,
             context.CorrelationId,
             context.TenantId,
             attempts,

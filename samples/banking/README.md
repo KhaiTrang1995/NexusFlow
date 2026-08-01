@@ -344,17 +344,30 @@ keyed `{ctx.IdempotencyKey}:{ctx.CapabilityId}`.
 > no step id on `CapabilityContext`, and `FlowInstanceId` is null outside a durable
 > flow. `CapabilityId` is what changes per step and is fixed by the compiled plan.
 
-**And a compensation cannot use that expression at all.** During an unwind the engine
-calls `EnterStep(entry.Step)`, which reads `step.Capability.Id` — the *forward*
-capability — so inside `ReverseDebit` the context reports `ledger.post_debit`. A key
-built from it is byte-for-byte the debit's key, the ledger returns the debit's own
-entry, the compensation reports success, and the engine reports
-`CompensationOutcome.Succeeded` over money that never came back. Two of this sample's
-tests failed exactly that way before `LedgerKeys.ForUndo` existed: `Compensated` was
-right and the balance was wrong. The journal, meanwhile, records the row as
-`ledger.reverse_debit`, so the audit trail and the context disagree about what ran —
-which is what makes the bug invisible. `LedgerKeys` documents it and
-`TheJournalNamesTheCompensationsAndTheLedgerSeesFourDistinctKeys` pins it.
+**A compensation uses the same expression, and this is the defect the sample found.**
+Inside `ReverseDebit` the context reports `ledger.reverse_debit`, so the contra entry
+is keyed differently from the debit and the ledger writes it. That was not true when
+this sample was written. The engine called `EnterStep(entry.Step)` during an unwind,
+which read `step.Capability.Id` — the *forward* capability — so `ReverseDebit` saw
+`ledger.post_debit`, the key it built was byte-for-byte the debit's, the ledger
+returned the debit's own entry and moved nothing, the compensation reported success,
+and the engine reported `CompensationOutcome.Succeeded` over money that never came
+back. Two of this sample's tests failed exactly that way: `Compensated` was right and
+the balance was wrong.
+
+The journal, meanwhile, had always recorded the row as `ledger.reverse_debit` — so the
+audit trail and the running code disagreed about what ran, which is what made the loss
+invisible. The sample shipped a `LedgerKeys.ForUndo(ctx, "ledger.reverse_debit")` that
+spelled the compensating id out by hand, because it was the only value in scope that
+identified the capability doing the writing.
+
+The runtime names the running capability now: `ctx.CapabilityId` is the compensating
+capability during an unwind, and the step being undone is `ctx.CompensatingFor` — a
+member of its own, because an operator reading a trace wants that fact and a
+compensator keying a write must not get it by mistake. `ForUndo` is gone and there is
+one key function again. `AReversalIsKeyedDifferentlyFromTheWriteItUndoes` pins the key
+and `TheJournalAndTheLedgerAgreeOnWhichCapabilitiesUnwoundTheTransfer` pins the
+agreement.
 
 ### A mapped step's compensation consumes the step's *input*
 

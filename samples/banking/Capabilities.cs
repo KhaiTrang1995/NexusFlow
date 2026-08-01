@@ -353,7 +353,7 @@ public sealed class ReverseDebit : ICapability<DebitInstruction, DebitReversed>
                 input.DebtorIban,
                 input.Amount,
                 input.Currency,
-                LedgerKeys.ForUndo(ctx, "ledger.reverse_debit"),
+                LedgerKeys.For(ctx),
                 ct)
             .ConfigureAwait(false);
 
@@ -391,7 +391,7 @@ public sealed class ReverseCredit : ICapability<CreditInstruction, CreditReverse
                 input.CreditorIban,
                 -input.Amount,
                 input.Currency,
-                LedgerKeys.ForUndo(ctx, "ledger.reverse_credit"),
+                LedgerKeys.For(ctx),
                 ct)
             .ConfigureAwait(false);
 
@@ -460,10 +460,23 @@ public sealed class RecordSettlement : ICapability<SettlementInstruction, Settle
 /// none in.
 /// </para>
 /// <para>
-/// <see cref="CapabilityContext.CapabilityId"/> is the identity of the step being executed.
-/// It changes per step and is fixed by the compiled plan, so it is stable across a retry
-/// and across a replay of the same instance — which is what makes the combination a key the
-/// ledger can be asked twice with.
+/// <see cref="CapabilityContext.CapabilityId"/> is the identity of the capability actually
+/// running. It changes per step and is fixed by the compiled plan, so it is stable across a
+/// retry and across a replay of the same instance — which is what makes the combination a
+/// key the ledger can be asked twice with.
+/// </para>
+/// <para>
+/// <strong>A compensation uses this and nothing special.</strong> Inside
+/// <see cref="ReverseDebit"/> the context reports <c>ledger.reverse_debit</c>, so the contra
+/// entry is keyed differently from the debit it reverses and the ledger writes it rather
+/// than deduplicating it away. That was not always true: the engine used to enter a
+/// compensation with the step being undone, <c>ctx.CapabilityId</c> read
+/// <c>ledger.post_debit</c> inside the reversal, and this sample carried a
+/// <c>ForUndo(ctx, "ledger.reverse_debit")</c> overload that spelled the compensating id out
+/// by hand. Both of this sample's unwind tests failed the collision before that workaround
+/// existed — <c>Compensated</c> was right and the balance was 380 instead of 500, which is
+/// the most dangerous shape a bug can have: correct-looking telemetry over a real loss. The
+/// runtime names the running capability now, so there is one key function again.
 /// </para>
 /// <para>
 /// The sample README once described this key as <c>instanceId:stepId</c>. There is no step
@@ -480,45 +493,6 @@ internal static class LedgerKeys
         ArgumentNullException.ThrowIfNull(ctx);
 
         return ctx.IdempotencyKey + ":" + ctx.CapabilityId;
-    }
-
-    /// <summary>
-    /// The key for the write an <em>undo</em> is about to make.
-    /// </summary>
-    /// <param name="ctx">The context the compensation is running under.</param>
-    /// <param name="capabilityId">
-    /// The compensating capability's own declared id, written out because it cannot be read
-    /// from <paramref name="ctx"/>.
-    /// </param>
-    /// <remarks>
-    /// <para>
-    /// <strong>A compensation cannot use <see cref="For"/>, and finding out why cost this
-    /// sample two red tests.</strong> During an unwind the engine calls
-    /// <c>FlowExecutionContext.EnterStep(entry.Step)</c> with the step being undone, and that
-    /// method reads <c>step.Capability.Id</c> — the <em>forward</em> capability. So inside
-    /// <see cref="ReverseDebit"/>, <c>ctx.CapabilityId</c> is <c>ledger.post_debit</c>, and a
-    /// key built from it is byte-for-byte the key the debit was written under.
-    /// </para>
-    /// <para>
-    /// A ledger that deduplicates on that key then treats the contra entry as a repeat of the
-    /// debit, returns the debit's own entry, and moves nothing. The compensation reports
-    /// success, the engine reports <c>CompensationOutcome.Succeeded</c>, and the money stays
-    /// out of the debtor's account. Both of this sample's unwind tests failed exactly that
-    /// way — <c>Compensated</c> was right and the balance was 380 instead of 500 — which is
-    /// the most dangerous shape a bug can have: correct-looking telemetry over a real loss.
-    /// </para>
-    /// <para>
-    /// Writing the id out is therefore not duplication for its own sake. It is the only
-    /// value in scope that identifies the capability doing the writing.
-    /// <c>CapabilityTests.AnUndoKeyedOnTheContextWouldCollideWithTheWriteItUndoes</c> pins
-    /// the hazard so that a future context member does not quietly make this comment wrong.
-    /// </para>
-    /// </remarks>
-    public static string ForUndo(CapabilityContext ctx, string capabilityId)
-    {
-        ArgumentNullException.ThrowIfNull(ctx);
-
-        return ctx.IdempotencyKey + ":" + capabilityId;
     }
 }
 
