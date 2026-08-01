@@ -68,12 +68,18 @@ public sealed class PolicyExecutionTests
             .Audit("financial"),
         Plans.Validate);
 
-    /// <summary>The three kinds outside stage 4, and nothing that executes.</summary>
+    /// <summary>The kinds outside stage 4 that still execute nowhere.</summary>
+    /// <remarks>
+    /// <strong>The <c>Cache</c> left this set when stage 5 landed.</strong> It was here as one
+    /// of the three kinds a declaration bought nothing for; it now buys a dispatch that does
+    /// not happen, so leaving it would make every "and this costs the flow nothing" assertion
+    /// below false for the wrong reason. <c>CachePolicyTests</c> is where it went. What is left
+    /// is stage 1 and stage 3.
+    /// </remarks>
     private static PolicyChain Inert { get; } = PolicyChain.ForStep(
         PolicySet.Named("inert")
             .RateLimit(permits: 1, TimeSpan.FromHours(1))
-            .Idempotency(TimeSpan.FromHours(1))
-            .Cache(TimeSpan.FromHours(1)),
+            .Idempotency(TimeSpan.FromHours(1)),
         Plans.Validate);
 
     /// <summary>
@@ -414,18 +420,24 @@ public sealed class PolicyExecutionTests
     // ------------------------------------------------------- the three kinds still inert
 
     /// <summary>
-    /// A <c>Cache</c> and a <c>RateLimit</c> survive a second run of the same flow unchanged.
+    /// A <c>RateLimit</c> survives a second run of the same flow unchanged.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>Kept, not inverted.</strong> Stage 1 and stage 5 are not implemented, and this
-    /// is what FLOWX1032 still reports. Two executions of one plan is the only shape that can
-    /// tell a consulted cache from an unconsulted one: a cache hit would skip the second
-    /// dispatch, and a rate limit of one permit an hour would refuse it.
+    /// <strong>Kept, and narrowed.</strong> Stage 1 is not implemented, and this is what
+    /// FLOWX1032 still reports. It used to make the same assertion about the <c>Cache</c>
+    /// beside it — "a one-hour cache was declared and the second run dispatched anyway" — and
+    /// that half is now false: <c>CachePolicyTests.TheSecondExecutionIsServedFromTheCache</c>
+    /// asserts the opposite, on the same two-run shape, which is the only shape that can tell a
+    /// consulted cache from an unconsulted one.
+    /// </para>
+    /// <para>
+    /// Two executions is still the right shape for what is left: a rate limit of one permit an
+    /// hour would refuse the second, and does not.
     /// </para>
     /// </remarks>
     [Fact]
-    public async Task ACacheIsNotConsultedAndARateLimitCountsNothing()
+    public async Task ARateLimitCountsNothing()
     {
         var engine = new FlowEngine(new FakeClock(T0));
         var plan = Plan();
@@ -440,45 +452,67 @@ public sealed class PolicyExecutionTests
 
         second.Executed.ShouldBe(
             [0, 1, 2],
-            "One permit an hour was declared and two runs went through, and a one-hour cache " +
-            "was declared and the second run dispatched anyway.");
+            "One permit an hour was declared and two runs went through.");
     }
 
     /// <summary>
-    /// A stage-7 <c>Audit</c> on a step's own chain is not a compensation policy, and is not
-    /// a step policy either.
+    /// A stage-7 <c>Audit</c> is not a compensation policy and is not a step policy either —
+    /// it is a third thing, with a flag of its own.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>Kept, and it is why the plan carries two flags rather than one.</strong>
-    /// <c>Audit</c> and <c>CompensationRetry</c> share <see cref="PolicyStage.Consistency"/>,
-    /// so a reader who cuts the gap by stage would expect stage 7 to be "the one that runs".
-    /// It is not: <c>PolicyChain.ForStep</c> moves only the compensation retry onto the undo's
-    /// chain, and <c>CompensationPolicy.From</c> reads only that kind.
+    /// <strong>Inverted in one assertion and kept in the rest.</strong> This test was
+    /// <c>AnAuditIsAStageSevenPolicyAndStillExecutesNowhere</c>, and FLOWX1032's page named it
+    /// as the assertion that would go red on the day stage 7's audit ran. What went red is the
+    /// claim that no flag counted it; what is unchanged is the reason there had to be a third
+    /// flag rather than a wider reading of the two that existed.
     /// </para>
     /// <para>
-    /// It is not stage 4 either, so <c>StepPolicy.From</c> reads past it and the plan reports
-    /// <c>HasStepPolicies == false</c> — an audit is executed by nothing, and the step pays
-    /// nothing for declaring it.
+    /// <c>Audit</c> and <c>CompensationRetry</c> share <see cref="PolicyStage.Consistency"/>,
+    /// so a reader who cut the gap by stage would have expected one flag to cover both. Neither
+    /// covers the other: <c>PolicyChain.ForStep</c> moves only the compensation retry onto the
+    /// undo's chain, and an audit is not stage 4, so <c>StepPolicy.From</c> still reads past it
+    /// and <c>HasStepPolicies</c> is still false for an audit-only chain.
     /// </para>
     /// </remarks>
     [Fact]
-    public void AnAuditIsAStageSevenPolicyAndStillExecutesNowhere()
+    public void AnAuditIsAStageSevenPolicyWithAFlagOfItsOwn()
     {
         var plan = Plan(Forward(PolicySet.Named("a").Audit("financial")));
 
         plan.Graph.Steps[0].Policies.Ordered
             .Select(static p => p.Stage)
-            .ShouldBe([PolicyStage.Consistency], "Audit is stage 7, the same stage as the retry that runs.");
+            .ShouldBe([PolicyStage.Consistency], "Audit is stage 7, the same stage as the retry.");
 
         plan.HasCompensationPolicies.ShouldBeFalse(
             "Stage is not the cut. The cut is what a policy wraps, and an Audit wraps the " +
-            "step — which nothing reads.");
+            "step rather than its undo.");
 
         plan.HasStepPolicies.ShouldBeFalse(
-            "Nor is it stage 4, so the engine's forward policy path is not entered for it.");
+            "Nor is it stage 4, so the engine's forward policy path is not entered for it — " +
+            "which is why folding it into StepPolicy.IsActive would have made that flag mean " +
+            "two different things.");
 
+        plan.HasAuditedSteps.ShouldBeTrue(
+            "It has its own flag, and that flag is what the step loop reads after the commit.");
+
+        plan.Graph.Steps[0].StepAudit.Category.ShouldBe("financial");
         plan.Graph.Steps[0].CompensationRetry.IsRetrying.ShouldBeFalse();
+    }
+
+    /// <summary>An <c>Audit</c> with a blank category reaches no flag and writes nothing.</summary>
+    /// <remarks>
+    /// <c>PolicySet.Audit</c> validates no argument — no builder method does — so a record whose
+    /// category is the empty string is expressible, and it is one no compliance query can
+    /// select. Writing it would be worse than not auditing while looking like auditing, so
+    /// <c>StepAudit.From</c> resolves it to <c>None</c> and the plan-level flag stays false:
+    /// the bargain every other flag of this shape strikes, which is that it counts what the
+    /// engine will do rather than what was declared.
+    /// </remarks>
+    [Fact]
+    public void AnAuditWithNoCategoryCountsAsNoAudit()
+    {
+        Plan(Forward(PolicySet.Named("a").Audit("   "))).HasAuditedSteps.ShouldBeFalse();
     }
 
     /// <summary>
@@ -493,8 +527,8 @@ public sealed class PolicyExecutionTests
     public void APlanDeclaringOnlyInertKindsReportsNoStepPolicies()
     {
         Plan().HasStepPolicies.ShouldBeFalse(
-            "RateLimit, Idempotency and Cache are declared and none of them is executed, so " +
-            "the step loop must not take the policy path for them.");
+            "RateLimit and Idempotency are declared and neither is executed, so the step loop " +
+            "must not take the policy path for them.");
 
         Plan(Everything).HasStepPolicies.ShouldBeTrue(
             "The same chain plus stage 4 does take it.");

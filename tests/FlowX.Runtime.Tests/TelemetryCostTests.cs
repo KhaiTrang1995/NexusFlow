@@ -189,21 +189,30 @@ public sealed class TelemetryCostTests
         PolicyMetrics.RetryAttempts.Enabled.ShouldBeFalse();
         PolicyMetrics.CircuitState.Enabled.ShouldBeFalse();
         PolicyMetrics.BulkheadQueueDepth.Enabled.ShouldBeFalse();
+        PolicyMetrics.CacheHits.Enabled.ShouldBeFalse();
+        PolicyMetrics.CacheMisses.Enabled.ShouldBeFalse();
 
         PolicyMetrics.IsEnabled.ShouldBeFalse();
 
         Measure(static () =>
         {
             PolicyMetrics.Applied("Timeout", "Resilience", "order.validate", PolicyMetrics.OkOutcome);
+            PolicyMetrics.Applied("Cache", "Efficiency", "order.validate", PolicyMetrics.MissedOutcome);
+            PolicyMetrics.Applied("Audit", "Consistency", "order.validate", PolicyMetrics.RecordedOutcome);
             PolicyMetrics.Retried("order.validate", 2, "order.validate_failed");
             PolicyMetrics.CircuitChanged("order.validate", PolicyMetrics.CircuitOpen);
             PolicyMetrics.BulkheadQueued("order.validate", 3);
+            PolicyMetrics.CacheHit("order.validate", nameof(CacheScope.Tenant));
+            PolicyMetrics.CacheMiss("order.validate", nameof(CacheScope.Tenant));
         })
         .ShouldBe(
             0,
-            "A breaker opening, a retry attempting and a bulkhead queueing are the three " +
-            "events docs/10 §9 exists to publish, and with no exporter attached all three " +
-            "must cost exactly what they cost before anything published them.");
+            "A breaker opening, a retry attempting, a bulkhead queueing and a cache answering " +
+            "are the events docs/10 §9 exists to publish, and with no exporter attached all of " +
+            "them must cost exactly what they cost before anything published them. The two " +
+            "cache helpers are here because they arrived with stage 5 and take the same " +
+            "already-a-string labels the other four take — a scope passed as a CacheScope " +
+            "would box on its way into a KeyValuePair, which is the whole shape of B6.");
     }
 
     /// <summary>

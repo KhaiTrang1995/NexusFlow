@@ -548,6 +548,146 @@ internal sealed class RecordingDispatcher : IStepDispatcher
 
         Restore?.Invoke(ctx, stateBagJson);
     }
+
+    /// <summary>What this step's input is, for a cache key. Null means "not cacheable".</summary>
+    /// <remarks>
+    /// A delegate for <see cref="Describe"/>'s reason, and returning a
+    /// <see cref="JournalPayload"/> rather than a string because that is the contract: the
+    /// engine hashes what <c>ToJson</c> produced, so a double that handed back a raw string
+    /// would not exercise the redaction the key's correctness depends on.
+    /// </remarks>
+    public Func<int, FlowContext, JournalPayload>? CacheKey { get; set; }
+
+    /// <summary>What this step produced, for the cache to hold.</summary>
+    public Func<int, FlowContext, JournalPayload>? CacheEntry { get; set; }
+
+    /// <summary>What an audited step contributes to its record, given the declared redact list.</summary>
+    public Func<int, FlowContext, IReadOnlyList<string>, JournalPayload>? Audit { get; set; }
+
+    /// <summary>The redact lists the engine passed, in order.</summary>
+    /// <remarks>
+    /// Recorded so a test can assert that the list an author wrote reached the payload builder
+    /// rather than being dropped between the DSL and the record — which is the whole of what
+    /// <c>redact</c> means.
+    /// </remarks>
+    public List<IReadOnlyList<string>> RedactionsAsked { get; } = [];
+
+    /// <inheritdoc />
+    public JournalPayload DescribeCacheKey(int stepIndex, FlowContext ctx) =>
+        CacheKey?.Invoke(stepIndex, ctx) ?? JournalPayload.Empty;
+
+    /// <inheritdoc />
+    public JournalPayload DescribeCacheEntry(int stepIndex, FlowContext ctx) =>
+        CacheEntry?.Invoke(stepIndex, ctx) ?? JournalPayload.Empty;
+
+    /// <inheritdoc />
+    public JournalPayload DescribeAudit(int stepIndex, FlowContext ctx, IReadOnlyList<string> redact)
+    {
+        lock (_recording)
+        {
+            RedactionsAsked.Add(redact);
+        }
+
+        return Audit?.Invoke(stepIndex, ctx, redact) ?? JournalPayload.Empty;
+    }
+}
+
+/// <summary>An <see cref="IResultCache"/> that holds entries in a dictionary.</summary>
+/// <remarks>
+/// <para>
+/// Here rather than in the conformance project because these tests are about the
+/// <em>engine's</em> use of a cache — that a hit skips a dispatch, that a redacted document is
+/// not stored — and a real store would make them about a store. The two implementations the
+/// contract is actually held to are Redis and PostgreSQL, through
+/// <c>ResultCacheConformance</c>.
+/// </para>
+/// <para>
+/// It records every call, because "the engine did not consult the cache" and "the engine
+/// consulted it and missed" are different facts and a test that could not tell them apart
+/// would pass against an engine that ignored the policy.
+/// </para>
+/// </remarks>
+internal sealed class RecordingCache : IResultCache
+{
+    private readonly Lock _sync = new();
+    private readonly Dictionary<string, string> _entries = new(StringComparer.Ordinal);
+
+    /// <summary>Keys the engine asked for, in order.</summary>
+    public List<string> Reads { get; } = [];
+
+    /// <summary>Keys and documents the engine stored, in order.</summary>
+    public List<(string Key, string Value, TimeSpan Ttl)> Writes { get; } = [];
+
+    /// <summary>Set to fail every call, so a broken cache can be told to degrade.</summary>
+    public bool IsDown { get; set; }
+
+    /// <inheritdoc />
+    public ValueTask<Result<CacheEntry>> GetAsync(string key, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            Reads.Add(key);
+
+            if (IsDown)
+            {
+                return ValueTask.FromResult(
+                    Result.Fail<CacheEntry>(CacheErrors.Unavailable("the double is down")));
+            }
+
+            return ValueTask.FromResult(
+                _entries.TryGetValue(key, out var held)
+                    ? Result.Ok(new CacheEntry(held, DateTimeOffset.UnixEpoch))
+                    : Result.Fail<CacheEntry>(CacheErrors.Miss(key)));
+        }
+    }
+
+    /// <inheritdoc />
+    public ValueTask<Result<bool>> SetAsync(
+        string key, string value, TimeSpan ttl, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            Writes.Add((key, value, ttl));
+
+            if (IsDown)
+            {
+                return ValueTask.FromResult(
+                    Result.Fail<bool>(CacheErrors.Unavailable("the double is down")));
+            }
+
+            _entries[key] = value;
+
+            return ValueTask.FromResult(Result.Ok(true));
+        }
+    }
+}
+
+/// <summary>An <see cref="IAuditSink"/> that keeps every record it is given.</summary>
+internal sealed class RecordingAuditSink : IAuditSink
+{
+    private readonly Lock _sync = new();
+
+    /// <summary>Every record written, in the order the engine wrote them.</summary>
+    public List<AuditRecord> Records { get; } = [];
+
+    /// <summary>Set to refuse every write, so the engine's refusal to degrade can be proved.</summary>
+    public Exception? Refusal { get; set; }
+
+    /// <inheritdoc />
+    public ValueTask WriteAsync(AuditRecord record, CancellationToken cancellationToken)
+    {
+        if (Refusal is not null)
+        {
+            throw Refusal;
+        }
+
+        lock (_sync)
+        {
+            Records.Add(record);
+        }
+
+        return ValueTask.CompletedTask;
+    }
 }
 
 /// <summary>

@@ -32,11 +32,13 @@ public sealed class ExecutionPlan
         bool hasStepPolicies,
         bool hasEmit,
         bool hasTimers,
-        bool hasAuthorizedSteps)
+        bool hasAuthorizedSteps,
+        bool hasAuditedSteps)
     {
         HasStepPolicies = hasStepPolicies;
         HasTimers = hasTimers;
         HasAuthorizedSteps = hasAuthorizedSteps;
+        HasAuditedSteps = hasAuditedSteps;
         Flow = flow;
         Graph = graph;
         CompensableStepIndices = compensableStepIndices;
@@ -216,6 +218,33 @@ public sealed class ExecutionPlan
     /// </remarks>
     public bool HasAuthorizedSteps { get; }
 
+    /// <summary>True when any step of this plan writes an audit record.</summary>
+    /// <remarks>
+    /// <para>
+    /// The same shape as <see cref="HasAuthorizedSteps"/> and for the same reason, applied to
+    /// stage 7: the step loop reads this before it reads <see cref="StepNode.StepAudit"/>, so a
+    /// flow that audits nothing reads no principal, asks the dispatcher for no payload and
+    /// touches no sink. One predictable always-false comparison against a field the plan
+    /// already holds.
+    /// </para>
+    /// <para>
+    /// <strong>It counts what writes a record, never what was declared.</strong>
+    /// <see cref="StepAudit.From"/> resolves an <c>Audit</c> with a blank category to
+    /// <see cref="StepAudit.None"/>, so a declaration that could produce nothing a compliance
+    /// query could select leaves this false — the bargain <see cref="HasStepPolicies"/> and
+    /// <see cref="HasAuthorizedSteps"/> both strike.
+    /// </para>
+    /// <para>
+    /// This is the fourth flag of
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>'s
+    /// shape, and that record's own "revisit when" names a third as the point at which the set
+    /// of them should probably become one bit set. It is noted rather than acted on here: the
+    /// four are read at four different points of the loop and a bit set would be one field read
+    /// plus a mask at each, which is not cheaper and is harder to read.
+    /// </para>
+    /// </remarks>
+    public bool HasAuditedSteps { get; }
+
     /// <summary>Builds a validated plan.</summary>
     /// <param name="flow">The flow's identity and profile.</param>
     /// <param name="graph">Its compiled step sequence.</param>
@@ -238,6 +267,7 @@ public sealed class ExecutionPlan
         var emit = false;
         var timers = false;
         var authorized = false;
+        var audited = false;
 
         foreach (var step in graph.Steps)
         {
@@ -258,6 +288,12 @@ public sealed class ExecutionPlan
             // say no. A Public or Internal step resolves to StepAuthorization.None and leaves
             // this false, so a flow nobody can be refused from takes the path it always took.
             authorized |= step.StepAuthorization.CanRefuse;
+
+            // And once more for stage 7. An Audit is resolved off the step's own chain and
+            // read after its commit, which is why it is a flag of its own rather than a field
+            // of StepPolicy: the four resilience kinds and the cache all wrap the dispatch,
+            // and this one follows it.
+            audited |= step.StepAudit.IsAudited;
 
             parallel |= step.Kind == StepKind.Parallel ||
                         (step.Kind == StepKind.ForEach && step.MaxDegreeOfParallelism > 1);
@@ -290,7 +326,8 @@ public sealed class ExecutionPlan
             stepPolicies,
             emit,
             timers,
-            authorized);
+            authorized,
+            audited);
     }
 
     private static void AddEffects(SortedSet<string> effects, CapabilityDescriptor? capability)

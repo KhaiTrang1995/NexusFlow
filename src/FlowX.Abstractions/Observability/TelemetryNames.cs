@@ -165,16 +165,25 @@ public static class TelemetryNames
     /// Counter. Labels: <c>policy</c>, <c>stage</c>, <c>capability</c>, <c>outcome</c>.
     /// </summary>
     /// <remarks>
-    /// The four rows of <c>docs/10 §9</c> below are frozen on the same terms as §3's above, and
-    /// for the same reason: an alert written against a breaker in one service must match the
-    /// breaker in every other. The three §9 rows that are <em>not</em> named here —
-    /// <c>flowx_ratelimit_rejected_total</c>, the cache hit/miss pair and
-    /// <c>flowx_idempotency_replays_total</c> — are omitted rather than named-and-unemitted,
-    /// which is the opposite of what was done for <see cref="TriggerAdmittedTotal"/> and
-    /// <see cref="StreamLagRecords"/>. The difference is that those two describe a subject that
-    /// exists and cannot be reached; a rate-limit rejection counter describes a decision no code
-    /// makes, so there is no name to freeze until <c>PolicyStage.Admission</c> is executed and
-    /// the shape of its <c>scope</c> label is a decision somebody has made.
+    /// The rows of <c>docs/10 §9</c> below are frozen on the same terms as §3's above, and for
+    /// the same reason: an alert written against a breaker in one service must match the
+    /// breaker in every other. The §9 rows that are <em>not</em> named here —
+    /// <c>flowx_ratelimit_rejected_total</c> and <c>flowx_idempotency_replays_total</c> — are
+    /// omitted rather than named-and-unemitted, which is the opposite of what was done for
+    /// <see cref="TriggerAdmittedTotal"/> and <see cref="StreamLagRecords"/>. The difference is
+    /// that those two describe a subject that exists and cannot be reached; a rate-limit
+    /// rejection counter describes a decision no code makes, so there is no name to freeze
+    /// until <c>PolicyStage.Admission</c> is executed and the shape of its <c>scope</c> label
+    /// is a decision somebody has made.
+    /// <para>
+    /// <strong>The cache pair left that list when stage 5 landed</strong>, which is exactly the
+    /// condition
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md">ADR-0026</a>
+    /// set for it: "a §9 row's policy starts executing, at which point its name is frozen and
+    /// this record's omission becomes an addition". <c>Audit</c> gains no row of its own — §9
+    /// never gave it one — and reaches
+    /// <see cref="PolicyInvocationsTotal"/> like every other policy that applies.
+    /// </para>
     /// </remarks>
     public const string PolicyInvocationsTotal = "flowx_policy_invocations_total";
 
@@ -186,6 +195,25 @@ public static class TelemetryNames
 
     /// <summary>Gauge. Label: <c>capability</c>.</summary>
     public const string BulkheadQueueDepth = "flowx_bulkhead_queue_depth";
+
+    /// <summary>Counter. Labels: <c>capability</c>, <c>scope</c>.</summary>
+    /// <remarks>
+    /// The half an operator sizes a cache from. Paired with <see cref="CacheMissesTotal"/>
+    /// rather than shipped alone, for <see cref="PolicyInvocationsTotal"/>'s reason: a hit
+    /// count with no miss count cannot express a hit <em>rate</em>, and "forty thousand hits"
+    /// means something different against forty-one thousand calls than against four hundred
+    /// thousand.
+    /// </remarks>
+    public const string CacheHitsTotal = "flowx_cache_hits_total";
+
+    /// <summary>Counter. Labels: <c>capability</c>, <c>scope</c>.</summary>
+    /// <remarks>
+    /// Counts every consultation that dispatched, whichever reason it had: the key was absent,
+    /// the entry had expired, or the store could not be reached. The three are not separated,
+    /// because the decision they all produce is the same one — call the dependency — and a
+    /// store that is down already shows up as an <see cref="ErrorCode"/> nowhere else.
+    /// </remarks>
+    public const string CacheMissesTotal = "flowx_cache_misses_total";
 
     // ---- Metric label names ----
 
@@ -242,4 +270,13 @@ public static class TelemetryNames
 
     /// <summary>The composite key a circuit breaker is tracked under.</summary>
     public const string KeyLabel = "key";
+
+    /// <summary>What a cache entry is keyed within: <c>Tenant</c>, <c>Principal</c> or <c>Global</c>.</summary>
+    /// <remarks>
+    /// <c>docs/10 §9</c> froze this label on the cache rows. It is the declared
+    /// <c>CacheScope</c> by name and never the resolved value — the tenant itself is
+    /// <see cref="TenantLabel"/>, bucketed, and putting a principal in a metric label would be
+    /// unbounded cardinality and an identity in a time series that is retained and shipped.
+    /// </remarks>
+    public const string ScopeLabel = "scope";
 }

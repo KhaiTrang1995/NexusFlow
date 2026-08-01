@@ -45,7 +45,9 @@ public sealed class StepPolicy
         TimeSpan samplingWindow,
         TimeSpan breakDuration,
         int maxConcurrency,
-        int queueDepth)
+        int queueDepth,
+        TimeSpan? cacheTtl,
+        CacheScope cacheScope)
     {
         Timeout = timeout;
         Attempts = attempts;
@@ -56,6 +58,8 @@ public sealed class StepPolicy
         BreakDuration = breakDuration;
         MaxConcurrency = maxConcurrency;
         QueueDepth = queueDepth;
+        CacheTtl = cacheTtl;
+        CacheScope = cacheScope;
     }
 
     /// <summary>
@@ -64,7 +68,7 @@ public sealed class StepPolicy
     /// </summary>
     public static StepPolicy None { get; } = new(
         null, 1, Backoff.ExponentialJitter(), ImmutableArray<ErrorCategory>.Empty,
-        0d, TimeSpan.Zero, TimeSpan.Zero, 0, 0);
+        0d, TimeSpan.Zero, TimeSpan.Zero, 0, 0, null, CacheScope.Tenant);
 
     /// <summary>
     /// How many calls a breaker's sampling window must hold before its ratio is evidence.
@@ -121,6 +125,20 @@ public sealed class StepPolicy
     /// <summary>How many callers may wait for a permit before one is refused outright.</summary>
     public int QueueDepth { get; }
 
+    /// <summary>
+    /// How long a cached result stays readable, or <c>null</c> when no cache was declared.
+    /// </summary>
+    /// <remarks>
+    /// Nullable rather than <see cref="TimeSpan.Zero"/> for "none", for <see cref="Timeout"/>'s
+    /// reason: zero is a value an author can write and it means "hold this for no time", which
+    /// <see cref="HasCache"/> deliberately reads as no cache at all rather than as a cache that
+    /// is written on every call and never read.
+    /// </remarks>
+    public TimeSpan? CacheTtl { get; }
+
+    /// <summary>What a cache entry is keyed within. <c>docs/10 §8</c>'s conservative default.</summary>
+    public CacheScope CacheScope { get; }
+
     /// <summary>True when this policy can ask for the step a second time.</summary>
     public bool IsRetrying => Attempts > 1;
 
@@ -130,17 +148,33 @@ public sealed class StepPolicy
     /// <summary>True when a bulkhead was declared.</summary>
     public bool HasBulkhead => MaxConcurrency > 0;
 
+    /// <summary>True when a cache with a usable lifetime was declared.</summary>
+    public bool HasCache => CacheTtl > TimeSpan.Zero;
+
     /// <summary>
     /// True when this step has anything for the engine to apply.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The single question the step loop asks. A step whose chain declares only a
-    /// <c>Cache</c> and an <c>Audit</c> answers <c>false</c> and takes the path it always
-    /// took — which is what stops a declaration that is still inert from costing the flow
-    /// anything, and what makes <see cref="ExecutionPlan.HasStepPolicies"/> mean "some step
-    /// will actually be wrapped" rather than "some step declared something".
+    /// <c>RateLimit</c> and an <c>Idempotency</c> window answers <c>false</c> and takes the
+    /// path it always took — which is what stops a declaration that is still inert from
+    /// costing the flow anything, and what makes <see cref="ExecutionPlan.HasStepPolicies"/>
+    /// mean "some step will actually be wrapped" rather than "some step declared something".
+    /// </para>
+    /// <para>
+    /// <strong><see cref="HasCache"/> joined it when stage 5 landed, and that is the widening
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>
+    /// predicted</strong> — *"implementing stage 5 means adding fields to <c>StepPolicy</c>,
+    /// widening <c>IsActive</c>, and nothing else: no new flag, no new read site, no change to
+    /// the step loop's shape"*. The read site is the same one, because stage 5 runs inside
+    /// stage 4's nesting. An <c>Audit</c> does not join it: stage 7 runs after the step and its
+    /// commit, so it has its own resolved value and its own flag
+    /// (<see cref="StepAudit"/>, <see cref="ExecutionPlan.HasAuditedSteps"/>).
+    /// </para>
     /// </remarks>
-    public bool IsActive => Timeout is not null || IsRetrying || HasBreaker || HasBulkhead;
+    public bool IsActive =>
+        Timeout is not null || IsRetrying || HasBreaker || HasBulkhead || HasCache;
 
     /// <summary>
     /// Reads the stage-4 kinds out of a chain, or <see cref="None"/> when it declares none.
@@ -165,6 +199,8 @@ public sealed class StepPolicy
         var breakDuration = TimeSpan.Zero;
         var maxConcurrency = 0;
         var queueDepth = 0;
+        TimeSpan? cacheTtl = null;
+        var cacheScope = CacheScope.Tenant;
 
         foreach (var policy in policies.Ordered)
         {
@@ -191,16 +227,26 @@ public sealed class StepPolicy
                     queueDepth = Math.Max(0, Parameter(policy, "queueDepth", 0));
                     break;
 
+                case CacheKind:
+                    // Collapsed to null at zero on purpose: HasCache asks the same question,
+                    // and a cache held for no time is a write nothing could ever read.
+                    var ttl = Parameter(policy, "ttl", TimeSpan.Zero);
+
+                    cacheTtl = ttl > TimeSpan.Zero ? ttl : null;
+                    cacheScope = Parameter(policy, "scope", CacheScope.Tenant);
+                    break;
+
                 default:
-                    // Stage 1, 3, 5 and 7. Read past rather than rejected — the chain is the
-                    // author's whole declaration and this type is one stage's view of it.
+                    // Stage 1, 3 and 7. Read past rather than rejected — the chain is the
+                    // author's whole declaration and this type is stages 4 and 5's view of it.
                     break;
             }
         }
 
         var resolved = new StepPolicy(
             timeout, attempts, backoff, retryOn,
-            failureRatio, samplingWindow, breakDuration, maxConcurrency, queueDepth);
+            failureRatio, samplingWindow, breakDuration, maxConcurrency, queueDepth,
+            cacheTtl, cacheScope);
 
         return resolved.IsActive ? resolved : None;
     }
@@ -216,6 +262,17 @@ public sealed class StepPolicy
 
     /// <summary>The descriptor kind <see cref="PolicySet.Bulkhead"/> emits.</summary>
     public const string BulkheadKind = "Bulkhead";
+
+    /// <summary>The descriptor kind <see cref="PolicySet.Cache"/> emits.</summary>
+    /// <remarks>
+    /// Stage 5 rather than stage 4, and read here anyway. The nesting puts the cache between
+    /// the innermost resilience policy and the capability
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>
+    /// §2.5: "adding stage 5 means adding it outside the dispatch and inside stage 4"), so it
+    /// is reached from the same call and resolved onto the same value. This type carries the
+    /// parameters; it does not decide what wraps what.
+    /// </remarks>
+    public const string CacheKind = "Cache";
 
     /// <summary>
     /// Whether the step is worth dispatching again after <paramref name="attemptsMade"/>

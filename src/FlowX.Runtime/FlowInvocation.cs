@@ -780,6 +780,74 @@ public static class FlowErrors
             .With("stepIndex", stepIndex)
             .With("subFlowId", subFlowId);
 
+    /// <summary>The code <see cref="AuditSinkNotConfigured"/> raises.</summary>
+    public const string AuditSinkNotConfiguredCode = "policy.audit_sink_not_configured";
+
+    /// <summary>The code <see cref="AuditNotRecorded"/> raises.</summary>
+    public const string AuditNotRecordedCode = "policy.audit_not_recorded";
+
+    /// <summary>
+    /// A step declared an <c>Audit</c> and the engine was built with nowhere to write it.
+    /// </summary>
+    /// <param name="flowId">The flow whose step is audited.</param>
+    /// <param name="capabilityId">The capability that ran and cannot be recorded.</param>
+    /// <param name="category">The category the author declared.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Refused rather than skipped, and it is the one seam on this path that
+    /// refuses.</strong> An unconfigured cache dispatches, an unconfigured alert sink reports
+    /// nowhere, and both are the honest older behaviour. There is no honest older behaviour
+    /// here: a step that happened with no record that it happened is the state
+    /// <c>docs/diagnostics/FLOWX1032.md</c>'s third remedy says not to ship — "a regulated
+    /// write whose audit record is the reason it is allowed to happen".
+    /// </para>
+    /// <para>
+    /// The step has already succeeded and already committed when this is raised, so the flow
+    /// fails on the failure path and the compensable work behind it — including this step —
+    /// unwinds. That is the correct end: the effect is reversed rather than left standing with
+    /// nothing describing it.
+    /// </para>
+    /// <para>
+    /// <see cref="ErrorCategory.Internal"/> because it is a wiring defect in the host rather
+    /// than a business outcome, and retrying reaches the same missing sink.
+    /// </para>
+    /// </remarks>
+    public static Error AuditSinkNotConfigured(string flowId, string capabilityId, string category) =>
+        new Error(
+            AuditSinkNotConfiguredCode,
+            $"Step '{capabilityId}' of flow '{flowId}' declares an Audit in category " +
+            $"'{category}', so it must produce an immutable audit record — but the engine was " +
+            "built with no IAuditSink. Supply one, or remove the Audit from the policy set if " +
+            "this step does not need to be recorded.",
+            ErrorCategory.Internal)
+            .With("flowId", flowId)
+            .With("capabilityId", capabilityId)
+            .With("category", category);
+
+    /// <summary>An audit sink refused, or a payload could not be described.</summary>
+    /// <param name="capabilityId">The capability that ran and cannot be recorded.</param>
+    /// <param name="category">The category the author declared.</param>
+    /// <param name="cause">What went wrong.</param>
+    /// <remarks>
+    /// <see cref="ErrorCategory.Unavailable"/> rather than <see cref="ErrorCategory.Internal"/>:
+    /// a store that was busy is worth asking again, and this is the one audit failure a caller
+    /// can act on. The message names the category so that an operator reading a failed transfer
+    /// knows which regime's record is missing rather than only that one is.
+    /// </remarks>
+    public static Error AuditNotRecorded(string capabilityId, string category, Exception cause)
+    {
+        ArgumentNullException.ThrowIfNull(cause);
+
+        return new Error(
+            AuditNotRecordedCode,
+            $"The '{category}' audit record for '{capabilityId}' could not be written, so the " +
+            $"step is reversed rather than left unrecorded: {cause.Message}",
+            ErrorCategory.Unavailable)
+            .With("capabilityId", capabilityId)
+            .With("category", category)
+            .With("exception", cause.GetType().FullName ?? cause.GetType().Name);
+    }
+
     /// <summary>
     /// A flow declaring <see cref="ExecutionProfile.Durable"/> was started with no journal to
     /// write to.

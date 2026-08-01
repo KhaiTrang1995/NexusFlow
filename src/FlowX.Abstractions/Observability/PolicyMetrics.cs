@@ -68,6 +68,26 @@ public static class PolicyMetrics
     /// <summary>A retry used every attempt it was allowed and the step still failed.</summary>
     public const string ExhaustedOutcome = "exhausted";
 
+    /// <summary>A cache was consulted and held nothing usable, so the step was dispatched.</summary>
+    /// <remarks>
+    /// Distinct from <see cref="OkOutcome"/> on <c>flowx_policy_invocations_total</c> because a
+    /// cache that applied cleanly and a cache that saved nothing are different facts, and the
+    /// counter's whole purpose is that a rate has a denominator. The dedicated
+    /// <see cref="CacheHits"/> / <see cref="CacheMisses"/> pair carries the same split at the
+    /// resolution <c>docs/10 §9</c> froze; this label is what keeps the shared counter honest
+    /// for an operator who graphs it by <c>policy</c>.
+    /// </remarks>
+    public const string MissedOutcome = "missed";
+
+    /// <summary>An audit record was written for a step that succeeded.</summary>
+    /// <remarks>
+    /// The only outcome an <c>Audit</c> reaches the counter with. A record that could not be
+    /// written fails the flow rather than being counted — see <see cref="IAuditSink"/> — so
+    /// there is no "failed" partner here, and a fall in this series against
+    /// <c>flowx_flow_total</c> is what an operator watches instead.
+    /// </remarks>
+    public const string RecordedOutcome = "recorded";
+
     /// <summary>
     /// Metric label values for small attempt numbers, so a label costs no allocation and no box.
     /// </summary>
@@ -152,6 +172,34 @@ public static class PolicyMetrics
         unit: null,
         "Callers waiting for a bulkhead permit, excluding those already holding one.");
 
+    /// <summary>
+    /// Consultations of a declared cache that were served from it. Labels: capability, scope.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Created because stage 5 executes, which is the condition
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md">ADR-0026</a>
+    /// set.</strong> That record left this row and its partner unnamed while nothing consulted
+    /// a cache — "an instrument that exists and is never written to publishes an empty series,
+    /// and an empty series is indistinguishable from a healthy one". Something consults one
+    /// now, so the series carries information and the omission becomes an addition.
+    /// </remarks>
+    public static Counter<long> CacheHits { get; } = FlowXTelemetry.Meter.CreateCounter<long>(
+        TelemetryNames.CacheHitsTotal,
+        unit: null,
+        "Steps served from a declared Cache without dispatching the capability.");
+
+    /// <summary>
+    /// Consultations of a declared cache that dispatched anyway. Labels: capability, scope.
+    /// </summary>
+    /// <remarks>
+    /// The denominator. A hit count alone cannot answer "what fraction of calls to this
+    /// dependency are we still making", which is the only question a cache is sized from.
+    /// </remarks>
+    public static Counter<long> CacheMisses { get; } = FlowXTelemetry.Meter.CreateCounter<long>(
+        TelemetryNames.CacheMissesTotal,
+        unit: null,
+        "Consultations of a declared Cache that found nothing usable and dispatched.");
+
     /// <summary>Whether anything is listening for any policy metric.</summary>
     /// <remarks>
     /// Read at the one place a policy path begins, so a policed step with no exporter pays a
@@ -159,7 +207,8 @@ public static class PolicyMetrics
     /// </remarks>
     public static bool IsEnabled =>
         Invocations.Enabled || RetryAttempts.Enabled ||
-        CircuitState.Enabled || BulkheadQueueDepth.Enabled;
+        CircuitState.Enabled || BulkheadQueueDepth.Enabled ||
+        CacheHits.Enabled || CacheMisses.Enabled;
 
     /// <summary>Counts one application of a policy to a step.</summary>
     /// <param name="policy">The descriptor kind, e.g. <c>Timeout</c>.</param>
@@ -230,6 +279,38 @@ public static class PolicyMetrics
         BulkheadQueueDepth.Record(
             waiting,
             new KeyValuePair<string, object?>(TelemetryNames.CapabilityLabel, capability));
+    }
+
+    /// <summary>Counts one step served out of a declared cache.</summary>
+    /// <param name="capability">The capability that was not dispatched.</param>
+    /// <param name="scope">The declared <c>CacheScope</c>, by name.</param>
+    public static void CacheHit(string capability, string scope)
+    {
+        if (!CacheHits.Enabled)
+        {
+            return;
+        }
+
+        CacheHits.Add(
+            1,
+            new KeyValuePair<string, object?>(TelemetryNames.CapabilityLabel, capability),
+            new KeyValuePair<string, object?>(TelemetryNames.ScopeLabel, scope));
+    }
+
+    /// <summary>Counts one consultation of a declared cache that dispatched anyway.</summary>
+    /// <param name="capability">The capability that was dispatched.</param>
+    /// <param name="scope">The declared <c>CacheScope</c>, by name.</param>
+    public static void CacheMiss(string capability, string scope)
+    {
+        if (!CacheMisses.Enabled)
+        {
+            return;
+        }
+
+        CacheMisses.Add(
+            1,
+            new KeyValuePair<string, object?>(TelemetryNames.CapabilityLabel, capability),
+            new KeyValuePair<string, object?>(TelemetryNames.ScopeLabel, scope));
     }
 
     /// <summary>The label for an attempt number, without allocating for the common ones.</summary>
