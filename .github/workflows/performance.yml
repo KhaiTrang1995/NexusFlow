@@ -16,14 +16,22 @@ env:
 
 jobs:
   allocations:
-    # This job was named "Allocation budgets (B2, B6)" and asserts only B2.
-    # B6 is "telemetry with no listener costs 0 ns / 0 B per step", and nothing
-    # under src/ constructs an ActivitySource, a Meter or an ILogger — there is no
-    # telemetry to be zero-cost about. Naming B6 here made an unmeasured budget
-    # look gated on every pull request. It becomes measurable with P5; see
-    # docs/14-Performance.md section 8, which lists B6 among the budgets with no
-    # harness, and docs/12-Observability.md for what has to exist first.
-    name: Allocation budget (B2)
+    # This job was named "Allocation budgets (B2, B6)" and asserted only B2, because
+    # nothing under src/ constructed an ActivitySource or a Meter — there was no
+    # telemetry to be zero-cost about, and naming B6 here made an unmeasured budget
+    # look gated on every pull request.
+    #
+    # WP-90 (2026-08-01) built the telemetry, so B6 has a subject. The allocation half
+    # is now asserted by TelemetryCostTests, in the same filter below: with no listener
+    # the decorator is not created, and a decorator abandoned by its listener runs a
+    # 4-step ephemeral flow for 0 B. That test found the defect it was written for —
+    # StartActivity($"step {i} {id}") evaluates its interpolation before returning null,
+    # at 68 B per step.
+    #
+    # The name still says B2 alone, and deliberately: B6 is "0 ns and 0 B", and only the
+    # allocation half is asserted. The nanosecond half is not measured rather than
+    # measured badly, which is this repository's standing position on timing here.
+    name: Allocation budget (B2, and B6's allocation half)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,7 +49,7 @@ jobs:
             --filter "FullyQualifiedName~AllocationBudget" \
             --logger "console;verbosity=detailed"
           dotnet test tests/FlowX.Runtime.Tests --configuration Release \
-            --filter "FullyQualifiedName~EngineAllocation|FullyQualifiedName~Concurrency" \
+            --filter "FullyQualifiedName~EngineAllocation|FullyQualifiedName~Concurrency|FullyQualifiedName~TelemetryCost" \
             --logger "console;verbosity=detailed"
 
   benchmarks:
