@@ -1003,8 +1003,17 @@ public static class FlowEmitter
                 return "StepNode.ForEmit(" + step.Index + ", " + Quote(step.EventType!) + ")";
 
             case StepKindModel.AwaitSignal:
-                return "StepNode.ForAwaitSignal(" + step.Index + ", " + Quote(step.SignalType!) +
-                       ", TimeSpan.FromHours(1))";
+                // This arm used to write the author's signal and a hard-coded one-hour
+                // timeout, whatever duration they declared — so a flow written to wait seven
+                // days published a plan and a manifest saying one hour. The model carries no
+                // timeout to write instead: that field arrives with WP-63, which is also
+                // when the step gets a meaning. Until then FLOWX1031 is an error on every
+                // AwaitSignal, so no model containing one is ever emitted, and this arm
+                // states the invariant rather than inventing a value to satisfy it.
+                throw new System.InvalidOperationException(
+                    "AwaitSignal reaches no execution plan in this release: FLOWX1031 refuses " +
+                    "the flow, because the compiler has no timeout to emit but the one the " +
+                    "author wrote and no way to carry it. See docs/diagnostics/FLOWX1031.md.");
 
             case StepKindModel.Fail:
                 // No payload. The error is in `Failures` above, which is where a business

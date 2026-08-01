@@ -24,6 +24,15 @@ namespace Workflow.Tests;
 /// project, with the command to reproduce it.
 /// </para>
 /// <para>
+/// <strong>All three are now reported</strong> — <c>FLOWX1031</c>, an error on
+/// <c>AwaitSignal</c> and a warning on <c>Delay</c> and <c>OnTimeout</c>. That closes the
+/// silence, not the gap: the behaviour this class measures is unchanged, because the rule
+/// stops a flow being written rather than making a written one wait. What it did change is
+/// that the compiler no longer emits a plan for a DSL flow that awaits a signal, so the
+/// hand-built plan below is now the only way to reach this shape at all — which is why the
+/// class comment above says the plan has to be hand-built.
+/// </para>
+/// <para>
 /// The plan below is hand-built, which every other test in this project avoids. It has to be:
 /// the sample deliberately declares no suspension point, and the shape under test is one no
 /// flow here is allowed to have.

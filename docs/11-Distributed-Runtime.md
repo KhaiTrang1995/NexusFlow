@@ -201,8 +201,11 @@ and they are corrected above rather than quietly redrawn
   expiry are an `UPDATE` to `expires_at`. See §3.
 
 `flow_signal` is the one entity above with no table behind it. Durable suspension and
-`AwaitSignal` are WP-63 ([`FLOWX1017`](diagnostics/FLOWX1017.md)), and a durable flow
-still runs to completion inside one invocation.
+`AwaitSignal` are WP-63, and a durable flow still runs to completion inside one
+invocation — so no instance is ever `Suspended` and no signal is ever delivered.
+[`FLOWX1017`](diagnostics/FLOWX1017.md) refuses `AwaitSignal` below the `Durable`
+profile, and [`FLOWX1031`](diagnostics/FLOWX1031.md) refuses it at that profile too:
+between them, no flow can declare a suspension point this schema has nowhere to record.
 
 | Property | Guarantee |
 |---|---|
