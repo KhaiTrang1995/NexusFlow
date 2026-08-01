@@ -7,27 +7,27 @@ namespace Banking;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Read this before reading anything else in the file: in this release these
-/// declarations reach the manifest and change nothing about how the flow runs.</strong>
-/// There is no policy engine — <c>docs/10-Policy-Framework.md</c> is P4 — so no timeout is
-/// applied, nothing is retried, no circuit opens, no rate limit is counted and no audit
-/// record is written by a policy.
+/// <strong>Read this before reading anything else in the file: with one exception, these
+/// declarations change nothing about how the flow runs.</strong> There is no policy engine
+/// — <c>docs/10-Policy-Framework.md</c> is P4 — so no timeout is applied, nothing is retried
+/// on the forward path, no circuit opens, no rate limit is counted and no audit record is
+/// written by a policy. They reach the compiled plan and the manifest; they are executed by
+/// nothing.
 /// </para>
 /// <para>
-/// <strong>The one policy the runtime does execute is
-/// <see cref="PolicySet.CompensationRetry"/> (WP-57), and it is unreachable from here
-/// anyway.</strong> <c>FlowEngine</c> reads
+/// <strong>The exception is <see cref="PolicySet.CompensationRetry"/> (WP-57), and it now
+/// reaches the engine from here.</strong> <c>FlowEngine</c> reads
 /// <c>ExecutionPlan.HasCompensationPolicies</c> and retries a failing undo when a step
-/// carries one — but the source generator emits every plan node as
-/// <c>StepNode.ForCapability(index, capability, compensation)</c> and never passes a
-/// <c>PolicyChain</c>, so a plan built by the compiler always reports
-/// <c>HasCompensationPolicies == false</c>. The retry is real and is reachable only from a
-/// hand-built <c>ExecutionPlan</c>. <c>ManifestTests.ThePlanCarriesNoPolicyChain</c> is
-/// what stops that sentence quietly becoming false without anyone noticing, in either
-/// direction.
+/// carries one. The source generator used to emit every plan node as
+/// <c>StepNode.ForCapability(index, capability, compensation)</c> and never pass a
+/// <c>PolicyChain</c>, so a plan built by the compiler always reported
+/// <c>HasCompensationPolicies == false</c> and the retry was reachable only from a
+/// hand-built <c>ExecutionPlan</c>. It now splits the set by what each policy wraps and
+/// passes both halves. <c>ManifestTests.ThePlanCarriesTheDeclaredPolicyChain</c> is what
+/// stops that sentence quietly becoming false without anyone noticing, in either direction.
 /// </para>
 /// <para>
-/// So why declare them at all? Because a policy set is a <em>published</em> statement of
+/// So why declare the rest at all? Because a policy set is a <em>published</em> statement of
 /// what this step needs, and it is published: each kind and its fixed
 /// <see cref="PolicyStage"/> reach <c>flowx.manifest.json</c>, where a reviewer, a
 /// <c>flowx diff</c> and an agent can all read them. Declaring the intent and saying
@@ -68,8 +68,9 @@ public static class Policies
     /// application that must not be given up on: the alternative to a retried undo is money
     /// sitting in one account only. It wraps the <em>compensating</em> capability, which is
     /// why <c>ledger.reverse_debit</c> and <c>ledger.reverse_credit</c> both declare
-    /// <c>Idempotent = true</c> — <c>PolicyChain</c> refuses the pairing otherwise. See this
-    /// file's remarks for why it does not run.
+    /// <c>Idempotent = true</c> — <c>PolicyChain.ForCompensation</c> refuses the pairing
+    /// otherwise, and it is handed the reversal's descriptor rather than the posting's for
+    /// exactly that reason. This is the one line in the file that runs.
     /// </para>
     /// </remarks>
     public static readonly PolicySet LedgerPost = PolicySet.Named("ledger-post")

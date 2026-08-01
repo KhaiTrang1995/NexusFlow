@@ -22,8 +22,8 @@ namespace Workflow;
 /// </para>
 /// <para>
 /// <strong>Both steps are compensable, and the first carries the only policy kind the engine
-/// knows how to execute — which still does not execute, because the generator drops the
-/// chain before it reaches the plan (see <see cref="Policies"/>).</strong> If
+/// knows how to execute — three attempts at <c>workspace.release_desk</c> before the unwind
+/// gives up on it (see <see cref="Policies"/>).</strong> If
 /// <c>workspace.issue_pass</c> fails, this flow unwinds
 /// <c>workspace.release_desk</c> itself. If it succeeds and the <em>parent</em> later fails,
 /// the parent unwinds both of them, in reverse, at the position the composition occupies in

@@ -29,11 +29,11 @@ namespace Banking;
 /// answers on are one string rather than two kept in step.
 /// </para>
 /// <para>
-/// <strong>What the policies below do at run time: nothing.</strong> See
-/// <see cref="Policies"/> — the policy engine is P4, and even the one policy the engine does
-/// read (<c>CompensationRetry</c>) never reaches a generated plan. The declarations are
-/// published in the manifest and enforced by no code. Every step here would behave
-/// identically with the <c>.WithPolicy(...)</c> calls deleted.
+/// <strong>What the policies below do at run time: one thing.</strong> See
+/// <see cref="Policies"/> — the policy engine is P4, so the timeouts, the retry, the breaker,
+/// the rate limit and the audits are carried into the plan and enforced by no code. The one
+/// exception is the <c>CompensationRetry</c> on the two ledger legs: delete the
+/// <c>.WithPolicy(...)</c> calls and only those two undos change, five attempts to one.
 /// </para>
 /// </remarks>
 [Flow("transfer.execute", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "payments")]

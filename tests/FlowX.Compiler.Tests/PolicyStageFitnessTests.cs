@@ -58,6 +58,28 @@ public sealed class PolicyStageFitnessTests
     }
 
     /// <summary>
+    /// The emitter's copy of the one kind that wraps a compensation must match the real one.
+    /// </summary>
+    /// <remarks>
+    /// <c>FlowEmitter</c> decides which half of a declared set goes on the step and which half
+    /// goes on its compensation by comparing against this name, and it cannot reference
+    /// <c>CompensationPolicy</c> for the reason <c>ManifestWriter</c> cannot reference
+    /// <c>PolicySet</c>. A drift here would not fail a build: it would quietly put the
+    /// compensation retry on the forward chain, where nothing reads it, and the undo would go
+    /// back to a single attempt with the manifest still advertising five.
+    /// </remarks>
+    [Fact]
+    public void TheEmittersCompensationRetryKindMatchesTheRealOne()
+    {
+        FlowEmitter.CompensationRetryKind.ShouldBe(
+            CompensationPolicy.CompensationRetryKind,
+            "The emitter splits a policy set on this name. If it stops matching, every " +
+            "declared compensation retry is silently emitted onto the wrong chain.");
+
+        ManifestWriter.KnownPolicyStages.ShouldContainKey(FlowEmitter.CompensationRetryKind);
+    }
+
+    /// <summary>
     /// The kind-to-stage mapping, read by invoking each builder method on an empty set.
     /// </summary>
     /// <remarks>
