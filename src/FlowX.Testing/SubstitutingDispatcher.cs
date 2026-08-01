@@ -258,6 +258,12 @@ internal sealed class SubstitutingDispatcher : IStepDispatcher
         StepKind.Capability => step.Capability!.Id,
         StepKind.Emit => "emit:" + step.EventType,
         StepKind.AwaitSignal => "signal:" + step.SignalType,
+
+        // Named rather than left to the fallback, so a trace distinguishes "the timer at
+        // index 3 came due and was dispatched" from a kind nobody expected to reach here.
+        // A delay's identity is a constant, but it is the constant a journal row carries,
+        // and a trace that disagreed with the row would be the wrong kind of test double.
+        StepKind.Delay => "delay:" + StepNode.DelayIdentity,
         StepKind.Fail => "fail",
 
         // Control transfers never reach a dispatcher — the engine resolves them itself —

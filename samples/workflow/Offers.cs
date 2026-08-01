@@ -5,25 +5,66 @@ namespace Workflow;
 /// <summary>The waits this application declares, named once and applied by name.</summary>
 /// <remarks>
 /// <para>
-/// A named constant rather than a literal at the call site, for the reason
-/// <see cref="Policies"/> gives about policy sets: the duration is a business decision and
-/// belongs where it can be read and changed without opening a flow. It also demonstrates the
-/// half of the fix that matters — the generator copies the author's <em>expression</em> into
-/// the plan rather than folding it, so <c>StepNode.SignalTimeout</c> is whatever this
-/// property is and the plan means what the source means.
+/// Named properties rather than literals at the call site, for the reason
+/// <see cref="Policies"/> gives about policy sets: a duration is a business decision and
+/// belongs where it can be read and changed without opening a flow. They also demonstrate the
+/// half of the compiler's behaviour that matters — the generator copies the author's
+/// <em>expression</em> into the plan rather than folding it, so <c>StepNode.SignalTimeout</c>
+/// and <c>StepNode.Delay</c> are whatever these properties are and the plan means what the
+/// source means.
 /// </para>
 /// <para>
-/// <strong>Nothing arms it.</strong> The timer half of WP-63 is not built, so a
-/// countersignature that never arrives leaves the instance waiting until
-/// <c>[FlowDeadline("P30D")]</c> is reached and something resumes it — a signal, or an
-/// operator. That is stated on <see cref="AcceptOfferFlow"/> and in the README rather than
-/// implied by a constant that looks enforced.
+/// <strong>Both are armed now.</strong> A suspended instance records which wait it is parked
+/// at and when it is due, and <c>FlowTimerScan</c> sweeps for the ones whose instant has
+/// passed — so a countersignature that never arrives runs
+/// <c>offer.accept</c>'s <c>.OnTimeout</c> block rather than waiting for
+/// <c>[FlowDeadline("P30D")]</c>, and the settling period after a signature is a real wait
+/// that costs one row.
+/// </para>
+/// <para>
+/// <strong>Overridable, and that is a property of the sample rather than of the DSL.</strong>
+/// The defaults are the business values, and a demonstration cannot wait seven days for the
+/// thing it exists to demonstrate. So <c>dotnet run</c> and <c>tests/Workflow.Tests</c> can
+/// wind them down to seconds through the environment, exactly as the connection string is
+/// read, and a reader is told which number is the business one. A duration folded to a
+/// constant at build time could not be overridden at all — which is a second reason the
+/// generator copies the expression instead.
 /// </para>
 /// </remarks>
 public static class Waits
 {
-    /// <summary>How long the offer is open for countersignature.</summary>
-    public static TimeSpan Countersignature { get; } = TimeSpan.FromDays(7);
+    /// <summary>How long the offer is open for countersignature. Seven days.</summary>
+    public static TimeSpan Countersignature { get; } =
+        FromEnvironment("FLOWX_SAMPLE_OFFER_WINDOW", TimeSpan.FromDays(7));
+
+    /// <summary>
+    /// How long onboarding holds off after the signature. One day.
+    /// </summary>
+    /// <remarks>
+    /// A real pattern rather than a place to put a <c>.Delay</c>: payroll's nightly sync has
+    /// to have seen the countersigned contract before onboarding creates an identity against
+    /// it, and "wait until tomorrow" is how that dependency is expressed when the upstream
+    /// system publishes nothing to wait for. It is exactly the case a durable timer exists
+    /// for — no thread is held, and the instance survives the deployment that happens
+    /// overnight.
+    /// </remarks>
+    public static TimeSpan Settling { get; } =
+        FromEnvironment("FLOWX_SAMPLE_SETTLING", TimeSpan.FromDays(1));
+
+    /// <summary>Reads an override in <c>TimeSpan</c>'s round-trip form, or keeps the default.</summary>
+    /// <remarks>
+    /// Silent about a value it cannot parse, deliberately: this is a demonstration switch, and
+    /// a sample that refused to start over a malformed environment variable would be teaching
+    /// a lesson about configuration rather than about timers. The default is the business
+    /// value, so falling back to it is never wrong — only slower.
+    /// </remarks>
+    private static TimeSpan FromEnvironment(string name, TimeSpan fallback) =>
+        TimeSpan.TryParse(
+            Environment.GetEnvironmentVariable(name),
+            System.Globalization.CultureInfo.InvariantCulture,
+            out var configured) && configured > TimeSpan.Zero
+            ? configured
+            : fallback;
 }
 
 /// <summary>The signal identities this application delivers, as the plan carries them.</summary>
@@ -98,6 +139,28 @@ public static class OfferErrors
     /// <summary>The offer names no candidate.</summary>
     public static Error MissingCandidate() =>
         new("offer.missing_candidate", "The offer names no candidate.", ErrorCategory.Validation);
+
+    /// <summary>The countersignature never arrived, and the offer window has closed.</summary>
+    /// <remarks>
+    /// <para>
+    /// Raised by <c>offer.accept</c>'s own <c>.OnTimeout</c> block rather than by the engine.
+    /// The engine's <c>flow.signal_not_received</c> is what a wait with no block declared ends
+    /// with; a flow that declares one is saying "this is what happens instead", and what
+    /// happens here is a business outcome with a business code.
+    /// </para>
+    /// <para>
+    /// <strong>Ending the block with a failure is what withdraws the offer.</strong> The
+    /// unwind runs <c>offer.withdraw</c>, which was put on the compensation stack before the
+    /// flow suspended and rebuilt from the journal's committed rows when it woke — so the
+    /// envelope that went out seven days ago is closed by the timer that fired today.
+    /// </para>
+    /// </remarks>
+    public static Error NotCountersigned() =>
+        new Error(
+            "offer.not_countersigned",
+            $"The offer was open for {Waits.Countersignature} and was not countersigned.",
+            ErrorCategory.Unavailable)
+            .With("window", Waits.Countersignature);
 
     /// <summary>Onboarding would not accept the signed offer.</summary>
     public static Error OnboardingRefused(string reason) =>

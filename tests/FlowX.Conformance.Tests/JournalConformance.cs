@@ -778,6 +778,74 @@ public abstract class JournalConformance
         ShouldContainText(record.StateBagJson, "order-9", "the final state bag is recorded.");
     }
 
+    /// <summary>
+    /// A suspended instance records the wait it is parked at, and every other state clears it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Three values written by the same call that writes the state, and that is the
+    /// part a store cannot get away with splitting.</strong> An instance parked with nothing
+    /// recorded to wake it is a wait that never ends; a store that wrote the state first and
+    /// the wait second would leave exactly that window open on every crash.
+    /// </para>
+    /// <para>
+    /// <strong>Cleared by every other state, and that is a requirement rather than a
+    /// courtesy.</strong> A timer sweep reads the instances whose recorded instant has passed,
+    /// so a completed instance keeping the one it was waiting on before it finished would be
+    /// woken on every sweep for the rest of its retention window. It is asserted here rather
+    /// than left to <c>ITimerIndex</c>'s own suite because it is a property of the write, and
+    /// a store may implement this contract and no index at all.
+    /// </para>
+    /// <para>
+    /// The identity is checked as well as the instant. One row carries one wait, and a flow
+    /// may declare several: without the step and the scope, an instance whose first wait was
+    /// satisfied late would read a stale instant on reaching its second and walk straight
+    /// through a wait that had not started.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ASuspendedInstanceRecordsTheWaitItIsParkedAtAndEveryOtherStateClearsIt()
+    {
+        var journal = await CreateJournalAsync();
+        var instance = await StartAsync(journal, new FencingToken(3));
+        var due = DateTimeOffset.UtcNow.AddHours(1);
+
+        ShouldSucceed(
+            await journal.CompleteAsync(
+                instance,
+                new FencingToken(3),
+                FlowInstanceState.Suspended,
+                JournalPayload.Empty,
+                new FlowWake(StepScope.Root.Element(2), 5, due),
+                Cancellation),
+            "the owner parks the instance at a wait.");
+
+        var parked = await ReadInstanceAsync(journal, instance);
+
+        parked.Wake.ShouldNotBeNull("a parked instance that records no wait is one nothing wakes.");
+        parked.Wake!.Value.StepId.ShouldBe(5, "which step it is parked at.");
+        parked.Wake!.Value.Scope.Text.ShouldBe("2", "and which iteration of which loop.");
+
+        parked.Wake!.Value.At.ShouldBe(
+            due,
+            TimeSpan.FromMilliseconds(1),
+            "and when it is due, to whatever precision the store's timestamps carry.");
+
+        ShouldSucceed(
+            await journal.CompleteAsync(
+                instance,
+                new FencingToken(3),
+                FlowInstanceState.Completed,
+                JournalPayload.Empty,
+                wake: null,
+                Cancellation),
+            "and then it finishes.");
+
+        (await ReadInstanceAsync(journal, instance)).Wake.ShouldBeNull(
+            "an instance that is not waiting is waiting for nothing, and a sweep must not " +
+            "find it again.");
+    }
+
     /// <summary>A finished instance takes no further steps.</summary>
     /// <remarks>
     /// The failure this prevents is a late-arriving branch, or a redelivered trigger,
