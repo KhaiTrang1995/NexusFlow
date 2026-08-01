@@ -70,6 +70,67 @@ public static class RedisKeys
         return string.Concat(keyPrefix, Separator, "{", instanceId.ToString("n"), "}", Separator, "lease");
     }
 
+    /// <summary>The field holding an event's identity, which a consumer deduplicates on.</summary>
+    public const string EventIdField = "event-id";
+
+    /// <summary>The field holding the instance that emitted the event.</summary>
+    public const string InstanceIdField = "instance-id";
+
+    /// <summary>The field holding the event type.</summary>
+    public const string TypeField = "type";
+
+    /// <summary>The field holding the event contract's semantic version.</summary>
+    public const string SchemaVersionField = "schema-version";
+
+    /// <summary>The field holding the key the event was ordered by, absent when it had none.</summary>
+    public const string PartitionKeyField = "partition-key";
+
+    /// <summary>The field holding the event body, exactly as the store held it.</summary>
+    public const string PayloadField = "payload";
+
+    /// <summary>
+    /// The stream one partition key's events are appended to.
+    /// </summary>
+    /// <param name="keyPrefix">The configured prefix, from <see cref="RedisStreamOptions"/>.</param>
+    /// <param name="partitionKey">
+    /// The key the events are ordered by, or null for the events staged without one.
+    /// </param>
+    /// <returns>The stream key.</returns>
+    /// <exception cref="ArgumentException"><paramref name="keyPrefix"/> is null or empty.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>One stream per <c>partition_key</c>, and that is the whole of the ordering
+    /// design.</strong> A Redis stream is totally ordered, so a stream per key is exactly the
+    /// guarantee
+    /// <see href="../../docs/adr/ADR-0018-outbox-publication-and-ordering.md">ADR-0018</see>
+    /// decision 3 offers — per key, and nothing across keys. Publishing every event to one
+    /// stream would offer a <em>global</em> order, which that record refuses in as many words
+    /// ("global ordering is not offered, and no setting turns it on") and refuses for a reason
+    /// that survives the change of transport: one stream is one append point, so every key would
+    /// queue behind every other key's slowest write.
+    /// </para>
+    /// <para>
+    /// <strong>A null key gets its own stream rather than one stream each.</strong>
+    /// <c>OutboxWrite.PartitionKey</c> documents null as an unordered event, so any order these
+    /// happen to end up in is an accident of the transport and nothing may be inferred from it.
+    /// One stream is chosen over one-per-event because the alternative is an unbounded number of
+    /// keys in the server for events that asked for no ordering at all.
+    /// </para>
+    /// <para>
+    /// The two shapes cannot collide: a keyed stream always carries braces immediately after the
+    /// prefix and the unkeyed one never does, so no <paramref name="partitionKey"/> — including
+    /// the literal text <c>events</c> — can produce the unkeyed key.
+    /// </para>
+    /// </remarks>
+    public static string EventStream(string keyPrefix, string? partitionKey)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(keyPrefix);
+
+        return partitionKey is null
+            ? string.Concat(keyPrefix, Separator, "events", Separator, "unkeyed")
+            : string.Concat(keyPrefix, Separator, "{", partitionKey, "}", Separator, "events");
+    }
+
     /// <summary>Renders a scope as a key component that is never empty.</summary>
     /// <param name="scope">The scope to render.</param>
     /// <returns><see cref="RootScope"/> for the flow body, otherwise the canonical path.</returns>
