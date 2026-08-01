@@ -69,12 +69,22 @@ a NuGet feed built from that same run.
 
 There is no `--profile` and no `--transport`.
 
-`--profile durable` would generate a project that does not build. `FLOWX1028` reports a
-declared `Durable` profile as a **warning**, deliberately — its page argues an error there
-would be actively harmful, because the only repair is to delete a declaration P2 will
-need. But the generated project sets `TreatWarningsAsErrors`, which is the bar this
-repository holds itself to, so the warning is an error in the only configuration the
-template ships.
+`--profile durable` would generate a project that builds and then refuses its own first
+request.
+
+*This paragraph used to give a different reason — that `FLOWX1028` reported a declared
+`Durable` profile as a warning, and `TreatWarningsAsErrors` turned it into a build failure.
+That stopped being true at **WP-52**, which made `FlowX.Runtime` read `ExecutionProfile`
+and narrowed `FLOWX1028` to `Streaming`. The option is still not offered, for a reason
+that outlived the old one.*
+
+Durability is opted into by **registering stores**, not by an attribute: a `Durable` flow
+on a host with no journal and no lease store is refused before its first step with
+`flow.durability_not_configured`. The only journal that ships is `plugins/FlowX.Postgres`.
+So `--profile durable` would have to scaffold a connection string, a migration step and a
+running PostgreSQL into the one command whose whole value is that `dotnet run` works — or
+scaffold the attribute alone and hand a new user a project that compiles and cannot serve a
+request. Neither is a template.
 
 `--transport` has one value. `plugins/` contains `FlowX.Http` and nothing else.
 

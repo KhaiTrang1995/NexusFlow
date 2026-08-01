@@ -24,7 +24,7 @@
 > without being made fast. See
 > [§5d](#5d-p2--durable-execution--nearly-complete-and-entirely-unmeasured).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 1706/1706 passing (a large share against a live
+> **Build:** 0 warnings, 0 errors · **Tests:** 1707/1707 passing (a large share against a live
 > PostgreSQL 16.13 and Redis 7.0.15; 0 skipped). Without `FLOWX_POSTGRES_CONNECTION` the adapter suite skips
 > 79 with reasons; set to an unreachable server it **fails 80 and skips none**, on purpose ·
 > **Coverage:** **83.9 % line / 77.6 % branch** over `src/` and `plugins/`, measured
@@ -460,9 +460,13 @@ forbids, so the documented shape was corrected rather than faked. `AwaitSignal` 
 `FLOWX1007`–`FLOWX1009`, `FLOWX1012`, four of them blocked on *severity* and not on
 analysis), three blocked fitness functions (`CrossTenantAccessIsDenied`,
 `RedactionCannotBeBypassed`, `PluginsPassConformance`), and the build-overhead exception.
-`dotnet new flowx`, unshipped since P0 and carried twice, **is being attempted in the
-current round** — until it lands, `docs/19-SDK.md` and `docs/03 §12` still describe a
-command that does not run. See
+`dotnet new flowx` **has shipped**, and this paragraph said otherwise for longer than the
+command was actually missing. *It read "unshipped since P0 and carried twice, is being
+attempted in the current round".* It scaffolds, builds at **0 warnings**, serves a request,
+and returns an RFC 7807 body for a rejected one. **What was missing was the gate:**
+`templates/README.md` called `verify.sh` "the acceptance test, and what CI should run", and
+CI never ran it — so the template could have rotted silently at any point. A `template` job
+now runs it. `docs/19-SDK.md` and `docs/03 §12` are corrected. See
 [§5d](#5d-p2--durable-execution--nearly-complete-and-entirely-unmeasured) and [PLAN §5](PLAN.md#5-p2--durable-execution).
 
 - [x] **WP-15** The branching DSL — **`When` / `Otherwise` done** through builder, model,
