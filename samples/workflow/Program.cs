@@ -1,4 +1,3 @@
-using System.Text.Json;
 using FlowX;
 using FlowX.Generated;
 using FlowX.Hosting;
@@ -93,115 +92,27 @@ app.MapHealthChecks("/health");
 // Every endpoint this application declares, generated from the [HttpTrigger] on the flow that
 // declares it. `workspace.provision` has no trigger and therefore no route: it is reached by
 // being composed, which is the whole difference between a flow and an endpoint.
+//
+// `offer.accept` publishes two of them, and until WP-64 it published none. It suspends, and
+// the generated endpoint answered 200 with the flow's projected output — which a suspended
+// flow does not have, because its `.Return(...)` reads values the steps after the wait were
+// going to produce. So it carried no [HttpTrigger] and this file mapped two routes by hand,
+// with a `RequestDelegate` because minimal-API delegate binding reflects over handler
+// parameters and constraint C2 forbids it.
+//
+// Both routes are generated now (ADR-0022):
+//
+//   POST /api/v1/offers
+//        -> 202 { instanceId, status: "suspended", awaiting: [ { signal, deliverTo } ] }
+//           and a Location header, because this flow declares exactly one wait
+//
+//   POST /api/v1/offers/{instanceId:guid}/signals/offer.countersigned
+//        -> 202 { instanceId, status: "completed" }
+//
+// The identity in the second route is read off the flow's own `.AwaitSignal<T>` call, so
+// `Signals.OfferCountersigned` is now a constant this application uses to *send* against a
+// route the compiler wrote — which is exactly what
+// `SuspensionTests.TheSignalIdentityThisApplicationSendsIsTheOneThePlanWaitsFor` checks.
 app.MapFlowX();
-
-// ---------------------------------------------------------------------------------------
-// offer.accept — the two routes a flow that waits needs, and why they are hand-written
-// ---------------------------------------------------------------------------------------
-//
-// `MapFlowX` generates an endpoint per [HttpTrigger] and answers 200 with the flow's
-// projected output. A flow that suspends has no output to project — its `.Return(...)` reads
-// values the steps after the wait were going to produce — and the answer that shape needs is
-// 202 with the instance id, so that the caller can address the countersignature to it. The
-// HTTP plugin has no 202 path yet, which is why `offer.accept` declares no [HttpTrigger] and
-// these two routes are here instead. It is a gap in the transport, named in the README.
-//
-// Everything below the two `host` calls is the real runtime: the same FlowHost, the same
-// lease, the same journal, the same step loop. Delivering a signal is `ResumeAsync` carrying
-// a value — the call FlowRecoveryScan already makes — and not a second way of running a flow.
-
-// `Map` with a RequestDelegate rather than `MapPost` with a bound handler, for the reason
-// FlowEndpointExtensions gives: minimal-API delegate binding reflects over the handler's
-// parameters, which constraint C2 forbids. A RequestDelegate plus the generated
-// JsonTypeInfo does the same job with no reflection at all.
-app.Map("/api/v1/offers", async (HttpContext http) =>
-{
-    var offer = await JsonSerializer
-        .DeserializeAsync(http.Request.Body, WorkflowJsonContext.Default.OfferToAccept, http.RequestAborted)
-        .ConfigureAwait(false);
-
-    if (offer is null)
-    {
-        http.Response.StatusCode = StatusCodes.Status400BadRequest;
-        return;
-    }
-
-    var host = http.RequestServices.GetRequiredService<FlowHost>();
-    var dispatcher = http.RequestServices.GetRequiredService<AcceptOfferFlow.Dispatcher>();
-
-    var result = await host.RunAsync(
-            AcceptOfferFlow.Plan,
-            dispatcher,
-            new FlowInvocation(http.TraceIdentifier, offer.CandidateId),
-            offer,
-            AcceptOfferFlow.Projection,
-            http.RequestAborted)
-        .ConfigureAwait(false);
-
-    if (result.IsSuspended)
-    {
-        // The whole point of the sample. The offer has gone out, the instance is one row in
-        // the journal, and this process is holding nothing on its behalf — no thread, no
-        // pooled context, no lease.
-        http.Response.StatusCode = StatusCodes.Status202Accepted;
-        http.Response.ContentType = "application/json";
-
-        await JsonSerializer.SerializeAsync(
-                http.Response.Body,
-                new OfferPending(result.InstanceId!.Value, Signals.OfferCountersigned),
-                WorkflowJsonContext.Default.OfferPending,
-                http.RequestAborted)
-            .ConfigureAwait(false);
-
-        return;
-    }
-
-    http.Response.StatusCode = result.IsSuccess
-        ? StatusCodes.Status200OK
-        : StatusCodes.Status409Conflict;
-}).WithMetadata(new HttpMethodMetadata(["POST"]));
-
-// The signal endpoint, shaped the way `docs/06-Execution-Engine.md §6` draws it: the instance
-// in the path, the signal's identity in the path, and the payload in the body. The identity is
-// what the plan carries, so a transport can route a signal without knowing a contract type.
-app.Map("/api/v1/offers/{instanceId:guid}/signals/{signalType}", async (HttpContext http) =>
-{
-    if (!Guid.TryParse((string?)http.Request.RouteValues["instanceId"], out var instanceId) ||
-        !string.Equals(
-            (string?)http.Request.RouteValues["signalType"],
-            Signals.OfferCountersigned,
-            StringComparison.Ordinal))
-    {
-        http.Response.StatusCode = StatusCodes.Status404NotFound;
-        return;
-    }
-
-    var signed = await JsonSerializer
-        .DeserializeAsync(
-            http.Request.Body, WorkflowJsonContext.Default.OfferCountersigned, http.RequestAborted)
-        .ConfigureAwait(false);
-
-    if (signed is null)
-    {
-        http.Response.StatusCode = StatusCodes.Status400BadRequest;
-        return;
-    }
-
-    var host = http.RequestServices.GetRequiredService<FlowHost>();
-    var dispatcher = http.RequestServices.GetRequiredService<AcceptOfferFlow.Dispatcher>();
-
-    // The same call FlowRecoveryScan makes to pick up an instance a dead node left behind,
-    // carrying a value. There is no second resume path.
-    var result = await host.SignalAsync(
-            instanceId,
-            new FlowRegistration(AcceptOfferFlow.Plan, dispatcher),
-            FlowSignal.Of(Signals.OfferCountersigned, signed),
-            http.RequestAborted)
-        .ConfigureAwait(false);
-
-    http.Response.StatusCode = result.IsSuccess
-        ? StatusCodes.Status200OK
-        : StatusCodes.Status409Conflict;
-}).WithMetadata(new HttpMethodMetadata(["POST"]));
 
 await app.RunAsync().ConfigureAwait(false);

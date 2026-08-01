@@ -209,24 +209,110 @@ public static class EndpointEmitter
             endpoint.FlowId + "</c>, through the given serialiser.</summary>");
         writer.Line("/// <param name=\"endpoints\">The route builder.</param>");
         writer.Line("/// <param name=\"json\">A context declaring both of this flow's contracts.</param>");
+
+        if (endpoint.Signals.Count > 0)
+        {
+            writer.Line("/// <remarks>");
+            writer.Line("/// This flow suspends, so it publishes more than one route: the one above, which");
+            writer.Line("/// answers <c>202</c> when the flow stops at a wait, and one per signal that");
+            writer.Line("/// continues it. The returned builder covers all of them, so a convention applied");
+            writer.Line("/// here — authorisation, rate limiting, CORS — reaches the delivery routes too.");
+            writer.Line("/// </remarks>");
+        }
+
         writer.Line("public static " + ConventionBuilder + " " + endpoint.MethodName + "(");
         writer.Line("    this " + RouteBuilder + " endpoints,");
-        writer.Line("    " + JsonContext + " json) =>");
+        writer.Line("    " + JsonContext + " json)" + (endpoint.Signals.Count > 0 ? string.Empty : " =>"));
+
+        if (endpoint.Signals.Count > 0)
+        {
+            writer.OpenBrace();
+            writer.Line("var flow =");
+        }
+
+        EmitRunEndpoint(writer, endpoint, flow);
+
+        if (endpoint.Signals.Count == 0)
+        {
+            return;
+        }
+
+        var names = new List<string> { "flow" };
+
+        for (var i = 0; i < endpoint.Signals.Count; i++)
+        {
+            var signal = endpoint.Signals[i];
+            var name = "signal" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            names.Add(name);
+
+            writer.Line();
+            writer.Line("var " + name + " =");
+            writer.Line(
+                "    global::FlowX.Http.FlowEndpointExtensions.MapFlowSignal<global::" +
+                signal.ContractTypeName + ">(");
+            writer.Line("        endpoints,");
+            writer.Line("        " + Quote(endpoint.Method) + ",");
+            writer.Line("        " + Quote(SignalRoute(endpoint.Route, signal.SignalType)) + ",");
+            writer.Line("        " + Quote(signal.SignalType) + ",");
+            writer.Line("        " + flow + ".Plan,");
+            writer.Line("        static services => global::Microsoft.Extensions.DependencyInjection");
+            writer.Line("            .ServiceProviderServiceExtensions");
+            writer.Line("            .GetRequiredService<" + flow + ".Dispatcher>(services),");
+            writer.Line("        json);");
+        }
+
+        writer.Line();
         writer.Line(
-            "    global::FlowX.Http.FlowEndpointExtensions.MapFlow<global::" + endpoint.InputTypeName +
+            "return global::FlowX.Http.FlowEndpointExtensions.Together(" +
+            string.Join(", ", names) + ");");
+        writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// The route one signal is delivered on: the flow's own route, the instance, the identity.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Derived from the run route rather than declared anywhere, so a caller who knows where to
+    /// start a flow can construct where to continue it — and so the <c>deliverTo</c> the
+    /// <c>202</c> hands back is the same string as the route registered here, by construction
+    /// rather than by agreement. <c>SuspensionJson.DeliveryPath</c> is the other end of that,
+    /// and neither of them is the copy.
+    /// </para>
+    /// <para>
+    /// The identity is a literal segment, so an identity nothing waits for is answered by the
+    /// router with a <c>404</c> before any code runs. <c>{instanceId:guid}</c> is the only
+    /// parameter, so an id that is not a GUID is answered the same way.
+    /// </para>
+    /// </remarks>
+    private static string SignalRoute(string route, string signalType) =>
+        route.TrimEnd('/') + "/{instanceId:guid}/signals/" + signalType;
+
+    /// <summary>
+    /// The <c>MapFlow</c> call itself, indented one level whether it is an
+    /// expression body or the first statement of a block.
+    /// </summary>
+    private static void EmitRunEndpoint(SourceWriter writer, HttpEndpointModel endpoint, string flow)
+    {
+        const string indent = "    ";
+
+        writer.Line(
+            indent + "global::FlowX.Http.FlowEndpointExtensions.MapFlow<global::" + endpoint.InputTypeName +
             ", global::" + endpoint.OutputTypeName + ">(");
-        writer.Line("        endpoints,");
-        writer.Line("        " + Quote(endpoint.Method) + ",");
-        writer.Line("        " + Quote(endpoint.Route) + ",");
-        writer.Line("        " + flow + ".Plan,");
-        writer.Line("        static services => global::Microsoft.Extensions.DependencyInjection");
-        writer.Line("            .ServiceProviderServiceExtensions");
-        writer.Line("            .GetRequiredService<" + flow + ".Dispatcher>(services),");
-        writer.Line("        " + flow + ".Projection,");
-        writer.Line("        json,");
+        writer.Line(indent + "    endpoints,");
+        writer.Line(indent + "    " + Quote(endpoint.Method) + ",");
+        writer.Line(indent + "    " + Quote(endpoint.Route) + ",");
+        writer.Line(indent + "    " + flow + ".Plan,");
+        writer.Line(indent + "    static services => global::Microsoft.Extensions.DependencyInjection");
+        writer.Line(indent + "        .ServiceProviderServiceExtensions");
+        writer.Line(indent + "        .GetRequiredService<" + flow + ".Dispatcher>(services),");
+        writer.Line(indent + "    " + flow + ".Projection,");
+        writer.Line(indent + "    json,");
         writer.Line(
-            "        requireIdempotencyKey: " + (endpoint.RequiresIdempotencyKey ? "true" : "false") + ",");
-        writer.Line("        sensitiveMembers: " + flow + ".SensitiveMembers);");
+            indent + "    requireIdempotencyKey: " +
+            (endpoint.RequiresIdempotencyKey ? "true" : "false") + ",");
+        writer.Line(indent + "    sensitiveMembers: " + flow + ".SensitiveMembers);");
     }
 
     private static string Quote(string value) =>
