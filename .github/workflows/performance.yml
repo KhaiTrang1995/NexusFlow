@@ -390,3 +390,59 @@ jobs:
             exit 1
           fi
           echo "Gate correctly rejected the injected regression."
+
+      - name: A run that measured nothing must be rejected as absent, not as a crash
+        # The other failure mode, found on 2026-08-01 by running the benchmarks with a
+        # duplicate .csproj on disk: BenchmarkDotNet exports a benchmark it could not
+        # run with a null Statistics rather than omitting it. The gate did reject such
+        # a run — but by raising TypeError inside a dict comprehension, so the log said
+        # the script was broken and not that nothing had been measured. This asserts
+        # both halves: non-zero exit, and the benchmark named as absent.
+        run: |
+          python3 - <<'PY'
+          import json, os
+          os.makedirs('/tmp/unmeasured/results', exist_ok=True)
+          baseline = json.load(open('docs/benchmarks/baseline.json'))
+          by_type = {}
+          for name, entry in baseline['benchmarks'].items():
+              type_name, method = name.rsplit('.', 1)
+              # Every benchmark in one type fails to run; the rest measure cleanly, so
+              # the gate has to keep reporting the good ones while blocking on these.
+              failed = type_name == 'EngineBenchmarks'
+              by_type.setdefault(type_name, []).append({
+                  'Type': type_name,
+                  'Method': method,
+                  'Statistics': None if failed else {
+                      'Mean': entry['absoluteNs'],
+                      'Percentiles': {'P95': entry['absoluteNs'] * 1.02},
+                  },
+                  'Memory': None if failed else {
+                      'BytesAllocatedPerOperation': entry['allocatedBytes'],
+                  },
+              })
+          for type_name, group in by_type.items():
+              path = f"/tmp/unmeasured/results/{type_name}-report-full.json"
+              json.dump({'Benchmarks': group}, open(path, 'w'))
+          PY
+
+          set +e
+          output=$(python3 scripts/check-benchmark-budgets.py /tmp/unmeasured 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+
+          if [ "$status" -eq 0 ]; then
+            echo "::error::The gate accepted a run in which no engine benchmark was measured."
+            exit 1
+          fi
+
+          if echo "$output" | grep -q 'Traceback'; then
+            echo "::error::The gate rejected the run by crashing rather than by reporting it."
+            exit 1
+          fi
+
+          if ! echo "$output" | grep -q 'EngineBenchmarks.SagaFailure: in the baseline but absent'; then
+            echo "::error::The gate did not name the unmeasured benchmark as absent."
+            exit 1
+          fi
+          echo "Gate correctly reported the unmeasured benchmarks as absent."

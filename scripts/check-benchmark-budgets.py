@@ -62,7 +62,25 @@ def load_results(artifacts_dir: str) -> dict[str, dict]:
         with open(path, encoding="utf-8") as handle:
             document = json.load(handle)
 
-        benchmarks = document.get("Benchmarks", [])
+        # A benchmark BenchmarkDotNet could not run is exported with a null Statistics
+        # rather than omitted, so reading b["Statistics"]["Mean"] straight out crashes
+        # with "'NoneType' object is not subscriptable" and a traceback that names the
+        # dict comprehension instead of the run. The gate did fail — it has never been
+        # able to pass a run that measured nothing — but it failed as a Python error,
+        # and an operator reading the log learned the script broke rather than that
+        # the benchmarks did not execute. Dropping the unmeasured ones here hands them
+        # to check(), which reports each one as "in the baseline but absent from this
+        # run" and blocks. Same verdict, stated in the vocabulary of the gate.
+        benchmarks = [b for b in document.get("Benchmarks", []) if b.get("Statistics")]
+        unmeasured = len(document.get("Benchmarks", [])) - len(benchmarks)
+
+        if unmeasured:
+            print(
+                f"::warning::{os.path.basename(path)}: {unmeasured} benchmark(s) produced "
+                "no measurement. BenchmarkDotNet failed to run them; see the run log for "
+                "the build or toolchain error."
+            )
+
         means = {b["Method"]: b["Statistics"]["Mean"] for b in benchmarks}
         fastest = min(means.values()) if means else 1.0
 

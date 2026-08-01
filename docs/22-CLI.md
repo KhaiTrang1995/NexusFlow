@@ -14,7 +14,7 @@ deliberately: it consumes the manifest exactly as a third-party tool would, whic
 strongest available evidence that the document is genuinely self-describing rather than
 only usable from inside this repository
 ([ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md)). The architecture test
-`CliDependsOnNothingButTheManifest` holds that line, and still does —
+`CliLinksNoFlowXAssembly` holds that line, and still does —
 [ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md) widened the tool's *inputs*
 without weakening its *links*, which is the distinction [§8](#8-flowx-replay-and-the-fitness-function--decided)
 is about.
@@ -406,7 +406,7 @@ wrapper and one that wants it advisory runs it in a step allowed to fail. There 
 
 Every input the rule needs is already published: the profile, each step's kind, and the
 compensation registered against a step. So the check costs no new contract, needs no
-assembly and keeps `CliDependsOnNothingButTheManifest` green.
+assembly and keeps `CliLinksNoFlowXAssembly` green.
 
 It also reads `Delay` — a step kind `flowx.manifest.schema.json` defines and this
 repository's generator has no case for yet. That is the correct way round. The CLI is a
@@ -424,11 +424,17 @@ check is already right.
 **Neither of the two resolutions this section sketched was taken whole**, and the reason
 is that the audit it recorded was right about the rule and wrong about the journal.
 
-Right about the rule: `CliDependsOnNothingButTheManifest` asserts that `FlowX.Cli.csproj`
+Right about the rule: `CliLinksNoFlowXAssembly` asserts that `FlowX.Cli.csproj`
 has no `ProjectReference`, and it counts links rather than inputs. Reading a journal as
 **data** leaves it green untouched. So no amendment was forced, and none was made — the
 test stands exactly as written. `Npgsql` is a `PackageReference`, the same kind of
 dependency `System.Reflection.MetadataLoadContext` already was.
+
+That test was called `CliDependsOnNothingButTheManifest` until the rename ADR-0020's
+owed-work list asked for. The old name claimed more than the assertion checked — it named
+one input for a tool that has always read two, since `flowx manifest --assembly` reads a
+built assembly — and that gap is what let a *link* rule be reported as colliding with a new
+*input*. The assertion never moved.
 
 Wrong about the journal: publishing a `flowx.journal.schema.json` was the other half of
 the sketch, and it does not fit what a journal is. A JSON Schema describes a *document*,
@@ -453,7 +459,7 @@ Three things changed as a result, and one thing deliberately did not:
 | §1's prose | widened. "Reads the manifest and nothing else" was already false of `flowx manifest --assembly`; it is now stated as *reads published contracts and links no FlowX assembly* |
 | Exit codes | gained `4`, because a store read can fail in a way a file read cannot |
 | A new assertion | `EveryVerbButReplayRunsWithNoStore`. "The CLI runs against an artifact with no database" was one of three properties resting on the rule's *name* and the only one it never asserted — true because no verb had needed a store. It is checked now |
-| The fitness function | **unchanged**. Its name overclaims and is now one step further from what it asserts; `CliLinksNoFlowXAssembly` is the name it should have, and renaming it is owed work recorded in ADR-0020 rather than smuggled in on a feature branch |
+| The fitness function | **unchanged in body, renamed since**. Its name overclaimed and WP-64 put it one step further from what it asserts; the rename to `CliLinksNoFlowXAssembly` was recorded as owed work in ADR-0020 rather than smuggled in on this feature branch, and was carried out on 2026-08-01 together with the six documents citing it |
 
 **What is not decided.** `simulate`, `resume` and `fork` all execute, and ADR-0020's
 argument reaches none of them — reading rows needs no engine and that is the whole of why

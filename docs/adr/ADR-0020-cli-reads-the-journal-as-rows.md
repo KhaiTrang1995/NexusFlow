@@ -13,20 +13,28 @@
 > legal, and [§5](#5-what-this-record-does-not-decide) says why that is a property of the
 > decision rather than an omission from it.
 
+> **The rule this record argues about has since been renamed, exactly as
+> [§Owed work](#owed-work-named-so-it-is-not-lost) item 1 asked.** The fitness test in
+> `tests/FlowX.Architecture.Tests/DependencyRuleTests.cs` is now
+> `CliLinksNoFlowXAssembly`. Where the old name `CliDependsOnNothingButTheManifest` still
+> appears below it is being *quoted* rather than used — §1 and §2 are an argument about that
+> name, and rewriting them would delete the argument.
+
 ## Context
 
 [PLAN WP-64](../../PLAN.md) states the conflict rather than leaving it to be discovered:
-`CliDependsOnNothingButTheManifest` is a green fitness function, `flowx replay` reads a
-journal, and one of the two has to give. [22-CLI §8](../22-CLI.md#8-flowx-replay-against-the-fitness-function--a-finding-not-a-decision)
+`CliLinksNoFlowXAssembly` — then still named `CliDependsOnNothingButTheManifest` — is a
+green fitness function, `flowx replay` reads a journal, and one of the two has to give. [22-CLI §8](../22-CLI.md#8-flowx-replay-and-the-fitness-function--decided)
 narrows it to two resolutions — publish a `flowx.journal.schema.json` beside the manifest's
 and make `replay` a second *document* consumer, or amend the fitness function by ADR — and
 says explicitly that choosing between them is not that page's call.
 
 ### 1. What the rule protects, separated from what its name says
 
-`CliDependsOnNothingButTheManifest` asserts one thing: `FlowX.Cli.csproj` has no
-`ProjectReference`. It counts links, not inputs. Three properties have been resting on it,
-and they are not equally well supported.
+The rule asserts one thing: `FlowX.Cli.csproj` has no `ProjectReference`. It counts links,
+not inputs. Three properties have been resting on it, and they are not equally well
+supported. (It was called `CliDependsOnNothingButTheManifest` when this was written, which
+is the gap §2 is about; it is now named for what it asserts.)
 
 | Property | Held by the assertion? |
 |---|---|
@@ -102,7 +110,7 @@ Rejected for §3: it would freeze a live store shape that is still on migration 
 would publish a schema for a document nothing writes. The journal's contract is its DDL,
 and that is already published (§4).
 
-### 2. `CliDependsOnNothingButTheManifest` is **not** amended
+### 2. `CliLinksNoFlowXAssembly` is **not** amended
 
 It stays exactly as written and stays green. Nothing forces the amendment: the rule counts
 `ProjectReference` items, a data read adds none, and `Npgsql` is a `PackageReference` — the
@@ -113,8 +121,9 @@ evidence for no gain. What is true is that its **name** now overclaims further t
 because a second input has been added and the name mentions one. The name is left wrong for
 one round rather than fixed here: it lives in `tests/FlowX.Architecture.Tests`, this package
 does not own that project, and a rename is a mechanical change that should not ride in on a
-feature branch. `CliLinksNoFlowXAssembly` is the name it should have, and §6 records that as
-owed.
+feature branch. `CliLinksNoFlowXAssembly` is the name it should have, and
+[the owed-work list](#owed-work-named-so-it-is-not-lost) records it as owed. *That rename
+has since been made; the assertion is unchanged.*
 
 ### 3. The invariant the name was hiding gets its own assertion
 
@@ -177,13 +186,19 @@ to, or accepting that three of the four modes are not CLI verbs at all.
   ADO.NET surface is the trim- and AOT-safe half of the library — the same subset
   `FlowX.Postgres` restricts itself to — so constraint C2 is unaffected.
 - `CliDependsOnNothingButTheManifest` is left carrying a name that is further from its
-  assertion than it was. Recorded as owed work below rather than fixed quietly.
+  assertion than it was. Recorded as owed work below rather than fixed quietly. *Since
+  closed — see item 1.*
 
 **Owed work, named so it is not lost**
 
-1. Rename `CliDependsOnNothingButTheManifest` to `CliLinksNoFlowXAssembly` in
+1. ~~Rename `CliDependsOnNothingButTheManifest` to `CliLinksNoFlowXAssembly` in
    `tests/FlowX.Architecture.Tests/DependencyRuleTests.cs`, and update the six documents that
-   cite it by name. Mechanical; owned by whoever next touches that project.
+   cite it by name. Mechanical; owned by whoever next touches that project.~~ **Done.** The
+   test is `CliLinksNoFlowXAssembly`; its assertion, its subject and its failure message's
+   substance are unchanged, and the message now states that the rule counts project links
+   rather than package inputs, so the gap that produced the collision warning in the plan
+   cannot be re-read out of a failing gate. Struck rather than deleted, because the reason
+   the rename was owed is the argument in §1 and §2 and a reader should be able to reach it.
 2. `docs/22-CLI.md` §1's *"reads `flowx.manifest.json` and nothing else"* is widened by this
    record, and §8 is superseded by it. Both are edited in the commit that carries this ADR.
 

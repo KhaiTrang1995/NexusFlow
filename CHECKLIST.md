@@ -4,9 +4,10 @@
 > "where is this project actually at?" — the [plan](PLAN.md) says what to build,
 > this says what is built.
 >
-> **Last updated:** 2026-07-31 · **Phase:** **P0 complete · P1 closed with one accepted
-> exception → P2 in progress: WP-51, WP-52, WP-53, WP-55 and WP-58 landed, WP-50 still not
-> started** · **Commit:** see `git log`
+> **Last updated:** 2026-08-01 · **Phase:** **P0 complete · P1 closed with one accepted
+> exception → P2 in progress: every package except WP-59, WP-62 and WP-63 has landed at
+> least in part; WP-64 landed whole, and WP-50 landed its chaos rig without B7 or B8** ·
+> **Commit:** see `git log`
 >
 > **Durable execution runs against a real database, and is not yet end to end.** WP-52 made
 > `FlowX.Runtime` read `ExecutionProfile`: a `Durable` flow journals one row per
@@ -17,16 +18,35 @@
 > clauses of ADR-0015 that a dictionary could not have,
 > [ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md).
 >
-> **What is still missing is not small:** the transactional outbox (WP-56), `AwaitSignal`
-> and durable suspension (WP-63), Redis (WP-54), and — the one that matters most for a
-> claim about durability — **both durability budgets are unreported rather than passed**,
-> because WP-50, the benchmark harness, has not started. A journal has been made correct
-> without being made fast. See
-> [§5d](#5d-p2--durable-execution--nearly-complete-and-entirely-unmeasured).
+> **A rig has now killed real processes, and it is not a gate.** WP-50 built
+> `tests/FlowX.Chaos`: worker processes `SIGKILL`ed at a step boundary chosen so a step's
+> effect has happened and its commit has not, against a shared PostgreSQL. At **10 000
+> flows per arm and 97 kills per arm** it recorded **0 duplicate effects against the
+> guarantee, 0 lost instances, 0 orphan effects and 0 instances run by two live nodes** —
+> QR2's two correctness clauses, at QR2's own scale. **It runs on demand and nothing runs it
+> in CI**, so those clauses are *measured*, not *enforced by a check that can fail*; putting
+> the run on a nightly schedule is WP-62 and is not started. Record:
+> [docs/benchmarks/QR2-chaos.md](docs/benchmarks/QR2-chaos.md).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 1868/1868 passing (a large share against a live
-> PostgreSQL 16.13 and Redis 7.0.15; 0 skipped). Without `FLOWX_POSTGRES_CONNECTION` the adapter suite skips
-> 79 with reasons; set to an unreachable server it **fails 80 and skips none**, on purpose ·
+> **What is still missing is not small:** `AwaitSignal` and durable suspension (WP-63),
+> `FLOWX1006` (WP-59), QR2 in CI (WP-62), and — the one that matters most for a claim about
+> durability — **both durability budgets are still unreported rather than passed**. *This
+> paragraph said that was "because WP-50, the benchmark harness, has not started", and also
+> listed the outbox (WP-56) and Redis (WP-54) as missing; all three clauses expired.* WP-56
+> and WP-54 shipped on 2026-07-31, and WP-50 shipped one of the three items in its
+> deliverable row: the rig, not `JournalBenchmarks`. A journal has been made correct without
+> being made fast. See
+> [§5d](#5d-p2--durable-execution--nearly-complete-qr2-measured-on-demand-b7-and-b8-not-at-all).
+>
+> **Build:** 0 warnings, 0 errors · **Tests:** **1887/1887 passing across 16 assemblies**
+> (a large share against a live PostgreSQL 16.13 and Redis 7.0.15; **0 failed, 0 skipped**).
+> Without `FLOWX_POSTGRES_CONNECTION` the adapter suite skips **113 of its 120 with
+> reasons**; set to an unreachable server it **fails 114 and skips none**, on purpose.
+> *Those two figures read 79 and 80 until 2026-08-01: the suite grew and nobody re-ran the
+> probes. Both are re-measured rather than annotated.*
+> **The chaos rig is not in the 1887 and must not be** — `tests/FlowX.Chaos` is an `Exe`,
+> not a test project, so the ordinary suite is unchanged by it; it kills processes, and one
+> recorded run took 328 s and spawned 203 children ·
 > **Coverage:** **83.9 % line / 77.6 % branch** over `src/` and `plugins/`, measured
 > 2026-07-31 with a live PostgreSQL. *This line read 94.0 / 87.0 for several phases. That
 > figure was not re-measured as the codebase grew and was overstated by about ten points;
@@ -85,14 +105,18 @@ What changed is that it is no longer tracked as a blocker.*
 ## 1. Documentation
 
 - [x] 20 specification documents, `docs/01` – `docs/20`
-- [~] **16 ADRs** with trade-offs stated. *This line said "15 ADRs … ADR-0014 and ADR-0015
-      are **Proposed**" and was wrong twice: ADR-0016 was uncounted, and ADR-0015 became
-      **Accepted** at WP-53 — which this file records correctly 800 lines further down. A
-      count and a status, both wrong, both ticked `[x]`.* **[ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)
-      is the only one still Proposed**, and it is `[~]` rather than `[x]` because three of
-      the sixteen do not meet the [index's own template rule](docs/adr/README.md):
-      **ADR-0013** has no `Revisit when`, **ADR-0016** has no `Negative` section, and
-      **ADR-0014** has no `Context` heading. See [PLAN open item 11](PLAN.md#9-open-items-blocking-the-plan)
+- [~] **20 ADRs** with trade-offs stated, `ADR-0001` – `ADR-0020`. *This line said "15 ADRs
+      … ADR-0014 and ADR-0015 are **Proposed**" and was wrong twice: ADR-0016 was uncounted,
+      and ADR-0015 became **Accepted** at WP-53 — which this file records correctly 800 lines
+      further down. A count and a status, both wrong, both ticked `[x]`. It then read "16"
+      through ADR-0017, ADR-0018, ADR-0019 and ADR-0020; a count that is only corrected when
+      somebody notices is not a count.* **[ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)
+      is the only one still Proposed**, and it is `[~]` rather than `[x]` because **one** of
+      the twenty does not meet the [index's own template rule](docs/adr/README.md):
+      **ADR-0014** has no `Context` heading — its §1 does that work under another name.
+      *Two of the three named here have since been fixed and this line did not say so:
+      **ADR-0013** gained a `Revisit when` and **ADR-0016** a `Negative` section, both on
+      2026-07-31.* See [PLAN open item 11](PLAN.md#9-open-items-blocking-the-plan)
 - [x] `docs/diagnostics/` — 23 pages plus an index, one per raised diagnostic; every help
       URI resolves, asserted by test
 - [x] `docs/benchmarks/` — baseline, gate policy, and the honest caveats
@@ -221,7 +245,7 @@ than only in a footnote.
 - [x] `EverySourceProjectIsCoveredByTheLayeringRule` — a rule with a hand-maintained
       subject list needs a rule about the list
 - [x] `RuntimeDoesNotReferenceAnyPlugin`
-- [x] `CliDependsOnNothingButTheManifest`
+- [x] `CliLinksNoFlowXAssembly` — called `CliDependsOnNothingButTheManifest` until 2026-08-01
 - [x] `RoslynComponentsReferenceNoRuntimeAssemblies`
 - [x] `EveryShippedRuntimeProjectIsAotAnalyzed` — exempts Roslyn components
 - [x] `RoslynComponentsTargetNetStandard20`
@@ -467,7 +491,7 @@ and returns an RFC 7807 body for a rejected one. **What was missing was the gate
 `templates/README.md` called `verify.sh` "the acceptance test, and what CI should run", and
 CI never ran it — so the template could have rotted silently at any point. A `template` job
 now runs it. `docs/19-SDK.md` and `docs/03 §12` are corrected. See
-[§5d](#5d-p2--durable-execution--nearly-complete-and-entirely-unmeasured) and [PLAN §5](PLAN.md#5-p2--durable-execution).
+[§5d](#5d-p2--durable-execution--nearly-complete-qr2-measured-on-demand-b7-and-b8-not-at-all) and [PLAN §5](PLAN.md#5-p2--durable-execution).
 
 - [x] **WP-15** The branching DSL — **`When` / `Otherwise` done** through builder, model,
       analysis, emission, graph and engine. A conditional compiles into the *same flat
@@ -940,7 +964,7 @@ Three more surfaced while getting the suite green:
 
 ---
 
-## 5d. P2 · Durable execution — **nearly complete, and entirely unmeasured**
+## 5d. P2 · Durable execution — **nearly complete; QR2 measured on demand, B7 and B8 not at all**
 
 Work packages in [PLAN.md §5](PLAN.md#5-p2--durable-execution); the design they are held
 to is [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md), **Accepted at
@@ -960,12 +984,22 @@ exists only in a closing summary is one nobody reads.
 > live. *Each fix made the next defect reachable rather than creating it — the holes were
 > always there and nothing could get to them.*
 >
-> **P2's Must is one package from complete, and none of it is measured.** Of the twelve
-> Must packages, ten have shipped. **WP-50 has not started**, so B7, B8 and the chaos rig do
-> not exist — which is why **WP-62, P2's own Done-when, cannot run**: nothing kills a node,
-> nothing crosses a process boundary, nothing has executed ten thousand of anything. And
-> **WP-59** is the last unwritten one. A phase that is functionally complete and entirely
-> unmeasured is a specific state worth naming rather than averaging away.
+> **P2's Must has two packages nothing has been written for, three that shipped in part,
+> and its correctness clauses are measured while its budgets are not.** Of the **thirteen**
+> numbered Must packages, **eleven have shipped at least in part**; **WP-59 and WP-62** are
+> the two with nothing, and **WP-50, WP-53 and WP-57** are the three carrying a named gap.
+> *This paragraph said "of the twelve Must packages, ten have shipped" — the count was
+> twelve when WP-50..WP-62 is thirteen — and that **WP-50 has not started**, "so B7, B8 and
+> the chaos rig do not exist, which is why WP-62, P2's own Done-when, cannot run: nothing
+> kills a node, nothing crosses a process boundary, nothing has executed ten thousand of
+> anything". **All four of those sentences expired on 2026-08-01**, and one of them was
+> wrong before it did:* the chaos rig exists, kills operating-system processes with
+> `SIGKILL`, and has executed 10 000 flows in each of two arms. **B7 and B8 still do not
+> exist.** And WP-62 was never blocked on the rig alone — its deliverable is *the chaos run
+> in CI, nightly*, which nothing is, so "cannot run" has become "is not scheduled". A phase
+> that is functionally complete, whose correctness is measured by a rig no job runs and
+> whose two latency budgets are measured by nothing at all, is a specific state worth naming
+> rather than averaging away.
 >
 > **Where durability actually is, in one paragraph, because the rest of this file depends
 > on it.** `FlowX.Runtime` reads `ExecutionProfile` (WP-52). A `Durable` flow commits one
@@ -976,10 +1010,15 @@ exists only in a closing summary is one nobody reads.
 > whose lease expired (WP-55); a node that loses its lease stops **without compensating**,
 > because the work belongs to another node now. `plugins/FlowX.Postgres` is a real store
 > (WP-53), and the conformance suite passes against PostgreSQL 16.13 unmodified, from a
-> different assembly. **The outbox, `AwaitSignal` and Redis are not built**, and neither
-> durability budget has been measured. A reader must not conclude durability works end to
-> end — but "nothing has run against a store", which this section said until 2026-07-31, is
-> no longer one of the reasons why.
+> different assembly. **All of that has now been made to happen across a real process
+> boundary under `SIGKILL`** — WP-50's rig runs the shipped `FlowRecoveryScan` in real
+> recovery-node processes against workers the kernel destroys, and nothing in that path is
+> rig-specific. **`AwaitSignal` is not built** (WP-63), and **neither durability budget has
+> been measured**. *This sentence also named the outbox and Redis as not built; WP-56 and
+> WP-54 shipped on 2026-07-31 and the clause was carried a day too long.* A reader must not
+> conclude durability works end to end — but "nothing has run against a store", which this
+> section said until 2026-07-31, and "nothing has killed a process", which it said until
+> 2026-08-01, are no longer among the reasons why.
 
 > **ADR-0015 is Accepted, and the caveat matters more than the status.** Its condition was
 > that the conformance suite hold a *real* implementation to the schema — not the in-memory
@@ -990,24 +1029,72 @@ exists only in a closing summary is one nobody reads.
 > because the lease is taken before the instance row exists; and the state-bag snapshot
 > ADR-0015 names as B8's mitigation had no column saying which commit it came from. Two of
 > the three were in an ERD ADR-0015 already declared superseded; the third was the record
-> contradicting itself. **B7 and B8 are unreported rather than passed** — WP-50 has not
-> started — so a journal has been made correct without being made fast, and that is what
-> Accepted does and does not mean here.
+> contradicting itself. **B7 and B8 are unreported rather than passed** — *this said "WP-50
+> has not started"; WP-50 has since shipped its chaos rig and neither benchmark* — so a
+> journal has been made correct without being made fast, and that is what Accepted does and
+> does not mean here.
 
 **Roadmap Must:**
 
-- [ ] **WP-50** B7, B8 and the QR2 chaos rig — **before** the journal. `JournalBenchmarks`
-      does not exist and neither does a chaos rig; both are named in P2's Must as outcomes
-      and by nothing as tooling. This is B12's lesson applied on time rather than late.
-      **It was not applied on time.** WP-51 landed first, so the baseline WP-53 is to be
-      judged against still does not exist and will be written by someone who already knows
-      what the journal looks like. It must land before **WP-53**, which is a weaker claim
-      than the plan made. **WP-52 has now landed too, so the inversion is complete:** the
-      journal has a step-commit path and nothing measures B7 or B8 against it. The two
-      entries this package was to remove *first* — `JournalBenchmarks` in `14 §8` and the
-      chaos row in `21 §8` — are now the **last** entries left, and their stated reason
-      ("there is no journal") has stopped being true. *(The attribution-guard and DAST repairs were credited to WP-50
+- [~] **WP-50** B7, B8 and the QR2 chaos rig — **one of the three, shipped 2026-08-01.**
+      `[~]` is the whole of this row: **the rig is built; B7 and B8 are not**, and this line
+      must never be read as the package being done. *It read `[ ]` and "`JournalBenchmarks`
+      does not exist and neither does a chaos rig" until 2026-08-01; the second half
+      expired, the first did not.*
+      **What the rig is.** `tests/FlowX.Chaos` is an **`Exe`, not a test project**, so the
+      ordinary suite is unchanged by it. Its coordinator spawns worker and recovery-node
+      processes (`Process.Start`) against a shared PostgreSQL; a worker **kills itself** —
+      `Process.Kill()`, which on Unix is `kill(2)` with `SIGKILL` — at an instruction chosen
+      so a step's effect has happened and the engine's commit has not. On Windows it throws
+      `PlatformNotSupportedException` rather than substituting a graceful stop, because a rig
+      that quietly stops instead of dying is the failure this package exists to prevent.
+      The recovery half is the shipped `FlowHost` + `FlowRecoveryScan` over the real
+      adapters: if this loop recovers an instance, production code recovered it.
+      **Three-way gating, the same discipline as the Postgres suite.** `scripts/run-chaos-qr2.sh`
+      is opt-in on **`FLOWX_CHAOS`**: unset → skip with a reason, **exit 0**; set with no
+      `FLOWX_POSTGRES_CONNECTION` → **fail, exit 1**, because a skip there would report a
+      chaos run that never happened as a green job. `scripts/check-chaos-qr2.py` returns
+      **INCONCLUSIVE (exit 2), never PASS**, when nothing was killed, when no worker exited
+      **137**, when nothing was recovered, or when an arm ran fewer flows than it registered.
+      **This is a rig you run, not a gate that runs**: no CI job invokes either script, so
+      everything it measured is *measured* and none of it is *enforced*. Scheduling it is
+      **WP-62** and is not started.
+      **Two deviations from [PLAN's rows for this package](PLAN.md#wp-50--the-measurements-before-the-thing-they-measure--partially-delivered-the-rig-only).**
+      Its `scripts/chaos-qr2.sh` is `scripts/run-chaos-qr2.sh` plus a Python checker. And the
+      **ephemeral floor was never built**: the Tests-first row asked for a run against the
+      ephemeral engine reporting 10 000 lost instances, the rig has no ephemeral mode and its
+      flow is declared `Durable`, and the INCONCLUSIVE conditions above are what stands in
+      its place — they prove the rig killed something, not that it can see a loss.
+      **The ordering lesson still stands and now has a second example.** WP-51 landed first,
+      so the baseline WP-53 was to be judged against still does not exist and will be written
+      by someone who already knows what the journal looks like; **WP-52 landed too, and so in
+      the end did the rig** — after the thing it measures rather than before it. The entry
+      this package was to remove *first* — `JournalBenchmarks` in `14 §8` — is now the last
+      one left, and its stated reason ("there is no journal") stopped being true two
+      packages ago. *(The attribution-guard and DAST repairs were credited to WP-50
       in `docs/21`; they were not this package's work and the credit is withdrawn.)*
+- [~] **QR2's clauses, measured by that rig and enforced by nothing.** `[~]` because a
+      measurement is not a gate and one row below is an open question, not a pass. Read from
+      [`docs/benchmarks/QR2-chaos.json`](docs/benchmarks/QR2-chaos.json), recorded in
+      [QR2-chaos.md](docs/benchmarks/QR2-chaos.md). Two arms, `before-commit` and
+      `after-commit`, **10 000 flows requested each**, **97 process kills each**, exit codes
+      `{"137": 97, "0": 2}` and `{"137": 97, "0": 3}` — every kill observed as a real
+      `SIGKILL` from outside.
+      **Zero in both arms:** lost instances, duplicates against the guarantee, orphan
+      effects, duplicates between live workers, instances resumed by more than one node.
+      **Not zero, and not a defect:** **260** and **186** duplicate applications, every one
+      of them inside ADR-0006's documented window — the exposure that record stated in
+      advance, not a breach of it. Isolated at concurrency 1
+      ([QR2-chaos-isolated.json](docs/benchmarks/QR2-chaos-isolated.json)), killing after
+      the effect and before the commit gave **exactly 20 duplicates from 20 kills**, and
+      killing after the commit gave **0 from 20**.
+      **Not zero, and an open question:** **61** and **57** instances were claimed by a
+      worker killed before it opened a journal row. Nothing durable existed to lose and no
+      effect was applied, so they are not lost instances — but the rig asked for those flows
+      and they did not run, and closing that window belongs to trigger redelivery rather
+      than to the journal. **This is not a passing row.**
+      **Resume p99 32.860131 s and 32.568505 s** against QR2's 45 s (p50 30.698786 and
+      30.778241). **Measured and reported, not gated** — see the budget table in §6
 - [x] **WP-51** `IFlowJournal`, `ILeaseStore` and the shared conformance suite ADR-0006
       promises. **Shipped, with two deviations from its own row, both recorded rather than
       absorbed.** The contracts are in `src/FlowX.Abstractions/Durability/` — where
@@ -1054,12 +1141,15 @@ exists only in a closing summary is one nobody reads.
       instance-local column, the lease row must be `UPDATE`d and never `DELETE`d or the
       token counter resets under a returning zombie, `duration_ms` overflows as `int` at
       24.8 days, and `CompleteAsync` on an already-terminal instance is a **contract gap**
-      the suite does not specify. **B7 and B8 are unreported**, because WP-50 has not
-      started; the exit criterion asks for an explicit pass or fail and the honest answer is
-      neither yet. Skip behaviour is deliberately three-way: no connection string → every
-      adapter case skips with a reason; a connection string and no server → **59 failures,
-      0 skips**, because a skip would report the suite green against a database never
-      reached; and three always-on tests gate the skip logic itself.
+      the suite does not specify. **B7 and B8 are unreported** — *this said "because WP-50
+      has not started"; WP-50 shipped its chaos rig and neither benchmark, so the reason has
+      changed and the state has not.* The exit criterion asks for an explicit pass or fail
+      and the honest answer is still neither. Skip behaviour is deliberately three-way: no
+      connection string → **113 of 120 skip with a reason**; a connection string and no
+      server → **114 failures, 0 skips**, because a skip would report the suite green
+      against a database never reached; and three always-on tests gate the skip logic
+      itself. *Those two counts read "59 failures, 0 skips" until 2026-08-01; the suite grew
+      and the probe was not re-run. Both figures here were re-measured.*
       **Three gaps found after the merge, by reading the adapter against the documents
       rather than by a test.** One is closed, two stand.
       *Closed:* the adapter implemented **no `IRecoveryIndex`**, so a Postgres-backed host
@@ -1070,7 +1160,9 @@ exists only in a closing summary is one nobody reads.
       `WHERE instance_id = @instance ORDER BY sequence` with no lower bound, so B8's
       mitigation is a column and not yet a shorter scan; and the deliverable row's
       **group-commit batching and `tenant_id` partition key are not built**, which is
-      defensible only because WP-50's absent numbers are the sole rational basis for either
+      defensible only because B7 and B8 are the sole rational basis for either and **WP-50
+      shipped its rig without them** — the rig measures resume latency after a kill, which
+      neither optimisation is aimed at
 - [x] **`IRecoveryIndex` for Postgres** — the class that connects WP-53's store to WP-55's
       scan. Recorded as its own line because it belongs to neither package: both shipped
       complete against their own exit criteria, and the gap was *between* them. A separate
@@ -1207,17 +1299,56 @@ exists only in a closing summary is one nobody reads.
       One runtime change: `FlowExecutionContext.ReplayNondeterminism`, the **read half** of a
       capture that was written and never read. The engine still cannot call it — the loop
       skips a committed step rather than re-running it — so replay is driven from outside the
-      loop, which is WP-64
+      loop, which is WP-64. **WP-64 has since shipped, and it does not use this.**
+      `flowx replay --mode inspect` renders history from the journal *as rows* in a process
+      that links no FlowX assembly, so it cannot call `ReplayNondeterminism` and does not
+      re-execute anything. The only caller is still `ReplayCorpus` in
+      `tests/FlowX.Runtime.Tests`; no shipped code path drives a replay
 - [ ] **WP-62** QR2 — 10 000 flows, `SIGKILL` at every step boundary, zero duplicate
-      non-idempotent effects, zero lost instances, resume p99 ≤ 45 s. P2's Done-when
+      non-idempotent effects, zero lost instances, resume p99 ≤ 45 s. P2's Done-when.
+      **Still `[ ]`, and the reason has to be stated precisely because WP-50's rig makes it
+      look otherwise.** The rig has been **run by hand and its results committed**; this
+      package's deliverable is *the chaos run in CI, nightly*, and no job, schedule or
+      workflow invokes it. **A recorded run is evidence; a nightly job is a check that can
+      fail**, and only the second one closes this row. Its p99 clause is the part that will
+      argue back: 32.9 s and 32.6 s on the recorded run, **48.1 s and 69.9 s on two other
+      runs of the same rig** with every correctness row still zero
+      ([QR2-chaos.md §4.4](docs/benchmarks/QR2-chaos.md#44-the-resume-p99-which-is-measured-and-not-gated))
 
 **Roadmap Should:**
 
 - [ ] **WP-63** `AwaitSignal`, `Delay`, timers. Un-blocks `SubFlowMode.AwaitCompletion`
       and makes `FLOWX1017`'s existing code fix buy something
-- [ ] **WP-64** `flowx replay --mode inspect`. Its exit criterion collides with the green
-      fitness function `CliDependsOnNothingButTheManifest`, which is stated in the plan
-      rather than left to be discovered by whoever writes it
+- [x] **WP-64** `flowx replay --mode inspect` — **shipped 2026-08-01.** The verb renders a
+      durable instance from the journal, reading it **as rows** over the published migration
+      contract through `Npgsql` and joining it against the manifest, which publishes the plan
+      a `step_id` is meaningless without.
+      [ADR-0020](docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md) is the decision, and it
+      **declines to publish `flowx.journal.schema.json`** on three grounds: nothing writes a
+      journal *document*, so the schema would describe a file that does not exist; a manifest
+      freeze is a promise about *code* regenerated on every build while a journal schema is a
+      promise about *data at rest* that no gate here can enforce; and the migrations are on
+      their **fourth** script, so the shape has not stopped moving. A store's published
+      contract is its DDL, and that already ships as reviewable SQL.
+      **This line said the exit criterion "collides with the green fitness function
+      `CliDependsOnNothingButTheManifest`". It does not, and the warning was wrong rather
+      than merely obsolete.** The rule asserts
+      `RepositoryLayout.ProjectReferences(cli).ShouldBeEmpty(...)` —
+      `tests/FlowX.Architecture.Tests/DependencyRuleTests.cs:166` — so it counts **project
+      links, not package inputs**. `Npgsql` is a `PackageReference`, the same kind of
+      dependency `System.Reflection.MetadataLoadContext` already was; it adds no link, the
+      assertion never came near failing, **no fitness function was amended and every
+      architecture gate stayed green**. The warning was read off the rule's *name* instead of
+      its body, which is the part worth keeping rather than deleting.
+      **The invariant that name was hiding is now asserted rather than accidental:**
+      `EveryVerbButReplayRunsWithNoStore` in `tests/FlowX.Cli.Tests` runs `graph`, `manifest`,
+      `diff` and `verify` with no connection string in the environment. The old property was
+      enforced by nobody having tried.
+      **Owed when WP-64 shipped, done on 2026-08-01:** `CliDependsOnNothingButTheManifest`
+      is now **`CliLinksNoFlowXAssembly`**, with the six documents that cite it by name.
+      ADR-0020 recorded it as owed and its owed-work item is struck. It is carried in the
+      fitness-function list below so
+      it is not lost
 
 **Fitness functions P2 changes, and one it does not:**
 
@@ -1227,6 +1358,18 @@ exists only in a closing summary is one nobody reads.
 - [~] `CrossTenantAccessIsDenied` — lost **half** its blocker at WP-52 (the missing
       journal) and stays blocked on P4's policy execution and, for "every trigger kind",
       P3's second transport. It did not become green, and the row in §4 says so
+- [x] `EveryVerbButReplayRunsWithNoStore` — **added at WP-64**, in `tests/FlowX.Cli.Tests`.
+      It asserts what `CliDependsOnNothingButTheManifest`'s *name* implied and its body never
+      checked: `graph`, `manifest`, `diff` and `verify` run with no connection string in the
+      environment. Before WP-64 that held because no verb had needed a store
+- [x] `CliDependsOnNothingButTheManifest` → **`CliLinksNoFlowXAssembly`** — **done
+      2026-08-01.** WP-64 widened the CLI's inputs without touching the rule, which stayed
+      green because it counts `ProjectReference` items and `Npgsql` is a `PackageReference`,
+      leaving the name further from the assertion than it was. Renamed with the six
+      documents that cite it, and the rule's *failure message* now states that it counts
+      project links rather than package inputs — that message is what a future reader
+      believes, and it was the sentence that would have re-created the misreading.
+      ADR-0020's owed-work item is struck, not deleted
 
 ---
 
@@ -1272,7 +1415,7 @@ everything else.*
 | **V1** | ≤ 3 files, ≤ 60 lines for a 4-step flow | **yes** | **no** — a review. Endpoint generation cut the sample from 12 lines to 2 and no assertion noticed the number move |
 | **V2** | HTTP → Kafka, zero logic edits | **no** — one transport | no — WP-71 writes the assertion |
 | **V3** | p99 ≤ 5 µs, ≤ 1 alloc/step | **yes** — 172.3 ns / 0 B | **yes.** The only one of the eight |
-| **V4** | durable checkpoint p99 ≤ 15 ms @ 5 000 flows/s | **unknown** — a journal exists since WP-53; nothing times it | no — WP-50 |
+| **V4** | durable checkpoint p99 ≤ 15 ms @ 5 000 flows/s | **unknown** — a journal exists since WP-53; nothing times it. **WP-50 shipping did not move this row:** its rig times *resume* after a `SIGKILL`, not the *checkpoint commit* this criterion names | no — WP-50's unbuilt half |
 | **V5** | cold start ≤ 200 ms, NativeAOT | **unknown** — the binary links and serves; nothing times it | no — P9 |
 | **V6** | build overhead ≤ 8 % | **no** — +67.1 % | **no, and deliberately.** The job that measures it is advisory by an ADR-0014 commitment; the blocking gate is relative |
 | **V7** | 100 % of flows, capabilities, **policies and events** in the manifest | **partly** — flows and capabilities yes; policies and events neither exist nor are checked | partly — `ManifestIsComplete` covers the half that exists |
@@ -1336,9 +1479,10 @@ noticing.
 | B12 build overhead · **1 flow** | ≤ 8 % | **+0.4 %** ✅ | WP-14, like-for-like sample build |
 | B12 build overhead · **200 flows** — P1's exit criterion | ≤ 8 % | **+67.1 %** ❌ | WP-43. **Accepted exception; P1 closed over it.** 50 flows: +46.5 %. Growth linear, R² 0.994 |
 | Generator cost regression (relative, blocking) | ≤ +2 % | **green** ✅ | WP-31, deterministic allocation proxy. Prints `ABSOLUTE CRITERION — FAIL` on every run, so a pass here is not a met budget |
-| B7 durable step commit | ≤ 15 ms p99 @ 5 000/s | **no harness** | P2 · WP-50 |
-| B8 journal rehydration | ≤ 8 ms p99 | **no harness** | P2 · WP-50 |
-| QR2 chaos: 10 000 flows, `SIGKILL` | 0 duplicate effects, 0 lost | **no rig** | P2 · WP-50 builds it, WP-62 runs it |
+| B7 durable step commit | ≤ 15 ms p99 @ 5 000/s | **no harness** — `JournalBenchmarks` does not exist. WP-50 shipped its rig and not this | P2 · WP-50's unbuilt half |
+| B8 journal rehydration | ≤ 8 ms p99 | **no harness** — same. *These two rows read "P2 · WP-50" as though the whole package were pending; the package is now partial and these are the pending part* | P2 · WP-50's unbuilt half |
+| QR2 chaos · **correctness**: 10 000 flows, `SIGKILL` | 0 duplicate effects against the guarantee, 0 lost | **measured, not gated** — *this row read "no rig"; the rig shipped 2026-08-01.* **0 and 0 in both arms**, at 10 000 flows and 97 real `SIGKILL`s per arm. **No CI job runs it**: `scripts/run-chaos-qr2.sh` is opt-in on `FLOWX_CHAOS`, so nothing here can fail a build | P2 · WP-50 built it, **WP-62 schedules it** |
+| QR2 chaos · **latency**: resume p99 | ≤ 45 s | **measured, not gated** — **32.9 s / 32.6 s** on the recorded run; **48.1 s and 69.9 s on two other runs of the same rig**, correctness zero in all three. The checker prints it and does not fail on it | P2 · [QR2-chaos.md §4.4](docs/benchmarks/QR2-chaos.md#44-the-resume-p99-which-is-measured-and-not-gated) |
 
 ### The architecture's quality goals — [05 §1.2](docs/05-Architecture.md#12-quality-goals-measurable--arc42-12)
 
@@ -1349,7 +1493,7 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | # | Quality goal | Enforced by |
 |---|---|---|
 | **Q1** | predictable low latency | `EngineAllocationTests` (hard zero) + B1/B2. **The only quality goal whose gate has ever failed a build** |
-| **Q2** | durable correctness | conformance suite vs real Postgres, lease, recovery scan. **The measure — p99 ≤ 15 ms — is unmeasured, and the *scenario* has never happened:** nothing has killed a process |
+| **Q2** | durable correctness | conformance suite vs real Postgres, lease, recovery scan. **The measure — p99 ≤ 15 ms — is still unmeasured.** *This cell added "and the scenario has never happened: nothing has killed a process". That expired on 2026-08-01:* WP-50's rig `SIGKILL`s worker processes and found **0 duplicates against the guarantee and 0 lost instances over 10 000 flows per arm**. **It is measured by a rig run on demand, not by a gate that can fail** |
 | **Q3** | static knowability | `ManifestIsComplete`, `flowx diff`, the error catalogue. Same half-gap as V7 — policies and events are unchecked |
 | **Q4** | transport portability | **nothing.** One transport |
 | **Q5** | operational uniformity | **nothing.** No `ActivitySource`, no `Meter`, no exporter (P5) |
@@ -1357,7 +1501,7 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | **Q7** | startup and footprint | **nothing.** Same gap as V5 |
 | **Q8** | multi-tenant isolation | **nothing.** `CrossTenantAccessIsDenied` blocked on P4 and P3 |
 
-### ADR inventory — 19 records, and which carry undischarged obligations
+### ADR inventory — 20 records, and which carry undischarged obligations
 
 | ADR | Status | Revisit trigger | Obligation this file or the plan is missing |
 |---|---|---|---|
@@ -1372,7 +1516,8 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | **0013** DSL vocabulary | Accepted | **has no `Revisit when`** | violates the index's own rule |
 | **0014** catalogue vs budget | **Proposed** | **one of four FIRED** — the inner loop pays full derivation per edit, by construction. A second is **crossed, not fired**: withheld 42 % vs a 20 % trigger, on a corpus [B13 §2](docs/benchmarks/B13-error-catalogue-resolution.md) argues is inadmissible. *This cell said "two of four" and overstated it* | **corrected 2026-07-31.** The record headlined **+77.1 %** and claimed 200 flows had not been re-measured; [ADR-0014 §10](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) now states +67.1 % and which triggers fired |
 | 0015 journal schema | Accepted | cannot fire — keyed on B8, no harness | tracked well |
-| **0016** Postgres adapter | Accepted | not fired | **has no `Negative` section.** Its WP-56 purge-guard note and its Oracle `Root`-scope portability rule are in neither planning file |
+| **0016** Postgres adapter | Accepted | not fired | *This cell said the record **has no `Negative` section**; it gained a Positive / Negative split on 2026-07-31 and the cell was not updated.* Its WP-56 purge-guard note and its Oracle `Root`-scope portability rule are still in neither planning file |
+| **0020** CLI reads the journal as rows | Accepted | not fired | *This cell said the record **names its own owed work and nothing was tracking it**.* Tracked, then discharged on 2026-08-01: `CliDependsOnNothingButTheManifest` is `CliLinksNoFlowXAssembly` and all six citing documents moved with it. The record's owed-work item is struck rather than deleted, and §1/§2 keep the old name where they *quote* it, because those sections are the argument about the name |
 
 ---
 
@@ -1394,7 +1539,19 @@ command in this working tree. Every "not measured" is equally honest: the gate
 exists and the mechanism to run it has not been run here. **"No harness" is a third
 state and the worst of them**: the budget is stated, nothing can run, and P2's WP-50
 exists to make sure that state does not survive into the phase that depends on it, the
-way it survived into P1.
+way it survived into P1. **B7 and B8 are still in it**, and WP-50 shipping did not change
+that — the package built its rig and neither benchmark.
+
+**"Measured, not gated" is a fourth state, and the two QR2 rows are the first entries in
+it.** A number exists, it was produced by a command in this working tree, and **no check
+anywhere fails when it moves**: the rig is opt-in on `FLOWX_CHAOS` and no workflow sets
+that variable. That is strictly better than "no harness" and strictly worse than a ✅,
+because a measurement nobody re-runs decays exactly the way the coverage figure above did.
+Converting the two correctness clauses into a job that can fail is **WP-62**. The resume
+p99 is deliberately *not* on that path — three runs of the one rig disagree by a factor of
+two on it, for reasons
+[QR2-chaos.md §4.4](docs/benchmarks/QR2-chaos.md#44-the-resume-p99-which-is-measured-and-not-gated)
+attributes to lease TTL and recovery capacity rather than to this codebase.
 
 **The two B12 rows are one budget at two scales, and splitting them is the point.** A
 single row reading +0.4 % ✅ was true of a one-flow sample and hid a criterion failing by
