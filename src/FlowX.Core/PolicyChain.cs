@@ -41,20 +41,102 @@ public sealed class PolicyChain
     /// A retry is attached to a non-idempotent capability, or a cache to one with
     /// side effects.
     /// </exception>
+    /// <remarks>
+    /// Every descriptor is validated against the one capability handed in, so this is the
+    /// right entry point for a set that already describes a single call. A set an author
+    /// declared on a <em>step</em> may describe two — the step and its compensation — and wants
+    /// <see cref="ForStep"/> and <see cref="ForCompensation"/> instead; that is what the
+    /// generated plan uses.
+    /// </remarks>
     public static PolicyChain Create(PolicySet policies, CapabilityDescriptor capability)
     {
         ArgumentNullException.ThrowIfNull(policies);
         ArgumentNullException.ThrowIfNull(capability);
 
-        foreach (var policy in policies.Policies)
+        return Build(policies.Policies, capability);
+    }
+
+    /// <summary>
+    /// The half of a declared set that wraps the step itself: everything except the
+    /// compensation retry.
+    /// </summary>
+    /// <param name="policies">The set the author named on the step.</param>
+    /// <param name="capability">The capability the step invokes.</param>
+    /// <exception cref="InvalidFlowPlanException">
+    /// A retry is attached to a non-idempotent capability, or a cache to one with side effects.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>One <c>.WithPolicy(...)</c> describes two capabilities.</strong> A step and its
+    /// compensation are different calls with different idempotency declarations, and a set may
+    /// legitimately speak to both — <c>Timeout</c> bounds the capture, <c>CompensationRetry</c>
+    /// bounds the refund. <see cref="Create"/> validates every descriptor against the single
+    /// capability it is handed, so it cannot express that pairing: handed the set and
+    /// <c>payment.capture</c> it refuses the compensation retry, and refuses it for the wrong
+    /// capability's idempotency. Splitting first is what makes the ordinary saga expressible.
+    /// </para>
+    /// <para>
+    /// <strong>Only <c>CompensationRetry</c> moves.</strong> <c>Audit</c> is also a
+    /// <see cref="PolicyStage.Consistency"/> policy and stays here, because it runs after the
+    /// step succeeded rather than over its undo — the split is by what a policy wraps, not by
+    /// which stage it runs in.
+    /// </para>
+    /// </remarks>
+    public static PolicyChain ForStep(PolicySet policies, CapabilityDescriptor capability)
+    {
+        ArgumentNullException.ThrowIfNull(policies);
+        ArgumentNullException.ThrowIfNull(capability);
+
+        return Build(
+            policies.Policies.Where(static p => p.Kind != CompensationPolicy.CompensationRetryKind),
+            capability);
+    }
+
+    /// <summary>
+    /// The half of a declared set that wraps the step's <em>compensation</em>: the compensation
+    /// retry and nothing else.
+    /// </summary>
+    /// <param name="policies">The set the author named on the step.</param>
+    /// <param name="compensation">The compensating capability — the one that would run twice.</param>
+    /// <exception cref="InvalidFlowPlanException">
+    /// The compensating capability does not declare itself idempotent.
+    /// </exception>
+    /// <remarks>
+    /// The validation is FLOWX1014's rule applied to the capability the retry would actually
+    /// re-dispatch. A non-idempotent <c>payment.capture</c> may carry an idempotent
+    /// <c>payment.refund</c>; it is the refund's declaration that decides whether asking twice
+    /// is safe, and running a reversal twice is a second reversal.
+    /// </remarks>
+    public static PolicyChain ForCompensation(PolicySet policies, CapabilityDescriptor compensation)
+    {
+        ArgumentNullException.ThrowIfNull(policies);
+        ArgumentNullException.ThrowIfNull(compensation);
+
+        return Build(
+            policies.Policies.Where(static p => p.Kind == CompensationPolicy.CompensationRetryKind),
+            compensation);
+    }
+
+    private static PolicyChain Build(
+        IEnumerable<PolicyDescriptor> policies, CapabilityDescriptor capability)
+    {
+        var kept = ImmutableArray.CreateBuilder<PolicyDescriptor>();
+
+        foreach (var policy in policies)
         {
             Validate(policy, capability);
+            kept.Add(policy);
+        }
+
+        if (kept.Count == 0)
+        {
+            return Empty;
         }
 
         // OrderBy is a stable sort, which matters: two policies in the same stage must
         // keep their declared order, or the emitted plan differs between builds and
         // `flowx diff` reports changes nobody made.
-        return new PolicyChain([.. policies.Policies.OrderBy(static p => (int)p.Stage)]);
+        return new PolicyChain([.. kept.OrderBy(static p => (int)p.Stage)]);
     }
 
     private static void Validate(PolicyDescriptor policy, CapabilityDescriptor capability)

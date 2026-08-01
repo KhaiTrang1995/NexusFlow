@@ -251,43 +251,76 @@ public sealed class ManifestTests
     // ------------------------------------------------------------------ published vs. real
 
     /// <summary>
-    /// The manifest publishes the policies; the compiled plan carries none of them.
+    /// The manifest publishes the policies, and the compiled plan now carries them.
     /// </summary>
     /// <remarks>
     /// <para>
     /// <strong>This is the sample's central honesty assertion, and it is deliberately a
-    /// test rather than a paragraph.</strong> The manifest above says the ledger steps carry
-    /// <c>Timeout</c>, <c>Audit</c> and <c>CompensationRetry</c>. The generated plan carries
-    /// no <c>PolicyChain</c> at all: <c>FlowEmitter</c> emits every node as
-    /// <c>StepNode.ForCapability(index, capability, compensation)</c> and passes no policies,
-    /// so <c>ExecutionPlan.HasCompensationPolicies</c> is false and
-    /// <c>FlowEngine</c> dispatches each undo exactly once.
+    /// test rather than a paragraph. It used to assert the opposite.</strong> The manifest
+    /// says the ledger steps carry <c>Timeout</c>, <c>Audit</c> and <c>CompensationRetry</c>;
+    /// the generated plan carried no <c>PolicyChain</c> at all, because <c>FlowEmitter</c>
+    /// emitted every node as <c>StepNode.ForCapability(index, capability, compensation)</c>
+    /// and passed no policies. So <c>ExecutionPlan.HasCompensationPolicies</c> was false for
+    /// every compiled flow and <c>FlowEngine</c> dispatched each undo exactly once, whatever
+    /// the author had written.
     /// </para>
     /// <para>
-    /// <c>CompensationRetry</c> is the one policy the runtime does execute (WP-57), which is
-    /// what makes this worth pinning: the gap is not "the policy engine is P4", it is that
-    /// the single implemented policy is unreachable from the DSL. If the generator ever
-    /// starts emitting chains, this test fails and the README stops being wrong on the same
-    /// commit.
+    /// <c>CompensationRetry</c> is the one policy the runtime executes (WP-57), which is what
+    /// made the gap worth pinning: it was not "the policy engine is P4", it was that the
+    /// single implemented policy was unreachable from the DSL. The emitter now splits the
+    /// declared set — the compensation retry onto <c>CompensationPolicies</c>, everything else
+    /// onto <c>Policies</c> — so the two artifacts agree about the same source line.
+    /// </para>
+    /// <para>
+    /// <strong>The forward half being carried is not the forward half being run.</strong>
+    /// Nothing in <c>FlowEngine</c> reads <c>StepNode.Policies</c>: no timeout is armed and no
+    /// rate limit is counted, exactly as before. What the plan now states is what was
+    /// declared, which is the precondition for P4 executing it and, until then, for a reader
+    /// of the plan seeing what a reader of the manifest sees.
     /// </para>
     /// </remarks>
     [Fact]
-    public void ThePlanCarriesNoPolicyChain()
+    public void ThePlanCarriesTheDeclaredPolicyChain()
     {
         var plan = ExecuteTransferFlow.Plan;
 
-        plan.HasCompensationPolicies.ShouldBeFalse(
-            "the generated plan carries no policy chain, so the CompensationRetry declared " +
-            "on both ledger steps never runs. A failing undo is dispatched once.");
+        // Flipped from ShouldBeFalse. This is the gate FlowEngine reads before it does any
+        // retry bookkeeping at all, and it was false for every flow the compiler produced.
+        plan.HasCompensationPolicies.ShouldBeTrue(
+            "Policies.LedgerPost declares CompensationRetry on both ledger legs, so a failing " +
+            "reversal is retried rather than dispatched once and abandoned.");
 
-        foreach (var step in plan.Graph.Steps)
-        {
-            step.Policies.IsEmpty.ShouldBeTrue(step.Index.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            step.CompensationPolicies.IsEmpty.ShouldBeTrue(step.Index.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        }
+        var debitStep = plan.Graph.Steps.Single(s => s.Capability?.Id == "ledger.post_debit");
 
-        // And the document says otherwise, which is the point: a reader of the manifest sees
-        // a retry that a reader of the plan cannot find.
+        // Flipped from `CompensationPolicies.IsEmpty.ShouldBeTrue()` on every step.
+        debitStep.CompensationPolicies.Ordered
+            .Select(p => p.Kind)
+            .ShouldBe(["CompensationRetry"],
+                "The undo's chain wraps ledger.reverse_debit and carries only what applies " +
+                "to it. Timeout and Audit wrap the forward post.");
+
+        debitStep.CompensationRetry.Attempts.ShouldBe(
+            5,
+            "The number Policies.LedgerPost declares, resolved into the node when the plan " +
+            "was built rather than walked while an incident is in progress.");
+
+        debitStep.CompensationRetry.IsRetrying.ShouldBeTrue();
+
+        // Flipped from `Policies.IsEmpty.ShouldBeTrue()`. Carried, and still executed by
+        // nothing — the Policy Engine is P4 and the forward path runs zero policies.
+        debitStep.Policies.Ordered
+            .Select(p => p.Kind)
+            .ShouldBe(["Timeout", "Audit"],
+                "Ordered by stage: Resilience before Consistency, ADR-0011's fixed order.");
+
+        // A step that declared no set still carries nothing, which is what keeps the flags
+        // that gate the engine's fast paths meaningful.
+        plan.Graph.Steps
+            .Single(s => s.Capability?.Id == "ledger.post_credit")
+            .CompensationRetry.Attempts.ShouldBe(5);
+
+        // And the document agrees, which is the point: a reader of the manifest and a reader
+        // of the plan now find the same retry.
         var debit = Flow.GetProperty("steps")[3];
 
         debit.GetProperty("policies").EnumerateArray()

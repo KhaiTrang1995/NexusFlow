@@ -1550,8 +1550,12 @@ public static class FlowAnalyzer
         var argument = link.Invocation.ArgumentList.Arguments[0];
         var kinds = PolicySetReader.Read(argument.Expression, semanticModel);
 
+        // The expression, not the whole argument, as everywhere else in this file. The
+        // difference used to be invisible because nothing read the text back; the emitter now
+        // copies it into a call of its own, where the argument *name* of a named argument —
+        // `.WithPolicy(policy: Policies.Undo)` — cannot travel with it.
         var last = steps.Count - 1;
-        var step = steps[last].WithPolicy(argument.ToString(), kinds.ToArray());
+        var step = steps[last].WithPolicy(argument.Expression.ToString(), kinds.ToArray());
 
         ReportPolicyConflicts(step, link, diagnostics);
 
