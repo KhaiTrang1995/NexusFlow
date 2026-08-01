@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>Banking</RootNamespace>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      No PublishAot here, unlike samples/ecommerce. That sample is the repository's AOT
+      smoke test and it has no database behind it; this one journals to PostgreSQL, so it
+      pulls in Npgsql, and claiming a NativeAOT publish for a graph nobody has published
+      that way would be exactly the untested claim this sample exists to argue against.
+      The trim and AOT analysers still run — Directory.Build.props turns them on for every
+      project — so the sample's own code is held to constraint C2 either way.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The in-memory ledger is internal: it is infrastructure, not part of the sample's
+      story. Its keying behaviour is what makes the idempotency claim true, though, so the
+      test project sees it rather than the sample widening its surface to be testable.
+    -->
+    <InternalsVisibleTo Include="Banking.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+    <ProjectReference Include="../../plugins/FlowX.Http/FlowX.Http.csproj" />
+
+    <!--
+      The journal. A Durable flow on a host that registers none is refused with
+      flow.durability_not_configured, which is the honest answer and not a runnable
+      sample — so the reference to the only journal FlowX ships is not optional here.
+    -->
+    <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+
+    <!--
+      The compiler is referenced as an ANALYZER, not as a library, exactly as
+      samples/ecommerce references it: the generator runs inside this project's build,
+      against this project's source, as it would for any consumer. This is the only place
+      in the repository where it runs over a Durable flow that branches, switches, fails
+      and emits — the shapes the ecommerce sample does not have.
+    -->
+    <ProjectReference Include="../../src/FlowX.Compiler/FlowX.Compiler.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>
