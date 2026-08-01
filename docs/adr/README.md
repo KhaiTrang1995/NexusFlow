@@ -25,6 +25,7 @@ and the condition under which it must be revisited.
 | [0017](ADR-0017-manifest-v1-freeze-criteria.md) | Eight checkable criteria that must hold before the manifest schema is frozen at v1.0 (amends 0005) | Accepted | a criterion is closed by a check that could not have failed; P8 starts with the outbox or the policy engine still absent; the schema gains a field; or the freeze happens |
 | [0018](ADR-0018-outbox-publication-and-ordering.md) | Declare `IEventPublisher` in `FlowX.Abstractions`; publish per `partition_key` in staging order and offer no global order; retention refuses to purge an instance holding a pending event | Accepted | a broker plugin exists and `PublisherConformance` can hold two implementations to the contract, or a dead-letter path is needed |
 | [0019](ADR-0019-redis-lease-store.md) | A lease's expiry is a value in a hash, never a Redis key TTL; `StepScope.Root` renders as `-` at the key space | Accepted | the key space must live under an `allkeys-*` eviction policy, or a lease store is asked to carry state a journal should own |
+| [0020](ADR-0020-cli-reads-the-journal-as-rows.md) | *(claimed — WP-64, `flowx replay --mode inspect` against `CliDependsOnNothingButTheManifest`)* | **Proposed** | *(being written)* |
 
 ## Writing an ADR
 
