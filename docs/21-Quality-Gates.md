@@ -501,7 +501,7 @@ Budgets live in [14-Performance](14-Performance.md). Their enforcement is here.
 
 | Gate | Rule | Class | State |
 |---|---|---|---|
-| B1, B3, B12 | allocation change vs `baseline.json`, or p95 over the documented ceiling, fails the build | Merge | **runs** — *Benchmark budgets* job. Timing drift is measured and printed but **advisory**, see below |
+| B1, B3, B12 | allocation change vs `baseline.json`, or p95 over the documented ceiling, fails the build | Merge | **runs, and is currently red on `dev`** — *Benchmark budgets* job. Blocking and failing since at least run #41 on 2026-07-31, on three allocation entries that are not the engine's; see [benchmarks/README §5.2](benchmarks/README.md#52-the-gate-above-has-been-red-on-dev-and-that-is-why-16-bytes-got-in) for which, and for the sixteen bytes that crossed `dev` because a red gate is a gate nobody reads. Timing drift is measured and printed but **advisory**, see below |
 | B2 | allocations must be **exactly 0** — not "low" | Merge | **runs** — `AllocationBudgetTests`, `EngineAllocationTests` |
 | Generator cost | > 2 % more bytes allocated by the generator than the committed baseline fails the build | Merge | **runs** — [generator-cost-gate.md](benchmarks/generator-cost-gate.md) |
 | B12 against its **+8 %** budget | — | — | **failing.** +46.6 % at 50 flows, +77 % at 200. The relative gate above stops it getting worse; it does not make the budget met |
