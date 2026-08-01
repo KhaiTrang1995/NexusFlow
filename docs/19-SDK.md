@@ -69,9 +69,16 @@ does not change. `templates/verify.sh` is the acceptance test for all of it, and
 [templates/README.md](../templates/README.md) is the reference.
 
 There are no template options. `--profile durable` would generate a project that
-does not build: `FLOWX1028` is deliberately a *warning*, and the generated project
-sets `TreatWarningsAsErrors`, which is this repository's own bar. `--transport`
-would have one value.
+builds and then refuses its own first request: since **WP-52** the runtime honours
+the profile, and since **WP-55** a `Durable` flow on a host that registers no
+journal and no lease store is refused with `flow.durability_not_configured` rather
+than run ephemerally. The only journal that ships is PostgreSQL, so the option
+would have to scaffold a database into the one command whose value is that
+`dotnet run` works. `--transport` would have one value.
+
+New here? [24 Getting Started](24-Getting-Started.md) is the path from this
+scaffold to compensation, durability, an event and a test, with every snippet
+compiled by a test.
 
 ---
 

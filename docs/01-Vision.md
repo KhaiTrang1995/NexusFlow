@@ -148,7 +148,9 @@ A vision that cannot fail is marketing. FlowX succeeds only if:
 > against a 5 000 ns budget, 0 B). **V6 is failing** — +46.6 % at 50 flows
 > against ≤ 8 % ([B12-scale.md](benchmarks/B12-scale.md)).
 >
-> **V4 and V5 have no harness.** There is no journal to checkpoint into (V4,
+> **V4 and V5 have no harness.** *This sentence said "there is no journal to checkpoint
+> into"; since WP-53 there is one, with a PostgreSQL store. What V4 lacks is the load test
+> (WP-50), not the journal.* (V4,
 > P2) and no start-up benchmark or AOT-published image to time (V5, P9); the
 > AOT job proves the binary links and serves a request, and does not measure
 > 200 ms. V1 is a review, V2 needs a second transport (P3) and a sample that is

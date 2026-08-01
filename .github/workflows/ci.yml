@@ -68,6 +68,33 @@ jobs:
           --filter "FullyQualifiedName!~Architecture"
           --collect:"XPlat Code Coverage"
 
+  template:
+    name: dotnet new flowx
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: The template generates a project that builds clean and serves a request
+        # templates/README.md called this "the acceptance test, and what CI should run",
+        # and until now nothing ran it — so `dotnet new flowx` was verified by whoever
+        # last remembered to, which is the definition of a gate that does not exist.
+        #
+        # Its own job, not a step in `build`, for two reasons. It is not about the
+        # solution: the template pack is deliberately outside FlowX.slnx, and the thing
+        # under test is `dotnet new`, `dotnet restore` against a feed, and a process
+        # listening on a socket. And it is machine-global — it registers a NuGet source
+        # and installs a template — which is fine on a throwaway runner and is not
+        # something to do halfway through the test job.
+        #
+        # The script packs the seven packages a generated project resolves, evicting
+        # them from the NuGet cache first: the version does not change between runs, and
+        # NuGet caches by id AND version, so without the eviction a second run verifies
+        # the first run's assemblies and reports green against stale output.
+        run: templates/verify.sh
+
   aot:
     name: NativeAOT smoke test
     runs-on: ubuntu-latest

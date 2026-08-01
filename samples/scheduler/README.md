@@ -1,10 +1,54 @@
 # Sample — Scheduled and recurring work
 
-**Claim proved:** cron work is an ordinary flow. Leader election, overlap policy,
-missed-fire recovery, per-tenant fan-out and DST correctness are platform
-services, not job-framework glue.
+**Claim it is meant to prove:** cron work is an ordinary flow. Leader election,
+overlap policy, missed-fire recovery, per-tenant fan-out and DST correctness are
+platform services, not job-framework glue.
+
+> [!WARNING]
+> **This sample has no code.** `samples/scheduler/` is this file and nothing else.
+> **There is no scheduler.** Nothing anywhere in `src/` or `plugins/` reads a cron
+> expression, computes a next firing, or starts a flow because a clock said so —
+> the word *leader* appears exactly once in the whole of `src/` and `plugins/`,
+> in the doc comment on `CronTriggerAttribute` promising the behaviour this page
+> describes.
+>
+> `[CronTrigger("0 2 * * *", TimeZone = "Europe/Berlin")]` nevertheless
+> **compiles**, and `EveryTriggerKindTheAbstractionShipsIsRecognised` asserts it
+> reaches `flowx.manifest.json` as `"kind": "Schedule"`. Its cron expression and
+> its time zone get that far.
+> `Overlap`, `MissedFire`, `Jitter` and `PerTenant` do not: only
+> `cron` and `timeZone` are read by `TriggerReader` and written by
+> `ManifestWriter`, so the four options the [policy table](#policy-semantics)
+> below is about are, today, defaults on an attribute nobody reads —
+> `CronTriggerDefaultsProtectAgainstTheTwoClassicSchedulerIncidents` asserts the
+> defaults are the safe ones and is the only thing that touches them.
+>
+> **The lease under the diagram is the part that exists.** `ILeaseStore` is
+> declared, `DurableLease` acquires, renews and releases under a fencing token,
+> and two stores implement it — `plugins/FlowX.Postgres` and `plugins/FlowX.Redis`
+> — both passing `LeaseStoreConformance` unmodified
+> ([11 §3](../../docs/11-Distributed-Runtime.md#3-leases-and-fencing)). What that
+> lease is taken on is a *flow instance*, not a schedule. Electing one scheduler
+> across N nodes is the same primitive pointed at a different key, and nobody has
+> pointed it there.
+>
+> | What has to exist first | Where it comes from |
+> |---|---|
+> | A scheduler: next-firing computation, DST-correct time zones, a firing loop | **WP-75**, [P3](../../PLAN.md#6-p3--transport-breadth) |
+> | Leader election over the existing lease store | **WP-75**, which depends on **WP-55** — *leader election is a lease, which is why P3 follows P2* |
+> | `Overlap`, `MissedFire`, `Jitter` and `PerTenant` read into the manifest | Unassigned. The reader and the writer are three lines each; the semantics behind them are WP-75 |
+> | `PerTenant` fan-out | **P6** — nothing consumes `TenantId` beyond carrying it ([16](../../docs/16-Multi-Tenant.md)) |
+> | A retry policy that executes on a forward step | **P4.** Only `PolicySet.CompensationRetry` runs today, at `PolicyStage.Consistency`; the forward path runs zero policies |
+>
+> Read the rest as the design a P3 implementer is held to, not as behaviour you
+> can observe.
 
 ## The flow
+
+> **Compiles; never fires.** Every attribute below is real and the flow builds.
+> Four of the five `[CronTrigger]` options are inert, and nothing starts the flow
+> at 02:00 or at any other time. `.WithPolicy(Policies.ExternalRead)` on a forward
+> step is recorded in the plan and the manifest and applies nothing at run time.
 
 ```csharp
 [Flow("reconciliation.daily", Profile = ExecutionProfile.Durable)]
@@ -34,6 +78,11 @@ operator can run reconciliation manually. Nothing about the flow changes.
 
 ## Leader election
 
+> **The lease store in this diagram is built; the scheduler on either side of it
+> is not.** `acquire`, `renew` and the TTL takeover at token 13 are exactly what
+> `LeaseStoreConformance` asserts of both implementations. The two participants
+> named `scheduler-1` and `scheduler-2` do not exist.
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -55,6 +104,10 @@ sequenceDiagram
 
 ## Policy semantics
 
+*Four of these five options are declared and unread — see the box at the top. The
+table states what each one is for, which is why they were put on the attribute
+before anything served them.*
+
 | Option | Values | What it prevents |
 |---|---|---|
 | `Overlap` | `Skip` \| `Queue` \| `Concurrent` | a long run stacking on itself until the system dies |
@@ -64,6 +117,12 @@ sequenceDiagram
 | `PerTenant` | bool | writing your own tenant loop, and forgetting isolation inside it |
 
 ## Tests
+
+> **Neither test exists.** `SchedulerCluster` and `SchedulerTestHost` are in no
+> file under `tests/` or `src/FlowX.Testing`, which ships `FlowTestHost` and a
+> `WithClock(IClock)` seam — not `WithVirtualTime()`, and nothing that advances a
+> cluster through a DST boundary. WP-75's exit criterion is the first of these two
+> made real: *three nodes, one fire per tick, proven under a kill.*
 
 ```csharp
 [Fact]
@@ -91,6 +150,9 @@ public async Task Skips_overlapping_runs_and_records_why()
 ```
 
 ## Things to try
+
+*None of these can be tried yet — there is no project and no scheduler. Kept as
+the acceptance list WP-75 is written to.*
 
 1. Set `Overlap = OverlapPolicy.Concurrent` and simulate a 25-hour run — watch
    instances stack, and see why `Skip` is the default.

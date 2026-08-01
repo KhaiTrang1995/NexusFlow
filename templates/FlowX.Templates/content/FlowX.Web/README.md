@@ -59,7 +59,13 @@ in FlowX, which is why the two here declare a stance and one of them names a per
 
 * Nothing enforces the declared authorisation at run time yet — the stance reaches the
   manifest and is not checked by the HTTP endpoint. Put authentication in front of it.
-* `Profile = ExecutionProfile.Durable` is declared-only: the runtime executes every flow
-  on the ephemeral engine, and the compiler reports `FLOWX1028` if you declare it.
-* Retry, timeout and circuit-breaker policies reach the plan and are not executed. The
-  flow deadline is.
+* This flow is `Ephemeral`, which is the right profile for it and is not free.
+  `Profile = ExecutionProfile.Durable` **is** honoured by the runtime — a durable flow
+  journals its step boundaries and resumes after a node dies — but only on a host that
+  registers a journal and a lease store. Without them the flow is refused before its first
+  step with `flow.durability_not_configured`, so the attribute and the registration change
+  together. The only journal that ships is PostgreSQL, which is why this project does not
+  declare it: `dotnet run` would need a database.
+* Retry, timeout and circuit-breaker policies reach the plan and are not executed. What
+  does execute is the flow deadline, and — on a flow that declares compensation —
+  `CompensationRetry`.
