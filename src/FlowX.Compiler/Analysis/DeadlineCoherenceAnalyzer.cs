@@ -340,9 +340,12 @@ public sealed class DeadlineCoherenceAnalyzer : DiagnosticAnalyzer
     /// The initialiser of the field or property the expression names.
     /// </summary>
     /// <remarks>
-    /// The same restriction <see cref="PolicySetReader"/> works under, and for the same
-    /// reason: a set assembled at run time has no compile-time contents, and returning
-    /// nothing is the only honest answer.
+    /// The restriction <see cref="PolicySetReader"/> works under for everything but
+    /// <c>PolicySet</c>'s own well-known sets, and for the same reason: a set assembled at run
+    /// time has no compile-time contents, and returning nothing is the only honest answer.
+    /// This rule does not take the metadata path, and does not need it — a well-known set
+    /// declares no <c>Timeout</c> and no forward <c>Retry</c>, so there is nothing in one for
+    /// this arithmetic to count. FLOWX1036 is what reports the rest.
     /// </remarks>
     private static ExpressionSyntax? Initialiser(ISymbol? symbol)
     {

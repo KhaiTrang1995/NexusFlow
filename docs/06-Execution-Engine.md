@@ -503,7 +503,18 @@ Rules:
    executes it** — the only policy it executes anywhere, at the `Consistency`
    stage ([10 §2](10-Policy-Framework.md#2-fixed-stage-order--the-core-decision)).
    A policy applies because it was declared: an undo with no declared chain is
-   still attempted exactly once.
+   still attempted exactly once. *`PolicySet.CompensationDefault` itself did not
+   reach a plan until `PolicySetReader` learned to resolve a set declared in a
+   referenced assembly: it lives in `FlowX.Abstractions`, its symbol carries no
+   syntax in a consuming compilation, and the emitter wrote no chain for it. So
+   for two releases the set this rule names was the one way to retry an undo that
+   could not work, while a hand-written `.CompensationRetry(attempts: 5)` did.*
+   Two attempt counts do **not** work and are diagnosed rather than silent:
+   `attempts: 1` retries nothing, because `IsRetrying` is `Attempts > 1`
+   ([`FLOWX1035`](diagnostics/FLOWX1035.md)), and a second `.WithPolicy(...)` on
+   one step discards the first
+   ([`FLOWX1034`](diagnostics/FLOWX1034.md)) — so a compensation default applied
+   *beside* a step's own set deletes that set rather than adding to it.
 3. Compensation is **best-effort but loud**: exhaustion produces
    `flowx_flow_compensation_failed_total`, a dead-letter record, and a documented
    operator recovery path. *Half of this is now true.* WP-57 ships

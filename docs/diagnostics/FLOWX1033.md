@@ -78,7 +78,13 @@ promised over an undo that does not exist. The report lands on the `WithPolicy` 
   initialiser declared in source. `PolicySetReader` returns nothing rather than guessing, so
   the rule is silent exactly where the emitter is — the same restriction FLOWX1014 works
   under, for the same reason: a diagnostic raised on a guess names a policy the author
-  cannot find.
+  cannot find. That silence is [FLOWX1036](FLOWX1036.md)'s report, which says only that the
+  set could not be read. `PolicySet.CompensationDefault` is not one of these: it resolves
+  from metadata, so this rule *does* fire when it is applied to a step with no undo.
+- A single attempt. `.CompensationRetry(attempts: 1)` on a step with no compensation reports
+  this rule and not [FLOWX1035](FLOWX1035.md): the declaration reaches no plan node at all,
+  which is the stronger statement, and two reports on one line would leave the author
+  choosing which to act on.
 - Either order of the two calls. `.CompensateWith<T>()` and `.WithPolicy(...)` both return
   `IStepBuilder<TIn, TOut>`, so both orders are legal C# and neither reports. A rule that
   depended on which the author wrote first would be a rule that fires on correct code half
@@ -104,9 +110,26 @@ public static readonly PolicySet LedgerCompensable = PolicySet.Named("ledger-com
     .CompensationRetry(attempts: 5);
 ```
 
-Splitting the set is usually the right answer for the shared-set case above, and
+Splitting the set is the right answer for the shared-set case above.
 `PolicySet.CompensationDefault` exists so that the common shape does not need a bespoke set
-at all: apply it alongside the step's own set on the steps that have an undo.
+at all, and it is the whole set for a step whose only policy is the documented compensation
+default:
+
+```csharp
+.Step<PostDebit>()
+    .CompensateWith<ReverseDebit>()
+    .WithPolicy(PolicySet.CompensationDefault)     // five attempts, and nothing else
+```
+
+> [!WARNING]
+> **This page used to say "apply it alongside the step's own set", and that advice was wrong
+> twice over.** `PolicySet.CompensationDefault` reached no plan at all until
+> `PolicySetReader` learned to resolve a set declared in a referenced assembly — so the
+> recommended way to retry an undo was the one way that could not work. And a step carries
+> **one** policy set: `StepModel.WithPolicy` assigns rather than accumulates, so a second
+> `.WithPolicy(...)` deletes the first from the compiled plan and from the manifest. Both
+> halves are now diagnosed — the second is [FLOWX1034](FLOWX1034.md) — and the repair for a
+> step that needs a timeout *and* a compensation retry is one set that declares both.
 
 ### The quick action, and the two cases it declines
 

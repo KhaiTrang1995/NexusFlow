@@ -971,8 +971,10 @@ public static class FlowXDiagnostics
         "while the manifest publishes it, leaving the published contract promising a retried " +
         "undo the plan has no undo for. Either the step does have an inverse and it was not " +
         "declared, in which case add '.CompensateWith<T>()'; or it genuinely has none, in " +
-        "which case the set naming its policies should not promise one — split the set, or " +
-        "apply PolicySet.CompensationDefault alongside it on the steps that do have an undo. " +
+        "which case the set naming its policies should not promise one — split the set, and " +
+        "give the steps that do have an undo a set that declares the retry. Not a second " +
+        ".WithPolicy(PolicySet.CompensationDefault) beside the first: a step carries one " +
+        "policy set and the later call discards the earlier, which is FLOWX1034. " +
         "There is no suppression that makes the declaration work: the emitter still drops it, " +
         "so what a suppression buys is a manifest and a plan that disagree with no message " +
         "saying which is true.",

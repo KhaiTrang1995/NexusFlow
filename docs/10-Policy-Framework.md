@@ -28,11 +28,17 @@
 > policy wraps**, not by which stage it runs in.
 >
 > **[`FLOWX1032`](diagnostics/FLOWX1032.md) says so at build time**, on every
-> `.WithPolicy(...)` naming a set the runtime will not apply, and
-> [`FLOWX1033`](diagnostics/FLOWX1033.md) reports the one case where even
-> `CompensationRetry` is dropped — a step with no compensation for it to wrap.
-> Until they existed, this box was the only thing saying any of it, and a box in
-> a document is not a build.
+> `.WithPolicy(...)` naming a set the runtime will not apply, and four rules
+> report the ways a declared set reaches even less than that:
+> [`FLOWX1033`](diagnostics/FLOWX1033.md) a `CompensationRetry` on a step with no
+> compensation for it to wrap; [`FLOWX1034`](diagnostics/FLOWX1034.md) a second
+> `.WithPolicy(...)` on one step, which *replaces* the first rather than adding
+> to it; [`FLOWX1035`](diagnostics/FLOWX1035.md) a compensation retry of one
+> attempt, which the manifest publishes as a retry and the engine dispatches
+> once; and [`FLOWX1036`](diagnostics/FLOWX1036.md) a set the compiler cannot
+> read at all — one in a referenced assembly or built at run time — which reaches
+> no plan, no manifest and none of the rules above it. Until they existed, this
+> box was the only thing saying any of it, and a box in a document is not a build.
 >
 > **The exception is WP-57's slice, and it is deliberately one stage wide.** A
 > step's *compensation* may declare `CompensationRetry`, and the unwind honours

@@ -10,7 +10,7 @@ using Microsoft.CodeAnalysis.Diagnostics;
 namespace FlowX.Compiler.Analysis;
 
 /// <summary>
-/// Reports a declared policy the runtime will not apply: FLOWX1032 and FLOWX1033.
+/// Reports a declared policy the runtime will not apply: FLOWX1032 through FLOWX1036.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -49,11 +49,21 @@ namespace FlowX.Compiler.Analysis;
 /// same DSL call, from growing a third policy concern.
 /// </para>
 /// <para>
-/// <strong>Silent wherever the emitter is silent.</strong> <see cref="PolicySetReader"/>
-/// resolves only a set declared as a field or property initialiser in source, and returns
-/// nothing rather than guessing; <c>FlowEmitter.PolicyArguments</c> emits nothing for exactly
-/// that case. Reporting on a set the compiler could not read would name policies the author
-/// cannot find, and could name a set that in fact holds nothing but a compensation retry.
+/// <strong>Silent about the <em>contents</em> wherever the emitter is silent.</strong>
+/// <see cref="PolicySetReader"/> resolves a set declared as a field or property initialiser
+/// in source, plus <c>PolicySet</c>'s own well-known sets from metadata, and returns
+/// <c>Unreadable</c> rather than guessing at anything else; <c>FlowEmitter.PolicyArguments</c>
+/// emits nothing for exactly that case. Naming a kind in a set the compiler could not read
+/// would name policies the author cannot find, and could name a set that in fact holds
+/// nothing but a compensation retry. FLOWX1036 is the one report that is available there,
+/// and it is a statement about the reading rather than about the contents.
+/// </para>
+/// <para>
+/// <strong>Three more, and they are ordered.</strong> FLOWX1034 runs first and returns: a
+/// superseded set is carried by neither the plan nor the manifest, so every rule below it
+/// would be describing a declaration the compiler has already discarded. FLOWX1035 runs after
+/// FLOWX1033 and only when it stayed quiet, because a compensation retry with no compensation
+/// reaches no plan node at all and its attempt count is not the finding.
 /// </para>
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]

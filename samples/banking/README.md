@@ -268,6 +268,26 @@ backoff before the run reports `PartiallyFailed`.
 `ManifestTests.ThePlanCarriesTheDeclaredPolicyChain` asserts both halves at once, and
 fails on the day either changes.
 
+### Three ways this file could have lost that retry, and what stops each now
+
+The one policy that runs is the easiest one in this application to declare and not get,
+and the sample's shape is not an accident. Each of these compiled silently until the
+rule beside it was written, and `ReferenceSamplePolicyTests` proves each one against a
+one-line edit of *this* file rather than against a fixture.
+
+| The edit | What happens | Since |
+|---|---|---|
+| `.WithPolicy(Policies.LedgerPost).WithPolicy(PolicySet.CompensationDefault)` on a ledger leg | The second call **replaces** the first — `StepModel.WithPolicy` assigns rather than accumulates — so the leg loses its five-second timeout and its financial audit from the plan *and* from the manifest, in exchange for a retry it already had | [FLOWX1034](../../docs/diagnostics/FLOWX1034.md), an error. *This is the edit [FLOWX1033's page](../../docs/diagnostics/FLOWX1033.md) used to recommend* |
+| `.CompensationRetry(attempts: 1)` in `Policies.LedgerPost` | `IsRetrying` is `Attempts > 1`, so `HasCompensationPolicies` stays false, the engine takes `CompensationPolicy.None`, and both reversals are dispatched once — while the manifest still publishes `{"kind":"CompensationRetry"}` with no parameters and reads exactly as it does today | [FLOWX1035](../../docs/diagnostics/FLOWX1035.md), a warning |
+| `Policies.cs` moved into a shared library and referenced as an assembly | Its symbols carry no syntax, so all seven declarations reach no plan node and no manifest entry — the timeouts, the audits, the rate limit *and* the compensation retry — and FLOWX1032 goes quiet with them, because the compiler cannot name a kind it could not read | [FLOWX1036](../../docs/diagnostics/FLOWX1036.md), a warning |
+
+`PolicySet.CompensationDefault` — the five-attempt default
+[06 §7](../../docs/06-Execution-Engine.md) rule 2 names — is now usable as a step's whole
+policy set: it lives in `FlowX.Abstractions`, and until `PolicySetReader` learned to
+resolve a set arriving as metadata it reached no plan either. This bank does not use it,
+because its ledger legs need a timeout and an audit in the same set and a step carries
+one set; five attempts is `CompensationDefault`'s count written out in `LedgerPost`.
+
 ### There is no `[RateLimit]`, `[Audit]` or `[Timeout]` attribute
 
 The version of this file that preceded the sample showed
