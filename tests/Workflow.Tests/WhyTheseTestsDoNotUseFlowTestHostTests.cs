@@ -44,6 +44,7 @@ public sealed class WhyTheseTestsDoNotUseFlowTestHostTests
         var host = FlowTestHost
             .For(OnboardEmployeeFlow.Plan, world.Parent)
             .WithInvocation(new FlowInvocation("corr-1", "key-1"))
+            .As(OnboardingHarness.Coordinator)
             .Build();
 
         var run = await host.RunAsync(

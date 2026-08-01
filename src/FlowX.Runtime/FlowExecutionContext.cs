@@ -82,6 +82,7 @@ public sealed class FlowExecutionContext : FlowContext
     private string _idempotencyKey = string.Empty;
     private string? _tenantId;
     private ClaimsPrincipal? _principal;
+    private bool _isContinuation;
 
     /// <summary>
     /// <see cref="Run"/>'s instance id as text, computed the first time it is asked for.
@@ -398,6 +399,17 @@ public sealed class FlowExecutionContext : FlowContext
     /// </remarks>
     public override ClaimsPrincipal? Principal => _principal;
 
+    /// <summary>
+    /// True when the platform is continuing an instance it already admitted, so no caller is
+    /// asking for anything and no stance is re-decided.
+    /// </summary>
+    /// <remarks>
+    /// Internal because it is the engine's business and not a capability's: a capability that
+    /// branched on how it was resumed would be a capability that behaves differently on a node
+    /// restart, which is the determinism the replay tests exist to protect.
+    /// </remarks>
+    internal bool IsContinuation => _isContinuation;
+
     /// <inheritdoc />
     /// <remarks>
     /// Empty until a transport plugin supplies one (WP-8). The engine never reads it:
@@ -583,6 +595,7 @@ public sealed class FlowExecutionContext : FlowContext
         _idempotencyKey = invocation.IdempotencyKey;
         _tenantId = invocation.TenantId;
         _principal = invocation.Principal;
+        _isContinuation = invocation.IsContinuation;
         _flowInstanceId = null;
         _clock = clock;
 
@@ -912,6 +925,7 @@ public sealed class FlowExecutionContext : FlowContext
         _idempotencyKey = string.Empty;
         _tenantId = null;
         _principal = null;
+        _isContinuation = false;
         _flowInstanceId = null;
         _deadline = default;
         _clock = SystemClock.Instance;

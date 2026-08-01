@@ -316,6 +316,7 @@ public sealed class DurableHostTests
             suspended.InstanceId!.Value,
             new FlowRegistration(WaitingPlan(), second),
             FlowSignal.Of("contract.countersigned", "signed-by-ada"),
+            principal: null,
             ct);
 
         resumed.IsSuccess.ShouldBeTrue(resumed.Error?.ToString());
@@ -359,7 +360,7 @@ public sealed class DurableHostTests
         var signal = FlowSignal.Of("contract.countersigned", "signed-by-ada");
         var registration = new FlowRegistration(WaitingPlan(), new CountingDispatcher());
 
-        var first = await host.SignalAsync(suspended.InstanceId!.Value, registration, signal, ct);
+        var first = await host.SignalAsync(suspended.InstanceId!.Value, registration, signal, principal: null, ct);
 
         first.IsSuccess.ShouldBeTrue(first.Error?.ToString());
 
@@ -367,7 +368,11 @@ public sealed class DurableHostTests
         var again = new CountingDispatcher();
 
         var redelivered = await host.SignalAsync(
-            suspended.InstanceId!.Value, new FlowRegistration(WaitingPlan(), again), signal, ct);
+            suspended.InstanceId!.Value,
+            new FlowRegistration(WaitingPlan(), again),
+            signal,
+            principal: null,
+            ct);
 
         again.Executed.ShouldBeEmpty("nothing ran a second time");
 

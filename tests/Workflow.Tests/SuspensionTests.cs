@@ -471,7 +471,9 @@ internal sealed class OfferHarness
             .RunAsync(
                 AcceptOfferFlow.Plan,
                 Wrap(trace),
-                new FlowInvocation("corr-offer", offer.CandidateId),
+                new FlowInvocation(
+                    "corr-offer", offer.CandidateId, TenantId: null, Deadline: null,
+                    Principal: OnboardingHarness.Coordinator),
                 offer,
                 AcceptOfferFlow.Projection,
                 ct)
@@ -499,6 +501,12 @@ internal sealed class OfferHarness
                 instanceId,
                 new FlowRegistration(AcceptOfferFlow.Plan, Wrap(trace)),
                 FlowSignal.Of(Signals.OfferCountersigned, signed),
+
+                // The countersignature's deliverer authorises the steps after the wait, and
+                // onboarding.start declares Authorization.Authenticated. A null here resumes
+                // anonymously and the flow is refused at that step — which is the behaviour,
+                // not an accident of the harness.
+                OnboardingHarness.Coordinator,
                 ct)
             .ConfigureAwait(false);
 

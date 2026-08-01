@@ -1090,7 +1090,15 @@ public sealed class FlowEngine
             //
             // Before the dispatch, even more deliberately. A check that ran after the call
             // would have authorised nothing, because the payment has already been captured.
+            // `!context.IsContinuation` is not a bypass, and the distinction is on
+            // FlowInvocation: a timer sweep and a recovery scan are the platform continuing an
+            // instance it already admitted, with no caller asking for anything and no claims on
+            // the journal row to ask about. Re-deciding a stance there would make
+            // `.Delay(TimeSpan.FromHours(1))` a construct no flow could place before an
+            // authenticated step, and would turn a node restart into a refusal. A signal is the
+            // opposite — somebody is delivering something now — and carries its deliverer.
             if (plan.HasAuthorizedSteps
+                && !context.IsContinuation
                 && step.StepAuthorization.Decide(context.Principal, capabilityId) is { } denial)
             {
                 failure = denial;

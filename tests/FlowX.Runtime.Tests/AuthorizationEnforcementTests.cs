@@ -423,6 +423,96 @@ public sealed class AuthorizationEnforcementTests
         clock.Delays.ShouldBeEmpty("A denial is not a transient fault, so no backoff is waited.");
     }
 
+    // ------------------------------------------------------------------- continuation
+
+    /// <summary>
+    /// A platform continuation runs the steps of an instance already admitted, without a
+    /// caller and without re-deciding a stance.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Not a bypass, and the reason it is not is that nothing can reach it by
+    /// asking.</strong> <c>IsContinuation</c> is set in exactly one place —
+    /// <c>FlowHost.ResumeAsync</c>, when there is neither a signal nor a principal, which is
+    /// a timer sweep or a recovery scan. Both are the platform continuing work it already
+    /// admitted: no caller is asking for anything, and the instance's journal row carries no
+    /// claims to ask about because persisting them was refused (ADR-0027).
+    /// </para>
+    /// <para>
+    /// <strong>Without it, <c>.Delay</c> would revoke a grant.</strong> A flow that waits an
+    /// hour and then runs an authenticated step would be refused on waking, forever — making
+    /// a delay a construct no author could place before a stanced step, and making a node
+    /// restart a refusal rather than a resumption.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task APlatformContinuationIsNotReDecided()
+    {
+        var dispatcher = new RecordingDispatcher();
+
+        var result = await new FlowEngine(new FakeClock(T0)).ExecuteAsync(
+            OneStep(NeedsPaymentWrite),
+            dispatcher,
+            new FlowInvocation("corr", "idem", Principal: null, IsContinuation: true),
+            Ct);
+
+        result.IsSuccess.ShouldBeTrue(
+            "A timer sweep is the platform continuing an instance it already admitted, not a " +
+            "caller asking for something.");
+
+        dispatcher.Executed.ShouldBe([0]);
+    }
+
+    /// <summary>
+    /// An ordinary anonymous invocation is still refused, so the flag is doing the work and
+    /// not the absence of a principal.
+    /// </summary>
+    /// <remarks>
+    /// The control for the test above. Both invocations carry no principal; only one of them
+    /// claims to be a continuation, and they must not have the same outcome — otherwise the
+    /// flag would be describing a permit the engine was granting anyway.
+    /// </remarks>
+    [Fact]
+    public async Task TheSameInvocationWithoutTheFlagIsRefused()
+    {
+        var dispatcher = new RecordingDispatcher();
+
+        var result = await new FlowEngine(new FakeClock(T0)).ExecuteAsync(
+            OneStep(NeedsPaymentWrite),
+            dispatcher,
+            new FlowInvocation("corr", "idem", Principal: null, IsContinuation: false),
+            Ct);
+
+        result.IsFailure.ShouldBeTrue();
+        result.Error!.Category.ShouldBe(ErrorCategory.Forbidden);
+        dispatcher.Executed.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A continuation that carries a principal still decides the stance against it.
+    /// </summary>
+    /// <remarks>
+    /// The flag means "no caller", not "skip the check". A signal delivery sets a principal
+    /// and leaves the flag false; this asserts the two are independent, so a future caller
+    /// that sets both does not get a free pass with a principal who lacks the grant.
+    /// </remarks>
+    [Fact]
+    public async Task AContinuationCarryingAPrincipalWithoutTheGrantIsStillRefused()
+    {
+        var dispatcher = new RecordingDispatcher();
+
+        var result = await new FlowEngine(new FakeClock(T0)).ExecuteAsync(
+            OneStep(NeedsPaymentWrite),
+            dispatcher,
+            new FlowInvocation(
+                "corr", "idem", Principal: Holding("orders.read"), IsContinuation: false),
+            Ct);
+
+        result.IsFailure.ShouldBeTrue();
+        result.Error!.Code.ShouldBe(AuthorizationErrors.PermissionDeniedCode);
+        dispatcher.Executed.ShouldBeEmpty();
+    }
+
     // ------------------------------------------------------------------ identity plumbing
 
     /// <summary>

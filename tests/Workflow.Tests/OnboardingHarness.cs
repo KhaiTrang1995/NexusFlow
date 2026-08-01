@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Globalization;
 using System.Text;
 using FlowX;
@@ -44,7 +45,35 @@ internal sealed class OnboardingHarness
 {
     private readonly Dictionary<string, CapabilityStandIn> _substitutions = new(StringComparer.Ordinal);
 
-    private FlowInvocation _invocation = new("corr-test", "key-test");
+    /// <summary>
+    /// The caller every onboarding in this file runs as.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>OnboardEmployeeFlow</c> and the flows it composes declare six permissions between
+    /// them, and the engine decides each stance against the invocation's principal before
+    /// the step is dispatched. A harness supplying none would refuse every run at
+    /// <c>OpenPayrollRecord</c>, and every test below would be one assertion about
+    /// authorisation wearing the name of an assertion about control flow.
+    /// </para>
+    /// <para>
+    /// Listed rather than granted wholesale so a capability added with a seventh permission
+    /// fails here, naming the grant it needs. The sample's many
+    /// <c>Authorization.Internal</c> capabilities need nothing: a trigger addresses a flow
+    /// and never a capability, so that stance admits every caller and is why an
+    /// HTTP-triggered flow may call <c>hardware.order</c> at all.
+    /// </para>
+    /// </remarks>
+    internal static ClaimsPrincipal Coordinator { get; } = TestPrincipal.Holding(
+        "access.write",
+        "equipment.approve",
+        "identity.write",
+        "payroll.write",
+        "screening.write",
+        "supplier.write");
+
+    private FlowInvocation _invocation =
+        new("corr-test", "key-test", TenantId: null, Deadline: null, Principal: Coordinator);
 
     private OnboardingHarness(OnboardingWorld world) => World = world;
 
