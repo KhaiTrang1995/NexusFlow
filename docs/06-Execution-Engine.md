@@ -792,9 +792,13 @@ combined with capability idempotency this yields effectively-once processing.
 | Operator cancel | `flowx cancel --instance 42` → `Compensating` |
 
 Deadlines are **absolute**, set at trigger time, and never reset by a retry. A
-retry that would exceed the deadline is not attempted — the policy engine
-subtracts elapsed time before arming the next attempt. This prevents the classic
-"3 retries × 30 s timeout inside a 10 s SLA" failure.
+retry that would exceed the deadline is not attempted — the policy engine plans
+the backoff first and refuses the attempt when the wait alone would run past the
+budget — and a step's `Timeout` is clamped to whatever is left of the deadline
+whenever the deadline is shorter. This prevents the classic
+"3 retries × 30 s timeout inside a 10 s SLA" failure, and prevents it in both
+directions: `PolicyExecutionTests.ARetryNeverOutlivesTheDeadline` pins the first
+half and `StepPolicy.EffectiveTimeout` the second.
 
 ---
 

@@ -224,6 +224,20 @@ public sealed record StepNode
     /// </remarks>
     public CompensationPolicy CompensationRetry { get; private init; } = CompensationPolicy.None;
 
+    /// <summary>
+    /// The step's <see cref="PolicyStage.Resilience"/> policies, resolved out of
+    /// <see cref="Policies"/> when the plan was built.
+    /// </summary>
+    /// <remarks>
+    /// Resolved here rather than at the point of use for <see cref="CompensationRetry"/>'s
+    /// reason, applied to the other path: this one is read on the <em>success</em> path, once
+    /// per step of every policed flow, and walking an array of policy descriptors there would
+    /// put the cost of a declaration on the flow that made it rather than on the phase that
+    /// implements it. A step that declares nothing at stage 4 holds
+    /// <see cref="StepPolicy.None"/> and answers one comparison.
+    /// </remarks>
+    public StepPolicy StepPolicy { get; private init; } = StepPolicy.None;
+
     /// <summary>The event published by an <see cref="StepKind.Emit"/> step.</summary>
     public string? EventType { get; private init; }
 
@@ -473,6 +487,7 @@ public sealed record StepNode
                 "compensation must undo the step, not repeat it.");
         }
 
+        var stepChain = policies ?? PolicyChain.Empty;
         var undoChain = compensationPolicies ?? PolicyChain.Empty;
 
         if (compensation is null && !undoChain.IsEmpty)
@@ -487,9 +502,10 @@ public sealed record StepNode
         {
             Capability = capability,
             Compensation = compensation,
-            Policies = policies ?? PolicyChain.Empty,
+            Policies = stepChain,
             CompensationPolicies = undoChain,
             CompensationRetry = CompensationPolicy.From(undoChain),
+            StepPolicy = StepPolicy.From(stepChain),
         };
     }
 

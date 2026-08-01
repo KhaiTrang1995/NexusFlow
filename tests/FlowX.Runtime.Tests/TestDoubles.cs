@@ -300,6 +300,24 @@ internal sealed class RecordingDispatcher : IStepDispatcher
         return this;
     }
 
+    /// <summary>
+    /// Holds step <paramref name="index"/> inside the dispatcher until
+    /// <paramref name="release"/> completes, signalling <paramref name="entered"/> on the way in.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="YieldAt"/> lets a sibling in; this keeps a caller <em>in</em> the step, which
+    /// is the only shape that can prove a concurrency bound. A bulkhead of one permit is
+    /// indistinguishable from no bulkhead at all unless a second caller arrives while the
+    /// first still holds the permit, and nothing else here can arrange that.
+    /// </remarks>
+    public RecordingDispatcher HoldAt(int index, Task release, TaskCompletionSource entered)
+    {
+        _held = (index, release, entered);
+        return this;
+    }
+
+    private (int Index, Task Release, TaskCompletionSource Entered)? _held;
+
     /// <summary>Highest number of steps observed running at once. 1 means nothing overlapped.</summary>
     public int PeakConcurrency { get; private set; }
 
@@ -353,6 +371,12 @@ internal sealed class RecordingDispatcher : IStepDispatcher
             {
                 await Task.Yield();
                 ct.ThrowIfCancellationRequested();
+            }
+
+            if (_held is { } held && held.Index == stepIndex)
+            {
+                held.Entered.TrySetResult();
+                await held.Release.ConfigureAwait(false);
             }
 
             if (_visitFailures.TryGetValue((stepIndex, visit), out var visitError))

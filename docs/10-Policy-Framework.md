@@ -1,35 +1,49 @@
 # 10 — Policy Framework
 
-> **Status:** Accepted · **one policy executed, fifteen declared only** · **Audience:** application engineers, SRE
+> **Status:** Accepted · **stage 4 executed in full, four declarable kinds still inert** · **Audience:** application engineers, SRE
 > **Answers:** how are cross-cutting concerns declared, ordered and made safe?
 
 > [!IMPORTANT]
-> **Exactly one policy is applied at run time: `CompensationRetry`, at stage 7.**
-> What ships: `PolicySet` and its builder methods, `.WithPolicy(...)` on a step, a
-> compiler that reads the set's contents well enough to raise
-> [`FLOWX1014`](diagnostics/FLOWX1014.md) (retry on a non-idempotent capability)
-> and [`FLOWX1018`](diagnostics/FLOWX1018.md) (cache on a capability with side
-> effects), and a manifest that records each step's policies with the fixed stage
-> each one runs in. The safety *diagnostics* in this document are real and
-> enforced at build time.
+> **Stage 4 — `Resilience` — is applied at run time, and so is `CompensationRetry`
+> at stage 7.** A declared `Timeout` is armed and clamped to what is left of the
+> flow's deadline; a declared `Retry` makes the attempts it asked for, on the
+> categories it named, with full-jitter backoff, and refuses an attempt whose
+> backoff alone would outlive the deadline; a declared `CircuitBreaker` counts
+> outcomes per capability, opens on its failure ratio and half-opens after its
+> break duration; a declared `Bulkhead` bounds concurrency and refuses past its
+> queue depth. `FlowEngine` reads `ExecutionPlan.HasStepPolicies` and then
+> `StepNode.StepPolicy`, resolved when the plan was built.
+> `PolicyExecutionTests` asserts each of them against a real engine running a
+> real plan, and `samples/banking` settles a transfer whose screening provider
+> fails once.
 >
-> What does not ship: the Policy Engine. **No policy but `CompensationRetry` is
-> executed at all** in `FlowX.Runtime` — no timeout is armed, no forward retry is
-> attempted, no breaker opens, no cache is consulted, no authorisation stance is
-> checked at a boundary, and no audit record is written. A step's own policy
-> chain is metadata the runtime never reads: `PolicyChain.Ordered` is read in one
-> place in `src/`, `CompensationPolicy.From`, which skips every kind but the
-> compensation retry. That is **P4** in [20-Roadmap](20-Roadmap.md).
+> **Four declarable kinds are still executed by nothing:** `RateLimit` (stage 1),
+> `Idempotency` (stage 3), `Cache` (stage 5) and `Audit` (stage 7). No rate is
+> counted, no recorded result is replayed for a repeated key, no cache is
+> consulted and no audit record is written.
+> [`FLOWX1032`](diagnostics/FLOWX1032.md) reports exactly those four, narrowed
+> from the eight it reported when it was written.
+> [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)
+> argues each of the four skips separately, including the one that looks like a
+> violation of [ADR-0011](adr/ADR-0011-fixed-policy-stage-order.md): running a
+> retry without the stage-3 policy is safe because `FLOWX1014` refuses a retry
+> over a capability that is not idempotent, and because every attempt presents
+> the same `ctx.IdempotencyKey`.
 >
-> **"On the forward path" is the wrong cut, and this document used to make it.**
-> `Audit` is a stage-7 `Consistency` policy — the same stage as
-> `CompensationRetry` — and it is inert too, because `PolicyChain.ForStep` moves
-> only the compensation retry onto the undo's chain. The line is by **what a
-> policy wraps**, not by which stage it runs in.
+> **Eight catalogue rows in §3 cannot be declared at all.** `PolicySet` offers
+> nine builder methods, and there is no policy attribute anywhere in
+> `FlowX.Abstractions` — the `[Timeout]`, `[CircuitBreaker]`, `[Audit]`,
+> `[RateLimit]` and `[Idempotency]` attributes in §4 do not exist. So `Quota`,
+> `Authorize`, `Consent`, `Validate`, `Hedge`, `Fallback`, `Batch` and `Outbox`
+> are specification with no surface: no author can write one, and there is
+> nothing for an engine to execute. §3 marks each of them.
 >
-> **[`FLOWX1032`](diagnostics/FLOWX1032.md) says so at build time**, on every
-> `.WithPolicy(...)` naming a set the runtime will not apply, and four rules
-> report the ways a declared set reaches even less than that:
+> **The cut is a list of kinds, not a range of stages, and this document used to
+> get that wrong in both directions.** `Audit` is a stage-7 `Consistency` policy —
+> the same stage as `CompensationRetry`, which runs — so no line drawn by stage
+> number separates what executes from what does not.
+>
+> Four rules report the ways a declared set reaches even less than the plan:
 > [`FLOWX1033`](diagnostics/FLOWX1033.md) a `CompensationRetry` on a step with no
 > compensation for it to wrap; [`FLOWX1034`](diagnostics/FLOWX1034.md) a second
 > `.WithPolicy(...)` on one step, which *replaces* the first rather than adding
@@ -37,23 +51,12 @@
 > attempt, which the manifest publishes as a retry and the engine dispatches
 > once; and [`FLOWX1036`](diagnostics/FLOWX1036.md) a set the compiler cannot
 > read at all — one in a referenced assembly or built at run time — which reaches
-> no plan, no manifest and none of the rules above it. Until they existed, this
-> box was the only thing saying any of it, and a box in a document is not a build.
+> no plan, no manifest and none of the rules above it.
 >
-> **The exception is WP-57's slice, and it is deliberately one stage wide.** A
-> step's *compensation* may declare `CompensationRetry`, and the unwind honours
-> it: attempts, full-jitter backoff, retryable categories, the same idempotency
-> key, and the flow deadline as the bound on every wait. It sits at
-> `Consistency` — stage 7, where §2 puts compensation — because executing the
-> *last* stage cannot skip an earlier one, which is the property that makes a
-> single-policy slice safe to ship before the engine that runs the other fifteen.
-> Ordering is still `PolicyChain`'s and nothing else's; nothing here introduces a
-> second way to say what runs before what.
->
-> Read §2's stage order as the contract the engine must be built to, and every
-> claim below about behaviour at run time as specification — except §5's two
-> retry guarantees and the full-jitter default, which the compensation slice
-> honours today and `CompensationPolicyTests` pins.
+> Read §2's stage order as the contract the engine is built to. Read §5, §6 and
+> §11 as behaviour, with §6's composite `BreakerKey` excepted — the breaker is
+> keyed by capability id and there is no syntax for the other three components.
+> Read §7 and §8 as specification: they describe the two stages that do not run.
 
 ---
 
@@ -84,7 +87,16 @@ flowchart LR
 ```
 
 The order is **not configurable** ([ADR-0011](adr/ADR-0011-fixed-policy-stage-order.md)).
-Within a stage, an `order` value breaks ties.
+
+**Within a stage there is no `order` value, and this document claimed one for three
+releases.** `PolicyDescriptor` carries `Kind`, `Stage` and `Parameters`, and no builder
+method accepts a precedence. `PolicyChain` sorts by stage with a *stable* sort, so two
+policies in one stage keep their declared order — which decides what the manifest publishes
+and nothing else. What decides which of them wraps which is fixed by kind:
+`Retry { CircuitBreaker { Bulkhead { Timeout { capability } } } }`, settled by
+[ADR-0024](adr/ADR-0024-stage-four-is-a-fixed-nesting.md), which also says why an `order`
+value is not merely missing but unwanted — three of the four possible nestings are the
+incidents this section exists to make unexpressible.
 
 ### Why rigidity is the feature
 
@@ -107,31 +119,46 @@ ADR-0011 is scheduled for review after three documented counterexamples.
 
 ## 3. The policy catalogue
 
-| Policy | Stage | Key parameters | Notes |
-|---|---|---|---|
-| `RateLimit` | 1 | `permits`, `window`, `scope` (global/tenant/principal/key) | token bucket; returns 429 + `Retry-After` |
-| `Quota` | 1 | `budget`, `period`, `scope` | long-window fairness across tenants |
-| `Authorize` | 2 | derived from the capability's stance | deny-by-default; audited |
-| `Consent` | 2 | `purpose` | GDPR purpose-limitation checks |
-| `Validate` | 3 | generated from contract annotations | field errors → RFC 7807 |
-| `Idempotency` | 3 | `key`, `window`, `store` | replays the recorded result |
-| `Timeout` | 4 | `duration` | never exceeds the remaining flow deadline |
-| `Retry` | 4 | `attempts`, `backoff`, `jitter`, `retryOn` | **requires `Idempotent = true`** |
-| `CircuitBreaker` | 4 | `failureRatio`, `samplingWindow`, `minimumThroughput`, `breakDuration` | per capability + per downstream key |
-| `Bulkhead` | 4 | `maxConcurrency`, `queueDepth` | isolates a slow dependency |
-| `Hedge` | 4 | `afterDelay`, `maxAttempts` | tail-latency cutting; idempotent only |
-| `Fallback` | 4 | capability or constant | explicit degraded mode |
-| `Cache` | 5 | `ttl`, `key`, `scope`, `store` | tenant-scoped by default |
-| `Batch` | 5 | `size`, `window` | coalesces N invocations into one |
-| `Audit` | 7 | `category`, `redact` | immutable audit record. **Stage 7 and still inert:** it wraps the *step*, so it stays on `StepNode.Policies`, which nothing reads. `FLOWX1032` reports it |
-| `Outbox` | 7 | — | implicit on `.Emit` in durable flows |
-| `CompensationRetry` | 7 | `attempts`, `backoff`, `retryOn` | **the one policy the runtime executes.** Wraps the step's *compensation*, so it requires the **compensating** capability to declare `Idempotent = true`. Defaults: 5 attempts (more aggressive than forward retry, [06 §7](06-Execution-Engine.md#7-compensation-semantics) rule 2), full jitter, `Conflict`/`Unavailable`/`Internal` |
+Seventeen rows, and **only nine of them can be written down**: `PolicySet` has nine builder
+methods and there is no policy attribute in `FlowX.Abstractions`. The **Status** column says
+which is which — *executes*, *declared only* (an author can write it and nothing applies it,
+which is [`FLOWX1032`](diagnostics/FLOWX1032.md)), or *undeclarable* (no builder method, no
+attribute, no descriptor kind: specification with no surface).
+
+| Policy | Stage | Status | Key parameters | Notes |
+|---|---|---|---|---|
+| `RateLimit` | 1 | **declared only** | `permits`, `window`, `scope` (global/tenant/principal/key) | token bucket; returns 429 + `Retry-After`. Nothing counts. Stage 1 is not implemented |
+| `Quota` | 1 | *undeclarable* | `budget`, `period`, `scope` | long-window fairness across tenants |
+| `Authorize` | 2 | *undeclarable* | derived from the capability's stance | deny-by-default; audited. The stance reaches the manifest and no boundary checks it |
+| `Consent` | 2 | *undeclarable* | `purpose` | GDPR purpose-limitation checks |
+| `Validate` | 3 | *undeclarable* | generated from contract annotations | field errors → RFC 7807 |
+| `Idempotency` | 3 | **declared only** | `window`, `scope` | replays the recorded result. Nothing is recorded or replayed. `ctx.IdempotencyKey` is stable and reaches the capability, but that is the engine's identity plumbing rather than this policy |
+| `Timeout` | 4 | **executes** | `duration` | armed per attempt, and clamped to what is left of the flow deadline — so §11's "a timeout longer than the deadline is a lie" is prevented rather than discouraged |
+| `Retry` | 4 | **executes** | `attempts`, `backoff`, `jitter`, `retryOn` | **requires `Idempotent = true`** (`FLOWX1014`). `attempts` includes the first. Outermost of the four ([ADR-0024](adr/ADR-0024-stage-four-is-a-fixed-nesting.md)), which is what makes `FLOWX1019`'s `timeout × attempts` arithmetic true |
+| `CircuitBreaker` | 4 | **executes** | `failureRatio`, `samplingWindow`, `breakDuration` | keyed by capability id, per process. `minimumThroughput` is **not a parameter** — `PolicySet.CircuitBreaker` has none — and is the constant `StepPolicy.DefaultMinimumThroughput`. §6's composite `BreakerKey` is undeclarable |
+| `Bulkhead` | 4 | **executes** | `maxConcurrency`, `queueDepth` | isolates a slow dependency. One pool per capability, so two steps calling it share the bound. Past the queue depth a caller is refused rather than queued |
+| `Hedge` | 4 | *undeclarable* | `afterDelay`, `maxAttempts` | tail-latency cutting; idempotent only |
+| `Fallback` | 4 | *undeclarable* | capability or constant | explicit degraded mode |
+| `Cache` | 5 | **declared only** | `ttl`, `scope` | tenant-scoped by default. Nothing is cached or consulted. `FLOWX1018` still refuses one on a capability with side effects |
+| `Batch` | 5 | *undeclarable* | `size`, `window` | coalesces N invocations into one |
+| `Audit` | 7 | **declared only** | `category`, `redact` | immutable audit record. **Stage 7 and still inert:** it wraps the *step*, so it stays on `StepNode.Policies`, which the step loop reads only for stage 4. `FLOWX1032` reports it, and it is the reason the cut cannot be written as a range of stages |
+| `Outbox` | 7 | *undeclarable* | — | implicit on `.Emit` in durable flows, and real — but it is the emit step's own commit rather than a policy anybody declares |
+| `CompensationRetry` | 7 | **executes** | `attempts`, `backoff`, `retryOn` | wraps the step's *compensation*, so it requires the **compensating** capability to declare `Idempotent = true`. Defaults: 5 attempts (more aggressive than forward retry, [06 §7](06-Execution-Engine.md#7-compensation-semantics) rule 2), full jitter, `Conflict`/`Unavailable`/`Internal` |
 
 ---
 
 ## 4. Declaring policies
 
-### On a capability (its own defaults, travel with it)
+> [!WARNING]
+> **Only one of the four ways below exists.** A policy reaches a step through
+> `.WithPolicy(PolicySet)` and through nothing else. There is no `[Timeout]`,
+> `[CircuitBreaker]`, `[Audit]`, `[RateLimit]` or `[Idempotency]` attribute in
+> `FlowX.Abstractions`, no flow-level policy surface, and no runtime configuration that
+> reaches a policy parameter — so the capability block, the flow block and the last box of
+> the resolution diagram below are all specification. `samples/banking` declares its rate
+> limit on the first *step* for exactly this reason, and says so in `Policies.cs`.
+
+### On a capability (its own defaults, travel with it) — *specification*
 
 ```csharp
 [Capability("payment.capture", Version = "2.1.0", Idempotent = true,
@@ -169,7 +196,7 @@ public static class Policies
 }
 ```
 
-### On a flow (applies to every step unless overridden)
+### On a flow (applies to every step unless overridden) — *specification*
 
 ```csharp
 [Flow("order.place", Profile = ExecutionProfile.Durable)]
@@ -178,7 +205,7 @@ public static class Policies
 public sealed partial class PlaceOrderFlow : … { }
 ```
 
-### Resolution order
+### Resolution order — *one of the five levels exists*
 
 ```mermaid
 flowchart LR
@@ -193,6 +220,15 @@ Later stages override earlier ones **for parameter values only**. Runtime
 configuration can change a timeout from 2 s to 3 s; it can never add, remove or
 reorder a policy. That would change the graph, which is forbidden (Manifesto,
 "What we refuse").
+
+**Today the fourth box is the whole chain.** Platform defaults, capability attributes and
+runtime configuration have no surface at all, and a named `PolicySet` is not a resolution
+level so much as the value the fourth box carries — a set is applied by
+`.WithPolicy(...)` or it is applied nowhere. There is therefore nothing to override and no
+precedence to get wrong, which is why no diagnostic reports one:
+[`FLOWX1034`](diagnostics/FLOWX1034.md) reports the only composition that *is* expressible,
+a second `.WithPolicy(...)` on one step, and it reports it because the second **replaces**
+the first rather than merging with it.
 
 ---
 
@@ -209,6 +245,9 @@ flowchart TD
     F -- yes --> H["Sleep backoff+jitter, retry<br/>same ctx.IdempotencyKey"]
     H --> D
 ```
+
+Both branches of that tree are `StepPolicy.AllowsAnotherAttempt` and the deadline check
+beside it in `FlowEngine`'s step loop, and both are asserted by `PolicyExecutionTests`.
 
 Two guarantees worth stating explicitly:
 
@@ -235,6 +274,16 @@ region trips the breaker for everyone.
 [CircuitBreaker(FailureRatio = 0.5, Key = BreakerKey.Capability | BreakerKey.Downstream)]
 ```
 
+> [!IMPORTANT]
+> **The composite key is specification; the breaker is keyed by capability id alone.**
+> There is no `CircuitBreakerAttribute` and `PolicySet.CircuitBreaker` takes no key, so
+> `Downstream`, `Tenant` and `Partition` have nothing to read — the table below describes
+> the key this section argues *for*, and `Capability` is the row it marks "always included"
+> and the only one built. The breaker is also per process rather than per deployment:
+> sharing one would need a store, which is a plugin contract and a separate decision
+> ([ADR-0009](adr/ADR-0009-plugin-contracts.md)). The conservative direction — every node
+> discovers an outage for itself.
+
 | Key component | Effect |
 |---|---|
 | `Capability` | per capability id (always included) |
@@ -242,12 +291,23 @@ region trips the breaker for everyone.
 | `Tenant` | per tenant — prevents one tenant tripping everyone |
 | `Partition` | per stream partition |
 
-State transitions are exported as `flowx_circuit_state{capability,key}` and
-appear live in Studio's topology view.
+State transitions are specified to export as `flowx_circuit_state{capability,key}` and to
+appear live in Studio's topology view. **Neither exists**: FlowX ships no metrics
+infrastructure, which is why `ICompensationAlertSink` is a seam rather than a counter, and
+§9's whole table is in the same position.
 
 ---
 
-## 7. Idempotency policy
+## 7. Idempotency policy — *specification*
+
+> [!NOTE]
+> **Nothing below runs.** The `[Idempotency]` attribute does not exist, no store is
+> consulted, and no recorded result is replayed. The sequence diagram is what stage 3 will
+> do; [`FLOWX1032`](diagnostics/FLOWX1032.md) reports every `.Idempotency(...)` an author
+> declares. What *is* real is the key itself: `ctx.IdempotencyKey` is stable across a flow
+> and across every attempt of a retried step, which is the engine's identity plumbing and
+> the mechanism [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)
+> §2.2 leans on.
 
 ```csharp
 [Idempotency(Window = "PT24H", Scope = IdempotencyScope.Tenant, Store = "redis")]
@@ -283,7 +343,13 @@ key both execute. This is the most common bug in hand-rolled idempotency.
 
 ---
 
-## 8. Cache safety
+## 8. Cache safety — *specification*
+
+> [!NOTE]
+> **No cache is consulted.** Stage 5 is not implemented, so every defaulting decision below
+> is a decision about a cache that does not exist. The one half that is enforced is the last
+> line: `FLOWX1018` refuses a `Cache` on a capability with side effects, at build time,
+> whether or not anything would have cached it.
 
 Caching is the most dangerous policy in a multi-tenant system, so its defaults
 are conservative:
@@ -300,10 +366,16 @@ Declaring `Cache` on a capability with side effects is `FLOWX1018` (error).
 
 ---
 
-## 9. Observing policies
+## 9. Observing policies — *specification*
 
-Every policy emits telemetry with a uniform schema — you never have to instrument
-resilience by hand:
+> [!NOTE]
+> **No metric in this table is emitted.** FlowX ships no metrics or logging infrastructure
+> at all, so a policy that now genuinely opens a breaker or spends two retries does so
+> silently. That is a real gap and it widened with this package: before it, the missing
+> counters described policies that were not running either.
+
+Every policy is specified to emit telemetry with a uniform schema, so that resilience never
+has to be instrumented by hand:
 
 | Metric | Type | Labels |
 |---|---|---|
@@ -346,9 +418,15 @@ resilience tests; FlowX removes the excuse.
 > flow with capabilities substituted — see [23 §4](23-Testing-Strategy.md#4-flowtesthost-in-detail)
 > for the shape, which is `For(plan, dispatcher)` and substitution by capability id, not
 > `For<TFlow>()`. What it does not have is `WithVirtualTime()`, `host.Policy<T>(…)` or
-> `host.Metrics`, and none of the three can be built before the Policy Engine is: there is
-> no breaker to open and no retry counter to read. This block stays as the specification
-> the P4 host is built to.
+> `host.Metrics`. **One of the three arguments for that has now expired and two have not.**
+> There *is* a breaker to open, so `host.Policy<CircuitBreaker>(…)` is buildable and simply
+> is not built; there is still no retry counter to read, because §9 emits nothing; and
+> `WithVirtualTime()` is the one that was always available — `IClock` is injected, and
+> `PolicyExecutionTests` proves a breaker's thirty-second break duration on a fake clock
+> without sleeping. What a test can do today is assert what the engine *did*: how many times
+> a capability was dispatched, and which error a refusal produced.
+> `samples/banking`'s `ExecuteTransferFlowTests` and `PolicyExecutionTests` are both written
+> that way.
 
 ---
 

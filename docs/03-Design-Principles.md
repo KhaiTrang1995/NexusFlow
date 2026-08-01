@@ -356,10 +356,15 @@ test that was never written — a reader takes the tension as settled and stops
 looking. They are standing resolutions, and the fourth column says which are also
 descriptions of the code.
 
-- **Policy parameters are not runtime-configurable, because no policy runs.**
-  `.WithPolicy(...)` composes at compile time and reaches the manifest; there is
-  no policy engine in `FlowX.Runtime` at all, so there is no magnitude to
-  configure. **P4** ([10-Policy-Framework](10-Policy-Framework.md)).
+- **Policy parameters are not runtime-configurable, and there are now magnitudes
+  worth configuring.** `.WithPolicy(...)` composes at compile time and reaches the
+  manifest, and `FlowX.Runtime` executes stage 4 — so a declared timeout, attempt
+  count, failure ratio and concurrency bound are real numbers a deployment might
+  want to move. There is still no configuration surface that reaches one: the
+  last box of [10 §4](10-Policy-Framework.md#resolution-order--one-of-the-five-levels-exists)'s
+  resolution diagram does not exist. The tension is no longer vacuous, which
+  makes it a live resolution rather than a description of an absence
+  ([10-Policy-Framework](10-Policy-Framework.md)).
 - **Telemetry is listener-gated, and the gate is asserted.** *This entry said there were
   "no listeners and nothing to gate", because nothing under `src/` constructed an
   `ActivitySource`, a `Meter` or an `ILogger`. Two thirds of that expired at WP-90:*
@@ -371,10 +376,16 @@ descriptions of the code.
   harness; the 0 ns half is still unmeasured, and so is B5. **The `ILogger` third has not
   expired** — there are no logs, and [12 §4](12-Observability.md#4-logs) records what that is
   blocked on. **P5**, as P10 above already states.
-- **`Durable` is not journaled.** The profile is a declaration the compiler
-  validates and the manifest records; `FlowX.Runtime` never reads it, so a
-  `Durable` flow executes the `Ephemeral` path with no checkpoint and no resume.
-  **P2**, as P10 above already states.
+- ~~**`Durable` is not journaled.**~~ **Expired at WP-52 (2026-07-31), and this entry
+  outlived it by a day.** It said *"the profile is a declaration the compiler validates and
+  the manifest records; `FlowX.Runtime` never reads it, so a `Durable` flow executes the
+  `Ephemeral` path with no checkpoint and no resume"* — every clause of which is now false.
+  The runtime reads the profile, journals one row per step boundary, takes a fenced lease,
+  resumes through the same step loop from a derived frontier, suspends at `.AwaitSignal<T>`
+  and wakes on a timer. What is still true and worth keeping from the original tension: the
+  ephemeral path pays **nothing** for any of it, which is budget **B2**'s hard zero and the
+  reason the durable seam is gated on plan-level flags rather than on a runtime check.
+  **P2**.
 
 ---
 

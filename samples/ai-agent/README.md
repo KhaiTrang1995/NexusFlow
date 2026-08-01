@@ -83,9 +83,13 @@ a descriptor.*
 ## What happens on a call
 
 > **No participant in this diagram exists except the flow.** There is no
-> `FlowX.Ai`, no policy engine executing on the forward path, and no confirmation
-> channel. The tracing and journaling in the last step are real for an HTTP call
-> today; there is no agent call to apply them to.
+> `FlowX.Ai` and no confirmation channel, and the Policy Engine below is doing
+> the two things it still cannot do — checking an authorisation stance at a
+> boundary (stage 2 is undeclarable) and applying a rate limit (stage 1 is not
+> implemented). What a step's policy chain *does* apply on the forward path is
+> `PolicyStage.Resilience`, which is not what this diagram asks of it. The
+> tracing and journaling in the last step are real for an HTTP call today; there
+> is no agent call to apply them to.
 
 ```mermaid
 sequenceDiagram

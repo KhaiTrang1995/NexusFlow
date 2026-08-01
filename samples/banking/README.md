@@ -195,36 +195,59 @@ sequenceDiagram
 ## What is declared and not enforced
 
 This is the section the sample exists for. Everything below is in
-`flowx.manifest.json`, is visible to a reviewer, and changes nothing about how the
-program runs. Each one has a test that goes red if that ever stops being true.
+`flowx.manifest.json` and is visible to a reviewer; what has changed is that some of it
+now changes how the program runs and some of it still does not, and the point of the
+section is to say which is which. Each claim has a test that goes red if it stops being
+true — in either direction.
 
-### The policy engine is P4, so every policy but one is inert
+### Three of this bank's eight declarations are inert; five of them run
 
-`Policies.cs` declares `Timeout`, `Retry`, `CircuitBreaker`, `RateLimit`,
-`Idempotency` and `Audit`. Nothing applies any of them. They now reach
-`StepNode.Policies` in the compiled plan as well as the manifest — the plan and the
-document agree about what was declared — but no timeout is armed and no rate limit
-is counted, and that is the whole of their effect.
+*This section used to read "the policy engine is P4, so every policy but one is
+inert".* The engine now executes `PolicyStage.Resilience`, so what is left is
+narrower and this is the exact split:
 
-**"No *forward* policy runs" is what this section used to say, and it is the wrong
-cut.** `Audit` is a stage-7 `Consistency` policy — the same stage as
-`CompensationRetry` — and it is inert too, because `PolicyChain.ForStep` moves only
-the compensation retry onto the undo's chain and `CompensationPolicy.From` reads only
-that kind. The line is by **what a policy wraps**, not by which stage it runs in. So
-this bank writes no policy-driven audit record, and a summary phrased by stage would
-have implied it does.
+| Declared in `Policies.cs` | Set | Runs? |
+|---|---|---|
+| `Timeout(PT3S)` · `Retry(3)` · `CircuitBreaker(0.5, PT30S)` | `ExternalRead` | **yes** — the screening call is bounded, retried and breakered |
+| `Timeout(PT5S)` | `LedgerPost`, `SettlementRegister` | **yes** — each ledger write and the settlement write is bounded |
+| `CompensationRetry(5)` | `LedgerPost` | **yes** — since WP-57 |
+| `Audit("financial", …)` | `LedgerPost`, `SettlementRegister` | no — **this bank writes no policy-driven audit record** |
+| `RateLimit(20, PT1S)` · `Idempotency(PT24H)` | `Admission` | no — nothing is counted, nothing is replayed |
 
-**The compiler says all of this now, and it is an error in this repository.**
+**The cut is a list of kinds, not a range of stages, and this section used to get
+that wrong in two different ways.** It once said "no *forward* policy runs", which
+was wrong because `Audit` is a stage-7 `Consistency` policy — the same stage as the
+`CompensationRetry` that does run. Now the reverse trap is available too: `RateLimit`
+is stage 1 and inert while `Timeout` is stage 4 and armed. No line drawn by stage
+number separates the two halves.
+
+**The compiler says all of this, and it is an error in this repository.**
 [FLOWX1032](../../docs/diagnostics/FLOWX1032.md) reports every declared policy the
-runtime does not apply, and this flow was its first finding: seven reports, one per
-`.WithPolicy(...)`, naming `Audit` and `Timeout` on the ledger legs and *not* their
-`CompensationRetry`. `ExecuteTransferFlow.cs` suppresses it with an argued pragma
-rather than hiding it — the flow is survivable with the policies unenforced, because
-the `PT60S` deadline bounds the run whatever the step timeouts say and a real
-deployment puts the rate limit in front of the process — which is the first of the
-three answers [the diagnostic's page](../../docs/diagnostics/FLOWX1032.md#how-to-fix-it)
-asks for. Deleting the declarations to buy a green build would delete the record P4
-needs and change nothing about how a transfer runs.
+runtime does not apply. It reported all seven of this flow's `.WithPolicy(...)` calls
+when it was written; it reports four now, and the three that went quiet are the
+`ExternalRead` ones. `ExecuteTransferFlow.cs` carries two narrow argued pragmas rather
+than one over the whole method — one for the rate limit and the idempotency window,
+one for the audits — and the `Switch` in between carries none at all, which is the
+visible half of the change. Keeping the four declarations is the first of the three
+answers [the diagnostic's page](../../docs/diagnostics/FLOWX1032.md#how-to-fix-it)
+asks for: the limit belongs in front of the process, the endpoint is already
+`Idempotent = true` at the transport, and deleting the audits would delete the record
+the stage that implements them will need.
+
+### And a transfer that used to fail now settles
+
+`ExecuteTransferFlowTests.ATransientScreeningFailureIsRetriedAndTheTransferSettles`
+runs a SEPA transfer whose sanctions provider fails once with `Unavailable` and
+recovers. Before the policy engine, `compliance.screen_sanctions` was dispatched once
+and the transfer was refused. It is now dispatched twice and the money moves — and the
+test beside it asserts that a provider which never recovers is asked exactly three
+times, which is the number `Policies.ExternalRead` declares, first attempt included.
+
+Two things about that are worth stating because they are the safety argument rather
+than a feature: `compliance.screen_sanctions` declares `Idempotent = true`, without
+which [FLOWX1014](../../docs/diagnostics/FLOWX1014.md) would refuse the retry at build
+time; and a sanctions *hit* is `Forbidden`, which is not in the retryable set, so the
+one screening answer that must never be asked twice is not.
 
 ### The rule this sample deliberately does not trigger
 
@@ -240,7 +263,7 @@ line. Reusing `LedgerPost` there is the tempting edit and is the defect; before 
 rule, making it would have compiled silently and published a five-attempt retry over
 nothing.
 
-### The exception: `CompensationRetry` is implemented, and now reachable
+### `CompensationRetry` was implemented before the rest, and is reachable
 
 `FlowEngine` really does retry a failing compensation — WP-57 — and reads
 `ExecutionPlan.HasCompensationPolicies` to decide. **It used to be unreachable from
@@ -260,7 +283,8 @@ StepNode.ForCapability(8, Descriptors.Step8, Descriptors.Step8Compensation,
     compensationPolicies:  PolicyChain.ForCompensation(Policies.LedgerPost, Descriptors.Step8Compensation)),
 ```
 
-`Timeout` and `Audit` wrap `ledger.post_debit`; `CompensationRetry` wraps
+`Timeout` and `Audit` wrap `ledger.post_debit` — the timeout armed, the audit not —
+and `CompensationRetry` wraps
 `ledger.reverse_debit`, and is checked against *its* `Idempotent = true` — which is
 exactly why the reversals declare it. A reversal that fails with `Conflict`,
 `Unavailable` or `Internal` is now dispatched up to five times with full-jitter
@@ -279,7 +303,7 @@ one-line edit of *this* file rather than against a fixture.
 |---|---|---|
 | `.WithPolicy(Policies.LedgerPost).WithPolicy(PolicySet.CompensationDefault)` on a ledger leg | The second call **replaces** the first — `StepModel.WithPolicy` assigns rather than accumulates — so the leg loses its five-second timeout and its financial audit from the plan *and* from the manifest, in exchange for a retry it already had | [FLOWX1034](../../docs/diagnostics/FLOWX1034.md), an error. *This is the edit [FLOWX1033's page](../../docs/diagnostics/FLOWX1033.md) used to recommend* |
 | `.CompensationRetry(attempts: 1)` in `Policies.LedgerPost` | `IsRetrying` is `Attempts > 1`, so `HasCompensationPolicies` stays false, the engine takes `CompensationPolicy.None`, and both reversals are dispatched once — while the manifest still publishes `{"kind":"CompensationRetry"}` with no parameters and reads exactly as it does today | [FLOWX1035](../../docs/diagnostics/FLOWX1035.md), a warning |
-| `Policies.cs` moved into a shared library and referenced as an assembly | Its symbols carry no syntax, so all seven declarations reach no plan node and no manifest entry — the timeouts, the audits, the rate limit *and* the compensation retry — and FLOWX1032 goes quiet with them, because the compiler cannot name a kind it could not read | [FLOWX1036](../../docs/diagnostics/FLOWX1036.md), a warning |
+| `Policies.cs` moved into a shared library and referenced as an assembly | Its symbols carry no syntax, so all seven declarations reach no plan node and no manifest entry — the timeouts, the retry, the breaker, the audits, the rate limit *and* the compensation retry — and FLOWX1032 goes quiet with them, because the compiler cannot name a kind it could not read. This edit now costs the sample real behaviour rather than only its published contract | [FLOWX1036](../../docs/diagnostics/FLOWX1036.md), a warning |
 
 `PolicySet.CompensationDefault` — the five-attempt default
 [06 §7](../../docs/06-Execution-Engine.md) rule 2 names — is now usable as a step's whole

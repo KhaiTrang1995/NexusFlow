@@ -1432,7 +1432,7 @@ public static class FlowEmitter
     /// <strong>Until this existed, <c>.WithPolicy(...)</c> reached the manifest and stopped.</strong>
     /// Every node was emitted as <c>ForCapability(index, capability, compensation)</c>, so
     /// <c>ExecutionPlan.HasCompensationPolicies</c> was false for every compiled flow and
-    /// <c>PolicySet.CompensationRetry</c> — the one policy this runtime executes — was
+    /// <c>PolicySet.CompensationRetry</c> — the one policy the unwind executes — was
     /// unreachable from the DSL. The document said the undo would be retried; the plan the
     /// engine walked said it would be dispatched once.
     /// </para>

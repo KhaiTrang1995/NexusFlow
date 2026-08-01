@@ -43,13 +43,23 @@ namespace Workflow;
 public static class Policies
 {
     /// <summary>
-    /// The directory's resilience stance: timeout, retry, breaker. Declared, published and
-    /// carried into the plan; nothing arms it.
+    /// The directory's resilience stance: timeout, retry, breaker. Declared, published,
+    /// carried into the plan — and, since the policy engine's stage 4, executed.
     /// </summary>
     /// <remarks>
-    /// The retry is legal only because <see cref="CreateIdentity"/> declares
-    /// <c>Idempotent = true</c>. That is the difference between a safety diagnostic, which
-    /// ships, and a runtime feature, which does not — and it is worth seeing both on one step.
+    /// <para>
+    /// This summary said "nothing arms it", and the remark below drew a line between "a
+    /// safety diagnostic, which ships, and a runtime feature, which does not". All three
+    /// kinds here run now: the timeout is per attempt and clamped to what is left of the
+    /// flow's deadline, the retry backs off with full jitter and refuses a sleep that would
+    /// outlive that deadline, and the breaker is per capability and per process.
+    /// </para>
+    /// <para>
+    /// The retry is still legal only because <see cref="CreateIdentity"/> declares
+    /// <c>Idempotent = true</c> — <c>FLOWX1014</c> is an error otherwise. That part of the
+    /// original remark survives, and it matters more now than when it was written: it used to
+    /// guard a declaration nothing executed.
+    /// </para>
     /// </remarks>
     public static PolicySet DirectoryService { get; } = PolicySet
         .Named("directory-service")
@@ -58,8 +68,8 @@ public static class Policies
         .CircuitBreaker(failureRatio: 0.5, breakDuration: TimeSpan.FromSeconds(10));
 
     /// <summary>
-    /// The undo stance for the desk: the one policy kind the engine can execute, attached to
-    /// the one kind of step it applies to, and reaching it.
+    /// The undo stance for the desk: attached to the one kind of step it applies to, and
+    /// reaching it. *It was "the one policy kind the engine can execute" until stage 4 ran.*
     /// </summary>
     /// <remarks>
     /// Three attempts rather than the documented default of five, so that the assertion which

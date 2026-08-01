@@ -4,29 +4,32 @@ using Xunit;
 namespace FlowX.Runtime.Tests;
 
 /// <summary>
-/// What the engine does with a declared policy chain: for eight of the nine kinds, nothing.
+/// What the engine does with a declared policy chain: stage 4 executes, and three kinds
+/// outside it still do not.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>The executable half of <c>docs/diagnostics/FLOWX1032.md</c>.</strong> That page
-/// says a declared <c>Timeout</c> arms no clock, a <c>Retry</c> dispatches once, a
-/// <c>Cache</c> is never consulted and a <c>RateLimit</c> counts nothing. Those are claims
-/// about the engine, and a claim about the engine that only a paragraph makes is the exact
-/// failure the diagnostic exists to end — so they are asserted here, against a real
-/// <see cref="FlowEngine"/> running a real plan whose steps carry a real
-/// <see cref="PolicyChain"/>.
+/// <strong>This file used to assert the opposite of every test above the fold.</strong> It
+/// was the executable half of <c>docs/diagnostics/FLOWX1032.md</c> while that rule covered
+/// eight kinds, and each of its assertions was of the form "this did not happen" — a
+/// zero-length <c>Timeout</c> that stopped nothing, a <c>Retry(3)</c> that dispatched once,
+/// a <c>Bulkhead(1)</c> that counted nobody. Its own remarks said it was "written to go red
+/// on the day P4 lands". It did, and the inversions are recorded on each test.
 /// </para>
 /// <para>
-/// <strong>It is written to go red on the day P4 lands</strong>, which is when FLOWX1032 is
-/// deleted. Every assertion below is of the form "this did not happen"; the first policy the
-/// engine actually applies breaks one of them, and the failure message points at the rule
-/// that then has to be narrowed or removed.
+/// <strong>What runs now is <see cref="PolicyStage.Resilience"/>, whole.</strong>
+/// <c>Timeout</c>, <c>Retry</c>, <c>CircuitBreaker</c> and <c>Bulkhead</c> are executed by
+/// <c>FlowEngine</c> over <c>StepNode.StepPolicy</c>, in the fixed nesting
+/// <a href="../../docs/adr/ADR-0024-stage-four-is-a-fixed-nesting.md">ADR-0024</a> settles.
+/// <c>RateLimit</c> (stage 1), <c>Idempotency</c> (stage 3) and <c>Cache</c> (stage 5) are
+/// not, and the three tests that say so are kept rather than deleted — they are what
+/// FLOWX1032 now reports, narrowed from eight kinds to three.
 /// </para>
 /// <para>
-/// <strong>The positive control is at the bottom and is not optional.</strong> A file of
-/// nothing-happened assertions passes against an engine that does not run at all, which is
-/// exactly the vacuous gate <c>docs/21-Quality-Gates.md §2.4</c> refuses. The last test
-/// declares the one policy that <em>is</em> executed and asserts it executes.
+/// <strong>The positive control is still at the bottom and still not optional.</strong> A
+/// file mixing "this happened" and "this did not" passes against an engine that runs nothing
+/// only if the second sort is all it contains. The compensation retry, which executed before
+/// this package and still does, is asserted last.
 /// </para>
 /// </remarks>
 public sealed class PolicyExecutionTests
@@ -38,6 +41,9 @@ public sealed class PolicyExecutionTests
     private static readonly Error Unavailable =
         new("order.validate_failed", "the ledger is down", ErrorCategory.Unavailable);
 
+    private static readonly Error Invalid =
+        new("order.validate_rejected", "the iban is malformed", ErrorCategory.Validation);
+
     private static readonly Error BrokerDown =
         new("inventory.release_failed", "broker down", ErrorCategory.Unavailable);
 
@@ -45,10 +51,10 @@ public sealed class PolicyExecutionTests
     /// Every kind the DSL offers except the compensation retry, on one step.
     /// </summary>
     /// <remarks>
-    /// A zero-length <c>Timeout</c> and a one-permit <c>RateLimit</c> deliberately: if either
-    /// were armed, no step in this file would ever complete and no flow would ever run twice.
-    /// Choosing values that make the failure loud is what stops these assertions passing
-    /// because the numbers happened to be generous.
+    /// A zero-length <c>Timeout</c> and a one-permit <c>RateLimit</c> deliberately: the
+    /// timeout now stops the step before it begins, and the rate limit still does not.
+    /// Choosing values that make the difference loud is what stops either half of this file
+    /// passing because the numbers happened to be generous.
     /// </remarks>
     private static PolicyChain Everything { get; } = PolicyChain.ForStep(
         PolicySet.Named("everything")
@@ -62,8 +68,16 @@ public sealed class PolicyExecutionTests
             .Audit("financial"),
         Plans.Validate);
 
+    /// <summary>The three kinds outside stage 4, and nothing that executes.</summary>
+    private static PolicyChain Inert { get; } = PolicyChain.ForStep(
+        PolicySet.Named("inert")
+            .RateLimit(permits: 1, TimeSpan.FromHours(1))
+            .Idempotency(TimeSpan.FromHours(1))
+            .Cache(TimeSpan.FromHours(1)),
+        Plans.Validate);
+
     /// <summary>
-    /// <c>0 validate (every forward policy) · 1 reserve (undo: release) · 2 capture</c>.
+    /// <c>0 validate (the forward chain) · 1 reserve (undo: release) · 2 capture</c>.
     /// </summary>
     /// <remarks>
     /// Three steps rather than two, because a step that fails is not on its own unwind stack:
@@ -74,68 +88,74 @@ public sealed class PolicyExecutionTests
         ExecutionPlan.Create(
             FlowDescriptor.Create("order.policy", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
             StepGraph.Create([
-                StepNode.ForCapability(0, Plans.Validate, policies: forward ?? Everything),
+                StepNode.ForCapability(0, Plans.Validate, policies: forward ?? Inert),
                 StepNode.ForCapability(1, Plans.Reserve, Plans.Release, compensationPolicies: undo),
                 StepNode.ForCapability(2, Plans.Capture),
             ]));
 
-    // ------------------------------------------------------------------ nothing runs
+    private static PolicyChain Forward(PolicySet set) => PolicyChain.ForStep(set, Plans.Validate);
+
+    // ------------------------------------------------------------------- stage 4 executes
 
     /// <summary>
-    /// A step carrying all eight kinds is dispatched exactly once, and the flow succeeds.
+    /// A step carrying all eight forward kinds is stopped by the one of them that is armed.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The single assertion the diagnostic's page rests on. The <c>Timeout</c> is
-    /// <see cref="TimeSpan.Zero"/> — an armed one would abort the step before it began — and
-    /// the run completes; the <c>Bulkhead</c> admits one caller and there is one; the
-    /// <c>Cache</c>, the <c>Idempotency</c> window and the <c>CircuitBreaker</c> are
-    /// consulted by nothing.
+    /// <strong>Inverted.</strong> This test was <c>OnlyCompensationRetryIsExecutedAtRunTime</c>,
+    /// and it asserted <c>result.IsSuccess</c> with the message "a zero-length Timeout on step
+    /// 0 stops nothing, because nothing arms it", and <c>dispatcher.Executed == [0, 1, 2]</c>
+    /// — one dispatch per step, the whole flow through. It was named on FLOWX1032's page as
+    /// that rule's take-down trigger.
     /// </para>
     /// <para>
-    /// This is the test named on <c>docs/diagnostics/FLOWX1032.md</c> as the rule's take-down
-    /// trigger.
+    /// A zero-length timeout is degenerate on purpose: it has expired before the step begins,
+    /// so nothing is dispatched at all and the loudest possible thing happens. The
+    /// <c>Retry(3)</c> beside it is armed too, so the step is attempted three times and times
+    /// out three times, and <c>order.validate</c> is never entered once.
     /// </para>
     /// </remarks>
     [Fact]
-    public async Task OnlyCompensationRetryIsExecutedAtRunTime()
+    public async Task AZeroLengthTimeoutStopsTheStepBeforeItBegins()
     {
         var dispatcher = new RecordingDispatcher();
 
         var result = await new FlowEngine(new FakeClock(T0))
-            .ExecuteAsync(Plan(), dispatcher, Plans.Invocation, Ct);
+            .ExecuteAsync(Plan(Everything), dispatcher, Plans.Invocation, Ct);
 
-        result.IsSuccess.ShouldBeTrue(
-            "A zero-length Timeout on step 0 stops nothing, because nothing arms it. If this " +
-            "fails, the policy engine has landed and FLOWX1032 is due for deletion — see " +
-            "docs/diagnostics/FLOWX1032.md.");
+        result.IsSuccess.ShouldBeFalse(
+            "A zero-length Timeout has no budget left the moment the step is reached.");
 
-        dispatcher.Executed.ShouldBe(
-            [0, 1, 2],
-            "One dispatch per step. A Bulkhead of one, a Cache and an Idempotency window are " +
-            "declared on step 0 and read by no code.");
+        result.Error!.Code.ShouldBe(FlowErrors.StepTimedOutCode);
+
+        dispatcher.Executed.ShouldBeEmpty(
+            "The capability is never entered: the timeout is checked before the dispatch, so " +
+            "a step with no budget costs the dependency nothing.");
     }
 
-    /// <summary>
-    /// A declared <c>Retry(3)</c> over a failing step buys exactly one attempt.
-    /// </summary>
+    /// <summary>A declared <c>Retry(3)</c> over a failing step buys three attempts.</summary>
     /// <remarks>
-    /// The forward half of FLOWX1014's subject, from the other side. That rule refuses a
-    /// <c>Retry</c> on a capability that is not idempotent, and has always been enforced;
-    /// this asserts that the retry it was protecting does not happen. <c>order.validate</c>
-    /// declares <c>Idempotent = true</c>, so the declaration is legal and the failure is
+    /// <para>
+    /// <strong>Inverted.</strong> This test was <c>AForwardRetryDoesNotRetry</c> and asserted
+    /// <c>dispatcher.Executed == [0]</c> with the message "three attempts were declared
+    /// against a retryable failure on an idempotent capability, and one was made".
+    /// </para>
+    /// <para>
+    /// Every precondition FLOWX1014 protects is met and now matters: <c>order.validate</c>
+    /// declares <c>Idempotent = true</c>, so the declaration is legal, and the failure is
     /// <see cref="ErrorCategory.Unavailable"/>, which is in <c>Retry</c>'s own default
-    /// retryable set — every precondition an executing retry would need is met, and it still
-    /// runs once.
+    /// retryable set.
+    /// </para>
     /// </remarks>
     [Fact]
-    public async Task AForwardRetryDoesNotRetry()
+    public async Task AForwardRetryRetries()
     {
         var dispatcher = new RecordingDispatcher().FailAt(0, Unavailable);
+        var clock = new FakeClock(T0);
 
-        var result = await new FlowEngine(new FakeClock(T0))
+        var result = await new FlowEngine(clock)
             .ExecuteAsync(
-                Plan(PolicyChain.ForStep(PolicySet.Named("r").Retry(attempts: 3), Plans.Validate)),
+                Plan(Forward(PolicySet.Named("r").Retry(attempts: 3))),
                 dispatcher,
                 Plans.Invocation,
                 Ct);
@@ -143,18 +163,266 @@ public sealed class PolicyExecutionTests
         result.IsSuccess.ShouldBeFalse();
 
         dispatcher.Executed.ShouldBe(
-            [0],
+            [0, 0, 0],
             "Three attempts were declared against a retryable failure on an idempotent " +
-            "capability, and one was made.");
+            "capability, and three were made.");
+
+        clock.Delays.Count.ShouldBe(2, "Two waits for three attempts — a backoff sits between them, never before the first.");
     }
+
+    /// <summary>A retry that succeeds stops retrying, and the flow carries on.</summary>
+    [Fact]
+    public async Task ARetryStopsAtTheFirstAttemptThatSucceeds()
+    {
+        var dispatcher = new RecordingDispatcher().FailAtNthVisit(0, visit: 1, Unavailable);
+
+        var result = await new FlowEngine(new FakeClock(T0))
+            .ExecuteAsync(
+                Plan(Forward(PolicySet.Named("r").Retry(attempts: 3))),
+                dispatcher,
+                Plans.Invocation,
+                Ct);
+
+        result.IsSuccess.ShouldBeTrue();
+
+        dispatcher.Executed.ShouldBe(
+            [0, 0, 1, 2],
+            "The first attempt failed, the second succeeded, and the flow ran on rather than " +
+            "spending the third attempt it was entitled to.");
+    }
+
+    /// <summary>
+    /// A retry declines a category outside its <c>retryOn</c> set, however many attempts it has.
+    /// </summary>
+    /// <remarks>
+    /// <c>docs/10-Policy-Framework.md §5</c>'s decision tree, second question:
+    /// <em>Validation / NotFound / Forbidden — no retry, terminal</em>. The input will not
+    /// become valid by being sent again.
+    /// </remarks>
+    [Fact]
+    public async Task ARetryDeclinesANonRetryableCategory()
+    {
+        var dispatcher = new RecordingDispatcher().FailAt(0, Invalid);
+
+        var result = await new FlowEngine(new FakeClock(T0))
+            .ExecuteAsync(
+                Plan(Forward(PolicySet.Named("r").Retry(attempts: 5))),
+                dispatcher,
+                Plans.Invocation,
+                Ct);
+
+        result.IsSuccess.ShouldBeFalse();
+        result.Error!.Category.ShouldBe(ErrorCategory.Validation);
+
+        dispatcher.Executed.ShouldBe(
+            [0],
+            "Five attempts were declared and the failure was a Validation error, which is " +
+            "terminal — the input does not become valid by being sent again.");
+    }
+
+    /// <summary>A retry never outlives the flow deadline, backoff included.</summary>
+    /// <remarks>
+    /// <c>docs/10-Policy-Framework.md §5</c>'s second explicit guarantee. The plan's deadline
+    /// is one second and the backoff is fixed at 800 ms, so the first wait fits and the second
+    /// would not — the policy stops rather than arming an attempt whose sleep alone outlasts
+    /// the budget.
+    /// </remarks>
+    [Fact]
+    public async Task ARetryNeverOutlivesTheDeadline()
+    {
+        var dispatcher = new RecordingDispatcher().FailAt(0, Unavailable);
+        var clock = new FakeClock(T0);
+
+        var plan = ExecutionPlan.Create(
+            FlowDescriptor.Create("order.tight", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(1)),
+            StepGraph.Create([
+                StepNode.ForCapability(
+                    0,
+                    Plans.Validate,
+                    policies: Forward(PolicySet.Named("r").Retry(
+                        attempts: 10,
+                        Backoff.Exponential(TimeSpan.FromMilliseconds(800), TimeSpan.FromMilliseconds(800))))),
+            ]));
+
+        var result = await new FlowEngine(clock).ExecuteAsync(plan, dispatcher, Plans.Invocation, Ct);
+
+        result.IsSuccess.ShouldBeFalse();
+
+        dispatcher.Executed.ShouldBe(
+            [0, 0],
+            "Ten attempts were declared inside a one-second deadline with an 800 ms backoff. " +
+            "The second attempt fits; the third would have to sleep past the budget, so it is " +
+            "refused and the last error is returned.");
+    }
+
+    /// <summary>Every attempt presents the same idempotency key.</summary>
+    /// <remarks>
+    /// <c>docs/10-Policy-Framework.md §5</c>'s first explicit guarantee, and the one that
+    /// makes downstream deduplication work: attempt 2 is the same request as attempt 1, so a
+    /// gateway that honours the key cannot double-charge for a retry FlowX asked for.
+    /// </remarks>
+    [Fact]
+    public async Task EveryAttemptPresentsTheSameIdempotencyKey()
+    {
+        var dispatcher = new RecordingDispatcher().FailAt(0, Unavailable);
+        dispatcher.Observe = ctx => ctx.IdempotencyKey;
+
+        var result = await new FlowEngine(new FakeClock(T0))
+            .ExecuteAsync(
+                Plan(Forward(PolicySet.Named("r").Retry(attempts: 3))),
+                dispatcher,
+                Plans.Invocation,
+                Ct);
+
+        result.IsSuccess.ShouldBeFalse();
+
+        var keys = dispatcher.Observed.Cast<string>().ToList();
+
+        keys.Count.ShouldBe(3);
+        keys.Distinct(StringComparer.Ordinal).Count().ShouldBe(
+            1,
+            "A retry never mints a fresh idempotency key. Attempt 2 presents attempt 1's, " +
+            "which is what makes downstream deduplication work.");
+    }
+
+    /// <summary>A breaker opens after sustained failure and short-circuits the next call.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>New.</strong> Nothing asserted this before, because no breaker existed: the
+    /// old file's single line on the subject was that the <c>CircuitBreaker</c> in
+    /// <see cref="Everything"/> "is consulted by nothing".
+    /// </para>
+    /// <para>
+    /// The breaker's sampling needs <see cref="StepPolicy.DefaultMinimumThroughput"/> calls
+    /// before a ratio means anything — one failure out of one is not evidence — so the loop
+    /// runs past it and then asserts that the capability stops being called at all.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ABreakerOpensAfterSustainedFailuresAndShortCircuitsTheNextCall()
+    {
+        var clock = new FakeClock(T0);
+        var engine = new FlowEngine(clock);
+
+        var plan = Plan(Forward(PolicySet.Named("b")
+            .CircuitBreaker(failureRatio: 0.5, breakDuration: TimeSpan.FromSeconds(30))));
+
+        var dispatchesBeforeTheBreakerOpened = 0;
+        Error? lastError = null;
+
+        for (var run = 0; run < StepPolicy.DefaultMinimumThroughput + 2; run++)
+        {
+            var dispatcher = new RecordingDispatcher().FailAt(0, Unavailable);
+            var result = await engine.ExecuteAsync(plan, dispatcher, Plans.Invocation, Ct);
+
+            dispatchesBeforeTheBreakerOpened += dispatcher.Executed.Count(static i => i == 0);
+            lastError = result.Error;
+        }
+
+        lastError!.Code.ShouldBe(
+            FlowErrors.CircuitOpenCode,
+            "Every call failed and the breaker's failure ratio is 0.5, so once the sampling " +
+            "window holds enough calls to mean something the breaker opens and the next call " +
+            "is refused without reaching the dependency.");
+
+        dispatchesBeforeTheBreakerOpened.ShouldBeLessThan(
+            StepPolicy.DefaultMinimumThroughput + 2,
+            "An open breaker stops calling. If every run still dispatched, nothing opened.");
+    }
+
+    /// <summary>A breaker closes again once its break duration has passed.</summary>
+    /// <remarks>
+    /// The half that makes a breaker a breaker rather than a kill switch. Asserted on the
+    /// fake clock, so the thirty seconds cost the suite nothing.
+    /// </remarks>
+    [Fact]
+    public async Task ABreakerClosesAfterItsBreakDuration()
+    {
+        var clock = new FakeClock(T0);
+        var engine = new FlowEngine(clock);
+
+        var plan = Plan(Forward(PolicySet.Named("b")
+            .CircuitBreaker(failureRatio: 0.5, breakDuration: TimeSpan.FromSeconds(30))));
+
+        for (var run = 0; run < StepPolicy.DefaultMinimumThroughput + 2; run++)
+        {
+            await engine.ExecuteAsync(
+                plan, new RecordingDispatcher().FailAt(0, Unavailable), Plans.Invocation, Ct);
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(31));
+
+        var recovered = new RecordingDispatcher();
+        var result = await engine.ExecuteAsync(plan, recovered, Plans.Invocation, Ct);
+
+        result.IsSuccess.ShouldBeTrue();
+
+        recovered.Executed.ShouldBe(
+            [0, 1, 2],
+            "The break duration passed, so the breaker let a call through, it succeeded, and " +
+            "the dependency is back in service.");
+    }
+
+    /// <summary>A bulkhead refuses a caller beyond its concurrency and its queue.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Inverted, in the half that could be.</strong> The old file asserted a
+    /// <c>Bulkhead(1)</c> "admits one caller and there is one" — which stays true — and drew
+    /// from it that nothing counted. Two callers is the shape that can tell a counted
+    /// bulkhead from an uncounted one, and the old file never ran one.
+    /// </para>
+    /// <para>
+    /// <c>queueDepth: 0</c> so the refusal is immediate rather than a wait: a bulkhead that
+    /// queues indefinitely is a bulkhead that converts a concurrency problem into a latency
+    /// one, which is the failure it exists to prevent.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ABulkheadRefusesACallerBeyondItsConcurrency()
+    {
+        var gate = new TaskCompletionSource();
+        var entered = new TaskCompletionSource();
+
+        // Two dispatchers, because only the first caller is meant to be inside the step. One
+        // shared double would hold the second caller too, and the test would then be waiting
+        // on the very dispatch it is asserting never happens.
+        var holding = new RecordingDispatcher().HoldAt(0, gate.Task, entered);
+        var arriving = new RecordingDispatcher();
+
+        var plan = Plan(Forward(PolicySet.Named("bh").Bulkhead(maxConcurrency: 1, queueDepth: 0)));
+        var engine = new FlowEngine(new FakeClock(T0));
+
+        var first = engine.ExecuteAsync(plan, holding, Plans.Invocation, Ct).AsTask();
+
+        await entered.Task;
+
+        var second = await engine.ExecuteAsync(plan, arriving, Plans.Invocation, Ct);
+
+        gate.SetResult();
+        (await first).IsSuccess.ShouldBeTrue();
+
+        second.IsSuccess.ShouldBeFalse();
+
+        arriving.Executed.ShouldBeEmpty("A refused caller never reaches the dependency.");
+
+        second.Error!.Code.ShouldBe(
+            FlowErrors.BulkheadRejectedCode,
+            "One permit was declared, one caller held it, and the second was refused rather " +
+            "than queued — a bulkhead with no queue depth fails fast on purpose.");
+    }
+
+    // ------------------------------------------------------- the three kinds still inert
 
     /// <summary>
     /// A <c>Cache</c> and a <c>RateLimit</c> survive a second run of the same flow unchanged.
     /// </summary>
     /// <remarks>
-    /// Two executions of one plan, which is the only shape that can tell a consulted cache
-    /// from an unconsulted one: a cache hit would skip the second dispatch, and a rate limit
-    /// of one permit an hour would refuse it.
+    /// <para>
+    /// <strong>Kept, not inverted.</strong> Stage 1 and stage 5 are not implemented, and this
+    /// is what FLOWX1032 still reports. Two executions of one plan is the only shape that can
+    /// tell a consulted cache from an unconsulted one: a cache hit would skip the second
+    /// dispatch, and a rate limit of one permit an hour would refuse it.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task ACacheIsNotConsultedAndARateLimitCountsNothing()
@@ -177,26 +445,27 @@ public sealed class PolicyExecutionTests
     }
 
     /// <summary>
-    /// A stage-7 <c>Audit</c> on a step's own chain is not a compensation policy.
+    /// A stage-7 <c>Audit</c> on a step's own chain is not a compensation policy, and is not
+    /// a step policy either.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The runtime statement of the correction FLOWX1032 exists to make. <c>Audit</c> and
-    /// <c>CompensationRetry</c> share <see cref="PolicyStage.Consistency"/>, so a reader who
-    /// cuts the gap by stage would expect stage 7 to be "the one that runs". It is not:
-    /// <c>PolicyChain.ForStep</c> moves only the compensation retry onto the undo's chain, and
-    /// <c>CompensationPolicy.From</c> reads only that kind.
+    /// <strong>Kept, and it is why the plan carries two flags rather than one.</strong>
+    /// <c>Audit</c> and <c>CompensationRetry</c> share <see cref="PolicyStage.Consistency"/>,
+    /// so a reader who cuts the gap by stage would expect stage 7 to be "the one that runs".
+    /// It is not: <c>PolicyChain.ForStep</c> moves only the compensation retry onto the undo's
+    /// chain, and <c>CompensationPolicy.From</c> reads only that kind.
     /// </para>
     /// <para>
-    /// So a plan whose only stage-7 policy is an audit reports
-    /// <c>HasCompensationPolicies == false</c> — the flag the engine reads before it does any
-    /// retry bookkeeping at all — and the audit is executed by nothing.
+    /// It is not stage 4 either, so <c>StepPolicy.From</c> reads past it and the plan reports
+    /// <c>HasStepPolicies == false</c> — an audit is executed by nothing, and the step pays
+    /// nothing for declaring it.
     /// </para>
     /// </remarks>
     [Fact]
     public void AnAuditIsAStageSevenPolicyAndStillExecutesNowhere()
     {
-        var plan = Plan(PolicyChain.ForStep(PolicySet.Named("a").Audit("financial"), Plans.Validate));
+        var plan = Plan(Forward(PolicySet.Named("a").Audit("financial")));
 
         plan.Graph.Steps[0].Policies.Ordered
             .Select(static p => p.Stage)
@@ -206,19 +475,41 @@ public sealed class PolicyExecutionTests
             "Stage is not the cut. The cut is what a policy wraps, and an Audit wraps the " +
             "step — which nothing reads.");
 
+        plan.HasStepPolicies.ShouldBeFalse(
+            "Nor is it stage 4, so the engine's forward policy path is not entered for it.");
+
         plan.Graph.Steps[0].CompensationRetry.IsRetrying.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A plan whose only declared kinds are the three inert ones costs the step loop nothing.
+    /// </summary>
+    /// <remarks>
+    /// The flag is what keeps budget B2 a hard zero for a flow that declares no stage-4
+    /// policy, and a flag that were true for every declaration would defeat its own purpose —
+    /// see <a href="../../docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>.
+    /// </remarks>
+    [Fact]
+    public void APlanDeclaringOnlyInertKindsReportsNoStepPolicies()
+    {
+        Plan().HasStepPolicies.ShouldBeFalse(
+            "RateLimit, Idempotency and Cache are declared and none of them is executed, so " +
+            "the step loop must not take the policy path for them.");
+
+        Plan(Everything).HasStepPolicies.ShouldBeTrue(
+            "The same chain plus stage 4 does take it.");
     }
 
     // -------------------------------------------------------------- the positive control
 
     /// <summary>
-    /// And the one policy that does execute, on the same plan, executes.
+    /// And the one policy that executed before this package, on the same plan, still executes.
     /// </summary>
     /// <remarks>
-    /// Without this the file passes against an engine that never dispatches anything. Step 1
-    /// carries the same forward chain as every test above and a <c>CompensationRetry</c> on
-    /// its undo; the undo fails once and is dispatched a second time, which is the whole of
-    /// the policy engine P2 ships.
+    /// Step 1 carries a <c>CompensationRetry</c> on its undo; the undo fails once and is
+    /// dispatched a second time. Kept unchanged from the file this replaced, because a
+    /// package that made stage 4 run and quietly broke stage 7 would pass every other test
+    /// here.
     /// </remarks>
     [Fact]
     public async Task TheCompensationRetryOnTheSamePlanDoesExecute()
