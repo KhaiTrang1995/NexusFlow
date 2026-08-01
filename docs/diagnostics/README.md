@@ -297,6 +297,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1031](FLOWX1031.md) | Suspension construct is declared but not honoured by the compiler | A `.Delay(...)` that produces no step and an `.OnTimeout(...)` block absent from the plan, the dispatcher and the manifest. *Narrowed at WP-63: `AwaitSignal` is honoured — a durable flow suspends at it and a signal resumes it — so the half that described **a flow written to wait seven days running straight past the wait** is gone with the behaviour it described* |
 | [FLOWX1032](FLOWX1032.md) | Declared policy is not executed by the runtime | **A step declaring a three-second timeout, three retries and a circuit breaker, published in the manifest as wrapped in all three and dispatched once with no clock, no attempt count and no breaker** |
 | [FLOWX1033](FLOWX1033.md) | `CompensationRetry` is declared on a step with no compensation | **The one policy the runtime executes, dropped by the emitter in silence: a manifest promising five attempts at an undo, and a plan with no undo to attempt** |
+| [FLOWX1034](FLOWX1034.md) | Step declares more than one policy set | **A declared timeout, breaker or audit deleted before the plan and the manifest are written, because the second `.WithPolicy(...)` on a step replaces the first rather than adding to it** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -429,7 +430,17 @@ opposite severities: `FLOWX1032` is deleted when P4 lands, and this one is not, 
 release gives a non-compensable step an undo. It is not `FLOWX1014` either — that rule asks
 whether the *compensating capability* is idempotent, and presupposes there is one.
 
-The next is `FLOWX1034`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1034` is claimed** — *step declares more than one policy set*: `StepModel.WithPolicy`
+assigns `PolicySetName` and `PolicyKinds` rather than adding to them, so the second
+`.WithPolicy(...)` on a step replaces the first and everything the first declared is gone
+before the emitter and the manifest writer run. It is none of the reservations, and it is not
+`FLOWX1032`: that rule reports a policy the plan and the manifest both carry and no code
+applies, and this one reports a policy neither of them carries at all. [FLOWX1019's
+page](FLOWX1019.md) already recorded the gap — it declines to count a second `.WithPolicy` on
+the grounds that "which set wins is a resolution question this rule has no answer to" — and
+this is the rule that answers it.
+
+The next is `FLOWX1035`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 
