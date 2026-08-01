@@ -489,6 +489,11 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     {
         StepKind.Capability => step.Capability!.Id,
         StepKind.Emit => "emit:" + step.EventType,
+
+        // A suspension point is only ever dispatched when the signal it waits for has been
+        // delivered — an unsatisfied one stops the loop before the dispatcher is reached — so
+        // its presence in a trace is exactly the fact "this invocation carried the signal".
+        StepKind.AwaitSignal => "await:" + step.SignalType,
         StepKind.Fail => "fail",
         _ => step.Kind.ToString().ToLowerInvariant(),
     };
