@@ -104,13 +104,15 @@ internal static class Coordinator
         var recovery = StartRecoveryNodes(options);
 
         Dictionary<int, int> exitCodes;
+        bool convergenceTimedOut;
 
         try
         {
             exitCodes = await DriveWorkersAsync(dataSource, options, cancellationToken)
                 .ConfigureAwait(false);
 
-            await ConvergeAsync(dataSource, options, cancellationToken).ConfigureAwait(false);
+            convergenceTimedOut =
+                await ConvergeAsync(dataSource, options, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -118,7 +120,7 @@ internal static class Coordinator
         }
 
         var result = await ChaosAnalysis
-            .ReadAsync(dataSource, options.Position, exitCodes, cancellationToken)
+            .ReadAsync(dataSource, options.Position, exitCodes, convergenceTimedOut, cancellationToken)
             .ConfigureAwait(false);
 
         if (!options.KeepSchema)
@@ -203,7 +205,20 @@ internal static class Coordinator
     }
 
     /// <summary>Waits for every opened instance to reach a terminal state.</summary>
-    private static async Task ConvergeAsync(
+    /// <returns>
+    /// <c>true</c> when the deadline was reached with instances still running.
+    /// </returns>
+    /// <remarks>
+    /// <strong>The return value exists because a timeout and a lost instance were the same
+    /// number.</strong> Instances still running when this gives up are counted by
+    /// <c>ReadAsync</c> as <c>lostInstances</c> — they are, at that moment, indistinguishable
+    /// from an instance no recovery scan ever found. So a runner too slow to drain its backlog
+    /// produced a correctness FAIL against QR2's "zero lost instances" clause, and the results
+    /// document held nothing that could tell the two apart. It does now, and the checker
+    /// refuses such a run rather than failing it: a run that stopped waiting has not disproved
+    /// the guarantee, it has not tested it.
+    /// </remarks>
+    private static async Task<bool> ConvergeAsync(
         NpgsqlDataSource dataSource,
         ChaosOptions options,
         CancellationToken cancellationToken)
@@ -220,7 +235,7 @@ internal static class Coordinator
             if (unfinished == 0)
             {
                 Console.WriteLine("    every opened instance reached a terminal state.");
-                return;
+                return false;
             }
 
             if (unfinished != reported)
@@ -232,7 +247,12 @@ internal static class Coordinator
             await Task.Delay(1000, cancellationToken).ConfigureAwait(false);
         }
 
-        Console.WriteLine("    convergence timed out; the remaining instances are reported as lost.");
+        Console.WriteLine(
+            "    convergence timed out. The instances still running are counted as lost, and " +
+            "the results document records that this run stopped waiting — so the verdict is " +
+            "INCONCLUSIVE rather than a correctness failure.");
+
+        return true;
     }
 
     private static List<Process> StartRecoveryNodes(ChaosOptions options)

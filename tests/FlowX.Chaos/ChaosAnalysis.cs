@@ -17,6 +17,15 @@ namespace FlowX.Chaos;
 /// <param name="LostInstances">
 /// Instances with a journal row that never reached a terminal state. QR2's figure is zero.
 /// </param>
+/// <param name="ConvergenceTimedOut">
+/// Whether the coordinator gave up waiting with instances still running. **When this is true,
+/// <paramref name="LostInstances"/> is not evidence about QR2's "zero lost instances" clause**:
+/// an instance still running when the rig stopped watching is indistinguishable, from the
+/// database alone, from one no recovery scan ever found. The two were the same number and the
+/// results document said nothing, so a runner too slow to drain its backlog filed a
+/// correctness failure against a guarantee it had not tested. The checker reads this and
+/// returns INCONCLUSIVE instead.
+/// </param>
 /// <param name="ClaimedButNeverOpened">
 /// Instances a worker claimed and was killed before it could open — no journal row, and so
 /// nothing for a recovery scan to find. Distinct from a lost instance because no durable
@@ -61,6 +70,7 @@ internal sealed record ArmResult(
     long FlowsCompleted,
     long FlowsTerminalOther,
     long LostInstances,
+    bool ConvergenceTimedOut,
     long ClaimedButNeverOpened,
     long ProcessKills,
     IReadOnlyDictionary<int, int> KillExitCodes,
@@ -109,6 +119,7 @@ internal sealed record ArmResult(
         ["flowsCompleted"] = FlowsCompleted,
         ["flowsTerminalOther"] = FlowsTerminalOther,
         ["lostInstances"] = LostInstances,
+        ["convergenceTimedOut"] = ConvergenceTimedOut,
         ["claimedButNeverOpened"] = ClaimedButNeverOpened,
         ["processKills"] = ProcessKills,
         ["killExitCodes"] = new JsonObject(
@@ -162,12 +173,18 @@ internal static class ChaosAnalysis
     /// <param name="dataSource">The arm's data source.</param>
     /// <param name="position">Which half of the window this arm killed in.</param>
     /// <param name="exitCodes">The exit codes the coordinator observed from killed workers.</param>
+    /// <param name="convergenceTimedOut">
+    /// Whether the coordinator stopped waiting with instances still running. When it did,
+    /// <c>lostInstances</c> is not a measurement of the guarantee — see
+    /// <see cref="ArmResult.ConvergenceTimedOut"/>.
+    /// </param>
     /// <param name="cancellationToken">Cancels the reads.</param>
     /// <returns>The arm's result.</returns>
     public static async Task<ArmResult> ReadAsync(
         NpgsqlDataSource dataSource,
         KillPosition position,
         IReadOnlyDictionary<int, int> exitCodes,
+        bool convergenceTimedOut,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
@@ -282,6 +299,7 @@ internal static class ChaosAnalysis
             completed,
             terminalOther,
             lost,
+            convergenceTimedOut,
             neverOpened,
             kills,
             exitCodes,

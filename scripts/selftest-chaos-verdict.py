@@ -64,6 +64,21 @@ def lost_instance(document: dict) -> None:
     first_arm(document)["lostInstances"] = 1
 
 
+def lost_instance_after_a_timeout(document: dict) -> None:
+    """The same number, with the rig recording that it stopped waiting for it.
+
+    These two cases are a pair on purpose. Until the rig recorded
+    `convergenceTimedOut`, an instance still running when the coordinator gave up was
+    counted in `lostInstances` and was indistinguishable from one no recovery scan ever
+    found — so a slow runner filed a correctness failure against a clause it had not
+    tested. The pair below is what keeps them distinguishable: the same mutation, one bit
+    apart, must produce two different verdicts.
+    """
+    arm = first_arm(document)
+    arm["lostInstances"] = 1
+    arm["convergenceTimedOut"] = True
+
+
 def orphan_effect(document: dict) -> None:
     first_arm(document)["orphanEffects"] = 1
 
@@ -111,6 +126,9 @@ CASES = [
      ["VERDICT: FAIL", "already in the journal"]),
     ("an instance never reached a terminal state", lost_instance, [], FAIL,
      ["VERDICT: FAIL", "never reached a terminal state"]),
+    ("an instance still running when the rig stopped waiting",
+     lost_instance_after_a_timeout, [], INCONCLUSIVE,
+     ["VERDICT: INCONCLUSIVE", "stopped waiting", "has not tested the clause"]),
     ("an effect with no journal row at all", orphan_effect, [], FAIL,
      ["VERDICT: FAIL", "no journal row at all"]),
     ("one step applied by two live workers", two_live_workers, [], FAIL,

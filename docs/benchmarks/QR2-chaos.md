@@ -467,13 +467,24 @@ the correct response is to lower `FLOWX_CHAOS_FLOWS` — one line of `env:` — 
 say it ran at a smaller scale, not to widen anything until the failure fits.
 
 `--converge-timeout` is raised to **1800 s** from the rig's 600, and not for slack. When the
-coordinator gives up waiting it reports every instance still running as **lost** — the same
-field a genuinely lost instance lands in — so a runner too slow to drain its backlog produces
-a correctness `FAIL` that is not one. The results document does not record the timeout, so
-`check-chaos-qr2.py` cannot tell the two apart; until it does, the defences are the larger
-timeout and a log line (`convergence timed out`) that the publisher puts at the top of the
-issue. **Recording the converge timeout in the JSON is the fix and is not done here** — it
-belongs to the rig, and this package deliberately changed no part of `tests/FlowX.Chaos`.
+coordinator gives up waiting it counts every instance still running as **lost** — the same
+field a genuinely lost instance lands in — so a runner too slow to drain its backlog produced
+a correctness `FAIL` that was not one, against the clause QR2 exists to test.
+
+*This paragraph said the results document could not tell the two apart and that recording the
+timeout "is the fix and is not done here", because the fix belongs to `tests/FlowX.Chaos` and
+the package that found it deliberately changed no part of the rig.* **It is done now.**
+`ConvergeAsync` returns whether it reached its deadline, `ArmResult` carries
+`convergenceTimedOut`, and the results document publishes it. `check-chaos-qr2.py` reads it
+and returns **INCONCLUSIVE** rather than FAIL: a run that stopped waiting has not disproved
+the guarantee, it has not reached a verdict on it — which is what the third exit code is for.
+
+The two cases are held apart by a **pair** in `scripts/selftest-chaos-verdict.py`, running on
+every pull request: the same mutation, one bit apart, asserted to produce exit 1 and exit 2.
+Collapsing them back into one verdict turns that self-test red on the change that does it.
+The larger timeout and the `convergence timed out` log line the publisher puts at the top of
+the issue both stay — they are what stops the third state from being reached in the first
+place.
 
 ### 7.2 The three verdicts, kept three
 
