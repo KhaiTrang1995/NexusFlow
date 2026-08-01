@@ -1,4 +1,5 @@
 using System.Reflection;
+using FlowX.Compiler.Analysis;
 using FlowX.Compiler.Emit;
 using Shouldly;
 using Xunit;
@@ -77,6 +78,81 @@ public sealed class PolicyStageFitnessTests
             "declared compensation retry is silently emitted onto the wrong chain.");
 
         ManifestWriter.KnownPolicyStages.ShouldContainKey(FlowEmitter.CompensationRetryKind);
+    }
+
+    /// <summary>
+    /// The compiler's copy of what <c>PolicySet</c>'s own well-known sets contain must match
+    /// the real ones, in both directions.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>PolicySetReader</c> resolves a policy set by walking its initialiser, and a set
+    /// declared in a referenced assembly has no initialiser to walk. <c>PolicySet</c>'s own
+    /// sets are the exception: the compiler ships beside the assembly that declares them and
+    /// their composition is part of FlowX's published surface, so the reader carries a table
+    /// rather than inferring one. <c>PolicySet.CompensationDefault</c> is the whole reason it
+    /// is worth carrying — <c>docs/06-Execution-Engine.md</c> §7 rule 2 recommends it for
+    /// compensation, and it is a metadata symbol in every consuming compilation.
+    /// </para>
+    /// <para>
+    /// <strong>The second direction is the load-bearing one.</strong> A well-known set added
+    /// to <c>PolicySet</c> and not to the reader would resolve to nothing in every consuming
+    /// build: no plan chain, no manifest entry, and FLOWX1036 reported against FlowX's own
+    /// API. That is exactly the state <c>CompensationDefault</c> shipped in.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void PolicySetContentsAreThePinnedOnes()
+    {
+        var actual = ReadWellKnownSets();
+
+        foreach (var (name, kinds) in PolicySetReader.WellKnownSets)
+        {
+            actual.ShouldContainKey(name,
+                $"PolicySetReader carries a well-known set '{name}' that PolicySet does not " +
+                "declare as a public static member. Remove it, or add the member.");
+
+            actual[name].ShouldBe(kinds,
+                $"PolicySetReader says PolicySet.{name} declares [{string.Join(", ", kinds)}]; " +
+                $"it declares [{string.Join(", ", actual[name])}]. Every consuming build " +
+                "resolves the set from that table, so a stale entry emits the wrong chain " +
+                "into the plan and publishes the wrong kinds in the manifest.");
+        }
+
+        foreach (var name in actual.Keys)
+        {
+            PolicySetReader.WellKnownSets.ShouldContainKey(name,
+                $"PolicySet declares a well-known set '{name}' and PolicySetReader has no " +
+                "entry for it, so every .WithPolicy(PolicySet." + name + ") in a consuming " +
+                "assembly resolves to nothing: no plan chain, no manifest entry, and " +
+                "FLOWX1036 raised against FlowX's own API.");
+        }
+    }
+
+    /// <summary>
+    /// Every public static <c>PolicySet</c> member of <c>PolicySet</c>, and the kinds it
+    /// declares — ordinally sorted, as <c>PolicySetReader</c> returns them.
+    /// </summary>
+    private static Dictionary<string, string[]> ReadWellKnownSets()
+    {
+        var sets = new Dictionary<string, string[]>(StringComparer.Ordinal);
+
+        foreach (var property in typeof(PolicySet).GetProperties(BindingFlags.Public | BindingFlags.Static))
+        {
+            if (property.PropertyType != typeof(PolicySet))
+            {
+                continue;
+            }
+
+            var set = (PolicySet)property.GetValue(null)!;
+
+            sets[property.Name] = [.. set.Policies
+                .Select(policy => policy.Kind)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(kind => kind, StringComparer.Ordinal)];
+        }
+
+        return sets;
     }
 
     /// <summary>
