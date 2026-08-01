@@ -9,7 +9,7 @@ using Xunit;
 namespace FlowX.Compiler.Tests;
 
 /// <summary>
-/// FLOWX1032 and FLOWX1033 against <c>samples/banking</c>'s real source, read off disk.
+/// Every policy rule against <c>samples/banking</c>'s real source, read off disk.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -22,6 +22,16 @@ namespace FlowX.Compiler.Tests;
 /// only case here that could fail for a reason the author did not think of, and it is the
 /// evidence that these rules report on real code rather than on a fixture —
 /// <c>docs/21-Quality-Gates.md §2.4</c> refuses a check that passes vacuously.
+/// </para>
+/// <para>
+/// <strong>Each of the five rules is proved against a one-line edit of this file.</strong>
+/// Reusing the ledger set on the settlement step is FLOWX1033; applying
+/// <c>PolicySet.CompensationDefault</c> beside it is FLOWX1034 — the repair FLOWX1033's page
+/// used to recommend and no build could perform; dropping the ledger retry to one attempt is
+/// FLOWX1035; and compiling this sample's own <c>Policies.cs</c> into a referenced assembly,
+/// which is the shape a second application reaches for, is FLOWX1036 on all seven calls.
+/// Each edit is one an author would plausibly make, which is what separates proof that a rule
+/// fires from proof that it can be made to fire.
 /// </para>
 /// <para>
 /// <strong>The sample's own suppression is removed first, deliberately.</strong>
@@ -48,7 +58,9 @@ public sealed class ReferenceSamplePolicyTests
     private const string Restore = "#pragma warning restore FLOWX1032";
 
     /// <summary>The four sample files the policy rules read, with the suppression removed.</summary>
-    private static (string Path, string Source)[] Sample(Func<string, string>? editPolicies = null)
+    private static (string Path, string Source)[] Sample(
+        Func<string, string>? editPolicies = null,
+        Func<string, string>? editFlow = null)
     {
         var flow = Read("ExecuteTransferFlow.cs");
 
@@ -61,9 +73,11 @@ public sealed class ReferenceSamplePolicyTests
 
         var policies = Read("Policies.cs");
 
+        var unsuppressed = Unsuppressed(flow);
+
         return
         [
-            ("/samples/banking/ExecuteTransferFlow.cs", Unsuppressed(flow)),
+            ("/samples/banking/ExecuteTransferFlow.cs", editFlow is null ? unsuppressed : editFlow(unsuppressed)),
             ("/samples/banking/Policies.cs", editPolicies is null ? policies : editPolicies(policies)),
             ("/samples/banking/Capabilities.cs", Read("Capabilities.cs")),
             ("/samples/banking/Contracts.cs", Read("Contracts.cs")),
@@ -74,9 +88,11 @@ public sealed class ReferenceSamplePolicyTests
         .Replace(Pragma, string.Empty, StringComparison.Ordinal)
         .Replace(Restore, string.Empty, StringComparison.Ordinal);
 
-    private static Diagnostic[] Report(Func<string, string>? editPolicies = null) =>
+    private static Diagnostic[] Report(
+        Func<string, string>? editPolicies = null,
+        Func<string, string>? editFlow = null) =>
         [.. GeneratorHarness.Report(
-            GeneratorHarness.CompilationOf(Sample(editPolicies)),
+            GeneratorHarness.CompilationOf(Sample(editPolicies, editFlow)),
             new DeclaredPolicyAnalyzer())];
 
     // ------------------------------------------------------------------ it fires
@@ -213,6 +229,131 @@ public sealed class ReferenceSamplePolicyTests
             .ShouldBe(["FLOWX1032"], "Reported:\n" + Describe(reports));
     }
 
+    // ------------------------------------- the three later rules, against the sample
+
+    /// <summary>
+    /// Applying <c>PolicySet.CompensationDefault</c> beside the ledger set — the edit
+    /// FLOWX1033's page used to recommend — is FLOWX1034.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The repair that could not work, on the real saga. <c>StepModel.WithPolicy</c> assigns,
+    /// so the second call deletes <c>Policies.LedgerPost</c> from the plan and from the
+    /// manifest: the ledger leg loses its five-second timeout and its financial audit in
+    /// exchange for a compensation retry it already had. A payments team following the
+    /// documented advice would have shipped that.
+    /// </para>
+    /// <para>
+    /// One report, not two. Only the superseded call is discarded, and only it is reported.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ApplyingASecondSetToALedgerLegIsReported()
+    {
+        var reports = Report(editFlow: static flow => WithSecondPolicyOnTheDebitLeg(flow))
+            .Where(static d => d.Id == "FLOWX1034")
+            .ToList();
+
+        reports.Count.ShouldBe(1, "Only the superseded call is discarded.\n" + Describe(reports));
+        reports[0].Severity.ShouldBe(DiagnosticSeverity.Error);
+
+        var message = reports[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+
+        message.ShouldContain("Policies.LedgerPost");
+        message.ShouldContain("PolicySet.CompensationDefault");
+    }
+
+    /// <summary>
+    /// Dropping the ledger set's five attempts to one is FLOWX1035.
+    /// </summary>
+    /// <remarks>
+    /// <c>Policies.LedgerPost</c>'s own remarks call its compensation retry "the one line in
+    /// the file that runs". At <c>attempts: 1</c> it does not: the plan's
+    /// <c>HasCompensationPolicies</c> stays false, the engine takes
+    /// <c>CompensationPolicy.None</c>, and the manifest still publishes the kind — which in
+    /// this bank is a published promise that a failed reversal is retried, over a reversal
+    /// dispatched once.
+    /// </remarks>
+    [Fact]
+    public void DroppingTheLedgerRetryToOneAttemptIsReported()
+    {
+        var reports = Report(static policies => WithSingleAttempt(policies))
+            .Where(static d => d.Id == "FLOWX1035")
+            .ToList();
+
+        reports.Count.ShouldBe(
+            2,
+            "Both ledger legs declare Policies.LedgerPost, and both undos stop being " +
+            "retried.\n" + Describe(reports));
+
+        reports[0].Severity.ShouldBe(DiagnosticSeverity.Warning);
+
+        var message = reports[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+
+        message.ShouldContain("Policies.LedgerPost");
+        message.ShouldContain("1");
+    }
+
+    /// <summary>
+    /// Moving this bank's policy file into a referenced assembly is FLOWX1036, on every call.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The shape a second application would reach for on its own: one shared
+    /// <c>Policies</c> library, referenced by several flow projects. Compiled rather than
+    /// linked, the file the sample already has stops being readable — its symbols carry no
+    /// syntax — so all seven declarations reach no plan node and no manifest entry, and the
+    /// <c>CompensationRetry</c> that is "the one line in the file that runs" stops running.
+    /// </para>
+    /// <para>
+    /// FLOWX1032 goes quiet in the same breath, which is the point of reporting this
+    /// separately: the compiler cannot name a kind it could not read, so the seven warnings
+    /// that describe this bank's unenforced controls would disappear along with the controls.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheSamplesPolicyFileInAReferencedAssemblyIsReported()
+    {
+        var library = CompiledPolicyLibrary();
+
+        var compilation = GeneratorHarness.CompilationOf(
+            "Banking",
+            [library],
+            ("/samples/banking/ExecuteTransferFlow.cs", Unsuppressed(Read("ExecuteTransferFlow.cs"))),
+            ("/samples/banking/Capabilities.cs", Read("Capabilities.cs")),
+            ("/samples/banking/Contracts.cs", Read("Contracts.cs")));
+
+        var reports = GeneratorHarness.Report(compilation, new DeclaredPolicyAnalyzer());
+
+        reports.Select(static d => d.Id).Distinct().ShouldBe(
+            ["FLOWX1036"],
+            "Nothing can be said about the kinds in a set the compiler cannot read.\n" +
+            Describe(reports));
+
+        reports.Length.ShouldBe(7, "One per .WithPolicy(...) call.\n" + Describe(reports));
+        reports.ShouldAllBe(static d => d.Severity == DiagnosticSeverity.Warning);
+    }
+
+    /// <summary>
+    /// <c>PolicySet.CompensationDefault</c> reaches the ledger leg's undo, from metadata.
+    /// </summary>
+    /// <remarks>
+    /// The set arrives from <c>FlowX.Abstractions</c> with no syntax behind it, and the rules
+    /// that ask what is in a set answer correctly all the same: silent on the compensable
+    /// ledger leg — it declares the compensation retry and nothing else — and FLOWX1033 on
+    /// the settlement step, which has no undo for it to wrap. Before it resolved, both were
+    /// silent, and so was the emitter.
+    /// </remarks>
+    [Theory]
+    [InlineData("PostDebit", new string[0])]
+    [InlineData("RecordSettlement", new[] { "FLOWX1033" })]
+    public void TheDocumentedDefaultIsUnderstoodOnTheRealSaga(string step, string[] expected) =>
+        Report(editFlow: flow => WithDocumentedDefaultOn(flow, step))
+            .Where(d => d.Id != "FLOWX1032" && d.Id != "FLOWX1034")
+            .Select(d => d.Id)
+            .Distinct()
+            .ShouldBe(expected);
+
     /// <summary>
     /// And with its own suppression in place the sample reports nothing at all.
     /// </summary>
@@ -254,6 +395,88 @@ public sealed class ReferenceSamplePolicyTests
             Declaration,
             Declaration + "\n        .CompensationRetry(attempts: 5)",
             StringComparison.Ordinal);
+    }
+
+    /// <summary>The debit leg's policy set, as the sample declares it.</summary>
+    /// <remarks>
+    /// Anchored on <c>ReverseDebit</c> rather than on the <c>.WithPolicy</c> line, because
+    /// both ledger legs name <c>Policies.LedgerPost</c> and only the compensation tells the
+    /// two calls apart.
+    /// </remarks>
+    private const string DebitLegPolicy =
+        """
+        .CompensateWith<ReverseDebit>()
+                        .WithPolicy(Policies.LedgerPost)
+        """;
+
+    /// <summary>The settlement step's policy set, as the sample declares it.</summary>
+    private const string SettlementPolicy = ".WithPolicy(Policies.SettlementRegister)";
+
+    /// <summary>The repair FLOWX1033's page used to recommend, applied to the debit leg.</summary>
+    private static string WithSecondPolicyOnTheDebitLeg(string flow)
+    {
+        flow.ShouldContain(
+            DebitLegPolicy,
+            Case.Sensitive,
+            "The debit leg is no longer declared the way this test edits it.");
+
+        return flow.Replace(
+            DebitLegPolicy,
+            DebitLegPolicy + "\n                .WithPolicy(PolicySet.CompensationDefault)",
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>The documented default in place of a named set, on one step.</summary>
+    private static string WithDocumentedDefaultOn(string flow, string step)
+    {
+        var declared = step == "PostDebit" ? DebitLegPolicy : SettlementPolicy;
+
+        flow.ShouldContain(declared, Case.Sensitive, $"{step} is no longer declared the way this test edits it.");
+
+        return flow.Replace(
+            declared,
+            declared.Replace(
+                declared.Contains("LedgerPost", StringComparison.Ordinal)
+                    ? "Policies.LedgerPost"
+                    : "Policies.SettlementRegister",
+                "PolicySet.CompensationDefault",
+                StringComparison.Ordinal),
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>The ledger set's five attempts, dropped to the one that retries nothing.</summary>
+    private static string WithSingleAttempt(string policies)
+    {
+        const string Declared = ".CompensationRetry(attempts: 5)";
+
+        policies.ShouldContain(
+            Declared,
+            Case.Sensitive,
+            "Policies.LedgerPost no longer declares the attempt count this test edits.");
+
+        return policies.Replace(Declared, ".CompensationRetry(attempts: 1)", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <c>samples/banking/Policies.cs</c>, compiled to an image and referenced as one.
+    /// </summary>
+    private static PortableExecutableReference CompiledPolicyLibrary()
+    {
+        var compilation = GeneratorHarness.CompilationOf(
+            "Banking.Policies",
+            [],
+            // The sample builds with ImplicitUsings; this compilation does not, and System is
+            // the only one its policy declarations need.
+            ("/shared/Policies.cs", "using System;\n" + Read("Policies.cs")));
+
+        using var image = new MemoryStream();
+        var emitted = compilation.Emit(image);
+
+        emitted.Success.ShouldBeTrue(string.Join(
+            "\n",
+            emitted.Diagnostics.Where(static d => d.Severity == DiagnosticSeverity.Error)));
+
+        return MetadataReference.CreateFromImage(image.ToArray());
     }
 
     private static string Describe(System.Collections.Generic.IEnumerable<Diagnostic> reports) =>

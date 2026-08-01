@@ -1412,12 +1412,16 @@ public static class FlowEmitter
     /// </para>
     /// <para>
     /// <strong>Nothing is emitted for a set the compiler could not read.</strong>
-    /// <c>StepModel.PolicyKinds</c> is empty exactly when <c>PolicySetReader</c> failed to
-    /// resolve the argument to a declared field or property initialiser — the same signal that
-    /// keeps FLOWX1014 from firing on a guess. An expression that could not be resolved is one
-    /// this emitter cannot promise will even bind inside a static initialiser in a file the
-    /// author did not write, and turning a working build into a compile error there is worse
-    /// than carrying nothing.
+    /// <c>StepModel.PolicyKinds</c> is empty when <c>PolicySetReader</c> could not resolve the
+    /// argument — to an initialiser in source, or to one of <c>PolicySet</c>'s own well-known
+    /// sets, whose composition it carries because a set in <c>FlowX.Abstractions</c> reaches
+    /// every consuming compilation as metadata and has no syntax at all. That is the same
+    /// signal that keeps FLOWX1014 from firing on a guess. An expression that could not be
+    /// resolved is one this emitter cannot promise will even bind inside a static initialiser
+    /// in a file the author did not write, and turning a working build into a compile error
+    /// there is worse than carrying nothing — but it is not silent either: FLOWX1036 reports
+    /// the whole set as reaching nothing, which is the one thing the compiler can say when it
+    /// cannot say what is in it.
     /// </para>
     /// <para>
     /// <strong>The split is by what a policy wraps, not by which stage it runs in.</strong>

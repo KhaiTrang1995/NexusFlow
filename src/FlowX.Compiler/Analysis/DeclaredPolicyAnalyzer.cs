@@ -10,7 +10,7 @@ using Microsoft.CodeAnalysis.Diagnostics;
 namespace FlowX.Compiler.Analysis;
 
 /// <summary>
-/// Reports a declared policy the runtime will not apply: FLOWX1032 and FLOWX1033.
+/// Reports a declared policy the runtime will not apply: FLOWX1032 through FLOWX1036.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -49,11 +49,21 @@ namespace FlowX.Compiler.Analysis;
 /// same DSL call, from growing a third policy concern.
 /// </para>
 /// <para>
-/// <strong>Silent wherever the emitter is silent.</strong> <see cref="PolicySetReader"/>
-/// resolves only a set declared as a field or property initialiser in source, and returns
-/// nothing rather than guessing; <c>FlowEmitter.PolicyArguments</c> emits nothing for exactly
-/// that case. Reporting on a set the compiler could not read would name policies the author
-/// cannot find, and could name a set that in fact holds nothing but a compensation retry.
+/// <strong>Silent about the <em>contents</em> wherever the emitter is silent.</strong>
+/// <see cref="PolicySetReader"/> resolves a set declared as a field or property initialiser
+/// in source, plus <c>PolicySet</c>'s own well-known sets from metadata, and returns
+/// <c>Unreadable</c> rather than guessing at anything else; <c>FlowEmitter.PolicyArguments</c>
+/// emits nothing for exactly that case. Naming a kind in a set the compiler could not read
+/// would name policies the author cannot find, and could name a set that in fact holds
+/// nothing but a compensation retry. FLOWX1036 is the one report that is available there,
+/// and it is a statement about the reading rather than about the contents.
+/// </para>
+/// <para>
+/// <strong>Three more, and they are ordered.</strong> FLOWX1034 runs first and returns: a
+/// superseded set is carried by neither the plan nor the manifest, so every rule below it
+/// would be describing a declaration the compiler has already discarded. FLOWX1035 runs after
+/// FLOWX1033 and only when it stayed quiet, because a compensation retry with no compensation
+/// reaches no plan node at all and its attempt count is not the finding.
 /// </para>
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
@@ -93,11 +103,17 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     /// <summary>The namespace <see cref="StepBuilderMetadataName"/> lives in.</summary>
     private const string AbstractionsNamespace = "FlowX";
 
+    /// <summary><c>FlowX.PolicySet</c>, the type every <c>.WithPolicy(...)</c> argument has.</summary>
+    private const string PolicySetTypeName = "PolicySet";
+
     /// <inheritdoc />
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } =
         ImmutableArray.Create(
             FlowXDiagnostics.PolicyIsNotExecutedByTheRuntime,
-            FlowXDiagnostics.CompensationRetryHasNoCompensation);
+            FlowXDiagnostics.CompensationRetryHasNoCompensation,
+            FlowXDiagnostics.StepDeclaresMoreThanOnePolicySet,
+            FlowXDiagnostics.CompensationRetryRetriesNothing,
+            FlowXDiagnostics.PolicySetCannotBeRead);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -127,20 +143,225 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
         }
 
         var argument = invocation.ArgumentList.Arguments[0].Expression;
-        var kinds = PolicySetReader.Read(argument, context.SemanticModel);
-
-        if (kinds.Count == 0)
-        {
-            return;
-        }
 
         // The expression, not the whole argument, exactly as FlowAnalyzer stores it: this is
         // the text the author would edit, and a named argument's name is not part of it.
         var set = argument.ToString();
         var location = NameOf(invocation);
 
+        // FLOWX1034 first, and it returns. Every other rule here says something about what
+        // the compiled plan and the manifest carry, and a superseded set is carried by
+        // neither — telling an author their discarded Timeout will not be executed is true
+        // of a declaration that no longer exists.
+        if (SupersedingSet(invocation) is { } winner)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(
+                FlowXDiagnostics.StepDeclaresMoreThanOnePolicySet, location, set, winner));
+
+            return;
+        }
+
+        var contents = PolicySetReader.Resolve(argument, context.SemanticModel);
+
+        if (!contents.IsReadable)
+        {
+            ReportUnreadableSet(context, argument, set, location);
+            return;
+        }
+
+        var kinds = contents.Kinds;
+
+        if (kinds.Count == 0)
+        {
+            return;
+        }
+
         ReportInertPolicies(context, kinds, set, location);
-        ReportDroppedCompensationRetry(context, kinds, invocation, set, location);
+
+        if (ReportDroppedCompensationRetry(context, kinds, invocation, set, location))
+        {
+            return;
+        }
+
+        ReportCompensationRetryThatRetriesNothing(context, contents, invocation, set, location);
+    }
+
+    /// <summary>
+    /// FLOWX1036 — the set is a real <c>PolicySet</c> reference and its contents cannot be
+    /// read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Gated on the argument's type rather than on its symbol.</strong> An expression
+    /// the compiler could not bind at all is a compile error the compiler already reports, and
+    /// a second message on every keystroke between <c>.WithPolicy(</c> and the name would make
+    /// this rule the noisiest thing in an editor. Asking for the type covers the shapes a
+    /// symbol lookup misses too — a conditional, an invocation, an element access — all of
+    /// which are unreadable sets and none of which resolves to a symbol.
+    /// </para>
+    /// <para>
+    /// <c>Type</c> and not <c>ConvertedType</c>: the parameter is a <c>PolicySet</c>, so the
+    /// converted type of a broken argument is <c>PolicySet</c> as well, and reading it would
+    /// put the gate back where it started.
+    /// </para>
+    /// </remarks>
+    private static void ReportUnreadableSet(
+        SyntaxNodeAnalysisContext context,
+        ExpressionSyntax argument,
+        string set,
+        Location location)
+    {
+        var type = context.SemanticModel.GetTypeInfo(argument, context.CancellationToken).Type;
+
+        if (type?.MetadataName != PolicySetTypeName ||
+            type.ContainingNamespace?.ToDisplayString() != AbstractionsNamespace)
+        {
+            return;
+        }
+
+        context.ReportDiagnostic(Diagnostic.Create(
+            FlowXDiagnostics.PolicySetCannotBeRead, location, set));
+    }
+
+    /// <summary>
+    /// FLOWX1035 — a compensation retry whose declared attempt count retries nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Only where the retry reaches the plan.</strong> The caller returns before this
+    /// when FLOWX1033 fired, and this asks for the compensation directly rather than trusting
+    /// that: on a step whose chain the walk could not follow, FLOWX1033 is silent and so is
+    /// this, because absence of a compensation is then something nobody observed.
+    /// </para>
+    /// <para>
+    /// <strong>Read from syntax, never from a second semantic model.</strong> The set is
+    /// nearly always declared in a different file, a <see cref="SemanticModel"/> belongs to
+    /// one tree, and RS1030 forbids an analyzer from asking the compilation for another. So
+    /// the count is a literal or it is unknown — <c>DeadlineCoherenceAnalyzer</c> works under
+    /// exactly this restriction, and each spelling not recognised costs a false negative
+    /// rather than a wrong number.
+    /// </para>
+    /// <para>
+    /// <strong>Silent for a well-known set.</strong> A set resolved out of
+    /// <c>PolicySetReader.WellKnownSets</c> has no initialiser to read, which is right twice
+    /// over: there is no syntax, and FlowX fixed those arguments itself.
+    /// </para>
+    /// </remarks>
+    private static void ReportCompensationRetryThatRetriesNothing(
+        SyntaxNodeAnalysisContext context,
+        PolicySetContents contents,
+        InvocationExpressionSyntax invocation,
+        string set,
+        Location location)
+    {
+        if (contents.Initialiser is not { } initialiser || !DeclaresCompensation(invocation))
+        {
+            return;
+        }
+
+        if (StepCapabilityName(invocation) is not { } step)
+        {
+            return;
+        }
+
+        foreach (var policy in FlowChainWalker.Walk(initialiser))
+        {
+            if (policy.MethodName != CompensationRetryKind ||
+                LiteralCount(Argument(policy, AttemptsParameter, 0)) is not { } attempts ||
+                attempts > 1)
+            {
+                continue;
+            }
+
+            context.ReportDiagnostic(Diagnostic.Create(
+                FlowXDiagnostics.CompensationRetryRetriesNothing,
+                location,
+                step,
+                attempts.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                set));
+
+            return;
+        }
+    }
+
+    /// <summary>The parameter <see cref="CompensationRetryKind"/>'s attempt count is written as.</summary>
+    private const string AttemptsParameter = "attempts";
+
+    /// <summary>The named argument if it was written that way, else the one in that position.</summary>
+    private static ExpressionSyntax? Argument(ChainLink link, string name, int position)
+    {
+        var arguments = link.Invocation.ArgumentList.Arguments;
+
+        foreach (var argument in arguments)
+        {
+            if (argument.NameColon?.Name.Identifier.ValueText == name)
+            {
+                return argument.Expression;
+            }
+        }
+
+        return position < arguments.Count && arguments[position].NameColon is null
+            ? arguments[position].Expression
+            : null;
+    }
+
+    /// <summary>
+    /// An integer written down, or <see langword="null"/> for anything the compiler would have
+    /// to fold.
+    /// </summary>
+    /// <remarks>
+    /// The unary minus is spelled out because <c>-1</c> is not a literal in C# syntax — it is
+    /// a prefix expression over one — and <c>CompensationPolicy.From</c> clamps a negative
+    /// count to a single attempt exactly as it clamps zero. A rule blind to the minus sign
+    /// would be silent on the one spelling that is furthest from a retry.
+    /// </remarks>
+    private static int? LiteralCount(ExpressionSyntax? expression) => expression switch
+    {
+        LiteralExpressionSyntax literal when literal.Token.Value is int count => count,
+        PrefixUnaryExpressionSyntax negated when negated.IsKind(SyntaxKind.UnaryMinusExpression) =>
+            LiteralCount(negated.Operand) is { } count ? -count : null,
+        _ => null,
+    };
+
+    /// <summary>
+    /// The set named by a later <c>.WithPolicy(...)</c> on the same step, or
+    /// <see langword="null"/> when this call is the step's own.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Upwards only, and that is the whole rule: <c>StepModel.WithPolicy</c> assigns, so the
+    /// <em>last</em> call on the step is the one that survives and every earlier one is
+    /// discarded. Reporting from the discarded call puts the message on the line whose set
+    /// disappeared rather than on the line that is working, and makes three calls report twice
+    /// rather than once.
+    /// </para>
+    /// <para>
+    /// Bounded by <c>IStepBuilder</c>'s two methods, like every other walk here: a
+    /// <c>.Step&lt;T&gt;()</c> between two <c>.WithPolicy(...)</c> calls ends this step's
+    /// segment, which is what keeps the rule off the ordinary flow that declares a policy on
+    /// each of its steps.
+    /// </para>
+    /// </remarks>
+    private static string? SupersedingSet(InvocationExpressionSyntax withPolicy)
+    {
+        for (var call = Enclosing(withPolicy); call is not null; call = Enclosing(call))
+        {
+            var name = MethodName(call);
+
+            if (name == WithPolicyMethod)
+            {
+                return call.ArgumentList.Arguments.Count > 0
+                    ? call.ArgumentList.Arguments[0].Expression.ToString()
+                    : null;
+            }
+
+            if (name != CompensateWithMethod)
+            {
+                return null;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -196,7 +417,13 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     /// the set rather than about the step.
     /// </para>
     /// </remarks>
-    private static void ReportDroppedCompensationRetry(
+    /// <returns>
+    /// Whether the report was raised. The caller uses it to stay off FLOWX1035: a retry with
+    /// no compensation reaches no plan node at all, so how many attempts it asked for is not
+    /// the finding, and two reports on one line would leave the author choosing which to act
+    /// on.
+    /// </returns>
+    private static bool ReportDroppedCompensationRetry(
         SyntaxNodeAnalysisContext context,
         IReadOnlyList<string> kinds,
         InvocationExpressionSyntax invocation,
@@ -205,12 +432,12 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     {
         if (!kinds.Contains(CompensationRetryKind) || DeclaresCompensation(invocation))
         {
-            return;
+            return false;
         }
 
         if (StepCapabilityName(invocation) is not { } step)
         {
-            return;
+            return false;
         }
 
         context.ReportDiagnostic(Diagnostic.Create(
@@ -221,6 +448,8 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
                 (kinds.Count == 1).ToString(System.Globalization.CultureInfo.InvariantCulture)),
             step,
             set));
+
+        return true;
     }
 
     /// <summary>

@@ -109,12 +109,23 @@ times on one line, which is how a catalogue gets suppressed wholesale.
 - A step with no `.WithPolicy(...)` at all.
 - A `.WithPolicy(...)` whose argument the compiler cannot resolve to a field or property
   initialiser declared in source — a set built at run time, one returned by a method, or one
-  arriving from a referenced assembly, `PolicySet.CompensationDefault` included.
-  `PolicySetReader` returns nothing rather than guessing, which is the same restriction
-  FLOWX1014 and FLOWX1019 already work under, and it is exactly where
-  `FlowEmitter.PolicyArguments` is silent too: a set whose kinds the compiler could not read
-  produces no policy argument at all. A report naming policies the compiler inferred would
-  name policies the author cannot find.
+  arriving from a referenced assembly. `PolicySetReader` returns nothing rather than guessing,
+  which is the same restriction FLOWX1014 and FLOWX1019 already work under, and it is exactly
+  where `FlowEmitter.PolicyArguments` is silent too: a set whose kinds the compiler could not
+  read produces no policy argument at all. A report naming policies the compiler inferred
+  would name policies the author cannot find. **The silence itself is now reported, by
+  [FLOWX1036](FLOWX1036.md)** — not as a claim about the kinds, which the compiler cannot
+  make, but as the fact that none of them reaches the plan or the manifest.
+- `PolicySet.CompensationDefault`, which is a referenced-assembly set and resolves anyway.
+  *This page said the opposite for two releases, and it was true: the set named as the
+  documented default for compensation reached no plan, so the one policy this runtime
+  executes did not execute.* `PolicySetReader` now carries the composition of `PolicySet`'s
+  own well-known sets, pinned by `PolicySetContentsAreThePinnedOnes`, so the set resolves to
+  its `CompensationRetry` and this rule is silent on it for the ordinary reason: it is a
+  compensation-only set.
+- Every `.WithPolicy(...)` on a step that has a later one — see
+  [FLOWX1034](FLOWX1034.md). The discarded set reaches neither the plan nor the manifest, and
+  this rule's message says both carry the kinds it names.
 
 ## How to fix it
 

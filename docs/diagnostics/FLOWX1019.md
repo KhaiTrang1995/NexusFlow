@@ -33,11 +33,11 @@ protects nothing. The consequence is that **silence is not a statement that a fl
 |---|---|
 | Steps inside a `When`, `Switch`, `ForEach`, `Parallel` or `SubFlow` block | They run on some paths and not others, and a `Parallel` overlaps rather than adds. Only unconditional top-level steps are summed |
 | A step with no `.WithPolicy(...)` | There is no platform default step timeout in this release — `CapabilityAttribute` carries no `Timeout` member — so such a step is genuinely unbounded, and this rule will not put a number on unbounded |
-| A policy set that is not a field or property with an initialiser in source | The same restriction `PolicySetReader` works under: a set built at run time has no compile-time contents |
+| A policy set that is not a field or property with an initialiser in source | The same restriction `PolicySetReader` works under: a set built at run time has no compile-time contents. [FLOWX1036](FLOWX1036.md) reports the case rather than leaving it silent, and `PolicySet`'s own well-known sets — `PolicySet.CompensationDefault` — are read from metadata and are not one of them, though neither declares a `Timeout` for this rule to count |
 | A set with a `Retry` and no `Timeout` | Unbounded, not free |
 | A timeout not written as `TimeSpan.From…(literal)` | `new TimeSpan(0, 0, 30)`, a `const`, an arithmetic expression and `TimeSpan.Parse` all read as unknown. The duration is read from syntax rather than from a symbol, because the policy set is usually declared in another file and Roslyn's RS1030 forbids an analyzer from binding a second syntax tree |
 | Retry backoff delays | Real elapsed time against the same budget, and not counted |
-| A second `.WithPolicy(...)` on the same step | Which set wins is a resolution question this rule has no answer to; counting both would be the one way to *overstate* the total |
+| A second `.WithPolicy(...)` on the same step | Which set wins is a resolution question this rule has no answer to; counting both would be the one way to *overstate* the total. *The answer, since [FLOWX1034](FLOWX1034.md), is that the later call wins outright and the earlier set reaches neither the plan nor the manifest — so this rule declining to count it is right, and the shape is now an error in its own right* |
 
 `Retry(attempts)` is read as the **total** number of attempts — the smaller of the two
 readings the parameter name allows. If it turns out to mean retries-after-the-first, every

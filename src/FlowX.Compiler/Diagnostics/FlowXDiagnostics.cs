@@ -971,12 +971,156 @@ public static class FlowXDiagnostics
         "while the manifest publishes it, leaving the published contract promising a retried " +
         "undo the plan has no undo for. Either the step does have an inverse and it was not " +
         "declared, in which case add '.CompensateWith<T>()'; or it genuinely has none, in " +
-        "which case the set naming its policies should not promise one — split the set, or " +
-        "apply PolicySet.CompensationDefault alongside it on the steps that do have an undo. " +
+        "which case the set naming its policies should not promise one — split the set, and " +
+        "give the steps that do have an undo a set that declares the retry. Not a second " +
+        ".WithPolicy(PolicySet.CompensationDefault) beside the first: a step carries one " +
+        "policy set and the later call discards the earlier, which is FLOWX1034. " +
         "There is no suppression that makes the declaration work: the emitter still drops it, " +
         "so what a suppression buys is a manifest and a plan that disagree with no message " +
         "saying which is true.",
         DiagnosticSeverity.Error);
+
+    /// <summary>FLOWX1034 — a step declaring more than one policy set.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A declared control deleted, not merely unapplied.</strong>
+    /// <c>StepModel.WithPolicy</c> assigns <c>PolicySetName</c> and <c>PolicyKinds</c> rather
+    /// than adding to them, and <c>FlowAnalyzer.AttachPolicy</c> calls it once per
+    /// <c>.WithPolicy(...)</c>. So the last call on a step wins outright: everything the
+    /// earlier sets declared is gone before <c>FlowEmitter</c> and <c>ManifestWriter</c> run,
+    /// and a step that declared a five-second timeout compiles to a plan with no timeout and
+    /// publishes a contract with no timeout in it.
+    /// </para>
+    /// <para>
+    /// <strong>An error, where <see cref="PolicyIsNotExecutedByTheRuntime"/> is a
+    /// warning</strong>, on <see cref="CompensationRetryHasNoCompensation"/>'s line exactly.
+    /// That rule's warning neighbour keeps the declaration somewhere P4 can find it; here
+    /// there is nothing to keep. No release makes a discarded set apply, no author means to
+    /// write two sets and use one, and the repair is mechanical and local: merge them.
+    /// </para>
+    /// <para>
+    /// <strong>It was written down one rule over and not reported.</strong>
+    /// <c>docs/diagnostics/FLOWX1019.md</c> declines to count a second <c>.WithPolicy</c>
+    /// because "which set wins is a resolution question this rule has no answer to". The
+    /// answer is the later one, and a fact about the compiler belongs in a diagnostic rather
+    /// than in the stated limits of a rule about deadlines.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor StepDeclaresMoreThanOnePolicySet = Create(
+        "FLOWX1034",
+        "Step declares more than one policy set",
+        "'{0}' is discarded: this step's policy set is '{1}', because a second " +
+        ".WithPolicy(...) replaces the first rather than adding to it",
+        "A step carries one policy set. FlowAnalyzer writes it with StepModel.WithPolicy, " +
+        "which assigns the set and its kinds rather than accumulating them, so every " +
+        ".WithPolicy(...) but the last one on a step is discarded before the compiled plan " +
+        "and flowx.manifest.json are written. Nothing else says so: the discarded set has no " +
+        "plan node, no manifest entry and no FLOWX1014 or FLOWX1018 check, so a declared " +
+        "timeout, breaker, rate limit or audit disappears in silence. Merge the sets into " +
+        "one and name the merged set for the step — a PolicySet is a fluent chain, so the " +
+        "merge is textual and the result is one declaration a reviewer can read. Do not " +
+        "apply PolicySet.CompensationDefault as a second set: that is what this rule " +
+        "reports, and until it existed FLOWX1033 recommended it. There is no suppression " +
+        "that makes both sets apply; policy-set composition is a language feature this " +
+        "release does not have.",
+        DiagnosticSeverity.Error);
+
+    /// <summary>FLOWX1035 — a compensation retry that retries nothing.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The number is honest and the kind is not.</strong>
+    /// <c>CompensationPolicy.IsRetrying</c> is <c>Attempts &gt; 1</c>;
+    /// <c>ExecutionPlan.Create</c> ORs it across the graph into
+    /// <c>HasCompensationPolicies</c>; <c>FlowEngine.CompensateAsync</c> reads that one flag
+    /// and takes <c>CompensationPolicy.None</c> when it is false. So a single attempt is the
+    /// dispatch a step with no declared chain already gets, because <c>None</c> is one
+    /// attempt — and <c>ManifestWriter</c> publishes the kind and its stage with no
+    /// parameters, so the published contract cannot be told apart from five attempts.
+    /// </para>
+    /// <para>
+    /// <strong>A warning, not <see cref="CompensationRetryHasNoCompensation"/>'s error</strong>,
+    /// and the line is that rule's own. It is an error because the plan and the manifest
+    /// disagree about one source line — the declaration reaches no plan node while the
+    /// manifest publishes it. Here they agree: the chain is built, the descriptor is in it at
+    /// stage <c>Consistency</c>, and <c>PolicyChain.ForCompensation</c> has already checked
+    /// the compensating capability's idempotency. What is false is the inference a reader
+    /// draws from the kind's name, which is <see cref="PolicyIsNotExecutedByTheRuntime"/>'s
+    /// category and its severity.
+    /// </para>
+    /// <para>
+    /// <strong>Not fixed by redefining the parameter.</strong> <c>attempts</c> is documented
+    /// as "how many times the undo may be dispatched, including the first"; making one mean
+    /// two would silently double a reversal for every author who wrote the honest thing.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor CompensationRetryRetriesNothing = Create(
+        "FLOWX1035",
+        "CompensationRetry declares a single attempt",
+        "Step '{0}' declares CompensationRetry({1}) in '{2}', which retries nothing: the " +
+        "undo is dispatched once, and the manifest publishes it as retried",
+        "CompensationPolicy.IsRetrying is Attempts > 1, so an attempt count below two leaves " +
+        "ExecutionPlan.HasCompensationPolicies false and FlowEngine.CompensateAsync takes " +
+        "CompensationPolicy.None — one dispatch, which is exactly what a step with no " +
+        "declared chain gets. A count of zero or less behaves identically, because " +
+        "CompensationPolicy.From clamps it. Meanwhile ManifestWriter publishes " +
+        "{\"kind\":\"CompensationRetry\",\"stage\":\"Consistency\"} and no parameters, so a " +
+        "reviewer, a flowx diff and an agent all read a retried undo out of the published " +
+        "contract. Either raise the count — docs/06-Execution-Engine.md §7 rule 2 makes " +
+        "compensation retry more aggressive than forward retry at five attempts, which is " +
+        "what PolicySet.CompensationDefault declares — or delete the call, which stops the " +
+        "manifest promising a retry and changes nothing about how the undo is dispatched. " +
+        "There is no configuration, deployment or later release under which one attempt " +
+        "becomes a retry.",
+        DiagnosticSeverity.Warning);
+
+    /// <summary>FLOWX1036 — a policy set the compiler cannot read.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Five rules and two artifacts being quiet together.</strong>
+    /// <c>PolicySetReader</c> resolves a set by walking the fluent chain that built it, and a
+    /// symbol from a referenced assembly has no <c>DeclaringSyntaxReferences</c> — the
+    /// initialiser was compiled to IL in another build. So <c>FlowEmitter</c> emits no chain,
+    /// <c>ManifestWriter</c> writes no <c>policies</c> array, and FLOWX1014, FLOWX1018,
+    /// FLOWX1019, <see cref="PolicyIsNotExecutedByTheRuntime"/> and
+    /// <see cref="CompensationRetryHasNoCompensation"/> all decline to speak. That is not an
+    /// unchecked policy; it is an absent one, and a <c>CompensationRetry</c> inside such a set
+    /// — the one policy this runtime executes — does not run.
+    /// </para>
+    /// <para>
+    /// <strong>Silence was the deliberate choice, and it was the wrong one.</strong> The
+    /// reader returns nothing rather than guessing, which is right: a report naming kinds the
+    /// compiler inferred would name policies the author cannot find. But "I cannot read this
+    /// set" is itself a fact worth reporting, and it is the fact the author needs — it is not
+    /// a claim about the contents at all.
+    /// </para>
+    /// <para>
+    /// <strong>A warning, on <see cref="PolicyIsNotExecutedByTheRuntime"/>'s argument.</strong>
+    /// The source is not wrong: a shared policy library is a reasonable design that this
+    /// compiler cannot see into, and the repairs are structural rather than a token. An error
+    /// would fail builds over a program that needs no change to be correct on the day the
+    /// compiler can read a metadata set.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor PolicySetCannotBeRead = Create(
+        "FLOWX1036",
+        "Policy set cannot be read at compile time",
+        "'{0}' cannot be read at compile time, so none of the policies it declares reaches " +
+        "the compiled plan or flowx.manifest.json",
+        "PolicySetReader resolves a .WithPolicy(...) argument by walking the fluent chain " +
+        "that built the set. A set declared in a referenced assembly has no syntax to walk — " +
+        "its initialiser was compiled to IL, and Roslyn does not read IL — and a set " +
+        "returned by a method, held in a local or chosen by a conditional has no single " +
+        "initialiser either. Everything downstream then agrees, quietly: no PolicyChain is " +
+        "emitted, so a CompensationRetry in the set does not run and " +
+        "ExecutionPlan.HasCompensationPolicies stays false; no policies array is published, " +
+        "so flowx diff compares nothing; and FLOWX1014, which is what prevents a duplicate " +
+        "charge, has no set to inspect. Move the declaration into the assembly that declares " +
+        "the flow — a linked source file or a source-only package where several projects " +
+        "need one set — or use PolicySet.CompensationDefault, which FlowX declares and this " +
+        "compiler therefore knows the composition of. Do not assemble a set at run time: " +
+        "PolicySet composition is resolved at compile time by design, and only parameter " +
+        "values are runtime-configurable.",
+        DiagnosticSeverity.Warning);
 
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
@@ -1011,7 +1155,10 @@ public static class FlowXDiagnostics
         ProfileIsNotHonouredByTheRuntime,
         SuspensionIsNotHonoured,
         PolicyIsNotExecutedByTheRuntime,
-        CompensationRetryHasNoCompensation);
+        CompensationRetryHasNoCompensation,
+        StepDeclaresMoreThanOnePolicySet,
+        CompensationRetryRetriesNothing,
+        PolicySetCannotBeRead);
 
     private static DiagnosticDescriptor Create(
         string id,
