@@ -15,9 +15,11 @@
     <Project Path="plugins/FlowX.Redis/FlowX.Redis.csproj" />
   </Folder>
   <Folder Name="/samples/">
+    <Project Path="samples/banking/Banking.csproj" />
     <Project Path="samples/ecommerce/Ecommerce.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Banking.Tests/Banking.Tests.csproj" />
     <Project Path="tests/Ecommerce.Tests/Ecommerce.Tests.csproj" />
     <Project Path="tests/FlowX.Abstractions.Tests/FlowX.Abstractions.Tests.csproj" />
     <Project Path="tests/FlowX.Architecture.Tests/FlowX.Architecture.Tests.csproj" />
