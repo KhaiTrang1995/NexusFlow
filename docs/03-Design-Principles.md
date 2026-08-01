@@ -199,10 +199,12 @@ refused commit discards both; and `PostgresOutboxPublisher` drains it at-least-o
 `ACrashBetweenPublishingAndMarkingDeliversTwiceRatherThanNever` and
 `EmitReachesTheBrokerTests` hold it to end to end.
 
-*Two things are still not true, and both are stated rather than left to be discovered.*
-**No broker plugin exists**: `IEventPublisher` is a declared contract with a recording
-test double behind it and nothing else, so *published* means *handed to a publisher*
-([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)). And two shapes of `.Emit`
+*This paragraph said no broker plugin exists and that `published` therefore meant `handed to
+a publisher`. That expired at WP-56b:* `plugins/FlowX.Redis` implements `IEventPublisher` over
+Redis Streams, one stream per `partition_key`, and `PublisherConformance` holds it and the
+recording double to one contract
+([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)). *One thing is still not true and
+is stated rather than left to be discovered.* Two shapes of `.Emit`
 still stage nothing — one on an `Ephemeral` flow, which keeps no transaction to stage
 into, and one whose contract no source-generated `JsonSerializerContext` declares.
 [`FLOWX1024`](diagnostics/FLOWX1024.md) reports exactly those two, with a fix in user

@@ -243,7 +243,11 @@ public sealed class ManifestTests
     {
         var source = Flow.GetProperty("source").GetString().ShouldNotBeNull();
 
-        source.ShouldBe("ExecuteTransferFlow.cs:42");
+        // Moves whenever the file's header does — most recently when the flow's remarks
+        // gained the paragraph explaining its FLOWX1032 suppression. The number is the
+        // assertion, not an incidental: a source pointer that drifts from the declaration
+        // it names is a pointer a reader follows to the wrong line.
+        source.ShouldBe("ExecuteTransferFlow.cs:52");
         source.ShouldNotStartWith("/");
         source.ShouldNotContain(":\\");
     }
@@ -272,11 +276,20 @@ public sealed class ManifestTests
     /// onto <c>Policies</c> — so the two artifacts agree about the same source line.
     /// </para>
     /// <para>
-    /// <strong>The forward half being carried is not the forward half being run.</strong>
-    /// Nothing in <c>FlowEngine</c> reads <c>StepNode.Policies</c>: no timeout is armed and no
-    /// rate limit is counted, exactly as before. What the plan now states is what was
-    /// declared, which is the precondition for P4 executing it and, until then, for a reader
-    /// of the plan seeing what a reader of the manifest sees.
+    /// <strong>The half being carried is not the half being run.</strong> Nothing in
+    /// <c>FlowEngine</c> reads <c>StepNode.Policies</c>: no timeout is armed and no rate limit
+    /// is counted, exactly as before. What the plan now states is what was declared, which is
+    /// the precondition for P4 executing it and, until then, for a reader of the plan seeing
+    /// what a reader of the manifest sees.
+    /// </para>
+    /// <para>
+    /// <strong>"The forward half" is one stage too narrow, and the assertion below shows
+    /// it.</strong> <c>Audit</c> is a <c>PolicyStage.Consistency</c> policy — stage 7, the
+    /// same stage as the <c>CompensationRetry</c> that runs — and it sits on
+    /// <c>Policies</c> rather than <c>CompensationPolicies</c>, because
+    /// <c>PolicyChain.ForStep</c> splits by what a policy <em>wraps</em>. So it is carried and
+    /// inert alongside the <c>Timeout</c>. <c>FLOWX1032</c> reports both, and
+    /// <c>ReferenceSamplePolicyTests</c> asserts it does so against this file's real source.
     /// </para>
     /// </remarks>
     [Fact]

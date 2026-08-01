@@ -205,9 +205,13 @@ nothing in the repository produces:
   repository. It is not, any more.* A `Durable` flow's emitted event is staged by the step's
   own commit and drained by `PostgresOutboxPublisher`, and the rule now fires only where the
   chain cannot start — an `Ephemeral` flow, or a contract no source-generated
-  `JsonSerializerContext` declares. What is still missing is a **broker plugin**:
-  `IEventPublisher` has one recording test double behind it, so freezing `event.producedBy`
-  and `event.consumedBy` would freeze a topology whose far end nobody has run.
+  `JsonSerializerContext` declares. *This bullet then said a **broker plugin** was missing and
+  that `IEventPublisher` had one recording test double behind it; that expired at WP-56b, when
+  `RedisStreamEventPublisher` shipped and `PublisherConformance` began holding both to one
+  contract.* The freeze argument survives it intact, because it was never about the publisher:
+  nothing in the repository writes `event.consumedBy` at all — a **consumer** is what would
+  populate it, and the manifest describes one application's production side. Freezing those two
+  fields would still freeze a topology only half of which anything produces.
 * **Policies.** `.WithPolicy(...)` reaches the manifest as a per-step `policies` array with
   each policy's fixed stage, and `FlowX.Runtime` contains no policy engine at all, so a
   declared `Retry` *"is a manifest entry and nothing more"* (05 §12). The schema's **top-level**

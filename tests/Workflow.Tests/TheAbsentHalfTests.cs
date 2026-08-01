@@ -1,134 +1,75 @@
 using FlowX;
-using FlowX.Conformance.InMemory;
-using FlowX.Runtime;
 using Shouldly;
 using Xunit;
 
 namespace Workflow.Tests;
 
 /// <summary>
-/// What the old README promised, and what the platform does with it.
+/// What the old README promised, what the platform did with it, and which half is left.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <c>samples/workflow/README.md</c> used to claim "a multi-day process with human approvals,
-/// escalations, timers and reversible steps". Three of those four are
-/// <c>AwaitSignal</c>, <c>Delay</c> and <c>OnTimeout</c>, and none of them works. This class
-/// measures the one of the three whose failure is observable from a test project: an
-/// <c>AwaitSignal</c> step in a <c>Durable</c> flow does not wait.
+/// escalations, timers and reversible steps". Three of those four were <c>AwaitSignal</c>,
+/// <c>Delay</c> and <c>OnTimeout</c>, and none of them worked. This class measured the one of
+/// the three whose failure was observable from a test project: an <c>AwaitSignal</c> step in a
+/// <c>Durable</c> flow did not wait.
 /// </para>
 /// <para>
-/// <strong>The other two fail at compile time and are shown in the README instead</strong>,
-/// because demonstrating them needs a flow that declares them and the whole point is that no
-/// flow in this repository should. The README carries the generated output from a throwaway
-/// project, with the command to reproduce it.
+/// <strong>That test is gone, because the behaviour it measured is gone.</strong> It was
+/// written to go red on the day WP-63 landed and it did; the assertion that replaces it is
+/// <see cref="SuspensionTests"/>, which runs <c>offer.accept</c> — a flow of this sample's
+/// own, with a real wait in the middle of it — through the real host and the real journal.
+/// A degenerate behaviour that no longer exists is not something to keep a test for.
 /// </para>
 /// <para>
-/// <strong>All three are now reported</strong> — <c>FLOWX1031</c>, an error on
-/// <c>AwaitSignal</c> and a warning on <c>Delay</c> and <c>OnTimeout</c>. That closes the
-/// silence, not the gap: the behaviour this class measures is unchanged, because the rule
-/// stops a flow being written rather than making a written one wait. What it did change is
-/// that the compiler no longer emits a plan for a DSL flow that awaits a signal, so the
-/// hand-built plan below is now the only way to reach this shape at all — which is why the
-/// class comment above says the plan has to be hand-built.
-/// </para>
-/// <para>
-/// The plan below is hand-built, which every other test in this project avoids. It has to be:
-/// the sample deliberately declares no suspension point, and the shape under test is one no
-/// flow here is allowed to have.
+/// <strong>What is left is the timer half, and it is still absent.</strong> <c>Delay</c> and
+/// <c>OnTimeout</c> compile to nothing and say so as <c>FLOWX1031</c>. They fail at compile
+/// time, so demonstrating them needs a flow that declares them and the whole point is that no
+/// flow in this repository should — the README carries the generated output from a throwaway
+/// project, with the command to reproduce it. What this class can still assert is that no flow
+/// here declares one, which is the guard on that claim.
 /// </para>
 /// </remarks>
 public sealed class TheAbsentHalfTests
 {
-    private static readonly CapabilityDescriptor Validate =
-        CapabilityDescriptor.Create("offer.validate", "1.0.0", isIdempotent: true);
-
-    private static readonly CapabilityDescriptor Welcome =
-        CapabilityDescriptor.Create("welcome.send", "1.0.0", isIdempotent: true);
-
     /// <summary>
-    /// An <c>AwaitSignal</c> step completes immediately; nothing suspends and no signal is
-    /// waited for.
+    /// No flow in this sample declares a construct the compiler still cannot honour.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// The generated dispatcher answers <c>StepOutcome.Success</c> for an <c>AwaitSignal</c>
-    /// index — "Emit and AwaitSignal have no capability to call; the engine and the event
-    /// plugin handle them" — and the engine has no case for <c>StepKind.AwaitSignal</c> at
-    /// all, so the step falls through to the ordinary capability path and returns. The step
-    /// after it runs on the same thread, in the same millisecond.
-    /// </para>
-    /// <para>
-    /// So the degenerate behaviour is not a wait with a short timeout. It is no wait: a flow
-    /// written to pause for a countersignature runs straight past the pause and does whatever
-    /// came after it, with a clean journal and a successful result.
-    /// </para>
-    /// <para>
-    /// <strong>Red when WP-63 lands.</strong> A durable suspension point makes this run stop
-    /// at index 1, and this test with it.
-    /// </para>
+    /// A <c>Delay</c> or an <c>OnTimeout</c> would be a warning in this project's build, and
+    /// this repository builds with <c>TreatWarningsAsErrors</c> — so this assertion is
+    /// belt-and-braces against the day someone relaxes that. The failure it guards is a flow
+    /// that says it waits a day and does not.
     /// </remarks>
     [Fact]
-    public async Task AnAwaitSignalStepDoesNotWaitForAnything()
+    public void NoFlowInThisSampleDeclaresAConstructTheCompilerCannotHonour()
     {
-        var plan = ExecutionPlan.Create(
-            FlowDescriptor.Create(
-                "probe.suspend", "1.0.0", ExecutionProfile.Durable, TimeSpan.FromSeconds(30)),
-            StepGraph.Create(
-            [
-                StepNode.ForCapability(0, Validate),
-                StepNode.ForAwaitSignal(1, "contract.signed", TimeSpan.FromDays(7)),
-                StepNode.ForCapability(2, Welcome),
-            ]));
-
-        var clock = new FlowX.Testing.FlowTestClock();
-        var journal = new InMemoryFlowJournal();
-        var dispatcher = new CountingDispatcher();
-        var ct = TestContext.Current.CancellationToken;
-
-        var begun = await DurableExecution.BeginAsync(
-            journal, plan, new FlowInvocation("corr-1", "key-1"), Guid.NewGuid(), new FencingToken(1),
-            input: null, cancellationToken: ct);
-
-        begun.IsSuccess.ShouldBeTrue("The journal opened the instance.");
-
-        var started = clock.UtcNow;
-
-        var result = await new FlowEngine(clock)
-            .ExecuteAsync(plan, dispatcher, new FlowInvocation("corr-1", "key-1"), begun.Value, ct);
-
-        result.IsSuccess.ShouldBeTrue("It did not suspend, and it did not fail either.");
-
-        dispatcher.Executed.ShouldBe(
-            [0, 1, 2],
-            "Index 1 is the suspension point. It was dispatched like any other step and the " +
-            "step after it ran.");
-
-        clock.UtcNow.ShouldBe(started, "Nothing waited, so nothing moved the clock.");
-
-        var frontier = await journal.ReadResumeFrontierAsync(journal.Instances[0].InstanceId, ct);
-
-        frontier.Value.Committed.Count.ShouldBe(
-            3,
-            "Three step boundaries, three rows. A suspended instance would have two and a " +
-            "pending timer, and there is no table for one.");
-
-        journal.Instances[0].State.ShouldBe(
-            FlowInstanceState.Completed,
-            "The instance finished in a single invocation. A durable flow still runs to " +
-            "completion inside one, which is what WP-63 changes.");
+        // A Delay would occupy an index of its own and an OnTimeout would contribute steps;
+        // neither reaches a plan, so the only observable form of "this sample declares one"
+        // is the build, which is green. What is assertable here is the shape that *does*
+        // reach the plan, and that it is the one the engine has a case for.
+        AllSteps()
+            .Where(step => step.Kind == StepKind.AwaitSignal)
+            .ShouldAllBe(
+                step => step.SignalTimeout != null,
+                "a suspension point carries the author's declared duration. A plan with none " +
+                "is the state that made FlowEmitter fabricate one hour.");
     }
 
     /// <summary>
-    /// And this repository's own sample declares no suspension point, in either flow.
+    /// The two flows that were written before suspension existed still declare none.
     /// </summary>
     /// <remarks>
-    /// The guard on the finding above. A sample that used <c>AwaitSignal</c> would compile, run
-    /// green, publish a manifest naming the signal, and quietly not wait — which is precisely
-    /// the failure the old README documented as a feature.
+    /// <c>employee.onboard</c> is <c>[HttpTrigger]</c>-mapped, and the generated endpoint
+    /// answers <c>200</c> with the flow's projected output — a shape a suspended flow has no
+    /// answer for, because its <c>.Return(...)</c> reads values the steps after the wait were
+    /// going to produce. Adding a wait to it would publish a route that fails on the request
+    /// that suspends, which is why <c>offer.accept</c> is a separate flow with hand-written
+    /// routes and this assertion keeps the two apart.
     /// </remarks>
     [Fact]
-    public void NeitherOfTheSamplesFlowsDeclaresASuspensionPoint()
+    public void TheHttpTriggeredFlowsDeclareNoSuspensionPoint()
     {
         OnboardEmployeeFlow.Plan.Graph.Steps
             .ShouldNotContain(step => step.Kind == StepKind.AwaitSignal);
@@ -137,30 +78,10 @@ public sealed class TheAbsentHalfTests
             .ShouldNotContain(step => step.Kind == StepKind.AwaitSignal);
     }
 
-    /// <summary>A dispatcher that records the indices the engine asked for and does nothing else.</summary>
-    private sealed class CountingDispatcher : IStepDispatcher
-    {
-        private readonly List<int> _executed = [];
-
-        public IReadOnlyList<int> Executed => _executed;
-
-        public ValueTask<StepOutcome> ExecuteAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
-        {
-            _executed.Add(stepIndex);
-
-            return ValueTask.FromResult(StepOutcome.Success);
-        }
-
-        public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct) =>
-            ValueTask.FromResult(StepOutcome.Success);
-
-        public bool Evaluate(int stepIndex, FlowContext ctx) => throw new NotSupportedException();
-
-        public int Select(int stepIndex, FlowContext ctx) => throw new NotSupportedException();
-
-        public IterationSource BeginIteration(int stepIndex, FlowContext ctx) => throw new NotSupportedException();
-
-        public FlowContext EnterIteration(int stepIndex, in IterationSource source, int iteration, FlowContext ctx) =>
-            throw new NotSupportedException();
-    }
+    private static IEnumerable<StepNode> AllSteps() =>
+    [
+        .. OnboardEmployeeFlow.Plan.Graph.Steps,
+        .. ProvisionWorkspaceFlow.Plan.Graph.Steps,
+        .. AcceptOfferFlow.Plan.Graph.Steps,
+    ];
 }

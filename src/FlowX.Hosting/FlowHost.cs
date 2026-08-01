@@ -279,10 +279,65 @@ public sealed class FlowHost
     /// quieter one than never being picked up.
     /// </para>
     /// </remarks>
-    public async ValueTask<FlowExecutionResult> ResumeAsync(
+    public ValueTask<FlowExecutionResult> ResumeAsync(
         Guid instanceId,
         FlowRegistration registration,
+        CancellationToken ct = default) =>
+        ResumeAsync(instanceId, registration, signal: null, ct);
+
+    /// <summary>
+    /// Delivers a signal to an instance that is waiting for one, and runs it on from there.
+    /// </summary>
+    /// <param name="instanceId">The waiting instance.</param>
+    /// <param name="registration">The plan the instance is pinned to, and its dispatcher.</param>
+    /// <param name="signal">The signal to deliver.</param>
+    /// <param name="ct">The caller's cancellation token.</param>
+    /// <returns>
+    /// How the instance ended — which may be <c>IsSuspended</c> again, if the flow has a
+    /// second wait after this one — or a rejection, in the same set
+    /// <see cref="ResumeAsync(Guid, FlowRegistration, CancellationToken)"/> returns.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is <see cref="ResumeAsync(Guid, FlowRegistration, CancellationToken)"/>
+    /// with a signal attached, and deliberately nothing more.</strong> A signal is not a
+    /// different way of running an instance: the lease is acquired, its token raises the
+    /// fence, the frontier is read, and the same <c>FlowEngine.ExecuteAsync</c> a recovery
+    /// scan calls is called. The step loop steps over every <c>(scope, step)</c> that
+    /// committed and stops at the first that has not, which is the wait — and the wait is
+    /// satisfied because this invocation is carrying what it asked for.
+    /// </para>
+    /// <para>
+    /// <strong>A signal for an instance that is not waiting for it is inert, not an
+    /// error.</strong> The instance runs forward to wherever it actually is and stops there,
+    /// leaving <c>Suspended</c> untouched. Refusing would mean the host deciding what a flow
+    /// is waiting for, and the journal already answers that: the open wait is the first
+    /// <c>AwaitSignal</c> with no committed row.
+    /// </para>
+    /// <para>
+    /// A signal delivered twice re-enters an instance whose wait now <em>has</em> a committed
+    /// row, so the second delivery steps over it and changes nothing. That is the same
+    /// idempotence the frontier gives every other step, rather than a check written for
+    /// signals.
+    /// </para>
+    /// </remarks>
+    public ValueTask<FlowExecutionResult> SignalAsync(
+        Guid instanceId,
+        FlowRegistration registration,
+        FlowSignal signal,
         CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(signal);
+
+        return ResumeAsync(instanceId, registration, signal, ct);
+    }
+
+    /// <inheritdoc cref="ResumeAsync(Guid, FlowRegistration, CancellationToken)" />
+    private async ValueTask<FlowExecutionResult> ResumeAsync(
+        Guid instanceId,
+        FlowRegistration registration,
+        FlowSignal? signal,
+        CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(registration);
 
@@ -323,6 +378,11 @@ public sealed class FlowHost
 
                 var run = resumed.Value;
                 var record = run.Frontier!.Instance;
+
+                if (signal is not null)
+                {
+                    run.WithSignal(signal);
+                }
 
                 var invocation = new FlowInvocation(
                     record.CorrelationId,

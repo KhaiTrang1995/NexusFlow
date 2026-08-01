@@ -13,12 +13,26 @@
 > each one runs in. The safety *diagnostics* in this document are real and
 > enforced at build time.
 >
-> What does not ship: the Policy Engine. **On the forward path there is still no
-> policy execution at all** in `FlowX.Runtime` — no timeout is armed, no forward
-> retry is attempted, no breaker opens, no cache is consulted, no authorisation
-> stance is checked at a boundary, and no audit record is written. A step's own
-> policy chain is metadata the runtime never reads. That is **P4** in
-> [20-Roadmap](20-Roadmap.md).
+> What does not ship: the Policy Engine. **No policy but `CompensationRetry` is
+> executed at all** in `FlowX.Runtime` — no timeout is armed, no forward retry is
+> attempted, no breaker opens, no cache is consulted, no authorisation stance is
+> checked at a boundary, and no audit record is written. A step's own policy
+> chain is metadata the runtime never reads: `PolicyChain.Ordered` is read in one
+> place in `src/`, `CompensationPolicy.From`, which skips every kind but the
+> compensation retry. That is **P4** in [20-Roadmap](20-Roadmap.md).
+>
+> **"On the forward path" is the wrong cut, and this document used to make it.**
+> `Audit` is a stage-7 `Consistency` policy — the same stage as
+> `CompensationRetry` — and it is inert too, because `PolicyChain.ForStep` moves
+> only the compensation retry onto the undo's chain. The line is by **what a
+> policy wraps**, not by which stage it runs in.
+>
+> **[`FLOWX1032`](diagnostics/FLOWX1032.md) says so at build time**, on every
+> `.WithPolicy(...)` naming a set the runtime will not apply, and
+> [`FLOWX1033`](diagnostics/FLOWX1033.md) reports the one case where even
+> `CompensationRetry` is dropped — a step with no compensation for it to wrap.
+> Until they existed, this box was the only thing saying any of it, and a box in
+> a document is not a build.
 >
 > **The exception is WP-57's slice, and it is deliberately one stage wide.** A
 > step's *compensation* may declare `CompensationRetry`, and the unwind honours
@@ -103,7 +117,7 @@ ADR-0011 is scheduled for review after three documented counterexamples.
 | `Fallback` | 4 | capability or constant | explicit degraded mode |
 | `Cache` | 5 | `ttl`, `key`, `scope`, `store` | tenant-scoped by default |
 | `Batch` | 5 | `size`, `window` | coalesces N invocations into one |
-| `Audit` | 7 | `category`, `redact` | immutable audit record |
+| `Audit` | 7 | `category`, `redact` | immutable audit record. **Stage 7 and still inert:** it wraps the *step*, so it stays on `StepNode.Policies`, which nothing reads. `FLOWX1032` reports it |
 | `Outbox` | 7 | — | implicit on `.Emit` in durable flows |
 | `CompensationRetry` | 7 | `attempts`, `backoff`, `retryOn` | **the one policy the runtime executes.** Wraps the step's *compensation*, so it requires the **compensating** capability to declare `Idempotent = true`. Defaults: 5 attempts (more aggressive than forward retry, [06 §7](06-Execution-Engine.md#7-compensation-semantics) rule 2), full jitter, `Conflict`/`Unavailable`/`Internal` |
 

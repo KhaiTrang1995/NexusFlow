@@ -198,13 +198,47 @@ This is the section the sample exists for. Everything below is in
 `flowx.manifest.json`, is visible to a reviewer, and changes nothing about how the
 program runs. Each one has a test that goes red if that ever stops being true.
 
-### The policy engine is P4, so no *forward* policy runs
+### The policy engine is P4, so every policy but one is inert
 
 `Policies.cs` declares `Timeout`, `Retry`, `CircuitBreaker`, `RateLimit`,
 `Idempotency` and `Audit`. Nothing applies any of them. They now reach
 `StepNode.Policies` in the compiled plan as well as the manifest — the plan and the
 document agree about what was declared — but no timeout is armed and no rate limit
 is counted, and that is the whole of their effect.
+
+**"No *forward* policy runs" is what this section used to say, and it is the wrong
+cut.** `Audit` is a stage-7 `Consistency` policy — the same stage as
+`CompensationRetry` — and it is inert too, because `PolicyChain.ForStep` moves only
+the compensation retry onto the undo's chain and `CompensationPolicy.From` reads only
+that kind. The line is by **what a policy wraps**, not by which stage it runs in. So
+this bank writes no policy-driven audit record, and a summary phrased by stage would
+have implied it does.
+
+**The compiler says all of this now, and it is an error in this repository.**
+[FLOWX1032](../../docs/diagnostics/FLOWX1032.md) reports every declared policy the
+runtime does not apply, and this flow was its first finding: seven reports, one per
+`.WithPolicy(...)`, naming `Audit` and `Timeout` on the ledger legs and *not* their
+`CompensationRetry`. `ExecuteTransferFlow.cs` suppresses it with an argued pragma
+rather than hiding it — the flow is survivable with the policies unenforced, because
+the `PT60S` deadline bounds the run whatever the step timeouts say and a real
+deployment puts the rate limit in front of the process — which is the first of the
+three answers [the diagnostic's page](../../docs/diagnostics/FLOWX1032.md#how-to-fix-it)
+asks for. Deleting the declarations to buy a green build would delete the record P4
+needs and change nothing about how a transfer runs.
+
+### The rule this sample deliberately does not trigger
+
+[FLOWX1033](../../docs/diagnostics/FLOWX1033.md) is FLOWX1032's other half and an
+**error**: a `CompensationRetry` on a step with no compensation is dropped by the
+emitter and published by the manifest, so the contract promises a retried undo the plan
+has no undo for.
+
+`RecordSettlement` is not compensable, and `Policies.SettlementRegister` therefore
+declares no `CompensationRetry` — which is why it exists as its own set rather than as
+a second application of `Policies.LedgerPost`, from which it differs by exactly one
+line. Reusing `LedgerPost` there is the tempting edit and is the defect; before this
+rule, making it would have compiled silently and published a five-attempt retry over
+nothing.
 
 ### The exception: `CompensationRetry` is implemented, and now reachable
 

@@ -2,10 +2,12 @@
 
   <PropertyGroup>
     <Description>
-      FlowX Redis lease store: time-bounded exclusive ownership of a flow instance and the
-      monotonic fencing tokens that survive both a clean release and an expiry.
+      FlowX Redis adapters: a lease store giving time-bounded exclusive ownership of a flow
+      instance with monotonic fencing tokens that survive both a clean release and an expiry,
+      and an event publisher that drains the transactional outbox to Redis Streams, one stream
+      per partition key.
     </Description>
-    <PackageTags>flowx;redis;lease;fencing-token;durable-execution;leader-election</PackageTags>
+    <PackageTags>flowx;redis;lease;fencing-token;durable-execution;leader-election;outbox;streams</PackageTags>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 

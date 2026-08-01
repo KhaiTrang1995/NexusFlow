@@ -394,10 +394,20 @@ public static class FlowEmitter
         Add(flow.InputTypeName, isFlowInput: true, stepIndex: -1);
 
         foreach (var step in flow.AllSteps
-            .Where(s => s.Kind == StepKindModel.Capability && !string.IsNullOrEmpty(s.CapabilityOutput))
+            .Where(s =>
+                (s.Kind == StepKindModel.Capability && !string.IsNullOrEmpty(s.CapabilityOutput)) ||
+                (s.Kind == StepKindModel.AwaitSignal && !string.IsNullOrEmpty(s.SignalContractTypeName)))
             .OrderBy(s => s.Index))
         {
-            Add(step.CapabilityOutput!, isFlowInput: false, step.Index);
+            // A suspension point produces a value in exactly the sense a capability step
+            // does: the engine seeds the delivered signal into the bag before dispatching
+            // the step, and the commit that records the step carries the snapshot. So the
+            // signal's contract belongs in the state bag's membership, and the generated
+            // DescribeStep and RestoreState carry it with no special case of their own.
+            Add(
+                step.CapabilityOutput ?? step.SignalContractTypeName!,
+                isFlowInput: false,
+                step.Index);
         }
 
         return journaled;
@@ -1345,15 +1355,24 @@ public static class FlowEmitter
             case StepKindModel.AwaitSignal:
                 // This arm used to write the author's signal and a hard-coded one-hour
                 // timeout, whatever duration they declared — so a flow written to wait seven
-                // days published a plan and a manifest saying one hour. The model carries no
-                // timeout to write instead: that field arrives with WP-63, which is also
-                // when the step gets a meaning. Until then FLOWX1031 is an error on every
-                // AwaitSignal, so no model containing one is ever emitted, and this arm
-                // states the invariant rather than inventing a value to satisfy it.
-                throw new System.InvalidOperationException(
-                    "AwaitSignal reaches no execution plan in this release: FLOWX1031 refuses " +
-                    "the flow, because the compiler has no timeout to emit but the one the " +
-                    "author wrote and no way to carry it. See docs/diagnostics/FLOWX1031.md.");
+                // days published a plan saying one hour. The model had no field to carry the
+                // author's, which is why FLOWX1031 refused the whole flow rather than let
+                // the constant through.
+                //
+                // The refusal is still here, and it is still the same invariant: this
+                // generator does not invent a duration. What changed is that it no longer
+                // has to, because `StepModel.SignalTimeout` carries the one that was
+                // written. `AwaitSignal<TSignal>(TimeSpan timeout)` has no overload without
+                // a timeout, so an empty model means a half-typed buffer — and refusing it
+                // keeps the choice in front of the next person "carry the author's duration"
+                // rather than "put a constant back".
+                return step.SignalTimeout is { Length: > 0 } timeout
+                    ? "StepNode.ForAwaitSignal(" + step.Index + ", " + Quote(step.SignalType!) +
+                      ", " + timeout + ")"
+                    : throw new System.InvalidOperationException(
+                        "A suspension point reached the emitter with no timeout on it, and " +
+                        "the only value this generator may write there is the duration the " +
+                        "author declared. See docs/diagnostics/FLOWX1031.md.");
 
             case StepKindModel.Fail:
                 // No payload. The error is in `Failures` above, which is where a business

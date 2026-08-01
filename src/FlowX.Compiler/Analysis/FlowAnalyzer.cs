@@ -230,6 +230,17 @@ public static class FlowAnalyzer
             {
                 contracts.Add(output);
             }
+
+            // A signal's payload is put into the bag by the engine when it is delivered, and
+            // journaled by the commit that records the suspension point — so it is in the bag
+            // in exactly the sense a step's output is, and is checked for exactly the same
+            // reason. Leaving it out would mean an instance resumed by a signal and then
+            // crashed came back with the wait satisfied and what it delivered lost, silently.
+            if (step.Kind == StepKindModel.AwaitSignal &&
+                step.SignalContractTypeName is { Length: > 0 } signal)
+            {
+                contracts.Add(signal);
+            }
         }
 
         var location = declaration.Identifier.GetLocation();
@@ -392,7 +403,7 @@ public static class FlowAnalyzer
                     break;
 
                 case "AwaitSignal":
-                    AddSignalStep(link, semanticModel, diagnostics, steps, ref nextIndex);
+                    AddSignalStep(link, semanticModel, steps, ref nextIndex);
                     break;
 
                 case "Delay":
@@ -1574,10 +1585,16 @@ public static class FlowAnalyzer
             .Add(EmitReasons.ContractProperty, Display(contract))
             .Add(EmitReasons.NameProperty, contract.Name);
 
+    /// <summary>Models a <c>.AwaitSignal&lt;TSignal&gt;(timeout)</c> call.</summary>
+    /// <remarks>
+    /// No diagnostic of its own any more, which is the difference WP-63 made. This used to
+    /// raise <c>FLOWX1031</c> as an error, and the reason was never that suspension mattered
+    /// more than a timer: it was the only one of the three constructs that put something into
+    /// the plan, and what it put there was a duration nobody wrote.
+    /// </remarks>
     private static void AddSignalStep(
         ChainLink link,
         SemanticModel semanticModel,
-        List<Diagnostic> diagnostics,
         List<StepModel> steps,
         ref int nextIndex)
     {
@@ -1593,23 +1610,30 @@ public static class FlowAnalyzer
             return;
         }
 
-        // FLOWX1031, as an error — the one report in this rule that stops the build rather
-        // than annotating it, and the reason is not that suspension matters more than a
-        // timer. It is that this is the only one of the three that puts something into the
-        // plan. `Delay` and `OnTimeout` are dropped, so the emitted graph says less than the
-        // source and nothing untrue; this reaches the graph, the dispatcher and the manifest
-        // carrying a duration nobody wrote, because the step model has no field to carry the
-        // author's and `StepNode.ForAwaitSignal` demands one. Refusing the flow is what
-        // stops the fabrication: an error here leaves `IsSuccess` false, and
-        // `FlowPlanGenerator` emits neither the plan nor the manifest entry.
-        ReportSuspension(link, diagnostics, DiagnosticSeverity.Error, WhatIsLost(link.MethodName));
+        // No FLOWX1031 here any more, and this is where that rule lost half its subject.
+        // It reported `AwaitSignal` as an *error* because the step reached the plan carrying
+        // `TimeSpan.FromHours(1)` — the model had no field for the author's duration and
+        // `StepNode.ForAwaitSignal` demands one — so publishing no plan was the only ending
+        // that published nothing untrue. The model carries the duration now and the engine
+        // suspends at the step, so there is neither a fabrication to refuse nor a wait that
+        // does not happen. `Delay` and `OnTimeout` still have neither, and still report.
+        var arguments = link.Invocation.ArgumentList.Arguments;
 
-        // The step is still modelled. FLOWX1017 reads the built steps to find a suspension
-        // point under the wrong profile, and dropping the model here would silently retire
-        // a shipped rule as a side effect of adding this one.
         steps.Add(StepModel.AwaitSignal(
             nextIndex++,
             ToEventIdentity(symbol.Name),
+
+            // Copied verbatim, like every other expression the plan carries. A call with no
+            // argument does not compile — the DSL declares only
+            // `AwaitSignal<TSignal>(TimeSpan timeout)` — so the null branch is reachable
+            // only from a half-typed buffer, where C# is already saying something more
+            // useful and the emitter refuses the model rather than inventing a duration.
+            arguments.Count == 0 ? null : arguments[0].Expression.ToString(),
+
+            // The signal's payload is seeded into the state bag under this contract, which
+            // makes it a journaled contract in the sense FLOWX1006 checks and the sense
+            // `DescribeStep` and `RestoreState` have to carry.
+            Display(symbol),
             FormatLocation(link.CallLocation)));
     }
 
@@ -1652,9 +1676,6 @@ public static class FlowAnalyzer
     /// </remarks>
     private static string WhatIsLost(string methodName) => methodName switch
     {
-        "AwaitSignal" =>
-            "the step completes immediately, so the flow does not wait, and the plan would " +
-            "carry a one-hour timeout in place of the duration declared here",
         "Delay" =>
             "the call produces no step at all, so the flow continues without waiting",
         _ =>
