@@ -470,22 +470,39 @@ public sealed class DeclaredPolicyAnalyzerTests
 
     /// <summary>A second <c>.WithPolicy(...)</c> on one step is reported.</summary>
     /// <remarks>
+    /// <para>
     /// <c>StepModel.WithPolicy</c> assigns rather than accumulates, so the first set reaches
     /// no plan node and no manifest entry. <c>FlowPlanGeneratorTests</c> asserts the loss on
     /// the emitted artifacts; this asserts that the build says so.
+    /// </para>
+    /// <para>
+    /// <strong>And FLOWX1032 speaks once, about the surviving set only.</strong> Both sets
+    /// declare a <c>Timeout</c>, so a rule that reported the discarded one too would report
+    /// twice here. It must not: FLOWX1032's message says the plan and the manifest carry the
+    /// kinds it names, and neither carries anything from a set the compiler threw away.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void ASecondPolicySetOnOneStepIsReported() =>
-        Analyze(FlowWith(
-            ".CompensateWith<ReleaseInventory>().WithPolicy(Policies.Ledger).WithPolicy(Policies.Undo)",
-            """
+    public void ASecondPolicySetOnOneStepIsReported()
+    {
+        var step = ".CompensateWith<ReleaseInventory>()" +
+                   ".WithPolicy(Policies.Ledger).WithPolicy(Policies.Undo)";
+
+        const string policies = """
             public static readonly PolicySet Ledger = PolicySet.Named("ledger")
                 .Timeout(TimeSpan.FromSeconds(5));
 
             public static readonly PolicySet Undo = PolicySet.Named("undo")
+                .Timeout(TimeSpan.FromSeconds(9))
                 .CompensationRetry(attempts: 5);
-            """))
-            .ShouldBe(["FLOWX1032", "FLOWX1034"]);
+            """;
+
+        Analyze(FlowWith(step, policies)).ShouldBe(["FLOWX1032", "FLOWX1034"]);
+
+        Messages(FlowWith(step, policies))
+            .Count(m => m.StartsWith("FLOWX1032", StringComparison.Ordinal))
+            .ShouldBe(1, "The discarded set is carried by nothing, so nothing carries it unapplied.");
+    }
 
     /// <summary>The message names the set that is dropped and the one that replaces it.</summary>
     /// <remarks>
@@ -531,10 +548,10 @@ public sealed class DeclaredPolicyAnalyzerTests
         var report = GeneratorHarness.Report(source, new DeclaredPolicyAnalyzer())
             .Single(d => d.Id == "FLOWX1034");
 
-        source[..report.Location.SourceSpan.Start].ShouldNotContain(
-            "Policies.Ledger)",
-            "The first WithPolicy is the one whose set is thrown away, so it is the one to " +
-            "point at.");
+        source[report.Location.SourceSpan.Start..].ShouldStartWith(
+            "WithPolicy(Policies.Ledger)",
+            customMessage: "The first WithPolicy is the one whose set is thrown away, so it " +
+                           "is the one to point at.");
     }
 
     /// <summary>Three calls report twice: every set but the last is lost.</summary>

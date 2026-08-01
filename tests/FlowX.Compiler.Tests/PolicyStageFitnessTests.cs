@@ -137,16 +137,20 @@ public sealed class PolicyStageFitnessTests
     {
         var sets = new Dictionary<string, string[]>(StringComparer.Ordinal);
 
-        foreach (var property in typeof(PolicySet).GetProperties(BindingFlags.Public | BindingFlags.Static))
+        var members = typeof(PolicySet)
+            .GetProperties(BindingFlags.Public | BindingFlags.Static)
+            .Where(p => p.PropertyType == typeof(PolicySet))
+            .Select(p => (p.Name, Value: p.GetValue(null)))
+            .Concat(typeof(PolicySet)
+                .GetFields(BindingFlags.Public | BindingFlags.Static)
+                .Where(f => f.FieldType == typeof(PolicySet))
+                .Select(f => (f.Name, Value: f.GetValue(null))));
+
+        foreach (var (name, value) in members)
         {
-            if (property.PropertyType != typeof(PolicySet))
-            {
-                continue;
-            }
+            var set = (PolicySet)value!;
 
-            var set = (PolicySet)property.GetValue(null)!;
-
-            sets[property.Name] = [.. set.Policies
+            sets[name] = [.. set.Policies
                 .Select(policy => policy.Kind)
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(kind => kind, StringComparer.Ordinal)];
