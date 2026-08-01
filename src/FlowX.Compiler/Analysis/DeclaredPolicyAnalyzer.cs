@@ -216,9 +216,36 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
         context.ReportDiagnostic(Diagnostic.Create(
             FlowXDiagnostics.CompensationRetryHasNoCompensation,
             location,
+            ImmutableDictionary<string, string?>.Empty.Add(
+                CallReachesNoPlanNodeProperty,
+                (kinds.Count == 1).ToString(System.Globalization.CultureInfo.InvariantCulture)),
             step,
             set));
     }
+
+    /// <summary>
+    /// Set on a FLOWX1033 report when deleting the whole <c>.WithPolicy(...)</c> call would
+    /// provably change nothing the engine executes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// True exactly when the set declares <c>CompensationRetry</c> and nothing else, because
+    /// then <c>FlowEmitter.PolicyArguments</c> emits neither half: the forward chain needs a
+    /// kind that is not the compensation retry, and the compensation chain needs a
+    /// compensation. The call compiles to no argument at all, so removing it is a
+    /// behaviour-preserving edit rather than a choice between two designs.
+    /// </para>
+    /// <para>
+    /// <strong>Carried on the diagnostic rather than recomputed by the fix.</strong>
+    /// <c>FlowX.Compiler.CodeFixes</c> deliberately does not reference this assembly — a
+    /// development dependency does not flow transitively, and a fixes assembly whose
+    /// reference the host cannot resolve is dropped without a message — so it cannot call
+    /// <see cref="PolicySetReader"/>. A property bag is the seam Roslyn provides for exactly
+    /// this, and it keeps one implementation of "what does this set contain" rather than two
+    /// that drift.
+    /// </para>
+    /// </remarks>
+    public const string CallReachesNoPlanNodeProperty = "FlowX.CallReachesNoPlanNode";
 
     /// <summary>
     /// Whether the step this <c>.WithPolicy(...)</c> attaches to declares a compensation.

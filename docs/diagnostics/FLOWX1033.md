@@ -108,13 +108,30 @@ Splitting the set is usually the right answer for the shared-set case above, and
 `PolicySet.CompensationDefault` exists so that the common shape does not need a bespoke set
 at all: apply it alongside the step's own set on the steps that have an undo.
 
-**A quick action is offered for one case and one only**: when the set contains
-`CompensationRetry` and *nothing else*, the whole `.WithPolicy(...)` call contributes nothing
-to the compiled plan — `FlowEmitter.PolicyArguments` emits neither half — so removing it is
-provably behaviour-preserving and the fix does exactly that. When the set contains other
-kinds, removing the call would drop declarations that do reach the plan and the manifest, so
-no fix is offered and the two edits above are yours to choose between. A quick action that
-guessed there would be a quick action that deletes a published contract entry.
+### The quick action, and the two cases it declines
+
+**Offered for one case only**: when the set contains `CompensationRetry` and *nothing else*,
+the whole `.WithPolicy(...)` call contributes nothing to the compiled plan —
+`FlowEmitter.PolicyArguments` emits neither half, because the forward chain needs a kind that
+is not the compensation retry and the compensation chain needs a compensation. Removing the
+call is then provably behaviour-preserving, and the fix does exactly that.
+
+It **does** change `flowx.manifest.json`: `ManifestWriter` publishes the kind today, so the
+entry goes and `flowx diff` will report it. That entry is the promise of a retried undo for a
+step with no undo, and removing a false claim from a published contract is the point of the
+rule rather than a side effect. An author who wanted the entry to be *true* wants the other
+repair, which is why the action is offered rather than applied.
+
+**Declined when the set carries anything else.** Removing the call would then delete
+declarations that do reach the plan and the manifest, and the two edits above are design
+decisions the author owns. A quick action that guessed there would be one that deletes a
+published contract entry which is true.
+
+**Declined when a comment would go with it.** A comment written above the call attaches as
+leading trivia of the `.` token — inside the node being removed, not beside it — and every
+rule for re-placing it is right for one layout and wrong for the next. Declining costs two
+keystrokes; guessing costs a sentence somebody wrote. A quick action may cost you a manifest
+row; it may not lose your work.
 
 ## When to suppress
 
