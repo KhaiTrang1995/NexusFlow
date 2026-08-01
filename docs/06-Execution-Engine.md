@@ -250,7 +250,7 @@ flowchart LR
 | No `Guid.NewGuid()`, `Random.Shared` | `FLOWX1008` | Error | **yes** — WP-58 |
 | No mutable static state reachable from a flow | `FLOWX1009` | Error | **yes** — WP-58 |
 | Flow branching, step input mappings and the `Return` projection may only read `ctx.State` and step results | `FLOWX1011` | Error | **yes** (Warning in `Ephemeral`) |
-| Anything in `ctx.State` must be serialisable by a generated STJ context | `FLOWX1006` | Error | **no** — WP-59 |
+| Anything in `ctx.State` must be serialisable by a generated STJ context | `FLOWX1006` | Error | **yes** — WP-59 |
 
 *Outside a durable flow they are **Warnings**, not Info.* This paragraph said they
 "drop to Info — there is no replay, so there is no determinism obligation", which is
@@ -265,17 +265,19 @@ through a sub-flow. The reasoning is written once, on
 wording is superseded. Repeating it here is what let the two disagree for two phases, so
 it is not repeated again.
 
-**Three of the four `no` rows are now `yes`, and the severity question they were blocked
-on was the one answered.** They were blocked on *severity*, not on analysis: `Ephemeral`
+**All four `no` rows are now `yes`, and three of them turned on the severity question
+this section asked.** They were blocked on *severity*, not on analysis: `Ephemeral`
 was the only profile the runtime executed, ADR-0003 makes `FLOWX1007`–`FLOWX1009`
 informational there, and an Info diagnostic never reaches a build log — so they would
 have shipped doing nothing anywhere. WP-52 removed that premise and WP-58 wrote the
 rules: `DeterminismAnalyzer` and `AmbientReads` in `src/FlowX.Compiler/Analysis/`, with
-both directions pinned by `DeterminismAnalyzerTests`. **`FLOWX1006` is the row that
-stays `no`**, and it was never blocked on severity: it checks membership in the generated
+both directions pinned by `DeterminismAnalyzerTests`. **`FLOWX1006` was the row that stayed
+`no` longest**, and it was never blocked on severity: it checks membership in the generated
 `System.Text.Json` context that
 [ADR-0015 commitment 5](adr/ADR-0015-journal-schema-and-durable-execution.md) requires
-payloads to be written through, and that writer is WP-59.
+payloads to be written through, and until **WP-59** emitted that writer there was no
+membership to check. It is an **error uniformly** rather than Warning-then-escalate,
+because it reports only on a `Durable` flow and so cannot fire where the set would warn.
 [`FLOWX1012`](diagnostics/FLOWX1012.md) was the last id in this family and **shipped at
 WP-60**, once the fix it recommends — `Profile = Durable`, plus a journal and a lease store
 registered on the host — stopped being a lie. Its severity is a `Warning` and is

@@ -304,10 +304,12 @@ public interface IStepDispatcher
     /// <para>
     /// Defaulted to <see cref="StepJournalEntry.Nothing"/> rather than to a throw, unlike
     /// <see cref="BeginSubFlow"/>. A dispatcher that describes nothing produces a journal
-    /// with the step boundaries and without the payloads, which is a truthful, resumable
-    /// record — the generated payload writer and <c>FLOWX1006</c> are WP-59's, and a default
-    /// that threw would make every hand-written dispatcher unusable under a profile it is
-    /// entitled to run.
+    /// with the step boundaries and without the payloads, which is a truthful record and a
+    /// resumable one only in the weak sense — the resumed loop skips what committed and
+    /// re-enters with an empty bag. WP-59 made the generated dispatcher describe both
+    /// payloads at every step boundary, so that is no longer what a compiled flow does; the
+    /// default stays because a hand-written dispatcher is entitled to run under
+    /// <c>Durable</c>, and a default that threw would make it unusable.
     /// </para>
     /// </remarks>
     StepJournalEntry DescribeStep(int stepIndex, FlowContext ctx) => StepJournalEntry.Nothing;

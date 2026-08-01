@@ -458,25 +458,37 @@ store to serve a query some deployments never run.
 
 None of these is in a document yet. Each has a test that goes red when it is fixed.
 
-### 7.1 A resumed flow cannot bind anything a skipped step produced
+### 7.1 A resumed flow could not bind anything a skipped step produced — fixed at WP-59
 
-No state bag is journaled. The generated dispatcher emits `DescribeStep` only for `Emit`
-steps, so `flow_instance.state_bag_json` stays null and `IStepDispatcher.RestoreState` is
-never called. A resumed instance re-enters with an empty context holding only the input the
-trigger re-seeds, and the first step past the frontier that binds a value an earlier step
-produced fails with `capability.unhandled`. `ResumeTests` asserts both halves: everything
-committed really is stepped over, and then `screening.waive` cannot find the `Identity` that
-`identity.create` made.
+**This finding is closed, and the paragraph it replaces is worth keeping because the fix is
+not where a reader would look for it.** No state bag was journaled: the generated dispatcher
+emitted `DescribeStep` only for `Emit` steps, so `flow_instance.state_bag` stayed null and
+`IStepDispatcher.RestoreState` was never called. A resumed instance re-entered with an empty
+context holding only the input the trigger re-seeded, and the first step past the frontier
+that bound a value an earlier step produced failed with `capability.unhandled` — in this
+sample, `screening.waive` looking for the `Identity` that `identity.create` made.
 
-This is not a property of this sample — any flow whose steps pass values to each other has
-it, which is every flow the DSL is for. **"Resumes on another node" is true of the loop and
-not yet true of a flow.**
+The generated payload writer now describes the state bag at every step boundary and restores
+it before the first resumed step, so `ResumeTests.AResumedStepBindsTheValueAnEarlierStepProduced`
+asserts what it was named against: the flow finishes on the second node. **The cost is one
+attribute per contract.** Every type the bag holds needs `[JsonSerializable]` on
+`WorkflowJsonContext` — `JournalPayload.Of` requires generated metadata and has no overload
+that reflects over a type — and `FLOWX1006` fails the build naming any that is missing. The
+fifteen declarations in `Infrastructure.cs` are that list.
 
-There is one thing an author can do about it now, and this sample does it: **in a `Durable`
-flow, prefer control-flow delegates that read `ctx.Input`.** A `Branch` and a `Switch` are
+What a resume still does **not** get back is a `[Sensitive]` member's value: the snapshot
+stored `[redacted]`, because the journal never held anything else.
+
+This was never a property of this sample — any flow whose steps pass values to each other
+had it, which is every flow the DSL is for. **"Resumes on another node" was true of the loop
+and not of a flow; it is now true of both.**
+
+One piece of advice from the finding survives its fix, and this sample still does it: **in a
+`Durable` flow, prefer control-flow delegates that read `ctx.Input`.** A `Branch` and a `Switch` are
 never journaled — the engine resolves them before it asks whether a step has committed — so
 the arm is recomputed on every pass. A selector over the flow input can be re-derived after a
-resume; one over a step's output cannot. This flow's first draft switched on
+resume from something the trigger re-seeds, without depending on the snapshot having been
+written — which is one fewer thing that has to have gone right. This flow's first draft switched on
 `ctx.Get<ValidatedOffer>().Employment` and a resume died at `flow.selector_failed` on step 1.
 
 ### 7.2 A compensable step inside a `ForEach` must bind the element type

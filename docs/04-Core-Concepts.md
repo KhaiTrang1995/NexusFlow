@@ -227,7 +227,8 @@ Rules:
 This list said "all compiler-enforced". Five of the six are, once the type system
 is counted; rule 1 is only partly. See [07 §3](07-Capability-Model.md#3-rules),
 which carries the same status for the wider rule set — including the determinism
-rules (`FLOWX1006`–`1009`), which are reserved and unraised.
+rules (`FLOWX1006`–`1009`), *which were reserved and unraised when this was written
+and were all raised in P2: `FLOWX1007`–`FLOWX1009` at WP-58, `FLOWX1006` at WP-59.*
 
 Full contract in [07-Capability-Model](07-Capability-Model.md).
 
@@ -287,8 +288,11 @@ property. `FlowContext<TIn>` adds the flow's typed input.*
 
 Context is **pooled and reset**, never allocated per step (P5). In `Durable`
 flows, state is serialised into the journal at each checkpoint, so anything
-placed in it must be serialisable — *which nothing enforces: `FLOWX1006` does not
-exist, and neither does the journal ([06 §5](06-Execution-Engine.md#5-the-determinism-boundary)).*
+placed in it must be serialisable — *which was enforced by nothing when this was
+written, because neither `FLOWX1006` nor the journal existed. Both do: the journal
+since WP-52, and since WP-59 the generated payload writer that snapshots the bag at
+every step boundary and the rule that fails the build when a contract in it has no
+generated metadata ([FLOWX1006](diagnostics/FLOWX1006.md)).*
 
 ---
 

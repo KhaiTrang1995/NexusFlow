@@ -137,11 +137,15 @@ public sealed record TicketOpened(string TicketId, string Subject);
 ```
 
 `[Sensitive]` is not a comment. The member is listed under the contract's `sensitive` array
-in the manifest, and the generated HTTP endpoint strips it out of error responses. It is
-also *narrower than it sounds*: a Problem Details body is the only sink this release
-redacts, so nothing stops your own code writing the value somewhere the platform does not
-see. [`SensitiveAttribute`](../src/FlowX.Abstractions/Capabilities/CapabilityAttribute.cs)
-says so at the declaration.
+in the manifest, and it is redacted in every sink the platform owns: the generated HTTP
+endpoint strips it out of error responses, and — for a `Durable` flow — it is `[redacted]` in
+the stored input, in every step result, in the state-bag snapshot and in an emitted event
+body. That last group is one mechanism, not four: a value reaches a store only as a
+`JournalPayload`, which has no accessor for what it holds and one exit that redacts.
+It is still *narrower than it sounds*, in the direction that matters: nothing stops your own
+code writing the value somewhere the platform does not see.
+[`SensitiveAttribute`](../src/FlowX.Abstractions/Capabilities/CapabilityAttribute.cs) says so
+at the declaration.
 
 ### The error catalogue
 
@@ -578,8 +582,9 @@ fails. With it, the snapshot committed alongside each step is restored before th
 starts.
 
 **A `[Sensitive]` member does not come back.** It is stored as `[redacted]`, because the
-journal never held anything else — see [§11](#11-sensitive-data). A flow that needs a secret
-after a resume has to fetch it, not remember it.
+journal never held anything else: the writer hands values to `JournalPayload`, whose only
+exit replaces every declared member by name at every depth. A flow that needs a secret after
+a resume has to fetch it, not remember it.
 
 ### Part three — the host
 
@@ -774,9 +779,9 @@ journal, `AwaitSignal` or `AwaitCompletion`.
 
 ---
 
-## 11. The five diagnostics you will meet first
+## 11. The six diagnostics you will meet first
 
-The compiler is the framework teaching you. These five are the ones a newcomer hits in the
+The compiler is the framework teaching you. These six are the ones a newcomer hits in the
 first hour, in roughly that order. Every one has a page under
 [docs/diagnostics](diagnostics/README.md) arguing the case; this is the one-line version.
 
@@ -787,6 +792,7 @@ first hour, in roughly that order. Every one has a page under
 | [FLOWX1014](diagnostics/FLOWX1014.md) | a retry policy on a capability that is not `Idempotent` | make it idempotent and declare it, or handle the failure in the flow |
 | [FLOWX1012](diagnostics/FLOWX1012.md) | `.CompensateWith<T>()` on a flow that is not `Durable` | `Profile = ExecutionProfile.Durable` **and** register a journal |
 | [FLOWX1024](diagnostics/FLOWX1024.md) | `.Emit<T>()` whose event no `JsonSerializerContext` declares | `[JsonSerializable(typeof(T))]` on one context |
+| [FLOWX1006](diagnostics/FLOWX1006.md) | a `Durable` flow's state bag holds a contract no `JsonSerializerContext` declares | the same attribute, for the contract the message names — see [§8](#part-two--the-contracts) |
 
 ### FLOWX1010 — a capability must declare an authorisation stance
 

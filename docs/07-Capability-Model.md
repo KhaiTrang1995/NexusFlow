@@ -105,14 +105,14 @@ FlowX will not let you retry something that is unsafe to retry.
 
 ## 3. Rules
 
-**This table said "all compiler-enforced". Seven of the eight now are, one of them
+**This table said "all compiler-enforced". Eight of the eight now are, one of them
 partially.** The diagnostic column named four ids the compiler had never raised —
 `FLOWX1006`, `FLOWX1007`, `FLOWX1008` and `FLOWX1009` were absent from
 `FlowXDiagnostics`, which is deliberately built to contain only descriptors something
 reports. A rule that names an id is the strongest claim this documentation set makes,
-and four of these were the id of nothing. *Three of the four were built at WP-58;
-`FLOWX1006` is the one that is still the id of nothing.* The **Enforced by** column
-below is what is true today.
+and four of these were the id of nothing. *Three were built at WP-58 and the fourth at
+WP-59; none of them is the id of nothing any more.* The **Enforced by** column below is
+what is true today.
 
 | # | Rule | Enforced by | Status |
 |---|---|---|---|
@@ -123,7 +123,7 @@ below is what is true today.
 | 5 | Declares an authorisation stance | `FLOWX1010` + [`FLOWX1030`](diagnostics/FLOWX1030.md) + `EveryCapabilityDeclaresAuthorization` | **enforced**, and since `FLOWX1030` a `Permission` or `Policy` stance must also carry the name it demands — a stance that names nothing is declared but not checkable |
 | 6 | Stateless: no mutable instance or static fields | [`FLOWX1009`](diagnostics/FLOWX1009.md) | **enforced since WP-58** — Warning, and Error where the compilation shows the type on a durable flow's replay path. *This cell read "**not enforced.** `FLOWX1009` does not exist".* `RuntimeHasNoMutableStatics` still covers only `FlowX.Runtime`; this rule is what covers application capabilities |
 | 7 | Time/ID/randomness only via `ctx` | [`FLOWX1007`](diagnostics/FLOWX1007.md) + [`FLOWX1008`](diagnostics/FLOWX1008.md) | **enforced since WP-58**, at the same severities. *This cell read "**not enforced** … nothing stops a capability calling `DateTime.UtcNow` instead".* `CapabilityContext` offers `UtcNow`, `NewId()` and `Random`; reaching past them is now reported |
-| 8 | Contract types are immutable records, serialisable by a generated STJ context | — | **not enforced.** `FLOWX1006` does not exist — the last of the four ids this table named for nothing. **WP-59** |
+| 8 | Contract types are immutable records, serialisable by a generated STJ context | [`FLOWX1006`](diagnostics/FLOWX1006.md) | **partial, since WP-59** — the serialisability half is enforced: a `Durable` flow whose state bag holds a contract no single generated `JsonSerializerContext` declares fails the build, naming it. *This cell read "**not enforced.** `FLOWX1006` does not exist".* Immutability is still enforced by nothing — no rule refuses a mutable contract, and the two halves were only ever one row because one attribute happens to imply the other in practice |
 
 Rules 6, 7 and 8 are the determinism rules, and they are exactly the rules a
 `Durable` flow needs — which is why this paragraph said they were "all blocked on the
@@ -137,7 +137,10 @@ determinism set re-decided at once —
 the record. Rule 8 was never a severity question: `FLOWX1006` checks membership in
 the generated `System.Text.Json` context that
 [ADR-0015 commitment 5](adr/ADR-0015-journal-schema-and-durable-execution.md) requires
-journal payloads to be written through, and that writer is **WP-59**. The same table
+journal payloads to be written through, and there was no writer to make the requirement
+real. **WP-59 emitted one**, and the rule landed with it as an **error uniformly** rather
+than with the set's split severity — it reports only on a `Durable` flow, so its trigger
+*is* the set's escalation condition. The same table
 appears in [06 §5](06-Execution-Engine.md#5-the-determinism-boundary) with the
 diagnostics' own severities. Write contract types as if rule 8 held; nothing will
 tell you when it does not.

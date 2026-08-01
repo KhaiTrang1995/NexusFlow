@@ -249,7 +249,7 @@ Every capability names a stance and `FLOWX1010` fails the build without one, so
 it at run time. `curl` reaches this endpoint with no credentials at all, which is
 what the transcripts above show.
 
-### The audit trail is thinner than it looks
+### The audit trail is thinner than it looks — one row thinner than it was
 
 The old table claimed the journal records "principal, tenant, input hash, outcome,
 timestamp — immutable". Read back off a real instance row:
@@ -258,13 +258,21 @@ timestamp — immutable". Read back off a real instance row:
 |---|---|
 | principal | **absent** — `FlowInstanceRecord` has no member for one and `FlowInvocation` carries none |
 | tenant | present, from validated claims only |
-| input hash | **absent — and so is the input.** `FlowHost.OpenAsync` calls `BeginAsync(…, input: null, …)`. `DurableExecution` accepts a payload; the HTTP path never supplies one |
+| input hash | present as the input itself, since WP-59, with both IBANs `[redacted]`. *This row read "**absent — and so is the input**": `FlowHost.OpenAsync` passed the literal `input: null`, so `flow_instance.input` was NULL on every row ever written* |
 | outcome | present, per step and per attempt |
 | timestamp | present, plus the duration of each attempt |
 
-`TransferJournalTests.TheInstanceRowHoldsNoInputAndNoPrincipal` asserts the two
-absences, so the day a trigger starts journaling its input this README goes red with
-the test.
+`TransferJournalTests` asserted both absences and was written to go red on the day a
+trigger started journaling its input. It went red at WP-59, and now asserts the
+opposite: `TheInstanceRowHoldsTheRequestAndStillNoPrincipal` reads the stored request
+back and checks that the two account numbers are withheld from it.
+
+**Why the input could not simply have been passed.** Recording it needs a
+`JsonTypeInfo<ExecuteTransfer>`, and only generated code can name one — the host holds
+the dispatcher through an interface that knows no contract types. So the host asks:
+`IStepDispatcher.DescribeInput` returns a `JournalPayload` carrying this flow's
+`SensitiveMembers`, and the stored row is redacted by the same single exit as the event
+body and every step result.
 
 The rows *are* immutable in the sense that matters: `flow_step` is append-only and a
 retry writes a new row rather than replacing the old one, which is why
