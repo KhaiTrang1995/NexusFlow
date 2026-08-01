@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -8,6 +9,7 @@ using FlowX.Hosting;
 using FlowX.Http;
 using FlowX.Observability;
 using FlowX.Runtime;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
@@ -179,10 +181,26 @@ public sealed class TelemetryTests
     }
 
     /// <summary>
-    /// The sample authenticates nobody, so it resolves no tenant and its metrics are bucketed.
+    /// The sample now authenticates its callers, so the tenant on the span is the token's.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Inverted, and the inversion is the point.</strong> This test was
+    /// <c>TheSampleResolvesNoTenantSoItsMetricsAreBucketed</c> and asserted the tag was
+    /// <c>null</c>, on the grounds that "<c>FlowInvocation.TenantId</c> is documented as
+    /// resolved from validated claims only, and this sample validates none". The sample
+    /// validates some now — it has to, because its capabilities' authorisation stances are
+    /// decided against a principal — so the second half of that sentence stopped being true
+    /// and the tenant the claim carries reaches the span.
+    /// </para>
+    /// <para>
+    /// The rule it was really asserting is unchanged and is still asserted: the tenant comes
+    /// from a validated claim and from nothing else. What changed is that there is now a
+    /// validated claim. A <c>tid</c> sent as a header would still resolve nothing.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public async Task TheSampleResolvesNoTenantSoItsMetricsAreBucketed()
+    public async Task TheTenantOnTheSpanIsTheOneTheValidatedTokenCarried()
     {
         using var spans = new SpanRecorder();
         using var host = await StartAsync();
@@ -190,18 +208,22 @@ public sealed class TelemetryTests
 
         await PostAsync(client, "key-1", new PlaceOrder("SKU-1", 1, "tok"));
 
-        spans.Single("flow order.place").GetTagItem("flowx.tenant.id").ShouldBeNull(
-            "FlowInvocation.TenantId is documented as resolved from validated claims only, and " +
-            "this sample validates none. An absent attribute is the truthful answer; a literal " +
-            "'default' would be an invented tenant on every trace in the estate.");
+        spans.Single("flow order.place").GetTagItem("flowx.tenant.id").ShouldBe(
+            "tenant-1",
+            "HttpTriggerReader resolves the tenant from the principal's `tid` claim, which " +
+            "DemoTokenHandler put there after validating the token — never from a header.");
 
         var scrape = await client.GetStringAsync("/metrics", TestContext.Current.CancellationToken);
 
         scrape.ShouldContain(
             "tenant=\"other\"",
             customMessage:
-            "and an untenanted flow lands in the bucket rather than dropping the label, so the " +
-            "sum over tenants still equals the total.");
+            "and the metric is still bucketed, because FlowXTelemetry.TenantLabel emits a " +
+            "tenant only when it is on the configured allow-list and this sample configures " +
+            "none. A resolved tenant is not a licensed metric label — that is the cardinality " +
+            "cap, and it is a separate decision from whether the tenant is known. The span " +
+            "above carries the real value; the counter lands in the bucket, so the sum over " +
+            "tenants still equals the total.");
     }
 
     /// <summary>Captures every FlowX span for the duration of a test.</summary>
@@ -256,7 +278,15 @@ public sealed class TelemetryTests
         public void Dispose() => _listener.Dispose();
     }
 
-    private static Task<HttpResponseMessage> PostAsync(HttpClient client, string key, PlaceOrder order)
+    /// <summary>
+    /// Posts an order as <paramref name="token"/>'s caller.
+    /// </summary>
+    /// <param name="token">
+    /// Defaults to <see cref="Tokens.Cashier"/>, the caller holding <c>payment.write</c>, so
+    /// that a test about spans and counters is not silently also a test about authorisation.
+    /// </param>
+    private static Task<HttpResponseMessage> PostAsync(
+        HttpClient client, string key, PlaceOrder order, string token = Tokens.Cashier)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, Route)
         {
@@ -267,6 +297,11 @@ public sealed class TelemetryTests
         };
 
         request.Headers.Add("Idempotency-Key", key);
+
+        if (!string.IsNullOrEmpty(token))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
 
         return client.SendAsync(request, TestContext.Current.CancellationToken);
     }
@@ -290,6 +325,15 @@ public sealed class TelemetryTests
                 {
                     services.AddRouting();
                     services.AddFlowX(options => options.ApplicationName = "Ecommerce");
+
+                    // The same scheme Program.cs registers. Without it every request here is
+                    // anonymous and refused at the first step, and the spans this file
+                    // asserts on would be a refusal's rather than an order's.
+                    services
+                        .AddAuthentication(DemoTokenHandler.SchemeName)
+                        .AddScheme<AuthenticationSchemeOptions, DemoTokenHandler>(
+                            DemoTokenHandler.SchemeName, null);
+
                     services.AddSingleton(telemetry);
                     services.AddSingleton<IInventoryStore, InMemoryInventoryStore>();
                     services.AddSingleton<IPaymentGateway, AlwaysApprovesGateway>();
@@ -301,6 +345,7 @@ public sealed class TelemetryTests
                 })
                 .Configure(app =>
                 {
+                    app.UseAuthentication();
                     app.UseRouting();
                     app.UseEndpoints(endpoints =>
                     {
