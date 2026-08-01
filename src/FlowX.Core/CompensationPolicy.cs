@@ -8,12 +8,12 @@ namespace FlowX;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>This is the only policy FlowX executes at run time, and it is deliberately the
-/// only one.</strong> The Policy Engine is P4: no timeout is armed, no breaker opens, no
-/// cache is consulted, and the forward path executes nothing at all. What ships here is the
-/// slice compensation cannot do without — a saga whose undo cannot survive a broker being
-/// briefly unreachable is a saga that reports an unrecoverable business inconsistency for a
-/// blip, which is the ordinary case rather than the rare one.
+/// <strong>This was the only policy FlowX executed, and it shipped alone on purpose.</strong>
+/// The forward path now applies <see cref="PolicyStage.Resilience"/> — see
+/// <see cref="StepPolicy"/> — and four declarable kinds are still applied by nothing. What
+/// shipped here first was the slice compensation cannot do without: a saga whose undo cannot
+/// survive a broker being briefly unreachable is a saga that reports an unrecoverable
+/// business inconsistency for a blip, which is the ordinary case rather than the rare one.
 /// </para>
 /// <para>
 /// <strong>Resolved once, when the plan is built.</strong> It hangs off
@@ -26,8 +26,11 @@ namespace FlowX;
 /// <strong>Where ADR-0011 comes in.</strong> The stage is
 /// <see cref="PolicyStage.Consistency"/>, which is where the fixed order puts compensation,
 /// and the ordering itself is <see cref="PolicyChain"/>'s and nothing else's. Executing the
-/// <em>last</em> stage cannot skip an earlier one, which is what makes a single-policy slice
-/// safe to ship before the engine that runs the other fifteen.
+/// <em>last</em> stage cannot skip an earlier one, which is what made a single-policy slice
+/// safe to ship before any other stage existed. A stage in the middle of the order needs a
+/// different argument, and
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>
+/// is the one stage 4 was shipped on.
 /// </para>
 /// </remarks>
 public sealed class CompensationPolicy

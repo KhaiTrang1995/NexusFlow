@@ -351,10 +351,15 @@ test that was never written — a reader takes the tension as settled and stops
 looking. They are standing resolutions, and the fourth column says which are also
 descriptions of the code.
 
-- **Policy parameters are not runtime-configurable, because no policy runs.**
-  `.WithPolicy(...)` composes at compile time and reaches the manifest; there is
-  no policy engine in `FlowX.Runtime` at all, so there is no magnitude to
-  configure. **P4** ([10-Policy-Framework](10-Policy-Framework.md)).
+- **Policy parameters are not runtime-configurable, and there are now magnitudes
+  worth configuring.** `.WithPolicy(...)` composes at compile time and reaches the
+  manifest, and `FlowX.Runtime` executes stage 4 — so a declared timeout, attempt
+  count, failure ratio and concurrency bound are real numbers a deployment might
+  want to move. There is still no configuration surface that reaches one: the
+  last box of [10 §4](10-Policy-Framework.md#resolution-order--one-of-the-five-levels-exists)'s
+  resolution diagram does not exist. The tension is no longer vacuous, which
+  makes it a live resolution rather than a description of an absence
+  ([10-Policy-Framework](10-Policy-Framework.md)).
 - **Telemetry is not listener-gated, because there are no listeners and nothing
   to gate.** Nothing under `src/` constructs an `ActivitySource`, a `Meter` or an
   `ILogger`. "Zero cost when unobserved" is budget **B6** in

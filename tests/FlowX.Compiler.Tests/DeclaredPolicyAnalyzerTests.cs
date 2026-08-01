@@ -21,12 +21,12 @@ namespace FlowX.Compiler.Tests;
 /// are asserted at least as heavily as the cases that must fire.
 /// </para>
 /// <para>
-/// <strong><c>Audit</c> is the test that pins the correction.</strong> It is a
-/// <c>PolicyStage.Consistency</c> policy — stage 7, the same stage as
-/// <c>CompensationRetry</c> — and it is inert, because <c>PolicyChain.ForStep</c> moves only
-/// <c>CompensationRetry</c> onto the compensation's chain and <c>CompensationPolicy.From</c>
-/// reads only that kind. Every summary of this gap that says "stages 1–6 do not run" is
-/// wrong, and this file is where that is checked rather than asserted in prose.
+/// <strong><c>Audit</c> is the test that pins the correction, and the correction now has two
+/// halves.</strong> <c>Audit</c> is a <c>PolicyStage.Consistency</c> policy — stage 7, the
+/// same stage as the <c>CompensationRetry</c> that runs — and it is inert; <c>RateLimit</c>
+/// is stage 1 and inert while <c>Timeout</c> is stage 4 and applied. So no line drawn by
+/// stage number separates what this rule reports from what it must not, in either direction,
+/// and this file is where that is checked rather than asserted in prose.
 /// </para>
 /// <para>
 /// The two severities are pinned by tests of their own, because the split is the decision
@@ -704,7 +704,7 @@ public sealed class DeclaredPolicyAnalyzerTests
 
     // ------------------------------------------------------ FLOWX1035 must not fire
 
-    /// <summary>Two attempts is a retry, and the one policy this runtime executes.</summary>
+    /// <summary>Two attempts is a retry, and the one policy an undo can carry.</summary>
     [Theory]
     [InlineData("attempts: 2")]
     [InlineData("attempts: 5")]

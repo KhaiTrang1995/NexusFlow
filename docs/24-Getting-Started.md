@@ -988,14 +988,23 @@ plugin implements the consumer, and no diagnostic reports a trigger that nothing
 [12-Observability](12-Observability.md) describes the intended design; the code emits
 nothing, so plan on your own instrumentation inside capabilities.
 
-**No policy engine at run time, except compensation retry.** `PolicySet` has `Retry`,
-`Timeout`, `CircuitBreaker`, `Bulkhead`, `Cache`, `RateLimit`, `Idempotency` and `Audit`.
-They are parsed, validated, checked against the capability's declarations — `FLOWX1014` and
-`FLOWX1018` are real build errors — and written into the plan and the manifest. **At run
-time exactly one executes: `CompensationRetry`**, and the flow deadline, which is not a
-policy. A `.WithPolicy(… .Retry(3))` on a forward step is a declaration the engine currently
-ignores. The declaration is still worth writing: it is what the day the engine reads it will
-find.
+**Four of the nine policy kinds still do nothing.** `PolicySet` has `Retry`, `Timeout`,
+`CircuitBreaker`, `Bulkhead`, `Cache`, `RateLimit`, `Idempotency`, `Audit` and
+`CompensationRetry`. **The first four execute**, and so does `CompensationRetry` on a
+compensation: `.WithPolicy(… .Retry(3))` on a forward step now makes three attempts, a
+`Timeout` is armed per attempt and clamped to the flow deadline, a `CircuitBreaker` opens
+per capability, and a `Bulkhead` refuses a caller past its queue depth. `RateLimit`,
+`Idempotency`, `Cache` and `Audit` are parsed, validated — `FLOWX1014` and `FLOWX1018` are
+real build errors — written into the plan and the manifest, and applied by nothing;
+[`FLOWX1032`](diagnostics/FLOWX1032.md) reports each one you declare. Declaring them is
+still worth it: they are what the stage that implements them will find.
+
+**And four things you may expect around a policy are missing.** There is no `[Timeout]`,
+`[Retry]` or `[CircuitBreaker]` attribute — a policy attaches through `.WithPolicy(...)` on
+a step and nowhere else; there is no flow-level policy surface; there is no runtime
+configuration that reaches a policy parameter; and no policy emits a metric, because there
+is no metrics infrastructure at all (see the paragraph above). A breaker that opens does so
+silently.
 
 **Waits work; there is no scheduler engine behind them.** A `Durable` flow that reaches an
 `AwaitSignal<TSignal>(timeout)` or a `Delay(duration)` **suspends**: the invocation returns,

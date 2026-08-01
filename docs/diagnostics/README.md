@@ -236,21 +236,30 @@ which is worth saying explicitly, because the deleted `FLOWX1031` — the neares
 shape — could only use one of them.
 
 **An error erases the inventory the fixing phase needs.** The only edit that silences an
-error is deleting the `.WithPolicy(...)` call or emptying the set. That declaration is P4's
-list of the steps that asked for a timeout, and it is the same greppability ADR-0003 lists
-as a positive consequence for the profile.
+error is deleting the `.WithPolicy(...)` call or emptying the set. That declaration is the
+list of the steps that asked for a rate limit or a cache, and it is the same greppability
+ADR-0003 lists as a positive consequence for the profile. **The argument has been paid off
+once already**: when the policy engine landed stage 4, the flows that got a working timeout
+and a working retry were exactly the flows whose declarations this rule had refused to make
+them delete.
 
 **The source is not wrong.** This is the half `FLOWX1031` could not use, and it is what puts
 this rule on FLOWX1028's side of the line. *No flow is correct with a seven-day wait
 compiled to no wait* — but a great many flows are correct with a `RateLimit` enforced by the
-gateway in front of the process, or a `Timeout` subsumed by a `[FlowDeadline]` that is
-already shorter. "Confirm the flow is correct as it is, and record that" is a real remedy
-here and is the page's first one.
+gateway in front of the process, or an `Idempotency` window an idempotent endpoint already
+provides. "Confirm the flow is correct as it is, and record that" is a real remedy here and
+is the page's first one.
 
 **And nothing is falsified.** `FLOWX1031`'s error half turned on the plan carrying a value no
 author wrote. The plan here carries exactly the declared set, in exactly ADR-0011's stage
 order; what a reader over-reads is *behaviour*, not *declaration*. That is
 [FLOWX1027](FLOWX1027.md)'s category at `CS0162`'s severity.
+
+**The rule has since been narrowed rather than deleted**, from the eight kinds it was
+written over to the four no code path applies — `RateLimit`, `Idempotency`, `Cache` and
+`Audit`. `Timeout`, `Retry`, `CircuitBreaker` and `Bulkhead` left it when the policy engine
+landed `PolicyStage.Resilience`, which is the same take-down step [FLOWX1028](FLOWX1028.md)
+took when `Durable` started running and `FLOWX1031` took before it was finally deleted.
 
 **What does not transfer is [FLOWX1033](FLOWX1033.md)**, which is an **error**, and the two
 being adjacent ids about the same DSL call makes the distinction worth stating here rather

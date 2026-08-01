@@ -117,9 +117,11 @@ public sealed class ExecutionPlan
     /// allocation figure `EngineAllocationTests` records is unchanged.
     /// </para>
     /// <para>
-    /// <strong>It is the whole of the gate.</strong> The one policy this runtime executes is a
-    /// compensation retry, and a flow that declares none executes no policy at all — which is
-    /// what keeps the Policy Engine in P4 while the unwind gets the slice it cannot do without.
+    /// <strong>It is the whole of the gate on this path.</strong> The one policy an undo can
+    /// carry is a compensation retry, and a flow that declares none unwinds exactly as it did
+    /// before the policy engine. The forward path has a gate of its own,
+    /// <see cref="HasStepPolicies"/>, because it counts different kinds and is read in a
+    /// different loop.
     /// </para>
     /// </remarks>
     public bool HasCompensationPolicies { get; }

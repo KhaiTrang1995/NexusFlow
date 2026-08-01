@@ -48,11 +48,14 @@ namespace FlowX.Runtime;
 /// write the same slot in the first place.
 /// </para>
 /// <para>
-/// <strong>Deadlines are enforced at step boundaries.</strong> The engine will not
-/// start a step whose flow has run out of budget, but it does not interrupt a step
-/// already running. Interrupting in-flight work is the Timeout policy's job (P4),
-/// and conflating the two would put a timer allocation on every execution to solve a
-/// problem most flows do not have.
+/// <strong>Deadlines are enforced at step boundaries; a <c>Timeout</c> is what
+/// interrupts a step already running.</strong> The engine will not start a step whose
+/// flow has run out of budget, and it does not interrupt a long step that declared
+/// nothing — the timer allocation that would take is paid only by the steps whose
+/// author asked for it. A step carrying a stage-4 <c>Timeout</c> gets a linked
+/// <see cref="CancellationTokenSource"/> for the shorter of its declared duration and
+/// what is left of the deadline; every other step reaches the dispatcher with the
+/// caller's own token, exactly as before.
 /// </para>
 /// <para>
 /// <strong>A sub-flow is where "one array is one execution" stops being true, and it is
@@ -2863,15 +2866,15 @@ public sealed class FlowEngine
     /// <returns>The last failure, or <c>null</c> when the undo worked.</returns>
     /// <remarks>
     /// <para>
-    /// <strong>This is the whole of the policy engine that P2 ships, and it is one policy at
-    /// one stage.</strong> A compensation retry is declared at
+    /// <strong>This is the whole of the policy engine on the failure path, and it is one
+    /// policy at one stage.</strong> A compensation retry is declared at
     /// <see cref="PolicyStage.Consistency"/>, which is where ADR-0011's fixed order puts
     /// compensation; the unwind is that stage's obligation discharged later, and the retry is
-    /// a parameter of it. Nothing at stages 1–6 executes here or anywhere else, so no policy
-    /// runs out of order — executing only the last stage cannot skip an earlier one. That is
-    /// what makes the slice safe to ship before the engine that runs the other fifteen
-    /// policies, and it is why <see cref="PolicyChain"/> remains the only thing in the system
-    /// that decides what runs before what.
+    /// a parameter of it. Nothing else executes here: the forward path's stage-4 policies are
+    /// applied around a step's own dispatch and none of them reaches an undo, which is why
+    /// <see cref="PolicyChain.ForStep"/> and <see cref="PolicyChain.ForCompensation"/> split a
+    /// declared set by what each policy wraps. <see cref="PolicyChain"/> remains the only
+    /// thing in the system that decides what runs before what.
     /// </para>
     /// <para>
     /// <strong>The first attempt is not bounded by the deadline; the retries are.</strong>

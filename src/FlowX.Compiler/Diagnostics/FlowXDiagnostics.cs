@@ -1041,7 +1041,7 @@ public static class FlowXDiagnostics
     /// FLOWX1019, <see cref="PolicyIsNotExecutedByTheRuntime"/> and
     /// <see cref="CompensationRetryHasNoCompensation"/> all decline to speak. That is not an
     /// unchecked policy; it is an absent one, and a <c>CompensationRetry</c> inside such a set
-    /// — the one policy this runtime executes — does not run.
+    /// — the one policy an undo can carry — does not run.
     /// </para>
     /// <para>
     /// <strong>Silence was the deliberate choice, and it was the wrong one.</strong> The

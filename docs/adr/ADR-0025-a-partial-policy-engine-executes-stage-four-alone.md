@@ -1,4 +1,4 @@
-# ADR-0025: A partial policy engine may execute stage 4 alone, and the three stages it skips are each safe to skip
+# ADR-0025: A partial policy engine may execute stage 4 alone, and each of the four kinds it leaves inert is skipped for a stated reason
 
 **Status:** Accepted
 **Date:** 2026-08-01
@@ -67,7 +67,7 @@ It is also the stage the complaint is about. Every published example of the gap 
   audit record with no payload. Rejected: a half-executing policy is worse than an unexecuted
   one, because the declaration then looks satisfied. FLOWX1032's own remedy list says the same
   thing about deleting a declaration to silence it.
-* **Ship stage 4 and delete FLOWX1032.** Rejected: three declarable kinds remain inert and an
+* **Ship stage 4 and delete FLOWX1032.** Rejected: four declarable kinds remain inert and an
   author declaring a `Cache` must still be told. The rule narrows, exactly as
   [FLOWX1028](../diagnostics/FLOWX1028.md) and `FLOWX1031` were narrowed before it.
 
@@ -75,8 +75,9 @@ It is also the stage the complaint is about. Every published example of the gap 
 
 ## 2. Decision
 
-**`PolicyStage.Resilience` is executed in full. Stages 1, 3 and 5 are not, and each skip is
-argued individually below rather than covered by a single claim that partial is fine.**
+**`PolicyStage.Resilience` is executed in full. Stage 1, stage 3, stage 5 and the audit half
+of stage 7 are not, and each skip is argued individually below rather than covered by a single
+claim that partial is fine.**
 
 ### 2.1 Skipping stage 1 (`RateLimit`) is safe for stage 4
 
@@ -145,8 +146,8 @@ insertion at a point ADR-0011 already names.
   retries happen, the breaker opens — which is the complaint FLOWX1032 was written to
   acknowledge and could not fix.
 * **The remaining gap is smaller and is still reported.** FLOWX1032 narrows from eight kinds
-  to three (`RateLimit`, `Idempotency`, `Cache`), so an author still hears about every
-  declaration that is not applied, and hears about a shorter list.
+  to four — `RateLimit`, `Idempotency`, `Cache` and `Audit` — so an author still hears about
+  every declaration that is not applied, and hears about a shorter list.
 * **The safety argument is per-stage and checkable.** Each of §2.1–§2.4 names the mechanism
   that makes the skip survivable, or says plainly that there is none. A future reader can
   falsify any one of them without having to re-derive the whole position.
@@ -171,8 +172,9 @@ insertion at a point ADR-0011 already names.
   genuinely not audited, which is a wider gap between the two halves of one policy set than
   existed before.
 
-**Revisit when:** any of stages 1, 3 or 5 is implemented, at which point the corresponding
-subsection of §2 stops being a justification and becomes history, and FLOWX1032 narrows again;
+**Revisit when:** any of stage 1, stage 3, stage 5 or stage 7's `Audit` is implemented, at
+which point the corresponding subsection of §2 stops being a justification and becomes history,
+and FLOWX1032 narrows again;
 or `Hedge`, `Fallback` or any other stage-4 catalogue row becomes declarable, because this
 record claims stage 4 is executed *in full* and a new declarable kind would falsify that
 sentence; or FLOWX1014 is downgraded from an error, which would remove the first of §2.2's two

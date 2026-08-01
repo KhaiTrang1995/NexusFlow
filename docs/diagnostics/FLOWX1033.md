@@ -206,11 +206,12 @@ reaches a build log.
 
 Unlike [FLOWX1028](FLOWX1028.md), [FLOWX1032](FLOWX1032.md) and the already-deleted
 `FLOWX1031`, this one has no take-down row, because it does not describe a gap in the
-platform. When P4
-lands the policy engine, FLOWX1032 is deleted and this rule becomes *more* load-bearing, not
-less: a compensation retry attached to nothing is still attached to nothing, and by then
-every other policy in the set will be running, which makes it likelier rather than less
-likely that a reader assumes this one is too.
+platform. **That prediction has now half happened and held.** FLOWX1032 has narrowed from
+eight kinds to four, and this rule became more load-bearing rather than less: a compensation
+retry attached to nothing is still attached to nothing, and a set that also declares a
+`Timeout` and a `Retry` now has two policies in it that visibly work — which makes it
+likelier, not less likely, that a reader assumes the third does too. When the last four
+kinds execute and FLOWX1032 is deleted, this rule stays.
 
 ---
 

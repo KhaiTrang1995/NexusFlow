@@ -1,53 +1,65 @@
 # FLOWX1032 — Declared policy is not executed by the runtime
 
-> **Severity:** Warning · **Category:** FlowX · **Since:** 0.1.0
-> **Applies to:** every policy kind a `.WithPolicy(...)` set declares **except**
-> `CompensationRetry` — `RateLimit`, `Idempotency`, `Timeout`, `Retry`, `CircuitBreaker`,
-> `Bulkhead`, `Cache` and `Audit`.
-> **Scheduled for deletion:** when P4 lands the policy engine — see
-> [When this rule is deleted](#when-this-rule-is-deleted). This is scaffolding for a phase
-> that has not started, not a rule about your code.
+> **Severity:** Warning · **Category:** FlowX · **Since:** 0.1.0 · **Narrowed:** P4
+> **Applies to:** the four policy kinds no code path applies — `RateLimit` (stage 1),
+> `Idempotency` (stage 3), `Cache` (stage 5) and `Audit` (stage 7).
+> **No longer applies to:** `Timeout`, `Retry`, `CircuitBreaker` and `Bulkhead`, which the
+> policy engine now executes, or `CompensationRetry`, which the unwind has executed since
+> WP-57.
+> **Scheduled for deletion:** when the last four kinds execute — see
+> [When this rule is deleted](#when-this-rule-is-deleted). This is scaffolding for the part
+> of a phase that has not landed, not a rule about your code.
 
 > [!NOTE]
-> **This is the other half of [FLOWX1014](FLOWX1014.md) and [FLOWX1018](FLOWX1018.md).**
-> Those two check a declared policy's *safety precondition* and have always been real: they
-> ran whether or not anything armed the policy, and they still do. This rule is what an
-> author hears after taking their advice — the `Retry` you were made to justify against
-> `Idempotent = true` is carried into the plan, published to the manifest, and armed by
-> nothing.
+> **This rule used to report eight kinds and now reports four.** `Timeout`, `Retry`,
+> `CircuitBreaker` and `Bulkhead` left it when the policy engine landed
+> `PolicyStage.Resilience`. If you are reading this because a `Retry` stopped being
+> reported: it is not being ignored, it is being executed —
+> [10 §5](../10-Policy-Framework.md#5-retry-safety) is now behaviour, and the `Idempotent = true`
+> that [FLOWX1014](FLOWX1014.md) made you justify is now load-bearing rather than
+> precautionary.
+>
+> **[FLOWX1014](FLOWX1014.md) and [FLOWX1018](FLOWX1018.md) are unaffected and are the ones
+> that matter more than they did.** They check a declared policy's *safety precondition* and
+> have always been real; the difference is that the duplicate charge FLOWX1014 prevents is
+> now a thing that could actually happen.
 
 ## What it means
 
-`.WithPolicy(Policies.PaymentGateway)` names a set of policies for a step. Every kind in
-that set except one reaches the compiled plan and the manifest and is then read by no code
-at run time.
+`.WithPolicy(Policies.PaymentGateway)` names a set of policies for a step. Four of the nine
+kinds `PolicySet` offers reach the compiled plan and the manifest and are then read by no
+code at run time.
 
-**One policy executes, and it is `CompensationRetry`.** `FlowEngine` reads
-`ExecutionPlan.HasCompensationPolicies` before it does any retry bookkeeping and then reads
-`StepNode.CompensationRetry` on the failure path; those are the only two policy reads in the
-engine. Underneath them, `PolicyChain.Ordered` is read in exactly one place in the whole of
-`src/` — `CompensationPolicy.From`, which skips every descriptor whose kind is not
-`CompensationRetry`. **`StepNode.Policies` — the chain that wraps the step itself — is read
-nowhere at all.**
+`FlowEngine` reads four policy properties: `ExecutionPlan.HasStepPolicies` and
+`StepNode.StepPolicy` in the step loop, and `ExecutionPlan.HasCompensationPolicies` and
+`StepNode.CompensationRetry` on the failure path. Underneath them `PolicyChain.Ordered` is
+read in exactly two places in the whole of `src/` — `StepPolicy.From` and
+`CompensationPolicy.From` — and between them they read five kinds.
 
 | What the DSL promises | What runs today |
 |---|---|
-| `.Timeout(d)` — caps how long one attempt may take | Nothing arms it. The flow's `[FlowDeadline]` is the only clock that bounds anything |
-| `.Retry(n)` — retries retryable failures | Nothing retries. A failing step fails once and the flow unwinds |
-| `.CircuitBreaker(...)` — stops calling a failing dependency | No breaker exists. Every call is dispatched |
-| `.Bulkhead(...)` — bounds concurrency | Nothing counts. `ForEach`'s `MaxDegreeOfParallelism` is the only concurrency bound the runtime honours, and it is not a policy |
+| `.Timeout(d)` — caps how long one attempt may take | **Executes.** Armed per attempt, and clamped to what is left of the `[FlowDeadline]` when that is shorter |
+| `.Retry(n)` — retries retryable failures | **Executes.** `n` attempts including the first, on the declared categories, full-jitter backoff, and never a wait that outlives the deadline |
+| `.CircuitBreaker(...)` — stops calling a failing dependency | **Executes.** Keyed by capability id, per process. `minimumThroughput` is a constant rather than a parameter, and [10 §6](../10-Policy-Framework.md#6-circuit-breaker-scope)'s composite `BreakerKey` does not exist |
+| `.Bulkhead(...)` — bounds concurrency | **Executes.** One pool per capability, refusing rather than queueing past `queueDepth` |
+| `.CompensationRetry(n)` | **Executes.** See [FLOWX1033](FLOWX1033.md) for the one case where it does not |
 | `.Cache(ttl)` — replays a recorded result | Nothing is cached or consulted |
 | `.RateLimit(...)` — limits invocation rate | Nothing is counted |
 | `.Idempotency(window)` — replays a recorded result for a repeated key | Nothing is recorded or replayed. `ctx.IdempotencyKey` is stable and is handed to the capability, but that is the engine's identity plumbing, not this policy |
 | `.Audit(category, redact)` — writes an immutable audit record | No record is written by a policy |
-| `.CompensationRetry(n)` | **Executes.** See [FLOWX1033](FLOWX1033.md) for the one case where it does not |
 
-**The line is by what a policy wraps, not by which stage it runs in**, and that is the part
-that is easy to get wrong. `Audit` is a `PolicyStage.Consistency` policy — stage 7, the same
-stage as `CompensationRetry` — and it is inert, because `PolicyChain.ForStep` moves only
-`CompensationRetry` onto the compensation's chain and `CompensationPolicy.From` reads only
-that kind. "Stages 1–6 do not run" is the wrong summary; "everything except
-`CompensationRetry` does not run" is the right one.
+**The line is a list of kinds, not a range of stages**, and that is the part that is easy to
+get wrong — in both directions. `Audit` is a `PolicyStage.Consistency` policy, stage 7, the
+same stage as `CompensationRetry`, which executes; and `RateLimit` at stage 1 is inert while
+`Timeout` at stage 4 is not. No line drawn by stage number separates the two halves, so the
+rule carries an enumerated set, `DeclaredPolicyAnalyzer.ExecutedKinds`, pinned against
+`StepPolicy`'s and `CompensationPolicy`'s own constants by `PolicyStageFitnessTests`.
+
+**Why stage 4 could be executed while stages 1, 3 and 5 were not** is
+[ADR-0025](../adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md), which
+argues each skip separately rather than as one concession — including the one that looks
+like a breach of [ADR-0011](../adr/ADR-0011-fixed-policy-stage-order.md)'s own
+"retry outside idempotency → duplicate charges" row.
 
 ### What a declared policy still does
 
@@ -66,17 +78,23 @@ to say the declarations are worthless:
   FLOWX1018's rules enforced a second time, at a second place.
 - **It is read at build time by [FLOWX1019](FLOWX1019.md).** That rule multiplies a set's
   `Timeout` by its `Retry(attempts)` and checks the total against the flow's
-  `[FlowDeadline]`. So a `Timeout` that arms nothing at run time can still fail your build,
-  which is the one effect these declarations have today.
+  `[FlowDeadline]` — arithmetic that is now true of the running program rather than of a
+  hypothetical one, because [ADR-0024](../adr/ADR-0024-stage-four-is-a-fixed-nesting.md) puts
+  the retry outside the timeout.
 
-What none of that amounts to is **behaviour**. A step declaring a three-second timeout runs
-for as long as the capability takes.
+What none of that amounts to, for the four kinds this rule still names, is **behaviour**. A
+step declaring a one-hour cache calls the dependency every time.
 
 ## Example that triggers it
 
 ```csharp
 public static class Policies
 {
+    public static readonly PolicySet Admission = PolicySet.Named("admission")
+        .RateLimit(permits: 20, TimeSpan.FromSeconds(1))
+        .Idempotency(TimeSpan.FromHours(24));
+
+    // Silent: every kind in it is executed.
     public static readonly PolicySet ExternalRead = PolicySet.Named("external-read")
         .Timeout(TimeSpan.FromSeconds(3))
         .Retry(attempts: 3, Backoff.ExponentialJitter())
@@ -90,8 +108,10 @@ public static class Policies
 public sealed partial class ExecuteTransferFlow : Flow<ExecuteTransfer, TransferResult>
 {
     protected override void Define(IFlowBuilder<ExecuteTransfer, TransferResult> flow) => flow
+        .Step<ValidateTransfer>()
+            .WithPolicy(Policies.Admission)       // FLOWX1032 — RateLimit, Idempotency
         .Step<ScreenSanctions>()
-            .WithPolicy(Policies.ExternalRead)   // FLOWX1032 — Timeout, Retry, CircuitBreaker
+            .WithPolicy(Policies.ExternalRead)    // silent — all three kinds execute
         .Step<PostDebit>()
             .CompensateWith<ReverseDebit>()
             .WithPolicy(Policies.LedgerUndo)      // silent — CompensationRetry executes
@@ -105,6 +125,8 @@ times on one line, which is how a catalogue gets suppressed wholesale.
 
 **What stays silent**, so the rule's silence means something:
 
+- A set whose every kind is executed — `ExternalRead` above, and any combination of
+  `Timeout`, `Retry`, `CircuitBreaker`, `Bulkhead` and `CompensationRetry`.
 - A set containing only `CompensationRetry`, like `LedgerUndo` above.
 - A step with no `.WithPolicy(...)` at all.
 - A `.WithPolicy(...)` whose argument the compiler cannot resolve to a field or property
@@ -137,21 +159,19 @@ declarations are how P4 will find the flows that asked for a timeout.
 In the order they should be considered:
 
 1. **Confirm the flow is survivable with the policy unenforced, and record that.** For a
-   large class of steps it is: a `Timeout` on a step inside a flow whose `[FlowDeadline]` is
-   already tight, a `Retry` on a caller that retries the whole flow anyway, a `RateLimit`
-   whose real enforcement lives in the gateway in front of the process. If that is true here,
-   keep the declaration and downgrade the rule — below.
+   large class of steps it is: a `RateLimit` whose real enforcement lives in the gateway in
+   front of the process, an `Idempotency` window a caller already gets from an idempotent
+   HTTP endpoint, a `Cache` on a read whose cost nobody is complaining about. If that is
+   true here, keep the declaration and downgrade the rule — below.
 2. **Move the control to where it is real.** A rate limit belongs in front of the process; a
-   timeout can be enforced inside the capability against the `CancellationToken` the engine
-   passes; a cache can be a dependency the capability holds. A control that exists in a
-   manifest protects nothing.
+   cache can be a dependency the capability holds; an audit record can be written by the
+   capability itself. A control that exists in a manifest protects nothing.
 3. **Do not ship this flow on this release**, if the step genuinely cannot run without the
-   policy — a capability that will hang forever without a timeout, in a flow whose deadline
-   is long.
+   policy — a regulated write whose audit record is the reason it is allowed to happen.
 
 There is no fix inside FlowX in this release, in the same sense as
 [FLOWX1024](FLOWX1024.md) and [FLOWX1028](FLOWX1028.md), and in the sense `FLOWX1031` was in
-until the feature it waited on arrived and it was deleted: the feature the declaration waits
+until the feature it waited on arrived and it was deleted: the stage the declaration waits
 on does not exist. **This rule ships with no code fix**, and
 that is deliberate — every mechanical edit that clears it is the deletion the first
 paragraph refuses.
@@ -166,9 +186,9 @@ Because this is a statement about a platform gap rather than about a line of cod
 it:
 
 ```ini
-# FLOWX-DEBT(payments, 2026-12-31): these flows declare policies P4 will execute and
-#   nothing executes today. The deadline bounds the flow; the rate limit is enforced at
-#   the gateway. Reviewed and accepted until the policy engine lands.
+# FLOWX-DEBT(payments, 2026-12-31): these flows declare a RateLimit and an Idempotency
+#   window that no stage executes yet. The limit is enforced at the gateway and the
+#   endpoint is already idempotent. Reviewed and accepted until stages 1 and 3 land.
 [src/Flows/Payments/**.cs]
 dotnet_diagnostic.FLOWX1032.severity = suggestion
 ```
@@ -191,17 +211,20 @@ to a declaration one level down from the profile, and both of its halves transfe
 
 **An error erases the inventory the fixing phase needs.** The only edit that silences an
 error here is deleting the `.WithPolicy(...)` call or emptying the set. `.WithPolicy(...)`
-visible in the code, in the manifest and in a rendered diagram is P4's list of the steps
-that asked for a timeout, and an error would systematically delete it — leaving the phase
-that implements the policy engine with no flow declaring a policy to implement it for.
+visible in the code, in the manifest and in a rendered diagram is the list of the steps that
+asked for a cache or a rate limit, and an error would systematically delete it — leaving the
+work that implements stages 1, 3 and 5 with no flow declaring a policy to implement it for.
+**This argument has now been paid off once**: the flows that declared a `Timeout` and a
+`Retry` under this rule are the flows that got one, because the declarations were still
+there.
 
 **The source is not wrong; it is written correctly for a platform that has the feature.**
 This is the half `FLOWX1031` explicitly could not use, and it is what puts this rule on
 FLOWX1028's side of that line rather than on `AwaitSignal`'s. *No flow is
 correct with a seven-day wait compiled to no wait* — but a great many flows are correct with
-a `RateLimit` enforced at the gateway instead of in-process, or a `Timeout` subsumed by a
-`[FlowDeadline]` that is already shorter. FLOWX1028's first remedy — "confirm the flow is
-correct as it is, and record that" — is an honest offer here, and option 1 above is it.
+a `RateLimit` enforced at the gateway instead of in-process, or an `Idempotency` window the
+transport already provides. FLOWX1028's first remedy — "confirm the flow is correct as it
+is, and record that" — is an honest offer here, and option 1 above is it.
 
 **Nothing is falsified, which is the line `FLOWX1031` drew for its error half.** That rule
 was an error for `AwaitSignal` because the emitted plan carried `TimeSpan.FromHours(1)`, a
@@ -231,7 +254,7 @@ between what the source says and what the platform does.
 |---|---|
 | [FLOWX1028](FLOWX1028.md) | Is the flow's declared **execution profile** implemented? |
 | `FLOWX1031` *(deleted — it can)* | Could the compiler compile a **suspension construct** into a plan at all? |
-| **FLOWX1032** | Will the runtime **apply** a policy the plan already carries correctly? |
+| **FLOWX1032** | Is the **stage** this policy runs in implemented? |
 | [FLOWX1014](FLOWX1014.md) / [FLOWX1018](FLOWX1018.md) | Is a declared policy **safe** for the capability it wraps? |
 
 FLOWX1032 presupposes the last row's answer is yes and asks the next question. The two are
@@ -247,12 +270,19 @@ catalogue.
 
 | Event | Action | Status |
 |---|---|---|
-| P4 lands the policy engine: stages 1–6 execute in ADR-0011's fixed order, over `StepNode.Policies` | Delete `FLOWX1032`, `DeclaredPolicyAnalyzer`, this page and the release-tracking row. Narrow it instead if only some kinds are implemented, exactly as WP-52 narrowed `FLOWX1028` rather than deleting it | Outstanding |
+| The policy engine lands `PolicyStage.Resilience` | Narrow the rule to the kinds still inert, rather than deleting it — the WP-52 / `FLOWX1028` precedent | **Done.** `Timeout`, `Retry`, `CircuitBreaker` and `Bulkhead` left the rule; `RateLimit`, `Idempotency`, `Cache` and `Audit` remain |
+| Stage 1 executes | Drop `RateLimit` from `DeclaredPolicyAnalyzer.ExecutedKinds`' complement | Outstanding |
+| Stage 3 executes | Drop `Idempotency` | Outstanding |
+| Stage 5 executes | Drop `Cache` | Outstanding |
+| Stage 7's `Audit` executes | Drop `Audit`, and then delete `FLOWX1032`, `DeclaredPolicyAnalyzer`, this page and the release-tracking row — nothing is left for it to report | Outstanding |
 
-`PolicyExecutionTests.OnlyCompensationRetryIsExecutedAtRunTime` in
-`tests/FlowX.Runtime.Tests` is the executable half of this reminder: it asserts on the real
-engine that a step declaring `Timeout` and `Retry` is dispatched exactly once and takes as
-long as the capability takes, and it goes red on the day a forward policy actually runs.
+`PolicyExecutionTests` in `tests/FlowX.Runtime.Tests` is the executable half of this
+reminder, and it works in both directions. `ACacheIsNotConsultedAndARateLimitCountsNothing`
+and `AnAuditIsAStageSevenPolicyAndStillExecutesNowhere` assert on the real engine that the
+four remaining kinds do nothing, and go red on the day one of them does;
+`AZeroLengthTimeoutStopsTheStepBeforeItBegins` and the tests beside it assert that the four
+that left really run, and go red if one silently stops. The narrowing above happened because
+the first sort went red, which is what they are for.
 
 ---
 

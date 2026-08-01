@@ -224,10 +224,18 @@ nothing in the repository produces:
   populate it, and the manifest describes one application's production side. Freezing those two
   fields would still freeze a topology only half of which anything produces.
 * **Policies.** `.WithPolicy(...)` reaches the manifest as a per-step `policies` array with
-  each policy's fixed stage, and `FlowX.Runtime` contains no policy engine at all, so a
-  declared `Retry` *"is a manifest entry and nothing more"* (05 §12). The schema's **top-level**
-  `policies` — named policy sets — is written by nothing, because named sets are not a thing
-  the DSL has.
+  each policy's fixed stage. *This bullet said `FlowX.Runtime` contains no policy engine at
+  all, so a declared `Retry` "is a manifest entry and nothing more". That expired when the
+  engine landed `PolicyStage.Resilience`:* a published `Timeout`, `Retry`, `CircuitBreaker`
+  and `Bulkhead` now describe run-time structure something produces. **The criterion is not
+  met, and what is left of it is narrower and specific.** Four declarable kinds —
+  `RateLimit`, `Idempotency`, `Cache` and `Audit` — still reach the array and are applied by
+  nothing ([`FLOWX1032`](../diagnostics/FLOWX1032.md),
+  [ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)), so freezing the
+  array would freeze a vocabulary the runtime honours five of the nine declarable kinds of.
+  The schema's
+  **top-level** `policies` — named policy sets — is still written by nothing, because named
+  sets are not a thing the DSL has.
 
 **Checked by:** `FLOWX1024` no longer being raised for a published emit, and F3's
 non-vacuous completeness check, which cannot be written honestly until these land.
