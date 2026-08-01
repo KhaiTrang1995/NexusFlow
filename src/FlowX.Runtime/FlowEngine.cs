@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace FlowX.Runtime;
 
 /// <summary>
@@ -87,6 +89,28 @@ public sealed class FlowEngine
     private readonly ContextPool _contexts;
     private readonly ICompensationAlertSink? _alerts;
     private readonly object _detachedSync = new();
+
+    /// <summary>
+    /// The breakers and bulkheads this engine's policed steps share, keyed by capability id.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// On the engine rather than on the plan, because both are <em>state</em> and a plan is a
+    /// compiled artifact that several executions read at once. A breaker that lived on the
+    /// plan would also be per flow rather than per dependency, so two flows calling one failing
+    /// payment gateway would each have to discover the outage — which is the opposite of what
+    /// a breaker keyed by capability is for.
+    /// </para>
+    /// <para>
+    /// Two dictionaries per engine, never per execution, so budget B2 is untouched: a host
+    /// holds one engine, and a flow that declares no stage-4 policy never looks in either.
+    /// </para>
+    /// </remarks>
+    private readonly ConcurrentDictionary<string, CircuitBreakerState> _breakers =
+        new(StringComparer.Ordinal);
+
+    private readonly ConcurrentDictionary<string, BulkheadGate> _bulkheads =
+        new(StringComparer.Ordinal);
 
     private TaskCompletionSource? _detachedIdle;
     private int _detachedInFlight;
@@ -1045,61 +1069,119 @@ public sealed class FlowEngine
                 }
             }
 
-            // Only read when there is a row to put it on. An ephemeral step does not pay a
-            // clock read to measure a duration nobody records.
-            var startedAt = cursor.IsJournaled ? _clock.UtcNow : default;
+            // ADR-0023, and the whole of the forward policy hook: one comparison against a
+            // field the plan already holds. A flow that declares no stage-4 policy reaches
+            // StepPolicy.None, the loop below runs exactly once, and the execution is
+            // byte-for-byte the one it always was — which is what keeps budget B2 a hard zero
+            // for the shapes that have always had it.
+            var policy = plan.HasStepPolicies ? step.StepPolicy : StepPolicy.None;
 
-            StepOutcome outcome;
-            Error? thrown = null;
+            var attempt = 0;
+            Error? stepFailure = null;
+            var abandoned = false;
 
-            try
+            // The retry is the outermost of the four stage-4 kinds (ADR-0024), so it is a loop
+            // around the dispatch and the commit rather than something inside either. That is
+            // also what makes the journal's key honest: run.NextAttempt derives the attempt
+            // number from the committed history, so a retried step writes one row per attempt
+            // without this node having to remember a number that dies with it.
+            while (true)
             {
-                outcome = await dispatcher.ExecuteAsync(i, scope, ct).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                // Caller-initiated, or a sibling branch's failure cancelling this one, and
-                // not this step's fault — but the work already done still has to be
-                // undone, so this joins the failure path rather than propagating.
-                //
-                // Deliberately not journaled: the token that would guard the write is the
-                // one this node may be losing, and a store call on a cancelled path is the
-                // least likely of all writes to succeed. The attempt simply has no row, which
-                // is what makes it re-runnable on resume.
-                failure = FlowErrors.Cancelled(plan.Flow.Id);
-                break;
-            }
-#pragma warning disable CA1031 // A capability that throws is a defect; the engine converts
-            catch (Exception exception)  //   it into an error rather than letting it kill the
-            {                            //   trigger's consumer loop. This is the one place a
-                outcome = StepOutcome.Success;  //   general catch is correct, and it re-reports
-                thrown = FlowErrors             //   rather than swallowing.
-                    .Unhandled(capabilityId, exception);
-            }
-#pragma warning restore CA1031
+                attempt++;
 
-            var stepFailure = thrown ?? outcome.Error;
+                // Only read when there is a row to put it on. An ephemeral step does not pay a
+                // clock read to measure a duration nobody records.
+                var startedAt = cursor.IsJournaled ? _clock.UtcNow : default;
 
-            // One commit per (instance, scope, step, attempt), before control moves on — the
-            // whole of ADR-0015's decision, in one place. A failed attempt is recorded too:
-            // the attempt history is what makes the replay contract provable rather than
-            // asserted, and an effect that happened before the failure is exactly what a
-            // resumed instance must not repeat blindly.
-            if (cursor.IsJournaled)
-            {
-                var refusal = await CommitStepAsync(
-                    plan, dispatcher, context, scope, cursor, step, stepFailure, startedAt,
-                    capabilityVersion: null, ct)
-                    .ConfigureAwait(false);
+                StepOutcome outcome;
+                Error? thrown = null;
 
-                if (refusal is not null)
+                try
                 {
-                    // Fenced out, duplicated, or written to a finished instance. Every one of
-                    // those means this node is no longer the writer, so it stops rather than
-                    // carrying on with work nobody will accept.
-                    failure = refusal;
+                    outcome = policy.IsActive
+                        ? await DispatchPolicedAsync(dispatcher, context, step, policy, i, scope, ct)
+                            .ConfigureAwait(false)
+                        : await dispatcher.ExecuteAsync(i, scope, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Caller-initiated, or a sibling branch's failure cancelling this one, and
+                    // not this step's fault — but the work already done still has to be
+                    // undone, so this joins the failure path rather than propagating.
+                    //
+                    // Deliberately not journaled: the token that would guard the write is the
+                    // one this node may be losing, and a store call on a cancelled path is the
+                    // least likely of all writes to succeed. The attempt simply has no row,
+                    // which is what makes it re-runnable on resume.
+                    //
+                    // A timeout never arrives here: DispatchPolicedAsync converts its own
+                    // cancellation into an Error and lets the caller's through, so "the step
+                    // ran out of budget" and "the caller went away" stay distinguishable.
+                    failure = FlowErrors.Cancelled(plan.Flow.Id);
+                    abandoned = true;
                     break;
                 }
+#pragma warning disable CA1031 // A capability that throws is a defect; the engine converts
+                catch (Exception exception)  //   it into an error rather than letting it kill
+                {                            //   the trigger's consumer loop. This is the one
+                    outcome = StepOutcome.Success;  //   place a general catch is correct, and
+                    thrown = FlowErrors             //   it re-reports rather than swallowing.
+                        .Unhandled(capabilityId, exception);
+                }
+#pragma warning restore CA1031
+
+                stepFailure = thrown ?? outcome.Error;
+
+                // One commit per (instance, scope, step, attempt), before control moves on —
+                // the whole of ADR-0015's decision, in one place. A failed attempt is recorded
+                // too: the attempt history is what makes the replay contract provable rather
+                // than asserted, and an effect that happened before the failure is exactly
+                // what a resumed instance must not repeat blindly.
+                if (cursor.IsJournaled)
+                {
+                    var refusal = await CommitStepAsync(
+                        plan, dispatcher, context, scope, cursor, step, stepFailure, startedAt,
+                        capabilityVersion: null, ct)
+                        .ConfigureAwait(false);
+
+                    if (refusal is not null)
+                    {
+                        // Fenced out, duplicated, or written to a finished instance. Every one
+                        // of those means this node is no longer the writer, so it stops rather
+                        // than carrying on with work nobody will accept.
+                        failure = refusal;
+                        abandoned = true;
+                        break;
+                    }
+                }
+
+                if (stepFailure is null || !policy.AllowsAnotherAttempt(stepFailure, attempt))
+                {
+                    break;
+                }
+
+                // docs/10 §5's second guarantee: a retry never outlives the deadline. The wait
+                // is planned before it is taken, so an attempt whose backoff alone would run
+                // past the budget is refused rather than started and then killed by the step
+                // loop's own deadline check.
+                //
+                // Random.Shared rather than ctx.Random, for the reason the compensation
+                // backoff gives: how long a failed attempt waited is not one of the step's
+                // decisions, and recording it would put a number in the replay envelope that
+                // no replay could act on.
+                var backoff = policy.DelayBefore(attempt, Random.Shared.NextDouble());
+
+                if (_clock.UtcNow + backoff >= context.Deadline)
+                {
+                    break;
+                }
+
+                await _clock.DelayAsync(backoff, ct).ConfigureAwait(false);
+            }
+
+            if (abandoned)
+            {
+                break;
             }
 
             if (stepFailure is not null)
@@ -1130,6 +1212,152 @@ public sealed class FlowEngine
 
         return new RangeOutcome(failure, completed, suspended, wake);
     }
+
+    /// <summary>
+    /// Dispatches one attempt at a step through its declared stage-4 policies.
+    /// </summary>
+    /// <param name="dispatcher">Invokes the capability.</param>
+    /// <param name="context">The flow's context, for the deadline the timeout is clamped to.</param>
+    /// <param name="step">The node being run, for the capability its gates are keyed by.</param>
+    /// <param name="policy">The resolved policy. Never <see cref="StepPolicy.None"/>.</param>
+    /// <param name="index">Position in the plan's step graph.</param>
+    /// <param name="scope">The context the capability sees — an iteration's, inside a loop.</param>
+    /// <param name="ct">The caller's token, kept distinguishable from the timeout's.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The nesting is
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0024-stage-four-is-a-fixed-nesting.md">ADR-0024</a>'s,
+    /// read from the inside out.</strong> The retry is the caller's loop; what is left here is
+    /// <c>CircuitBreaker { Bulkhead { Timeout { capability } } }</c>. The breaker is asked
+    /// first so that an open one refuses without taking a permit — the other way round, a
+    /// dependency that is down would hold every permit in the pool for as long as it takes each
+    /// caller to be told the breaker is open, which turns the isolation policy into the thing
+    /// that spreads the outage.
+    /// </para>
+    /// <para>
+    /// <strong>A refusal is an <see cref="Error"/> and never an exception.</strong>
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0007-result-over-exceptions.md">ADR-0007</a>
+    /// makes a business outcome a value; a policy refusal is not a business outcome, but it is
+    /// an outcome the flow has to handle — the compensable steps behind it unwind exactly as
+    /// they would behind a declined payment — so it arrives on the same path as one. Throwing
+    /// would put it on the defect path beside <c>capability.unhandled</c>, where a saga's
+    /// unwind is a rescue rather than the design.
+    /// </para>
+    /// <para>
+    /// <strong>Only calls that were made are recorded against the breaker.</strong> A step the
+    /// breaker itself refused, one the bulkhead turned away, and one whose budget had already
+    /// gone before the dispatch all say nothing about the dependency. Counting them would make
+    /// an open breaker self-sustaining, which is a breaker that never closes.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<StepOutcome> DispatchPolicedAsync(
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        StepNode step,
+        StepPolicy policy,
+        int index,
+        FlowContext scope,
+        CancellationToken ct)
+    {
+        var capabilityId = step.Identity;
+
+        if (policy.HasBreaker &&
+            !Breaker(capabilityId).TryEnter(policy, _clock.UtcNow, out var until))
+        {
+            return StepOutcome.Failed(FlowErrors.CircuitOpen(capabilityId, until));
+        }
+
+        BulkheadGate? bulkhead = null;
+
+        if (policy.HasBulkhead)
+        {
+            bulkhead = Bulkhead(capabilityId, policy);
+
+            if (!await bulkhead.EnterAsync(ct).ConfigureAwait(false))
+            {
+                return StepOutcome.Failed(
+                    FlowErrors.BulkheadRejected(capabilityId, policy.MaxConcurrency));
+            }
+        }
+
+        try
+        {
+            // docs/10 §11: "timeout longer than the flow deadline — the step is killed by the
+            // deadline anyway; the timeout is a lie". Taking the minimum is what makes that
+            // sentence false rather than merely discouraged.
+            var budget = policy.EffectiveTimeout(context.UtcNow, context.Deadline);
+
+            if (budget is { } expired && expired <= TimeSpan.Zero)
+            {
+                // Refused rather than started. A step with no budget cannot finish inside one,
+                // and dispatching it would cost the dependency a call whose answer is thrown
+                // away — which is the one thing a timeout exists to stop.
+                return StepOutcome.Failed(FlowErrors.StepTimedOut(capabilityId, expired));
+            }
+
+            var succeeded = false;
+            CancellationTokenSource? timeout = null;
+
+            try
+            {
+                var token = ct;
+
+                if (budget is { } granted)
+                {
+                    timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    timeout.CancelAfter(granted);
+                    token = timeout.Token;
+                }
+
+                var outcome = await dispatcher.ExecuteAsync(index, scope, token).ConfigureAwait(false);
+
+                succeeded = outcome.Error is null;
+
+                return outcome;
+            }
+            catch (OperationCanceledException)
+                when (timeout is not null && timeout.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                // The timeout fired and the caller did not. Distinguishing the two is what
+                // keeps "this dependency is slow" from being reported as "the caller went
+                // away", and it is why the linked source is kept rather than passing `ct`
+                // through a `CancelAfter` on a source the caller owns.
+                return StepOutcome.Failed(FlowErrors.StepTimedOut(capabilityId, budget!.Value));
+            }
+            finally
+            {
+                // A capability that threw leaves `succeeded` false, which is right: a defect is
+                // a failure of the call. A cancelled caller is excluded, because a deployment
+                // draining a node must not open every breaker on its way out.
+                if (policy.HasBreaker && !ct.IsCancellationRequested)
+                {
+                    Breaker(capabilityId).Record(policy, _clock.UtcNow, succeeded);
+                }
+
+                timeout?.Dispose();
+            }
+        }
+        finally
+        {
+            bulkhead?.Exit();
+        }
+    }
+
+    /// <summary>This engine's breaker for one capability, created on first use.</summary>
+    private CircuitBreakerState Breaker(string capabilityId) =>
+        _breakers.GetOrAdd(capabilityId, static _ => new CircuitBreakerState());
+
+    /// <summary>This engine's bulkhead for one capability, created on first use.</summary>
+    /// <remarks>
+    /// The bound comes from whichever declaration reached the engine first — see
+    /// <see cref="BulkheadGate"/>, which says why the pool is per dependency rather than per
+    /// declaration. A static factory rather than a closure, so the lookup allocates nothing.
+    /// </remarks>
+    private BulkheadGate Bulkhead(string capabilityId, StepPolicy policy) =>
+        _bulkheads.GetOrAdd(
+            capabilityId,
+            static (_, declared) => new BulkheadGate(declared.MaxConcurrency, declared.QueueDepth),
+            policy);
 
     /// <summary>
     /// Where control goes when a suspension point's signal <em>arrives</em>, or <c>null</c>
