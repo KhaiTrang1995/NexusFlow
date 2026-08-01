@@ -2074,6 +2074,49 @@ becomes durable. That choice is worth a paragraph in this file, not a quiet edit
 
 ## 6. P3 — Transport breadth
 
+> [!NOTE]
+> **Three P4/P3 packages landed on 2026-08-01 and are recorded here rather than as work
+> packages, because none of them was numbered before it started.**
+>
+> **Authorisation is enforced.** A capability declared a stance, `FLOWX1010` errored if it did
+> not, the manifest published it and `flowx diff` called a changed grant **Breaking** — and the
+> runtime never looked; there were **zero** occurrences of `Authorization`, `Permission` or
+> `Authorize` in `FlowX.Runtime` or `FlowX.Hosting`. Two of the five stances can refuse and now
+> do. `Internal` permits **by construction** — its refusal branch is unreachable, because a
+> trigger addresses a *flow* and never a capability, and any stricter reading refuses
+> `samples/workflow`'s own reference flow. `Policy` is refused at build time by `FLOWX1037`
+> rather than skipped, because it needs a service `FlowX.Runtime` may not reference. Records
+> [0027](docs/adr/ADR-0027-authorisation-runs-in-the-step-loop.md)–[0030](docs/adr/ADR-0030-policy-stance-is-refused-at-build-time.md).
+> *Two things this plan believed were wrong: `ClaimsPrincipal` was always available in
+> `FlowX.Abstractions` — `System.Security.Claims` is shared-framework, so it costs neither a
+> package nor a project reference — and there was no open design question about identity, because
+> `FlowContext.Principal` was declared from the first commit and `FlowExecutionContext.Principal`
+> returned `null` unconditionally. The abstraction was whole and the wire was cut at the last inch.*
+>
+> **`Schedule` is bound**, so ADR-0004's "one trigger abstraction for all transports" has two
+> transports. A cron occurrence names the instance it starts, so N nodes racing produce one
+> instance with no leader and no election — the lease refuses the losers while the winner runs
+> and the journal's primary key refuses them for ever, both refusals reached by giving them an
+> id to compare. Records [0031](docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md)–[0034](docs/adr/ADR-0034-the-manifest-publishes-a-schedules-address.md).
+> **`Bus`, `Stream`, `Change` and `Agent` remain declaration only.** *And one claim in
+> [09 §3](docs/09-Trigger-Model.md) was false: it prints a flow serving HTTP and cron together
+> and calls it Q4's most visible benefit, and ADR-0004's first Positive says the same — but a
+> schedule's input is platform-supplied and an HTTP body caller-supplied, and a flow declares
+> one input.*
+>
+> **Policy decisions are observable.** Four of [10 §9](docs/10-Policy-Framework.md)'s seven
+> metrics emit ([0026](docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md)); the other
+> three get **no instrument at all**, because a permanently-zero rejection counter claims
+> nothing is refused when the truth is that nothing refuses. **`FLOWX1032` is unchanged at four
+> kinds** — `RateLimit`, `Idempotency`, `Cache` and `Audit` still do not execute, and narrowing
+> the rule without implementing a kind would be the lie it exists to prevent. *The stated reason
+> for skipping `Idempotency` was wrong: `IStepDispatcher` has carried `DescribeStep` and
+> `RestoreState` since WP-59 and that **is** a per-step result seam. The real blockers are
+> narrower — the seam is documented `Durable`-only, and `RestoreState` receives payloads with
+> sensitive members already redacted and no read path that could put them back, so a replay
+> through it would silently drop `[Sensitive]` fields.*
+
+
 Lighter than P2 on purpose: P3's packages are mostly one shape repeated, and the value of
 detail here is lower than the value of naming the two things that are **not** repetition.
 Full detail is written when P2 closes and the shape is known rather than guessed.
