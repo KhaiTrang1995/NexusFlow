@@ -71,6 +71,31 @@ internal sealed class TransferHarness
         return this;
     }
 
+    /// <summary>
+    /// Makes a capability fail its first <paramref name="attempts"/> dispatches and succeed
+    /// after that.
+    /// </summary>
+    /// <param name="capabilityId">The id as the compiled plan carries it.</param>
+    /// <param name="attempts">How many dispatches fail before the real capability runs.</param>
+    /// <param name="error">The business error the stand-in returns while it is failing.</param>
+    /// <remarks>
+    /// <see cref="Substitute"/> can only fail for ever, which cannot tell a retried step from
+    /// an unretried one: both end with the flow failing. "The provider was down and then came
+    /// back" is the ordinary transient case and the one <c>Policies.ExternalRead</c>'s
+    /// <c>Retry(attempts: 3)</c> exists for, so it needs a double that can recover — the same
+    /// gap <c>RecordingDispatcher.FailCompensationForAttempts</c> filled for the undo.
+    /// </remarks>
+    public TransferHarness SubstituteForAttempts(string capabilityId, int attempts, Error error)
+    {
+        _budgets[capabilityId] = attempts;
+        _substitutions[capabilityId] = error;
+
+        return this;
+    }
+
+    private readonly Dictionary<string, int> _budgets = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _attempts = new(StringComparer.Ordinal);
+
     /// <summary>Runs the flow and projects its declared output.</summary>
     /// <param name="input">What a trigger would have deserialised.</param>
     /// <param name="idempotencyKey">The caller's key, which becomes the transfer id.</param>
@@ -149,10 +174,26 @@ internal sealed class TransferHarness
 
             _harness.Executed.Add(id);
 
-            return step.Capability is { } capability
-                && _harness._substitutions.TryGetValue(capability.Id, out var error)
-                ? ValueTask.FromResult(StepOutcome.Failed(error))
-                : _inner.ExecuteAsync(stepIndex, ctx, ct);
+            if (step.Capability is not { } capability ||
+                !_harness._substitutions.TryGetValue(capability.Id, out var error))
+            {
+                return _inner.ExecuteAsync(stepIndex, ctx, ct);
+            }
+
+            // A budget means the stand-in is transient: it fails that many dispatches and
+            // then steps out of the way. No budget is the old behaviour — fail for ever.
+            if (_harness._budgets.TryGetValue(capability.Id, out var budget))
+            {
+                var made = _harness._attempts.TryGetValue(capability.Id, out var seen) ? seen + 1 : 1;
+                _harness._attempts[capability.Id] = made;
+
+                if (made > budget)
+                {
+                    return _inner.ExecuteAsync(stepIndex, ctx, ct);
+                }
+            }
+
+            return ValueTask.FromResult(StepOutcome.Failed(error));
         }
 
         public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)

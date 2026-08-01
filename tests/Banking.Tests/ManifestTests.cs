@@ -244,10 +244,10 @@ public sealed class ManifestTests
         var source = Flow.GetProperty("source").GetString().ShouldNotBeNull();
 
         // Moves whenever the file's header does — most recently when the flow's remarks
-        // gained the paragraph explaining its FLOWX1032 suppression. The number is the
-        // assertion, not an incidental: a source pointer that drifts from the declaration
-        // it names is a pointer a reader follows to the wrong line.
-        source.ShouldBe("ExecuteTransferFlow.cs:52");
+        // stopped saying its policies were executed by nothing and started saying which four
+        // of them are. The number is the assertion, not an incidental: a source pointer that
+        // drifts from the declaration it names is a pointer a reader follows to the wrong line.
+        source.ShouldBe("ExecuteTransferFlow.cs:53");
         source.ShouldNotStartWith("/");
         source.ShouldNotContain(":\\");
     }
@@ -276,20 +276,19 @@ public sealed class ManifestTests
     /// onto <c>Policies</c> — so the two artifacts agree about the same source line.
     /// </para>
     /// <para>
-    /// <strong>The half being carried is not the half being run.</strong> Nothing in
-    /// <c>FlowEngine</c> reads <c>StepNode.Policies</c>: no timeout is armed and no rate limit
-    /// is counted, exactly as before. What the plan now states is what was declared, which is
-    /// the precondition for P4 executing it and, until then, for a reader of the plan seeing
-    /// what a reader of the manifest sees.
+    /// <strong>The half being carried is now mostly the half being run.</strong>
+    /// <c>FlowEngine</c> reads <c>StepNode.StepPolicy</c> in the step loop, so the
+    /// <c>Timeout</c> on this chain is armed. What the plan states is still what was declared,
+    /// which is what lets a reader of the plan and a reader of the manifest see one thing.
     /// </para>
     /// <para>
-    /// <strong>"The forward half" is one stage too narrow, and the assertion below shows
-    /// it.</strong> <c>Audit</c> is a <c>PolicyStage.Consistency</c> policy — stage 7, the
-    /// same stage as the <c>CompensationRetry</c> that runs — and it sits on
-    /// <c>Policies</c> rather than <c>CompensationPolicies</c>, because
-    /// <c>PolicyChain.ForStep</c> splits by what a policy <em>wraps</em>. So it is carried and
-    /// inert alongside the <c>Timeout</c>. <c>FLOWX1032</c> reports both, and
-    /// <c>ReferenceSamplePolicyTests</c> asserts it does so against this file's real source.
+    /// <strong>The <c>Audit</c> beside it is the part that is still carried and inert, and it
+    /// is why the split is not by stage.</strong> <c>Audit</c> is a
+    /// <c>PolicyStage.Consistency</c> policy — stage 7, the same stage as the
+    /// <c>CompensationRetry</c> that runs — and it sits on <c>Policies</c> rather than
+    /// <c>CompensationPolicies</c>, because <c>PolicyChain.ForStep</c> splits by what a policy
+    /// <em>wraps</em>. <c>FLOWX1032</c> reports it and not the <c>Timeout</c> beside it, and
+    /// <c>ReferenceSamplePolicyTests</c> asserts that against this file's real source.
     /// </para>
     /// </remarks>
     [Fact]
@@ -319,12 +318,21 @@ public sealed class ManifestTests
 
         debitStep.CompensationRetry.IsRetrying.ShouldBeTrue();
 
-        // Flipped from `Policies.IsEmpty.ShouldBeTrue()`. Carried, and still executed by
-        // nothing — the Policy Engine is P4 and the forward path runs zero policies.
+        // Flipped from `Policies.IsEmpty.ShouldBeTrue()`, and now half executed: the engine
+        // arms the Timeout and writes no audit record.
         debitStep.Policies.Ordered
             .Select(p => p.Kind)
             .ShouldBe(["Timeout", "Audit"],
                 "Ordered by stage: Resilience before Consistency, ADR-0011's fixed order.");
+
+        debitStep.StepPolicy.Timeout.ShouldBe(
+            TimeSpan.FromSeconds(5),
+            "Resolved onto the node when the plan was built, which is what the step loop " +
+            "reads rather than walking the chain above per step (ADR-0023).");
+
+        plan.HasStepPolicies.ShouldBeTrue(
+            "The gate FlowEngine reads before it enters the attempt loop at all. It is false " +
+            "for a plan whose every declared kind is one nothing applies.");
 
         // A step that declared no set still carries nothing, which is what keeps the flags
         // that gate the engine's fast paths meaningful.
