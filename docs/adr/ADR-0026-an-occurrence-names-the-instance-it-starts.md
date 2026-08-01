@@ -229,11 +229,13 @@ classified by `flowx diff`, so binding the transport adds no schema field and do
   `FlowRecoveryScan` takes it over exactly as it takes over an instance a request started.
 - **"Did this schedule run last night" is answerable from the journal**, by recomputing the id
   and reading the row — not from a log, and not from a scheduler's own state.
-- **The second transport cost `FlowX.Runtime` two pure types and `FlowX.Hosting` three.** No new
-  store interface, no new migration, no new conformance suite, and nothing added to
-  `IFlowJournal` or `ILeaseStore`. ADR-0004's *"new transports are plugins; `FlowX.Runtime` never
-  changes"* is not quite what happened — `CronSchedule` is in the runtime — but nothing
-  transport-shaped is, and `RuntimeDoesNotReferenceAnyPlugin` is untouched.
+- **The second transport added no store contract at all.** Two pure types in `FlowX.Runtime`
+  (`CronSchedule`, `ScheduleOccurrence`) and a catalogue, a sweep, its report and a hosted service
+  in `FlowX.Hosting` — and **no new store interface, no new migration, no new conformance suite,
+  and nothing added to `IFlowJournal` or `ILeaseStore`.** ADR-0004's *"new transports are plugins;
+  `FlowX.Runtime` never changes"* is not quite what happened, since `CronSchedule` is in the
+  runtime; nothing transport-shaped is, and `RuntimeDoesNotReferenceAnyPlugin` is untouched.
+  `FlowHost` gained one overload and one line — `suppliedId ?? Guid.CreateVersion7()`.
 
 **Negative / accepted trade-offs**
 
