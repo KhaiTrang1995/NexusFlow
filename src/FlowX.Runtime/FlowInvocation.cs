@@ -306,6 +306,101 @@ public static class FlowErrors
             .With("flowId", flowId)
             .With("deadline", deadline);
 
+    /// <summary>The code <see cref="StepTimedOut"/> raises.</summary>
+    /// <remarks>
+    /// A constant for <see cref="DeadlineExceededCode"/>'s reason: it is the one policy
+    /// failure a caller is most likely to branch on, and a code spelled out at each of its
+    /// readers is a code that eventually disagrees with itself.
+    /// </remarks>
+    public const string StepTimedOutCode = "policy.step_timeout";
+
+    /// <summary>
+    /// A step's <c>Timeout</c> policy expired. Retryable: the dependency was slow, not wrong.
+    /// </summary>
+    /// <param name="capabilityId">What was being called when the budget ran out.</param>
+    /// <param name="budget">
+    /// The budget that expired — the declared timeout, or what was left of the flow's
+    /// deadline when it was shorter.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// Distinct from <see cref="DeadlineExceeded"/> even though both are a clock running out,
+    /// because the two say different things to whoever reads them and lead to different
+    /// repairs. A deadline names the whole flow's budget and is a statement that the request
+    /// as a whole took too long; this names one dependency, and the usual fix is that
+    /// dependency rather than the flow.
+    /// </para>
+    /// <para>
+    /// <see cref="ErrorCategory.Unavailable"/>, which is in <c>Retry</c>'s own default
+    /// retryable set — deliberately, because a timeout is exactly the failure a retry is for,
+    /// and a timeout the retry declined to act on would make the two policies contradict each
+    /// other on the same step.
+    /// </para>
+    /// </remarks>
+    public static Error StepTimedOut(string capabilityId, TimeSpan budget) =>
+        new Error(
+            StepTimedOutCode,
+            $"Capability '{capabilityId}' did not complete within its {budget} timeout.",
+            ErrorCategory.Unavailable)
+            .With("capabilityId", capabilityId)
+            .With("timeout", budget);
+
+    /// <summary>The code <see cref="CircuitOpen"/> raises.</summary>
+    public const string CircuitOpenCode = "policy.circuit_open";
+
+    /// <summary>
+    /// A step's <c>CircuitBreaker</c> is open, so the call was refused without being made.
+    /// </summary>
+    /// <param name="capabilityId">The capability whose breaker is open.</param>
+    /// <param name="until">When the breaker will next let a call through.</param>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ErrorCategory.Unavailable"/>, and the category is the whole point: the
+    /// dependency is not saying no, the platform is saying not yet. A caller that retries the
+    /// flow later is doing the right thing, which is what this category means everywhere else
+    /// in the runtime.
+    /// </para>
+    /// <para>
+    /// <strong>It is retryable in <c>Retry</c>'s default set, and that is not a mistake.</strong>
+    /// An open breaker refuses each attempt in turn, so the retries cost the dependency
+    /// nothing and end where they would have ended anyway — which is the behaviour
+    /// <c>docs/10-Policy-Framework.md §11</c> asks for when it says to always pair a retry
+    /// with a breaker: the breaker is what makes the retry safe, not what makes it stop.
+    /// </para>
+    /// </remarks>
+    public static Error CircuitOpen(string capabilityId, DateTimeOffset until) =>
+        new Error(
+            CircuitOpenCode,
+            $"The circuit breaker for capability '{capabilityId}' is open until {until:O}. " +
+            "The call was refused without being made.",
+            ErrorCategory.Unavailable)
+            .With("capabilityId", capabilityId)
+            .With("until", until);
+
+    /// <summary>The code <see cref="BulkheadRejected"/> raises.</summary>
+    public const string BulkheadRejectedCode = "policy.bulkhead_rejected";
+
+    /// <summary>
+    /// A step's <c>Bulkhead</c> had no permit and no room to queue for one.
+    /// </summary>
+    /// <param name="capabilityId">The capability whose bulkhead is full.</param>
+    /// <param name="maxConcurrency">How many callers it admits at once.</param>
+    /// <remarks>
+    /// <see cref="ErrorCategory.Unavailable"/>: the dependency is healthy and this caller is
+    /// simply not getting in right now. Reporting it as <see cref="ErrorCategory.Internal"/>
+    /// would attribute a deliberate isolation decision to a defect, and would put it outside
+    /// the categories a retry acts on — a bulkhead rejection is the one failure where waiting
+    /// and asking again is exactly the right response.
+    /// </remarks>
+    public static Error BulkheadRejected(string capabilityId, int maxConcurrency) =>
+        new Error(
+            BulkheadRejectedCode,
+            $"The bulkhead for capability '{capabilityId}' admits {maxConcurrency} caller(s) " +
+            "at once and has no queue depth left. The call was refused without being made.",
+            ErrorCategory.Unavailable)
+            .With("capabilityId", capabilityId)
+            .With("maxConcurrency", maxConcurrency);
+
     /// <summary>The caller cancelled. Not a defect, and not the flow's fault.</summary>
     public static Error Cancelled(string flowId) =>
         new Error(

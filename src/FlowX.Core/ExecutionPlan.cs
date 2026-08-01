@@ -29,9 +29,11 @@ public sealed class ExecutionPlan
         bool hasParallel,
         bool hasSubFlow,
         bool hasCompensationPolicies,
+        bool hasStepPolicies,
         bool hasEmit,
         bool hasTimers)
     {
+        HasStepPolicies = hasStepPolicies;
         HasTimers = hasTimers;
         Flow = flow;
         Graph = graph;
@@ -141,6 +143,28 @@ public sealed class ExecutionPlan
     /// </remarks>
     public bool HasEmit { get; }
 
+    /// <summary>True when any step carries a forward policy the runtime executes.</summary>
+    /// <remarks>
+    /// <para>
+    /// Precomputed for the reason <see cref="HasParallel"/> is, and read in the same shape: a
+    /// flow whose steps declare nothing the engine applies must not pay for the ones that do.
+    /// The step loop reads it before it reads <see cref="StepNode.StepPolicy"/>, so an
+    /// unpoliced plan reaches no attempt loop, no clock read and no timeout source — one
+    /// predictable always-false comparison on a field the plan already holds, and the
+    /// figure <c>EngineAllocationTests</c> records is unchanged.
+    /// </para>
+    /// <para>
+    /// <strong>It counts what executes, not what was declared.</strong> A step whose chain
+    /// holds only a <c>RateLimit</c>, an <c>Idempotency</c> window, a <c>Cache</c> or an
+    /// <c>Audit</c> leaves this false: those stages are not implemented, <c>StepPolicy.From</c>
+    /// resolves them to <see cref="StepPolicy.None"/>, and a flag that were true for them
+    /// would charge the flow for a policy nothing applies — which is the exact cost this flag
+    /// exists to refuse. See
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>.
+    /// </para>
+    /// </remarks>
+    public bool HasStepPolicies { get; }
+
     /// <summary>True when any step waits on a clock: a timer, or a suspension point.</summary>
     /// <remarks>
     /// <para>
@@ -178,6 +202,7 @@ public sealed class ExecutionPlan
         var parallel = false;
         var subFlow = false;
         var compensationPolicies = false;
+        var stepPolicies = false;
         var emit = false;
         var timers = false;
 
@@ -189,6 +214,12 @@ public sealed class ExecutionPlan
             }
 
             compensationPolicies |= step.CompensationRetry.IsRetrying;
+
+            // The forward half of the same bargain, and the same shape: what is counted is
+            // what the engine will apply, never what the author declared. A chain of policies
+            // whose stages are all unimplemented resolves to StepPolicy.None and leaves this
+            // false, so declaring one costs the flow nothing until the stage that runs it lands.
+            stepPolicies |= step.StepPolicy.IsActive;
 
             parallel |= step.Kind == StepKind.Parallel ||
                         (step.Kind == StepKind.ForEach && step.MaxDegreeOfParallelism > 1);
@@ -218,6 +249,7 @@ public sealed class ExecutionPlan
             parallel,
             subFlow,
             compensationPolicies,
+            stepPolicies,
             emit,
             timers);
     }
