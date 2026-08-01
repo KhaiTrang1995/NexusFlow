@@ -26,9 +26,27 @@ builder.Services.AddSingleton<ReleaseInventory>();
 builder.Services.AddSingleton<CapturePayment>();
 builder.Services.AddSingleton<PlaceOrderFlow.Dispatcher>();
 
+// Spans to the console, metrics at /metrics. Hand-written rather than an OpenTelemetry SDK
+// reference because this is the repository's only NativeAOT-published assembly (constraint
+// C2), and the thing being demonstrated is that FlowX emits through an ActivitySource and a
+// Meter named "FlowX" — which is exactly the seam an SDK attaches to. A real deployment
+// deletes this line and adds AddSource("FlowX") and AddMeter("FlowX") instead.
+//
+// Registered as a singleton so the host disposes it, and started before the app runs so the
+// very first request is observed. FlowX allocates nothing per step until this exists, which
+// is budget B6 and is asserted in TelemetryCostTests rather than claimed here.
+var telemetry = SampleTelemetry.Start();
+
+builder.Services.AddSingleton(telemetry);
+
 var app = builder.Build();
 
 app.MapHealthChecks("/health");
+
+// The scrape endpoint. Prometheus text format, and deliberately not behind the same routing
+// as the flow endpoints: an operator's scraper is not a caller of this application's API.
+app.MapGet("/metrics", (SampleTelemetry collected) =>
+    Results.Text(collected.Scrape(), "text/plain; version=0.0.4"));
 
 // Every endpoint this application declares, generated from the [HttpTrigger] on the flow
 // that declares it. The method, the route and the idempotency rule come from the same

@@ -1,0 +1,291 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
+using System.Runtime.CompilerServices;
+using FlowX.Observability;
+using FlowX.Runtime;
+using Shouldly;
+using Xunit;
+
+namespace FlowX.Runtime.Tests;
+
+/// <summary>
+/// Budget <strong>B6</strong> — <em>telemetry with no listener costs 0 ns and 0 B per step</em> —
+/// asserted as a unit test, the way <c>EngineAllocationTests</c> asserts B2.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>A correctness property, not a benchmark.</strong> B6 is a hard zero in
+/// <a href="../../docs/14-Performance.md">14-Performance</a>, and a hard zero is the one
+/// performance property that can be gated without a harness: allocation counts are
+/// deterministic while nanoseconds on a shared runner are not.
+/// <a href="../../docs/21-Quality-Gates.md">21-Quality-Gates</a> §7 lists B6 under "no harness",
+/// and this does not build one — it asserts the half of B6 that is checkable exactly, on every
+/// pull request, in milliseconds.
+/// </para>
+/// <para>
+/// <strong>The zero has two halves and both are here.</strong> With nothing listening the host
+/// installs no decorator at all — <see cref="TheDispatcherIsNotWrappedWhenNothingIsListening"/> —
+/// so the ordinary answer is that there is no telemetry code on the step path to cost anything.
+/// That alone would be a zero that depends on a decision made one layer up, so
+/// <see cref="AnInstalledDecoratorStillCostsNothingWithNoListener"/> forces the decorator into
+/// existence and measures a dispatch through it. Both must hold: the first is what happens, the
+/// second is what stops a future change to the first from quietly costing every step.
+/// </para>
+/// <para>
+/// <strong>Release only</strong>, skipped rather than failed in Debug, for the reason
+/// <c>EngineAllocationTests</c> gives: the C# compiler emits an async state machine as a class in
+/// Debug and as a struct in Release, so a Debug run measures Edit-and-Continue scaffolding and
+/// reports it as this code's allocation.
+/// </para>
+/// </remarks>
+public sealed class TelemetryCostTests
+{
+    private static void RequireOptimisedBuild()
+    {
+#if DEBUG
+        Assert.Skip(
+            "Allocation budgets are measured in Release only. In Debug the compiler emits " +
+            "async state machines as classes, which shows up as a few hundred bytes per " +
+            "dispatch that this code does not allocate. Run: dotnet test -c Release");
+#endif
+    }
+
+    /// <summary>
+    /// The positive control. Without it every zero below could be a broken measurement.
+    /// </summary>
+    [Fact]
+    public void TheMeasurementCanDetectAnAllocationItShouldSee()
+    {
+        Measure(static () => _ = new object()).ShouldBeGreaterThan(
+            0,
+            "If this reports zero, the harness is broken and every other assertion in this " +
+            "class is meaningless.");
+    }
+
+    /// <summary>
+    /// With no listener, <see cref="StepTelemetry.Wrap"/> hands back the caller's own dispatcher.
+    /// </summary>
+    /// <remarks>
+    /// Reference equality, because it is the only evidence of "no telemetry on this path" that
+    /// costs nothing to produce. An unobserved flow therefore dispatches to exactly the object it
+    /// would have dispatched to before any of this existed — no extra virtual call, no extra
+    /// frame in a stack trace, and nothing per step to measure.
+    /// </remarks>
+    [Fact]
+    public void TheDispatcherIsNotWrappedWhenNothingIsListening()
+    {
+        StepTelemetry.IsEnabled.ShouldBeFalse(
+            "Another test in this assembly has left a listener attached, which makes every " +
+            "measurement here meaningless.");
+
+        var dispatcher = new NullDispatcher();
+
+        StepTelemetry.Wrap(Plans.FourStepSaga(), Plans.Invocation, dispatcher)
+            .ShouldBeSameAs(dispatcher);
+    }
+
+    /// <summary>Deciding not to wrap allocates nothing.</summary>
+    /// <remarks>
+    /// The decision runs once per flow, and a <c>HasListeners()</c> that boxed or a
+    /// <c>TenantLabel</c> that allocated would put bytes on every unobserved execution — small,
+    /// per flow rather than per step, and exactly the kind of cost that is never noticed because
+    /// nobody thought to look at the code that does nothing.
+    /// </remarks>
+    [Fact]
+    public void DecidingNotToInstrumentAllocatesNothing()
+    {
+        RequireOptimisedBuild();
+
+        var plan = Plans.FourStepSaga();
+        var dispatcher = new NullDispatcher();
+
+        Measure(() =>
+        {
+            _ = StepTelemetry.IsEnabled;
+            _ = StepTelemetry.Wrap(plan, Plans.Invocation, dispatcher);
+            _ = FlowXTelemetry.TenantLabel("acme");
+        })
+        .ShouldBe(0, "B6: telemetry with no listener costs 0 B.");
+    }
+
+    /// <summary>
+    /// Every emit site is guarded by a check that is false, and reading that check allocates
+    /// nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the shape B6 is actually about.</strong> <c>Counter.Add(value, tags)</c>
+    /// is cheap with no listener, but building the tags to hand it is not: a label value that is
+    /// not already a <see cref="string"/> boxes on its way into a
+    /// <see cref="KeyValuePair{TKey,TValue}"/>, so the tag list must not be built before the
+    /// check. <see cref="Instrument.Enabled"/> is what makes "do not build it" expressible.
+    /// </para>
+    /// <para>
+    /// The same applies to <see cref="ActivitySource.StartActivity(string, ActivityKind)"/>,
+    /// which returns <c>null</c> with no listener — asserted here because every span in this
+    /// package is built by calling it first and setting tags only on the non-null result.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryInstrumentReportsItselfDisabledAndReadingThatAllocatesNothing()
+    {
+        RequireOptimisedBuild();
+
+        FlowXMetrics.FlowDuration.Enabled.ShouldBeFalse();
+        FlowXMetrics.FlowTotal.Enabled.ShouldBeFalse();
+        FlowXMetrics.StepDuration.Enabled.ShouldBeFalse();
+        FlowXMetrics.CapabilityDuration.Enabled.ShouldBeFalse();
+        FlowXMetrics.CapabilityUnhandled.Enabled.ShouldBeFalse();
+        FlowXMetrics.JournalCommit.Enabled.ShouldBeFalse();
+        FlowXMetrics.LeaseLost.Enabled.ShouldBeFalse();
+        FlowXMetrics.CompensationFailed.Enabled.ShouldBeFalse();
+
+        FlowXTelemetry.Source.HasListeners().ShouldBeFalse();
+
+        Measure(static () =>
+        {
+            _ = FlowXMetrics.StepDuration.Enabled;
+            _ = FlowXMetrics.CapabilityDuration.Enabled;
+            _ = FlowXMetrics.CapabilityUnhandled.Enabled;
+            _ = FlowXTelemetry.Source.HasListeners();
+            _ = FlowXTelemetry.Source.StartActivity("step 0 order.validate", ActivityKind.Internal);
+        })
+        .ShouldBe(
+            0,
+            "StartActivity returns null with no listener, and Instrument.Enabled reads a " +
+            "field. Building a tag list before either would be the shape that costs 0 ns and " +
+            "several hundred bytes.");
+    }
+
+    /// <summary>
+    /// A decorator that <em>is</em> installed still costs nothing per step once the listener
+    /// goes away.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The stronger half of B6, and the one that is not a consequence of a decision made
+    /// elsewhere. The decorator is built while a listener is attached, the listener is then
+    /// disposed, and a dispatch is measured: what is left is the code that runs on every step of
+    /// an observed-then-unobserved process, which is also the code that would run on every step
+    /// if <see cref="StepTelemetry.Wrap"/> ever stopped short-circuiting.
+    /// </para>
+    /// <para>
+    /// It also pins that <see cref="StepTelemetry.ExecuteAsync"/> completes synchronously when
+    /// the step does. An <c>async ValueTask</c> that suspends boxes its state machine, so a
+    /// decorator that gratuitously went asynchronous would cost an allocation per step while
+    /// reporting <c>Enabled = false</c> on every instrument.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AnInstalledDecoratorStillCostsNothingWithNoListener()
+    {
+        RequireOptimisedBuild();
+
+        var plan = Plans.FourStepSaga();
+        var inner = new NullDispatcher();
+
+        IStepDispatcher decorated;
+
+        using (var listener = Listening())
+        {
+            decorated = StepTelemetry.Wrap(plan, Plans.Invocation, inner, Guid.NewGuid());
+
+            decorated.ShouldNotBeSameAs(
+                inner, "with a listener attached the dispatcher must be wrapped.");
+        }
+
+        StepTelemetry.IsEnabled.ShouldBeFalse("the listener was disposed.");
+
+        // Through the real engine, which is what makes this the same measurement B2 is. A
+        // four-step ephemeral saga is EngineAllocationTests' own subject, so a non-zero here
+        // is either the decorator's or a regression B2 would have caught anyway — and either
+        // way it is the number 14-Performance calls a hard zero.
+        var engine = new FlowEngine(new UnixEpochClock());
+
+        Measure(() => Complete(engine.ExecuteAsync(plan, decorated, Plans.Invocation)))
+            .ShouldBe(
+                0,
+                "B6: four steps dispatched through an installed decorator with nothing " +
+                "listening must allocate exactly nothing — no span, no tag list, and no boxed " +
+                "state machine — and B2's hard zero on the ephemeral path must not move.");
+    }
+
+    /// <summary>An <see cref="ActivityListener"/> attached for the life of a <c>using</c>.</summary>
+    private static ActivityListener Listening()
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == FlowXTelemetry.SourceName,
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+        };
+
+        ActivitySource.AddActivityListener(listener);
+
+        return listener;
+    }
+
+    private static FlowExecutionResult Complete(ValueTask<FlowExecutionResult> execution)
+    {
+        execution.IsCompleted.ShouldBeTrue(
+            "The decorator went asynchronous for a flow whose every step completed " +
+            "synchronously. That boxes a state machine on the hot path.");
+
+        return execution.GetAwaiter().GetResult();
+    }
+
+    /// <summary>Bytes allocated on this thread by one invocation, after warm-up.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    private static long Measure(Action operation)
+    {
+        for (var i = 0; i < 64; i++)
+        {
+            operation();
+        }
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        operation();
+
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    private sealed class UnixEpochClock : IClock
+    {
+        public DateTimeOffset UtcNow => DateTimeOffset.UnixEpoch;
+    }
+
+    /// <summary>
+    /// A dispatcher whose steps succeed and which allocates nothing doing it.
+    /// </summary>
+    /// <remarks>
+    /// Its own double rather than <c>RecordingDispatcher</c>, and the difference is the whole
+    /// measurement: a dispatcher that records what it was asked grows a list on every step, and
+    /// sixty-five warm-up executions of a four-step flow through one measures the list rather
+    /// than the engine. <c>EngineAllocationTests</c> keeps a private double for the same reason;
+    /// this is that double, at the size this file needs.
+    /// </remarks>
+    private sealed class NullDispatcher : IStepDispatcher
+    {
+        public ValueTask<StepOutcome> ExecuteAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+            => ValueTask.FromResult(StepOutcome.Success);
+
+        public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+            => ValueTask.FromResult(StepOutcome.Success);
+
+        public bool Evaluate(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no branch step.");
+
+        public int Select(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This double runs plans with no switch step.");
+
+        public IterationSource BeginIteration(int stepIndex, FlowContext ctx)
+            => throw new NotSupportedException("This dispatcher has no iteration to begin.");
+
+        public FlowContext EnterIteration(int stepIndex, in IterationSource source, int iteration, FlowContext ctx)
+            => throw new NotSupportedException("This dispatcher has no iteration to enter.");
+    }
+}

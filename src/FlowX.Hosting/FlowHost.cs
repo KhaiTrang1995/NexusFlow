@@ -107,27 +107,47 @@ public sealed class FlowHost
             return FlowExecutionResult.Rejected(Draining);
         }
 
+        var scope = FlowScope.Start(plan, invocation);
+
         try
         {
             if (!IsJournaled(plan))
             {
-                return await _engine.ExecuteAsync(plan, dispatcher, invocation, ct).ConfigureAwait(false);
+                var ephemeral = await _engine
+                    .ExecuteAsync(plan, StepTelemetry.Wrap(plan, invocation, dispatcher), invocation, ct)
+                    .ConfigureAwait(false);
+
+                scope.Complete(ephemeral);
+
+                return ephemeral;
             }
 
             var opened = await OpenAsync(plan, dispatcher, invocation, input: null, ct).ConfigureAwait(false);
 
             if (opened.IsFailure)
             {
-                return FlowExecutionResult.Rejected(opened.Error);
+                var refused = FlowExecutionResult.Rejected(opened.Error);
+                scope.Complete(refused);
+
+                return refused;
             }
 
             var session = opened.Value;
 
             try
             {
-                return await _engine
-                    .ExecuteAsync(plan, dispatcher, invocation, session.Run, ct)
+                var journaled = await _engine
+                    .ExecuteAsync(
+                        plan,
+                        StepTelemetry.Wrap(plan, invocation, dispatcher, session.Run.InstanceId),
+                        invocation,
+                        session.Run,
+                        ct)
                     .ConfigureAwait(false);
+
+                scope.Complete(journaled);
+
+                return journaled;
             }
             finally
             {
@@ -157,29 +177,49 @@ public sealed class FlowHost
             return FlowExecutionResult.Rejected(Draining);
         }
 
+        var scope = FlowScope.Start(plan, invocation);
+
         try
         {
             if (!IsJournaled(plan))
             {
-                return await _engine
-                    .ExecuteAsync(plan, dispatcher, invocation, input, ct)
+                var ephemeral = await _engine
+                    .ExecuteAsync(
+                        plan, StepTelemetry.Wrap(plan, invocation, dispatcher), invocation, input, ct)
                     .ConfigureAwait(false);
+
+                scope.Complete(ephemeral);
+
+                return ephemeral;
             }
 
             var opened = await OpenAsync(plan, dispatcher, invocation, input, ct).ConfigureAwait(false);
 
             if (opened.IsFailure)
             {
-                return FlowExecutionResult.Rejected(opened.Error);
+                var refused = FlowExecutionResult.Rejected(opened.Error);
+                scope.Complete(refused);
+
+                return refused;
             }
 
             var session = opened.Value;
 
             try
             {
-                return await _engine
-                    .ExecuteAsync(plan, dispatcher, invocation, input, session.Run, ct)
+                var journaled = await _engine
+                    .ExecuteAsync(
+                        plan,
+                        StepTelemetry.Wrap(plan, invocation, dispatcher, session.Run.InstanceId),
+                        invocation,
+                        input,
+                        session.Run,
+                        ct)
                     .ConfigureAwait(false);
+
+                scope.Complete(journaled);
+
+                return journaled;
             }
             finally
             {
@@ -216,29 +256,55 @@ public sealed class FlowHost
             return FlowExecutionResult.Rejected<TOut>(Draining);
         }
 
+        var scope = FlowScope.Start(plan, invocation);
+
         try
         {
             if (!IsJournaled(plan))
             {
-                return await _engine
-                    .ExecuteAsync(plan, dispatcher, invocation, input, projection, ct)
+                var ephemeral = await _engine
+                    .ExecuteAsync(
+                        plan,
+                        StepTelemetry.Wrap(plan, invocation, dispatcher),
+                        invocation,
+                        input,
+                        projection,
+                        ct)
                     .ConfigureAwait(false);
+
+                scope.Complete(ephemeral.Outcome);
+
+                return ephemeral;
             }
 
             var opened = await OpenAsync(plan, dispatcher, invocation, input, ct).ConfigureAwait(false);
 
             if (opened.IsFailure)
             {
-                return FlowExecutionResult.Rejected<TOut>(opened.Error);
+                var refused = FlowExecutionResult.Rejected<TOut>(opened.Error);
+                scope.Complete(refused.Outcome);
+
+                return refused;
             }
 
             var session = opened.Value;
 
             try
             {
-                return await _engine
-                    .ExecuteAsync(plan, dispatcher, invocation, input, projection, session.Run, ct)
+                var journaled = await _engine
+                    .ExecuteAsync(
+                        plan,
+                        StepTelemetry.Wrap(plan, invocation, dispatcher, session.Run.InstanceId),
+                        invocation,
+                        input,
+                        projection,
+                        session.Run,
+                        ct)
                     .ConfigureAwait(false);
+
+                scope.Complete(journaled.Outcome);
+
+                return journaled;
             }
             finally
             {
@@ -390,9 +456,24 @@ public sealed class FlowHost
                     record.TenantId,
                     record.DeadlineAt);
 
-                return await _engine
-                    .ExecuteAsync(registration.Plan, registration.Dispatcher, invocation, run, ct)
+                // Opened after the lease and the frontier read, unlike a fresh execution's:
+                // an instance another node got to first is not a flow this node ran, and a
+                // span for it would put a duration on work that never started here.
+                var scope = FlowScope.Start(registration.Plan, invocation);
+
+                var resumedOutcome = await _engine
+                    .ExecuteAsync(
+                        registration.Plan,
+                        StepTelemetry.Wrap(
+                            registration.Plan, invocation, registration.Dispatcher, instanceId),
+                        invocation,
+                        run,
+                        ct)
                     .ConfigureAwait(false);
+
+                scope.Complete(resumedOutcome);
+
+                return resumedOutcome;
             }
             finally
             {

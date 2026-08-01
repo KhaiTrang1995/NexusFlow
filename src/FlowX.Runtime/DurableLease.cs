@@ -1,3 +1,5 @@
+using FlowX.Observability;
+
 namespace FlowX.Runtime;
 
 /// <summary>
@@ -40,6 +42,15 @@ namespace FlowX.Runtime;
 /// </remarks>
 public sealed class DurableLease : IAsyncDisposable
 {
+    /// <summary>The lease store answered, and said this node no longer owns the instance.</summary>
+    private const string RefusedReason = "refused";
+
+    /// <summary>
+    /// The lease store could not be reached, and by the time that was certain the lease had
+    /// already lapsed.
+    /// </summary>
+    private const string UnreachableReason = "unreachable";
+
     private readonly ILeaseStore _store;
     private readonly LeasePolicy _policy;
     private readonly CancellationTokenSource _stopped = new();
@@ -329,7 +340,7 @@ public sealed class DurableLease : IAsyncDisposable
                 return true;
             }
 
-            Lose();
+            Lose(UnreachableReason);
             return false;
         }
 #pragma warning restore CA1031
@@ -339,7 +350,7 @@ public sealed class DurableLease : IAsyncDisposable
             // A store that is working and saying no is definitive: the lease expired, or
             // another node has acquired since. Renewal never resurrects a lost lease —
             // that is precisely the split brain the token exists to prevent.
-            Lose();
+            Lose(RefusedReason);
             return false;
         }
 
@@ -356,14 +367,38 @@ public sealed class DurableLease : IAsyncDisposable
         return true;
     }
 
-    private void Lose()
+    /// <summary>
+    /// Records that this node has stopped owning the instance, and counts it once.
+    /// </summary>
+    /// <param name="reason">
+    /// Which of the two ways it happened. <c>docs/12-Observability.md</c> §3 labels
+    /// <c>flowx_lease_lost_total</c> by <c>reason</c>, and these are the two the runtime can
+    /// tell apart: a store that answered and refused, and a store that could not be reached
+    /// until after the lease had already lapsed. They point at different faults — a partition
+    /// or a pause on one side, a genuinely reissued lease on the other — and a single
+    /// unlabelled counter would make a network blip and a split brain the same line.
+    /// </param>
+    /// <remarks>
+    /// Counted inside the lock and only on the <c>Held</c> to <c>Lost</c> edge, so a lease that
+    /// loses a renewal and is then disposed contributes exactly one to the counter rather than
+    /// one per attempt to notice.
+    /// </remarks>
+    private void Lose(string reason)
     {
         lock (_gate)
         {
-            if (_state == State.Held)
+            if (_state != State.Held)
             {
-                _state = State.Lost;
+                return;
             }
+
+            _state = State.Lost;
+        }
+
+        if (FlowXMetrics.LeaseLost.Enabled)
+        {
+            FlowXMetrics.LeaseLost.Add(
+                1, new KeyValuePair<string, object?>(TelemetryNames.ReasonLabel, reason));
         }
     }
 

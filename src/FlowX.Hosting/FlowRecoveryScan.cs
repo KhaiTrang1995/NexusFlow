@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using FlowX.Observability;
 using FlowX.Runtime;
 
 namespace FlowX.Hosting;
@@ -122,9 +124,15 @@ public sealed class FlowRecoveryScan
     /// </remarks>
     public async ValueTask<RecoveryScanReport> RunOnceAsync(CancellationToken ct = default)
     {
+        // The sweep's own span, so a resumed instance's flow span has a parent that says why
+        // it started. Without it a recovered saga appears in a trace backend as a root with no
+        // caller, which is indistinguishable from a request nobody can find — and "why did this
+        // instance run at 03:14" is the first question an operator asks of one.
+        using var span = FlowXTelemetry.Source.StartActivity("recovery scan", ActivityKind.Internal);
+
         if (_durability.RecoveryIndex is not { } index || _host.IsDraining)
         {
-            return RecoveryScanReport.Nothing;
+            return Tagged(span, RecoveryScanReport.Nothing);
         }
 
         var query = new AbandonedInstanceQuery
@@ -140,14 +148,14 @@ public sealed class FlowRecoveryScan
 
         if (listed.IsFailure)
         {
-            return RecoveryScanReport.Nothing with { Error = listed.Error };
+            return Tagged(span, RecoveryScanReport.Nothing with { Error = listed.Error });
         }
 
         var candidates = listed.Value;
 
         if (candidates.Count == 0)
         {
-            return RecoveryScanReport.Nothing;
+            return Tagged(span, RecoveryScanReport.Nothing);
         }
 
         var offset = Random.Shared.Next(candidates.Count);
@@ -175,7 +183,8 @@ public sealed class FlowRecoveryScan
 
         if (takeovers is null)
         {
-            return RecoveryScanReport.Nothing with { Examined = examined, NotRunnable = notRunnable };
+            return Tagged(
+                span, RecoveryScanReport.Nothing with { Examined = examined, NotRunnable = notRunnable });
         }
 
         var attempts = await Task.WhenAll(takeovers).ConfigureAwait(false);
@@ -200,14 +209,36 @@ public sealed class FlowRecoveryScan
             }
         }
 
-        return new RecoveryScanReport
+        return Tagged(span, new RecoveryScanReport
         {
             Examined = examined,
             Resumed = resumed,
             Contended = contended,
             NotRunnable = notRunnable,
             Failed = failed,
-        };
+        });
+    }
+
+    /// <summary>Puts what a sweep did onto its span, and hands the report back unchanged.</summary>
+    /// <remarks>
+    /// A function rather than a block before each <c>return</c>, because this method has five
+    /// exits and four of them are "there was nothing to do" — the shape that ends up tagged on
+    /// one path and silent on the others. The counts are span attributes rather than metrics on
+    /// purpose: docs/12-Observability.md §3 specifies no recovery metric, and inventing one
+    /// here would put a series into the frozen schema by the side door.
+    /// </remarks>
+    private static RecoveryScanReport Tagged(Activity? span, in RecoveryScanReport report)
+    {
+        if (span is not null)
+        {
+            span.SetTag("flowx.scan.examined", report.Examined);
+            span.SetTag("flowx.scan.resumed", report.Resumed);
+            span.SetTag("flowx.scan.contended", report.Contended);
+            span.SetTag("flowx.scan.not_runnable", report.NotRunnable);
+            span.SetTag("flowx.scan.failed", report.Failed);
+        }
+
+        return report;
     }
 
     /// <summary>
