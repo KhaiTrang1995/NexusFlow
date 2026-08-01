@@ -366,29 +366,36 @@ Declaring `Cache` on a capability with side effects is `FLOWX1018` (error).
 
 ---
 
-## 9. Observing policies — *specification*
+## 9. Observing policies — *four of seven metrics emit*
 
 > [!NOTE]
-> **No metric in this table is emitted.** FlowX ships no metrics or logging infrastructure
-> at all, so a policy that now genuinely opens a breaker or spends two retries does so
-> silently. That is a real gap and it widened with this package: before it, the missing
-> counters described policies that were not running either.
+> **The four rows whose policy executes are emitted; the three whose policy does not are not
+> named at all.** A breaker opening, a retry attempting, a bulkhead refusing and a timeout
+> firing each produce a measurement — which they did not before
+> [ADR-0026](adr/ADR-0026-policy-metrics-name-only-what-executes.md), and the note that used to
+> stand here said so. The other three describe stages
+> [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) skips, and an
+> instrument that exists and is never written to publishes an empty series that reads as a
+> healthy one. **The span-event half of this section is still unbuilt.**
 
 Every policy is specified to emit telemetry with a uniform schema, so that resilience never
 has to be instrumented by hand:
 
-| Metric | Type | Labels |
-|---|---|---|
-| `flowx_policy_invocations_total` | counter | `policy`, `stage`, `capability`, `outcome` |
-| `flowx_retry_attempts_total` | counter | `capability`, `attempt`, `error_code` |
-| `flowx_circuit_state` | gauge (0/1/2) | `capability`, `key` |
-| `flowx_ratelimit_rejected_total` | counter | `scope`, `tenant` |
-| `flowx_cache_hits_total` / `_misses_total` | counter | `capability`, `scope` |
-| `flowx_bulkhead_queue_depth` | gauge | `capability` |
-| `flowx_idempotency_replays_total` | counter | `capability`, `scope` |
+| Metric | Type | Labels | Emitted |
+|---|---|---|---|
+| `flowx_policy_invocations_total` | counter | `policy`, `stage`, `capability`, `outcome` | **yes** — on refusal *and* on clean application, so a refusal rate has a denominator |
+| `flowx_retry_attempts_total` | counter | `capability`, `attempt`, `error_code` | **yes** — attempts beyond the first only; the first dispatch is not a retry |
+| `flowx_circuit_state` | gauge (0/1/2) | `capability`, `key` | **yes** — recorded on transition, not per scrape. `key` equals `capability` until §6's composite key is expressible |
+| `flowx_ratelimit_rejected_total` | counter | `scope`, `tenant` | no — stage 1 is not executed, and `scope` presupposes a decision nobody has made |
+| `flowx_cache_hits_total` / `_misses_total` | counter | `capability`, `scope` | no — stage 5 is not executed |
+| `flowx_bulkhead_queue_depth` | gauge | `capability` | **yes** — on the queueing path only, so an uncontended pool publishes nothing rather than a flat zero |
+| `flowx_idempotency_replays_total` | counter | `capability`, `scope` | no — stage 3 is not executed |
 
-Policy decisions also appear as span events on the step span, so a trace shows
-*why* a call took 3.2 s: two retries with 400 ms and 900 ms of backoff.
+Policy decisions are *specified* to appear as span events on the step span too, so that a
+trace shows *why* a call took 3.2 s: two retries with 400 ms and 900 ms of backoff. **No span
+event is emitted.** The metrics above are the alert; the span events would be the diagnosis,
+and only the first half is built — see
+[ADR-0026 §1.3](adr/ADR-0026-policy-metrics-name-only-what-executes.md).
 
 ---
 
