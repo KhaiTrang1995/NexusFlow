@@ -22,8 +22,14 @@
 > and **WP-50 has shipped one of the three things in its deliverable row**: the QR2 chaos
 > rig exists, kills real processes and has been run; B7 and B8 still have no harness, so
 > that package is **partially delivered and must not be read as done**. **WP-62 is now the
-> only Must with nothing written for it**, and it is a nightly schedule rather than code;
-> WP-63, a *Should*, is the other package not started.
+> only Must with nothing written for it**, and it is a nightly schedule rather than code.
+> **WP-63, a *Should*, is now half built:** a `Durable` flow suspends at `.AwaitSignal<T>`
+> and a signal resumes it through the same engine entry a recovery scan uses, with no signal
+> table and no migration; `.Delay` and `.OnTimeout` still compile to nothing and the declared
+> timeout is armed by nothing, so `FLOWX1031` is narrowed rather than deleted. **WP-56 gained
+> the broker plugin its own ADR names as the condition for reopening** — `RedisStreamEventPublisher`,
+> one stream per `partition_key`, held to `PublisherConformance` alongside the recording
+> double, so ADR-0018's revisit condition is met.
 > *This sentence read "WP-51, WP-52, WP-53, WP-55 and WP-58 have shipped, WP-50 has not
 > started". The WP-50 clause expired on 2026-08-01. The list before it was never the live
 > record and is not one now —
