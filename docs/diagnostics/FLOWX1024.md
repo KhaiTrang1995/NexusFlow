@@ -49,15 +49,19 @@ visible rather than being quietly overwritten.
 | The engine stages it into `StepCommit.Outbox` | **no** | **no** | yes |
 | A store commits it atomically with the step row | yes (WP-53) | yes | yes |
 | A publisher drains it to a broker | **no** | yes (`PostgresOutboxPublisher`) | yes |
-| A broker plugin implements `IEventPublisher` | **no** | **no** | **no** |
+| A broker plugin implements `IEventPublisher` | **no** | yes (`RedisStreamEventPublisher`) | yes |
 
-The last row is the honest residue and it is *not* what this diagnostic reports.
-`IEventPublisher` is a declared contract with a recording test double behind it,
-so "published" means "handed to a publisher"
-([ADR-0018](../adr/ADR-0018-outbox-publication-and-ordering.md)). A broker plugin
-is a plugin author's job, not something the author of a flow can fix, so warning
-about it on every `.Emit` would be a warning with no action attached — which is
-how a diagnostic gets suppressed project-wide and stops being read.
+*That last row read **no** in all three columns until WP-56b, and the paragraph
+under it called `IEventPublisher` "a declared contract with a recording test
+double behind it".* `plugins/FlowX.Redis` now implements it over Redis Streams,
+one stream per `partition_key`, and `PublisherConformance` holds it and the double
+to one contract ([ADR-0018](../adr/ADR-0018-outbox-publication-and-ordering.md)).
+The **first** column is still **no**, and it is still not what this diagnostic
+reports: what this rule is about is a flow that cannot stage, and which broker a
+deployment wires behind the seam is a composition decision, not something the
+author of a flow can fix. Warning about it on every `.Emit` would be a warning
+with no action attached — which is how a diagnostic gets suppressed project-wide
+and stops being read.
 
 **Severity is unchanged, and that is a decision rather than an omission.**
 `Warning` was chosen because the source is not wrong — the artifact is

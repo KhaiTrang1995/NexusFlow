@@ -49,7 +49,7 @@ them away, an ADR must record it.
 | C1 | .NET 10+, C# 14 | Technical | Roslyn incremental generators; `ref struct` interfaces available |
 | C2 | Must run under NativeAOT | Technical | No reflection, no dynamic codegen, no `System.Text.Json` reflection mode |
 | C3 | Must host inside ASP.NET Core | Technical | Cannot own the process lifecycle or the DI container |
-| C4 | No 2-phase commit | Technical | Consistency is saga-based; outbox for atomic publish. **The constraint now describes the system.** `.Emit<T>()` on a `Durable` flow stages its event in the same transaction as the step row, a refused commit discards it, and `PostgresOutboxPublisher` delivers it at-least-once in per-`partition_key` order. What is still missing is the far end: **no broker plugin implements `IEventPublisher`**, so *delivered* means *handed to a publisher*. [FLOWX1024](diagnostics/FLOWX1024.md) survives, narrowed to an `Ephemeral` flow and to a contract no serialiser context declares |
+| C4 | No 2-phase commit | Technical | Consistency is saga-based; outbox for atomic publish. **The constraint now describes the system.** `.Emit<T>()` on a `Durable` flow stages its event in the same transaction as the step row, a refused commit discards it, and `PostgresOutboxPublisher` delivers it at-least-once in per-`partition_key` order. The far end is no longer missing: `plugins/FlowX.Redis` implements `IEventPublisher` over Redis Streams (WP-56b), one stream per `partition_key`, and `PublisherConformance` holds it and the recording double to one contract. [FLOWX1024](diagnostics/FLOWX1024.md) survives, narrowed to an `Ephemeral` flow and to a contract no serialiser context declares |
 | C5 | OpenTelemetry is the only telemetry API | Technical | No proprietary metrics interface |
 | C6 | Apache-2.0, no copyleft dependencies | Legal | Vets every transitive dependency ([ADR-0012](adr/ADR-0012-apache-2-license.md)) |
 | C7 | Public contracts follow SemVer with a 2-minor deprecation window | Organisational | Breaking changes are batched into majors |
@@ -750,8 +750,10 @@ reaches the plan, the manifest *and* the outbox: a `Durable` flow's emitted even
 by the step's own commit and drained by `PostgresOutboxPublisher`, so a completeness check
 over `events` would not pass vacuously. [`FLOWX1024`](diagnostics/FLOWX1024.md) is no longer
 raised on every `.Emit` — only on the two that still cannot be staged, an `Ephemeral` flow
-and a contract outside every source-generated `JsonSerializerContext`. What remains unproved
-is the network: `IEventPublisher` has no implementation but a recording test double.
+and a contract outside every source-generated `JsonSerializerContext`. *This paragraph then
+said the network remained unproved because `IEventPublisher` had no implementation but a
+recording test double; that expired at WP-56b, when `RedisStreamEventPublisher` shipped and
+`PublisherConformance` began holding both to one contract.*
 
 *The stale wording was duplicated verbatim in the `ManifestIsComplete` XML doc comment in
 `tests/FlowX.Architecture.Tests/PublishedContractTests.cs`. That comment carries the same

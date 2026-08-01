@@ -1,28 +1,39 @@
-namespace FlowX.Postgres.Tests;
+namespace FlowX.Conformance.InMemory;
 
 /// <summary>
-/// The broker these tests publish to.
+/// The reference <see cref="IEventPublisher"/>: it records what it was handed and gives it back.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>There is no broker plugin, and this is not pretending to be one.</strong>
-/// <c>plugins/FlowX.Http</c> is the only transport in the repository, and
-/// <c>docs/17-Plugin-System.md §2</c> lists Kafka, RabbitMQ, Service Bus, Event Hubs and SNS
-/// as first-party <see cref="IEventPublisher"/> implementations that do not exist. What can
-/// be proved without one is everything on the outbox side of the seam: that an event reaches
-/// a publisher in staging order, that a crash before the mark republishes rather than loses,
-/// and that two publishers over one table never hand the same event over twice. What cannot
-/// be proved here is the network: acknowledgement semantics, broker-side partitioning, and
-/// what a real client does with a batch it half accepted.
+/// <strong>It lives here for the same reason <see cref="InMemoryFlowJournal"/> does.</strong> It
+/// was a private double inside <c>tests/FlowX.Postgres.Tests</c>, written when the outbox had a
+/// publisher seam and nothing behind it, and
+/// <see href="../../../docs/adr/ADR-0018-outbox-publication-and-ordering.md">ADR-0018</see>
+/// records exactly that as the reason <c>PublisherConformance</c> was not written: "the only
+/// <see cref="IEventPublisher"/> in the repository is a recording test double … writing it
+/// against one test double would have been a suite that encodes its only implementation". Now
+/// that a second implementation exists this is one of two things the suite holds, which makes it
+/// a reference implementation rather than a fixture — and a reference implementation belongs
+/// beside the other three, where an author reads it when a conformance failure message is not
+/// enough.
+/// </para>
+/// <para>
+/// <strong>What it can prove, and what it cannot.</strong> Everything on the outbox side of the
+/// seam: that an event reaches a publisher in staging order, that a crash before the mark
+/// republishes rather than loses, and that two publishers over one table never hand the same
+/// event over twice. What it cannot prove is the network — acknowledgement semantics,
+/// broker-side partitioning, and what a real client does with a batch it half accepted. That is
+/// <c>RedisStreamEventPublisher</c>'s half, and holding both to one suite is the only way either
+/// is checked against the contract rather than against itself.
 /// </para>
 /// <para>
 /// It records rather than asserts. A double publish has to be visible as two entries in a
-/// list, because "was this delivered twice" is the question every one of these tests is
-/// really asking and a publisher that threw on the second delivery would answer it by
-/// changing the outcome.
+/// list, because "was this delivered twice" is the question the outbox's tests are really
+/// asking and a publisher that threw on the second delivery would answer it by changing the
+/// outcome.
 /// </para>
 /// </remarks>
-internal sealed class RecordingEventPublisher : IEventPublisher
+public sealed class RecordingEventPublisher : IEventPublisher
 {
     private readonly List<OutboxRecord> _delivered = [];
     private readonly Lock _gate = new();
@@ -73,6 +84,8 @@ internal sealed class RecordingEventPublisher : IEventPublisher
         IReadOnlyList<OutboxRecord> batch,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(batch);
+
         if (BeforePublish is { } hook)
         {
             await hook(batch, cancellationToken).ConfigureAwait(false);

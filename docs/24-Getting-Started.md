@@ -709,9 +709,12 @@ there is no transaction for the event to be part of, and the diagnostic's messag
 `AnEphemeralEmitIsReportedAndSaysWhichProfileWouldPublishIt`, and the silent case,
 `AStageableEmitRaisesNothing`.
 
-> **One honest residue.** "Published" currently means "handed to an `IEventPublisher`".
-> `PostgresOutboxPublisher` drains the outbox at-least-once in `partition_key` order, and
-> **this repository ships no broker plugin behind that interface** — see
+> **One honest residue, now smaller.** *This box said "published" means "handed to an
+> `IEventPublisher`" because the repository shipped no broker plugin. It ships one:*
+> `AddFlowXRedisStreams` registers `RedisStreamEventPublisher`, which appends each event to
+> its `partition_key`'s own Redis stream, and `PublisherConformance` holds it and the
+> recording double to one contract. What is left is the list of brokers: there is no Kafka,
+> RabbitMQ, Service Bus, Event Hubs or SNS publisher — see
 > [§12 below](#12-what-flowx-cannot-do-yet) and
 > [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md).
 

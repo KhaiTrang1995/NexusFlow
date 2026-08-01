@@ -221,15 +221,33 @@ diagram.
 
 ## What the sample does not do yet
 
-**`.Emit<OrderPlaced>()` publishes nothing.** The step is compiled into the plan and
-recorded in the manifest, so a consumer reading the manifest will expect the event —
-and nothing delivers it. *The reason narrowed at WP-56: transactional outbox
-publication **is** implemented — `plugins/FlowX.Postgres` stages the event in the
-step's transaction and `PostgresOutboxPublisher` drains it at-least-once — and the
-engine still stages nothing into `StepCommit.Outbox` for an `Emit` step, so there is
-no row for a publisher to find.* The compiler says so as **FLOWX1024**, and the sample
-suppresses it with an explicit `FLOWX-DEBT` marker rather than hiding it. See
+**`.Emit<OrderPlaced>()` publishes nothing, and the reason is now entirely this sample's
+profile.** The step is compiled into the plan and recorded in the manifest, so a consumer
+reading the manifest will expect the event — and nothing delivers it. *This paragraph said
+at WP-56 that "the engine still stages nothing into `StepCommit.Outbox` for an `Emit` step".
+That expired immediately afterwards, and the rest of the chain expired at WP-56b.* Every
+other link is built and exercised: the generated `DescribeStep` builds the event body, the
+engine stages it in the step's own transaction, `PostgresOutboxPublisher` drains it
+at-least-once in per-`partition_key` order, and `RedisStreamEventPublisher` puts it on a
+broker. What is missing here is the **first** link — an `Ephemeral` flow keeps no
+transaction to stage into. The compiler says so as **FLOWX1024**, and the sample suppresses
+it with an explicit `FLOWX-DEBT` marker rather than hiding it. See
 [docs/diagnostics/FLOWX1024.md](../../docs/diagnostics/FLOWX1024.md).
+
+**This sample cannot demonstrate the broker plugin, and the obstacle is measured rather
+than assumed.** [DEBT-0001](../../docs/DEBT.md) names one resolution — declare
+`Profile = Durable` here — and that resolution is blocked by this sample's *other* job.
+`FlowHost` runs a `Durable` flow on the ephemeral path only when no journal is registered,
+and the engine then refuses it with `flow.durability_not_configured`
+(`src/FlowX.Runtime/FlowInvocation.cs`). CI's NativeAOT step publishes this project and
+**POSTs a real order to the native binary with no database attached**
+(`.github/workflows/ci.yml`, *"The native binary serves a request"*), so a `Durable`
+`PlaceOrderFlow` would turn that step red on the first request. Wiring a journal into this
+project instead would put Npgsql inside the repository's only AOT-published assembly, which
+is the one thing this sample exists to keep clean. The durable, journal-backed reference
+application is [`samples/banking`](../banking); this one stays the ephemeral, dependency-free,
+AOT one. DEBT-0001's second resolution — *"deciding **not** to make the sample durable is
+also a resolution"* — is the one this paragraph takes.
 
 **Service registration is written by hand, and stays that way.** The endpoint is
 generated — `app.MapFlowX()` is the whole of it, from the `[HttpTrigger]` on the flow —

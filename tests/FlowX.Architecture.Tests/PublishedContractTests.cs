@@ -178,9 +178,12 @@ public sealed partial class PublishedContractTests
     /// <c>PostgresOutboxPublisher</c> drains it, so a completeness check over <c>events</c>
     /// would not pass vacuously. <c>FLOWX1024</c> is raised only where the event still cannot
     /// be staged — an <c>Ephemeral</c> flow, or a contract outside every source-generated
-    /// <c>JsonSerializerContext</c>. What is unproved is the network: no broker plugin
-    /// implements <c>IEventPublisher</c>. docs/05-Architecture.md §12 carries the same
-    /// wording; this comment was the verbatim duplicate it named.
+    /// <c>JsonSerializerContext</c>. <em>This comment then said the network was unproved
+    /// because no broker plugin implemented <c>IEventPublisher</c>; that expired at WP-56b,
+    /// when <c>RedisStreamEventPublisher</c> shipped and <c>PublisherConformance</c> began
+    /// holding it and the recording double to one contract.</em> docs/05-Architecture.md §12
+    /// carries the same wording; this comment was the verbatim duplicate it named, and both
+    /// were corrected together.
     /// </para>
     /// </remarks>
     [Fact]
