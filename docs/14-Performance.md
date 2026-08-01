@@ -266,7 +266,12 @@ tests/FlowX.Benchmarks/
 **Five of the eight files this listing used to show do not exist**, and neither
 do the budgets they were supposed to measure: there is no
 `PolicyChainBenchmarks` (B4) because no policy executes at run time, no
-`TelemetryBenchmarks` (B5, B6) because nothing emits telemetry, no
+`TelemetryBenchmarks` (B5, B6) — *this said "because nothing emits telemetry", and that
+expired at WP-90.* Telemetry emits, so B5 now has a subject and no harness. **B6 does not
+need one**: it is a hard zero, and `TelemetryCostTests` asserts its 0 B half as a unit test
+the way `EngineAllocationTests` asserts B2 — allocation counts are deterministic and
+nanoseconds on a shared runner are not, so the nanosecond half is left unmeasured rather
+than measured badly — no
 `JournalBenchmarks` (B7, B8) — *this said "because there is no journal", and then that
 the runtime committed a step boundary but no store persisted it. Neither reason survives:
 WP-52 made the runtime commit one and WP-53 gave it PostgreSQL to commit into — the

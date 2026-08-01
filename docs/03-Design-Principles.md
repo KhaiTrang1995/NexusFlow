@@ -242,11 +242,16 @@ golden signals per capability, deterministic replay from the journal.
 widest gap between what it claims and what exists, and both halves were audited
 in P1:**
 
-- **Telemetry.** `TelemetryConformanceTest` does not exist, and neither does the
-  thing it would assert: there is no `ActivitySource`, no `Meter`, no `ILogger`
-  and no exporter anywhere under `src/`. Not one of the span attributes or
-  metric names frozen in [12-Observability](12-Observability.md) is emitted by
-  any code path. "Traces, metrics and structured logs exist without user
+- **Telemetry.** *This read: "`TelemetryConformanceTest` does not exist, and neither does the
+  thing it would assert: there is no `ActivitySource`, no `Meter`, no `ILogger` and no exporter
+  anywhere under `src/`. Not one of the span attributes or metric names frozen in
+  12-Observability is emitted by any code path." Most of it expired at WP-90.* The gate exists
+  (`tests/FlowX.Hosting.Tests/TelemetryConformanceTests.cs`), eleven of the thirteen metrics and
+  ten of the thirteen span attributes are emitted, and
+  [12 §2](12-Observability.md#2-traces) and [§3](12-Observability.md#3-metrics) say per row which
+  are not and why. **There is still no `ILogger` and no exporter shipped in-box** — an exporter
+  is an application's choice of SDK, and the logs are
+  [12 §4](12-Observability.md#4-logs)'s unresolved dependency question. "Traces, metrics and structured logs exist without user
   instrumentation" is true of the *design* — the compiled graph is what makes it
   derivable — and is not true of the runtime. **P5.**
 - **Replay.** *This line has been wrong three times and every correction is kept.* It
@@ -355,12 +360,17 @@ descriptions of the code.
   `.WithPolicy(...)` composes at compile time and reaches the manifest; there is
   no policy engine in `FlowX.Runtime` at all, so there is no magnitude to
   configure. **P4** ([10-Policy-Framework](10-Policy-Framework.md)).
-- **Telemetry is not listener-gated, because there are no listeners and nothing
-  to gate.** Nothing under `src/` constructs an `ActivitySource`, a `Meter` or an
-  `ILogger`. "Zero cost when unobserved" is budget **B6** in
+- **Telemetry is listener-gated, and the gate is asserted.** *This entry said there were
+  "no listeners and nothing to gate", because nothing under `src/` constructed an
+  `ActivitySource`, a `Meter` or an `ILogger`. Two thirds of that expired at WP-90:*
+  `FlowX.Abstractions` carries one `ActivitySource` and one `Meter`, both named `FlowX`, and
+  the flow boundary, the step boundary, the journal, the lease, the outbox and both sweeps
+  emit through them. "Zero cost when unobserved" is budget **B6** in
   [14 §1.1](14-Performance.md#11-platform-budgets-overhead-attributable-to-flowx-excluding-user-code-and-io),
-  and it has no harness — the workflow job that used to name B6 asserts only B2.
-  **P5**, as P10 above already states.
+  and its 0 B half is now asserted by `TelemetryCostTests` as a unit test rather than by a
+  harness; the 0 ns half is still unmeasured, and so is B5. **The `ILogger` third has not
+  expired** — there are no logs, and [12 §4](12-Observability.md#4-logs) records what that is
+  blocked on. **P5**, as P10 above already states.
 - **`Durable` is not journaled.** The profile is a declaration the compiler
   validates and the manifest records; `FlowX.Runtime` never reads it, so a
   `Durable` flow executes the `Ephemeral` path with no checkpoint and no resume.
