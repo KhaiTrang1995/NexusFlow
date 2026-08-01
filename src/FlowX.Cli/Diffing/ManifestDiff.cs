@@ -201,6 +201,7 @@ public static class ManifestDiff
         CompareSensitive(findings, subject + " input", before.Input, after.Input);
         CompareSensitive(findings, subject + " output", before.Output, after.Output);
         CompareTriggers(findings, subject, before, after);
+        CompareWaits(findings, subject, before, after);
 
         // Neutral. A deadline is an operational budget, tuned against production latency,
         // not a promise in the contract — so shortening one must not fail a build. It is
@@ -456,6 +457,131 @@ public static class ManifestDiff
                 Summary = $"time zone changed: {Show(before.TimeZone)} -> {Show(after.TimeZone)}",
                 Consequence = "The schedule fires at a different wall-clock time, and its DST behaviour changes.",
             });
+        }
+    }
+
+    /// <summary>
+    /// Classifies a change to the signals a flow waits for, and to how long it waits.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the one place a flow's <c>steps</c> are compared, and the exception is
+    /// narrow on purpose</strong>
+    /// (<a href="../../../docs/adr/ADR-0021-manifest-publishes-the-wait.md">ADR-0021 §2.4</a>).
+    /// Every other step describes what the flow <em>does</em>, and reordering or replacing one
+    /// is the refactoring this platform exists to make safe. A wait describes what the flow
+    /// <em>requires from outside</em>: it is an inbound address, the same kind of fact as a
+    /// trigger, and it is compared for the same reason. Moving a wait behind a condition
+    /// still reports nothing, because the set of identities the flow can be continued by has
+    /// not changed.
+    /// </para>
+    /// <para>
+    /// <strong>Removal and addition are separate codes because they break different
+    /// parties.</strong> A signal that disappears breaks every <em>sender</em>, and does so in
+    /// total silence: <c>FlowHost.SignalAsync</c> treats a signal for an instance that is not
+    /// waiting for it as inert rather than an error, so deliveries keep being accepted, keep
+    /// doing nothing, and the instances wait until their deadline. A signal that appears
+    /// breaks the <em>caller</em>: a flow that ran to completion on the request that started
+    /// it now stops in the middle, and over HTTP the answer changes from the flow's output to
+    /// a <c>202</c> the baseline never mentioned.
+    /// </para>
+    /// <para>
+    /// <strong>The window is Neutral, for the reason a deadline is.</strong> It is an
+    /// operational budget tuned against how long real people take, not a term of the contract,
+    /// and nothing arms it at run time in any case. It gets a line so a reviewer sees it and
+    /// no exit code, because a gate that fails a build on a tuning change is a gate people
+    /// route around.
+    /// </para>
+    /// </remarks>
+    private static void CompareWaits(
+        List<DiffFinding> findings, string subject, ManifestFlow before, ManifestFlow after)
+    {
+        var waited = Awaited(before.Steps);
+        var waits = Awaited(after.Steps);
+
+        foreach (var signal in NotIn(waited.Keys, waits.Keys))
+        {
+            findings.Add(new DiffFinding
+            {
+                Code = "FLOWX-DIFF-021",
+                Severity = DiffSeverity.Breaking,
+                Subject = subject,
+                Summary = $"no longer waits for signal: {signal}",
+                Consequence =
+                    "Senders addressing this signal are not refused — a delivery to an instance " +
+                    "that is not waiting for it is inert — so nothing fails, nothing is logged, " +
+                    "and any instance expecting it waits until its deadline.",
+            });
+        }
+
+        foreach (var signal in NotIn(waits.Keys, waited.Keys))
+        {
+            findings.Add(new DiffFinding
+            {
+                Code = "FLOWX-DIFF-022",
+                Severity = DiffSeverity.Breaking,
+                Subject = subject,
+                Summary = $"now waits for signal: {signal}",
+                Consequence =
+                    "The flow no longer finishes on the request that starts it. Callers receive " +
+                    "an instance to continue rather than a result, and the work stops until " +
+                    "somebody delivers a signal the baseline never published.",
+            });
+        }
+
+        foreach (var signal in Common(waited, waits).Where(s => Changed(waited[s].Timeout, waits[s].Timeout)))
+        {
+            findings.Add(new DiffFinding
+            {
+                Code = "FLOWX-DIFF-206",
+                Severity = DiffSeverity.Neutral,
+                Subject = subject + " signal " + signal,
+                Summary = $"declared wait changed: {Show(waited[signal].Timeout)} -> {Show(waits[signal].Timeout)}",
+                Consequence =
+                    "The window an instance is expected to wait in moved. Nothing arms it today, " +
+                    "so this changes what the flow declares rather than what it does.",
+            });
+        }
+    }
+
+    /// <summary>Indexes a flow's suspension points by the identity each waits for.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The first wait on an identity wins, which is the opposite of
+    /// <see cref="Addressed"/>.</strong> Two triggers on one address are the same endpoint
+    /// declared twice and neither is privileged, so the last one is kept there. Two waits on
+    /// one identity are strictly ordered by the journal: <c>FlowHost.SignalAsync</c> resolves
+    /// the open wait as the first <c>AwaitSignal</c> with no committed row, so the first is
+    /// the one a delivery actually satisfies and the one whose window a caller experiences.
+    /// </para>
+    /// <para>
+    /// Nested blocks are walked, because a wait inside a <c>When</c> is still a wait the flow
+    /// can stop at — and a consumer that has to deliver to it does not care which branch put
+    /// it there.
+    /// </para>
+    /// </remarks>
+    private static Dictionary<string, ManifestStep> Awaited(IEnumerable<ManifestStep> steps)
+    {
+        var indexed = new Dictionary<string, ManifestStep>(StringComparer.Ordinal);
+
+        Walk(steps);
+
+        return indexed;
+
+        void Walk(IEnumerable<ManifestStep> block)
+        {
+            foreach (var step in block)
+            {
+                if (step.Signal is { Length: > 0 } signal)
+                {
+                    _ = indexed.TryAdd(signal, step);
+                }
+
+                foreach (var nested in step.Branches)
+                {
+                    Walk(nested);
+                }
+            }
         }
     }
 
