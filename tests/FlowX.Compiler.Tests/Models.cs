@@ -262,7 +262,11 @@ internal static class Models
     /// manifest is asked about — a wait between two capability steps, with the declared
     /// duration already folded to ISO-8601 by the analysis layer.
     /// </remarks>
-    public static FlowModel Waiting() => new(
+    /// <param name="timeout">
+    /// The folded wait, or <c>null</c> for a declaration the compiler could not evaluate —
+    /// which is the case <c>ManifestWriter</c> must omit rather than guess at.
+    /// </param>
+    public static FlowModel Waiting(string? timeout = "P7D") => new(
         flowId: "offer.accept",
         version: "1.0.0",
         profile: "Durable",
@@ -278,7 +282,8 @@ internal static class Models
                 1,
                 "offer.countersigned",
                 timeoutExpression: "Waits.Countersignature",
-                contractTypeName: "Sample.Contracts.OfferCountersigned"),
+                contractTypeName: "Sample.Contracts.OfferCountersigned",
+                timeout: timeout),
             StepModel.Capability(
                 2, "Sample.Capabilities.StartOnboarding", "onboarding.start", "1.0.0", isIdempotent: true),
         ]);

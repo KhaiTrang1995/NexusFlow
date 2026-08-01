@@ -69,6 +69,27 @@ public sealed class SuspensionManifestTests
         }
     }
 
+    /// <summary>
+    /// A declaration the compiler could not evaluate publishes no <c>timeout</c> at all.
+    /// </summary>
+    /// <remarks>
+    /// Not an empty string and not the expression's source text. The first would read as a
+    /// wait of no length; the second would publish a symbol into a document whose readers
+    /// have no symbols.
+    /// </remarks>
+    [Fact]
+    public void AWaitWhoseDurationCouldNotBeFoldedPublishesNoTimeout()
+    {
+        var wait = Wait(
+            ManifestWriter.Write("Sample.App", "1.0.0", [Models.Waiting(timeout: null)]), out var document);
+
+        using (document)
+        {
+            wait.TryGetProperty("timeout", out _).ShouldBeFalse();
+            wait.GetProperty("signal").GetString().ShouldBe("offer.countersigned");
+        }
+    }
+
     /// <summary>Neither field appears on a step that is not a wait.</summary>
     [Fact]
     public void NoOtherKindOfStepCarriesEitherField()
@@ -95,4 +116,23 @@ public sealed class SuspensionManifestTests
     [Fact]
     public void AFlowThatWaitsValidatesAgainstTheCommittedSchema()
         => ManifestSchemaTests.Validate(ManifestWriter.Write("Sample.App", "1.0.0", [Models.Waiting()]));
+
+    [Fact]
+    public void AFlowWhoseWaitCouldNotBeFoldedAlsoValidates()
+        => ManifestSchemaTests.Validate(
+            ManifestWriter.Write("Sample.App", "1.0.0", [Models.Waiting(timeout: null)]));
+
+    /// <summary>
+    /// The model refuses a duration that is not ISO-8601, at the point it is built.
+    /// </summary>
+    /// <remarks>
+    /// The schema's <c>duration</c> pattern would catch it eventually, but only for whoever
+    /// runs the schema tests — and the field is written by a generator that no application
+    /// build validates. Refusing here means a folder that produced <c>7.00:00:00</c> fails
+    /// in the compiler's own tests rather than in a consumer's parser.
+    /// </remarks>
+    [Fact]
+    public void TheModelRefusesADurationThatIsNotIso8601()
+        => Should.Throw<System.ArgumentException>(() => StepModel.AwaitSignal(
+            0, "offer.countersigned", timeoutExpression: "x", timeout: "7.00:00:00"));
 }

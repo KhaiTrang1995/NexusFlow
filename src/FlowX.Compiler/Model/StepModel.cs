@@ -335,6 +335,29 @@ public sealed record StepModel
     public string? SignalTimeout { get; private init; }
 
     /// <summary>
+    /// The same wait, evaluated to an ISO-8601 duration, or <c>null</c> when it could not be.
+    /// Reaches the manifest as an <c>AwaitSignal</c> step's <c>timeout</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Two fields for one declaration, because two consumers need different things
+    /// from it</strong> (ADR-0021 §2.2). <see cref="SignalTimeout"/> is what the plan carries,
+    /// and it is verbatim because generated C# can evaluate <c>Waits.Countersignature</c>
+    /// itself. This is what the manifest carries, and it cannot be verbatim, because a
+    /// consumer reading JSON has never seen the assembly the symbol lives in — and a
+    /// <c>flowx diff</c> rule over a symbol name would fire on a rename and stay silent on a
+    /// change of value, which is the exact inversion of what the rule is for.
+    /// </para>
+    /// <para>
+    /// <c>null</c> whenever <c>DeclaredDuration</c> could not evaluate the expression, and the
+    /// manifest then omits the field. That is <c>merge</c>'s stance
+    /// (<see cref="MergeKindName"/>): an absent field is a consumer asking, a guessed one is a
+    /// consumer misled.
+    /// </para>
+    /// </remarks>
+    public string? SignalTimeoutIso { get; private init; }
+
+    /// <summary>
     /// Fully-qualified contract of the signal an <see cref="StepKindModel.AwaitSignal"/> step
     /// waits for, or <c>null</c> when it could not be resolved.
     /// </summary>
@@ -774,21 +797,60 @@ public sealed record StepModel
     /// </param>
     /// <param name="contractTypeName">Fully-qualified <c>TSignal</c>, or null when unresolved.</param>
     /// <param name="location"><c>file:line</c> of the call.</param>
+    /// <param name="timeout">
+    /// The same wait as an ISO-8601 duration, for the manifest, or null when the compiler
+    /// could not evaluate the expression. Supplied rather than folded here, because following
+    /// a named constant to its declaration needs a semantic model and this layer has none.
+    /// </param>
+    /// <exception cref="System.ArgumentException">
+    /// <paramref name="timeout"/> is not an ISO-8601 duration the manifest schema accepts.
+    /// </exception>
     public static StepModel AwaitSignal(
         int index,
         string signalType,
         string? timeoutExpression = null,
         string? contractTypeName = null,
-        string? location = null)
+        string? location = null,
+        string? timeout = null)
     {
+        // Refused here rather than left to the schema, because the schema is validated by
+        // this repository's tests and never by an application's build — a folder that started
+        // producing `7.00:00:00` would ship into somebody's manifest and fail in their parser.
+        if (timeout != null && !Iso8601.IsMatch(timeout))
+        {
+            throw new System.ArgumentException(
+                $"'{timeout}' is not an ISO-8601 duration. The manifest's `timeout` field is " +
+                "`#/$defs/duration`, the same shape a flow's deadline uses.",
+                nameof(timeout));
+        }
+
         return new StepModel(index, StepKindModel.AwaitSignal)
         {
             SignalType = signalType,
             SignalTimeout = timeoutExpression,
+            SignalTimeoutIso = timeout,
             SignalContractTypeName = contractTypeName,
             Location = location,
         };
     }
+
+    /// <summary>The manifest schema's <c>duration</c> pattern, copied so the model can hold to it.</summary>
+    /// <remarks>
+    /// Duplicated from <c>schemas/flowx.manifest.schema.json</c>'s <c>#/$defs/duration</c> for
+    /// the reason <c>ManifestWriter.PolicyStages</c> is duplicated from <c>PolicySet</c>: this
+    /// assembly targets netstandard2.0, loads into the compiler process and reads no files.
+    /// Exposed rather than private because the copy has to be pinned to survive, and
+    /// <c>TheModelsDurationPatternIsTheSchemasOwn</c> is what pins it — it reads the committed
+    /// schema and fails if the two ever disagree.
+    /// </remarks>
+    public const string Iso8601DurationPattern =
+        @"^P(?!$)(\d+Y)?(\d+M)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+(\.\d+)?S)?)?$";
+
+    private static readonly System.Text.RegularExpressions.Regex Iso8601 =
+        new System.Text.RegularExpressions.Regex(
+            Iso8601DurationPattern,
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+            System.TimeSpan.FromSeconds(1));
 
     /// <summary>Models a <c>.When(predicate, then)</c> and the <c>.Otherwise(...)</c> that may follow.</summary>
     /// <param name="index">Flat index of the branch itself.</param>
