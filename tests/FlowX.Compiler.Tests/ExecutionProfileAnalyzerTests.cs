@@ -254,10 +254,9 @@ public sealed class ExecutionProfileAnalyzerTests
     /// </para>
     /// <para>
     /// <strong>"The fix's output is clean" was untrue for two phases and is true again.</strong>
-    /// This test runs one analyzer, so it only ever spoke for <c>FLOWX1028</c> — and while
-    /// <c>FLOWX1031</c> was an error on <c>AwaitSignal</c> under every profile, the quick
-    /// action really did land on a different diagnostic. WP-63 made the flow suspend and
-    /// narrowed <c>FLOWX1031</c> off <c>AwaitSignal</c>, so
+    /// This test runs one analyzer, so it only ever spoke for <c>FLOWX1028</c> — and while a
+    /// second rule reported <c>AwaitSignal</c> as an error under every profile, the quick
+    /// action really did land on a different diagnostic. WP-63 made the flow suspend, so
     /// <c>AwaitSignalRequiresDurableCodeFixTests.TheFixLandsOnAFlowThatCompilesAndWaits</c>
     /// now asserts the whole claim rather than the shortfall.
     /// </para>

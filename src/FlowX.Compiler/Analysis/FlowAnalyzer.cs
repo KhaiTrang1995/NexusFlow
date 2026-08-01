@@ -403,17 +403,17 @@ public static class FlowAnalyzer
                     break;
 
                 case "AwaitSignal":
-                    AddSignalStep(link, semanticModel, steps, ref nextIndex);
+                    // `OnTimeout` is the *next link*, not an argument: the DSL spells the pair
+                    // `.AwaitSignal<T>(timeout).OnTimeout(block)`, so the two halves of one
+                    // wait arrive as two siblings — the same shape `When` and `Otherwise`
+                    // have. Consuming both here is what stops the escalation being modelled
+                    // as steps that run unconditionally after the wait.
+                    i += AddSignalStep(
+                        link, NextOnTimeout(links, i), semanticModel, diagnostics, steps, ref nextIndex);
                     break;
 
                 case "Delay":
-                case "OnTimeout":
-                    // FLOWX1031. These two reach the `default:` arm below and are skipped,
-                    // which is the right treatment for a method the generator has not
-                    // learned — and the wrong silence for one the DSL already publishes.
-                    // Naming them here is the whole difference between the two cases: the
-                    // call is still not laid out, and the author is told it is not.
-                    ReportSuspension(link, diagnostics, DiagnosticSeverity.Warning, WhatIsLost(link.MethodName));
+                    AddDelayStep(link, steps, ref nextIndex);
                     break;
 
                 case "Fail":
@@ -571,6 +571,18 @@ public static class FlowAnalyzer
     /// <summary>The <c>.Otherwise(...)</c> immediately following the link at <paramref name="index"/>, if any.</summary>
     private static ChainLink? NextOtherwise(IReadOnlyList<ChainLink> links, int index) =>
         index + 1 < links.Count && links[index + 1].MethodName == "Otherwise"
+            ? links[index + 1]
+            : null;
+
+    /// <summary>The <c>.OnTimeout(...)</c> immediately following the link at <paramref name="index"/>, if any.</summary>
+    /// <remarks>
+    /// Immediately, and not "somewhere after". <c>OnTimeout</c> belongs to
+    /// <c>IAwaitBuilder</c>, which only an <c>AwaitSignal</c> returns, so a call anywhere else
+    /// does not compile — but a flow with two waits in it has two of these, and matching the
+    /// wrong one would attach an escalation to a wait the author did not write it for.
+    /// </remarks>
+    private static ChainLink? NextOnTimeout(IReadOnlyList<ChainLink> links, int index) =>
+        index + 1 < links.Count && links[index + 1].MethodName == "OnTimeout"
             ? links[index + 1]
             : null;
 
@@ -1585,42 +1597,55 @@ public static class FlowAnalyzer
             .Add(EmitReasons.ContractProperty, Display(contract))
             .Add(EmitReasons.NameProperty, contract.Name);
 
-    /// <summary>Models a <c>.AwaitSignal&lt;TSignal&gt;(timeout)</c> call.</summary>
+    /// <summary>
+    /// Models a <c>.AwaitSignal&lt;TSignal&gt;(timeout)</c> and the <c>.OnTimeout(...)</c>
+    /// that may follow it, laying the escalation block out in the flat index space.
+    /// </summary>
+    /// <returns>How many further links were consumed: 1 for an <c>OnTimeout</c>, 0 without.</returns>
     /// <remarks>
-    /// No diagnostic of its own any more, which is the difference WP-63 made. This used to
-    /// raise <c>FLOWX1031</c> as an error, and the reason was never that suspension mattered
-    /// more than a timer: it was the only one of the three constructs that put something into
-    /// the plan, and what it put there was a duration nobody wrote.
+    /// <para>
+    /// <strong>The block is laid out immediately after the wait, and no jump closes it.</strong>
+    /// That is the one layout available: the other path out of a suspension point is "the rest
+    /// of the flow", which has no end for a jump to skip. So the escalation is contiguous, the
+    /// signal path is the index one past it, and the two rejoin there — which is why a
+    /// conditional needs a jump between its blocks and this does not.
+    /// </para>
+    /// <para>
+    /// An <c>.OnTimeout(f =&gt; { })</c> that declares nothing produces no block and no target,
+    /// exactly as an empty <c>.Otherwise</c> produces no jump: a target equal to the next index
+    /// would read as an escalation that runs nothing, and the engine would walk through an
+    /// expired wait into the steps that bind a payload nothing delivered.
+    /// </para>
     /// </remarks>
-    private static void AddSignalStep(
+    private static int AddSignalStep(
         ChainLink link,
+        ChainLink? onTimeout,
         SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
         List<StepModel> steps,
         ref int nextIndex)
     {
         if (link.TypeArguments.Count == 0)
         {
-            return;
+            return onTimeout is null ? 0 : 1;
         }
 
         var symbol = ResolveType(link.TypeArguments[0], semanticModel);
 
         if (symbol is null)
         {
-            return;
+            return onTimeout is null ? 0 : 1;
         }
 
-        // No FLOWX1031 here any more, and this is where that rule lost half its subject.
-        // It reported `AwaitSignal` as an *error* because the step reached the plan carrying
-        // `TimeSpan.FromHours(1)` — the model had no field for the author's duration and
-        // `StepNode.ForAwaitSignal` demands one — so publishing no plan was the only ending
-        // that published nothing untrue. The model carries the duration now and the engine
-        // suspends at the step, so there is neither a fabrication to refuse nor a wait that
-        // does not happen. `Delay` and `OnTimeout` still have neither, and still report.
         var arguments = link.Invocation.ArgumentList.Arguments;
+        var waitIndex = nextIndex++;
+
+        var block = onTimeout is null
+            ? new List<StepModel>()
+            : BuildBlock(FlowChainWalker.WalkBlock(onTimeout, 0), semanticModel, diagnostics, ref nextIndex);
 
         steps.Add(StepModel.AwaitSignal(
-            nextIndex++,
+            waitIndex,
             ToEventIdentity(symbol.Name),
 
             // Copied verbatim, like every other expression the plan carries. A call with no
@@ -1634,53 +1659,34 @@ public static class FlowAnalyzer
             // makes it a journaled contract in the sense FLOWX1006 checks and the sense
             // `DescribeStep` and `RestoreState` have to carry.
             Display(symbol),
-            FormatLocation(link.CallLocation)));
+            FormatLocation(link.CallLocation),
+            block));
+
+        return onTimeout is null ? 0 : 1;
     }
 
-    /// <summary>
-    /// Reports FLOWX1031 against one call, at the severity that call has earned.
-    /// </summary>
+    /// <summary>Models a <c>.Delay(duration)</c> call.</summary>
     /// <remarks>
-    /// One id for three constructs, because they are one fact — this release cannot honour a
-    /// flow that waits — and two ids would give a team two suppressions, two pages and two
-    /// expiry dates for one gap. The severity is chosen per report, which is what
-    /// FLOWX1011 and FLOWX1025 already do; <c>docs/diagnostics/FLOWX1031.md</c> is the
-    /// argument, and the short form is that an omission and a falsification are not the same
-    /// finding.
+    /// One index and no block. This call used to reach the <c>default:</c> arm and be skipped
+    /// entirely — the step after it took the index it would have had, and a flow written to
+    /// wait a day ran straight through. That was the whole subject of a diagnostic, and the
+    /// diagnostic is deleted with the gap rather than kept as a warning nobody can act on.
     /// </remarks>
-    /// <param name="link">The offending call, whose name span the report points at.</param>
-    /// <param name="diagnostics">Collects everything worth reporting.</param>
-    /// <param name="severity">Error for a construct that fabricates, warning for one that is dropped.</param>
-    /// <param name="consequence">What the author loses, in the terms of this construct.</param>
-    private static void ReportSuspension(
-        ChainLink link,
-        List<Diagnostic> diagnostics,
-        DiagnosticSeverity severity,
-        string consequence) =>
-        diagnostics.Add(Diagnostic.Create(
-            FlowXDiagnostics.SuspensionIsNotHonoured,
-            link.CallLocation,
-            severity,
-            additionalLocations: null,
-            properties: null,
-            EnclosingFlowName(link),
-            link.MethodName,
-            consequence));
-
-    /// <summary>What each unhonoured construct costs, said in that construct's own terms.</summary>
-    /// <remarks>
-    /// Three sentences rather than one, because the three failures are not the same failure.
-    /// A message that said "this does not work" for all of them would leave the reader of an
-    /// <c>OnTimeout</c> report with no way to know that the steps inside the block are absent
-    /// from the manifest they are about to publish.
-    /// </remarks>
-    private static string WhatIsLost(string methodName) => methodName switch
+    private static void AddDelayStep(ChainLink link, List<StepModel> steps, ref int nextIndex)
     {
-        "Delay" =>
-            "the call produces no step at all, so the flow continues without waiting",
-        _ =>
-            "the block is discarded, so its steps reach no plan, no dispatcher and no manifest",
-    };
+        var arguments = link.Invocation.ArgumentList.Arguments;
+
+        steps.Add(StepModel.Delay(
+            nextIndex++,
+
+            // Verbatim, for the reason the signal's timeout is: the generator does not
+            // constant-fold, so a wait written as `Waits.Cooling` reaches the plan as that. A
+            // call with no argument does not compile, so the null branch is reachable only
+            // from a half-typed buffer — and the emitter refuses such a model rather than
+            // inventing a duration for it.
+            arguments.Count == 0 ? null : arguments[0].Expression.ToString(),
+            FormatLocation(link.CallLocation)));
+    }
 
     private static void AttachCompensation(
         ChainLink link,

@@ -42,6 +42,14 @@ public enum StepKindModel
     /// else here is a statement about what happens next.
     /// </remarks>
     Fail = 8,
+
+    /// <summary><c>.Delay(duration)</c>.</summary>
+    /// <remarks>
+    /// Appended rather than inserted beside <see cref="AwaitSignal"/>, because the members
+    /// are explicitly numbered and <c>flowx diff</c> compares manifests written by two builds
+    /// of the same source.
+    /// </remarks>
+    Delay = 9,
 }
 
 /// <summary>One branch of a <c>Parallel</c>: a block of steps that runs concurrently with its siblings.</summary>
@@ -318,7 +326,7 @@ public sealed record StepModel
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>This field is what ends the fabrication FLOWX1031 was raised over.</strong>
+    /// <strong>This field is what ended a fabrication.</strong>
     /// <c>StepNode.ForAwaitSignal</c> demands a duration and the model had none, so the
     /// emitter wrote <c>TimeSpan.FromHours(1)</c> for every suspension point whatever the
     /// author declared. Between publishing a value nobody wrote and publishing nothing, the
@@ -346,6 +354,18 @@ public sealed record StepModel
     /// crashed would come back having satisfied the wait and lost what it delivered.
     /// </remarks>
     public string? SignalContractTypeName { get; private init; }
+
+    /// <summary>
+    /// The author's declared wait, copied verbatim from the <c>.Delay</c> call.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="SignalTimeout"/> even though both are a duration a step waits
+    /// for, because they answer different questions — one bounds something else happening, the
+    /// other <em>is</em> what the step does — and one field would make the emitter's two arms
+    /// indistinguishable from each other. The expression, not a folded <c>TimeSpan</c>, for
+    /// the reason every other copied expression here is verbatim.
+    /// </remarks>
+    public string? DelayDuration { get; private init; }
 
     /// <summary>Named policy set applied via <c>.WithPolicy(...)</c>.</summary>
     public string? PolicySetName { get; private init; }
@@ -579,7 +599,7 @@ public sealed record StepModel
     /// </remarks>
     public int NextIndex =>
         Kind is StepKindModel.Condition or StepKindModel.Switch or StepKindModel.Parallel
-            or StepKindModel.ForEach
+            or StepKindModel.ForEach or StepKindModel.AwaitSignal
             ? JoinIndex
             : Index + 1;
 
@@ -774,18 +794,70 @@ public sealed record StepModel
     /// </param>
     /// <param name="contractTypeName">Fully-qualified <c>TSignal</c>, or null when unresolved.</param>
     /// <param name="location"><c>file:line</c> of the call.</param>
+    /// <param name="onTimeout">
+    /// Steps of the <c>.OnTimeout(...)</c> block, already carrying their flat indices, or
+    /// empty when the author declared none.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The block is carried in <see cref="Then"/>, and that is reuse rather than
+    /// overloading.</strong> It is a block laid out contiguously after the node that owns it,
+    /// closed by nothing, whose steps have to appear in <see cref="SelfAndNested"/> so that
+    /// the descriptors, the dispatcher's switch and the manifest's capability list see them —
+    /// which is exactly what a conditional's <c>then</c> block is. A second collection meaning
+    /// the same thing would need every one of those readers to learn about it.
+    /// </para>
+    /// <para>
+    /// <see cref="JoinIndex"/> is derived here rather than passed in, for the reason
+    /// <see cref="Condition"/> derives its three layout numbers: it is a consequence of the
+    /// block, and a caller able to supply one that disagreed with the block it also supplied
+    /// could produce a plan that skips or repeats real steps.
+    /// </para>
+    /// </remarks>
     public static StepModel AwaitSignal(
         int index,
         string signalType,
         string? timeoutExpression = null,
         string? contractTypeName = null,
-        string? location = null)
+        string? location = null,
+        IReadOnlyList<StepModel>? onTimeout = null)
     {
+        var block = onTimeout ?? (IReadOnlyList<StepModel>)System.Array.Empty<StepModel>();
+
         return new StepModel(index, StepKindModel.AwaitSignal)
         {
             SignalType = signalType,
             SignalTimeout = timeoutExpression,
             SignalContractTypeName = contractTypeName,
+            Then = block,
+
+            // One past the block, which is where a delivered signal carries on — and where the
+            // block falls through to, because the two paths rejoin. With no block it is the
+            // ordinary next index, and the emitter writes no target at all: a target equal to
+            // the next index would read as an escalation that runs nothing.
+            JoinIndex = block.Count == 0 ? index + 1 : block[block.Count - 1].NextIndex,
+            Location = location,
+        };
+    }
+
+    /// <summary>Models a <c>.Delay(duration)</c> call.</summary>
+    /// <param name="index">Flat index of the timer.</param>
+    /// <param name="durationExpression">
+    /// The author's declared wait, copied verbatim. Null only from a half-typed buffer — the
+    /// DSL has no <c>Delay</c> overload without a duration — and the emitter refuses such a
+    /// model rather than inventing one for it.
+    /// </param>
+    /// <param name="location"><c>file:line</c> of the call.</param>
+    /// <remarks>
+    /// One index and no block, like a capability. A timer is not a decision, it is a step that
+    /// takes a while — the difference being that the while is spent as a row rather than as a
+    /// process.
+    /// </remarks>
+    public static StepModel Delay(int index, string? durationExpression = null, string? location = null)
+    {
+        return new StepModel(index, StepKindModel.Delay)
+        {
+            DelayDuration = durationExpression,
             Location = location,
         };
     }

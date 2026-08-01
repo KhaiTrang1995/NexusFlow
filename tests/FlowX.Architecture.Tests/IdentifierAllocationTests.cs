@@ -219,7 +219,7 @@ public sealed class IdentifierAllocationTests
     /// </summary>
     /// <remarks>
     /// This is the rule that catches the <c>FLOWX1028</c> shape once the two branches meet.
-    /// Two authors reading "the next is <c>FLOWX1031</c>" both take it and both advance the
+    /// Two authors reading "the next is <c>FLOWX1034</c>" both take it and both advance the
     /// pointer; the merged tree then holds two claims on one id and a pointer that is stale
     /// against at least one of them. It is also the only rule here that fails on a claim
     /// made <em>correctly but not written down</em> — an id raised without moving the

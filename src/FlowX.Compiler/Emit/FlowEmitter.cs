@@ -1280,12 +1280,31 @@ public static class FlowEmitter
                     writer.Line("        " + SubFlowNodeExpression(step) + ",");
                     break;
 
+                case StepKindModel.AwaitSignal:
+                    // `await · escalation…`, and no jump closes the block: the escalation is
+                    // the only one of the two paths that can be contiguous, because the other
+                    // is the rest of the flow. The signal path is the target on the node, one
+                    // past the block, and the block falls through to the same index — so the
+                    // two rejoin without a node spent saying so.
+                    writer.Line("        " + StepNodeExpression(step) + ",");
+                    EmitStepNodes(writer, step.Then);
+                    break;
+
                 default:
                     writer.Line("        " + StepNodeExpression(step) + ",");
                     break;
             }
         }
     }
+
+    /// <summary>The one thing this generator says when a wait reaches it with no duration.</summary>
+    /// <remarks>
+    /// One sentence for both kinds because it is one invariant, and it is written once so the
+    /// two arms cannot come to say different things about the same rule.
+    /// </remarks>
+    private static string NoDuration(string what) =>
+        what + " reached the emitter with no duration on it, and the only value this " +
+        "generator may write there is the duration the author declared.";
 
     private static string SwitchNodeExpression(StepModel step)
     {
@@ -1356,7 +1375,7 @@ public static class FlowEmitter
                 // This arm used to write the author's signal and a hard-coded one-hour
                 // timeout, whatever duration they declared — so a flow written to wait seven
                 // days published a plan saying one hour. The model had no field to carry the
-                // author's, which is why FLOWX1031 refused the whole flow rather than let
+                // author's, which is why the generator refused the whole flow rather than let
                 // the constant through.
                 //
                 // The refusal is still here, and it is still the same invariant: this
@@ -1366,13 +1385,28 @@ public static class FlowEmitter
                 // a timeout, so an empty model means a half-typed buffer — and refusing it
                 // keeps the choice in front of the next person "carry the author's duration"
                 // rather than "put a constant back".
+                //
+                // The target is written only when the author declared an escalation. Writing
+                // one equal to the next index instead would be a node claiming a block that
+                // is not there — and the engine reads its absence as "there is nowhere for
+                // this timeout to go", which is a different ending from "go to the step after
+                // the wait".
                 return step.SignalTimeout is { Length: > 0 } timeout
                     ? "StepNode.ForAwaitSignal(" + step.Index + ", " + Quote(step.SignalType!) +
-                      ", " + timeout + ")"
+                      ", " + timeout +
+                      (step.Then.Count == 0 ? string.Empty : ", signalTarget: " + step.JoinIndex) + ")"
                     : throw new System.InvalidOperationException(
-                        "A suspension point reached the emitter with no timeout on it, and " +
-                        "the only value this generator may write there is the duration the " +
-                        "author declared. See docs/diagnostics/FLOWX1031.md.");
+                        NoDuration("A suspension point"));
+
+            case StepKindModel.Delay:
+                // The same invariant, stated for the construct that is nothing but a
+                // duration. `Delay(TimeSpan duration)` has no overload without one, so this
+                // throw is unreachable from source a developer can write — and it is here
+                // rather than absent so that a change which loses the expression on the way
+                // to the emitter fails loudly instead of producing a wait nobody asked for.
+                return step.DelayDuration is { Length: > 0 } duration
+                    ? "StepNode.ForDelay(" + step.Index + ", " + duration + ")"
+                    : throw new System.InvalidOperationException(NoDuration("A timer"));
 
             case StepKindModel.Fail:
                 // No payload. The error is in `Failures` above, which is where a business
@@ -1868,8 +1902,11 @@ public static class FlowEmitter
             }
             else
             {
-                // Emit and AwaitSignal have no capability to call; the engine and the
-                // event plugin handle them. Returning success keeps the switch total.
+                // Emit, AwaitSignal and Delay have no capability to call; the engine and
+                // the event plugin handle them. Returning success keeps the switch total —
+                // and for the two that wait, "success" is what the engine dispatches only
+                // once the wait is over, so the row that follows records a wait that
+                // happened rather than one that was skipped.
                 writer.Line("return StepOutcome.Success;");
             }
 

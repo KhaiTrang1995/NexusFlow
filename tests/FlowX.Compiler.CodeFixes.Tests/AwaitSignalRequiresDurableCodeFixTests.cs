@@ -69,12 +69,14 @@ public sealed class AwaitSignalRequiresDurableCodeFixTests
     /// <para>
     /// <strong>This assertion used to be its own inverse, and the inversion is the whole
     /// point of WP-63.</strong> It read
-    /// <c>TheFixTradesFLOWX1017ForFLOWX1031BecauseDurableDoesNotSuspendEither</c>: this quick
-    /// action cleared one error and raised another, because <c>FLOWX1031</c> was an error on
-    /// <c>AwaitSignal</c> under every profile including <c>Durable</c> — nothing implemented
-    /// suspension, the step completed immediately, and the plan it reached carried a one-hour
-    /// timeout whatever the author declared. <c>ExecutionProfileAnalyzerTests</c> calls a fix
-    /// whose result is a different diagnostic a broken fix, and this one was.
+    /// <c>TheFixTradesFLOWX1017ForAnotherErrorBecauseDurableDoesNotSuspendEither</c>: this
+    /// quick action cleared one error and raised a second, because a suspension construct the
+    /// compiler could not honour was reported under every profile including <c>Durable</c> —
+    /// nothing implemented suspension, the step completed immediately, and the plan it reached
+    /// carried a one-hour timeout whatever the author declared.
+    /// <c>ExecutionProfileAnalyzerTests</c> calls a fix whose result is a different diagnostic
+    /// a broken fix, and this one was. That rule is now deleted along with the gap it
+    /// described.
     /// </para>
     /// <para>
     /// <strong>The fix was never broken; its premise was.</strong> The provider's own remarks
@@ -95,11 +97,6 @@ public sealed class AwaitSignalRequiresDurableCodeFixTests
     public void TheFixLandsOnAFlowThatCompilesAndWaits()
     {
         var fixedProject = ApplyFix(Ephemeral());
-
-        CodeFixHarness.DiagnosticIds(fixedProject).ShouldNotContain(
-            "FLOWX1031",
-            "the profile the fix writes is the one the suspension point needs, and the " +
-            "suspension point is honoured under it.");
 
         CodeFixHarness.DiagnosticIds(fixedProject).Distinct().ShouldBe(
             ["FLOWX1006"],
