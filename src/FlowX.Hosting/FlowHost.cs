@@ -1,4 +1,5 @@
 using FlowX.Runtime;
+using System.Security.Claims;
 
 namespace FlowX.Hosting;
 
@@ -122,7 +123,7 @@ public sealed class FlowHost
                 return ephemeral;
             }
 
-            var opened = await OpenAsync(plan, dispatcher, invocation, input: null, ct).ConfigureAwait(false);
+            var opened = await OpenAsync(plan, dispatcher, invocation, input: null, suppliedId: null, ct).ConfigureAwait(false);
 
             if (opened.IsFailure)
             {
@@ -161,12 +162,75 @@ public sealed class FlowHost
     }
 
     /// <summary>Runs a flow with an input, unless the host is shutting down.</summary>
-    public async ValueTask<FlowExecutionResult> RunAsync<TIn>(
+    public ValueTask<FlowExecutionResult> RunAsync<TIn>(
         ExecutionPlan plan,
         IStepDispatcher dispatcher,
         FlowInvocation invocation,
         TIn input,
         CancellationToken ct = default)
+        where TIn : notnull =>
+        RunAsync(plan, dispatcher, invocation, input, instanceId: null, ct);
+
+    /// <summary>
+    /// Runs a flow with an input under an instance id the caller derived, so that a second
+    /// delivery of the same event is refused rather than executed.
+    /// </summary>
+    /// <param name="plan">The compiled flow.</param>
+    /// <param name="dispatcher">Invokes the capability behind each step index.</param>
+    /// <param name="invocation">Correlation, tenant and the caller's remaining budget.</param>
+    /// <param name="input">The flow's input.</param>
+    /// <param name="instanceId">
+    /// The id this delivery names. Derived from something the sender and every receiver agree
+    /// on — for a schedule, the occurrence
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>)
+    /// — never minted here.
+    /// </param>
+    /// <param name="ct">The caller's cancellation token.</param>
+    /// <returns>
+    /// How the flow ended, or the stores' refusal:
+    /// <see cref="DurabilityErrors.LeaseHeld"/> while another node is running this same
+    /// delivery, and <see cref="DurabilityErrors.InstanceExists"/> once one has.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Not a second way into a flow.</strong> This is
+    /// <see cref="RunAsync{TIn}(ExecutionPlan, IStepDispatcher, FlowInvocation, TIn, CancellationToken)"/>
+    /// with the one line that mints an id replaced by the caller's, and both reach the same
+    /// <c>FlowEngine.ExecuteAsync</c> through the same <c>OpenAsync</c>. <c>OpenAsync</c>'s own
+    /// remarks have named this path since WP-55 — <em>"a trigger that wants a redelivery to be
+    /// idempotent supplies its own id"</em> — and until now nothing supplied one.
+    /// </para>
+    /// <para>
+    /// <strong>The refusal is the mechanism, so it is not an error.</strong> A caller that
+    /// receives <c>journal.instance_exists</c> has learned that this delivery has already been
+    /// taken, which is the answer it asked for. Treating it as a failure would make an
+    /// at-least-once transport's ordinary case look like an outage.
+    /// </para>
+    /// <para>
+    /// <strong>The flow must be <c>Durable</c>, and this method cannot check that.</strong> An
+    /// <c>Ephemeral</c> plan journals nothing, so there is no primary key to refuse the second
+    /// delivery and the id is inert — the flow simply runs, once per delivery. Whoever
+    /// registers a schedule refuses an ephemeral flow at registration
+    /// (<c>FlowScheduleCatalog.Add</c>), and <c>FLOWX1038</c> refuses one at compile time.
+    /// </para>
+    /// </remarks>
+    public ValueTask<FlowExecutionResult> RunAsync<TIn>(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowInvocation invocation,
+        TIn input,
+        Guid instanceId,
+        CancellationToken ct = default)
+        where TIn : notnull =>
+        RunAsync(plan, dispatcher, invocation, input, (Guid?)instanceId, ct);
+
+    private async ValueTask<FlowExecutionResult> RunAsync<TIn>(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowInvocation invocation,
+        TIn input,
+        Guid? instanceId,
+        CancellationToken ct)
         where TIn : notnull
     {
         ArgumentNullException.ThrowIfNull(plan);
@@ -193,7 +257,8 @@ public sealed class FlowHost
                 return ephemeral;
             }
 
-            var opened = await OpenAsync(plan, dispatcher, invocation, input, ct).ConfigureAwait(false);
+            var opened = await OpenAsync(plan, dispatcher, invocation, input, instanceId, ct)
+                .ConfigureAwait(false);
 
             if (opened.IsFailure)
             {
@@ -277,7 +342,8 @@ public sealed class FlowHost
                 return ephemeral;
             }
 
-            var opened = await OpenAsync(plan, dispatcher, invocation, input, ct).ConfigureAwait(false);
+            var opened = await OpenAsync(plan, dispatcher, invocation, input, suppliedId: null, ct)
+                .ConfigureAwait(false);
 
             if (opened.IsFailure)
             {
@@ -349,7 +415,7 @@ public sealed class FlowHost
         Guid instanceId,
         FlowRegistration registration,
         CancellationToken ct = default) =>
-        ResumeAsync(instanceId, registration, signal: null, ct);
+        ResumeAsync(instanceId, registration, signal: null, principal: null, ct);
 
     /// <summary>
     /// Delivers a signal to an instance that is waiting for one, and runs it on from there.
@@ -387,15 +453,39 @@ public sealed class FlowHost
     /// signals.
     /// </para>
     /// </remarks>
+    /// <param name="principal">
+    /// Who is delivering the signal, resolved from validated claims by whatever transport
+    /// carried it, or <c>null</c> for an anonymous delivery.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The deliverer authorises the steps after the wait, and the original caller
+    /// does not.</strong> A resumed instance's invocation is rebuilt from its journal row,
+    /// and that row carries a correlation id, a tenant and a deadline — no claims. That is
+    /// deliberate and is argued in
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0028-identity-arrives-on-the-invocation.md">ADR-0028</a>:
+    /// persisting a principal would put claims at rest for the life of the instance, and
+    /// would then authorise a payment on Friday with a grant proved on Monday, which the
+    /// grant's issuer has had four days to revoke.
+    /// </para>
+    /// <para>
+    /// So the caller who delivers the countersignature is the caller the remaining steps are
+    /// decided against. Leaving this <c>null</c> resumes anonymously, and a step declaring
+    /// <see cref="Authorization.Authenticated"/> or <see cref="Authorization.Permission"/>
+    /// after the wait is then refused — loudly, as a <see cref="ErrorCategory.Forbidden"/>
+    /// failure, rather than run unauthorised.
+    /// </para>
+    /// </remarks>
     public ValueTask<FlowExecutionResult> SignalAsync(
         Guid instanceId,
         FlowRegistration registration,
         FlowSignal signal,
+        ClaimsPrincipal? principal = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(signal);
 
-        return ResumeAsync(instanceId, registration, signal, ct);
+        return ResumeAsync(instanceId, registration, signal, principal, ct);
     }
 
     /// <inheritdoc cref="ResumeAsync(Guid, FlowRegistration, CancellationToken)" />
@@ -403,6 +493,7 @@ public sealed class FlowHost
         Guid instanceId,
         FlowRegistration registration,
         FlowSignal? signal,
+        ClaimsPrincipal? principal,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(registration);
@@ -454,7 +545,17 @@ public sealed class FlowHost
                     record.CorrelationId,
                     instanceId.ToString(),
                     record.TenantId,
-                    record.DeadlineAt);
+                    record.DeadlineAt,
+
+                    // Whoever is resuming it, and never whoever started it. The row carries no
+                    // claims by design (ADR-0028).
+                    principal,
+
+                    // And when nobody is resuming it — a timer sweep, a recovery scan — this is
+                    // the platform continuing an instance it already admitted rather than a
+                    // caller asking for something, so the stances of the steps after the wait
+                    // are not re-decided against an absence that will never be filled.
+                    IsContinuation: signal is null && principal is null);
 
                 // Opened after the lease and the frontier read, unlike a fresh execution's:
                 // an instance another node got to first is not a flow this node ran, and a
@@ -586,11 +687,13 @@ public sealed class FlowHost
     /// Wins the instance and opens it: acquire, then start, in that order and no other.
     /// </summary>
     /// <remarks>
-    /// The instance id is minted here and it is version 7, so a journal's primary key is
-    /// time-ordered rather than scattered across its index. A trigger that wants a redelivery
-    /// to be idempotent supplies its own id through <c>DurableExecution.BeginAsync</c>; this
-    /// path is for a caller that has none to offer, and minting one per invocation is the
-    /// honest behaviour for that case.
+    /// An id the caller supplied is used unchanged; otherwise one is minted here, and it is
+    /// version 7, so a journal's primary key is time-ordered rather than scattered across its
+    /// index. A trigger that wants a redelivery to be idempotent supplies its own — a schedule
+    /// derives one from the occurrence
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>)
+    /// — and minting one per invocation is the honest behaviour for a caller with none to
+    /// offer.
     /// <para>
     /// The dispatcher is taken as a parameter for one reason: it is the only code that can
     /// name a <c>JsonTypeInfo</c> for the flow's input contract, and therefore the only code
@@ -602,10 +705,11 @@ public sealed class FlowHost
         IStepDispatcher dispatcher,
         FlowInvocation invocation,
         object? input,
+        Guid? suppliedId,
         CancellationToken ct)
     {
         var durability = _durability!;
-        var instanceId = Guid.CreateVersion7();
+        var instanceId = suppliedId ?? Guid.CreateVersion7();
 
         var acquired = await DurableLease
             .AcquireAsync(durability.Leases, instanceId, _options.NodeName, _policy, ct)

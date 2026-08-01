@@ -249,6 +249,29 @@ which [FLOWX1014](../../docs/diagnostics/FLOWX1014.md) would refuse the retry at
 time; and a sanctions *hit* is `Forbidden`, which is not in the retryable set, so the
 one screening answer that must never be asked twice is not.
 
+### And somebody can now tell that it happened
+
+A settled transfer is not evidence that the bank is healthy. A screening provider that
+fails every other call settles every transfer this sample runs, and the only sign that
+compliance has become unreliable is what the retries are costing — which, until
+[ADR-0026](../../docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md), was
+recorded nowhere at all.
+
+`ExecuteTransferFlowTests.TheScreeningRetryIsVisibleToAnOperator` runs the same
+transfer with a meter attached and requires `flowx_retry_attempts_total` to carry one
+measurement, labelled `capability=compliance.screen_sanctions`, `attempt=2` and
+`error_code=compliance.screening_unavailable`. The breaker in front of the same
+provider publishes `flowx_circuit_state` when it opens, and the timeouts on the two
+ledger legs and the settlement write are counted by
+`flowx_policy_invocations_total` whether they fire or not — the second is the
+denominator without which the first is a number with no scale.
+
+**Three of the seven metrics [10 §9](../../docs/10-Policy-Framework.md#9-observing-policies--four-of-seven-metrics-emit)
+specifies are still not emitted, and they are the three belonging to the stages this
+sample suppresses below.** A rate-limit rejection counter would read zero for ever,
+which says "nothing has ever been refused" rather than "nothing refuses", so no
+instrument is created for it.
+
 ### The rule this sample deliberately does not trigger
 
 [FLOWX1033](../../docs/diagnostics/FLOWX1033.md) is FLOWX1032's other half and an

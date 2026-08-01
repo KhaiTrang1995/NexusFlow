@@ -755,6 +755,12 @@ reservation:
             // assertions below statements about the substitution as well as the saga.
             .Substitute("payment.capture", OrderErrors.PaymentDeclined("insufficient funds"))
             .WithInvocation(new FlowInvocation("corr-5", "key-5"))
+
+            // payment.capture declares Authorization.Permission naming payment.write, so a
+            // flow run by nobody is refused at that step and never reaches the substituted
+            // decline this test is about. The caller holds exactly the one permission the
+            // flow needs — not a blanket one — so the stance is still doing its job here.
+            .As(TestPrincipal.Holding("payment.write"))
             .Build();
 ```
 
@@ -764,7 +770,7 @@ reservation:
         run.Compensation.ShouldBe(CompensationOutcome.Succeeded);
 ```
 
-Four things to copy from that:
+Five things to copy from that:
 
 - **The plan and the dispatcher are passed in by name.** There is no `For<TFlow>()`:
   discovering the generated members would need reflection, which the AOT constraint forbids.
@@ -773,6 +779,14 @@ Four things to copy from that:
   not the class name. It survives the capability being renamed or replaced.
 - **The substituted capability is one the happy path would have passed.** If the
   substitution silently failed to apply, the test would go green for the wrong reason.
+- **The flow is run as somebody.** `payment.capture` declares
+  `Authorization = Authorization.Permission, Permission = "payment.write"`, and the engine
+  decides that stance before it dispatches the step — so a host with no principal is refused
+  there and never reaches the decline. `.As(...)` is how a test says who is calling, and the
+  default is anonymous on purpose: a test that forgets gets the same answer a real anonymous
+  caller would. `TestPrincipal.Holding(...)` grants the named permissions and nothing else,
+  which is why there is no `TestPrincipal.Admin` — a caller who satisfied every stance would
+  let a test pass over a permission it never held.
 - **`run.Trace.Executed` and `run.Trace.Compensated`** are what the endpoint test could not
   see: an endpoint returns one status code whether the reservation was released before,
   after, or instead of anything else.

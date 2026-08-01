@@ -69,7 +69,7 @@ verb they have just read elsewhere is worse than finding it listed as unbuilt.
 
 | Verb | Named in | Blocked on |
 |---|---|---|
-| `flowx replay --mode simulate \| resume \| fork` | [12](12-Observability.md), [20](20-Roadmap.md) | **each needs the execution engine**, which is the one thing the CLI may not link. `--mode inspect` is built (§9) and is the only mode that runs nothing; [ADR-0020 §5](adr/ADR-0020-cli-reads-the-journal-as-rows.md#5-what-this-record-does-not-decide) is explicit that its argument does **not** reach these three. They are blocked on a decision, not only on code |
+| `flowx replay --mode simulate \| resume \| fork` | [12](12-Observability.md), [20](20-Roadmap.md) | **each needs the execution engine**, which is the one thing the CLI may not link. `--mode inspect` is built (§9) and is the only mode that runs nothing; [ADR-0020 §5](adr/ADR-0020-cli-reads-the-journal-as-rows.md)#5-what-this-record-does-not-decide) is explicit that its argument does **not** reach these three. They are blocked on a decision, not only on code |
 | `flowx query`, `flowx ai …`, `flowx generate` | [13](13-AI-Native.md), [15](15-Security.md), [19](19-SDK.md) | **P8** |
 | `flowx dev`, `flowx new`, `flowx run`, `flowx docs`, `flowx bench`, `flowx fill` | [19](19-SDK.md) | no template or dev-loop tooling exists. For benchmarks use `scripts/run-benchmarks.sh` |
 | `flowx cancel`, `flowx signal` | [06](06-Execution-Engine.md) | **P2** — there is no durable instance to cancel or signal |

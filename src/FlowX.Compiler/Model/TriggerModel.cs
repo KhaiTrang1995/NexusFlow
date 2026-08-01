@@ -130,6 +130,26 @@ public sealed class TriggerModel : IEquatable<TriggerModel>
     public override int GetHashCode() => SortKey.GetHashCode();
 }
 
+/// <summary>
+/// The part of a <c>[CronTrigger]</c> the manifest deliberately does not publish.
+/// </summary>
+/// <param name="Cron">
+/// The expression, which is <em>not</em> carried for the registration to use — that comes off
+/// the <see cref="TriggerModel"/> the manifest published — but as the key that joins this
+/// declaration back to it. A flow may declare several schedules.
+/// </param>
+/// <param name="MissedFire">The declared <c>MissedFirePolicy</c> member, by name.</param>
+/// <remarks>
+/// Separate from <see cref="TriggerModel"/> because that model is address and admission only,
+/// and a missed-fire policy is neither: it decides what this deployment does about work that is
+/// late, which is a run-time behaviour rather than a promise to a caller
+/// (<a href="../../../docs/adr/ADR-0034-the-manifest-publishes-a-schedules-address.md">ADR-0029</a>).
+/// Folding it onto <see cref="TriggerModel"/> would have put a value in the model whose own
+/// remarks say operational tuning is deliberately absent, one field away from
+/// <c>ManifestWriter</c> writing it.
+/// </remarks>
+public sealed record ScheduleDeclaration(string Cron, string MissedFire);
+
 /// <summary>Every trigger one flow declares, keyed by the flow's business identity.</summary>
 /// <remarks>
 /// <para>
@@ -149,12 +169,20 @@ public sealed class FlowTriggersModel : IEquatable<FlowTriggersModel>
     /// <summary>Creates the trigger set for one flow.</summary>
     /// <param name="flowId">Business identity from <c>[Flow]</c>.</param>
     /// <param name="triggers">The triggers it declares, in any order.</param>
-    public FlowTriggersModel(string flowId, IReadOnlyList<TriggerModel> triggers)
+    /// <param name="schedules">
+    /// The unpublished half of each <c>[CronTrigger]</c>, in declaration order. Empty for a flow
+    /// that declares no schedule, which is most of them.
+    /// </param>
+    public FlowTriggersModel(
+        string flowId,
+        IReadOnlyList<TriggerModel> triggers,
+        IReadOnlyList<ScheduleDeclaration>? schedules = null)
     {
         FlowId = flowId;
         Triggers = triggers
             .OrderBy(t => t.SortKey, StringComparer.Ordinal)
             .ToList();
+        Schedules = schedules ?? Array.Empty<ScheduleDeclaration>();
     }
 
     /// <summary>Business identity of the flow these triggers start.</summary>
@@ -163,12 +191,17 @@ public sealed class FlowTriggersModel : IEquatable<FlowTriggersModel>
     /// <summary>The declared triggers, ordinally sorted.</summary>
     public IReadOnlyList<TriggerModel> Triggers { get; }
 
+    /// <summary>What each <c>[CronTrigger]</c> declares that the manifest does not carry.</summary>
+    public IReadOnlyList<ScheduleDeclaration> Schedules { get; }
+
     /// <inheritdoc />
     public bool Equals(FlowTriggersModel? other) =>
         other is not null
         && string.Equals(FlowId, other.FlowId, StringComparison.Ordinal)
         && Triggers.Count == other.Triggers.Count
-        && Triggers.SequenceEqual(other.Triggers);
+        && Triggers.SequenceEqual(other.Triggers)
+        && Schedules.Count == other.Schedules.Count
+        && Schedules.SequenceEqual(other.Schedules);
 
     /// <inheritdoc />
     public override bool Equals(object? obj) => Equals(obj as FlowTriggersModel);

@@ -211,6 +211,43 @@ public static class FlowXDiagnostics
         "compare when the grant later moves. If no named grant is actually required, the " +
         "honest stance is Authenticated or Internal — both are complete in themselves.");
 
+    /// <summary>FLOWX1037 — a declared stance is one the runtime cannot decide.</summary>
+    /// <remarks>
+    /// <para>
+    /// The third rule of the authorisation chain, and it presupposes the first two passed.
+    /// <c>FLOWX1010</c> asks whether a stance was declared; <c>FLOWX1030</c> asks whether a
+    /// stance that needs a name has one; this asks whether the stance that was declared and
+    /// named is one the engine can reach a decision for. Four of the five are —
+    /// <c>StepAuthorization.Decide</c> settles <c>Public</c>, <c>Authenticated</c>,
+    /// <c>Permission</c> and <c>Internal</c> against the invocation's <c>ClaimsPrincipal</c>.
+    /// </para>
+    /// <para>
+    /// <c>Authorization.Policy</c> is not. It names an ASP.NET Core authorisation policy,
+    /// which only <c>IAuthorizationService</c> can evaluate, and <c>FlowX.Runtime</c> may not
+    /// reference ASP.NET Core — <c>RuntimeIsolationTests</c> is the gate, and it exists so a
+    /// flow behaves identically whichever transport activated it (ADR-0004).
+    /// </para>
+    /// <para>
+    /// <strong>An error, and not <c>FLOWX1032</c>'s warning.</strong> That rule's argument is
+    /// that an error would delete the inventory the fixing phase needs, and that a rate limit
+    /// enforced at the gateway is a correct program. Neither transfers: the declaration is a
+    /// choice among five of which four work, and an authorisation stance that checks nothing
+    /// is the control failing open. ADR-0030 carries it in full.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor AuthorizationStanceNotEnforceable = Create(
+        "FLOWX1037",
+        "Authorisation stance is not enforced by the runtime",
+        "Capability '{0}' declares Authorization.{1}, which the runtime cannot enforce",
+        "Authorization.Policy names an ASP.NET Core authorisation policy, and only " +
+        "IAuthorizationService can evaluate one — which FlowX.Runtime may not reference, so " +
+        "the stance reaches the manifest and `flowx diff` and is then checked by nothing. If " +
+        "the policy is a single claim requirement, which most are, declare " +
+        "Authorization.Permission with that claim's value and the runtime enforces it. If it " +
+        "genuinely needs a handler, keep the policy on the transport endpoint and declare the " +
+        "stance the capability is left with — accepting that the rule then holds over HTTP " +
+        "only, and not for a bus or agent invocation of the same flow.");
+
     /// <summary>
     /// FLOWX1011 — a flow condition, selector or projection reads something outside the
     /// flow's state.
@@ -1079,6 +1116,57 @@ public static class FlowXDiagnostics
         "values are runtime-configurable.",
         DiagnosticSeverity.Warning);
 
+    /// <summary>FLOWX1038 — a scheduled flow nothing can fire.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This rule exists because the alternative is the defect the schedule trigger was
+    /// bound to remove.</strong> A <c>[CronTrigger]</c> the generator cannot turn into a
+    /// registration is a flow declaring an address nothing serves — which is what
+    /// <c>TriggerReader</c>'s remarks said about <c>Schedule</c> as a whole until this release.
+    /// Skipping it silently, the way an <c>[HttpTrigger]</c> on a flow with no <c>.Return</c>
+    /// is skipped, would leave the same hole one layer down and with no message at all.
+    /// </para>
+    /// <para>
+    /// <strong>Two reasons, and they fail in opposite directions.</strong> A flow whose input
+    /// is not <c>ScheduledFire</c> cannot be started at all: a cron firing has no body, and the
+    /// occurrence is the only fact there is to hand it — which it has to be handed, because
+    /// <see cref="ClockIsReadAmbiently"/> forbids it asking
+    /// (<a href="../adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md">ADR-0028</a>).
+    /// An <c>Ephemeral</c> flow, by contrast, would start perfectly well — and would start on
+    /// every node in the fleet, every occurrence, because nothing journals an ephemeral instance
+    /// and the duplicate refusal that makes a schedule fire once is a primary key it never
+    /// writes
+    /// (<a href="../adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
+    /// </para>
+    /// <para>
+    /// <strong>An error, not a warning.</strong> Neither case has a deployment, configuration
+    /// or later release under which it becomes correct, and both present as work that silently
+    /// does not happen or silently happens <em>n</em> times. That is
+    /// <see cref="CompensationRetryHasNoCompensation"/>'s bar rather than
+    /// <see cref="PolicyIsNotExecutedByTheRuntime"/>'s: the source is wrong, not merely ahead of
+    /// the runtime.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor ScheduledFlowCannotBeFired = Create(
+        "FLOWX1038",
+        "Scheduled flow cannot be fired",
+        "Flow '{0}' declares a [CronTrigger] and no schedule is registered for it: {1}",
+        "A [CronTrigger] is turned into a registration by the same reading of the attribute " +
+        "that produces the manifest's triggers block, so a declared schedule and a fired one " +
+        "cannot disagree — but only for a flow the host can actually start. Two things stop " +
+        "it. A flow whose input contract is not FlowX.ScheduledFire has nothing to bind: a " +
+        "cron firing carries no body, and the occurrence is the only fact a schedule has to " +
+        "give — which it must give, because FLOWX1007 and FLOWX1011 forbid the flow reading a " +
+        "clock, so an instance that had to work out which occurrence it was could not. Declare " +
+        "the flow as Flow<ScheduledFire, TOut> and take whatever else it needs from a " +
+        "capability. And a flow that does not declare ExecutionProfile.Durable journals no " +
+        "instance, so there is no primary key to refuse a second node's firing: every node in " +
+        "the fleet runs every occurrence, with no error, no duplicate row and nothing anywhere " +
+        "to count. Declare Profile = ExecutionProfile.Durable. There is no suppression that " +
+        "makes either work — the generator emits no registration either way, so what a " +
+        "suppression buys is a manifest publishing a schedule and a host that fires nothing.",
+        DiagnosticSeverity.Error);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1114,7 +1202,8 @@ public static class FlowXDiagnostics
         CompensationRetryHasNoCompensation,
         StepDeclaresMoreThanOnePolicySet,
         CompensationRetryRetriesNothing,
-        PolicySetCannotBeRead);
+        PolicySetCannotBeRead,
+        ScheduledFlowCannotBeFired);
 
     private static DiagnosticDescriptor Create(
         string id,

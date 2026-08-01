@@ -436,13 +436,78 @@ public sealed class ManifestTriggerAndErrorTests
     {
         // One field for both, because a capability has one stance. The schema declares
         // `value`, not `permission` and `policy`, and the mode says which it came from.
-        using var manifest = ManifestOf(Guarded(
-            """[Capability("payment.capture", Version = "2.1.0", Authorization = Authorization.Policy, Policy = "eu-residents-only")]"""));
+        //
+        // Asserted on the model rather than on a manifest, because there is no longer a
+        // manifest to read: FLOWX1037 makes Authorization.Policy an error, so the compilation
+        // below reports and the generator writes nothing. The writer's behaviour is still
+        // worth pinning — the schema field and ManifestWriter's mapping outlive the rule, and
+        // ADR-0030's revisit condition is the day a policy evaluator ships and this becomes a
+        // manifest again.
+        var run = GeneratorHarness.Run(Source(Guarded(
+            """[Capability("payment.capture", Version = "2.1.0", Authorization = Authorization.Policy, Policy = "eu-residents-only")]""")));
 
-        var authorization = Capability(manifest, "payment.capture").GetProperty("authorization");
+        run.Ids.ShouldContain(
+            "FLOWX1037",
+            "A stance the runtime cannot decide is reported to its author, not published as " +
+            "though it were enforced. " + run.Describe());
+    }
 
-        authorization.GetProperty("mode").GetString().ShouldBe("Policy");
-        authorization.GetProperty("value").GetString().ShouldBe("eu-residents-only");
+    /// <summary>
+    /// A <c>Policy</c> stance is refused rather than published, and the message names it.
+    /// </summary>
+    /// <remarks>
+    /// The half of <see cref="ThePolicyAStanceNamesReachesTheSameField"/> that is about the
+    /// rule rather than the field. It is <c>FLOWX1037</c> and not
+    /// <c>FLOWX1030</c>: the stance <em>does</em> name a policy, which is what that rule
+    /// asks, and this one presupposes it and asks whether anything can check the name.
+    /// </remarks>
+    [Fact]
+    public void APolicyStanceIsRefusedAndNotConfusedWithNamingNothing()
+    {
+        var run = GeneratorHarness.Run(Source(Guarded(
+            """[Capability("payment.capture", Version = "2.1.0", Authorization = Authorization.Policy, Policy = "eu-residents-only")]""")));
+
+        run.Ids.ShouldNotContain("FLOWX1030", "The stance names a policy; what it lacks is anything that reads it.");
+        run.Ids.ShouldContain("FLOWX1037");
+    }
+
+    /// <summary>
+    /// A <c>Policy</c> stance with no name is <c>FLOWX1030</c> and not <c>FLOWX1037</c>.
+    /// </summary>
+    /// <remarks>
+    /// The chain's order, asserted. Reporting both on one declaration would name two
+    /// remedies for one edit, and the first of the two — supply the name — is the one that
+    /// has to happen before the second question is even meaningful.
+    /// </remarks>
+    [Fact]
+    public void APolicyStanceNamingNothingIsStillTheEarlierRule()
+    {
+        var run = GeneratorHarness.Run(Source(Guarded(
+            """[Capability("payment.capture", Version = "2.1.0", Authorization = Authorization.Policy)]""")));
+
+        run.Ids.ShouldContain("FLOWX1030");
+        run.Ids.ShouldNotContain("FLOWX1037", "One declaration, one remedy, and the name comes first.");
+    }
+
+    /// <summary>
+    /// The four stances the runtime decides are silent.
+    /// </summary>
+    /// <remarks>
+    /// The false-positive half, and the one that matters more: a rule that fired on
+    /// <c>Permission</c> or <c>Internal</c> would be suppressed wholesale within a day, and
+    /// would then be protecting nothing on the one stance it exists for.
+    /// </remarks>
+    [Theory]
+    [InlineData("Authorization = Authorization.Public")]
+    [InlineData("Authorization = Authorization.Authenticated")]
+    [InlineData("Authorization = Authorization.Internal")]
+    [InlineData("Authorization = Authorization.Permission, Permission = \"payment.write\"")]
+    public void AnEnforceableStanceIsNotReported(string stance)
+    {
+        var run = GeneratorHarness.Run(Source(Guarded(
+            $"""[Capability("payment.capture", Version = "2.1.0", {stance})]""")));
+
+        run.Ids.ShouldNotContain("FLOWX1037", run.Describe());
     }
 
     /// <summary>

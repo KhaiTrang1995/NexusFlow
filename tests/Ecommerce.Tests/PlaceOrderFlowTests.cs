@@ -52,6 +52,12 @@ public sealed class PlaceOrderFlowTests
             // assertions below statements about the substitution as well as the saga.
             .Substitute("payment.capture", OrderErrors.PaymentDeclined("insufficient funds"))
             .WithInvocation(new FlowInvocation("corr-5", "key-5"))
+
+            // payment.capture declares Authorization.Permission naming payment.write, so a
+            // flow run by nobody is refused at that step and never reaches the substituted
+            // decline this test is about. The caller holds exactly the one permission the
+            // flow needs — not a blanket one — so the stance is still doing its job here.
+            .As(TestPrincipal.Holding("payment.write"))
             .Build();
 
         var run = await host.RunAsync(

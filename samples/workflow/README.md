@@ -20,6 +20,12 @@ after the signature before it starts onboarding. Both waits cost one row and no 
 [§2](#2-the-wait-what-it-used-to-do-instead-and-what-is-still-missing) is the account,
 including the one bound a sweep-based timer cannot give you.
 
+**Third claim proved:** a flow **nobody calls**. `offer.window.close` is started by a
+`[CronTrigger]` and nothing else — no route, no hosted service, no timer, and no line in
+`Program.cs` naming a time. Three replicas over one PostgreSQL fire six occurrences six times,
+not eighteen, and a firing that fell due while all three were down happens late.
+[§5.1](#51-the-third-flow-which-nobody-calls) is the account, with the journal rows.
+
 Run it:
 
 ```bash
@@ -624,6 +630,95 @@ The event is staged in the same transaction as the step that emitted it:
 `partition_key` is the instance. **"Published" means "written to the outbox and handed to a
 publisher"** — `IEventPublisher` is declared and no plugin implements it, so nothing carries
 it to a broker (ADR-0018).
+
+### 5.1 The third flow, which nobody calls
+
+`offer.window.close` has no route. It is started by a `[CronTrigger]`, from a registration the
+compiler wrote out of that attribute into `FlowXSchedules.g.cs`, and `Program.cs`'s whole
+contribution is one line — `app.Services.AddFlowXSchedules()`. There is no hosted service in this
+project, no timer, and no mention of 02:00 anywhere outside the flow's own declaration.
+
+```csharp
+[Flow("offer.window.close", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "people-ops")]
+[CronTrigger("0 2 * * *", TimeZone = "Europe/Berlin", MissedFire = MissedFirePolicy.RunOnce)]
+public sealed partial class CloseOfferWindowFlow : Flow<ScheduledFire, OfferWindowClosed>
+```
+
+**Its input is `ScheduledFire`, and it has to be.** A cron firing carries no body, and
+`FLOWX1007` and `FLOWX1011` forbid a durable flow reading an ambient clock — so a scheduled flow
+cannot work out for itself which occurrence it is, and the platform has to tell it
+(`docs/adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md`). `OccurrenceAt` is the instant
+that was **due**, never the instant the sweep noticed it, which is why a firing recovered after
+an outage still closes the right window.
+
+**`Durable` is load-bearing here for a different reason than on `offer.accept`.** That flow
+declares it because it suspends. This one declares it because the thing that stops three replicas
+firing the same night three times is `flow_instance`'s primary key.
+
+#### Three replicas, one PostgreSQL, six occurrences
+
+Run with a denser expression so a demonstration does not have to wait until two in the morning —
+a *second* schedule registered beside the declared one, so the declaration a reader sees is still
+the one the manifest carries:
+
+```bash
+FLOWX_POSTGRES_CONNECTION="Host=localhost;Port=5432;Database=postgres;Username=postgres" \
+FLOWX_SAMPLE_SCHEDULE_CRON="* * * * *" \
+FLOWX_SAMPLE_SCHEDULE_SCAN="00:00:02" \
+FLOWX_SAMPLE_NODE="node-1" ASPNETCORE_URLS="http://127.0.0.1:41001" \
+  dotnet run --project samples/workflow
+```
+
+Three of those, on three ports, with three node names. Six minutes later:
+
+```sql
+select l.owner_node, i.input->>'occurrenceAt' as occurrence, count(*) over () as rows
+  from flowx.flow_instance i join flowx.flow_lease l using (instance_id)
+ where i.flow_id = 'offer.window.close' order by occurrence;
+```
+
+```
+ node-3     | 2026-08-01T16:24:00+00:00
+ node-3     | 2026-08-01T16:25:00+00:00
+ node-3     | 2026-08-01T16:26:00+00:00
+ node-1     | 2026-08-01T16:27:00+00:00
+ node-2     | 2026-08-01T16:28:00+00:00
+ node-1     | 2026-08-01T16:29:00+00:00
+(6 rows)
+```
+
+**Six occurrences, six rows, three nodes.** Two things in that table are the design.
+
+**Different nodes fired different occurrences**, so there is no leader — every replica sweeps,
+and whichever one gets there first wins. **And the row count is six and not eighteen**: the
+instance id is derived from the occurrence, so all three nodes tried to start the *same*
+instance, and the lease store refused two of them while the winner ran and the journal's primary
+key refused them afterwards (`docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md`).
+The `fencing_token` column shows that happening — it reads `2` and `3` on the later rows, which
+is a second and third node having acquired the lease for that id and then been refused by
+`StartAsync`.
+
+The keys are recomputable. `c49bd6f1-9174-8d06-9db3-a800dee1b260` is
+`uuidv8(sha256("offer.window.close\0" + "1.0.0\0" + "* * * * *\0" + "UTC\0" +
+"2026-08-01T16:24:00Z"))`, which is why the expression and the zone are in `input` beside the
+instant.
+
+#### And what happens when nothing is running
+
+Stop all three at 16:30, wait, start one at 16:32:
+
+```
+ occurrence                | created_at                    | lateness
+ 2026-08-01T16:29:00+00:00 | 2026-08-01 16:29:00.498924+00 | 00:00:00.498924
+ 2026-08-01T16:32:00+00:00 | 2026-08-01 16:32:21.836195+00 | 00:00:21.836195
+```
+
+**The 16:30 and 16:31 occurrences are gone, and 16:32 fired 21 seconds late.** That is
+`MissedFirePolicy.RunOnce` — *"run once, regardless of how many were missed"* — doing exactly
+what it says. The returning node had never seen this schedule, so it walked backwards asking the
+journal for each derived id, found 16:29, and knew that the three after it were missed rather
+than ancient (`docs/adr/ADR-0032-a-missed-schedule-fires-late.md`). `RunAll` would have fired all
+three; `Skip` would have fired none.
 
 ---
 

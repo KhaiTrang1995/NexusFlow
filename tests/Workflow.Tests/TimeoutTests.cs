@@ -99,7 +99,8 @@ public sealed class TimeoutTests
                 "corr-short",
                 "key-short",
                 TenantId: null,
-                Deadline: DateTimeOffset.UnixEpoch - TimeSpan.FromSeconds(1)));
+                Deadline: DateTimeOffset.UnixEpoch - TimeSpan.FromSeconds(1),
+                Principal: OnboardingHarness.Coordinator));
 
         var run = await harness.RunAsync(Offers.Permanent(), TestContext.Current.CancellationToken);
 

@@ -497,7 +497,7 @@ flowchart TB
         subgraph ns["namespace: ordering"]
             api["order-api<br/><i>Deployment 3..30, HPA on RPS+p99</i><br/>FlowX ephemeral flows"]
             wrk["order-worker<br/><i>Deployment 2..20, KEDA on lag</i><br/>FlowX durable + stream flows"]
-            sched["order-scheduler<br/><i>Deployment 2 (leader-elected)</i><br/>cron + timer flows"]
+            sched["order-scheduler<br/><i>Deployment 2</i><br/>cron + timer flows"]
         end
         otelc["OTel Collector<br/><i>DaemonSet</i>"]
     end
@@ -535,7 +535,7 @@ flowchart TB
 | Rule | Reason |
 |---|---|
 | API and worker are separate deployments of the *same* image | Different scaling signals; identical code and manifest |
-| Scheduler runs leader-elected, replica ≥ 2 | Avoid duplicate cron firing; survive node loss |
+| ~~Scheduler runs leader-elected, replica ≥ 2~~ **A scheduled flow needs no separate deployment and no leader.** Every replica sweeps; a firing is named by its occurrence, so the lease store and the journal's primary key make it exclusive ([ADR-0031](adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md)) | *The rule as written was a design, and its second clause did not follow from its first: a leader that has lost its lease and not noticed fires anyway, and a leader that dies at 01:59 takes the 02:00 firing with it until a successor is elected. The `order-scheduler` box above remains a legitimate deployment shape — a schedule that fires heavy work is worth isolating — but it is a **capacity** decision now, not a correctness one, and `replica ≥ 2` buys availability rather than exclusivity* |
 | `terminationGracePeriodSeconds` ≥ max flow step budget + 10 s | Graceful drain: stop accepting, finish in-flight, release leases |
 | Journal DB is regional, not global | Cross-region durable flows need explicit design ([11](11-Distributed-Runtime.md)) |
 | Manifest is published at deploy, not at build | The registry records what is *running*, not what was compiled |
@@ -652,7 +652,7 @@ agree.*
 > driver could use. Each is pinned by a test that goes red the day it is closed, which
 > is the only form of "known limitation" note that survives contact with a codebase.
 > The first is the per-branch context
-> [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md#what-wp-52-landed-and-what-it-did-not)
+> [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md)#what-wp-52-landed-and-what-it-did-not)
 > named as WP-61's to buy; WP-61 measured its absence instead, and said so.
 >
 > The analyzers were
@@ -675,7 +675,7 @@ agree.*
 > the flow context, the flow input and prior step results. **It carries more
 > weight than it was designed for.** ADR-0015 originally required the journal to
 > record the branch a `Switch` took; it has no field for one, and
-> [the amendment](adr/ADR-0015-journal-schema-and-durable-execution.md#amendments-the-first-implementation-forced-wp-52)
+> [the amendment](adr/ADR-0015-journal-schema-and-durable-execution.md)#amendments-the-first-implementation-forced-wp-52)
 > resolved that by replaying the selector against the restored state bag —
 > so replay of control flow rests on this rule. *This paragraph said it was
 > "specified to become an Error under `Durable` at WP-58"; what WP-58 decided is that

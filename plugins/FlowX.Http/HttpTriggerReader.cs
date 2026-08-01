@@ -75,7 +75,20 @@ public static class HttpTriggerReader
         return Result.Ok(new FlowInvocation(
             ReadCorrelationId(context),
             idempotencyKey,
-            ReadTenant(context.User)));
+            ReadTenant(context.User),
+            Deadline: null,
+
+            // The validated principal, and nothing derived from a header. This is the whole
+            // of where identity crosses the boundary (ADR-0028): past this line the engine
+            // decides a capability's authorisation stance against it and cannot tell whether
+            // a request, a broker record or a cron tick produced it.
+            //
+            // `context.User` is never null in ASP.NET Core — an unauthenticated request
+            // carries a ClaimsPrincipal whose identity is not authenticated — so it is
+            // passed as it stands and StepAuthorization asks the question that matters,
+            // which is whether the identity is authenticated rather than whether the object
+            // exists.
+            Principal: context.User));
     }
 
     /// <summary>

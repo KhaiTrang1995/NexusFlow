@@ -9,7 +9,7 @@
 
 | Principle | FlowX implementation |
 |---|---|
-| **Deny by default** | a capability without an authorisation stance fails the build (`FLOWX1010`) |
+| **Deny by default** | a capability without an authorisation stance fails the build (`FLOWX1010`); the stance it declares is decided before the step is dispatched ([§4.1](#41-what-of-that-diagram-executes)) |
 | **Authorise the operation, not the URL** | the stance lives on the capability, so it survives transport changes |
 | **Zero trust between components** | every hop authenticates; no "internal network is safe" assumption |
 | **Least privilege** | capabilities declare the permission they need; nothing is implicitly granted |
@@ -132,6 +132,55 @@ payment?"* is a single manifest query — over HTTP, Kafka, cron and agent
 invocations simultaneously. That is quality requirement QR9, and it is the
 security property that transport-attached authorisation can never provide.
 
+### 4.1 What of that diagram executes
+
+**Until P4 the answer was "none of it".** The stance was declared, published to
+`flowx.manifest.json`, compared by `flowx diff`'s `FLOWX-DIFF-015` and made mandatory by
+`FLOWX1010` and `FLOWX1030` — and a grep of `src/FlowX.Runtime` and `src/FlowX.Hosting` for
+`Authorization`, `Permission` or `Authorize` returned nothing at all. `samples/ecommerce`
+declared `Permission = "payment.write"` on `payment.capture` and captured payments for
+anonymous callers.
+
+| Stance | What the runtime does |
+|---|---|
+| `Public` | **Decided.** Permits, as an explicit branch rather than an absence |
+| `Authenticated` | **Decided.** Refuses an invocation whose principal is absent or unauthenticated |
+| `Permission` | **Decided.** Refuses a principal not holding the named grant, read from a `permission`, `permissions`, `scope` or `scp` claim |
+| `Internal` | **Decided, and it permits.** See below |
+| `Policy` | **Not enforceable.** [`FLOWX1037`](diagnostics/FLOWX1037.md) refuses it at build time |
+
+The check runs in `FlowEngine`'s step loop, before the dispatch and outside the retry loop,
+gated by `ExecutionPlan.HasAuthorizedSteps` — [ADR-0027](adr/ADR-0027-authorisation-runs-in-the-step-loop.md).
+Identity arrives on `FlowInvocation` as the `ClaimsPrincipal` the transport resolved from
+validated claims — [ADR-0028](adr/ADR-0028-identity-arrives-on-the-invocation.md).
+
+**Three corrections to the diagram above**, each of which is a decision rather than a gap:
+
+- **The `401` is a `403`.** `ErrorCategory` is a closed set with no authentication member, and
+  opening it would change the transport mapping for every existing consumer. The *codes* stay
+  distinct — `authorization.not_authenticated` and `authorization.permission_denied` — and a
+  `401` would in any case be malformed, because the engine is transport-agnostic and has no
+  `WWW-Authenticate` challenge to name. [ADR-0029](adr/ADR-0029-a-refusal-is-a-result-failure.md).
+- **`Internal`'s "no" branch is unreachable.** It asks *"invoked from a flow, not a trigger?"*,
+  and in FlowX a trigger addresses a **flow** and never a capability — `[HttpTrigger]` is
+  declared on a `Flow<,>` ([ADR-0004](adr/ADR-0004-universal-trigger-model.md)). Every
+  capability invocation that exists is reached from a flow's step loop, so the stance is
+  satisfied by construction of the trigger model rather than by a check. `samples/workflow`
+  settles it beyond argument: `OnboardEmployeeFlow` is HTTP-triggered and calls
+  `hardware.order`, `equipment.assign` and `welcome.send` — all three `Internal` — as ordinary
+  forward steps. The stance's other half, exclusion from the agent tool surface, is a
+  compile-time concern and that surface does not exist yet.
+- **There is no audit event.** `Audit` is a stage-7 policy that
+  [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) leaves
+  unexecuted, and no store persists one. A refusal is a returned `Error` and appears in
+  whatever the host logs.
+
+**A compensation is not authorised**, and a resumed instance is authorised by whoever resumes
+it rather than by whoever started it — the journal row carries no claims, deliberately, so a
+week-old grant cannot authorise today's payment. Both are argued in
+[ADR-0027 §2.4](adr/ADR-0027-authorisation-runs-in-the-step-loop.md) and
+[ADR-0028 §2.2](adr/ADR-0028-identity-arrives-on-the-invocation.md).
+
 ---
 
 ## 5. Multi-tenant isolation
@@ -153,10 +202,13 @@ name the fitness functions spell `CrossTenantAccessIsDenied`* — is to attempt 
 cross-tenant read through every trigger kind and assert a `Forbidden` plus an
 audit event.
 
-**Status: designed, not built.** Of the seven layers above, one exists —
+**Status: designed, not built.** Of the seven layers above, one and a half exist —
 `TenantId` is resolved from validated claims at the HTTP boundary and carried on the
-invocation. Nothing consumes it in the way this table needs: no policy executes at runtime
-and there is no cache. *This sentence also said there is no journal; since WP-52 a
+invocation, and *Identity* is now whole rather than half, because the principal the tenant was
+derived from is carried too and is decided against ([§4.1](#41-what-of-that-diagram-executes)).
+Nothing consumes the tenant in the way this table needs: **authorisation executes and tenant
+isolation does not**, and they are separate claims. No admission quota, no cache, and no
+row-level security. *This sentence also said there is no journal; since WP-52 a
 `Durable` flow's instance row carries `tenant_id` — an execution record, not the audit
 event this test asserts, and no store persists it.* The table describes P4 and P6; see
 [21 §2.4](21-Quality-Gates.md) for what the gate is blocked on.
@@ -234,7 +286,7 @@ mechanisms that compliance work needs:
 | `NoPermissiveDefaults` | nothing on the contract surface reaches a permissive stance by omission |
 | `SuppressionsAreAccountable` | every suppression names a registered, unexpired debt id (§6.1 of [21](21-Quality-Gates.md)) |
 | `ManifestContainsNoSecrets` | pattern scan over emitted manifests, matching the shape of a secret rather than a list of forbidden words |
-| `CrossTenantAccessIsDenied` | isolation across every trigger kind — **not yet enforced.** Blocked on P4 policy execution and, for "every trigger kind", on P3's second transport. *It was also blocked on the P2 journal; that half expired at WP-52, and the gate did not move* — see [21 §2.4](21-Quality-Gates.md) |
+| `CrossTenantAccessIsDenied` | isolation across every trigger kind — **not yet enforced.** *Its authorisation half is no longer blocked: a stance is decided at run time since P4 ([§4.1](#41-what-of-that-diagram-executes)). What remains is that nothing compares the invocation's tenant against the data a capability reads, which is the isolation this gate is actually about, and no audit event exists to assert.* Blocked on tenant isolation and, for "every trigger kind", on P3's second transport. *It was also blocked on the P2 journal; that half expired at WP-52, and the gate did not move* — see [21 §2.4](21-Quality-Gates.md) |
 | `SensitiveFieldsAreRedacted` / `RedactionCannotBeBypassed` | `[Sensitive]` never appears in logs, traces, journal or replay output — **not yet enforced.** *This cell said none of the four sinks exists; the **journal** does, since WP-52.* Redaction there is structural — `JournalPayload.ToJson()` is the only exit and it redacts — but the gate asserts the negative across all four, and logs, traces and replay output are still absent; see [21 §2.4](21-Quality-Gates.md) |
 | `ErrorsDoNotLeakInternals` | no stack traces, connection strings or type names in RFC 7807 bodies — **not written.** The property holds by construction today (`ProblemDetailsMapper` builds the body from `Error.Code`, `Category` and redacted detail, and never sees an exception), and `ProblemDetailsMapperTests` covers that mapping. Nothing asserts the *negative* |
 | `ExternalCapabilitiesHaveResilience` | outbound calls carry timeout + breaker — **not written**, and the id cited was wrong: `FLOWX1023` is "flow declares no steps". No diagnostic requires a policy on a capability with side effects, and no policy executes at run time. **P4** |
@@ -254,6 +306,8 @@ Stated plainly, because unstated limitations are how breaches happen:
 | The journal contains business inputs by design | replay can expose data to operators | field redaction, encryption at rest, RBAC on replay, audited access |
 | Compensation is best-effort | a failed compensation leaves inconsistent state | alert + operator runbook + explicit `CompensationFailed` state |
 | Plugins execute in-process | a malicious plugin has process-level access | plugin signing, review, permission declaration; process isolation is a v2 item |
+| A durable flow's authorisation is discontinuous across a wait | the steps before a suspension point are decided against the caller who started it, the steps after against whoever delivered the signal — so "who authorised this transfer" has two answers | deliberate: the journal keeps no claims, so a grant proved a week ago cannot authorise today's payment ([ADR-0028 §2.2](adr/ADR-0028-identity-arrives-on-the-invocation.md)). A timer sweep and a recovery scan carry no caller at all and are not re-decided, which is what keeps `.Delay` usable before a stanced step |
+| A compensation runs unauthorised | an undo with side effects heavier than the step it reverses is not separately authorised | deliberate: refusing an undo leaves standing the inconsistent state it exists to remove, and the caller was authorised for the step that made the mess ([ADR-0027 §2.4](adr/ADR-0027-authorisation-runs-in-the-step-loop.md)) |
 | Agent confirmation depends on accurate `SideEffects` | a mis-declared capability produces a misleading prompt | side effects are a review item; the analyzer warns when a capability with I/O declares none |
 
 ---

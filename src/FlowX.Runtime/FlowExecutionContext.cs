@@ -81,6 +81,8 @@ public sealed class FlowExecutionContext : FlowContext
     private string _correlationId = string.Empty;
     private string _idempotencyKey = string.Empty;
     private string? _tenantId;
+    private ClaimsPrincipal? _principal;
+    private bool _isContinuation;
 
     /// <summary>
     /// <see cref="Run"/>'s instance id as text, computed the first time it is asked for.
@@ -379,7 +381,34 @@ public sealed class FlowExecutionContext : FlowContext
     public override string FlowVersion => _flowVersion;
 
     /// <inheritdoc />
-    public override ClaimsPrincipal? Principal => null;
+    /// <remarks>
+    /// <para>
+    /// <strong>This answered <c>null</c> unconditionally until authorisation was
+    /// enforced</strong>, while <see cref="FlowContext.Principal"/> had been declared since
+    /// the first commit and <c>TriggerHeaders</c> had carried a
+    /// <see cref="ClaimsPrincipal"/> all along. The abstraction was whole and the wire was cut
+    /// at the last inch: a capability asking who the caller was got "nobody", every time,
+    /// with nothing saying so.
+    /// </para>
+    /// <para>
+    /// Reset with the rest of the pooled state, so a principal cannot outlive the invocation
+    /// that supplied it and be read by the next flow to rent this context — which would be a
+    /// cross-request identity leak of exactly the shape <c>docs/15-Security.md §3</c>'s
+    /// Boundary 2 spoofing row describes.
+    /// </para>
+    /// </remarks>
+    public override ClaimsPrincipal? Principal => _principal;
+
+    /// <summary>
+    /// True when the platform is continuing an instance it already admitted, so no caller is
+    /// asking for anything and no stance is re-decided.
+    /// </summary>
+    /// <remarks>
+    /// Internal because it is the engine's business and not a capability's: a capability that
+    /// branched on how it was resumed would be a capability that behaves differently on a node
+    /// restart, which is the determinism the replay tests exist to protect.
+    /// </remarks>
+    internal bool IsContinuation => _isContinuation;
 
     /// <inheritdoc />
     /// <remarks>
@@ -565,6 +594,8 @@ public sealed class FlowExecutionContext : FlowContext
         _correlationId = invocation.CorrelationId;
         _idempotencyKey = invocation.IdempotencyKey;
         _tenantId = invocation.TenantId;
+        _principal = invocation.Principal;
+        _isContinuation = invocation.IsContinuation;
         _flowInstanceId = null;
         _clock = clock;
 
@@ -893,6 +924,8 @@ public sealed class FlowExecutionContext : FlowContext
         _correlationId = string.Empty;
         _idempotencyKey = string.Empty;
         _tenantId = null;
+        _principal = null;
+        _isContinuation = false;
         _flowInstanceId = null;
         _deadline = default;
         _clock = SystemClock.Instance;

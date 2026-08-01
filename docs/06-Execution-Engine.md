@@ -215,7 +215,7 @@ flowchart TD
 > statement about a host that registered no stores rather than about the platform —
 > a host with a journal and a lease store runs durable flows; one with neither
 > refuses them, which is the right answer for an unconfigured deployment. See
-> [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md#what-wp-52-landed-and-what-it-did-not)
+> [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md)#what-wp-52-landed-and-what-it-did-not)
 > for the in/out list, [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md) for what
 > the schema looked like against a real database,
 > [§5](#5-the-determinism-boundary) for what it means for replay, and
@@ -307,7 +307,7 @@ instance of it. See
 
 **`FLOWX1011` also carries more weight than it did.** ADR-0015 originally said the
 journal must record the branch a `Switch` took; it has no field for one, and
-[the amendment](adr/ADR-0015-journal-schema-and-durable-execution.md#amendments-the-first-implementation-forced-wp-52)
+[the amendment](adr/ADR-0015-journal-schema-and-durable-execution.md)#amendments-the-first-implementation-forced-wp-52)
 resolved it by replaying the selector against the restored state bag instead. Replay
 of control flow now *depends* on this rule's purity guarantee — and the rule is a
 Warning, and says nothing about capability bodies.
@@ -357,7 +357,7 @@ byte-identical step inputs and identical control flow.
 >
 > 1. **A `Parallel` whose branches genuinely overlap does not replay.** One pooled
 >    context is shared by every branch, so a capture can land on a sibling's row —
->    [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md#what-wp-52-landed-and-what-it-did-not)
+>    [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md)#what-wp-52-landed-and-what-it-did-not)
 >    called this best-effort attribution and said WP-61 needed a per-branch context
 >    before it was safe. **WP-61 did not buy one.** It pinned the exact interleaving
 >    with a rendezvous instead, so the misattribution is reproduced on every run rather

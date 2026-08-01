@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using FlowX;
 
 namespace Workflow;
 
@@ -59,6 +60,15 @@ namespace Workflow;
 [JsonSerializable(typeof(OnboardingStarted))]
 [JsonSerializable(typeof(AcceptedOffer))]
 [JsonSerializable(typeof(OfferPending))]
+
+// offer.window.close's two. ScheduledFire is here for the reason OfferToAccept is: it is the
+// flow's INPUT, and FlowHost journals an input on flow_instance.input through the generated
+// dispatcher's DescribeInput — which needs a JsonTypeInfo<ScheduledFire> and can only get one
+// from a context that declares it. Without this line the row that records which occurrence
+// fired would be NULL, and the occurrence is the only thing distinguishing one night's
+// instance from the next.
+[JsonSerializable(typeof(ScheduledFire))]
+[JsonSerializable(typeof(OfferWindowClosed))]
 internal sealed partial class WorkflowJsonContext : JsonSerializerContext;
 
 /// <summary>People records, in memory.</summary>

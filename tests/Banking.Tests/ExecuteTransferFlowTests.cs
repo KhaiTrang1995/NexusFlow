@@ -1,5 +1,7 @@
+using System.Diagnostics.Metrics;
 using Banking;
 using FlowX;
+using FlowX.Observability;
 using FlowX.Runtime;
 using Shouldly;
 using Xunit;
@@ -431,6 +433,114 @@ public sealed class ExecuteTransferFlowTests
             .ShouldBe(["ledger.reverse_credit", "ledger.reverse_debit"]);
     }
 
+    /// <summary>
+    /// And an operator watching this bank sees the retry happen.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The half a passing saga cannot show.</strong>
+    /// <see cref="ATransientScreeningFailureIsRetriedAndTheTransferSettles"/> proves the retry
+    /// changed the outcome — the transfer settled. It cannot prove anybody could have
+    /// <em>known</em>: a screening provider that starts failing every other call still settles
+    /// every transfer, and the only evidence that this bank's compliance dependency has become
+    /// unreliable is the count of attempts it is costing. Before
+    /// <a href="../../docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md">ADR-0026</a>
+    /// that count existed nowhere.
+    /// </para>
+    /// <para>
+    /// Asserted on the sample's own declaration rather than on a fixture — the labels below are
+    /// <c>compliance.screen_sanctions</c> and <c>Policies.ExternalRead</c>'s error, so this
+    /// fails if the sample stops declaring the retry as surely as if the engine stops emitting.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task TheScreeningRetryIsVisibleToAnOperator()
+    {
+        using var recorder = new PolicyMetricRecorder();
+
+        var harness = new TransferHarness()
+            .SubstituteForAttempts("compliance.screen_sanctions", attempts: 1, ProviderDown);
+
+        var result = await harness.RunAsync(Transfer(120m, TransferChannel.Sepa), "t-p3", Cancellation);
+
+        result.IsSuccess.ShouldBeTrue(result.Error?.ToString());
+
+        var retries = recorder.Read(TelemetryNames.RetryAttemptsTotal);
+
+        var screening = retries
+            .Where(m => m.Tag(TelemetryNames.CapabilityLabel) == "compliance.screen_sanctions")
+            .ToList();
+
+        screening.ShouldHaveSingleItem(
+            "The provider blinked once, so exactly one extra attempt was spent. A second " +
+            "measurement here would mean the first dispatch was being counted as a retry.");
+
+        screening[0].Tag(TelemetryNames.AttemptLabel).ShouldBe(
+            "2",
+            "The label is the attempt being armed, which is never 1.");
+
+        screening[0].Tag(TelemetryNames.ErrorCodeLabel).ShouldBe(
+            "compliance.screening_unavailable",
+            "and it carries what the previous attempt failed with, so a dashboard can tell a " +
+            "provider that is down from one that is rejecting.");
+
+        recorder.Read(TelemetryNames.PolicyInvocationsTotal).ShouldContain(
+            m => m.Tag(TelemetryNames.PolicyLabel) == "Retry"
+                 && m.Tag(TelemetryNames.CapabilityLabel) == "compliance.screen_sanctions"
+                 && m.Tag(TelemetryNames.OutcomeLabel) == PolicyMetrics.OkOutcome,
+            "The retry finished cleanly — it spent an attempt and got its answer, which is the " +
+            "outcome that separates a recovered dependency from an exhausted one.");
+    }
+
     private static ExecuteTransfer Transfer(decimal amount, TransferChannel channel) =>
         new(Debtor, Creditor, amount, "EUR", channel);
+
+    /// <summary>Reads FlowX policy measurements as an exporter would see them.</summary>
+    private sealed class PolicyMetricRecorder : IDisposable
+    {
+        private readonly MeterListener _listener;
+        private readonly List<Taken> _taken = [];
+        private readonly Lock _sync = new();
+
+        public PolicyMetricRecorder()
+        {
+            _listener = new MeterListener
+            {
+                InstrumentPublished = static (instrument, listener) =>
+                {
+                    if (instrument.Meter.Name == FlowXTelemetry.SourceName)
+                    {
+                        listener.EnableMeasurementEvents(instrument);
+                    }
+                },
+            };
+
+            _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
+            {
+                lock (_sync)
+                {
+                    _taken.Add(new Taken(instrument.Name, tags.ToArray()));
+                }
+            });
+
+            _listener.Start();
+        }
+
+        public IReadOnlyList<Taken> Read(string instrument)
+        {
+            lock (_sync)
+            {
+                return [.. _taken.Where(m => string.Equals(m.Name, instrument, StringComparison.Ordinal))];
+            }
+        }
+
+        public void Dispose() => _listener.Dispose();
+    }
+
+    /// <summary>One measurement's instrument and labels.</summary>
+    private sealed record Taken(string Name, KeyValuePair<string, object?>[] Tags)
+    {
+        public string? Tag(string name) =>
+            Tags.FirstOrDefault(t => string.Equals(t.Key, name, StringComparison.Ordinal)).Value as string;
+    }
 }

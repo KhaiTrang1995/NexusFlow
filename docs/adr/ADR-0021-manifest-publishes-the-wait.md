@@ -52,7 +52,7 @@ that could carry more. So:
 
 ### 1.1 Why this is not "just another unpublished field"
 
-The twelve fields in [ADR-0017 §1](ADR-0017-manifest-v1-freeze-criteria.md#what-is-wrong-with-the-schema-right-now)
+The twelve fields in [ADR-0017 §1](ADR-0017-manifest-v1-freeze-criteria.md)#what-is-wrong-with-the-schema-right-now)
 are all facts *about* something the manifest already describes — an owner, a source pointer,
 a deprecation notice. A suspension point is different in kind: **it is an address the outside
 world has to use.**

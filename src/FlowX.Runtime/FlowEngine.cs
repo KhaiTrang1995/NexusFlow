@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using FlowX.Observability;
 
 namespace FlowX.Runtime;
 
@@ -1079,6 +1080,32 @@ public sealed class FlowEngine
             // for the shapes that have always had it.
             var policy = plan.HasStepPolicies ? step.StepPolicy : StepPolicy.None;
 
+            // ADR-0027, and the whole of the authorisation hook: ADR-0023's shape struck a
+            // second time. One comparison against a field the plan already holds, and a plan
+            // nobody can be refused from — every step Public, Internal or unstanced — never
+            // reads a principal or a claim.
+            //
+            // Before the retry loop, deliberately. A refusal is terminal: asking the same
+            // question of the same principal three times gets the same answer three times,
+            // while the backoff spends the flow's deadline and one audit event becomes three.
+            //
+            // Before the dispatch, even more deliberately. A check that ran after the call
+            // would have authorised nothing, because the payment has already been captured.
+            // `!context.IsContinuation` is not a bypass, and the distinction is on
+            // FlowInvocation: a timer sweep and a recovery scan are the platform continuing an
+            // instance it already admitted, with no caller asking for anything and no claims on
+            // the journal row to ask about. Re-deciding a stance there would make
+            // `.Delay(TimeSpan.FromHours(1))` a construct no flow could place before an
+            // authenticated step, and would turn a node restart into a refusal. A signal is the
+            // opposite — somebody is delivering something now — and carries its deliverer.
+            if (plan.HasAuthorizedSteps
+                && !context.IsContinuation
+                && step.StepAuthorization.Decide(context.Principal, capabilityId) is { } denial)
+            {
+                failure = denial;
+                break;
+            }
+
             var attempt = 0;
             Error? stepFailure = null;
             var abandoned = false;
@@ -1160,6 +1187,18 @@ public sealed class FlowEngine
 
                 if (stepFailure is null || !policy.AllowsAnotherAttempt(stepFailure, attempt))
                 {
+                    if (policy.IsRetrying)
+                    {
+                        // Once per step that carried a retry, at the point the retry stops
+                        // asking. `exhausted` is the outcome that matters: a step that used
+                        // every attempt it was allowed and still failed is the one whose
+                        // dependency an operator has to go and look at.
+                        PolicyApplied(
+                            StepPolicy.RetryKind,
+                            capabilityId,
+                            stepFailure is null ? PolicyMetrics.OkOutcome : PolicyMetrics.ExhaustedOutcome);
+                    }
+
                     break;
                 }
 
@@ -1176,8 +1215,18 @@ public sealed class FlowEngine
 
                 if (_clock.UtcNow + backoff >= context.Deadline)
                 {
+                    // The retry wanted another attempt and the deadline refused it. That is
+                    // still an exhausted retry from the operator's side — the step failed with
+                    // attempts left on paper — so it is reported rather than passed over.
+                    PolicyApplied(StepPolicy.RetryKind, capabilityId, PolicyMetrics.ExhaustedOutcome);
+
                     break;
                 }
+
+                // After the deadline check and before the wait, so the count is of attempts
+                // that were actually made rather than of attempts that were contemplated. The
+                // attempt label is the one about to run, which is why it is never 1.
+                PolicyMetrics.Retried(capabilityId, attempt + 1, stepFailure.Code);
 
                 await _clock.DelayAsync(backoff, ct).ConfigureAwait(false);
             }
@@ -1264,10 +1313,19 @@ public sealed class FlowEngine
     {
         var capabilityId = step.Identity;
 
-        if (policy.HasBreaker &&
-            !Breaker(capabilityId).TryEnter(policy, _clock.UtcNow, out var until))
+        if (policy.HasBreaker)
         {
-            return StepOutcome.Failed(FlowErrors.CircuitOpen(capabilityId, until));
+            if (!Breaker(capabilityId).TryEnter(policy, _clock.UtcNow, out var until))
+            {
+                PolicyApplied(StepPolicy.CircuitBreakerKind, capabilityId, PolicyMetrics.OpenOutcome);
+
+                return StepOutcome.Failed(FlowErrors.CircuitOpen(capabilityId, until));
+            }
+
+            // Counted on admission as well as on refusal. docs/10 §9 labels this counter by
+            // outcome, and a refusal rate needs the calls the breaker let through as its
+            // denominator — "this breaker refused forty" means nothing without them.
+            PolicyApplied(StepPolicy.CircuitBreakerKind, capabilityId, PolicyMetrics.OkOutcome);
         }
 
         BulkheadGate? bulkhead = null;
@@ -1278,9 +1336,13 @@ public sealed class FlowEngine
 
             if (!await bulkhead.EnterAsync(ct).ConfigureAwait(false))
             {
+                PolicyApplied(StepPolicy.BulkheadKind, capabilityId, PolicyMetrics.RejectedOutcome);
+
                 return StepOutcome.Failed(
                     FlowErrors.BulkheadRejected(capabilityId, policy.MaxConcurrency));
             }
+
+            PolicyApplied(StepPolicy.BulkheadKind, capabilityId, PolicyMetrics.OkOutcome);
         }
 
         try
@@ -1295,6 +1357,8 @@ public sealed class FlowEngine
                 // Refused rather than started. A step with no budget cannot finish inside one,
                 // and dispatching it would cost the dependency a call whose answer is thrown
                 // away — which is the one thing a timeout exists to stop.
+                PolicyApplied(StepPolicy.TimeoutKind, capabilityId, PolicyMetrics.TimedOutOutcome);
+
                 return StepOutcome.Failed(FlowErrors.StepTimedOut(capabilityId, expired));
             }
 
@@ -1316,6 +1380,14 @@ public sealed class FlowEngine
 
                 succeeded = outcome.Error is null;
 
+                if (budget is not null)
+                {
+                    // The timeout was armed and the call finished inside it. That is the
+                    // denominator for the row below, and without it "this capability timed
+                    // out 12 times" has no scale.
+                    PolicyApplied(StepPolicy.TimeoutKind, capabilityId, PolicyMetrics.OkOutcome);
+                }
+
                 return outcome;
             }
             catch (OperationCanceledException)
@@ -1325,6 +1397,8 @@ public sealed class FlowEngine
                 // keeps "this dependency is slow" from being reported as "the caller went
                 // away", and it is why the linked source is kept rather than passing `ct`
                 // through a `CancelAfter` on a source the caller owns.
+                PolicyApplied(StepPolicy.TimeoutKind, capabilityId, PolicyMetrics.TimedOutOutcome);
+
                 return StepOutcome.Failed(FlowErrors.StepTimedOut(capabilityId, budget!.Value));
             }
             finally
@@ -1346,9 +1420,30 @@ public sealed class FlowEngine
         }
     }
 
+    /// <summary>
+    /// Counts one application of a stage-4 policy, for <c>docs/10 §9</c>'s
+    /// <c>flowx_policy_invocations_total</c>.
+    /// </summary>
+    /// <param name="kind">The descriptor kind, which is also the metric's <c>policy</c> label.</param>
+    /// <param name="capabilityId">The dependency the step invokes.</param>
+    /// <param name="outcome">What the policy decided.</param>
+    /// <remarks>
+    /// The <c>stage</c> label is a literal because every kind that reaches here is stage 4 —
+    /// which is the whole of what
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>
+    /// says this engine executes. A stage landing later adds its own call site with its own
+    /// name rather than making this one derive it, because deriving it would mean reading the
+    /// descriptor the resolved <c>StepPolicy</c> exists to avoid reading.
+    /// </remarks>
+    private static void PolicyApplied(string kind, string capabilityId, string outcome) =>
+        PolicyMetrics.Applied(kind, ResilienceStage, capabilityId, outcome);
+
+    /// <summary>The one stage this engine executes, as a metric label.</summary>
+    private static readonly string ResilienceStage = nameof(PolicyStage.Resilience);
+
     /// <summary>This engine's breaker for one capability, created on first use.</summary>
     private CircuitBreakerState Breaker(string capabilityId) =>
-        _breakers.GetOrAdd(capabilityId, static _ => new CircuitBreakerState());
+        _breakers.GetOrAdd(capabilityId, static key => new CircuitBreakerState(key));
 
     /// <summary>This engine's bulkhead for one capability, created on first use.</summary>
     /// <remarks>
@@ -1359,7 +1454,8 @@ public sealed class FlowEngine
     private BulkheadGate Bulkhead(string capabilityId, StepPolicy policy) =>
         _bulkheads.GetOrAdd(
             capabilityId,
-            static (_, declared) => new BulkheadGate(declared.MaxConcurrency, declared.QueueDepth),
+            static (key, declared) =>
+                new BulkheadGate(declared.MaxConcurrency, declared.QueueDepth, key),
             policy);
 
     /// <summary>

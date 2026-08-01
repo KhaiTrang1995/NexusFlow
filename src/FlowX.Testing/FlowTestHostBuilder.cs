@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using FlowX.Runtime;
 
 namespace FlowX.Testing;
@@ -119,6 +120,32 @@ public sealed class FlowTestHostBuilder
     public FlowTestHostBuilder WithInvocation(FlowInvocation invocation)
     {
         _invocation = invocation;
+
+        return this;
+    }
+
+    /// <summary>Runs the flow as <paramref name="principal"/>.</summary>
+    /// <param name="principal">
+    /// The caller a trigger would have resolved from validated claims, or <c>null</c> to run
+    /// the flow anonymously.
+    /// </param>
+    /// <returns>This builder.</returns>
+    /// <remarks>
+    /// <para>
+    /// Keeps the rest of the invocation as it stands, because the two are set for different
+    /// reasons: correlation and the idempotency key are about what a capability passes
+    /// downstream, and this is about which steps the flow is allowed to reach at all.
+    /// </para>
+    /// <para>
+    /// <strong>A flow whose capabilities declare a stance needs this or it is refused</strong>,
+    /// which is the point: the default is anonymous, so a test that forgets to say who is
+    /// calling gets the same answer a real anonymous caller would. See
+    /// <see cref="TestPrincipal"/> for the two shapes worth passing.
+    /// </para>
+    /// </remarks>
+    public FlowTestHostBuilder As(ClaimsPrincipal? principal)
+    {
+        _invocation = _invocation with { Principal = principal };
 
         return this;
     }

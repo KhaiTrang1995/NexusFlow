@@ -158,6 +158,55 @@ public sealed class TelemetryCostTests
     }
 
     /// <summary>
+    /// The policy instruments are disabled too, and a policy that reports a decision to
+    /// nobody allocates nothing to do it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>B6 for <c>docs/10 §9</c>, and it is the half that could most easily have been
+    /// lost.</strong> Every one of these four helpers takes at least three labels, and a label
+    /// reaches an instrument as a <see cref="KeyValuePair{TKey,TValue}"/> of
+    /// <c>string</c> to <c>object?</c> — so a helper that built its tags before asking whether
+    /// anybody was listening would box the <see cref="int"/> in
+    /// <see cref="PolicyMetrics.CircuitChanged"/> and
+    /// <see cref="PolicyMetrics.BulkheadQueued"/> on every breaker transition and every
+    /// queued caller, while correctly reporting <c>Enabled = false</c>.
+    /// </para>
+    /// <para>
+    /// Measured through the helpers rather than through a policed execution on purpose. A
+    /// policed step allocates for reasons that have nothing to do with telemetry — a linked
+    /// <see cref="CancellationTokenSource"/> for the timeout, an async state machine for the
+    /// bulkhead's wait — so a measurement around the whole path could not tell a tag list from
+    /// a token source, and would go green the day the metrics started costing something.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void APolicyReportingADecisionToNobodyAllocatesNothing()
+    {
+        RequireOptimisedBuild();
+
+        PolicyMetrics.Invocations.Enabled.ShouldBeFalse();
+        PolicyMetrics.RetryAttempts.Enabled.ShouldBeFalse();
+        PolicyMetrics.CircuitState.Enabled.ShouldBeFalse();
+        PolicyMetrics.BulkheadQueueDepth.Enabled.ShouldBeFalse();
+
+        PolicyMetrics.IsEnabled.ShouldBeFalse();
+
+        Measure(static () =>
+        {
+            PolicyMetrics.Applied("Timeout", "Resilience", "order.validate", PolicyMetrics.OkOutcome);
+            PolicyMetrics.Retried("order.validate", 2, "order.validate_failed");
+            PolicyMetrics.CircuitChanged("order.validate", PolicyMetrics.CircuitOpen);
+            PolicyMetrics.BulkheadQueued("order.validate", 3);
+        })
+        .ShouldBe(
+            0,
+            "A breaker opening, a retry attempting and a bulkhead queueing are the three " +
+            "events docs/10 §9 exists to publish, and with no exporter attached all three " +
+            "must cost exactly what they cost before anything published them.");
+    }
+
+    /// <summary>
     /// A decorator that <em>is</em> installed still costs nothing per step once the listener
     /// goes away.
     /// </summary>

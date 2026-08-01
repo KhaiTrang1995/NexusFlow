@@ -1,8 +1,10 @@
+using System.Security.Claims;
 using Banking;
 using FlowX;
 using FlowX.Conformance.InMemory;
 using FlowX.Hosting;
 using FlowX.Runtime;
+using FlowX.Testing;
 
 namespace Banking.Tests;
 
@@ -107,10 +109,35 @@ internal sealed class TransferHarness
         Host().RunAsync(
             ExecuteTransferFlow.Plan,
             Dispatcher(),
-            new FlowInvocation("corr-" + idempotencyKey, idempotencyKey, "tenant-1"),
+            new FlowInvocation(
+                "corr-" + idempotencyKey, idempotencyKey, "tenant-1", Deadline: null, Principal: Operator),
             input,
             ExecuteTransferFlow.Projection,
             ct);
+
+    /// <summary>
+    /// The caller every transfer in this file runs as.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>ExecuteTransferFlow</c>'s capabilities declare four permissions between them, and
+    /// the engine decides each stance against the invocation's principal before the step is
+    /// dispatched. A harness that supplied none would refuse every transfer at
+    /// <c>ScreenSanctions</c> and turn this whole file into one assertion about
+    /// authorisation.
+    /// </para>
+    /// <para>
+    /// The four are listed rather than granted wholesale, so that a capability added with a
+    /// fifth permission fails here — naming the grant it needs — instead of being waved
+    /// through by a caller who holds everything. There is deliberately no <c>TestPrincipal</c>
+    /// that satisfies every stance, for exactly this reason.
+    /// </para>
+    /// </remarks>
+    private static ClaimsPrincipal Operator { get; } = TestPrincipal.Holding(
+        "compliance:screen",
+        "correspondent:read",
+        "ledger:post",
+        "settlement:write");
 
     /// <summary>Every instance this harness's journal holds.</summary>
     public IReadOnlyList<FlowInstanceRecord> Instances => Journal.Instances;

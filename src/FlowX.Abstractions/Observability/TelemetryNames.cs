@@ -159,6 +159,34 @@ public static class TelemetryNames
     /// <summary>Counter. Labels: <c>flow</c>, <c>step</c>. Alert on any occurrence.</summary>
     public const string FlowCompensationFailedTotal = "flowx_flow_compensation_failed_total";
 
+    // ---- Policy metrics (10 §9, "Observing policies") ----
+
+    /// <summary>
+    /// Counter. Labels: <c>policy</c>, <c>stage</c>, <c>capability</c>, <c>outcome</c>.
+    /// </summary>
+    /// <remarks>
+    /// The four rows of <c>docs/10 §9</c> below are frozen on the same terms as §3's above, and
+    /// for the same reason: an alert written against a breaker in one service must match the
+    /// breaker in every other. The three §9 rows that are <em>not</em> named here —
+    /// <c>flowx_ratelimit_rejected_total</c>, the cache hit/miss pair and
+    /// <c>flowx_idempotency_replays_total</c> — are omitted rather than named-and-unemitted,
+    /// which is the opposite of what was done for <see cref="TriggerAdmittedTotal"/> and
+    /// <see cref="StreamLagRecords"/>. The difference is that those two describe a subject that
+    /// exists and cannot be reached; a rate-limit rejection counter describes a decision no code
+    /// makes, so there is no name to freeze until <c>PolicyStage.Admission</c> is executed and
+    /// the shape of its <c>scope</c> label is a decision somebody has made.
+    /// </remarks>
+    public const string PolicyInvocationsTotal = "flowx_policy_invocations_total";
+
+    /// <summary>Counter. Labels: <c>capability</c>, <c>attempt</c>, <c>error_code</c>.</summary>
+    public const string RetryAttemptsTotal = "flowx_retry_attempts_total";
+
+    /// <summary>Gauge, 0/1/2. Labels: <c>capability</c>, <c>key</c>.</summary>
+    public const string CircuitState = "flowx_circuit_state";
+
+    /// <summary>Gauge. Label: <c>capability</c>.</summary>
+    public const string BulkheadQueueDepth = "flowx_bulkhead_queue_depth";
+
     // ---- Metric label names ----
 
     /// <summary>The flow's business identity.</summary>
@@ -190,4 +218,28 @@ public static class TelemetryNames
 
     /// <summary>The event contract's type name.</summary>
     public const string TypeLabel = "type";
+
+    /// <summary>The policy kind that made a decision, e.g. <c>CircuitBreaker</c>.</summary>
+    public const string PolicyLabel = "policy";
+
+    /// <summary>The <c>PolicyStage</c> that policy belongs to, by name.</summary>
+    public const string StageLabel = "stage";
+
+    /// <summary>Which attempt at a step is being made, counting from one.</summary>
+    /// <remarks>
+    /// The metric label, and deliberately not <see cref="Attempt"/>, which is the span
+    /// attribute. §2's attribute is dotted and §3's labels are bare, and a shared constant
+    /// would put <c>flowx.attempt</c> on a metric where every other label is a single word.
+    /// </remarks>
+    public const string AttemptLabel = "attempt";
+
+    /// <summary>The error code an attempt failed with.</summary>
+    /// <remarks>
+    /// Bounded by the flow's error catalogue, which is closed at build time — so this is a
+    /// label rather than a cardinality hazard, unlike a message or an instance id.
+    /// </remarks>
+    public const string ErrorCodeLabel = "error_code";
+
+    /// <summary>The composite key a circuit breaker is tracked under.</summary>
+    public const string KeyLabel = "key";
 }

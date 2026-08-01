@@ -114,6 +114,58 @@ public sealed class FlowXOptions
     /// every timer that fell due while it was gone, all due at once.
     /// </remarks>
     public int TimerScanBatchSize { get; set; } = 64;
+
+    /// <summary>How often this node looks for schedule occurrences that have fallen due.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The resolution of every <c>[CronTrigger]</c> this node fires, and the lower
+    /// bound on how late a firing is.</strong> A schedule at <c>0 2 * * *</c> under a
+    /// ten-second sweep fires between 02:00:00 and 02:00:10. Cron resolves to the minute, so
+    /// anything below a minute buys nothing but store traffic; anything above one is latency an
+    /// operator will eventually ask about.
+    /// </para>
+    /// <para>
+    /// It is also the window <see cref="MissedFirePolicy.Skip"/> is measured against: an
+    /// occurrence older than twice this is one a sweep missed, and <c>Skip</c> is the
+    /// declaration that says not to run it late.
+    /// </para>
+    /// </remarks>
+    public TimeSpan ScheduleScanInterval { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// How far back a sweep will look for an occurrence nothing fired.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the bound on a schedule's at-least-once, and it is the one number a
+    /// deployment has to think about.</strong> A fleet that was down across an occurrence fires
+    /// it late when it comes back; a fleet that was down for longer than this loses the
+    /// occurrences that fell outside the window — silently, because there is nothing to report
+    /// a firing that nothing was there to observe
+    /// (<c>docs/adr/ADR-0032-a-missed-schedule-fires-late.md</c>).
+    /// </para>
+    /// <para>
+    /// A day by default, which covers a rolling deploy, a node outage and a night. Raise it to
+    /// cover a longer expected outage; the cost of raising it is bounded, because
+    /// <see cref="MissedFirePolicy.RunOnce"/> — the default — fires the most recent missed
+    /// occurrence and not every one of them.
+    /// </para>
+    /// <para>
+    /// It is not unbounded, and could not usefully be: a sweep with no horizon on a fresh
+    /// database has no occurrence to stop at, so a first deployment would fire every occurrence
+    /// the expression has ever named.
+    /// </para>
+    /// </remarks>
+    public TimeSpan ScheduleCatchUp { get; set; } = TimeSpan.FromDays(1);
+
+    /// <summary>How many missed occurrences of one schedule a single sweep will fire.</summary>
+    /// <remarks>
+    /// Only reached under <see cref="MissedFirePolicy.RunAll"/>, which is the declaration that
+    /// asks for every missed firing. A minute-by-minute schedule under a day's horizon has
+    /// 1,440 of them, and a node that took them all at once would turn one outage into a second
+    /// one. What is not taken this sweep is still inside the horizon on the next.
+    /// </remarks>
+    public int ScheduleFireBatchSize { get; set; } = 32;
 }
 
 /// <summary>
@@ -228,6 +280,30 @@ internal sealed class FlowXOptionsValidator : IValidateOptions<FlowXOptions>
                 $"{nameof(FlowXOptions.TimerScanBatchSize)} must be greater than zero; it " +
                 $"is {options.TimerScanBatchSize}. Zero is not 'timers disabled' — leave the " +
                 "journal without an ITimerIndex for that.");
+        }
+
+        if (options.ScheduleScanInterval <= TimeSpan.Zero)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.ScheduleScanInterval)} must be positive; it is " +
+                $"{options.ScheduleScanInterval}. A zero interval is a sweep loop with no pause " +
+                "in it, which is a denial of service aimed at your own journal.");
+        }
+
+        if (options.ScheduleCatchUp < TimeSpan.Zero)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.ScheduleCatchUp)} cannot be negative; it is " +
+                $"{options.ScheduleCatchUp}. Zero is a legitimate value and means 'never fire a " +
+                "schedule late'; a negative one means nothing.");
+        }
+
+        if (options.ScheduleFireBatchSize <= 0)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.ScheduleFireBatchSize)} must be greater than zero; it is " +
+                $"{options.ScheduleFireBatchSize}. Zero is not 'schedules disabled' — register " +
+                "no schedule for that.");
         }
 
         if (options.MaxConcurrentRecoveries <= 0)

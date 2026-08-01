@@ -107,9 +107,9 @@ gantt
 
 | | |
 |---|---|
-| **Must** | Kafka · RabbitMQ · Azure Service Bus · Cron with leader election · the conformance suite as a published package |
+| **Must** | Kafka · RabbitMQ · Azure Service Bus · ~~Cron with leader election~~ **done, and without an election** ([ADR-0031](adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md)): `[CronTrigger]` generates a registration, `FlowScheduleScan` fires it, and exclusivity comes from the occurrence naming the instance rather than from a leader · the conformance suite as a published package |
 | **Should** | gRPC · MQTT · webhooks with signature verification |
-| **Done when** | `samples/event-driven` moves a flow HTTP → Kafka → cron with **zero** business-logic changes, proven by an unchanged-file assertion in CI |
+| **Done when** | `samples/event-driven` moves a flow HTTP → Kafka → cron with **zero** business-logic changes, proven by an unchanged-file assertion in CI. *The cron leg of that is now known to need two flows rather than one: a scheduled flow's input contract is fixed by the platform, so it cannot also bind an HTTP request body ([ADR-0033 §4](adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md)#4-the-consequence-that-contradicts-a-documented-claim)). The **capability** is the unchanged file, which is what the assertion should read* |
 
 ### P4 — Policy and security
 

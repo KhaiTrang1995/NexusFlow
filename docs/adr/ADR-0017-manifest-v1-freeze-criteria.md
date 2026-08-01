@@ -10,7 +10,7 @@
 > **The freeze was a deadline three documents used and none defined.**
 > [13-AI-Native](../13-AI-Native.md) gates its whole second half behind it and warns that
 > *"adding a field after the freeze is expensive"*.
-> [ADR-0014 §8](ADR-0014-derived-error-catalogue-vs-build-budget.md#8-consequences) makes it
+> [ADR-0014 §8](ADR-0014-derived-error-catalogue-vs-build-budget.md)#8-consequences) makes it
 > the point after which its own decision *"is materially harder to reverse"*, and uses
 > *"P8 approaches manifest v1.0 freeze"* as one of its four revisit triggers.
 > [20-Roadmap §3](../20-Roadmap.md#3-increment-detail) lists *"manifest v1.0 frozen"* first
@@ -323,10 +323,10 @@ gone) at the moment of the bump.
 **Today there is exactly one such field, and one such record.**
 [ADR-0014](ADR-0014-derived-error-catalogue-vs-build-budget.md) governs per-capability
 `errors`; it is **Proposed**; its
-[§8](ADR-0014-derived-error-catalogue-vs-build-budget.md#8-consequences) records that once
+[§8](ADR-0014-derived-error-catalogue-vs-build-budget.md)#8-consequences) records that once
 v1.0 is frozen *"removing `errors` is a breaking change, so this decision is materially harder
 to reverse after P8 than before it"*; its
-[§4](ADR-0014-derived-error-catalogue-vs-build-budget.md#4-decision)(5) commits to
+[§4](ADR-0014-derived-error-catalogue-vs-build-budget.md)#4-decision)(5) commits to
 re-measuring the derivation on a non-synthetic project *before* the freeze; and its fourth
 revisit trigger is the freeze itself. **The decision has been left unmade on purpose**, and
 this record does not touch it.

@@ -133,6 +133,61 @@ public sealed record AcceptedOffer(string CandidateId, string OnboardingId);
 /// </remarks>
 public sealed record OfferPending(Guid InstanceId, string AwaitingSignal);
 
+/// <summary>What the nightly close did, for the occurrence it did it for.</summary>
+/// <param name="OccurrenceAt">
+/// The instant the cron expression named, copied straight out of the
+/// <see cref="ScheduledFire"/> the flow was started with. Carried into the output on purpose:
+/// it is what a reader of the journal, or of a test, uses to tell one night's run from the
+/// next — and what tells a run that happened at 02:41 which window it was closing.
+/// </param>
+/// <param name="Closed">How many envelopes were withdrawn.</param>
+public sealed record OfferWindowClosed(DateTimeOffset OccurrenceAt, int Closed);
+
+/// <summary>
+/// Withdraws the offers whose window closed before this occurrence.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>It binds the occurrence and never a clock</strong>, which is the whole shape of a
+/// scheduled flow: the capability is the layer allowed to reach the outside world, and the one
+/// piece of the outside world it is <em>not</em> allowed to reach is the current time
+/// (<c>FLOWX1007</c>). The instant it works from is data, journalled on
+/// <c>flow_instance.input</c>, so a resumed instance closes exactly the offers the first
+/// attempt was going to.
+/// </para>
+/// <para>
+/// <c>Idempotent = true</c> is honest rather than decorative: withdrawing an envelope that is
+/// already withdrawn is a no-op on the desk, so the retry a firing may take is safe. It has to
+/// be — a schedule is at-least-once
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0004-universal-trigger-model.md">ADR-0004</a> §4),
+/// and the duplicate refusal that makes a <em>firing</em> exclusive says nothing about a step
+/// re-dispatched inside one.
+/// </para>
+/// </remarks>
+[Capability("offer.window.close", Version = "1.0.0",
+    Authorization = Authorization.Internal,
+    Idempotent = true, SideEffects = ["e-signature"])]
+public sealed class CloseExpiredOffers : ICapability<ScheduledFire, OfferWindowClosed>
+{
+    private readonly IOfferDesk _desk;
+
+    /// <summary>Creates the capability over the offer desk.</summary>
+    public CloseExpiredOffers(IOfferDesk desk) => _desk = desk;
+
+    /// <inheritdoc />
+    public ValueTask<Result<OfferWindowClosed>> ExecuteAsync(
+        ScheduledFire input,
+        CapabilityContext ctx,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+
+        var closed = _desk.WithdrawExpired(input.OccurrenceAt - Waits.Countersignature);
+
+        return ValueTask.FromResult(Result.Ok(new OfferWindowClosed(input.OccurrenceAt, closed)));
+    }
+}
+
 /// <summary>Errors <c>offer.accept</c> can produce.</summary>
 public static class OfferErrors
 {
@@ -172,13 +227,30 @@ public static class OfferErrors
 public interface IOfferDesk
 {
     /// <summary>Sends an offer out for signature and returns the envelope it went out in.</summary>
-    string Send(string candidateId, string role, string idempotencyKey);
+    /// <param name="candidateId">Who the offer is for.</param>
+    /// <param name="role">What they are being offered.</param>
+    /// <param name="idempotencyKey">What makes a re-dispatched step safe.</param>
+    /// <param name="sentAt">
+    /// When it went out, read from <c>CapabilityContext.UtcNow</c> — the seam that journals a
+    /// clock reading rather than taking one ambiently, which is what makes the nightly close
+    /// reproducible.
+    /// </param>
+    string Send(string candidateId, string role, string idempotencyKey, DateTimeOffset sentAt);
 
     /// <summary>Withdraws an envelope that is still open. The inverse of <see cref="Send"/>.</summary>
     void Withdraw(string envelopeId);
 
     /// <summary>Starts onboarding for a signed offer.</summary>
     string StartOnboarding(string envelopeId, string signedBy, string idempotencyKey);
+
+    /// <summary>
+    /// Withdraws every open envelope sent before an instant, and answers how many there were.
+    /// </summary>
+    /// <param name="sentBefore">
+    /// The cut-off, derived from the occurrence the schedule fired for rather than from a clock.
+    /// </param>
+    /// <returns>How many envelopes this call withdrew. Zero on a second call for the same instant.</returns>
+    int WithdrawExpired(DateTimeOffset sentBefore);
 }
 
 /// <summary>
@@ -213,7 +285,7 @@ public sealed class SendOfferForSignature : ICapability<OfferToAccept, OfferSent
             return ValueTask.FromResult(Result.Fail<OfferSent>(OfferErrors.MissingCandidate()));
         }
 
-        var envelope = _desk.Send(input.CandidateId, input.Role, ctx.IdempotencyKey);
+        var envelope = _desk.Send(input.CandidateId, input.Role, ctx.IdempotencyKey, ctx.UtcNow);
 
         return ValueTask.FromResult(Result.Ok(new OfferSent(input.CandidateId, envelope)));
     }
@@ -308,6 +380,7 @@ public sealed class StartOnboarding : ICapability<OfferCountersigned, Onboarding
 public sealed class InMemoryOfferDesk : IOfferDesk
 {
     private readonly Dictionary<string, string> _envelopes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> _sentAt = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _onboardings = new(StringComparer.Ordinal);
     private readonly HashSet<string> _withdrawn = new(StringComparer.Ordinal);
     private readonly List<string> _signatories = [];
@@ -357,7 +430,7 @@ public sealed class InMemoryOfferDesk : IOfferDesk
     }
 
     /// <inheritdoc />
-    public string Send(string candidateId, string role, string idempotencyKey)
+    public string Send(string candidateId, string role, string idempotencyKey, DateTimeOffset sentAt)
     {
         lock (_sync)
         {
@@ -369,8 +442,28 @@ public sealed class InMemoryOfferDesk : IOfferDesk
             var envelope = "env-" + candidateId;
 
             _envelopes[idempotencyKey] = envelope;
+            _sentAt[envelope] = sentAt;
 
             return envelope;
+        }
+    }
+
+    /// <inheritdoc />
+    public int WithdrawExpired(DateTimeOffset sentBefore)
+    {
+        lock (_sync)
+        {
+            var expired = _sentAt
+                .Where(entry => entry.Value < sentBefore && !_withdrawn.Contains(entry.Key))
+                .Select(static entry => entry.Key)
+                .ToList();
+
+            foreach (var envelope in expired)
+            {
+                _withdrawn.Add(envelope);
+            }
+
+            return expired.Count;
         }
     }
 

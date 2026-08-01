@@ -118,8 +118,11 @@ public sealed class FlowPlanGeneratorTests
         run.Ids.ShouldBeEmpty(run.Describe());
         run.Plan.ShouldContainText("partial class PlaceOrderFlow", run.Describe());
         run.Plan.ShouldContainText(
-            "CapabilityDescriptor.Create(\"inventory.reserve\", \"1.2.0\", true, \"inventory-ledger\")",
-            "Version, idempotency and side effects all come from the [Capability] attribute.");
+            "CapabilityDescriptor.Create(\"inventory.reserve\", \"1.2.0\", true, " +
+            "Authorization.Authenticated, null, \"inventory-ledger\")",
+            "Version, idempotency, the authorisation stance and side effects all come from " +
+            "the [Capability] attribute — and the stance is the same reading ManifestWriter " +
+            "publishes as authorization.mode, so the engine enforces what the manifest says.");
     }
 
     [Fact]

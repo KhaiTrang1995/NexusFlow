@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Claims;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Banking;
@@ -7,6 +8,7 @@ using FlowX.Conformance.InMemory;
 using FlowX.Generated;
 using FlowX.Hosting;
 using FlowX.Http;
+using FlowX.Testing;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
@@ -268,6 +270,20 @@ public sealed class TransferEndpointTests
     /// Composes the same graph the sample's <c>Program.cs</c> does, with the journal in
     /// memory instead of in PostgreSQL.
     /// </summary>
+    /// <summary>
+    /// The caller every request in this file is made as.
+    /// </summary>
+    /// <remarks>
+    /// The four permissions <c>ExecuteTransferFlow</c>'s capabilities name between them, and
+    /// no more — so a capability added with a fifth fails here naming the grant it needs,
+    /// rather than being waved through by a caller who holds everything.
+    /// </remarks>
+    private static ClaimsPrincipal Caller { get; } = TestPrincipal.Holding(
+        "compliance:screen",
+        "correspondent:read",
+        "ledger:post",
+        "settlement:write");
+
     private static async Task<Application> StartAsync(bool withJournal = true)
     {
         var journal = new InMemoryFlowJournal();
@@ -305,6 +321,22 @@ public sealed class TransferEndpointTests
                 })
                 .Configure(app =>
                 {
+                    // Stands where an authentication scheme stands, because the flow's
+                    // capabilities declare four permissions and the engine decides each
+                    // stance against HttpContext.User before the step is dispatched. Without
+                    // it every request here is anonymous, every assertion below reads 403,
+                    // and none of them is about what it says it is about.
+                    //
+                    // A middleware rather than a scheme: this file is testing the endpoint
+                    // the [HttpTrigger] generated, not how a token becomes a principal, and
+                    // samples/banking has no authentication of its own to mirror.
+                    // samples/ecommerce is where the token half is demonstrated.
+                    app.Use(async (context, next) =>
+                    {
+                        context.User = Caller;
+                        await next(context).ConfigureAwait(false);
+                    });
+
                     app.UseRouting();
                     app.UseEndpoints(endpoints =>
                     {
