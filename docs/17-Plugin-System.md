@@ -22,23 +22,31 @@
 >
 > **`IEventPublisher` was on the undeclared list until WP-56 and is now in
 > `src/FlowX.Abstractions/Events/`**
-> ([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)). It is the first
-> contract here declared with **nothing implementing it**:
-> `PostgresOutboxPublisher` consumes it, and no plugin produces one. There is no
-> Kafka, RabbitMQ, Service Bus, Event Hubs or SNS plugin, and the only
-> implementation anywhere is a recording test double in
-> `tests/FlowX.Postgres.Tests`. `PublisherConformance` stays unwritten for the
-> same reason it is worth naming here: a suite written against one test double is
-> a suite that has encoded it.
+> ([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)). *This paragraph
+> said it was "the first contract here declared with nothing implementing it",
+> that "the only implementation anywhere is a recording test double in
+> `tests/FlowX.Postgres.Tests`", and that `PublisherConformance` "stays unwritten
+> for the same reason … a suite written against one test double is a suite that
+> has encoded it". All three expired at WP-56b.* `plugins/FlowX.Redis` now
+> produces one — `RedisStreamEventPublisher`, one stream per `partition_key` —
+> and `PublisherConformance` holds it and the double, which has moved to
+> `tests/FlowX.Conformance.Tests/InMemory/` because it is now a reference
+> implementation rather than a fixture. There is still no Kafka, RabbitMQ,
+> Service Bus, Event Hubs or SNS plugin.
 >
-> **That gap is now the only one on the event path, which makes it sharper rather
-> than smaller.** `.Emit<T>()` reaches the publisher: the generated dispatcher
-> builds the body, the engine stages it in the step's transaction, and
-> `PostgresOutboxPublisher` hands it over at-least-once. Everything between an
-> author's chain and this interface is exercised end to end by
-> `EmitReachesTheBrokerTests`. Everything on the far side of it — acknowledgement
-> semantics, broker-side partitioning, what a real client does with a batch it half
-> accepted — is still unwritten and unproved.
+> **What remains unproved on the event path is narrower and worth stating
+> exactly.** `.Emit<T>()` reaches the publisher: the generated dispatcher builds
+> the body, the engine stages it in the step's transaction, and
+> `PostgresOutboxPublisher` hands it over at-least-once, which
+> `EmitReachesTheBrokerTests` exercises end to end. On the far side of the
+> interface, acknowledgement semantics and broker-side partitioning are now
+> asserted against a running server, and a batch a broker half accepts is
+> asserted through a real `WRONGTYPE` refusal
+> (`RedisStreamEventPublisherTests`). What is **not** proved is the two halves
+> meeting in one process: no test drives a PostgreSQL outbox into the Redis
+> publisher, because the two adapters have separate test projects with separate
+> availability gates. Every link is held; the chain is held by the seam being one
+> interface with one conformance suite behind it.
 >
 > There are **three plugins**. `plugins/FlowX.Http` extends FlowX by referencing
 > `FlowX.Abstractions` and mapping ASP.NET Core onto `TriggerEnvelope` — the
@@ -58,15 +66,18 @@
 > `FlowX.Http` is still the only *transport* plugin, which is the data point
 > `PluginsPassConformance` actually needs.
 >
-> **`FlowX.Conformance.Tests` is three of [§4](#4-compatibility-policy)'s seven
+> **`FlowX.Conformance.Tests` is four of [§4](#4-compatibility-policy)'s seven
 > rows and nothing else.**
 > `tests/FlowX.Conformance.Tests` holds `JournalConformance`,
-> `LeaseStoreConformance` and `RecoveryIndexConformance`; a store claims
+> `LeaseStoreConformance`, `RecoveryIndexConformance` and
+> `PublisherConformance`; a store claims
 > conformance by deriving from them and supplying itself. *This paragraph said
 > "two of six" and that `IRecoveryIndex` had no suite; the suite was written on
 > 2026-07-31 and immediately caught a disagreement between the two
-> implementations on a limit of zero or less.* `TriggerSourceConformance`,
-> `PublisherConformance`, `SerializerConformance` and `PolicyHandlerConformance`
+> implementations on a limit of zero or less. It then said three of seven and
+> named `PublisherConformance` as unwritten; that expired at WP-56b, and the
+> heading above is now four of seven.* `TriggerSourceConformance`,
+> `SerializerConformance` and `PolicyHandlerConformance`
 > are not written, so the
 > release-blocking gate in
 > [09 §11](09-Trigger-Model.md#11-writing-a-trigger-plugin) is still a statement
@@ -140,7 +151,7 @@ flowchart TB
 | Contract | Extends | First-party implementations |
 |---|---|---|
 | `ITriggerSource` | how flows are activated | Http, Grpc, GraphQL, Kafka, RabbitMq, AzureServiceBus, Mqtt, Sqs, Cron, FileWatcher, SignalR, Agent |
-| `IEventPublisher` | where events go | **declared at WP-56 and fed by `.Emit<T>()`; none of Kafka, RabbitMq, ServiceBus, EventHubs, Sns exists** |
+| `IEventPublisher` | where events go | **Redis Streams (WP-56b) ships**; none of Kafka, RabbitMq, ServiceBus, EventHubs, Sns exists |
 | `IFlowJournal` | durable state | PostgreSql, SqlServer, Redis, Cosmos |
 | `ILeaseStore` | ownership | **PostgreSql (WP-53) and Redis (WP-54) both ship**; etcd does not |
 | `IIdempotencyStore` | dedup | Redis, PostgreSql, in-memory |
@@ -225,18 +236,23 @@ FlowX.Conformance.Tests            # to be shipped as a NuGet package at WP-70
 │                                  #   commit order, replay capture, derived resume,
 │                                  #   child instances, redacted payloads
 ├── LeaseStoreConformance          # WP-51 · exclusivity, expiry, monotonic fencing tokens
-├── PublisherConformance           # NOT WRITTEN — at-least-once, per-key ordering, DLQ.
-│                                  #   IEventPublisher is declared (WP-56), fed by .Emit<T>()
-│                                  #   and implemented by nothing but a test double, so a
-│                                  #   suite would encode that double
+├── PublisherConformance           # WP-56b · the prefix contract, per-key staging order,
+│                                  #   at-least-once redelivery, an unreachable broker as a
+│                                  #   value. Held by the recording double and by
+│                                  #   RedisStreamEventPublisher. DLQ is still not part of
+│                                  #   it: there is no dead-letter path to conform to
 ├── SerializerConformance          # NOT WRITTEN — round-trip, versioning, redaction
 └── PolicyHandlerConformance       # NOT WRITTEN — stage placement, deadline, telemetry
 ```
 
-The two that exist are abstract classes: a store derives, overrides one factory
+The four that exist are abstract classes: a store derives, overrides one factory
 method and inherits every assertion. Editing the suite to make a store pass is a
 disagreement about the contract, not a local fix, which is the property that makes
-"the suite is the real contract" mean something.
+"the suite is the real contract" mean something. Each is also held to a suite of
+its own — `TheSuiteRejectsAStoreThatIsWrongTests` and
+`TheSuiteRejectsAPublisherThatIsWrongTests` run naive implementations against the
+assertions and require each defect to be rejected *by name*, because a suite that
+fails without saying which guarantee broke is one people re-run until it is green.
 
 A third party runs `dotnet test` against the suite and publishes the result — the
 same badge first-party plugins carry. No certification committee, no gatekeeping;

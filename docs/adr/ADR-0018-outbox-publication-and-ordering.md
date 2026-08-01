@@ -154,6 +154,18 @@ purged — is otherwise invisible until the disk is.
   [17 §4](../17-Plugin-System.md#4-compatibility-policy)'s `PublisherConformance` — the suite
   that would hold a second implementation to this contract — is still not written. Writing it
   against one test double would have been a suite that encodes its only implementation.
+
+  > **Spent.** `plugins/FlowX.Redis` now produces `RedisStreamEventPublisher`, which appends
+  > each event to its own `partition_key`'s Redis stream, and `PublisherConformance` holds it
+  > and the recording double — moved to `tests/FlowX.Conformance.Tests/InMemory/` — to the same
+  > assertions unmodified. Acknowledgement semantics and broker-side partitioning are asserted
+  > against a running server; a half-accepted batch is asserted through a real `WRONGTYPE`
+  > refusal and reports a prefix rather than a set. Two things this paragraph implied are
+  > *still* true and are stated rather than left to be inferred: the suite covers only the three
+  > decisions that are about this interface — decision 2 is a column and decision 5 is a
+  > `NOT EXISTS`, neither reachable from a publisher — and nothing drives a PostgreSQL outbox
+  > into the Redis publisher inside one process, because the two adapters gate on separate
+  > servers in separate test projects. The decision this record took is untouched.
 - **One event nobody can publish stops everything behind it.** The prefix contract means a
   permanently refused event is retried forever and blocks its batch. There is no dead-letter
   path; DLQ is named in §4's description of the unwritten conformance suite and is not part
@@ -170,9 +182,25 @@ purged — is otherwise invisible until the disk is.
 
 ## Revisit when
 
-- A broker plugin exists and `PublisherConformance` can hold two implementations to this
+- ~~A broker plugin exists and `PublisherConformance` can hold two implementations to this
   contract — at which point the prefix return is tested against a real client's batching
-  semantics and may not survive.
+  semantics and may not survive.~~
+
+  > **Met, and the prefix survived.** Both halves happened at WP-56b:
+  > `RedisStreamEventPublisher` is the plugin, and `PublisherConformance` holds it and the
+  > recording double. The prefix return was the thing most likely not to survive a real client
+  > and it did — for the reason decision 1 gave rather than by luck. Redis Streams has no batch
+  > command that reports a partial acceptance, so the publisher appends one event at a time and
+  > the count is simply where it stopped; a client that *did* offer a batch endpoint would still
+  > have to answer "how many, from the front" to be usable here, because that is the only shape
+  > the caller can mark against. What the real client changed is smaller and is recorded in the
+  > commit: a null field cannot be written to a stream entry, so an absent `partition_key` or
+  > body is an omitted field rather than a null one — which the double could not have found,
+  > because a list accepts nulls.
+  >
+  > The condition is spent; a second broker with genuinely different batching semantics —
+  > Kafka's producer, which acknowledges asynchronously and out of order — is the next thing
+  > that could unseat it, and would be its own record.
 - A deployment needs a dead-letter path, which changes the prefix contract from "stop" to
   "divert and continue".
 - The polling publisher becomes the latency bottleneck, at which point §5's CDC alternative

@@ -17,7 +17,7 @@
 > | [2 · the journal](#2-the-journal) | **built, against a real database.** WP-51 declared `IFlowJournal`, `ILeaseStore` and `FencingToken` in `src/FlowX.Abstractions/Durability/`; WP-52 made `FlowX.Runtime` read `ExecutionProfile` and commit one row per step boundary, and resume by replaying committed rows into the same step loop; WP-53 implemented both in `plugins/FlowX.Postgres/`, where 45 conformance assertions and 41 adapter tests run green against PostgreSQL 16.13. **The ERD below is no longer the drawn version** — it is migrations `0001`, `0002` and `0003`, after [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md) superseded three of the drawn clauses and [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md) found six more wrong against a real database |
 > | [3 · leases and fencing](#3-leases-and-fencing) | **built.** *This row said that nothing acquires or renews a lease and nothing scans for an abandoned instance; WP-55 built all three.* `DurableLease` acquires, renews and releases; `FlowHost` takes the lease before the first step; `FlowRecoveryScan` and `FlowRecoveryService` are node-2's half of the diagram below. *A later row said one half had no PostgreSQL behind it — that the adapter implemented no `IRecoveryIndex`, so a Postgres-backed node fenced correctly and scanned for nothing. `PostgresRecoveryIndex` closed it, in a class of its own rather than on the journal, because a scan is not part of executing an instance* |
 > | [4 · exactly-once](#4-exactly-once-honestly) | **not built**, and unchanged by WP-52, WP-53 or WP-55: a process that dies after an effect and before its commit still re-executes the step. **WP-50 measured it rather than changing it.** Under real `SIGKILL`s at that exact instruction, with a non-idempotent effect recorded in its own PostgreSQL ledger, the step re-executes **exactly once per kill and never otherwise** — 20 duplicate effects from 20 kills at concurrency 1, and **0 from 20 kills** when the signal moves to the far side of the commit |
-> | [5 · the outbox](#5-the-transactional-outbox) | **built end to end, and unproved against a broker.** The table is in the schema, `.Emit<T>()`'s generated `DescribeStep` builds the event, `FlowEngine.CommitStepAsync` stages it in the step's own transaction, and `PostgresOutboxPublisher` drains it at-least-once in per-`partition_key` order. What is not built is a broker: `IEventPublisher` is declared and the only implementation anywhere is a recording test double, so *published* means *handed to a publisher*. [`FLOWX1024`](diagnostics/FLOWX1024.md) survives, narrowed to the two cases that still stage nothing |
+> | [5 · the outbox](#5-the-transactional-outbox) | **built end to end, and proved against one broker.** The table is in the schema, `.Emit<T>()`'s generated `DescribeStep` builds the event, `FlowEngine.CommitStepAsync` stages it in the step's own transaction, and `PostgresOutboxPublisher` drains it at-least-once in per-`partition_key` order. *This row said no broker was built; `RedisStreamEventPublisher` (WP-56b) is one, one stream per `partition_key`, held to `PublisherConformance` alongside the recording double.* [`FLOWX1024`](diagnostics/FLOWX1024.md) survives, narrowed to the two cases that still stage nothing |
 > | [6 · partitioning](#6-partitioning-and-scale) · [8 · failure catalogue](#8-failure-catalogue) | **not built.** No sharding, no scheduler. *This row also said "no second node"; WP-50's rig runs several, as processes, though nothing deploys them for you.* §8's first two rows — node crash and zombie writes — are what §3 implements, and **only the first of them has been exercised by killing anything**: see §8's note |
 > | [7 · deployment safety](#7-deployment-safety) | **partly built.** *This row said "no migration"; there are three.* Rules 2, 3 and 4 have implementations — an explicit release on drain, a version-pinned candidate the scan leaves alone, and migrations `0002` and `0003` as the expand/contract worked examples. Rule 1 is still a number an operator has to set |
 >
@@ -409,11 +409,15 @@ every incident review template:
 > has no body that can be written without reflection. Both have a fix in user code, which is
 > what the rule now says.
 >
-> **`IEventPublisher` is declared and nothing implements it.** WP-56 added the contract to
-> `FlowX.Abstractions`; there is no Kafka, RabbitMQ, Service Bus, Event Hubs or SNS plugin,
-> and the only implementation in the repository is a recording test double. Everything on
-> the database side of that seam is proved against PostgreSQL 16.13. Nothing on the network
-> side of it is.
+> **`IEventPublisher` is declared and one plugin implements it.** *This box said nothing did,
+> and that "the only implementation in the repository is a recording test double". Both
+> expired at WP-56b.* `plugins/FlowX.Redis` produces `RedisStreamEventPublisher`, and
+> `PublisherConformance` holds it and the double to the same assertions unmodified. Everything
+> on the database side of that seam is proved against PostgreSQL 16.13, and the network side is
+> now proved against Redis 7 — including a batch a broker half accepts. There is still no
+> Kafka, RabbitMQ, Service Bus, Event Hubs or SNS plugin, and nothing drives the PostgreSQL
+> outbox into the Redis publisher inside one process: the two adapters gate on separate servers
+> in separate test projects, so the chain is held link by link rather than end to end.
 
 ```mermaid
 sequenceDiagram
