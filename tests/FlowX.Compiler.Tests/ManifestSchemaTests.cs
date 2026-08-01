@@ -44,6 +44,19 @@ public sealed class ManifestSchemaTests
         throw new FileNotFoundException("Could not locate schemas/flowx.manifest.schema.json.");
     }
 
+    /// <summary>
+    /// Evaluates one emitted manifest against the committed schema, failing with every
+    /// error the evaluation produced.
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than private so a sibling suite about one shape — a suspension
+    /// point's fields, say — can assert against the *committed* contract instead of
+    /// loading a second copy of it. A second loader is a second chance to validate
+    /// against a schema nobody ships.
+    /// </remarks>
+    /// <param name="manifest">The emitted document.</param>
+    internal static void Validate(string manifest) => ShouldValidate(manifest);
+
     private static void ShouldValidate(string manifest)
     {
         using var document = JsonDocument.Parse(manifest);
