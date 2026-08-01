@@ -210,8 +210,9 @@ jobs:
     services:
       postgres:
         # No other workflow in this repository stands one up — `tests/FlowX.Postgres.Tests`
-        # is opt-in on FLOWX_POSTGRES_CONNECTION and CI does not set it, so its 113 database
-        # tests skip. This is the first Postgres service container here, and it is written
+        # is opt-in on FLOWX_POSTGRES_CONNECTION and CI does not set it, so 119 of its 126
+        # tests skip on every run. This is the first Postgres service container here, and it
+        # is written
         # to be the one the others copy: pinned major version matching what the recorded run
         # used (PostgreSQL 16), a health check so the rig never races the server, and a
         # password because the rig connects over TCP.
