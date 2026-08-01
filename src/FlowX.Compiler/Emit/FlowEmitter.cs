@@ -1148,7 +1148,13 @@ public static class FlowEmitter
         {
             writer.Line(
                 "public static readonly CapabilityDescriptor Step" + step.Index + " = " +
-                DescriptorCall(step.CapabilityId!, step.CapabilityVersion!, step.IsIdempotent, step.SideEffects) + ";");
+                DescriptorCall(
+                    step.CapabilityId!,
+                    step.CapabilityVersion!,
+                    step.IsIdempotent,
+                    step.SideEffects,
+                    step.AuthorizationMode,
+                    step.AuthorizationValue) + ";");
 
             if (step.IsCompensable)
             {
@@ -1168,21 +1174,61 @@ public static class FlowEmitter
                         compensation.CapabilityId!,
                         compensation.CapabilityVersion!,
                         compensation.IsIdempotent,
-                        compensation.SideEffects) + ";");
+                        compensation.SideEffects,
+
+                        // Deliberately no stance. An undo runs on the failure path to reverse
+                        // work this principal already caused, and `StepNode.ForCapability`
+                        // resolves the node's stance from the forward capability alone — so a
+                        // stance here would reach no decision and would read as though it did.
+                        // ADR-0026 argues why a compensation is not authorised.
+                        authorizationMode: null,
+                        authorizationValue: null) + ";");
             }
         }
 
         writer.CloseBrace();
     }
 
-    private static string DescriptorCall(string id, string version, bool idempotent, string[] sideEffects)
+    /// <summary>
+    /// The <c>CapabilityDescriptor.Create(...)</c> call for one capability.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><paramref name="authorizationMode"/> is the same value
+    /// <c>ManifestWriter</c> publishes as <c>authorization.mode</c></strong>, and
+    /// <paramref name="authorizationValue"/> the same as <c>authorization.value</c>. Both
+    /// come off the <c>StepModel</c> that <c>CapabilityReader</c> filled, once, from the
+    /// author's <c>[Capability]</c> attribute — so the stance the engine enforces and the
+    /// stance <c>flowx diff</c>'s <c>FLOWX-DIFF-015</c> compares are one reading rather than
+    /// two kept in step. A second reading is how the two come to disagree, and a published
+    /// authorisation contract disagreeing with the enforced one is worse than neither.
+    /// </para>
+    /// <para>
+    /// A <c>null</c> mode emits the stanceless overload rather than a stance, because
+    /// <c>Authorization.Public</c> is the enum's zero value and inventing it here would be
+    /// the permissive default <c>FLOWX1010</c> exists to refuse. It is unreachable for a
+    /// forward step — that rule is an error — and is what a compensation gets.
+    /// </para>
+    /// </remarks>
+    private static string DescriptorCall(
+        string id,
+        string version,
+        bool idempotent,
+        string[] sideEffects,
+        string? authorizationMode,
+        string? authorizationValue)
     {
         var effects = sideEffects.Length == 0
             ? string.Empty
             : ", " + string.Join(", ", sideEffects.Select(Quote));
 
+        var stance = authorizationMode is null
+            ? string.Empty
+            : ", Authorization." + authorizationMode + ", " +
+              (authorizationValue is null ? "null" : Quote(authorizationValue));
+
         return "CapabilityDescriptor.Create(" + Quote(id) + ", " + Quote(version) + ", " +
-               (idempotent ? "true" : "false") + effects + ")";
+               (idempotent ? "true" : "false") + stance + effects + ")";
     }
 
     private static void EmitPlan(SourceWriter writer, FlowModel flow)

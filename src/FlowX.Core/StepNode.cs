@@ -238,6 +238,18 @@ public sealed record StepNode
     /// </remarks>
     public StepPolicy StepPolicy { get; private init; } = StepPolicy.None;
 
+    /// <summary>
+    /// The step's authorisation stance, resolved from its capability when the plan was built.
+    /// </summary>
+    /// <remarks>
+    /// Resolved here for <see cref="StepPolicy"/>'s reason and read the same way: a step whose
+    /// stance admits every caller holds the shared <see cref="StepAuthorization.None"/> and
+    /// answers one comparison. Gated by <see cref="ExecutionPlan.HasAuthorizedSteps"/>, so an
+    /// unstanced or wholly permissive plan never reaches it —
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-authorisation-runs-in-the-step-loop.md">ADR-0026</a>.
+    /// </remarks>
+    public StepAuthorization StepAuthorization { get; private init; } = StepAuthorization.None;
+
     /// <summary>The event published by an <see cref="StepKind.Emit"/> step.</summary>
     public string? EventType { get; private init; }
 
@@ -506,6 +518,13 @@ public sealed record StepNode
             CompensationPolicies = undoChain,
             CompensationRetry = CompensationPolicy.From(undoChain),
             StepPolicy = StepPolicy.From(stepChain),
+
+            // The forward capability's stance, and deliberately not the compensation's. An
+            // undo runs on the failure path to reverse work this principal has already
+            // caused; refusing it there would leave the inconsistent state the compensation
+            // exists to remove, and the caller has already been authorised for the step that
+            // made the mess. ADR-0026 records the trade.
+            StepAuthorization = StepAuthorization.From(capability),
         };
     }
 

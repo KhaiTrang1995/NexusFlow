@@ -1388,6 +1388,19 @@ public static class FlowAnalyzer
                 info.AuthorizationMode));
         }
 
+        // FLOWX1037 — the stance was declared and named, and nothing can decide it. Third in
+        // the chain and reported after the other two rather than beside them: a Policy stance
+        // with no name is FLOWX1030's finding, and reporting both on one declaration would
+        // name two remedies for one edit.
+        else if (NotEnforceable(info))
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.AuthorizationStanceNotEnforceable,
+                link.TypeArguments[0].GetLocation(),
+                info.Id,
+                info.AuthorizationMode));
+        }
+
         var mapping = ReadInputMapping(link, semanticModel, info, diagnostics);
 
         steps.Add(StepModel.Capability(
@@ -1829,6 +1842,42 @@ public static class FlowAnalyzer
     private static bool NamesNothing(CapabilityInfo info) =>
         info.AuthorizationValue is null
         && info.AuthorizationMode is "Permission" or "Policy";
+
+    /// <summary>
+    /// Whether a declared stance is one the runtime cannot decide — FLOWX1037.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One mode, and the set is spelled out here rather than derived from
+    /// <c>StepAuthorization</c> because this assembly may not reference <c>FlowX.Core</c> —
+    /// an analyzer runs inside the compiler host and takes no dependency on the runtime it
+    /// compiles for. <c>AuthorizationStancesMatchTheAbstraction</c> pins the two against each
+    /// other, so a stance that becomes enforceable cannot leave this rule reporting it.
+    /// </para>
+    /// <para>
+    /// Written as a set rather than a single comparison for the reason
+    /// <c>DeclaredPolicyAnalyzer.ExecutedKinds</c> is: the line is a list of members and not
+    /// a range, and the next stance to become undecidable — or decidable — should be one
+    /// edit here.
+    /// </para>
+    /// </remarks>
+    private static bool NotEnforceable(CapabilityInfo info) =>
+        System.Array.IndexOf(StancesTheRuntimeCannotDecide, info.AuthorizationMode) >= 0;
+
+    /// <summary>
+    /// The stance names <c>FLOWX1037</c> reports, as <c>CapabilityReader</c> spells them.
+    /// </summary>
+    /// <remarks>
+    /// Public so that <c>AuthorizationStancesMatchTheAbstraction</c> can pin it against
+    /// <c>StepAuthorization.IsRefusedAtBuildTime</c> — the arrangement
+    /// <c>DeclaredPolicyAnalyzer.ExecutedKinds</c> and <c>PolicyStageFitnessTests</c> already
+    /// use, and for the same reason: this assembly targets netstandard2.0, loads into the
+    /// compiler process and cannot reference the runtime it compiles for, so this is a copy,
+    /// and an unpinned copy of a security decision drifts in silence. The day a stance
+    /// becomes decidable, that gate goes red rather than this rule quietly reporting a stance
+    /// that now works.
+    /// </remarks>
+    public static readonly string[] StancesTheRuntimeCannotDecide = ["Policy"];
 
     private static void AttachPolicy(
         ChainLink link,

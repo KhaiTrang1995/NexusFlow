@@ -81,6 +81,7 @@ public sealed class FlowExecutionContext : FlowContext
     private string _correlationId = string.Empty;
     private string _idempotencyKey = string.Empty;
     private string? _tenantId;
+    private ClaimsPrincipal? _principal;
 
     /// <summary>
     /// <see cref="Run"/>'s instance id as text, computed the first time it is asked for.
@@ -379,7 +380,23 @@ public sealed class FlowExecutionContext : FlowContext
     public override string FlowVersion => _flowVersion;
 
     /// <inheritdoc />
-    public override ClaimsPrincipal? Principal => null;
+    /// <remarks>
+    /// <para>
+    /// <strong>This answered <c>null</c> unconditionally until authorisation was
+    /// enforced</strong>, while <see cref="FlowContext.Principal"/> had been declared since
+    /// the first commit and <c>TriggerHeaders</c> had carried a
+    /// <see cref="ClaimsPrincipal"/> all along. The abstraction was whole and the wire was cut
+    /// at the last inch: a capability asking who the caller was got "nobody", every time,
+    /// with nothing saying so.
+    /// </para>
+    /// <para>
+    /// Reset with the rest of the pooled state, so a principal cannot outlive the invocation
+    /// that supplied it and be read by the next flow to rent this context — which would be a
+    /// cross-request identity leak of exactly the shape <c>docs/15-Security.md §3</c>'s
+    /// Boundary 2 spoofing row describes.
+    /// </para>
+    /// </remarks>
+    public override ClaimsPrincipal? Principal => _principal;
 
     /// <inheritdoc />
     /// <remarks>
@@ -565,6 +582,7 @@ public sealed class FlowExecutionContext : FlowContext
         _correlationId = invocation.CorrelationId;
         _idempotencyKey = invocation.IdempotencyKey;
         _tenantId = invocation.TenantId;
+        _principal = invocation.Principal;
         _flowInstanceId = null;
         _clock = clock;
 
@@ -893,6 +911,7 @@ public sealed class FlowExecutionContext : FlowContext
         _correlationId = string.Empty;
         _idempotencyKey = string.Empty;
         _tenantId = null;
+        _principal = null;
         _flowInstanceId = null;
         _deadline = default;
         _clock = SystemClock.Instance;

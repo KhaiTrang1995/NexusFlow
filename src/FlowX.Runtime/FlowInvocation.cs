@@ -1,3 +1,5 @@
+using System.Security.Claims;
+
 namespace FlowX.Runtime;
 
 /// <summary>
@@ -16,14 +18,38 @@ namespace FlowX.Runtime;
 /// It can never lengthen it: a caller must not be able to buy a flow more budget
 /// than its own author gave it.
 /// </param>
+/// <param name="Principal">
+/// The caller, resolved once by the transport plugin from validated claims and from nothing
+/// else, or <c>null</c> for an anonymous activation.
+/// </param>
 /// <remarks>
-/// A readonly record struct, so starting a flow does not allocate an argument object.
+/// <para>
+/// A readonly record struct, so starting a flow does not allocate an argument object. The
+/// principal is a reference the trigger already holds, so carrying it costs a field copy.
+/// </para>
+/// <para>
+/// <strong><see cref="Principal"/> is the whole of where identity comes from</strong>
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0027-identity-arrives-on-the-invocation.md">ADR-0027</a>).
+/// It travels the path <see cref="TenantId"/> already travelled —
+/// <c>TriggerHeaders</c> to here to <c>FlowContext.Principal</c> — so a stance means the same
+/// thing whichever transport activated the flow, which is
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0004-universal-trigger-model.md">ADR-0004</a>'s
+/// requirement. There is no ambient principal and no <c>AsyncLocal</c>: an authorisation
+/// decision that depended on where the continuation happened to be running would be a
+/// different decision on a thread-pool hop.
+/// </para>
+/// <para>
+/// Last in the parameter list so that every existing positional construction still compiles
+/// and still means what it did — a trigger that supplies no principal produces an anonymous
+/// invocation, which is the truthful reading of one.
+/// </para>
 /// </remarks>
 public readonly record struct FlowInvocation(
     string CorrelationId,
     string IdempotencyKey,
     string? TenantId = null,
-    DateTimeOffset? Deadline = null);
+    DateTimeOffset? Deadline = null,
+    ClaimsPrincipal? Principal = null);
 
 /// <summary>What happened to the compensations after a flow failed.</summary>
 public enum CompensationOutcome

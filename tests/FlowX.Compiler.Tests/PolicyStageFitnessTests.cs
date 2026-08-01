@@ -44,6 +44,67 @@ public sealed class PolicyStageFitnessTests
         }
     }
 
+    /// <summary>
+    /// The compiler's copy of which stances the runtime cannot decide matches the runtime's.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>FLOWX1037</c> names a set of stance names, and <c>StepAuthorization</c> names the
+    /// same set as enum members. The two are separate because <c>FlowX.Compiler</c> targets
+    /// netstandard2.0, loads into the compiler process and cannot reference the runtime it
+    /// compiles for — the same constraint <c>PolicyStagesMatchTheAbstraction</c> exists
+    /// under.
+    /// </para>
+    /// <para>
+    /// <strong>The drift this catches is the one that matters most.</strong> A stance that
+    /// becomes decidable while the rule still reports it is a build error over a working
+    /// feature; a stance that stops being decidable while the rule stays quiet is a published
+    /// authorisation contract that nothing enforces and nothing reports — which is precisely
+    /// the defect P4's authorisation work was written to end.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AuthorizationStancesMatchTheAbstraction()
+    {
+        var runtime = Enum.GetValues<Authorization>()
+            .Where(StepAuthorization.IsRefusedAtBuildTime)
+            .Select(static stance => stance.ToString())
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+
+        var compiler = FlowAnalyzer.StancesTheRuntimeCannotDecide
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+
+        compiler.ShouldBe(
+            runtime,
+            "FLOWX1037 reports [" + string.Join(", ", compiler) + "] and StepAuthorization " +
+            "refuses [" + string.Join(", ", runtime) + "] at build time. A stance in one list " +
+            "and not the other is either a build error over a stance that now works, or a " +
+            "stance nothing enforces and nothing reports.");
+    }
+
+    /// <summary>
+    /// Every stance is decided by the engine or reported by the compiler, and none is both.
+    /// </summary>
+    /// <remarks>
+    /// The partition, asserted from the compiler's side. Its counterpart in
+    /// <c>tests/FlowX.Runtime.Tests</c> asserts it from the runtime's, and between them a
+    /// member of <see cref="Authorization"/> cannot fall through both.
+    /// </remarks>
+    [Fact]
+    public void NoStanceIsBothDecidedAndReported()
+    {
+        var both = Enum.GetValues<Authorization>()
+            .Where(static stance => StepAuthorization.IsDecidedAtRunTime(stance)
+                                 && StepAuthorization.IsRefusedAtBuildTime(stance))
+            .ToArray();
+
+        both.ShouldBeEmpty(
+            "A stance the engine decides and the compiler also refuses would fail a build " +
+            "over a capability that works.");
+    }
+
     [Fact]
     public void EveryPolicyTheAbstractionOffersHasAKnownStage()
     {

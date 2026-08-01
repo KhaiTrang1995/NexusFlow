@@ -141,7 +141,7 @@ public sealed class AuthorizationEnforcementTests
 
         result.IsFailure.ShouldBeTrue("order.validate declares Authorization.Authenticated and nobody is signed in.");
         result.Error!.Category.ShouldBe(ErrorCategory.Forbidden);
-        result.Error.Code.ShouldBe(FlowErrors.NotAuthenticatedCode);
+        result.Error.Code.ShouldBe(AuthorizationErrors.NotAuthenticatedCode);
 
         dispatcher.Executed.ShouldBeEmpty(
             "The step is refused before it is dispatched. A check after the call has " +
@@ -209,7 +209,7 @@ public sealed class AuthorizationEnforcementTests
 
         result.IsFailure.ShouldBeTrue("payment.capture requires 'payment.write' and this caller holds 'orders.read'.");
         result.Error!.Category.ShouldBe(ErrorCategory.Forbidden);
-        result.Error.Code.ShouldBe(FlowErrors.PermissionDeniedCode);
+        result.Error.Code.ShouldBe(AuthorizationErrors.PermissionDeniedCode);
 
         dispatcher.Executed.ShouldBeEmpty();
     }
@@ -363,8 +363,24 @@ public sealed class AuthorizationEnforcementTests
     {
         var dispatcher = new RecordingDispatcher();
 
-        var result = await Should.NotThrowAsync(
-            () => Run(OneStep(NeedsPaymentWrite), Anonymous, dispatcher));
+        Exception? thrown = null;
+        FlowExecutionResult result = default;
+
+        try
+        {
+            result = await Run(OneStep(NeedsPaymentWrite), Anonymous, dispatcher);
+        }
+#pragma warning disable CA1031 // The assertion is precisely that nothing of any type escapes.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            thrown = exception;
+        }
+
+        thrown.ShouldBeNull(
+            "A refusal is a value on the result. Thrown, every trigger's consumer loop would " +
+            "need a catch for it and a bus consumer would dead-letter a message that was " +
+            "merely not permitted.");
 
         result.IsFailure.ShouldBeTrue();
         result.Error!.Category.ShouldBe(ErrorCategory.Forbidden);
