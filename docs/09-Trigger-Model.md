@@ -8,15 +8,16 @@
 > **[ADR-0004](adr/ADR-0004-universal-trigger-model.md)'s "one trigger abstraction for
 > every transport" is true of the *declaration* and, so far, of two transports.** Five
 > trigger attributes ship in `FlowX.Abstractions`, the compiler reads all five into
-> `flowx.manifest.json`, and **two of them reach a running transport.** *This box said "one
-> of them" until 2026-08-01, when `[CronTrigger]` was bound.* There is no
+> `flowx.manifest.json`, and **three of them reach a running transport.** *This box said "one
+> of them" until 2026-08-01, when `[CronTrigger]` was bound, and "two of them" for the few hours
+> between that and `[BusTrigger]`.* There is no
 > Trigger Engine: no type under `src/` or `plugins/` normalises, admits, dedupes or binds,
 > and §11's `ITriggerSource` / `ITriggerSink` are declared nowhere.
 >
 > | Transport | What exists |
 > |---|---|
 > | **HTTP** ([§6](#6-http-trigger)) | **served, and generated.** `[HttpTrigger]` → `TriggerReader` → `EndpointEmitter` → `FlowXEndpoints.g.cs` → `plugins/FlowX.Http`. Route, body binding, `Idempotency-Key` enforcement when `Idempotent = true`, and RFC 7807 with `[Sensitive]` redaction are all real; `samples/ecommerce` and `samples/workflow` call the generated `app.MapFlowX()`. **A flow that suspends is served too, since WP-64** — `202` with where to continue it, and one generated delivery route per signal it waits for ([ADR-0022](adr/ADR-0022-http-shape-of-a-suspending-flow.md)); *this row used to say the signal endpoint was a design, and §6's own box has the correction*. **The OpenAPI operation is still not generated** — nothing in this repository writes an OpenAPI document, and `Version` is dropped by the reader rather than published, despite §6's *"Generated: … the OpenAPI operation"* and the same claim on `HttpTriggerAttribute` itself |
-> | **Bus** ([§7](#7-bus-trigger)) | **attribute only.** `[KafkaTrigger]` compiles and publishes `kind`, `transport`, `topic` and `group`; `MaxInFlight` and `DeadLetter` reach no artifact. There is no `FlowX.Kafka` — `plugins/` holds `FlowX.Http`, `FlowX.Postgres` and `FlowX.Redis` — so nothing consumes a topic, commits an offset or dead-letters, and §7's sequence diagram is specification. **WP-72**, P3 |
+> | **Bus** ([§7](#7-bus-trigger)) | **served, and generated.** `[BusTrigger]` and `[KafkaTrigger]` → `TriggerReader` → `BusEmitter` → `FlowXSubscriptions.g.cs` → `FlowBusScan` → an `IBusConsumer`, and `samples/ecommerce` calls the generated `services.AddFlowXSubscriptions()`. *This row said "attribute only" and that "nothing consumes a topic, commits an offset or dead-letters"; all of it expired on 2026-08-01 except the offset, which is Kafka's word for something Redis Streams does with `XACK`.* `plugins/FlowX.Redis` consumes, acknowledges and dead-letters; there is still no `FlowX.Kafka`, and a `[KafkaTrigger]` on a host wired for another broker is refused at startup rather than served by it. **`MaxInFlight` and `DeadLetter` still reach no artifact** — both are tuning `FlowXOptions` now owns ([ADR-0039](adr/ADR-0039-a-bus-subscription-publishes-no-new-manifest-field.md)), and the dead-letter destination is derived from the source stream rather than read. §7's sequence diagram remains specification in its details: there is no in-memory retry per policy and no partition pause, only a delivery limit |
 > | **Schedule** ([§8](#8-schedule-trigger)) | **served, and generated.** `[CronTrigger]` → `TriggerReader` → `ScheduleEmitter` → `FlowXSchedules.g.cs` → `FlowScheduleScan`, and `samples/workflow` calls the generated `services.AddFlowXSchedules()`. `cron`, `timeZone` and `MissedFire` are all read; the first two publish, the third executes. **There is no leader and no election** — *this row said "leader-elected, never double-fires" was a design, and what replaced it is not an election*: every node computes the same occurrence, derives the same instance id from it, and the lease store and the journal's primary key refuse all but one ([ADR-0031](adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md)). `Overlap`, `Jitter` and `PerTenant` still reach nothing at all |
 > | **Stream** ([§9](#9-stream-trigger)) | **attribute only, over an unbuilt profile.** `[StreamTrigger]` publishes its source; `Window`, `Lateness`, `Checkpoint` and `Parallelism` are dropped. `ExecutionProfile.Streaming` is an enum member no code branches on, and `.Window(…)` / `.Aggregate(…)` are not members of `IFlowBuilder<TIn, TOut>` — **§9's example does not compile.** Streaming is **P7** |
 > | **Agent** ([§10](#10-agent-trigger)) | **attribute only.** `[AgentTrigger]` publishes `description` and `confirmation`. There is no MCP server, no tool descriptor and no JSON Schema generation; `MCP` occurs under `src/` only inside doc comments. §10's two properties are consequences of a surface nothing serves. **P8** — see [13-AI-Native](13-AI-Native.md), which states the same thing about `AgentTriggerAttribute` |
@@ -331,6 +332,38 @@ Offsets are committed **after** flow completion. Combined with capability
 idempotency this yields effectively-once processing. A terminal error is
 dead-lettered rather than retried forever — head-of-line blocking is a bug, not
 a durability strategy.
+
+> [!NOTE]
+> **What was built, and where the diagram above is still specification.** `Bus` was bound on
+> 2026-08-01 over Redis Streams rather than Kafka, and the four questions the diagram gestures at
+> each have a record.
+>
+> - **Redelivery** ([ADR-0035](adr/ADR-0035-a-delivery-names-the-instance-it-starts.md)) — the
+>   diagram says "redelivery on rebalance is safe" and leaves *why* to capability idempotency.
+>   What was built is stronger: the delivery derives the instance id it starts, so a redelivered
+>   message is refused by the journal's primary key and the flow does not run twice at all.
+>   `FLOWX1039` refuses a subscriber that is not `Durable`, because that id is inert without a
+>   journal.
+> - **Acknowledgement** ([ADR-0036](adr/ADR-0036-a-message-is-acknowledged-when-its-flow-is-journalled.md))
+>   — "after flow completion" is not quite the rule. A delivery is acknowledged once it reached a
+>   *recorded outcome*, which includes a flow that **failed as a value**: ADR-0007 makes a
+>   business failure a `Result`, and the diagram's "terminal failure → DLQ" branch is wrong for
+>   it. A declined order is acknowledged and never dead-lettered.
+> - **Ordering** ([ADR-0037](adr/ADR-0037-the-consumer-offers-per-key-order.md)) — per
+>   `partition_key` and nothing across keys, the same pair of statements
+>   [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md) makes about publication. It holds
+>   across a fleet because a partition is read under a lease, not because a deployment runs one
+>   consumer.
+> - **Poison** ([ADR-0038](adr/ADR-0038-a-poison-message-is-dead-lettered.md)) — an entry that is
+>   not a message goes on its first delivery; one whose flow never reaches an outcome goes past
+>   `FlowXOptions.BusMaxDeliveries`. There is no in-memory retry per policy and no partition
+>   pause; the partition simply stops until the entry at its head reaches a disposition.
+>
+> **The declaration to reach for is `[BusTrigger]`**, which names a topic and a group and no
+> broker. `[KafkaTrigger]` binds through the same path — the kind and the address, not the
+> attribute's name — and additionally publishes `transport: "kafka"`, which the host checks
+> against the consumer it wired. `StartFrom` in the example above **is not a property of
+> `KafkaTriggerAttribute`** and never has been; the example does not compile.
 
 ---
 
