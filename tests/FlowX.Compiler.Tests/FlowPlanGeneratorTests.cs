@@ -1,4 +1,5 @@
 using System;
+using FlowX;
 using Shouldly;
 using Xunit;
 
@@ -49,6 +50,28 @@ public sealed class FlowPlanGeneratorTests
             Authorization = Authorization.Permission, Permission = "payment.write",
             SideEffects = new[] { "payment-gateway" })]
         public sealed class CapturePayment : ICapability<PlaceOrder, OrderResult>
+        {
+            public ValueTask<Result<OrderResult>> ExecuteAsync(PlaceOrder input, CapabilityContext ctx, CancellationToken ct)
+                => ValueTask.FromResult(Result.Ok(new OrderResult(input.Sku)));
+        }
+
+        // Two reversals of the same capture, differing only in the declaration FLOWX1014
+        // reads. The pair is what makes the compensation half of the rule testable: a
+        // check that looked at the *step* would stay silent for both, because
+        // payment.capture is not idempotent either way.
+        [Capability("payment.refund", Version = "1.0.0",
+            Authorization = Authorization.Permission, Permission = "payment.write",
+            SideEffects = new[] { "payment-gateway" })]
+        public sealed class RefundPayment : ICapability<PlaceOrder, OrderResult>
+        {
+            public ValueTask<Result<OrderResult>> ExecuteAsync(PlaceOrder input, CapabilityContext ctx, CancellationToken ct)
+                => ValueTask.FromResult(Result.Ok(new OrderResult(input.Sku)));
+        }
+
+        [Capability("payment.reverse", Version = "1.0.0",
+            Authorization = Authorization.Permission, Permission = "payment.write",
+            Idempotent = true, SideEffects = new[] { "payment-gateway" })]
+        public sealed class ReverseCapture : ICapability<PlaceOrder, OrderResult>
         {
             public ValueTask<Result<OrderResult>> ExecuteAsync(PlaceOrder input, CapabilityContext ctx, CancellationToken ct)
                 => ValueTask.FromResult(Result.Ok(new OrderResult(input.Sku)));
@@ -448,6 +471,159 @@ public sealed class FlowPlanGeneratorTests
         run.Ids.ShouldNotContain("FLOWX1014", run.Describe());
     }
 
+    // ------------------------------------------- FLOWX1014 over the compensating capability
+
+    /// <summary>
+    /// The half of FLOWX1014 that was never checked: a retry over the <em>undo</em>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The analyzer asked one question — is the <em>step</em> idempotent, and does the set
+    /// contain <c>Retry</c> — and the string <c>CompensationRetry</c> appeared nowhere in it.
+    /// A compensation retry over a non-idempotent reversal was therefore reported by nothing,
+    /// and running a reversal twice is a second reversal.
+    /// </para>
+    /// <para>
+    /// It was unreachable rather than harmless: until <c>.WithPolicy</c> reached the plan
+    /// nothing in the DSL could declare a <c>CompensationRetry</c> at all, so the rule's gap
+    /// cost nothing. The moment the declaration became reachable the gap became a live hole,
+    /// which is why the rule is extended here rather than left to the runtime.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ReportsFLOWX1014WhenCompensationRetryIsAttachedToANonIdempotentCompensation()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Undo = PolicySet
+                    .Named("payment-undo")
+                    .CompensationRetry(attempts: 3);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<CapturePayment>().CompensateWith<RefundPayment>()
+                        .WithPolicy(Policies.Undo)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1014", run.Describe());
+
+        run.Describe().ShouldContain(
+            "payment.refund",
+            Case.Sensitive,
+            "The report must name the capability that would run twice. Naming payment.capture " +
+            "would send the reader to the step, which is not the declaration that is wrong.");
+
+        run.Describe().ShouldContain(
+            "CompensationRetry",
+            Case.Sensitive,
+            "and it must name the policy that is at fault, because the same set may " +
+            "legitimately carry a Retry for the forward step.");
+    }
+
+    /// <summary>The shape the rule has to permit — banking's, and the ordinary saga's.</summary>
+    /// <remarks>
+    /// <c>payment.capture</c> is not idempotent and never will be; its reversal is, because it
+    /// is written against the idempotency key. It is the reversal that the compensation retry
+    /// would re-dispatch, so it is the reversal's declaration that decides. A rule that read
+    /// the step's declaration instead would refuse every real saga.
+    /// </remarks>
+    [Fact]
+    public void AllowsACompensationRetryOnAnIdempotentCompensation()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Undo = PolicySet
+                    .Named("payment-undo")
+                    .CompensationRetry(attempts: 3);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<CapturePayment>().CompensateWith<ReverseCapture>()
+                        .WithPolicy(Policies.Undo)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldNotContain("FLOWX1014", run.Describe());
+    }
+
+    /// <summary>A forward <c>Retry</c> is still judged by the step, not by its undo.</summary>
+    /// <remarks>
+    /// The two halves read different declarations off the same call, and widening the rule
+    /// must not blur them: an idempotent reversal does not make a capture safe to retry.
+    /// </remarks>
+    [Fact]
+    public void AnIdempotentCompensationDoesNotExcuseARetryOnTheStep()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Gateway = PolicySet
+                    .Named("payment-gateway")
+                    .Retry(3);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<CapturePayment>().CompensateWith<ReverseCapture>()
+                        .WithPolicy(Policies.Gateway)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1014", run.Describe());
+
+        run.Describe().ShouldContain(
+            "payment.capture",
+            Case.Sensitive,
+            "A Retry wraps the step, so the step's declaration is the one that decides it.");
+    }
+
+    /// <summary>
+    /// The pairing is caught whichever of the two calls completes it.
+    /// </summary>
+    /// <remarks>
+    /// <c>.CompensateWith</c> and <c>.WithPolicy</c> both return <c>IStepBuilder</c>, so both
+    /// orders are legal C# and the samples use the first. A check that only ran when the
+    /// policy arrived would be silent for every author who wrote the other one — a rule that
+    /// depends on the order of two interchangeable calls is a rule nobody can rely on.
+    /// </remarks>
+    [Fact]
+    public void ReportsFLOWX1014WhenTheCompensationIsDeclaredAfterThePolicy()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Undo = PolicySet
+                    .Named("payment-undo")
+                    .CompensationRetry(attempts: 3);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<CapturePayment>().WithPolicy(Policies.Undo)
+                        .CompensateWith<RefundPayment>()
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1014", run.Describe());
+    }
+
     [Fact]
     public void ReportsFLOWX1018WhenCacheIsAttachedToACapabilityWithSideEffects()
     {
@@ -553,6 +729,110 @@ public sealed class FlowPlanGeneratorTests
         run.Plan.ShouldNotContainText(
             "policies: PolicyChain.ForStep(Policies.Undo",
             "This set says nothing about the forward path, so nothing is emitted for it.");
+    }
+
+    /// <summary>
+    /// The compensation's descriptor states the compensation's own idempotency.
+    /// </summary>
+    /// <remarks>
+    /// It used to state <c>true</c>, for every compensation of every flow, written as a
+    /// literal. The consequence was not a cosmetic one: <c>PolicyChain.ForCompensation</c>
+    /// refuses a compensation retry over a capability that is not idempotent, and that
+    /// refusal was reachable only from a hand-built plan. Against everything the compiler
+    /// produced the backstop was answering a question about a value it had itself invented.
+    /// </remarks>
+    [Fact]
+    public void TheCompensationDescriptorCarriesTheCompensationsOwnIdempotency()
+    {
+        var source = WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<CapturePayment>().CompensateWith<RefundPayment>()
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """);
+
+        GeneratorHarness.GeneratedCompileErrorsIn(source).ShouldBeEmpty();
+
+        GeneratorHarness.Run(source).Plan.ShouldContainText(
+            "Step0Compensation = CapabilityDescriptor.Create(\"payment.refund\", \"1.0.0\", false, \"payment-gateway\")",
+            "payment.refund declares neither idempotency nor an empty effect list, and the " +
+            "descriptor the plan carries is what the runtime checks a policy against.");
+    }
+
+    /// <summary>
+    /// The runtime backstop can refuse a plan the compiler produced.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>PolicyChainTests</c> and <c>CompensationPolicyTests</c> both prove the refusal, and
+    /// both hand-build the descriptor they hand it — so both passed throughout the period in
+    /// which no generated plan could ever trigger it. This one reads the descriptor out of a
+    /// compiled flow's own <c>Plan</c>, which is the only way to ask whether the check applies
+    /// to the artifacts the product actually ships.
+    /// </para>
+    /// <para>
+    /// The flow declares no policy, deliberately. Now that the analyzer reports the pairing,
+    /// a flow that declared one would not compile — so the only way to reach the runtime with
+    /// a generated descriptor is to attach the chain here, which is also the shape of every
+    /// case the analyzer cannot see: a set assembled where <c>PolicySetReader</c> cannot read it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheRuntimeRefusesACompensationRetryOverAGeneratedNonIdempotentCompensation()
+    {
+        var plan = GeneratorHarness.GeneratedPlanFor(
+            WithFlow("""
+                [Flow("order.place")]
+                public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+                {
+                    protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                        .Step<CapturePayment>().CompensateWith<RefundPayment>()
+                        .Return(ctx => new OrderResult("id"));
+                }
+                """),
+            "Sample.PlaceOrderFlow");
+
+        var compensation = plan.Graph[0].Compensation.ShouldNotBeNull();
+
+        compensation.Id.ShouldBe("payment.refund");
+        compensation.IsIdempotent.ShouldBeFalse(
+            "The emitter wrote a literal true here, so every compiled compensation claimed " +
+            "to be safe to run twice whatever its author declared.");
+
+        var refusal = Should.Throw<InvalidFlowPlanException>(() => PolicyChain.ForCompensation(
+            PolicySet.Named("payment-undo").CompensationRetry(attempts: 3),
+            compensation));
+
+        refusal.Message.ShouldContain("payment.refund");
+    }
+
+    /// <summary>The same backstop stays out of the way of an honest idempotent reversal.</summary>
+    [Fact]
+    public void TheRuntimeAcceptsACompensationRetryOverAGeneratedIdempotentCompensation()
+    {
+        var plan = GeneratorHarness.GeneratedPlanFor(
+            WithFlow("""
+                [Flow("order.place")]
+                public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+                {
+                    protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                        .Step<CapturePayment>().CompensateWith<ReverseCapture>()
+                        .Return(ctx => new OrderResult("id"));
+                }
+                """),
+            "Sample.PlaceOrderFlow");
+
+        var compensation = plan.Graph[0].Compensation.ShouldNotBeNull();
+
+        compensation.IsIdempotent.ShouldBeTrue();
+
+        PolicyChain.ForCompensation(
+                PolicySet.Named("payment-undo").CompensationRetry(attempts: 3),
+                compensation)
+            .Ordered.Length.ShouldBe(1, "The pairing is legal, so the chain keeps the retry.");
     }
 
     /// <summary>The forward half of a set reaches the plan as well — carried, still not run.</summary>

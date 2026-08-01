@@ -341,13 +341,32 @@ public static class FlowXDiagnostics
         "second overwriting the first is a decision rather than an accident.");
 
     /// <summary>FLOWX1014 — a retry policy is attached to a non-idempotent capability.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Two policies, one rule, and <c>{1}</c> is which of them.</strong> <c>Retry</c>
+    /// wraps the step and is judged by the step's declaration; <c>CompensationRetry</c> wraps
+    /// the step's <em>undo</em> and is judged by the compensating capability's. One
+    /// <c>.WithPolicy(...)</c> may carry both, against two capabilities with two different
+    /// answers — a <c>payment.capture</c> that is not idempotent and a reversal that is — so
+    /// the message has to name which policy and which capability it means. Naming only the
+    /// capability would send the reader of a compensation report to the wrong declaration.
+    /// </para>
+    /// <para>
+    /// One id rather than two, because it is one rule reaching the case it always covered:
+    /// the argument the page makes is "what would run twice has to be safe to run twice", and
+    /// a compensation retry re-dispatches the compensation. A second id would let a team
+    /// suppress half a safety rule while believing they had suppressed a different one.
+    /// </para>
+    /// </remarks>
     public static readonly DiagnosticDescriptor RetryRequiresIdempotency = Create(
         "FLOWX1014",
         "Retry requires an idempotent capability",
-        "Capability '{0}' declares Idempotent = false, so a Retry policy cannot be attached",
+        "Capability '{0}' declares Idempotent = false, so a {1} policy cannot be attached",
         "Retrying a non-idempotent operation duplicates its effect; for a payment capture " +
-        "that is a duplicate charge. Make the capability idempotent and declare it, or " +
-        "handle the failure in the flow.");
+        "that is a duplicate charge, and for a reversal run twice it is a second reversal. " +
+        "The capability judged is the one the policy would re-dispatch: the step for Retry, " +
+        "the compensation for CompensationRetry. Make that capability idempotent and declare " +
+        "it, or handle the failure in the flow.");
 
     /// <summary>FLOWX1015 — a capability implements <c>ICapability</c> more than once.</summary>
     public static readonly DiagnosticDescriptor CapabilityHasMultipleContracts = Create(

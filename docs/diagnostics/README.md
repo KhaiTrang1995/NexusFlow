@@ -236,7 +236,7 @@ description of a platform with no suspension engine.
 | [FLOWX1011](FLOWX1011.md) | Condition, selector or projection reads something outside the flow's state | A branch that takes a different path on replay, or a step input that is not the journaled one |
 | [FLOWX1012](FLOWX1012.md) | Compensation is declared on a flow that is not durable | **A reservation, a hold or an authorisation left standing because the node that would have released it died first** |
 | [FLOWX1013](FLOWX1013.md) | Parallel branches must write disjoint context slots | **Two concurrent branches racing on one context slot** |
-| [FLOWX1014](FLOWX1014.md) | Retry requires an idempotent capability | **A duplicate charge** |
+| [FLOWX1014](FLOWX1014.md) | Retry requires an idempotent capability | **A duplicate charge** — and, since the rule reached the compensation side, **a second reversal**. *Widened once `.WithPolicy` reached the plan made `CompensationRetry` declarable: the analyzer had only ever asked about the step and the `Retry` kind, and the emitter hardcoded every compensation descriptor to idempotent, so a retry over a non-idempotent compensating capability was refused by neither* |
 | [FLOWX1015](FLOWX1015.md) | Capability implements more than one contract | Ambiguous dispatch, meaningless manifest entry |
 | [FLOWX1016](FLOWX1016.md) | Expected failures are values, not exceptions | A business outcome arriving as a defect alert, missing from the error catalogue and unclassifiable by retry |
 | [FLOWX1017](FLOWX1017.md) | AwaitSignal requires the Durable profile | A waiting flow vanishing with its node |

@@ -317,7 +317,7 @@ public static class FlowAnalyzer
                     return steps;
 
                 case "CompensateWith":
-                    AttachCompensation(link, semanticModel, steps);
+                    AttachCompensation(link, semanticModel, diagnostics, steps);
                     break;
 
                 case "WithPolicy":
@@ -1563,7 +1563,11 @@ public static class FlowAnalyzer
             "the block is discarded, so its steps reach no plan, no dispatcher and no manifest",
     };
 
-    private static void AttachCompensation(ChainLink link, SemanticModel semanticModel, List<StepModel> steps)
+    private static void AttachCompensation(
+        ChainLink link,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        List<StepModel> steps)
     {
         if (steps.Count == 0 || link.TypeArguments.Count == 0)
         {
@@ -1594,6 +1598,12 @@ public static class FlowAnalyzer
             info.AuthorizationValue,
             info.InputTypeName,
             info.OutputTypeName));
+
+        // The policy may already be on the step: `.WithPolicy(...).CompensateWith<T>()` is
+        // as legal as the order the samples use, because both calls return IStepBuilder.
+        // See ReportCompensationPolicyConflicts for why exactly one of the two call sites
+        // can ever fire.
+        ReportCompensationPolicyConflicts(steps[last], link, diagnostics);
     }
 
     /// <summary>
@@ -1651,17 +1661,23 @@ public static class FlowAnalyzer
             return;
         }
 
-        // FLOWX1014 — retrying a non-idempotent operation duplicates its effect.
-        if (!step.IsIdempotent && step.PolicyKinds.Contains("Retry"))
+        // FLOWX1014 — retrying a non-idempotent operation duplicates its effect. `Retry`
+        // wraps the step, so it is the step's own declaration that decides it; an idempotent
+        // reversal hanging off the same call says nothing about whether the capture may be
+        // asked twice.
+        if (!step.IsIdempotent && step.PolicyKinds.Contains(RetryKind))
         {
             diagnostics.Add(Diagnostic.Create(
                 FlowXDiagnostics.RetryRequiresIdempotency,
                 link.CallLocation,
-                step.CapabilityId));
+                step.CapabilityId,
+                RetryKind));
         }
 
+        ReportCompensationPolicyConflicts(step, link, diagnostics);
+
         // FLOWX1018 — a cache hit returns a success without performing the effect.
-        if (step.SideEffects.Length > 0 && step.PolicyKinds.Contains("Cache"))
+        if (step.SideEffects.Length > 0 && step.PolicyKinds.Contains(CacheKind))
         {
             diagnostics.Add(Diagnostic.Create(
                 FlowXDiagnostics.CacheRequiresNoSideEffects,
@@ -1669,6 +1685,89 @@ public static class FlowAnalyzer
                 step.CapabilityId));
         }
     }
+
+    /// <summary>
+    /// FLOWX1014 over the capability a <c>CompensationRetry</c> would actually re-dispatch.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The rule always meant this case and never reached it.</strong> The check above
+    /// asks about the step and the <c>Retry</c> kind, and the string <c>CompensationRetry</c>
+    /// appeared nowhere in this file — so a retry declared over a non-idempotent reversal was
+    /// reported by nothing. <c>PolicyChain.ForCompensation</c> did carry the same rule, and
+    /// carried it against a descriptor the emitter had hardcoded to idempotent, so it could
+    /// not refuse a compiled plan either. Neither gap cost anything while no DSL surface could
+    /// declare a compensation retry; both became live the moment one could.
+    /// </para>
+    /// <para>
+    /// <strong>Called from both <c>.WithPolicy</c> and <c>.CompensateWith</c>, and fires from
+    /// exactly one.</strong> Both return <c>IStepBuilder</c>, so an author may write them in
+    /// either order and only the second of the pair sees a step carrying both halves: at
+    /// <c>.WithPolicy</c> time there is a compensation only if <c>.CompensateWith</c> came
+    /// first, and at <c>.CompensateWith</c> time there are policy kinds only if
+    /// <c>.WithPolicy</c> did. So the report lands on the call that completed the pairing,
+    /// which is the last line the author wrote about it, and a rule that would otherwise
+    /// depend on the order of two interchangeable calls does not.
+    /// </para>
+    /// <para>
+    /// A compensation the reader could not resolve carries no id and is skipped, for the
+    /// reason an unreadable policy set is: a diagnostic raised on a guess names a capability
+    /// the author cannot find.
+    /// </para>
+    /// </remarks>
+    private static void ReportCompensationPolicyConflicts(
+        StepModel step, ChainLink link, List<Diagnostic> diagnostics)
+    {
+        if (step.Compensation is not { IsIdempotent: false, CapabilityId: { } compensationId })
+        {
+            return;
+        }
+
+        if (!step.PolicyKinds.Contains(CompensationRetryKind))
+        {
+            return;
+        }
+
+        diagnostics.Add(Diagnostic.Create(
+            FlowXDiagnostics.RetryRequiresIdempotency,
+            link.CallLocation,
+            compensationId,
+            CompensationRetryKind));
+    }
+
+    /// <summary>The policy kind that wraps the step. Judged by the step's idempotency.</summary>
+    /// <remarks>
+    /// Named here rather than spelled at each use, so that the two halves of FLOWX1014 read
+    /// as the pair they are: <see cref="RetryKind"/> against the step,
+    /// <see cref="CompensationRetryKind"/> against its undo.
+    /// </remarks>
+    private const string RetryKind = "Retry";
+
+    /// <summary>
+    /// The policy kind that wraps the step's <em>undo</em>. Judged by the compensation's.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>These are <c>PolicySet</c>'s method names, not <c>FlowX.Core</c>'s kind
+    /// constants.</strong> <see cref="PolicySetReader"/> walks the declared chain and returns
+    /// <c>link.MethodName</c>, so what lands in <c>StepModel.PolicyKinds</c> is whatever the
+    /// author literally called. The two coincide because <c>PolicySet</c> builds its
+    /// descriptors with <c>nameof</c>, which is also why this cannot be a reference to
+    /// <c>CompensationPolicy.CompensationRetryKind</c>: that constant names the descriptor
+    /// kind, this names the DSL surface, and this assembly targets netstandard2.0 and can see
+    /// neither.
+    /// </para>
+    /// <para>
+    /// Pinned by the generator tests rather than by a fitness test, and pinned to the right
+    /// thing: they declare a real <c>.CompensationRetry(...)</c> in real source and assert the
+    /// report, so renaming the builder method fails them. A fitness test against Core's
+    /// constant would keep passing while the analyzer had gone silent.
+    /// </para>
+    /// </remarks>
+    private const string CompensationRetryKind = "CompensationRetry";
+
+    /// <summary>The policy kind whose precondition is an absence of side effects — FLOWX1018.</summary>
+    private const string CacheKind = "Cache";
 
     private static ArrowExpressionClauseSyntax? FindArrow(MethodDeclarationSyntax method) =>
         method.ExpressionBody;

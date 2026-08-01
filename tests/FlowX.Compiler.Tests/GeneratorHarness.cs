@@ -307,6 +307,61 @@ internal static class GeneratorHarness
                                 d.GetMessage(CultureInfo.InvariantCulture))];
     }
 
+    /// <summary>
+    /// Runs the generator, compiles what it produced, loads it, and returns the plan a
+    /// generated flow actually built.
+    /// </summary>
+    /// <param name="source">The flow's source, preamble and all.</param>
+    /// <param name="flowTypeName">Fully-qualified name of the flow type to read <c>Plan</c> off.</param>
+    /// <remarks>
+    /// <para>
+    /// <see cref="GeneratedCompileErrorsIn"/> proves the emitted text is a program;
+    /// <see cref="Run"/> proves it says a particular thing. Neither runs it, and a descriptor
+    /// is a claim the runtime acts on rather than a string — <c>PolicyChain</c> refuses a
+    /// compensation retry over a capability whose <c>IsIdempotent</c> is false, and whether
+    /// that refusal can ever reach a compiled flow depends on what the emitter put in the
+    /// argument, not on what the plan text looks like.
+    /// </para>
+    /// <para>
+    /// Loading rather than reading metadata, unlike <c>FlowX.Architecture.Tests</c>: the
+    /// question here is what the type initialiser <em>builds</em>, which only running it can
+    /// answer. Safe to load into this process because the generated assembly's references are
+    /// the very files this test assembly already has loaded, so the descriptor it returns is
+    /// the same <c>CapabilityDescriptor</c> type the assertions use.
+    /// </para>
+    /// </remarks>
+    public static FlowX.ExecutionPlan GeneratedPlanFor(string source, string flowTypeName)
+    {
+        var compilation = CSharpCompilation.Create(
+            "FlowX.GeneratorTests.Loaded" + Guid.NewGuid().ToString("N"),
+            [CSharpSyntaxTree.ParseText(source, path: "/src/Flows/Sample.cs")],
+            References,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+
+        CSharpGeneratorDriver
+            .Create(new FlowPlanGenerator())
+            .RunGeneratorsAndUpdateCompilation(compilation, out var updated, out _);
+
+        using var image = new System.IO.MemoryStream();
+        var emitted = updated.Emit(image);
+
+        if (!emitted.Success)
+        {
+            throw new InvalidOperationException(
+                "The generated flow did not compile:\n" + string.Join(
+                    "\n",
+                    emitted.Diagnostics
+                        .Where(static d => d.Severity == DiagnosticSeverity.Error)
+                        .Select(static d => d.Id + ": " + d.GetMessage(CultureInfo.InvariantCulture))));
+        }
+
+        var flow = Assembly.Load(image.ToArray()).GetType(flowTypeName, throwOnError: true)!;
+
+        return (FlowX.ExecutionPlan)flow
+            .GetProperty("Plan", BindingFlags.Public | BindingFlags.Static)!
+            .GetValue(null)!;
+    }
+
     private static ImmutableArray<MetadataReference> BuildReferences()
     {
         var trusted = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string ?? string.Empty)
