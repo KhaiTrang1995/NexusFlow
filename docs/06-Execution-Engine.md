@@ -363,14 +363,36 @@ byte-identical step inputs and identical control flow.
 >    hook outside the loop is reached, so it sees the replaying node's time. Everything
 >    the *flow* reads is replayed; the engine's own read is not.
 >
-> `AwaitSignal` is still refused at build time
-> ([`FLOWX1017`](diagnostics/FLOWX1017.md)), so a durable flow still runs to
+> `AwaitSignal` is refused at build time under **every** profile — by
+> [`FLOWX1017`](diagnostics/FLOWX1017.md) below `Durable`, and by
+> [`FLOWX1031`](diagnostics/FLOWX1031.md) at it — so a durable flow still runs to
 > completion inside one invocation. Everything §6 describes about *suspension* is
 > design, not runtime.
 
 ---
 
 ## 6. Suspension: waiting without holding resources
+
+> [!WARNING]
+> **Nothing in this section runs, and the flow below does not compile.** It is the
+> design [WP-63](20-Roadmap.md#3-increment-detail) will build. Read it as a
+> specification.
+>
+> All three constructs it uses are reported by
+> [`FLOWX1031`](diagnostics/FLOWX1031.md):
+>
+> | Construct | What the compiler does with it today |
+> |---|---|
+> | `.AwaitSignal<T>(timeout)` | **Error.** It produced a step the engine completes immediately — `FlowEngine` has no `case StepKind.AwaitSignal` — and the emitted plan carried `TimeSpan.FromHours(1)` whatever the author declared. No plan is emitted for a flow that declares it |
+> | `.OnTimeout(block)` | **Warning.** The block is discarded: its steps reach no plan, no dispatcher and no manifest |
+> | `.Delay(duration)` | **Warning.** No step is produced at all, so the flow continues without waiting |
+>
+> Nothing writes a `Suspended` state, and there is no timer table, no signal table and
+> no scheduler engine. `samples/workflow/README.md §2` measures all of it, and
+> `TheAbsentHalfTests.AnAwaitSignalStepDoesNotWaitForAnything` runs the shape on the
+> real engine against a real journal: three committed rows, the instance `Completed`,
+> and the clock never moves. Until WP-63 lands, express the wait outside the flow —
+> split the process at the pause and trigger the second half from the arriving signal.
 
 ```csharp
 protected override void Define(IFlowBuilder<OnboardCustomer, OnboardResult> flow) => flow
@@ -405,7 +427,9 @@ sequenceDiagram
 
 A suspended instance costs one row. A million suspended onboardings cost a
 million rows and zero compute — this is what makes long-running business
-processes affordable.
+processes affordable. **That is the argument for building it, not a description of
+what it does**: today a durable flow declaring `AwaitSignal` gets no execution plan
+at all, and one declaring `Delay` gets a plan the delay is missing from.
 
 ---
 

@@ -159,7 +159,8 @@ flow.Step<ValidateOffer>()
     .Return(ctx => ctx.Get<Done>());
 ```
 
-That compiles with **0 errors and 0 warnings** under `Profile = Durable`, and produces:
+That **used to compile** with **0 errors and 0 warnings** under `Profile = Durable`, and
+produce:
 
 ```csharp
 // obj/generated/FlowX.Compiler/FlowX.Compiler.FlowPlanGenerator/…Flow.g.cs
@@ -199,6 +200,43 @@ old README documented as a feature. This sample therefore has no human wait, no 
 and no timer, and it says so here rather than pretending the domain never needed them:
 `RecordEquipmentApproval` records an approval that arrived *with the request*, and is not a
 step that waits for a person.
+
+### What the compiler says now
+
+[`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) closed the silence. The same throwaway
+project, same profile, same three lines:
+
+```
+Flows.cs(29,10): error FLOWX1031: Flow 'AcceptOfferFlow' declares 'AwaitSignal', which this
+  release cannot honour: the step completes immediately, so the flow does not wait, and the
+  plan would carry a one-hour timeout in place of the duration declared here
+Flows.cs(30,14): warning FLOWX1031: Flow 'AcceptOfferFlow' declares 'OnTimeout', which this
+  release cannot honour: the block is discarded, so its steps reach no plan, no dispatcher
+  and no manifest
+Flows.cs(31,10): warning FLOWX1031: Flow 'AcceptOfferFlow' declares 'Delay', which this
+  release cannot honour: the call produces no step at all, so the flow continues without
+  waiting
+```
+
+**And there is no longer a generated plan for that flow at all.** The `AwaitSignal` report
+is an *error*, so the generator emits neither the plan nor the manifest entry — which is
+what removes the fourth failure above, the one that is not about suspension. `FlowEmitter`
+no longer contains `TimeSpan.FromHours(1)`: the compiler has no timeout to write but the one
+the author declared, and the model has nowhere to carry it until WP-63 adds the field. Given
+a choice between publishing a duration nobody wrote and publishing nothing, it publishes
+nothing.
+
+`Delay` and `OnTimeout` stay **warnings**, because dropping a call leaves a plan that says
+less than the source and nothing untrue — the category `FLOWX1027` occupies at the severity
+C# gives `CS0162`. The full argument, including why `FLOWX1028`'s "an error would erase the
+inventory" reasoning stops where it does, is on
+[the page](../../docs/diagnostics/FLOWX1031.md#why-awaitsignal-is-an-error-and-the-other-two-are-warnings).
+
+One consequence is worth stating plainly: with `FLOWX1017` an error below `Durable` and
+`FLOWX1031` an error at it, **`AwaitSignal` has no profile it can legally declare**, and
+`AwaitSignalRequiresDurableCodeFixProvider` is a quick action whose result is a different
+diagnostic. That is an accurate description of a platform with no suspension engine rather
+than a cost the rule imposes, and it is argued rather than assumed on the page.
 
 **The one timeout that does work is the flow's own deadline.** `[FlowDeadline("PT60S")]` is
 an absolute budget set when the flow starts, checked at every step boundary, and enforced by
@@ -469,9 +507,9 @@ after the three runs in §5 every row has `flow_instance.input IS NULL` and
 
 | Missing | Work package |
 |---|---|
-| `AwaitSignal` — a durable suspension point, a signal table, and a compiler that keeps the declared timeout | WP-63 |
-| `Delay` — a durable timer, and a `case` in `FlowAnalyzer` | WP-63 |
-| `OnTimeout` — a `case` in `FlowAnalyzer`, a layout for the branch, and something to time out of | WP-63 |
+| `AwaitSignal` — a durable suspension point, a signal table, and a compiler that keeps the declared timeout: a field on the step model, a parameter through `FlowEmitter`, a manifest column | WP-63 — and [`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) is deleted with it |
+| `Delay` — a durable timer, and a `case` in `FlowAnalyzer` that lays out a step rather than reporting one | WP-63 |
+| `OnTimeout` — a layout for the branch, and something to time out of | WP-63 |
 | A resumed flow that can bind step outputs (§7.1) | WP-59 |
 | A policy chain in the compiled plan (§3) | P4, and the generator half is unassigned |
 | A per-branch context, so a fork replays (§6.1) | unassigned |
