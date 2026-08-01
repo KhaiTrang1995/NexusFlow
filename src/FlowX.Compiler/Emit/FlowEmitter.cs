@@ -816,9 +816,23 @@ public static class FlowEmitter
 
             if (step.IsCompensable)
             {
+                // The compensation's own declarations, not two literals. They used to be
+                // `true` and nothing, which made the descriptor a claim this layer invented:
+                // `PolicyChain.ForCompensation` refuses a compensation retry over a
+                // capability that is not idempotent, and against every plan the compiler
+                // produced it was checking the literal rather than the author's
+                // `[Capability(...)]`. The effects are the compensation's for the same
+                // reason — `ExecutionPlan.SideEffects` unions them in, and an undo that
+                // touches the ledger touches the ledger.
+                var compensation = step.Compensation!;
+
                 writer.Line(
                     "public static readonly CapabilityDescriptor Step" + step.Index + "Compensation = " +
-                    DescriptorCall(step.CompensationId!, step.CompensationVersion!, true, System.Array.Empty<string>()) + ";");
+                    DescriptorCall(
+                        compensation.CapabilityId!,
+                        compensation.CapabilityVersion!,
+                        compensation.IsIdempotent,
+                        compensation.SideEffects) + ";");
             }
         }
 

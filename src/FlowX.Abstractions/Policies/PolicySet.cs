@@ -169,7 +169,9 @@ public sealed class PolicySet
 
     /// <summary>
     /// Retries a failing <em>compensation</em>. <strong>Requires the compensating capability
-    /// to declare <c>Idempotent = true</c></strong>, for the reason <see cref="Retry"/> does.
+    /// to declare <c>Idempotent = true</c></strong> — otherwise the build fails with
+    /// FLOWX1014, which names the compensation, for the reason <see cref="Retry"/> makes it
+    /// name the step.
     /// </summary>
     /// <param name="attempts">How many times the undo may be dispatched, including the first.</param>
     /// <param name="backoff">The wait between attempts. Full-jitter exponential by default.</param>
