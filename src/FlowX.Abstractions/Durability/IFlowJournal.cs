@@ -91,19 +91,41 @@ public interface IFlowJournal
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Moves the instance to a terminal state and records its final state bag.
+    /// Moves the instance to the state it comes to rest in and records its final state bag.
     /// </summary>
-    /// <param name="instanceId">The instance that has finished.</param>
+    /// <param name="instanceId">The instance that has finished, or has parked.</param>
     /// <param name="token">The writer's lease token, checked against the fence.</param>
-    /// <param name="state">The terminal state.</param>
+    /// <param name="state">The state to rest in.</param>
     /// <param name="stateBag">The final state bag, or <see cref="JournalPayload.Empty"/>.</param>
+    /// <param name="wake">
+    /// The wait a <see cref="FlowInstanceState.Suspended"/> instance is parked at and when it
+    /// is due, or <c>null</c> for one nothing is due to wake. Recorded in the same write that
+    /// records the state, and cleared by every other state.
+    /// </param>
     /// <param name="cancellationToken">Cancels the store call.</param>
     /// <returns>The instance row as it now stands, or an error.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Not every state here is terminal, and <paramref name="wake"/> is why the
+    /// distinction has to be in the contract.</strong> A suspended instance is the one that
+    /// carries on afterwards, and what it is waiting for and until when is state — values on a
+    /// row, not a timer in a process. Writing them in a second call would leave a window in
+    /// which an instance is parked with nothing scheduled to wake it, which is a wait that
+    /// never ends and is indistinguishable from the defect this parameter exists to fix.
+    /// </para>
+    /// <para>
+    /// <strong>Cleared by every other state, and that is a requirement rather than a
+    /// courtesy.</strong> A timer sweep reads the instances whose wake instant has passed; a
+    /// completed instance keeping the one it was waiting on before it finished would be woken
+    /// for ever.
+    /// </para>
+    /// </remarks>
     ValueTask<Result<FlowInstanceRecord>> CompleteAsync(
         Guid instanceId,
         FencingToken token,
         FlowInstanceState state,
         JournalPayload stateBag,
+        FlowWake? wake,
         CancellationToken cancellationToken);
 
     /// <summary>Reads one instance row.</summary>

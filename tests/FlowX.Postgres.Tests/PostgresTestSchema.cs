@@ -226,7 +226,7 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
             or FlowInstanceState.CompensationFailed)
         {
             var completed = await Journal.CompleteAsync(
-                instance, token, state, JournalPayload.Empty, cancellationToken);
+                instance, token, state, JournalPayload.Empty, wake: null, cancellationToken);
 
             completed.IsSuccess.ShouldBeTrue(
                 completed.IsFailure ? completed.Error.ToString() : string.Empty);

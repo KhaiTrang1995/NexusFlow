@@ -162,13 +162,12 @@ internal sealed class ReplayFixture : IAsyncDisposable
     /// <param name="state">The state to leave it in.</param>
     /// <param name="cancellationToken">Cancels the write.</param>
     /// <returns>Nothing; the row is the effect.</returns>
-    public async ValueTask CompleteAsync(
-        Guid instanceId,
+    public async ValueTask CompleteAsync(Guid instanceId,
         FlowInstanceState state,
         CancellationToken cancellationToken)
     {
         var completed = await Journal
-            .CompleteAsync(instanceId, Token, state, JournalPayload.Empty, cancellationToken)
+            .CompleteAsync(instanceId, Token, state, JournalPayload.Empty, wake: null, cancellationToken)
             .ConfigureAwait(false);
 
         completed.IsSuccess.ShouldBeTrueOrThrow(completed);

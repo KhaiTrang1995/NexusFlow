@@ -501,7 +501,8 @@ public sealed class FlowEngine
             return Stamped(result, instanceId);
         }
 
-        var refusal = await CloseInstanceAsync(cursor, InstanceStateFor(result), ct).ConfigureAwait(false);
+        var refusal = await CloseInstanceAsync(cursor, InstanceStateFor(result), result.Wake, ct)
+            .ConfigureAwait(false);
 
         return refusal is null
             ? Stamped(result, instanceId)
@@ -516,7 +517,13 @@ public sealed class FlowEngine
     /// merely opaque.
     /// </remarks>
     private static FlowExecutionResult Stamped(FlowExecutionResult result, Guid instanceId) =>
-        new(result.Error, result.CompletedSteps, result.Compensation, result.IsSuspended, instanceId);
+        new(
+            result.Error,
+            result.CompletedSteps,
+            result.Compensation,
+            result.IsSuspended,
+            instanceId,
+            result.Wake);
 
     /// <summary>Moves one instance — root, composed or detached — to the state it rests in.</summary>
     /// <remarks>
@@ -527,12 +534,13 @@ public sealed class FlowEngine
     private static async ValueTask<Error?> CloseInstanceAsync(
         JournalCursor cursor,
         FlowInstanceState state,
+        FlowWake? wake,
         CancellationToken ct)
     {
         var run = cursor.Run!;
 
         var closed = await run.Journal
-            .CompleteAsync(run.InstanceId, run.Token, state, JournalPayload.Empty, ct)
+            .CompleteAsync(run.InstanceId, run.Token, state, JournalPayload.Empty, wake, ct)
             .ConfigureAwait(false);
 
         return closed.IsSuccess ? null : closed.Error;
@@ -642,7 +650,7 @@ public sealed class FlowEngine
             }
 
             return outcome.Suspended
-                ? FlowExecutionResult.Suspended(outcome.Completed)
+                ? FlowExecutionResult.Suspended(outcome.Completed, outcome.Wake)
                 : new FlowExecutionResult(null, outcome.Completed, CompensationOutcome.NotRequired);
         }
 
@@ -714,14 +722,33 @@ public sealed class FlowEngine
     /// and a success would let the range after it run.
     /// </para>
     /// </remarks>
-    private readonly struct RangeOutcome(Error? failure, int completed, bool suspended = false)
+    private readonly struct RangeOutcome(
+        Error? failure,
+        int completed,
+        bool suspended = false,
+        FlowWake? wake = null)
     {
         public Error? Failure { get; } = failure;
 
         public int Completed { get; } = completed;
 
-        /// <summary>Whether the range stopped at an <see cref="StepKind.AwaitSignal"/> step.</summary>
+        /// <summary>
+        /// Whether the range stopped at a suspension point — an
+        /// <see cref="StepKind.AwaitSignal"/> or a <see cref="StepKind.Delay"/>.
+        /// </summary>
         public bool Suspended { get; } = suspended;
+
+        /// <summary>
+        /// The wait the range parked at and when it is due, or <c>null</c> when nothing is
+        /// due to wake it.
+        /// </summary>
+        /// <remarks>
+        /// Carried out of the range rather than written where it is decided, because the write
+        /// that records it is the same one that records <c>Suspended</c> — a wake instant
+        /// stored by a second call would leave a window in which an instance is parked with
+        /// nothing scheduled to wake it.
+        /// </remarks>
+        public FlowWake? Wake { get; } = wake;
     }
 
     /// <summary>
@@ -775,6 +802,7 @@ public sealed class FlowEngine
         var steps = plan.Graph.Steps;
         var completed = 0;
         var suspended = false;
+        FlowWake? wake = null;
         Error? failure = null;
 
         // Not `for (i = from; i < end; i++)`. A conditional is compiled into this same flat
@@ -890,7 +918,10 @@ public sealed class FlowEngine
                         step, ReferenceEquals(scope, context) ? null : scope, cursor.Scope);
                 }
 
-                i++;
+                // A committed suspension point is one a signal satisfied — the timeout path
+                // writes no row for itself — so it resumes where a delivered signal left it,
+                // past the escalation block rather than into it.
+                i = SignalTargetOf(step) ?? i + 1;
                 continue;
             }
 
@@ -968,27 +999,50 @@ public sealed class FlowEngine
                 break;
             }
 
-            // The suspension point, and the whole of it. The step has no committed row — the
-            // skip above did not take — so either the signal it waits for is in this
-            // invocation, or the flow stops here.
+            // The suspension points, and the whole of them. The step has no committed row —
+            // the skip above did not take — so it is being reached rather than replayed, and
+            // one of four things is true: what it waits for is in this invocation, its wait is
+            // over, its wait is still running, or it already timed out and this is a second
+            // pass over the block that ran when it did.
             //
             // After the deadline check on purpose: an instance whose budget has already gone
-            // must time out rather than wait for a signal it can no longer act on, and a
-            // suspension is the one ending from which nothing else would ever look again.
+            // must time out rather than park, because a suspension is the one ending from
+            // which nothing but a signal or a sweep would ever look again.
             //
-            // A delivered signal falls through to the ordinary path below. The dispatcher
-            // answers Success for a suspension point — there is no capability to call — and
-            // the commit that follows writes the row and the state-bag snapshot the signal is
-            // now in, which is why resumption needs no signal table of its own.
-            if (step.Kind == StepKind.AwaitSignal)
+            // A wait that is satisfied falls through to the ordinary path below. The
+            // dispatcher answers Success for both kinds — there is no capability to call — and
+            // the commit that follows writes the row and the state-bag snapshot, which is why
+            // resumption needs no signal table and no timer table of its own.
+            if (step.Kind is StepKind.AwaitSignal or StepKind.Delay)
             {
-                if (cursor.Run?.TakeSignal(step.SignalType) is not { } delivered)
+                var verdict = ResolveWait(cursor, context, step, out var due);
+
+                if (verdict == WaitVerdict.Waiting)
                 {
                     suspended = true;
+                    wake = new FlowWake(cursor.Scope, step.Index, due);
                     break;
                 }
 
-                context.Deliver(delivered);
+                if (verdict == WaitVerdict.Unmet)
+                {
+                    // Nowhere for the timeout to go. Continuing at the next index would run
+                    // steps that bind a payload nothing delivered, so the wait ending is the
+                    // flow ending — and the completed compensable steps unwind behind it,
+                    // which is the whole reason an escalation is worth declaring.
+                    failure = FlowErrors.SignalNotReceived(
+                        plan.Flow.Id, step.Index, step.SignalType!, step.SignalTimeout!.Value);
+                    break;
+                }
+
+                if (verdict == WaitVerdict.Escalated)
+                {
+                    // The block is laid out immediately after the wait, so taking it is the
+                    // ordinary next index — the mirror of a Branch, whose `then` block is
+                    // contiguous and whose target is the path that skips it.
+                    i++;
+                    continue;
+                }
             }
 
             // Only read when there is a row to put it on. An ephemeral step does not pay a
@@ -1071,10 +1125,163 @@ public sealed class FlowEngine
                     step, ReferenceEquals(scope, context) ? null : scope, cursor.Scope);
             }
 
-            i++;
+            i = SignalTargetOf(step) ?? i + 1;
         }
 
-        return new RangeOutcome(failure, completed, suspended);
+        return new RangeOutcome(failure, completed, suspended, wake);
+    }
+
+    /// <summary>
+    /// Where control goes when a suspension point's signal <em>arrives</em>, or <c>null</c>
+    /// when that is simply the next index.
+    /// </summary>
+    /// <remarks>
+    /// Non-null only for an <see cref="StepKind.AwaitSignal"/> whose author declared an
+    /// <c>.OnTimeout(...)</c>. That block is laid out immediately after the wait — it is the
+    /// one of the two paths that has an end to jump over — so the satisfied path is the one
+    /// that needs a target, and this is where a delivered signal skips the escalation.
+    /// </remarks>
+    private static int? SignalTargetOf(StepNode step) =>
+        step.Kind == StepKind.AwaitSignal ? step.Target : null;
+
+    /// <summary>What the loop does when it arrives at a suspension point.</summary>
+    private enum WaitVerdict
+    {
+        /// <summary>
+        /// The wait is over: the signal is in this invocation, or the timer has come due. The
+        /// step takes the ordinary path — dispatch, commit, move on.
+        /// </summary>
+        Satisfied,
+
+        /// <summary>The wait is still running. The instance parks, holding nothing.</summary>
+        Waiting,
+
+        /// <summary>The wait expired and the author declared what to do instead.</summary>
+        Escalated,
+
+        /// <summary>The wait expired and the author declared nothing. The flow fails.</summary>
+        Unmet,
+    }
+
+    /// <summary>
+    /// Decides what a suspension point does on arrival, and delivers the signal when one is
+    /// what ends it.
+    /// </summary>
+    /// <param name="cursor">The instance, and which iteration it is running in.</param>
+    /// <param name="context">Where a delivered signal's payload is seeded.</param>
+    /// <param name="step">The <see cref="StepKind.AwaitSignal"/> or <see cref="StepKind.Delay"/> node.</param>
+    /// <param name="due">When the wait is due, meaningful only for <see cref="WaitVerdict.Waiting"/>.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>One method for both kinds, because they are one mechanism.</strong> A delay is a
+    /// wait with nothing to deliver; a suspension point is a wait with something that can end
+    /// it early. Everything else — how the due instant is found, what parking means, what a
+    /// second pass over an expired wait does — is identical, and two copies of it would be two
+    /// chances to park an instance wrongly.
+    /// </para>
+    /// <para>
+    /// <strong>An expired wait writes no row of its own</strong>, so what says the decision was
+    /// already taken is the block: a committed row between the wait and the index a delivered
+    /// signal would have jumped to. The two paths rejoin there, so replaying the block is safe
+    /// whichever way it originally went — every step in it that committed is skipped, and
+    /// control arrives where the signal path would have arrived. Recording the timeout as the
+    /// wait's own row instead would put "this step happened" into an operator's history for a
+    /// step that did not.
+    /// </para>
+    /// </remarks>
+    private WaitVerdict ResolveWait(
+        JournalCursor cursor,
+        FlowExecutionContext context,
+        StepNode step,
+        out DateTimeOffset due)
+    {
+        due = default;
+
+        if (step.Kind == StepKind.AwaitSignal)
+        {
+            if (cursor.Run?.TakeSignal(step.SignalType) is { } delivered)
+            {
+                context.Deliver(delivered);
+
+                return WaitVerdict.Satisfied;
+            }
+
+            if (TimeoutBlockWasEntered(cursor, step))
+            {
+                return WaitVerdict.Escalated;
+            }
+        }
+
+        var wait = step.Kind == StepKind.AwaitSignal ? step.SignalTimeout!.Value : step.Delay!.Value;
+
+        due = DueAt(cursor, step, wait);
+
+        if (_clock.UtcNow < due)
+        {
+            return WaitVerdict.Waiting;
+        }
+
+        // A delay that has come due is simply over; there is nothing else it could have been
+        // waiting for, so it walks on and commits its row like any other step.
+        return step.Kind == StepKind.Delay
+            ? WaitVerdict.Satisfied
+            : step.Target is null ? WaitVerdict.Unmet : WaitVerdict.Escalated;
+    }
+
+    /// <summary>
+    /// When the wait this step declares is due, in wall-clock terms.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The instant the row recorded for <em>this</em> wait, and the clock for one being
+    /// reached.</strong> Re-deriving it from the clock on every resume would restart a
+    /// seven-day wait every time anything touched the instance — an inert signal, an operator,
+    /// a sweep — which is a wait that can be made to last for ever by observing it. Trusting a
+    /// recorded instant without checking whose it is would be the opposite failure, and the
+    /// worse one: a wait walked through before it began.
+    /// </para>
+    /// <para>
+    /// A wait reached on a fresh instance, and a wait reached past one the instance has already
+    /// finished, are the same case and take the same answer.
+    /// </para>
+    /// </remarks>
+    private DateTimeOffset DueAt(JournalCursor cursor, StepNode step, TimeSpan wait) =>
+        cursor.Run?.RecordedWake(cursor.Scope, step.Index) ?? _clock.UtcNow + wait;
+
+    /// <summary>
+    /// Whether an earlier invocation already found this wait expired and ran into the block it
+    /// declared.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The timeout path writes no row of its own — the wait did not happen, so recording it as
+    /// having happened would be a lie an operator reads — so what says the decision was taken
+    /// is the block: any committed row between the wait and the index a delivered signal would
+    /// have jumped to. The two paths rejoin at that index, so replaying the block is safe
+    /// whichever way it originally went: every step in it that committed is skipped, and
+    /// control arrives where the signal path would have arrived.
+    /// </para>
+    /// <para>
+    /// A wait with no block cannot be here: it fails the flow when it expires, and a failed
+    /// flow is terminal.
+    /// </para>
+    /// </remarks>
+    private static bool TimeoutBlockWasEntered(JournalCursor cursor, StepNode step)
+    {
+        if (cursor.Run?.Frontier is not { } frontier || step.Target is not { } signalled)
+        {
+            return false;
+        }
+
+        for (var index = step.Index + 1; index < signalled; index++)
+        {
+            if (frontier.IsCommitted(cursor.Scope, index))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -1274,6 +1481,7 @@ public sealed class FlowEngine
         var completed = 0;
         var succeeded = 0;
         var suspended = false;
+        FlowWake? wake = null;
         Error? firstFailure = null;
 
         while (pending.Count > 0)
@@ -1290,6 +1498,12 @@ public sealed class FlowEngine
             // success would let Quorum(2) be satisfied by a branch that is still waiting,
             // and counting it as a failure would unwind a fork nothing went wrong in.
             suspended |= outcome.Suspended;
+
+            // The earliest, when two branches are both waiting. The fork is resumed when the
+            // first of them is due — the other finds its own wait still running and parks
+            // again, which costs one resume and is the only reading under which a branch
+            // waiting an hour is not held for the seven days its sibling asked for.
+            wake = Earlier(wake, outcome.Wake);
 
             if (outcome.Suspended)
             {
@@ -1322,11 +1536,25 @@ public sealed class FlowEngine
         // would report `flow.merge_not_satisfied` for branches that are merely waiting.
         if (suspended && firstFailure is null)
         {
-            return new RangeOutcome(null, completed, suspended: true);
+            return new RangeOutcome(null, completed, suspended: true, wake);
         }
 
         return new RangeOutcome(Verdict(plan, step, merge, errors, succeeded, firstFailure, context), completed);
     }
+
+    /// <summary>The wait that comes due first, when two branches of a fork are both waiting.</summary>
+    /// <remarks>
+    /// One row carries one wait, so a fork around two of them has to choose. The earlier is the
+    /// only choice that cannot lose a wait: the instance is resumed when it is due, the branch
+    /// it belongs to proceeds, and the other parks again — see <see cref="FlowWake"/> for what
+    /// that costs the sibling.
+    /// </remarks>
+    private static FlowWake? Earlier(FlowWake? left, FlowWake? right) => (left, right) switch
+    {
+        (null, _) => right,
+        (_, null) => left,
+        _ => right!.Value.At < left!.Value.At ? right : left,
+    };
 
     /// <summary>
     /// Runs the body of a <see cref="StepKind.ForEach"/> once per element.
@@ -1423,6 +1651,7 @@ public sealed class FlowEngine
         var errors = step.ContinueOnError ? new Error?[source.Count] : null;
         var completed = 0;
         var suspended = false;
+        FlowWake? wake = null;
         Error? firstFailure = null;
         Error? fatal = null;
 
@@ -1459,6 +1688,7 @@ public sealed class FlowEngine
                 // open, so a resumed loop would re-enter element 3 having already done
                 // element 4 — a `ForEach` is ordered by declaration and this keeps it so.
                 suspended = true;
+                wake = outcome.Wake;
                 break;
             }
 
@@ -1482,7 +1712,7 @@ public sealed class FlowEngine
             errors[element] = outcome.Failure;
         }
 
-        return Iterated(step, errors, firstFailure, fatal, suspended, completed, context);
+        return Iterated(step, errors, firstFailure, fatal, suspended, wake, completed, context);
     }
 
     /// <summary>Runs the elements with a sliding window of at most <c>MaxDegreeOfParallelism</c>.</summary>
@@ -1523,6 +1753,7 @@ public sealed class FlowEngine
         var completed = 0;
         var stopped = false;
         var suspended = false;
+        FlowWake? wake = null;
         Error? firstFailure = null;
         Error? fatal = null;
 
@@ -1576,6 +1807,7 @@ public sealed class FlowEngine
                 // than cancelled: their rows are what a resume steps over, and cancelling
                 // them would make the resumed loop redo work this invocation had done.
                 suspended = true;
+                wake = Earlier(wake, outcome.Wake);
                 stopped = true;
                 continue;
             }
@@ -1599,7 +1831,7 @@ public sealed class FlowEngine
             errors[element] = outcome.Failure;
         }
 
-        return Iterated(step, errors, firstFailure, fatal, suspended, completed, context);
+        return Iterated(step, errors, firstFailure, fatal, suspended, wake, completed, context);
     }
 
     /// <summary>
@@ -1618,6 +1850,7 @@ public sealed class FlowEngine
         Error? firstFailure,
         Error? fatal,
         bool suspended,
+        FlowWake? wake,
         int completed,
         FlowExecutionContext context)
     {
@@ -1626,7 +1859,7 @@ public sealed class FlowEngine
         // endings a saga has.
         if (suspended && fatal is null && firstFailure is null)
         {
-            return new RangeOutcome(null, completed, suspended: true);
+            return new RangeOutcome(null, completed, suspended: true, wake);
         }
 
         return new RangeOutcome(IterationVerdict(step, errors, firstFailure, fatal, context), completed);
@@ -2081,6 +2314,7 @@ public sealed class FlowEngine
             var closed = await CloseInstanceAsync(
                 childCursor,
                 failure is null ? FlowInstanceState.Completed : FlowInstanceState.Failed,
+                wake: null,
                 ct).ConfigureAwait(false);
 
             if (closed is not null)
@@ -2148,7 +2382,8 @@ public sealed class FlowEngine
             // tries to finish.
             if (cursor.IsJournaled)
             {
-                _ = await CloseInstanceAsync(cursor, InstanceStateFor(result), CancellationToken.None)
+                _ = await CloseInstanceAsync(
+                    cursor, InstanceStateFor(result), result.Wake, CancellationToken.None)
                     .ConfigureAwait(false);
             }
         }

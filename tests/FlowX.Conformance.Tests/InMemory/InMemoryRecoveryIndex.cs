@@ -191,8 +191,7 @@ public sealed class InMemoryRecoveryStore : RecoveryStore
 
         if (IsTerminal(state))
         {
-            var completed = await _journal.CompleteAsync(
-                instance, new FencingToken(1), state, JournalPayload.Empty, cancellationToken);
+            var completed = await _journal.CompleteAsync(instance, new FencingToken(1), state, JournalPayload.Empty, wake: null, cancellationToken);
 
             Ensure(completed.IsSuccess, completed.IsFailure ? completed.Error.ToString() : string.Empty);
 

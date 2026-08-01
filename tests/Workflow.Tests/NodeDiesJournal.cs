@@ -98,8 +98,9 @@ internal sealed class NodeDiesJournal : IFlowJournal
         FencingToken token,
         FlowInstanceState state,
         JournalPayload stateBag,
+        FlowWake? wake,
         CancellationToken cancellationToken) =>
-        _inner.CompleteAsync(instanceId, token, state, stateBag, cancellationToken);
+        _inner.CompleteAsync(instanceId, token, state, stateBag, wake, cancellationToken);
 
     /// <inheritdoc />
     public ValueTask<Result<FlowInstanceRecord>> ReadInstanceAsync(

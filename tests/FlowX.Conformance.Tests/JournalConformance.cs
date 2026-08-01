@@ -766,12 +766,10 @@ public abstract class JournalConformance
         var instance = await StartAsync(journal, new FencingToken(3));
 
         ShouldSucceed(
-            await journal.CompleteAsync(
-                instance,
+            await journal.CompleteAsync(instance,
                 new FencingToken(3),
                 FlowInstanceState.Completed,
-                Payload(new ConformanceOrder("order-9", "tok", 1)),
-                Cancellation),
+                Payload(new ConformanceOrder("order-9", "tok", 1)), wake: null, Cancellation),
             "the owner completes the instance.");
 
         var record = await ReadInstanceAsync(journal, instance);
@@ -792,8 +790,7 @@ public abstract class JournalConformance
         var instance = await StartAsync(journal);
 
         ShouldSucceed(
-            await journal.CompleteAsync(
-                instance, new FencingToken(1), FlowInstanceState.Failed, JournalPayload.Empty, Cancellation),
+            await journal.CompleteAsync(instance, new FencingToken(1), FlowInstanceState.Failed, JournalPayload.Empty, wake: null, Cancellation),
             "the instance failed and compensated.");
 
         ShouldFailWith(
@@ -820,8 +817,7 @@ public abstract class JournalConformance
             "another node took over.");
 
         ShouldFailWith(
-            await journal.CompleteAsync(
-                instance, new FencingToken(2), FlowInstanceState.Completed, JournalPayload.Empty, Cancellation),
+            await journal.CompleteAsync(instance, new FencingToken(2), FlowInstanceState.Completed, JournalPayload.Empty, wake: null, Cancellation),
             DurabilityErrors.FencedOutCode,
             ErrorCategory.Forbidden,
             "a zombie cannot complete an instance it no longer owns.");

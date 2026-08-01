@@ -430,6 +430,7 @@ public sealed class TheSuiteRejectsAStoreThatIsWrongTests
             FencingToken token,
             FlowInstanceState state,
             JournalPayload stateBag,
+            FlowWake? wake,
             CancellationToken cancellationToken)
         {
             if (!_instances.TryGetValue(instanceId, out var record))

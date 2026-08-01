@@ -201,6 +201,7 @@ public sealed class PostgresFlowJournal : IFlowJournal
         FencingToken token,
         FlowInstanceState state,
         JournalPayload stateBag,
+        FlowWake? wake,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stateBag);
@@ -238,6 +239,14 @@ public sealed class PostgresFlowJournal : IFlowJournal
             command.Parameters.Add(Db.Uuid("instance", instanceId));
             command.Parameters.Add(Db.Text("state", StoredEnums.ToText(state)));
             command.Parameters.Add(Db.Json("state_bag", stateBag.ToJson()));
+
+            // All three, or all three null. flow_instance_wake_check refuses anything else,
+            // which is what makes the read side able to test one column and trust the other
+            // two — and what stops a partial write leaving an instant with no step to belong
+            // to, or a step nothing is due to end.
+            command.Parameters.Add(Db.Timestamp("wake_at", wake?.At));
+            command.Parameters.Add(Db.Int("wake_step", wake?.StepId));
+            command.Parameters.Add(Db.Text("wake_scope", wake?.Scope.Text));
 
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }

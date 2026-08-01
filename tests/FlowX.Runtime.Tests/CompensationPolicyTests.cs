@@ -605,8 +605,9 @@ public sealed class CompensationPolicyTests
             FencingToken token,
             FlowInstanceState state,
             JournalPayload stateBag,
+            FlowWake? wake,
             CancellationToken cancellationToken) =>
-            _inner.CompleteAsync(instanceId, token, state, stateBag, cancellationToken);
+            _inner.CompleteAsync(instanceId, token, state, stateBag, wake, cancellationToken);
 
         public ValueTask<Result<FlowInstanceRecord>> ReadInstanceAsync(
             Guid instanceId, CancellationToken cancellationToken) =>

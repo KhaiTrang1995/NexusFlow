@@ -69,13 +69,15 @@ public readonly struct FlowExecutionResult
         int completedSteps,
         CompensationOutcome compensation,
         bool suspended = false,
-        Guid? instanceId = null)
+        Guid? instanceId = null,
+        FlowWake? wake = null)
     {
         Error = error;
         CompletedSteps = completedSteps;
         Compensation = compensation;
         IsSuspended = suspended;
         InstanceId = instanceId;
+        Wake = wake;
     }
 
     /// <summary>The business error, or <c>null</c> when the flow completed.</summary>
@@ -119,6 +121,26 @@ public readonly struct FlowExecutionResult
     /// </remarks>
     public Guid? InstanceId { get; }
 
+    /// <summary>
+    /// The wait a suspended flow is parked at and when it is due, or <c>null</c> when it is
+    /// not suspended or nothing is due to wake it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Recorded on the instance row by the same write that records
+    /// <see cref="FlowInstanceState.Suspended"/>, and reported here because a caller that has
+    /// just been told "this is waiting" has an obvious next question. A transport answering
+    /// <c>202 Accepted</c> has a <c>Retry-After</c> to fill in without asking the journal
+    /// again.
+    /// </para>
+    /// <para>
+    /// Not a promise that anything <em>will</em> wake it at that instant: a deployment whose
+    /// journal implements no <see cref="ITimerIndex"/>, or that runs no timer sweep, records
+    /// this and never reads it. <c>FlowTimerScan.IsEnabled</c> is where that is answered.
+    /// </para>
+    /// </remarks>
+    public FlowWake? Wake { get; }
+
     /// <summary>True when every step completed.</summary>
     /// <remarks>
     /// False for a suspended flow. It has not failed and it has not finished, and the steps
@@ -154,13 +176,14 @@ public readonly struct FlowExecutionResult
     /// A flow that reached a suspension point and is waiting in the journal.
     /// </summary>
     /// <param name="completedSteps">How many steps ran before the wait.</param>
+    /// <param name="wake">The wait it is parked at and when it is due, if anything is.</param>
     /// <remarks>
     /// Nothing failed, so <see cref="CompensationOutcome.NotRequired"/> is the truthful answer
     /// rather than a placeholder: the completed steps are still on the instance's history and
     /// are still undone if the flow fails <em>after</em> it resumes.
     /// </remarks>
-    public static FlowExecutionResult Suspended(int completedSteps) =>
-        new(null, completedSteps, CompensationOutcome.NotRequired, suspended: true);
+    public static FlowExecutionResult Suspended(int completedSteps, FlowWake? wake = null) =>
+        new(null, completedSteps, CompensationOutcome.NotRequired, suspended: true, wake: wake);
 
     /// <summary>
     /// A flow with a declared output that was refused before any step ran.
@@ -224,6 +247,9 @@ public readonly struct FlowExecutionResult<TOut>
 
     /// <inheritdoc cref="FlowExecutionResult.InstanceId" />
     public Guid? InstanceId => Outcome.InstanceId;
+
+    /// <inheritdoc cref="FlowExecutionResult.Wake" />
+    public FlowWake? Wake => Outcome.Wake;
 
     /// <summary>
     /// The projected output. Reading it on a failed flow is a defect in the caller, so
@@ -526,6 +552,56 @@ public static class FlowErrors
             .With("flowId", flowId)
             .With("subFlowId", subFlowId)
             .With("maxDepth", depth);
+
+    /// <summary>The code <see cref="SignalNotReceived"/> raises.</summary>
+    /// <remarks>
+    /// A constant because a caller has a reason to branch on it that no other engine error
+    /// has: it is the one failure that is a business outcome the author anticipated — the
+    /// countersignature did not arrive — rather than something going wrong.
+    /// </remarks>
+    public const string SignalNotReceivedCode = "flow.signal_not_received";
+
+    /// <summary>
+    /// A suspension point's declared timeout expired and the flow declared no
+    /// <c>.OnTimeout(...)</c> block to take instead.
+    /// </summary>
+    /// <param name="flowId">The waiting flow.</param>
+    /// <param name="stepIndex">Index of the wait, so the failure names one call site.</param>
+    /// <param name="signalType">What it was waiting for.</param>
+    /// <param name="timeout">How long the author gave it.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>A failure, and the completed compensable steps unwind behind it.</strong> The
+    /// alternative — carrying on at the next step — would run steps that bind a payload
+    /// nothing delivered, which is the same defect as a wait that does not wait, arriving one
+    /// step later. An author who wants something else to happen declares it, and then this is
+    /// unreachable: the block is what the flow does instead.
+    /// </para>
+    /// <para>
+    /// <see cref="ErrorCategory.Unavailable"/> rather than <see cref="ErrorCategory.Internal"/>,
+    /// for the reason a deadline is: nothing is wrong with the flow, something outside it did
+    /// not happen in time, and a fresh invocation may well be countersigned.
+    /// </para>
+    /// <para>
+    /// Distinct from <see cref="DeadlineExceededCode"/> on purpose. That one is the flow's
+    /// whole budget and says nothing about which step was standing when it ran out; this names
+    /// the wait, and the instance is recorded <c>Failed</c> rather than <c>TimedOut</c> because
+    /// the flow did not run out of time — one thing it was waiting for did.
+    /// </para>
+    /// </remarks>
+    public static Error SignalNotReceived(
+        string flowId, int stepIndex, string signalType, TimeSpan timeout) =>
+        new Error(
+            SignalNotReceivedCode,
+            $"Step {stepIndex} of flow '{flowId}' waited {timeout} for signal " +
+            $"'{signalType}' and it did not arrive. The flow declares no OnTimeout block, so " +
+            "there is nowhere for the wait to go: continuing would run the steps after it " +
+            "against a payload nothing delivered.",
+            ErrorCategory.Unavailable)
+            .With("flowId", flowId)
+            .With("stepIndex", stepIndex)
+            .With("signalType", signalType)
+            .With("timeout", timeout);
 
     /// <summary>
     /// An inline composed child reached a suspension point, which its parent cannot wait at.

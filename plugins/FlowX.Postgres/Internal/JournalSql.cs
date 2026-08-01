@@ -26,7 +26,8 @@ internal static class JournalSql
         """
         instance_id, flow_id, flow_version, tenant_id, state, fence, resume_from_step,
         input, state_bag, correlation_id, trace_id, deadline_at,
-        parent_instance_id, parent_scope, parent_step_id, created_at, updated_at
+        parent_instance_id, parent_scope, parent_step_id, created_at, updated_at,
+        wake_at, wake_step_id, wake_scope
         """;
 
     /// <summary>Opens the instance row. The primary key is what refuses a second start.</summary>
@@ -127,14 +128,30 @@ internal static class JournalSql
          WHERE instance_id = @instance
         """;
 
-    /// <summary>Moves the instance to a terminal state, fenced like every other write.</summary>
+    /// <summary>
+    /// Moves the instance to the state it comes to rest in, fenced like every other write.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The three wake columns are assigned unconditionally rather than <c>COALESCE</c>d like
+    /// the state bag, and the difference is the point. A state bag that is not supplied means
+    /// "unchanged" — the last snapshot still describes the instance. A wake that is not
+    /// supplied means <em>nothing is due to wake this instance</em>, which is the truth for
+    /// every state but <c>Suspended</c> and has to overwrite whatever the instance was waiting
+    /// on before. A completed instance keeping the instant it was parked at would be woken for
+    /// ever by the timer sweep.
+    /// </para>
+    /// </remarks>
     public const string CompleteInstance =
         """
         UPDATE flow_instance
-           SET state      = @state,
-               state_bag  = COALESCE(@state_bag::json, state_bag),
-               updated_at = now(),
-               version    = version + 1
+           SET state        = @state,
+               state_bag    = COALESCE(@state_bag::json, state_bag),
+               wake_at      = @wake_at,
+               wake_step_id = @wake_step,
+               wake_scope   = @wake_scope,
+               updated_at   = now(),
+               version      = version + 1
          WHERE instance_id = @instance
         """;
 
