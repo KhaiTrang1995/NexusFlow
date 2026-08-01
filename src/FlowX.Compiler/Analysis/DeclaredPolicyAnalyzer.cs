@@ -100,11 +100,23 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     public static readonly ImmutableHashSet<string> ExecutedKinds =
         ImmutableHashSet.Create(
             System.StringComparer.Ordinal,
+            "RateLimit",
+            "Idempotency",
             "Timeout",
             "Retry",
             "CircuitBreaker",
             "Bulkhead",
             CompensationRetryKind);
+
+    /// <summary><c>PolicySet.Idempotency</c>'s method name, which FLOWX1039 is about.</summary>
+    /// <remarks>
+    /// <see cref="CompensationRetryKind"/>'s reason: <see cref="PolicySetReader"/> returns what
+    /// the author literally called, and this assembly targets netstandard2.0 and cannot see
+    /// <c>StepPolicy.IdempotencyKind</c>. The two coincide because <c>PolicySet</c> builds its
+    /// descriptors with <c>nameof</c>, and <c>PolicyStageFitnessTests</c> is what keeps them
+    /// coinciding.
+    /// </remarks>
+    private const string IdempotencyKind = "Idempotency";
 
     /// <summary>The call this rule is about.</summary>
     private const string WithPolicyMethod = "WithPolicy";
@@ -140,7 +152,8 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
             FlowXDiagnostics.CompensationRetryHasNoCompensation,
             FlowXDiagnostics.StepDeclaresMoreThanOnePolicySet,
             FlowXDiagnostics.CompensationRetryRetriesNothing,
-            FlowXDiagnostics.PolicySetCannotBeRead);
+            FlowXDiagnostics.PolicySetCannotBeRead,
+            FlowXDiagnostics.IdempotencyCannotRecordARedactedResult);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -204,6 +217,7 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
         }
 
         ReportInertPolicies(context, kinds, set, location);
+        ReportUnrecordableIdempotency(context, kinds, invocation, set, location);
 
         if (ReportDroppedCompensationRetry(context, kinds, invocation, set, location))
         {
@@ -429,6 +443,145 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
             location,
             set,
             string.Join(", ", inert)));
+    }
+
+    /// <summary>
+    /// FLOWX1039 — an <c>Idempotency</c> window on a flow that marks a contract member
+    /// <c>[Sensitive]</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Read off the flow, not off the step</strong>, because that is where the redaction
+    /// set comes from: the generator emits <c>SensitiveMembers</c> from the two type arguments
+    /// of <c>Flow&lt;TIn, TOut&gt;</c> and hands the same array to every payload the flow writes.
+    /// So the question "can this flow record a result faithfully" has one answer for the whole
+    /// flow, and asking it per step would be answering a narrower question than the mechanism
+    /// asks. ADR-0038 §1.4 rejects the narrower rule and says why.
+    /// </para>
+    /// <para>
+    /// <strong>Silent when the enclosing flow cannot be found.</strong> A <c>.WithPolicy(...)</c>
+    /// in a helper method, or on a builder passed into one, has no <c>Flow&lt;,&gt;</c> above it
+    /// in this tree — and RS1030 forbids asking the compilation for another tree's model. Silent
+    /// rather than guessing, exactly as FLOWX1033 is silent when the chain does not reach a
+    /// <c>Step</c>: the run-time guard is what makes that safe.
+    /// </para>
+    /// <para>
+    /// Names the first marked member rather than all of them. One is enough to make the flow
+    /// unrecordable, and the author's next question is "which one", not "how many".
+    /// </para>
+    /// </remarks>
+    private static void ReportUnrecordableIdempotency(
+        SyntaxNodeAnalysisContext context,
+        IReadOnlyList<string> kinds,
+        InvocationExpressionSyntax invocation,
+        string set,
+        Location location)
+    {
+        if (!kinds.Contains(IdempotencyKind))
+        {
+            return;
+        }
+
+        if (EnclosingFlow(invocation, context.SemanticModel, context.CancellationToken) is not { } flow)
+        {
+            return;
+        }
+
+        if (FirstSensitiveMember(flow.Type) is not { } marked)
+        {
+            return;
+        }
+
+        context.ReportDiagnostic(Diagnostic.Create(
+            FlowXDiagnostics.IdempotencyCannotRecordARedactedResult,
+            location,
+            set,
+            flow.Name,
+            marked));
+    }
+
+    /// <summary>The flow class a <c>.WithPolicy(...)</c> is written inside, and its contracts.</summary>
+    private readonly struct EnclosingFlowInfo(string name, INamedTypeSymbol contracts)
+    {
+        public string Name { get; } = name;
+
+        /// <summary>The <c>Flow&lt;TIn, TOut&gt;</c> base, whose two arguments carry the marks.</summary>
+        public INamedTypeSymbol Type { get; } = contracts;
+    }
+
+    /// <summary><c>FlowX.Flow&lt;TIn, TOut&gt;</c>, as metadata names it.</summary>
+    private const string FlowMetadataName = "Flow`2";
+
+    /// <summary><c>FlowX.SensitiveAttribute</c>, as a display string.</summary>
+    private const string SensitiveAttribute = "FlowX.SensitiveAttribute";
+
+    private static EnclosingFlowInfo? EnclosingFlow(
+        SyntaxNode node,
+        SemanticModel semanticModel,
+        System.Threading.CancellationToken cancellationToken)
+    {
+        var declaration = node.FirstAncestorOrSelf<ClassDeclarationSyntax>();
+
+        if (declaration is null ||
+            semanticModel.GetDeclaredSymbol(declaration, cancellationToken) is not { } flowType)
+        {
+            return null;
+        }
+
+        for (var current = flowType.BaseType; current is not null; current = current.BaseType)
+        {
+            if (current.MetadataName == FlowMetadataName &&
+                current.ContainingNamespace?.ToDisplayString() == AbstractionsNamespace &&
+                current.TypeArguments.Length == 2)
+            {
+                return new EnclosingFlowInfo(flowType.Name, current);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The first member of either contract carrying <c>[Sensitive]</c>, or null when neither
+    /// does.
+    /// </summary>
+    /// <remarks>
+    /// Both spellings are read, for <c>FlowAnalyzer.ReadSensitiveMembers</c>'s reason: a
+    /// positional record puts the attribute on the primary constructor parameter, written
+    /// <c>[property: Sensitive]</c>, and a user who wrote one spelling and got nothing would
+    /// reasonably conclude the attribute does not work.
+    /// </remarks>
+    private static string? FirstSensitiveMember(INamedTypeSymbol flowBase)
+    {
+        foreach (var contract in flowBase.TypeArguments)
+        {
+            foreach (var member in contract.GetMembers())
+            {
+                if (member is not IPropertySymbol and not IFieldSymbol)
+                {
+                    continue;
+                }
+
+                var onMember = member.GetAttributes()
+                    .Any(a => a.AttributeClass?.ToDisplayString() == SensitiveAttribute);
+
+                var onParameter = contract
+                    .GetMembers(".ctor")
+                    .OfType<IMethodSymbol>()
+                    .SelectMany(c => c.Parameters)
+                    .Any(parameter =>
+                        string.Equals(parameter.Name, member.Name, System.StringComparison.OrdinalIgnoreCase) &&
+                        parameter.GetAttributes()
+                            .Any(a => a.AttributeClass?.ToDisplayString() == SensitiveAttribute));
+
+                if (onMember || onParameter)
+                {
+                    return member.Name;
+                }
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

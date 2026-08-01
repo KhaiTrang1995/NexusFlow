@@ -447,6 +447,185 @@ public static class FlowErrors
             .With("capabilityId", capabilityId)
             .With("maxConcurrency", maxConcurrency);
 
+    /// <summary>The code <see cref="RateLimited"/> raises.</summary>
+    /// <remarks>
+    /// A constant for <see cref="StepTimedOutCode"/>'s reason, and one more: this is the row
+    /// <c>docs/10-Policy-Framework.md</c> §3 says a transport turns into a <c>429</c> with a
+    /// <c>Retry-After</c>, so it is the policy failure most likely to be branched on outside
+    /// this repository.
+    /// </remarks>
+    public const string RateLimitedCode = "policy.rate_limited";
+
+    /// <summary>
+    /// A step's <c>RateLimit</c> had no permit left for this caller, so the call was refused
+    /// without being made.
+    /// </summary>
+    /// <param name="capabilityId">The capability whose budget is spent.</param>
+    /// <param name="retryAfter">How long until a permit accrues, as the store reported it.</param>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ErrorCategory.Unavailable"/>, matching <see cref="BulkheadRejected"/> and for
+    /// the same reason: the dependency is healthy and this caller is simply not getting in right
+    /// now, so waiting and asking again is the correct response and the category is the half of
+    /// the error that says so.
+    /// </para>
+    /// <para>
+    /// <strong>It is retryable in <c>Retry</c>'s default set, and stage 1 sits outside the retry
+    /// loop, so a refused caller is refused once.</strong> The two facts are consistent because
+    /// they are about different loops: a step's own retry never sees this error — the limiter
+    /// runs before the loop opens — and a <em>caller</em> retrying the whole flow is the party
+    /// <c>retryAfter</c> is addressed to.
+    /// </para>
+    /// </remarks>
+    public static Error RateLimited(string capabilityId, TimeSpan retryAfter) =>
+        new Error(
+            RateLimitedCode,
+            $"The rate limit for capability '{capabilityId}' has no permit left. Retry after " +
+            $"{retryAfter}. The call was refused without being made.",
+            ErrorCategory.Unavailable)
+            .With("capabilityId", capabilityId)
+            .With("retryAfter", retryAfter);
+
+    /// <summary>The code <see cref="RateLimiterUnavailable"/> raises.</summary>
+    public const string RateLimiterUnavailableCode = "policy.ratelimit_unavailable";
+
+    /// <summary>
+    /// A step declares a <c>RateLimit</c> and the limiter could not decide — none was
+    /// registered, or the one that was did not answer.
+    /// </summary>
+    /// <param name="capabilityId">The capability whose limit could not be consulted.</param>
+    /// <param name="cause">What the store reported, when there was a store.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>A refusal, and the whole of what makes the policy honest.</strong> Admitting when
+    /// the limiter is absent would put the declaration's meaning in a registration nobody can see
+    /// from the flow; admitting when the limiter is unreachable would turn an outage of the
+    /// limiter into an unbounded flood of whatever it was bounding. Both are the
+    /// half-executing policy
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>
+    /// rejects, arriving through the configuration rather than through the algorithm.
+    /// </para>
+    /// <para>
+    /// Distinct from <see cref="RateLimited"/> even though both stop the same call, because the
+    /// repairs are opposite: one is "register an <c>IRateLimiterStore</c>" or "fix Redis", the
+    /// other is "send fewer requests". An operator reading a refusal must not have to guess which.
+    /// </para>
+    /// </remarks>
+    public static Error RateLimiterUnavailable(string capabilityId, Error? cause = null) =>
+        new Error(
+            RateLimiterUnavailableCode,
+            cause is null
+                ? $"Capability '{capabilityId}' declares a RateLimit and no IRateLimiterStore is " +
+                  "registered, so no budget could be consulted. The call was refused rather than " +
+                  "admitted: a limiter that is not wired up must not read as a limit that passed."
+                : $"Capability '{capabilityId}' declares a RateLimit and its store did not answer: " +
+                  $"{cause.Message} The call was refused rather than admitted — a limiter that " +
+                  "cannot reach its server does not know whether this caller is inside the budget.",
+            ErrorCategory.Unavailable)
+            .With("capabilityId", capabilityId);
+
+    /// <summary>The code <see cref="IdempotencyStoreUnavailable"/> raises.</summary>
+    public const string IdempotencyUnavailableCode = "policy.idempotency_unavailable";
+
+    /// <summary>
+    /// A step declares an <c>Idempotency</c> window and the store could not answer — none was
+    /// registered, or the one that was did not respond.
+    /// </summary>
+    /// <param name="capabilityId">The capability whose window could not be consulted.</param>
+    /// <param name="cause">What the store reported, when there was a store.</param>
+    /// <remarks>
+    /// Dispatching on doubt is the duplicate the policy was declared to prevent, so this is a
+    /// refusal for <see cref="RateLimiterUnavailable"/>'s reason.
+    /// </remarks>
+    public static Error IdempotencyStoreUnavailable(string capabilityId, Error? cause = null) =>
+        new Error(
+            IdempotencyUnavailableCode,
+            cause is null
+                ? $"Capability '{capabilityId}' declares an Idempotency window and no " +
+                  "IIdempotencyStore is registered, so no record could be read or written. The " +
+                  "step was refused rather than dispatched: dispatching on doubt is the duplicate " +
+                  "the window was declared to prevent."
+                : $"Capability '{capabilityId}' declares an Idempotency window and its store did " +
+                  $"not answer: {cause.Message} The step was refused rather than dispatched.",
+            ErrorCategory.Unavailable)
+            .With("capabilityId", capabilityId);
+
+    /// <summary>The code <see cref="IdempotencyInProgress"/> raises.</summary>
+    /// <remarks>
+    /// <c>docs/10-Policy-Framework.md</c> §7's third arm, which that section renders as
+    /// <c>409 idempotency.in_progress + Retry-After</c>. The code is spelled with the policy's
+    /// prefix like every other policy failure so that one <c>policy.*</c> family covers the lot.
+    /// </remarks>
+    public const string IdempotencyInProgressCode = "policy.idempotency_in_progress";
+
+    /// <summary>
+    /// Another caller is running this step under the same idempotency key right now.
+    /// </summary>
+    /// <param name="capabilityId">The capability somebody else is inside.</param>
+    /// <param name="retryAfter">How long the holder's claim has left.</param>
+    /// <remarks>
+    /// <see cref="ErrorCategory.Conflict"/> rather than <see cref="ErrorCategory.Unavailable"/>,
+    /// and the distinction is the useful one: nothing is down and nothing is over budget — two
+    /// callers are contending for one outcome, and the right answer is to come back and read it
+    /// rather than to run it again. It is also in the compensation retry's default retryable set
+    /// and not in the forward retry's, which is right in both directions: an undo racing another
+    /// writer should insist, and a forward step should not spend its deadline re-asking a
+    /// question whose answer is "somebody else is doing it".
+    /// </remarks>
+    public static Error IdempotencyInProgress(string capabilityId, TimeSpan retryAfter) =>
+        new Error(
+            IdempotencyInProgressCode,
+            $"Another caller is executing '{capabilityId}' under this idempotency key. Retry " +
+            $"after {retryAfter}. Running it concurrently is exactly what the window forbids.",
+            ErrorCategory.Conflict)
+            .With("capabilityId", capabilityId)
+            .With("retryAfter", retryAfter);
+
+    /// <summary>The code <see cref="IdempotencyNotReplayable"/> raises.</summary>
+    public const string IdempotencyNotReplayableCode = "policy.idempotency_not_replayable";
+
+    /// <summary>
+    /// The step succeeded and what it produced cannot be recorded as what it produced.
+    /// </summary>
+    /// <param name="capabilityId">The capability whose result could not be recorded.</param>
+    /// <param name="describedNothing">
+    /// Whether the dispatcher described no state bag at all, as opposed to describing one the
+    /// redaction pass had to change.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The guard
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0038-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0038</a>
+    /// exists for, and it fails a step that worked.</strong> That is the correct direction and
+    /// it is genuinely a cost: the capability has been dispatched, the effect happened, and the
+    /// step is then reported as failed with the completed compensable steps unwinding behind it.
+    /// The alternative is a record that says a marked member's value is the literal
+    /// <c>[redacted]</c>, replayed to a later caller as if somebody had computed it.
+    /// </para>
+    /// <para>
+    /// <see cref="ErrorCategory.Internal"/>, because it is a defect in the flow's declaration
+    /// rather than anything the caller did or the dependency failed to do — and because
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1039.md">FLOWX1039</a>
+    /// should have caught it at build time. Reaching this at run time means the rule was silent:
+    /// a set the compiler could not read, or a hand-built plan.
+    /// </para>
+    /// </remarks>
+    public static Error IdempotencyNotReplayable(string capabilityId, bool describedNothing) =>
+        new Error(
+            IdempotencyNotReplayableCode,
+            describedNothing
+                ? $"Capability '{capabilityId}' declares an Idempotency window and its dispatcher " +
+                  "describes no state bag, so there is nothing a later caller could be answered " +
+                  "with. Recording an empty result would make the declaration look satisfied " +
+                  "while every step after the frontier bound values no step produced."
+                : $"Capability '{capabilityId}' declares an Idempotency window and its flow " +
+                  "declares a [Sensitive] member, so the recorded result would carry " +
+                  $"'{JournalPayload.Redacted}' where a value was. Replaying that would hand a " +
+                  "later step a placeholder as if it were the value — see FLOWX1039, which " +
+                  "reports this at build time whenever the compiler can read the policy set.",
+            ErrorCategory.Internal)
+            .With("capabilityId", capabilityId);
+
     /// <summary>The caller cancelled. Not a defect, and not the flow's fault.</summary>
     public static Error Cancelled(string flowId) =>
         new Error(

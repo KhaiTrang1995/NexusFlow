@@ -98,21 +98,29 @@ public sealed class ReferenceSamplePolicyTests
     // ------------------------------------------------------------------ it fires
 
     /// <summary>
-    /// The rule reports four of the reference saga's seven <c>.WithPolicy(...)</c> calls.
+    /// The rule reports three of the reference saga's seven <c>.WithPolicy(...)</c> calls.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>This asserted seven, and the drop to four is the policy engine landing.</strong>
-    /// The three calls that went quiet name <c>Policies.ExternalRead</c> — two of them inside
-    /// <c>Case</c> blocks — whose <c>Timeout</c>, <c>Retry</c> and <c>CircuitBreaker</c> are
-    /// all applied now. The four that remain are <c>Admission</c> once, <c>LedgerPost</c>
-    /// twice and <c>SettlementRegister</c> once, each carrying a <c>RateLimit</c>, an
-    /// <c>Idempotency</c> window or an <c>Audit</c>.
+    /// <strong>This asserted seven, then four, and is now three.</strong> Seven to four was the
+    /// policy engine landing: the three calls naming <c>Policies.ExternalRead</c> — two of them
+    /// inside <c>Case</c> blocks — went quiet when their <c>Timeout</c>, <c>Retry</c> and
+    /// <c>CircuitBreaker</c> started running.
     /// </para>
     /// <para>
-    /// The count is the assertion, not merely the presence. Three would mean one of the
-    /// remaining calls was missed; five would mean a set whose every kind now runs is still
-    /// reported, which is how a narrowed rule teaches an author to suppress it anyway.
+    /// Four to three is stage 1 and stage 3 landing, and it happened in two ways at once on one
+    /// call. <c>Policies.Admission</c> declared a <c>RateLimit</c> and an <c>Idempotency</c>
+    /// window; the limit is executed now, and the window was <em>deleted</em> rather than
+    /// executed, because <c>ExecuteTransfer</c> marks two IBANs <c>[Sensitive]</c> and
+    /// <c>FLOWX1039</c> refuses a window whose recorded result would carry <c>[redacted]</c>
+    /// where an account number was.
+    /// </para>
+    /// <para>
+    /// What is left is the <c>Audit</c>: <c>LedgerPost</c> twice and
+    /// <c>SettlementRegister</c> once. The count is the assertion, not merely the presence —
+    /// two would mean one of the remaining calls was missed, and four would mean a set whose
+    /// every kind now runs is still reported, which is how a narrowed rule teaches an author to
+    /// suppress it anyway.
     /// </para>
     /// </remarks>
     [Fact]
@@ -121,9 +129,10 @@ public sealed class ReferenceSamplePolicyTests
         var reported = Report().Where(static d => d.Id == "FLOWX1032").ToList();
 
         reported.Count.ShouldBe(
-            4,
+            3,
             "samples/banking declares seven .WithPolicy(...) calls; the three naming " +
-            "Policies.ExternalRead are wholly executed. Reported:\n" + Describe(reported));
+            "Policies.ExternalRead are wholly executed, and Policies.Admission's RateLimit is " +
+            "too. Reported:\n" + Describe(reported));
 
         reported.ShouldAllBe(static d => d.Severity == DiagnosticSeverity.Warning);
 

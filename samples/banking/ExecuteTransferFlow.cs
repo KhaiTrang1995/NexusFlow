@@ -38,13 +38,15 @@ namespace Banking;
 /// provider fails once, which is a transfer this sample refused a release ago.
 /// </para>
 /// <para>
-/// <strong>Three declarations still do nothing, and the pragmas below say which.</strong>
+/// <strong>One declaration still does nothing, and one pragma says which.</strong>
 /// <a href="../../docs/diagnostics/FLOWX1032.md">FLOWX1032</a> reported all seven of this
-/// flow's <c>.WithPolicy(...)</c> calls when it was written; it now reports four of them,
-/// naming <c>RateLimit</c> and <c>Idempotency</c> on the first step and <c>Audit</c> on the
-/// three that declare one. The three <c>ExternalRead</c> calls in the <c>Switch</c> carry no
-/// suppression at all, which is the visible half of the change: a policy that runs needs no
-/// argument for why it does not.
+/// flow's <c>.WithPolicy(...)</c> calls when it was written, then four when stage 4 landed,
+/// and now reports the three that declare an <c>Audit</c>. The first step's suppression is
+/// gone entirely: its <c>RateLimit</c> is enforced against a shared store, and the
+/// <c>Idempotency</c> window beside it was deleted rather than left unenforced, because this
+/// flow marks two IBANs <c>[Sensitive]</c> and
+/// <a href="../../docs/diagnostics/FLOWX1039.md">FLOWX1039</a> refuses a window whose
+/// recorded result would carry <c>[redacted]</c> where a value was.
 /// </para>
 /// </remarks>
 [Flow("transfer.execute", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "payments")]
@@ -57,26 +59,31 @@ public sealed partial class ExecuteTransferFlow : Flow<ExecuteTransfer, Transfer
     {
         ArgumentNullException.ThrowIfNull(flow);
 
-        // The suppression below is narrower than it was, and the narrowing is the news.
-        // FLOWX1032 used to report all seven of this flow's .WithPolicy(...) calls, so one
-        // pragma wrapped the whole method. The policy engine now executes
-        // PolicyStage.Resilience, so the three ExternalRead calls in the Switch below carry
-        // no suppression at all: their Timeout, Retry and CircuitBreaker are applied. What
-        // is left is RateLimit, Idempotency and Audit, and each is suppressed beside the
-        // step that declares it rather than by one pragma over the lot.
+        // There is no suppression on this step any more, and its removal is the news.
         //
-        // The rate limit and the idempotency window here are the first of FLOWX1032's three
-        // answers — the flow is survivable with them unenforced. A real deployment puts the
-        // limit in front of the process, and the endpoint is [HttpTrigger(Idempotent = true)]
-        // so the caller's key already reaches the flow as ctx.IdempotencyKey; what does not
-        // happen is a recorded result being replayed for a repeated key.
-#pragma warning disable FLOWX1032 // RateLimit and Idempotency: stage 1 and stage 3 are not implemented.
+        // FLOWX1032 used to report all seven of this flow's .WithPolicy(...) calls, so one
+        // pragma wrapped the whole method; then stage 4 landed and it reported four, so two
+        // narrow pragmas argued RateLimit + Idempotency here and Audit below. Stage 1 and
+        // stage 3 now execute, and the argument that suppression carried — "the flow is
+        // survivable with them unenforced" — has no subject left on this step:
+        //
+        //   * the RateLimit is enforced, in a store every replica shares, so twenty
+        //     principals a second is the deployment's bound and not each node's; and
+        //   * the Idempotency window is gone rather than unenforced, because this flow
+        //     cannot have one. See Policies.Admission: ExecuteTransfer marks two IBANs
+        //     [Sensitive], so every document this flow records carries [redacted] where an
+        //     account number was, and replaying that would answer a second caller with a
+        //     placeholder and a 200. FLOWX1039 is a build error that says so, and the
+        //     duplicate the window was reaching for is already held shut by FLOWX1014 and
+        //     by the stable ctx.IdempotencyKey (ADR-0025 §2.2).
+        //
+        // A policy that runs needs no argument for why it does not, and a policy that cannot
+        // run needs a deletion rather than a pragma. What is left below is the Audit.
         flow
             // Reads the debtor's balance and hands it forward. It does not judge it: the
             // judgement is the arm below, so that "we refuse transfers we cannot fund" is
             // a node in the published graph rather than an `if` inside a class.
             .Step<ValidateTransfer>().WithPolicy(Policies.Admission)
-#pragma warning restore FLOWX1032
 
             // A business outcome, not an exception (ADR-0007). The engine treats this
             // exactly as it treats a capability that returned Result.Fail — the failure

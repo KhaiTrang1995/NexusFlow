@@ -3,18 +3,26 @@ using System.Collections.Immutable;
 namespace FlowX;
 
 /// <summary>
-/// A step's <see cref="PolicyStage.Resilience"/> policies, resolved out of its declared
-/// <see cref="PolicyChain"/> into the numbers the step loop actually needs.
+/// A step's executed policies, resolved out of its declared <see cref="PolicyChain"/> into the
+/// numbers the step loop actually needs.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Stage 4, and only stage 4.</strong> <c>Timeout</c>, <c>Retry</c>,
-/// <c>CircuitBreaker</c> and <c>Bulkhead</c> are the kinds this reads; <c>RateLimit</c>
-/// (stage 1), <c>Idempotency</c> (stage 3), <c>Cache</c> (stage 5) and <c>Audit</c> (stage 7)
-/// are read past, exactly as <see cref="CompensationPolicy.From"/> reads past everything that
-/// is not a compensation retry. Which stages a partial engine may skip, and why skipping
-/// these four is safe, is
+/// <strong>Six kinds across three stages.</strong> <c>RateLimit</c> (stage 1),
+/// <c>Idempotency</c> (stage 3), and <c>Timeout</c>, <c>Retry</c>, <c>CircuitBreaker</c> and
+/// <c>Bulkhead</c> (stage 4) are the kinds this reads. <c>Cache</c> (stage 5) and <c>Audit</c>
+/// (stage 7) are read past, exactly as <see cref="CompensationPolicy.From"/> reads past
+/// everything that is not a compensation retry. Which stages a partial engine may skip, and why
+/// skipping the remaining two is safe, is
 /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>.
+/// </para>
+/// <para>
+/// <strong>Three stages on one object, and deliberately no second object.</strong> Stage 1,
+/// stage 3 and stage 4 all arrive on one <see cref="PolicyChain"/>, so a second resolved field
+/// on the node would be a second walk of the array this one already walks, and
+/// <see cref="IsActive"/> would then have to consult two objects to answer one question. See
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0036-stage-one-and-stage-three-run-outside-the-retry.md">ADR-0036</a>,
+/// which is also why no plan flag was added beside <see cref="ExecutionPlan.HasStepPolicies"/>.
 /// </para>
 /// <para>
 /// <strong>Resolved once, when the plan is built.</strong> It hangs off
@@ -45,7 +53,12 @@ public sealed class StepPolicy
         TimeSpan samplingWindow,
         TimeSpan breakDuration,
         int maxConcurrency,
-        int queueDepth)
+        int queueDepth,
+        int permits,
+        TimeSpan rateWindow,
+        RateLimitScope rateScope,
+        TimeSpan? idempotencyWindow,
+        IdempotencyScope idempotencyScope)
     {
         Timeout = timeout;
         Attempts = attempts;
@@ -56,15 +69,21 @@ public sealed class StepPolicy
         BreakDuration = breakDuration;
         MaxConcurrency = maxConcurrency;
         QueueDepth = queueDepth;
+        Permits = permits;
+        RateWindow = rateWindow;
+        RateScope = rateScope;
+        IdempotencyWindow = idempotencyWindow;
+        IdempotencyScope = idempotencyScope;
     }
 
     /// <summary>
-    /// Nothing armed: what a step with no stage-4 policy gets, and what every step got before
+    /// Nothing armed: what a step with no executed policy gets, and what every step got before
     /// the policy engine.
     /// </summary>
     public static StepPolicy None { get; } = new(
         null, 1, Backoff.ExponentialJitter(), ImmutableArray<ErrorCategory>.Empty,
-        0d, TimeSpan.Zero, TimeSpan.Zero, 0, 0);
+        0d, TimeSpan.Zero, TimeSpan.Zero, 0, 0,
+        0, TimeSpan.Zero, RateLimitScope.Tenant, null, IdempotencyScope.Tenant);
 
     /// <summary>
     /// How many calls a breaker's sampling window must hold before its ratio is evidence.
@@ -121,6 +140,27 @@ public sealed class StepPolicy
     /// <summary>How many callers may wait for a permit before one is refused outright.</summary>
     public int QueueDepth { get; }
 
+    /// <summary>How many invocations of this step are admitted per <see cref="RateWindow"/>, or zero when none was declared.</summary>
+    public int Permits { get; }
+
+    /// <summary>The period <see cref="Permits"/> are granted over.</summary>
+    public TimeSpan RateWindow { get; }
+
+    /// <summary>What the rate limit's budget is shared by.</summary>
+    public RateLimitScope RateScope { get; }
+
+    /// <summary>How long a recorded result is replayed for, or <c>null</c> when none was declared.</summary>
+    /// <remarks>
+    /// Nullable rather than <see cref="TimeSpan.Zero"/>, for <see cref="Timeout"/>'s reason: a
+    /// declared window of zero is a window that has already closed, which is sharply different
+    /// from no window at all, and collapsing the two would make an author's
+    /// <c>.Idempotency(TimeSpan.Zero)</c> silently mean "no idempotency".
+    /// </remarks>
+    public TimeSpan? IdempotencyWindow { get; }
+
+    /// <summary>What a recorded result's key is namespaced by.</summary>
+    public IdempotencyScope IdempotencyScope { get; }
+
     /// <summary>True when this policy can ask for the step a second time.</summary>
     public bool IsRetrying => Attempts > 1;
 
@@ -130,17 +170,40 @@ public sealed class StepPolicy
     /// <summary>True when a bulkhead was declared.</summary>
     public bool HasBulkhead => MaxConcurrency > 0;
 
+    /// <summary>True when a rate limit was declared.</summary>
+    /// <remarks>
+    /// A declared <c>permits: 0</c> leaves this false rather than making a limit that admits
+    /// nobody. <see cref="PolicySet.RateLimit"/>'s parameter is a budget, and a budget of zero
+    /// is a step no caller could ever run — which is a flow that should not have the step, not a
+    /// limit. The engine treats it as undeclared, exactly as <c>Attempts</c> is clamped to one.
+    /// </remarks>
+    public bool HasRateLimit => Permits > 0 && RateWindow > TimeSpan.Zero;
+
+    /// <summary>True when an idempotency window was declared.</summary>
+    public bool HasIdempotency => IdempotencyWindow is { Ticks: > 0 };
+
     /// <summary>
     /// True when this step has anything for the engine to apply.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The single question the step loop asks. A step whose chain declares only a
     /// <c>Cache</c> and an <c>Audit</c> answers <c>false</c> and takes the path it always
     /// took — which is what stops a declaration that is still inert from costing the flow
     /// anything, and what makes <see cref="ExecutionPlan.HasStepPolicies"/> mean "some step
     /// will actually be wrapped" rather than "some step declared something".
+    /// </para>
+    /// <para>
+    /// <strong>Six kinds rather than four since stage 1 and stage 3 landed</strong>, and no new
+    /// plan flag went with them — which is
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>'s
+    /// "widening is mechanical" being taken up literally, and is why that record's "a third flag
+    /// of this shape is proposed" trigger did not fire. See
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0036-stage-one-and-stage-three-run-outside-the-retry.md">ADR-0036</a>.
+    /// </para>
     /// </remarks>
-    public bool IsActive => Timeout is not null || IsRetrying || HasBreaker || HasBulkhead;
+    public bool IsActive =>
+        Timeout is not null || IsRetrying || HasBreaker || HasBulkhead || HasRateLimit || HasIdempotency;
 
     /// <summary>
     /// Reads the stage-4 kinds out of a chain, or <see cref="None"/> when it declares none.
@@ -148,8 +211,8 @@ public sealed class StepPolicy
     /// <param name="policies">The step's own chain, already ordered by stage.</param>
     /// <remarks>
     /// Tolerant of a chain that carries other kinds, for
-    /// <see cref="CompensationPolicy.From"/>'s reason: a set may legitimately declare a rate
-    /// limit and an audit alongside a timeout, and the stages that do not execute yet are
+    /// <see cref="CompensationPolicy.From"/>'s reason: a set may legitimately declare a cache
+    /// and an audit alongside a timeout, and the stages that do not execute yet are
     /// metadata this reads past rather than rejects.
     /// </remarks>
     public static StepPolicy From(PolicyChain policies)
@@ -165,11 +228,27 @@ public sealed class StepPolicy
         var breakDuration = TimeSpan.Zero;
         var maxConcurrency = 0;
         var queueDepth = 0;
+        var permits = 0;
+        var rateWindow = TimeSpan.Zero;
+        var rateScope = RateLimitScope.Tenant;
+        TimeSpan? idempotencyWindow = null;
+        var idempotencyScope = IdempotencyScope.Tenant;
 
         foreach (var policy in policies.Ordered)
         {
             switch (policy.Kind)
             {
+                case RateLimitKind:
+                    permits = Math.Max(0, Parameter(policy, "permits", 0));
+                    rateWindow = Parameter(policy, "window", TimeSpan.Zero);
+                    rateScope = Parameter(policy, "scope", RateLimitScope.Tenant);
+                    break;
+
+                case IdempotencyKind:
+                    idempotencyWindow = Parameter(policy, "window", TimeSpan.Zero);
+                    idempotencyScope = Parameter(policy, "scope", IdempotencyScope.Tenant);
+                    break;
+
                 case TimeoutKind:
                     timeout = Parameter(policy, "duration", TimeSpan.Zero);
                     break;
@@ -192,18 +271,26 @@ public sealed class StepPolicy
                     break;
 
                 default:
-                    // Stage 1, 3, 5 and 7. Read past rather than rejected — the chain is the
-                    // author's whole declaration and this type is one stage's view of it.
+                    // Stage 5 and stage 7's Audit. Read past rather than rejected — the chain is
+                    // the author's whole declaration and this type is the executed stages' view
+                    // of it.
                     break;
             }
         }
 
         var resolved = new StepPolicy(
             timeout, attempts, backoff, retryOn,
-            failureRatio, samplingWindow, breakDuration, maxConcurrency, queueDepth);
+            failureRatio, samplingWindow, breakDuration, maxConcurrency, queueDepth,
+            permits, rateWindow, rateScope, idempotencyWindow, idempotencyScope);
 
         return resolved.IsActive ? resolved : None;
     }
+
+    /// <summary>The descriptor kind <see cref="PolicySet.RateLimit"/> emits.</summary>
+    public const string RateLimitKind = "RateLimit";
+
+    /// <summary>The descriptor kind <see cref="PolicySet.Idempotency"/> emits.</summary>
+    public const string IdempotencyKind = "Idempotency";
 
     /// <summary>The descriptor kind <see cref="PolicySet.Timeout"/> emits.</summary>
     public const string TimeoutKind = "Timeout";

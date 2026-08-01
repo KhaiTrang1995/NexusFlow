@@ -21,9 +21,11 @@ namespace FlowX.Runtime.Tests;
 /// <c>Timeout</c>, <c>Retry</c>, <c>CircuitBreaker</c> and <c>Bulkhead</c> are executed by
 /// <c>FlowEngine</c> over <c>StepNode.StepPolicy</c>, in the fixed nesting
 /// <a href="../../docs/adr/ADR-0024-stage-four-is-a-fixed-nesting.md">ADR-0024</a> settles.
-/// <c>RateLimit</c> (stage 1), <c>Idempotency</c> (stage 3) and <c>Cache</c> (stage 5) are
-/// not, and the three tests that say so are kept rather than deleted — they are what
-/// FLOWX1032 now reports, narrowed from eight kinds to three.
+/// <c>Cache</c> (stage 5) and <c>Audit</c> (stage 7) are not, and the tests that say so are
+/// kept rather than deleted — they are what FLOWX1032 now reports, narrowed to two.
+/// <c>RateLimit</c> (stage 1) and <c>Idempotency</c> (stage 3) were in that list and left it;
+/// <c>AdmissionAndIntegrityTests</c> is where they are asserted, and it is written to the same
+/// rule as this file — every "did not happen" beside a "did".
 /// </para>
 /// <para>
 /// <strong>The positive control is still at the bottom and still not optional.</strong> A
@@ -51,15 +53,21 @@ public sealed class PolicyExecutionTests
     /// Every kind the DSL offers except the compensation retry, on one step.
     /// </summary>
     /// <remarks>
-    /// A zero-length <c>Timeout</c> and a one-permit <c>RateLimit</c> deliberately: the
-    /// timeout now stops the step before it begins, and the rate limit still does not.
-    /// Choosing values that make the difference loud is what stops either half of this file
-    /// passing because the numbers happened to be generous.
+    /// <para>
+    /// A zero-length <c>Timeout</c> deliberately: it stops the step before it begins, which is
+    /// the loudest available difference. Choosing values that make the difference loud is what
+    /// stops either half of this file passing because the numbers happened to be generous.
+    /// </para>
+    /// <para>
+    /// <strong>The <c>RateLimit</c> and the <c>Idempotency</c> window left this set when stage 1
+    /// and stage 3 landed.</strong> They are executed now, so a set carrying them would make
+    /// every test below assert stage 4 through two store round trips — and the tests that give
+    /// this engine no store would fail at stage 1 before reaching the timeout they are about.
+    /// `AdmissionAndIntegrityTests` holds the two kinds that moved.
+    /// </para>
     /// </remarks>
     private static PolicyChain Everything { get; } = PolicyChain.ForStep(
         PolicySet.Named("everything")
-            .RateLimit(permits: 1, TimeSpan.FromHours(1))
-            .Idempotency(TimeSpan.FromHours(1))
             .Timeout(TimeSpan.Zero)
             .Retry(attempts: 3)
             .CircuitBreaker(failureRatio: 0.01, breakDuration: TimeSpan.FromHours(1))
@@ -68,12 +76,18 @@ public sealed class PolicyExecutionTests
             .Audit("financial"),
         Plans.Validate);
 
-    /// <summary>The three kinds outside stage 4, and nothing that executes.</summary>
+    /// <summary>The kinds that are still executed by nothing, and nothing that executes.</summary>
+    /// <remarks>
+    /// <strong>Narrowed from three kinds to two.</strong> It held a <c>RateLimit</c> and an
+    /// <c>Idempotency</c> window as well, and both left when stage 1 and stage 3 landed —
+    /// `AdmissionAndIntegrityTests` is where they are asserted now. What is left is
+    /// <c>Cache</c> (stage 5) and <c>Audit</c> (stage 7), which is exactly what FLOWX1032
+    /// reports.
+    /// </remarks>
     private static PolicyChain Inert { get; } = PolicyChain.ForStep(
         PolicySet.Named("inert")
-            .RateLimit(permits: 1, TimeSpan.FromHours(1))
-            .Idempotency(TimeSpan.FromHours(1))
-            .Cache(TimeSpan.FromHours(1)),
+            .Cache(TimeSpan.FromHours(1))
+            .Audit("financial"),
         Plans.Validate);
 
     /// <summary>
@@ -411,21 +425,28 @@ public sealed class PolicyExecutionTests
             "than queued — a bulkhead with no queue depth fails fast on purpose.");
     }
 
-    // ------------------------------------------------------- the three kinds still inert
+    // --------------------------------------------------------- the two kinds still inert
 
     /// <summary>
-    /// A <c>Cache</c> and a <c>RateLimit</c> survive a second run of the same flow unchanged.
+    /// A <c>Cache</c> survives a second run of the same flow unchanged.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>Kept, not inverted.</strong> Stage 1 and stage 5 are not implemented, and this
-    /// is what FLOWX1032 still reports. Two executions of one plan is the only shape that can
-    /// tell a consulted cache from an unconsulted one: a cache hit would skip the second
-    /// dispatch, and a rate limit of one permit an hour would refuse it.
+    /// <strong>Kept, and narrowed.</strong> It was
+    /// <c>ACacheIsNotConsultedAndARateLimitCountsNothing</c>, and its second assertion read
+    /// "one permit an hour was declared and two runs went through". The rate limit left when
+    /// stage 1 landed — a two-permit version of exactly this shape is
+    /// <c>AdmissionAndIntegrityTests.ARateLimitRefusesPastItsPermitsWithoutDispatchingTheStep</c>,
+    /// and it refuses.
+    /// </para>
+    /// <para>
+    /// Stage 5 is still not implemented, and this is what FLOWX1032 still reports alongside the
+    /// <c>Audit</c>. Two executions of one plan is the only shape that can tell a consulted
+    /// cache from an unconsulted one: a hit would skip the second dispatch.
     /// </para>
     /// </remarks>
     [Fact]
-    public async Task ACacheIsNotConsultedAndARateLimitCountsNothing()
+    public async Task ACacheIsNotConsulted()
     {
         var engine = new FlowEngine(new FakeClock(T0));
         var plan = Plan();
@@ -440,8 +461,7 @@ public sealed class PolicyExecutionTests
 
         second.Executed.ShouldBe(
             [0, 1, 2],
-            "One permit an hour was declared and two runs went through, and a one-hour cache " +
-            "was declared and the second run dispatched anyway.");
+            "A one-hour cache was declared on step 0 and the second run dispatched it anyway.");
     }
 
     /// <summary>
@@ -493,8 +513,11 @@ public sealed class PolicyExecutionTests
     public void APlanDeclaringOnlyInertKindsReportsNoStepPolicies()
     {
         Plan().HasStepPolicies.ShouldBeFalse(
-            "RateLimit, Idempotency and Cache are declared and none of them is executed, so " +
-            "the step loop must not take the policy path for them.");
+            "A Cache and an Audit are declared and neither is executed, so the step loop must " +
+            "not take the policy path for them. The flag counts what runs, and widening " +
+            "StepPolicy.IsActive for stage 1 and stage 3 must not have quietly made it count " +
+            "declarations instead — which is the one way ADR-0036's widening could have cost " +
+            "budget B2.");
 
         Plan(Everything).HasStepPolicies.ShouldBeTrue(
             "The same chain plus stage 4 does take it.");
