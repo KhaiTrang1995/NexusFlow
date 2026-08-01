@@ -414,7 +414,7 @@ public sealed class ReferenceSamplePolicyTests
             """
             PolicySet.Named("settlement-register")
                     .Timeout(TimeSpan.FromSeconds(5))
-                    .Audit("financial")
+                    .Audit("financial", "DebitEntryId", "CreditEntryId")
             """;
 
         policies.ShouldContain(

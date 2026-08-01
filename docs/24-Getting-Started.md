@@ -552,9 +552,11 @@ template already generates.
 ### Part two — the contracts
 
 Everything in the state bag: the flow's input, which the engine puts there before the first
-step, and the output of every capability step. `samples/banking` is the shape to copy —
-`ExecuteTransfer` and `TransferResult` are on the wire, `TransferCompleted` is the event, and
-the six below are the step results the journal has to write:
+step, and the output of every capability step — plus, for a step that declares an `Audit`, the
+input the capability was handed. `samples/banking` is the shape to copy — `ExecuteTransfer` and
+`TransferResult` are on the wire, `TransferCompleted` is the event, the middle six are the step
+results the journal has to write, and the last three are the step inputs its audit records
+carry:
 
 <!-- verify: excerpt samples/banking/Infrastructure.cs -->
 ```csharp
@@ -568,6 +570,9 @@ the six below are the step results the journal has to write:
 [JsonSerializable(typeof(DebitPosted))]
 [JsonSerializable(typeof(CreditPosted))]
 [JsonSerializable(typeof(Settlement))]
+[JsonSerializable(typeof(DebitInstruction))]
+[JsonSerializable(typeof(CreditInstruction))]
+[JsonSerializable(typeof(SettlementInstruction))]
 internal sealed partial class BankingJsonContext : JsonSerializerContext;
 ```
 

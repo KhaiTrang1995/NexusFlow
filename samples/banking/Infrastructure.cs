@@ -26,6 +26,14 @@ namespace Banking;
 /// does not make the flow cheaper — it makes the build fail and names the line.
 /// </para>
 /// <para>
+/// <strong>The fifth group is every step <em>input</em>, and stage 7's <c>Audit</c> is what
+/// put it here.</strong> An audit record carries a composed request/result document, and the
+/// request is what the capability was handed — so a financial record of a ledger post says
+/// which account and how much, not only which entry id came back. Without the three
+/// instruction contracts the audit path degrades exactly as the journal did before WP-59: the
+/// record exists, names the step and the principal, and is silent about what the step carried.
+/// </para>
+/// <para>
 /// The camelCase policy is not decoration. Without it the wire names are the C# ones, and a
 /// client sending the conventional <c>"amount"</c> gets an <c>Amount</c> of zero rather than
 /// an error — a missing member deserialises to <c>default</c>. Here <c>ValidateTransfer</c>
@@ -43,13 +51,6 @@ namespace Banking;
 [JsonSerializable(typeof(DebitPosted))]
 [JsonSerializable(typeof(CreditPosted))]
 [JsonSerializable(typeof(Settlement))]
-
-// The three step *inputs*, added when stage 7's Audit landed. An audit record carries a
-// composed request/result document, and the request is what the capability was handed — so a
-// financial record of a ledger post says which account and how much, not only which entry id
-// came back. Without these three lines the audit path degrades exactly as the journal did
-// before WP-59: the record exists, names the step and the principal, and is silent about what
-// the step carried.
 [JsonSerializable(typeof(DebitInstruction))]
 [JsonSerializable(typeof(CreditInstruction))]
 [JsonSerializable(typeof(SettlementInstruction))]

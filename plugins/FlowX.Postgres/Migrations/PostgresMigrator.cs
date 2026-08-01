@@ -59,6 +59,7 @@ public sealed class PostgresMigrator
         new(3, "index_abandoned_instances", "0003_index_abandoned_instances.sql"),
         new(4, "outbox_publication", "0004_outbox_publication.sql"),
         new(5, "suspended_wake", "0005_suspended_wake.sql"),
+        new(6, "result_cache", "0006_result_cache.sql"),
     ];
 
     /// <summary>The schema version this build of the adapter reads and writes.</summary>
