@@ -27,6 +27,18 @@
       more trust than a diagram-rendering tool needs.
     -->
     <PackageReference Include="System.Reflection.MetadataLoadContext" Version="10.0.0" />
+
+    <!--
+      `flowx replay` in inspect mode reads the journal. Pinned to the same version
+      FlowX.Postgres uses, because the two read one store and a floating driver can change
+      how a value round-trips between two checkouts of the same commit.
+
+      This is a PackageReference, not a ProjectReference — a third-party driver, exactly as
+      a third-party tool reading the same journal would use. ADR-0020 is the decision;
+      the static ADO.NET surface used here is the trim- and AOT-safe half of the library,
+      the same subset FlowX.Postgres restricts itself to, so constraint C2 is untouched.
+    -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
   </ItemGroup>
 
   <!--
@@ -34,6 +46,11 @@
     exactly as any third-party tool would — which is the strongest available evidence
     that the manifest is genuinely self-describing rather than only usable from inside
     this repository (ADR-0005). CliDependsOnNothingButTheManifest asserts it.
+
+    ADR-0020 widened the CLI's *inputs* to include the journal and left that rule exactly
+    as it was: a journal read adds no project reference. What it did add is
+    EveryVerbButReplayRunsWithNoStore, because "this tool runs against an artifact with no
+    database" used to be true by accident and is now true by design.
   -->
 
 </Project>

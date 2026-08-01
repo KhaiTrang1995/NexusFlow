@@ -4,6 +4,7 @@ using System.Text.Json;
 using FlowX.Cli.Diffing;
 using FlowX.Cli.Manifest;
 using FlowX.Cli.Rendering;
+using FlowX.Cli.Replay;
 using FlowX.Cli.Verification;
 
 namespace FlowX.Cli;
@@ -30,6 +31,24 @@ public static class Program
     private const int UsageError = 2;
     private const int NotFound = 3;
 
+    /// <summary>
+    /// The store could not be read: nothing answered, or what answered holds no journal.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Its own code because every existing one lies about it.</strong> <c>1</c> says
+    /// the instance was inspected and something was wrong with it; <c>2</c> says the operator
+    /// typed it wrong; and <c>3</c> — the tempting one — says the instance does not exist,
+    /// which during an incident reads as "your data is gone" when the truth is only that the
+    /// tool could not look. That is the most expensive of the wrong answers available.
+    /// </para>
+    /// <para>
+    /// It is the same distinction <c>1</c> and <c>2</c> already draw and for the same reason:
+    /// a CI job, and an operator, has to tell a verdict apart from a failure to reach one.
+    /// </para>
+    /// </remarks>
+    private const int StoreUnreachable = 4;
+
     /// <summary>Entry point.</summary>
     public static int Main(string[] args)
     {
@@ -49,6 +68,7 @@ public static class Program
                 "manifest" => ManifestVerb(args.AsSpan(1)),
                 "diff" => Diff(args.AsSpan(1)),
                 "verify" => Verify(args.AsSpan(1)),
+                "replay" => ReplayVerb(args.AsSpan(1)),
                 _ => Fail($"Unknown command '{args[0]}'."),
             };
         }
@@ -56,6 +76,12 @@ public static class Program
         {
             Console.Error.WriteLine($"flowx: {error.Message}");
             return NotFound;
+        }
+        catch (JournalUnreadableException error)
+        {
+            // Distinct from NotFound on purpose. See StoreUnreachable.
+            Console.Error.WriteLine($"flowx: the journal could not be reached — {error.Message}");
+            return StoreUnreachable;
         }
         catch (JsonException error)
         {
@@ -136,6 +162,148 @@ public static class Program
         var written = Write(rendered, options.Value("--output"));
 
         return written is Ok && !report.Passed ? CheckFailed : written;
+    }
+
+    /// <summary>
+    /// Renders one durable instance's history out of the journal.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The only verb that reads anything other than a file, and the decision that
+    /// permits it is <a href="../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md">ADR-0020</a>.</strong>
+    /// It reads rows over the published migration contract through a third-party driver and
+    /// joins them against the manifest's plan, so the CLI still links no FlowX assembly and
+    /// <c>CliDependsOnNothingButTheManifest</c> is untouched.
+    /// </para>
+    /// <para>
+    /// <c>--mode</c> is required rather than defaulted, for the reason <c>verify --cost</c>
+    /// gives: the verb is documented with four modes and three of them change state, so a
+    /// bare invocation far more likely means "I read about one of the others" than "render
+    /// whatever is safe". Guessing the read-only one is a kindness today and a disaster the
+    /// day <c>resume</c> ships, because the caller who meant it would get silence.
+    /// </para>
+    /// </remarks>
+    private static int ReplayVerb(ReadOnlySpan<string> args)
+    {
+        var options = Options.Parse(args);
+        var mode = options.Value("--mode");
+
+        if (mode is null)
+        {
+            return Fail("flowx replay requires --mode inspect. It is the only mode implemented.");
+        }
+
+        if (mode is "simulate" or "resume" or "fork")
+        {
+            return Fail(
+                $"flowx replay --mode {mode} does not exist. 12-Observability §5 specifies it, " +
+                "and it needs the execution engine: `inspect` renders history and is the only " +
+                "mode that runs nothing. ADR-0020 permits this verb precisely because reading " +
+                "rows needs no engine, and it explicitly does not reach the three modes that " +
+                "do — so this is blocked on a decision, not only on code.");
+        }
+
+        if (mode is not "inspect")
+        {
+            return Fail($"Unknown --mode '{mode}'. The only mode implemented is 'inspect'.");
+        }
+
+        var requested = options.Value("--instance");
+
+        if (requested is null)
+        {
+            return Fail("flowx replay requires --instance <id>.");
+        }
+
+        if (!Guid.TryParse(requested, out var instanceId))
+        {
+            return Fail(
+                $"'{requested}' is not an instance id. The journal keys on a UUID, e.g. " +
+                "0198f3a1-6c2e-7b41-9f0d-2a5c8e4b1d33 — the short `fi_…` form in the " +
+                "documents is illustrative and is not what the store holds.");
+        }
+
+        var connection = options.Value("--connection")
+            ?? Environment.GetEnvironmentVariable(JournalReader.ConnectionVariable);
+
+        if (string.IsNullOrEmpty(connection))
+        {
+            return Fail(
+                "flowx replay needs to know where the journal is. Pass --connection " +
+                $"<string>, or set {JournalReader.ConnectionVariable}.");
+        }
+
+        if (!TryFormat(options, out var format))
+        {
+            return Fail($"Unknown --format '{format}'. Use 'text' or 'json'.");
+        }
+
+        var schema = options.Value("--schema") ?? JournalReader.DefaultSchema;
+
+        InstanceHistory? history;
+
+        try
+        {
+            history = JournalReader.Read(connection, schema, instanceId);
+        }
+        catch (ArgumentException error)
+        {
+            return Fail(error.Message);
+        }
+
+        if (history is null)
+        {
+            // Not found, not "the store said no". An operator who mistyped an id needs to be
+            // able to tell this from a store that would not answer, which is why the schema
+            // is named: reading the wrong one is overwhelmingly the likeliest cause.
+            Console.Error.WriteLine(
+                $"flowx: no instance {instanceId} in schema '{schema}'. Check the id, and " +
+                "check --schema if the journal does not live in the default one.");
+
+            return NotFound;
+        }
+
+        var manifest = ReplayManifest(options);
+        var plan = manifest is null
+            ? null
+            : PlanIndex.ForFlow(manifest, history.FlowId, history.FlowVersion);
+
+        var caveats = Caveats.For(history, plan, manifestGiven: manifest is not null);
+
+        var rendered = format is "json"
+            ? HistoryFormatter.ToJson(history, plan, caveats)
+            : HistoryFormatter.ToText(history, plan, caveats);
+
+        return Write(rendered, options.Value("--output"));
+    }
+
+    /// <summary>
+    /// The manifest to join the history against, or null when there is none to join.
+    /// </summary>
+    /// <remarks>
+    /// Optional, unlike every other verb's manifest, and the asymmetry is deliberate: an
+    /// operator running this during an incident is standing wherever they happen to be, not
+    /// in a build output. A history is still worth reading without the plan beside it — what
+    /// is lost is the ability to say which steps are branches of a <c>Parallel</c>, and the
+    /// output says so rather than staying quiet about a check that did not run.
+    /// <para>
+    /// An explicitly named manifest that is not there is still an error. Silently degrading
+    /// after the caller pointed at a file would hide a typo behind a weaker report.
+    /// </para>
+    /// </remarks>
+    private static ManifestDocument? ReplayManifest(Options options)
+    {
+        if (options.Value("--manifest") is { } named)
+        {
+            if (!File.Exists(named))
+            {
+                throw new FileNotFoundException($"No manifest at '{named}'.", named);
+            }
+
+            return Read(named);
+        }
+
+        return File.Exists("flowx.manifest.json") ? Read("flowx.manifest.json") : null;
     }
 
     private static int ManifestVerb(ReadOnlySpan<string> args)
@@ -295,6 +463,9 @@ public static class Program
                          [--format text|json] [--output <path>]
           flowx verify    --cost [--manifest <path>]
                          [--format text|json] [--output <path>]
+          flowx replay    --instance <id> --mode inspect
+                         [--connection <string>] [--schema <name>]
+                         [--manifest <path>] [--format text|json] [--output <path>]
 
         graph      Renders the manifest as a Mermaid flowchart. Defaults to
                    ./flowx.manifest.json, and writes to stdout unless --output is given.
@@ -311,7 +482,15 @@ public static class Program
                    it provides — no compensation, no signal, no timer — which is what a
                    profile chosen by accident looks like. Exits 1 when it finds one.
 
-        Exit codes: 0 success, 1 the check said no, 2 usage error, 3 not found.
+        replay     --mode inspect renders one durable instance's history from the
+                   journal: every committed step in commit order, with its scope,
+                   attempt, outcome, capability, duration and captured non-determinism.
+                   Reads no state and runs nothing. The connection comes from
+                   --connection or FLOWX_POSTGRES_CONNECTION; --manifest is optional and
+                   is what lets the output say which steps are branches of a Parallel.
+
+        Exit codes: 0 success, 1 the check said no, 2 usage error, 3 not found,
+                    4 the store could not be reached.
 
         """);
 

@@ -506,7 +506,7 @@ Budgets live in [14-Performance](14-Performance.md). Their enforcement is here.
 | Generator cost | > 2 % more bytes allocated by the generator than the committed baseline fails the build | Merge | **runs** — [generator-cost-gate.md](benchmarks/generator-cost-gate.md) |
 | B12 against its **+8 %** budget | — | — | **failing.** +46.6 % at 50 flows, +77 % at 200. The relative gate above stops it getting worse; it does not make the budget met |
 | B4, B5, B6, B10, B11 | regression > 5 % vs the baseline | Merge | **no harness.** Policy chain (P4), telemetry (P5) and start-up/RSS (P9) have nothing to measure |
-| B7–B9, B13 | nightly load test; regression opens a blocking issue | Release | **no harness.** Journal (P2 — the step-commit path exists since WP-52 and `plugins/FlowX.Postgres` backs it since WP-53; *"no store backs it" has stopped being the reason* — nothing measures it, WP-50), HTTP end-to-end (P3), streaming (P7) |
+| B7–B9, B13 | nightly load test; regression opens a blocking issue | Release | **no harness.** Journal (P2 — the step-commit path exists since WP-52 and `plugins/FlowX.Postgres` backs it since WP-53; *"no store backs it" has stopped being the reason* — nothing measures it, WP-50), HTTP end-to-end (P3), streaming (P7). ***WP-50 is "B7, B8 and the QR2 chaos rig" and shipped the rig only***, so this row is unchanged by it: [§8](#8-reliability-gates)'s chaos row now runs and these budgets still have nothing measuring them |
 | Baseline updates | require a reviewed commit stating why the budget moved | Merge | convention |
 
 **The old version of this table said B1–B6 and B10–B12 were gated on merge and
@@ -538,18 +538,18 @@ benchmark is a budget nobody is holding.
 
 ## 8. Reliability gates
 
-**None of the first four runs, and none can.** They are the exit criteria of the
-phases that build the subsystems they test, listed here so the criteria are
-agreed before the code is written. *WP-52 landed a durable seam without moving any of
-them, and the reason given here was that "a journal with no store, no lease and no second
-node does not make a chaos rig runnable". WP-53 supplied the store, WP-55 the lease and
-the recovery scan, and the first two rows still do not move — because what they were
-waiting on turned out to be the rig, and the rig is **WP-50**, unstarted. The reason has
-inverted; the state has not.*
+***This section opened "none of the first four runs, and none can" — the first row now
+does.*** The rest are the exit criteria of the phases that build the subsystems they test,
+listed here so the criteria are agreed before the code is written. *WP-52 landed a durable
+seam without moving any of them; WP-53 supplied the store, WP-55 the lease and the recovery
+scan, and the first two rows still did not move — because what they were waiting on turned
+out to be the rig.* **WP-50 built the rig**, and the row below is what it measured rather
+than what it hopes.
 
 | Gate | Rule | Class | State |
 |---|---|---|---|
-| Chaos: SIGKILL at every step boundary | 10 000 flows, zero duplicate non-idempotent effects, zero lost instances | Release | **not written.** *The reason given was "no journal, no second node", and neither half survives: the first expired at WP-52 (2026-07-31), the second at WP-53 and WP-55.* A `Durable` flow journals step boundaries, `plugins/FlowX.Postgres` persists them, `DurableLease` acquires and renews, and `FlowRecoveryScan` finds an instance a dead node left running so another host can finish it — pinned by `DurableHostTests`, with two hosts **in one process**. What is missing is the rig: nothing kills a node, nothing crosses a process boundary, and nothing has run 10 000 of anything. **WP-50**, unstarted. **P2** (QR2) |
+| Chaos: SIGKILL at every step boundary | 10 000 flows, zero duplicate non-idempotent effects, zero lost instances | Release | **runs — WP-50, 2026-08-01.** *This row said "not written … nothing kills a node, nothing crosses a process boundary, and nothing has run 10 000 of anything". All three expired.* `tests/FlowX.Chaos` spawns worker processes against a shared PostgreSQL and **SIGKILLs them at a step boundary chosen so the effect has happened and the commit has not** — 97 kills per arm, every one observed to exit 137. At **10 000 flows** per arm: **zero duplicate effects against the guarantee, zero lost instances**, zero orphan effects, zero instances run by two live nodes. The duplicates it *does* find — 260 and 186 — are all [ADR-0006](adr/ADR-0006-journal-and-leases.md)'s documented window, and at concurrency 1 that is exactly one per kill and exactly zero when the kill moves after the commit. **It does not run in the ordinary suite and must not**: it is opt-in on `FLOWX_CHAOS`, skipping with a reason when unset and failing rather than skipping when set with no database. Record: [benchmarks/QR2-chaos.md](benchmarks/QR2-chaos.md). **P2** (QR2) |
+| Chaos: resume p99 ≤ 45 s | the latency half of the same criterion | Release | **measured, not gated — WP-50.** **32.9 s** and **32.6 s** at 10 000 flows. The rig prints it against 45 s on every run and its checker does not fail on it, because B7 and B8 are latency budgets set aside for this phase (WP-50 shipped the rig only). **Two other runs of the same rig missed the budget** — 48.1 s at the rig's own defaults, 69.9 s in a 500-flow pilot — with every correctness row still zero, so **this is not a figure to quote on its own**. It is ~30 s of lease TTL plus however long a backlog takes to drain through `MaxConcurrentRecoveries`, which means a deployment that raises `LeaseTtl` above 45 s fails QR2 by configuration and one whose recovery capacity is below its crash rate fails it by queueing. [benchmarks/QR2-chaos.md §4.4](benchmarks/QR2-chaos.md). **P2** |
 | Replay determinism corpus | zero divergence across the full corpus | Merge | **runs — WP-61, 2026-07-31.** *This row said the corpus was not written and that nothing replayed a capture back into execution.* `ReplayDeterminismTests` in `tests/FlowX.Runtime.Tests` is the corpus, and it runs in the ordinary test job rather than needing one of its own. Zero divergence across eight shapes; the three shapes that cannot replay — an overlapping fork, a compensation's ambient reads, the engine's own deadline check — are asserted to diverge and named, so closing any of them turns the gate red until the note is deleted |
 | Backpressure conformance | bounded memory with a deliberately slow capability | Release | **not written** — no Stream Engine. **P7** |
 | Tenant fairness | one tenant at 10× quota degrades another's p99 by ≤ 10 % | Release | **not written** — no quota, no admission control. **P6** |

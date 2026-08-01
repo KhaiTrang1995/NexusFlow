@@ -15,6 +15,18 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/FlowX.Cli/FlowX.Cli.csproj" />
+
+    <!--
+      The replay tests write their rows through the real journal adapter rather than by
+      hand, so an assertion about what `flowx replay` reads cannot pass against a row shape
+      PostgresFlowJournal does not produce. ADR-0020 accepts that the CLI knows column names
+      with no compiler check tying it to the migration that defines them; this reference is
+      what makes the run-time check that replaces it faithful.
+
+      It is a reference from a TEST project. FlowX.Cli itself still references no FlowX
+      assembly, which is the whole of what CliDependsOnNothingButTheManifest asserts.
+    -->
+    <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
   </ItemGroup>
 
 </Project>

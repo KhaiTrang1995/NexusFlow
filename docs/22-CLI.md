@@ -7,12 +7,17 @@
 
 ## 1. What the tool is for
 
-`flowx` is a .NET tool that reads `flowx.manifest.json` and nothing else. It has no
-project reference to any FlowX assembly, deliberately: it consumes the manifest exactly
-as a third-party tool would, which is the strongest available evidence that the document
-is genuinely self-describing rather than only usable from inside this repository
+`flowx` is a .NET tool that **reads published contracts and links no FlowX assembly.**
+For four of its five verbs that means the manifest and nothing else; the fifth,
+`replay`, also reads a journal. It has no project reference to any FlowX assembly,
+deliberately: it consumes the manifest exactly as a third-party tool would, which is the
+strongest available evidence that the document is genuinely self-describing rather than
+only usable from inside this repository
 ([ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md)). The architecture test
-`CliDependsOnNothingButTheManifest` holds that line.
+`CliDependsOnNothingButTheManifest` holds that line, and still does —
+[ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md) widened the tool's *inputs*
+without weakening its *links*, which is the distinction [§8](#8-flowx-replay-and-the-fitness-function--decided)
+is about.
 
 | Verb | Reads | Produces |
 |---|---|---|
@@ -20,12 +25,15 @@ is genuinely self-describing rather than only usable from inside this repository
 | `flowx manifest` | a built assembly | the manifest compiled into it |
 | `flowx diff` | two manifests | a compatibility verdict, and a non-zero exit on a break |
 | `flowx verify --cost` | a manifest | flows paying for an execution profile they do not use |
+| `flowx replay --mode inspect` | a journal, and optionally a manifest | one instance's history, rendered ([§9](#9-flowx-replay---mode-inspect--reading-an-instance)) |
 
 ```
 flowx graph    [--manifest <path>] [--flow <id>] [--output <path>]
 flowx manifest  --assembly <path>  [--output <path>]
 flowx diff      --old <path> --new <path> [--format text|json] [--output <path>]
 flowx verify    --cost [--manifest <path>] [--format text|json] [--output <path>]
+flowx replay    --instance <id> --mode inspect [--connection <string>] [--schema <name>]
+               [--manifest <path>] [--format text|json] [--output <path>]
 ```
 
 | Exit code | Meaning |
@@ -33,12 +41,20 @@ flowx verify    --cost [--manifest <path>] [--format text|json] [--output <path>
 | 0 | success — the check found nothing |
 | 1 | the check said no: `diff` found a breaking change, `verify` found something |
 | 2 | usage error |
-| 3 | a file was not found |
+| 3 | the thing you named was not found: a file, or an instance |
+| 4 | the store could not be reached |
 
 `1` is distinct from `2` on purpose. A CI job has to tell "the gate says no" apart from
 "the gate could not run": the first blocks a merge, the second is a broken pipeline, and
 a tool that returns the same code for both gets the step deleted the first time somebody
 mistypes a path.
+
+**`4` is the same argument one step further out, and it was added for `replay`.** A
+journal read has a third way to end that no file read has: the store may not answer.
+Every existing code lies about that, and one of them lies dangerously — `3` would tell an
+operator mid-incident that the instance does not exist when the truth is only that the
+tool could not look, and "your data is gone" is the worst wrong answer available at three
+in the morning. So it gets its own code. Nothing else in the tool can return it.
 
 `flowx --help` lists exactly the table above and nothing else. It is not the place to
 learn what is planned — §1.1 is — because a verb in a help text that exits `2` when you
@@ -46,14 +62,14 @@ type it is worse than a verb you never heard of.
 
 ### 1.1 Verbs other documents name, and this one does not have
 
-**Four verbs. The table above is the whole tool.** Other documents in this set
-invoke `flowx` with fourteen more, none of which is implemented. They are listed
+**Five verbs. The table above is the whole tool.** Other documents in this set
+invoke `flowx` with thirteen more, none of which is implemented. They are listed
 here because this is the page a reader checks, and finding nothing said about a
 verb they have just read elsewhere is worse than finding it listed as unbuilt.
 
 | Verb | Named in | Blocked on |
 |---|---|---|
-| `flowx replay` (four modes) | [12](12-Observability.md), [20](20-Roadmap.md) | **P5**, behind the **P2** journal — and behind an architecture decision, §8 |
+| `flowx replay --mode simulate \| resume \| fork` | [12](12-Observability.md), [20](20-Roadmap.md) | **each needs the execution engine**, which is the one thing the CLI may not link. `--mode inspect` is built (§9) and is the only mode that runs nothing; [ADR-0020 §5](adr/ADR-0020-cli-reads-the-journal-as-rows.md#5-what-this-record-does-not-decide) is explicit that its argument does **not** reach these three. They are blocked on a decision, not only on code |
 | `flowx query`, `flowx ai …`, `flowx generate` | [13](13-AI-Native.md), [15](15-Security.md), [19](19-SDK.md) | **P8** |
 | `flowx dev`, `flowx new`, `flowx run`, `flowx docs`, `flowx bench`, `flowx fill` | [19](19-SDK.md) | no template or dev-loop tooling exists. For benchmarks use `scripts/run-benchmarks.sh` |
 | `flowx cancel`, `flowx signal` | [06](06-Execution-Engine.md) | **P2** — there is no durable instance to cancel or signal |
@@ -399,48 +415,137 @@ check is already right.
 
 ---
 
-## 8. `flowx replay` against the fitness function — a finding, not a decision
+## 8. `flowx replay` and the fitness function — decided
 
-[PLAN WP-64](../PLAN.md) states the conflict rather than leaving it to be discovered:
-`CliDependsOnNothingButTheManifest` is green, `flowx replay` reads a journal, and one of
-the two has to give. This section records what an audit of the CLI found about *how*,
-because it narrows the question and it is not the CLI page's decision to close.
+> This section used to record a *finding* and say that closing it was not this page's
+> call. It was closed by [ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md), and
+> what follows is the outcome rather than the argument — the record carries that.
 
-**The rule forbids less than its name suggests.** `CliDependsOnNothingButTheManifest`
-asserts that `FlowX.Cli.csproj` has no `ProjectReference`. It does not count inputs. A
-`replay` verb that reads a journal as **data** would leave it green untouched; a verb that
-imports a FlowX type to deserialise one turns it red. The rule's real content is *the CLI
-links no FlowX assembly*, and that is the part worth keeping — it is what makes the CLI
-evidence that the manifest is consumable from outside this repository.
+**Neither of the two resolutions this section sketched was taken whole**, and the reason
+is that the audit it recorded was right about the rule and wrong about the journal.
 
-**What would make `replay` legal is a published journal document.** The manifest is
-consumable by a stranger because [ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md)
-made it an artifact with a versioned schema in `schemas/`. The journal has no such thing:
-[ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md) specifies it as database
-tables — `flow_instance`, `flow_step` — with payloads written through a generated
-`System.Text.Json` context. There is no `flowx.journal.schema.json` beside the manifest's.
+Right about the rule: `CliDependsOnNothingButTheManifest` asserts that `FlowX.Cli.csproj`
+has no `ProjectReference`, and it counts links rather than inputs. Reading a journal as
+**data** leaves it green untouched. So no amendment was forced, and none was made — the
+test stands exactly as written. `Npgsql` is a `PackageReference`, the same kind of
+dependency `System.Reflection.MetadataLoadContext` already was.
 
-**The join `replay --mode inspect` needs already exists.** ADR-0015 derives the resume
-position by replaying committed `flow_step` rows *against the compiled plan*, and a journal
-row's `step_id` and `scope` mean nothing without it. But the manifest already publishes
-that plan — steps, their ids, their kinds, their branches. So rendering an instance's
-history is a join between two published documents, and needs no FlowX type on either side.
+Wrong about the journal: publishing a `flowx.journal.schema.json` was the other half of
+the sketch, and it does not fit what a journal is. A JSON Schema describes a *document*,
+and **nothing writes a journal document** — there is no file for the schema to describe.
+Worse, it would be a stability promise about data at rest, made over a shape that is still
+moving: `plugins/FlowX.Postgres/Migrations` is on its fourth migration and
+[ADR-0016](adr/ADR-0016-postgres-journal-adapter.md) has amended the row shape twice. The
+manifest can carry [ADR-0017](adr/ADR-0017-manifest-v1-freeze-criteria.md)'s freeze plan
+because it is rebuilt from source on every build; a journal holds rows written by every
+version that ever ran.
 
-So the finding is that the two are **reconcilable without amending the test**, at the price
-of giving the journal what the manifest already has. That price is not obviously worth
-paying and is not this page's call. What the audit does claim:
+**So the journal's contract is its DDL**, which is already published for exactly this kind
+of reader — the migrations ship as reviewable SQL rather than as C# string constants so a
+DBA can read them without a .NET toolchain. `replay` reads rows over that, and joins them
+against the plan the manifest publishes, which is the part the audit got right and which
+is what makes the verb possible at all.
 
-- If the journal gets a published schema, `replay` is a second document consumer, the
-  fitness function stays as written, and only [§1](#1-what-the-tool-is-for)'s prose —
-  "reads `flowx.manifest.json` and nothing else" — needs widening.
-- If instead `replay` must reach a live store through a FlowX abstraction, then the rule
-  is genuinely in the way and an ADR should **amend** it — restating it as "the CLI links
-  no FlowX assembly except the journal contract", with that exception named — rather than
-  delete it. A fitness function removed to unblock a feature stops being evidence of
-  anything.
-- Either way it is an ADR. Editing the test to make a verb compile would discard the one
-  piece of evidence the repository has that its manifest is a contract.
+Three things changed as a result, and one thing deliberately did not:
+
+| | |
+|---|---|
+| §1's prose | widened. "Reads the manifest and nothing else" was already false of `flowx manifest --assembly`; it is now stated as *reads published contracts and links no FlowX assembly* |
+| Exit codes | gained `4`, because a store read can fail in a way a file read cannot |
+| A new assertion | `EveryVerbButReplayRunsWithNoStore`. "The CLI runs against an artifact with no database" was one of three properties resting on the rule's *name* and the only one it never asserted — true because no verb had needed a store. It is checked now |
+| The fitness function | **unchanged**. Its name overclaims and is now one step further from what it asserts; `CliLinksNoFlowXAssembly` is the name it should have, and renaming it is owed work recorded in ADR-0020 rather than smuggled in on a feature branch |
+
+**What is not decided.** `simulate`, `resume` and `fork` all execute, and ADR-0020's
+argument reaches none of them — reading rows needs no engine and that is the whole of why
+`inspect` is legal. §1.1 lists them as blocked on a decision, which is more honest than
+listing them as blocked on a phase.
 
 ---
 
-**Back to:** [README](../README.md) · [AI-Native](13-AI-Native.md) · [Capability Model](07-Capability-Model.md) · [ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md)
+## 9. `flowx replay --mode inspect` — reading an instance
+
+```bash
+flowx replay --instance 0198f3a1-6c2e-7b41-9f0d-2a5c8e4b1d33 --mode inspect \
+             --connection "$FLOWX_POSTGRES_CONNECTION" --manifest flowx.manifest.json
+```
+
+```
+Flow order.place@1.2.0   instance 0198f3a1-6c2e-7b41-9f0d-2a5c8e4b1d33   tenant acme
+State: CompensationFailed   Duration: 4.21s   Started: 2026-07-30T09:14:00.001Z
+Correlation: req-8f21c4a0
+Input: unknown — flow_instance.input is NULL, which does not distinguish
+       a flow started with no input from one whose input was never captured.
+
+  ok    step 0        order.validate@1.0.0               2ms   -> {"id":"ord_7741",…}
+  ok    step 1        screen.sanctions@1.0.0            12ms   -> {"cleared":true}
+  ok    step 2        screen.fraud@1.0.0                31ms   -> {"score":0.02}   [capture may be a sibling's — see caveats]
+  ok    step 4[0]     inventory.reserve@1.0.0           41ms   -> {"sku":"SKU-1","qty":2}
+  ok    step 4[1]     inventory.reserve@1.0.0           38ms   -> {"sku":"SKU-9","qty":1}
+  FAIL  step 5        payment.capture@2.1.0            1.61s   (attempt 1)   -> {"code":"payment.gateway_timeout",…}
+  FAIL  step 5        payment.capture@2.1.0            1.98s   (attempt 2)   -> {"code":"payment.gateway_timeout",…}
+  comp  step 6[0]     inventory.release@1.0.0          493ms   -> {"code":"inventory.unavailable",…}
+
+  Non-deterministic values captured:
+      step 0        {"utcNow":"2026-07-30T09:14:00.001+00:00"}
+      step 2        {"newIds":["0198f3a1-7000-…","0198f3a1-7001-…"]}   [inside a fork]
+
+8 steps in commit order.
+
+Caveats:
+  - flow_instance.input is NULL for this instance, so the flow's input is not shown. …
+  - step 1, step 2 are branches of a Parallel. A fork's branches share one execution context, …
+  - A compensation's ambient reads are captured by nothing, …
+```
+
+### 9.1 The caveats are the point
+
+An `inspect` output is read during an incident, by someone who is in no position to go and
+check it. So every way the journal is **known to be less than it looks** is stated in the
+output rather than left for the reader to know already. Each caveat below is pinned by a
+test somewhere else in this repository, and none of them is a disclaimer.
+
+| Caveat | Why it is there |
+|---|---|
+| `Input: unknown` | `flow_instance.input` is NULL on every row ever written — `FlowHost` passes `input: null`. NULL cannot be told apart from a flow that genuinely started with none, so the tool refuses to guess. Rendering `{}` would be a positive claim about what the flow received |
+| Fork attribution | A `Parallel`'s branches share one execution context, so `TakeNondeterminism` at a branch's commit takes everything minted since the last commit — **including a sibling's**. `ReplayDeterminismTests.AForkAttributesOneBranchsCapturedIdToItsSiblingsRow` measures it. The journal cannot show this: both rows look ordinary. Only the plan says which steps are branches, which is what the manifest join is for |
+| No manifest | Without the plan the fork check *cannot run*, so the output says so. Silence would read as "it ran and found nothing", which is the more damaging of the two |
+| Compensation captures | A compensation's ambient reads are captured by nothing (ADR-0015), so what appears under a `comp` row is the forward step's capture |
+
+**The fork caveat is scoped, and the scoping is the whole value of the manifest join.** A
+warning that appears on every history is one a reader learns to skip; `step 1, step 2 are
+branches of a Parallel` is one they can act on.
+
+### 9.2 Two departures from [12 §5](12-Observability.md#5-flow-replay--the-differentiator)
+
+That page's worked output is the spec for this one's shape, and it is followed except here.
+
+**Markers are ASCII, not emoji.** `ok` / `FAIL` / `comp` rather than the document's
+✅ / ❌ / 🔄. This output goes into CI logs and redirected files at least as often as into
+a terminal; emoji are double-width on some terminals and single on others, which breaks the
+column alignment that makes a history scannable — and `grep FAIL` is a thing an operator
+can type at three in the morning. The tool also builds with `InvariantGlobalization`.
+
+**There is no `Trigger:` line.** 12 §5 shows `Trigger: kafka:orders.requested[3]@1042`, and
+**nothing journals a trigger.** `flow_instance` carries `correlation_id` and `trace_id`, and
+neither is the broker, topic, partition or offset that line describes. Printing a plausible
+one would be the same failure as rendering `Input: {}`. The correlation id is shown instead,
+because it is what the store actually holds.
+
+A third, smaller difference is an improvement rather than a departure: 12 §5 labels an
+attempt only when it is not the first, which leaves a retried step looking like one
+unlabelled row and one labelled one. Here **every** row of a step that was attempted more
+than once is labelled, and a step attempted exactly once is not labelled at all — the
+interesting fact is the retry, not the ordinal.
+
+### 9.3 What it costs, stated because ADR-0020 accepts it
+
+`Replay/JournalReader.cs` names columns that `0001_initial_schema.sql` defines, and **no
+compiler check connects the two files.** A column rename breaks this verb at run time. The
+only thing that catches it is `ReplayInspectTests`, which runs the verb against a migrated
+schema — and which **fails rather than skips** when a connection string is set and the
+server does not answer, because a skip there would leave the accepted cost with no
+compensating control at all.
+
+---
+
+**Back to:** [README](../README.md) · [AI-Native](13-AI-Native.md) · [Capability Model](07-Capability-Model.md) · [ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md) · [ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md)
