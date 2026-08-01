@@ -43,6 +43,20 @@ public sealed class DurableHostTests
             StepNode.ForCapability(1, Validate),
         ]));
 
+    /// <summary>The same shape with a suspension point in the middle of it.</summary>
+    /// <remarks>
+    /// <c>Durable</c>, because <c>ExecutionPlan</c> refuses a suspension point under any other
+    /// profile — an in-memory wait does not survive a deployment, which is what
+    /// <c>FLOWX1017</c> says at build time and this says at plan construction.
+    /// </remarks>
+    private static ExecutionPlan WaitingPlan() => ExecutionPlan.Create(
+        FlowDescriptor.Create("offer.accept", "1.0.0", ExecutionProfile.Durable, TimeSpan.FromDays(30)),
+        StepGraph.Create([
+            StepNode.ForCapability(0, Validate),
+            StepNode.ForAwaitSignal(1, "contract.countersigned", TimeSpan.FromDays(7)),
+            StepNode.ForCapability(2, Validate),
+        ]));
+
     private static FlowXOptions Options(Action<FlowXOptions>? configure = null)
     {
         var options = new FlowXOptions
@@ -224,6 +238,173 @@ public sealed class DurableHostTests
 
         dispatcher.Release();
         await running;
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Suspension and signals
+    // ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A flow that waits gives its lease back and leaves one row behind.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is what "costs no thread, no memory and no lease while it waits"
+    /// means concretely.</strong> The invocation returns, the pooled context goes back to the
+    /// pool, the lease is released rather than renewed for the duration of the wait, and what
+    /// is left is the instance row and the boundaries committed before it.
+    /// </para>
+    /// <para>
+    /// Holding the lease would be the opposite arrangement, and a worse one: an offer waiting
+    /// seven days for a countersignature would hold a lease for seven days, so a node restart
+    /// would strand it for a TTL and a thousand waiting offers would be a thousand renewal
+    /// timers on one node.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AFlowThatWaitsForASignalSuspendsAndGivesItsLeaseBack()
+    {
+        var journal = new ScannableJournal();
+        var leases = new InMemoryLeaseStore();
+        var host = NewHost(new FlowDurability(journal, leases, journal));
+        var dispatcher = new CountingDispatcher();
+        var ct = TestContext.Current.CancellationToken;
+
+        var result = await host.RunAsync(WaitingPlan(), dispatcher, Plans.Invocation, ct);
+
+        result.IsSuspended.ShouldBeTrue("the flow reached its suspension point");
+        result.IsSuccess.ShouldBeFalse("waiting is not finishing");
+        result.Error.ShouldBeNull("and it is not failing either");
+        dispatcher.Executed.ShouldBe([0], "the step after the wait was never dispatched");
+
+        result.InstanceId.ShouldBe(
+            journal.Instances[0].InstanceId,
+            "the caller is told which instance to deliver the signal to. Without it a " +
+            "suspended flow is unreachable, because the id is minted inside the host.");
+
+        journal.Instances[0].State.ShouldBe(FlowInstanceState.Suspended);
+
+        host.HeldLeases.ShouldBe(0, "a wait holds no lease");
+
+        (await leases.ReadAsync(journal.Instances[0].InstanceId, ct)).Error.Code.ShouldBe(
+            "lease.not_held",
+            "released, so the node that delivers the signal does not wait a TTL to take it");
+    }
+
+    /// <summary>
+    /// <c>SignalAsync</c> is <c>ResumeAsync</c> with a signal attached, and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// The lease is acquired, its token raises the fence, the frontier is read and the same
+    /// <c>FlowEngine.ExecuteAsync</c> a recovery scan reaches is reached. The committed prefix
+    /// is stepped over for free, because that is what the frontier already does — a signalled
+    /// resume does not reimplement resumption, it <em>is</em> resumption carrying a value.
+    /// </remarks>
+    [Fact]
+    public async Task ASignalResumesTheWaitingInstanceThroughTheSameCallARecoveryScanUses()
+    {
+        var journal = new ScannableJournal();
+        var leases = new InMemoryLeaseStore();
+        var host = NewHost(new FlowDurability(journal, leases, journal));
+        var ct = TestContext.Current.CancellationToken;
+
+        var suspended = await host.RunAsync(WaitingPlan(), new CountingDispatcher(), Plans.Invocation, ct);
+
+        var second = new CountingDispatcher();
+
+        var resumed = await host.SignalAsync(
+            suspended.InstanceId!.Value,
+            new FlowRegistration(WaitingPlan(), second),
+            FlowSignal.Of("contract.countersigned", "signed-by-ada"),
+            ct);
+
+        resumed.IsSuccess.ShouldBeTrue(resumed.Error?.ToString());
+        second.Executed.ShouldBe([1, 2], "the wait is satisfied and the flow runs on from it");
+
+        journal.Instances[0].State.ShouldBe(FlowInstanceState.Completed);
+
+        host.HeldLeases.ShouldBe(0, "and the lease taken to deliver the signal is given back");
+    }
+
+    /// <summary>
+    /// The same signal delivered twice does not run the flow's remaining steps twice.
+    /// </summary>
+    /// <remarks>
+    /// Not a check written for signals. The second delivery re-enters an instance whose wait
+    /// now has a committed row, so the frontier steps over it exactly as it steps over any
+    /// completed step — and the instance is already <c>Completed</c>, so the journal refuses
+    /// the write outright. At-least-once delivery is the ordinary case for a transport, and
+    /// this is the property that makes it safe.
+    /// </remarks>
+    [Fact]
+    public async Task ASignalDeliveredTwiceDoesNotRunTheFlowTwice()
+    {
+        var journal = new ScannableJournal();
+        var leases = new InMemoryLeaseStore();
+        var host = NewHost(new FlowDurability(journal, leases, journal));
+        var ct = TestContext.Current.CancellationToken;
+
+        var suspended = await host.RunAsync(WaitingPlan(), new CountingDispatcher(), Plans.Invocation, ct);
+        var signal = FlowSignal.Of("contract.countersigned", "signed-by-ada");
+        var registration = new FlowRegistration(WaitingPlan(), new CountingDispatcher());
+
+        await host.SignalAsync(suspended.InstanceId!.Value, registration, signal, ct);
+
+        var again = new CountingDispatcher();
+
+        var redelivered = await host.SignalAsync(
+            suspended.InstanceId!.Value, new FlowRegistration(WaitingPlan(), again), signal, ct);
+
+        again.Executed.ShouldBeEmpty("nothing ran a second time");
+
+        redelivered.Error?.Code.ShouldBe(
+            "journal.instance_terminal",
+            "the instance is finished, and a journal that let a finished instance be written " +
+            "to would be the one thing an append-only history cannot allow");
+    }
+
+    /// <summary>
+    /// An instance waiting for a signal is not something a recovery scan picks up.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The alternative is a stampede with the sweep's own name on it.</strong> A
+    /// waiting instance is idle by definition, so a scan that treated <c>Suspended</c> as
+    /// abandoned would take a lease on every waiting flow every TTL, resume it, find the same
+    /// wait still open, and put it back — for as long as the wait lasts, which is the whole
+    /// point of the feature.
+    /// </para>
+    /// <para>
+    /// Both shipped indexes already list <c>Pending</c>, <c>Running</c> and
+    /// <c>Compensating</c> only, so nothing had to change for this to hold. It is asserted
+    /// because it now <em>matters</em>: until a flow could suspend, the state was
+    /// unreachable and the exclusion was untested by anything that produced one.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ARecoveryScanDoesNotPickUpAnInstanceThatIsWaitingForASignal()
+    {
+        var journal = new ScannableJournal();
+        var leases = new InMemoryLeaseStore();
+        var durability = new FlowDurability(journal, leases, journal);
+        var host = NewHost(durability);
+        var ct = TestContext.Current.CancellationToken;
+
+        var suspended = await host.RunAsync(WaitingPlan(), new CountingDispatcher(), Plans.Invocation, ct);
+
+        suspended.IsSuspended.ShouldBeTrue();
+
+        var dispatcher = new CountingDispatcher();
+        var catalog = new FlowCatalog().Add(WaitingPlan(), dispatcher);
+
+        var report = await NewScan(host, catalog, durability).RunOnceAsync(ct);
+
+        report.Examined.ShouldBe(0, "a waiting instance is not abandoned work");
+        report.Resumed.ShouldBe(0);
+        dispatcher.Executed.ShouldBeEmpty();
+
+        journal.Instances[0].State.ShouldBe(
+            FlowInstanceState.Suspended, "and it is left exactly where it was");
     }
 
     // ---------------------------------------------------------------------------------
