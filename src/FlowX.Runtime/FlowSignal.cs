@@ -8,9 +8,13 @@ namespace FlowX.Runtime;
 /// <para>
 /// <strong>Identity plus a typed payload, and both halves are load-bearing.</strong> The
 /// identity is what the plan publishes — <c>StepNode.SignalType</c>, and the
-/// <c>signals[]</c> entry of <c>flowx.manifest.json</c> — so a transport that receives
-/// <c>POST /flows/{id}/signals/{signalType}</c> can name the step being satisfied without
-/// knowing a single contract type. The payload is what the steps <em>after</em> the
+/// <c>signal</c> field of an <c>AwaitSignal</c> step in <c>flowx.manifest.json</c> — so a
+/// transport that receives <c>POST {flow route}/{instanceId}/signals/{identity}</c> can name
+/// the step being satisfied without knowing a single contract type. <em>This sentence said
+/// "the <c>signals[]</c> entry" and there has never been one; the manifest publishes the
+/// identity on the step that waits for it, which is where its position gives it meaning
+/// (ADR-0021), and the route is the flow's own rather than a <c>/flows/{id}</c> namespace
+/// nothing serves (ADR-0022).</em> The payload is what the steps <em>after</em> the
 /// suspension point bind to, and it is seeded into the state bag under
 /// <see cref="Contract"/> rather than under its runtime type, so a signal declared as a base
 /// contract and delivered as a derived one still resolves the way the flow wrote it.

@@ -178,7 +178,11 @@ Run it against a real PostgreSQL and the two requests look like this:
 ```
 $ curl -i -X POST :5199/api/v1/offers -d '{"candidateId":"c-42","role":"staff-engineer","site":"london"}'
 HTTP/1.1 202 Accepted
-{"instanceId":"019fbd44-20de-77fc-9c6a-524782b5ad60","awaitingSignal":"offer.countersigned"}
+Location: /api/v1/offers/019fbd86-b1be-7398-a9bb-b90a96c6774c/signals/offer.countersigned
+
+{"instanceId":"019fbd86-b1be-7398-a9bb-b90a96c6774c","status":"suspended",
+ "awaiting":[{"signal":"offer.countersigned",
+              "deliverTo":"/api/v1/offers/019fbd86-…/signals/offer.countersigned"}]}
 ```
 
 ```sql
@@ -192,9 +196,11 @@ select count(*) from flowx.flow_lease
 One row, no lease. Then, on a different request:
 
 ```
-$ curl -i -X POST :5199/api/v1/offers/019fbd44-…/signals/offer.countersigned \
+$ curl -i -X POST :5199/api/v1/offers/019fbd86-…/signals/offer.countersigned \
        -d '{"envelopeId":"env-c-42","signedBy":"ada","signedAt":"2026-08-01T12:00:00Z"}'
-HTTP/1.1 200 OK
+HTTP/1.1 202 Accepted
+
+{"instanceId":"019fbd86-b1be-7398-a9bb-b90a96c6774c","status":"completed"}
 ```
 
 ```sql
@@ -228,16 +234,39 @@ select state from flowx.flow_instance where instance_id = '019fbd44-…';  -- Co
    `SuspensionTests.AWaitingOfferIsNotSweptUpAsAbandonedWork`. Left running for three minutes,
    the second offer above is still `Suspended` with one row.
 
-**`offer.accept` has no `[HttpTrigger]`, and that is a gap in the transport rather than a
-choice.** `MapFlowX` generates an endpoint that answers `200` with the flow's projected
-output, and a suspended flow has none — its `.Return(...)` reads values the steps after the
-wait were going to produce. `202 Accepted` with the instance id is the answer that shape
-needs, `plugins/FlowX.Http` has no path for it, and `Program.cs` therefore maps the two routes
-above by hand rather than publishing a route that fails on the request that suspends.
+**Both routes above are generated, and neither was until WP-64.** *This paragraph read
+"`offer.accept` has no `[HttpTrigger]`, and that is a gap in the transport rather than a
+choice".* It was: `MapFlowX` generated an endpoint that answered `200` with the flow's
+projected output, and a suspended flow has none — its `.Return(...)` reads values the steps
+after the wait were going to produce, so `FlowExecutionResult<TOut>.Value` threw. `Program.cs`
+therefore mapped both routes by hand, with a `RequestDelegate` because minimal-API delegate
+binding reflects over handler parameters and constraint C2 forbids it.
 
-**And the timeout is carried, not armed.** `Waits.Countersignature` reaches
-`StepNode.SignalTimeout` — that is the fabricated one hour below gone — and nothing fires when
-it expires. What bounds this flow is `[FlowDeadline("P30D")]`, checked at every step boundary
+`plugins/FlowX.Http` has the `202` path now ([ADR-0022](../../docs/adr/ADR-0022-http-shape-of-a-suspending-flow.md)),
+so `offer.accept` carries an ordinary `[HttpTrigger("POST", "/api/v1/offers")]` and
+`app.MapFlowX()` publishes both routes. **The identity in the delivery route is read off the
+flow's own `.AwaitSignal<OfferCountersigned>` call**, so there is no second declaration of it
+to disagree with the plan — and `Signals.OfferCountersigned` is now a constant this
+application uses only to *send* against a route the compiler wrote.
+
+The status codes are worth one line each. The run route answers `202` because a caller with a
+suspended flow needs an instance and an address, not a result. The delivery route also answers
+`202`, and never the flow's projected output: the person who countersigns an offer is not the
+person who requested it, and a delivery may complete the instance, suspend it again, fail it,
+or be inert — `202 Accepted` is an honest description of all four. A redelivery is therefore
+`202` with `"status":"completed"` and changes nothing, which is the frontier's idempotence and
+not a check written for signals.
+
+**And the wait now reaches `flowx.manifest.json`.** The suspension point publishes
+`"signal": "offer.countersigned"` and `"timeout": "P7D"` — the identity a sender addresses,
+and `Waits.Countersignature` folded to a duration, because a consumer reading JSON has never
+seen this assembly. `flowx diff` reads both: a signal removed or added is Breaking
+(`FLOWX-DIFF-021`, `022`) and a changed window is Neutral (`FLOWX-DIFF-206`). See
+[ADR-0021](../../docs/adr/ADR-0021-manifest-publishes-the-wait.md).
+
+**And the timeout is carried and published, not armed.** `Waits.Countersignature` reaches
+`StepNode.SignalTimeout` — that is the fabricated one hour below gone — and the manifest, and
+nothing fires when it expires. What bounds this flow is `[FlowDeadline("P30D")]`, checked at every step boundary
 *including* the one that decides whether to suspend, so an instance whose budget has gone
 times out rather than waiting for a signal it can no longer act on.
 
@@ -650,8 +679,8 @@ after the three runs in §5 every row has `flow_instance.input IS NULL` and
 | ~~`AwaitSignal` — a durable suspension point, a signal table, and a compiler that keeps the declared timeout~~ **done at WP-63**, and by a narrower construction than this row named: there is **no signal table** and no manifest column. A delivered signal is the suspension point's own `flow_step` row, so no schema changed; the step model got the timeout field, and [`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) was narrowed rather than deleted | WP-63 |
 | `Delay` — a durable timer, and a `case` in `FlowAnalyzer` that lays out a step rather than reporting one | WP-63, second half |
 | `OnTimeout` — a layout for the branch, and something to time out of | WP-63, second half |
-| A signal identity and a duration in `flowx.manifest.json` — the step object is `additionalProperties: false`, so this is a schema decision under [ADR-0017](../../docs/adr/ADR-0017-manifest-v1-freeze-criteria.md) | unassigned |
-| A `202 Accepted` shape in `plugins/FlowX.Http`, so an `[HttpTrigger]`ed flow may suspend. Until then `Program.cs` maps `offer.accept`'s two routes by hand | unassigned |
+| ~~A signal identity and a duration in `flowx.manifest.json` — the step object is `additionalProperties: false`, so this is a schema decision under [ADR-0017](../../docs/adr/ADR-0017-manifest-v1-freeze-criteria.md)~~ **done at WP-64**, as [ADR-0021](../../docs/adr/ADR-0021-manifest-publishes-the-wait.md): `signal` is always written, `timeout` is the folded duration or nothing, and three `flowx diff` rules read them. ADR-0017's F1 count of unproduced fields did not move | WP-64 |
+| ~~A `202 Accepted` shape in `plugins/FlowX.Http`, so an `[HttpTrigger]`ed flow may suspend. Until then `Program.cs` maps `offer.accept`'s two routes by hand~~ **done at WP-64**, as [ADR-0022](../../docs/adr/ADR-0022-http-shape-of-a-suspending-flow.md): the hand-mapped routes are gone and both are generated | WP-64 |
 | An inline composed child that may wait — refused today as `flow.suspension_inside_composition`, because a parent's composition is one row written when the child finishes | unassigned; the same schema question `SubFlowMode.AwaitCompletion` needs |
 | A resumed flow that can bind step outputs (§7.1) | WP-59 |
 | A forward policy that *executes* — the chain is in the compiled plan (§3), and nothing arms it | P4 |
