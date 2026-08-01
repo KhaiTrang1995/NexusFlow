@@ -9,11 +9,15 @@
 > exists: `TenantId` is read from validated claims at the HTTP boundary
 > (`HttpTriggerReader`) and carried on `TriggerHeaders` and the flow context.
 > **Nothing consumes it.** There is no admission control, no quota, no rate
-> limit, no journal *store* to partition — WP-52 journals step boundaries in process and
-> stamps `tenant_id` on the instance row, and no store persists it — no cache to key, no
-> telemetry to label and no
+> limit, no cache to key, no telemetry to label and no
 > residency binding — so every isolation level in §2 is currently the same level,
 > and it is "none enforced by the platform".
+>
+> *This box also said there is "no journal **store** to partition" and that "no store
+> persists" `tenant_id`. Both expired at WP-53: `plugins/FlowX.Postgres` persists it on the
+> instance row, and `PostgresRecoveryIndex` can filter on it.* **The conclusion is unchanged
+> and its supporting fact is not** — nothing partitions or shards on that column, and the
+> runtime never passes the tenant filter the store would accept.
 >
 > `ITenantResolver` and `ITenantStoreResolver` are not declared anywhere;
 > `CrossTenantAccessIsDenied` is not written and is recorded as blocked in
