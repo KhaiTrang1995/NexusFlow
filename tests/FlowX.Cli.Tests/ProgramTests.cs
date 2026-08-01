@@ -12,6 +12,7 @@ namespace FlowX.Cli.Tests;
 /// checks <c>$?</c> is relying on 0 meaning success and on a missing manifest not
 /// looking like a usage error — so those are asserted rather than assumed.
 /// </remarks>
+[Collection(CliConsoleGroup.Name)]
 public sealed class ProgramTests : IDisposable
 {
     private readonly string _directory =
@@ -165,7 +166,8 @@ public sealed class ProgramTests : IDisposable
     }
 
     [Theory]
-    [InlineData("replay")]
+    // "replay" left this list in the commit that built it. The rule is unchanged — the help
+    // names what you can run right now — and the verb moved from one side of it to the other.
     [InlineData("query")]
     [InlineData("bench")]
     [InlineData("new")]
