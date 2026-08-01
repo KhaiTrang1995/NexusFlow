@@ -92,9 +92,19 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     /// <para>
     /// The four stage-4 names arrived with the policy engine
     /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>).
-    /// <c>RateLimit</c>, <c>Idempotency</c>, <c>Cache</c> and <c>Audit</c> are deliberately
-    /// absent: their stages are not implemented, which is what this rule now reports and the
-    /// whole of what it reports.
+    /// <c>Cache</c> and <c>Audit</c> joined them when stage 5 and stage 7's audit landed —
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0036-a-cache-is-a-plugin-store-keyed-by-the-redacted-input.md">ADR-0036</a>
+    /// and
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0035-an-audit-record-is-the-journals-payload-redacted-twice.md">ADR-0035</a>.
+    /// <c>RateLimit</c> and <c>Idempotency</c> are deliberately absent: stage 1 and stage 3 are
+    /// not implemented, which is what this rule now reports and the whole of what it reports.
+    /// </para>
+    /// <para>
+    /// <strong>The list is still not a range of stages, and the two additions make that
+    /// louder rather than quieter.</strong> <c>Cache</c> is stage 5 and executes;
+    /// <c>Idempotency</c> is stage 3 and does not; <c>Audit</c> and <c>CompensationRetry</c>
+    /// are both stage 7 and both execute, while <c>RateLimit</c> at stage 1 does not. No line
+    /// drawn by stage number has ever separated the two halves.
     /// </para>
     /// </remarks>
     public static readonly ImmutableHashSet<string> ExecutedKinds =
@@ -104,6 +114,8 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
             "Retry",
             "CircuitBreaker",
             "Bulkhead",
+            "Cache",
+            "Audit",
             CompensationRetryKind);
 
     /// <summary>The call this rule is about.</summary>

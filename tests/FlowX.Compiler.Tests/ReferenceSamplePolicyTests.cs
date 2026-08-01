@@ -98,21 +98,26 @@ public sealed class ReferenceSamplePolicyTests
     // ------------------------------------------------------------------ it fires
 
     /// <summary>
-    /// The rule reports four of the reference saga's seven <c>.WithPolicy(...)</c> calls.
+    /// The rule reports one of the reference saga's seven <c>.WithPolicy(...)</c> calls.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>This asserted seven, and the drop to four is the policy engine landing.</strong>
-    /// The three calls that went quiet name <c>Policies.ExternalRead</c> — two of them inside
-    /// <c>Case</c> blocks — whose <c>Timeout</c>, <c>Retry</c> and <c>CircuitBreaker</c> are
-    /// all applied now. The four that remain are <c>Admission</c> once, <c>LedgerPost</c>
-    /// twice and <c>SettlementRegister</c> once, each carrying a <c>RateLimit</c>, an
-    /// <c>Idempotency</c> window or an <c>Audit</c>.
+    /// <strong>This asserted seven, then four, and is now one.</strong> Seven was the state
+    /// before any policy executed. Four was the policy engine landing stage 4: the three calls
+    /// naming <c>Policies.ExternalRead</c> — two of them inside <c>Case</c> blocks — went
+    /// quiet. One is stage 5 and stage 7's audit landing: <c>LedgerPost</c> twice and
+    /// <c>SettlementRegister</c> once went quiet with them, because an <c>Audit</c> is the only
+    /// thing any of the three still declared that nothing applied.
     /// </para>
     /// <para>
-    /// The count is the assertion, not merely the presence. Three would mean one of the
-    /// remaining calls was missed; five would mean a set whose every kind now runs is still
-    /// reported, which is how a narrowed rule teaches an author to suppress it anyway.
+    /// What is left is <c>Policies.Admission</c> on the first step, carrying a
+    /// <c>RateLimit</c> and an <c>Idempotency</c> window — stage 1 and stage 3, the two that
+    /// remain.
+    /// </para>
+    /// <para>
+    /// The count is the assertion, not merely the presence. Zero would mean the rule had gone
+    /// silent on a policy that is still inert; two would mean a set whose every kind now runs
+    /// is still reported, which is how a narrowed rule teaches an author to suppress it anyway.
     /// </para>
     /// </remarks>
     [Fact]
@@ -121,67 +126,74 @@ public sealed class ReferenceSamplePolicyTests
         var reported = Report().Where(static d => d.Id == "FLOWX1032").ToList();
 
         reported.Count.ShouldBe(
-            4,
-            "samples/banking declares seven .WithPolicy(...) calls; the three naming " +
-            "Policies.ExternalRead are wholly executed. Reported:\n" + Describe(reported));
+            1,
+            "samples/banking declares seven .WithPolicy(...) calls; six of them are wholly " +
+            "executed. Reported:\n" + Describe(reported));
 
         reported.ShouldAllBe(static d => d.Severity == DiagnosticSeverity.Warning);
 
         reported
             .Select(static d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture))
-            .ShouldAllBe(static m => !m.Contains("Policies.ExternalRead", StringComparison.Ordinal));
+            .ShouldAllBe(static m => m.Contains("Policies.Admission", StringComparison.Ordinal));
     }
 
     /// <summary>
-    /// The ledger legs are told about <c>Audit</c> and about nothing else.
+    /// The ledger legs are told about nothing at all.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The one report in this sample where getting it wrong would be actively harmful:
-    /// <c>Policies.LedgerPost</c> carries the <c>CompensationRetry</c> that unwinds a failed
-    /// transfer and the <c>Timeout</c> that now bounds the ledger write, and naming either
-    /// here would tell a payments team a control is off when it is on.
+    /// <strong>Inverted, and it is the sample assertion the audit work exists for.</strong>
+    /// This test read "the ledger legs are told about <c>Audit</c> and about nothing else",
+    /// and it was the one report in this sample where getting it wrong would have been
+    /// actively harmful: <c>Policies.LedgerPost</c> carries the <c>CompensationRetry</c> that
+    /// unwinds a failed transfer and the <c>Timeout</c> that bounds the ledger write, and
+    /// naming either would tell a payments team a control is off when it is on.
     /// </para>
     /// <para>
-    /// <strong><c>Timeout</c> moved from the first assertion to the second.</strong> It was
-    /// one of the two kinds this report had to name; it is now one of the two it must not.
+    /// <c>Audit</c> has now made the same journey <c>Timeout</c> made: it was the kind this
+    /// report had to name, and it is now a kind it must not. Every kind
+    /// <c>Policies.LedgerPost</c> declares is applied, so the correct number of reports on
+    /// both ledger legs is none — and the sample's two <c>#pragma warning disable
+    /// FLOWX1032</c> lines about the audit go with them.
     /// </para>
     /// </remarks>
     [Fact]
-    public void TheLedgerLegsAreToldAboutTheAuditAndNothingElse()
-    {
-        var ledger = Report()
+    public void TheLedgerLegsAreToldNothing() =>
+        Report()
             .Where(static d => d.Id == "FLOWX1032")
             .Select(static d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture))
             .Where(static message => message.Contains("Policies.LedgerPost", StringComparison.Ordinal))
-            .ToList();
-
-        ledger.Count.ShouldBe(2, "Both ledger legs declare Policies.LedgerPost.");
-
-        foreach (var message in ledger)
-        {
-            message.ShouldContain("Audit");
-            message.ShouldNotContain("Timeout");
-            message.ShouldNotContain("CompensationRetry");
-        }
-    }
+            .ShouldBeEmpty(
+                "Timeout, Audit and CompensationRetry are all applied. A report here would " +
+                "tell a payments team three controls are off when all three are on.");
 
     /// <summary>
-    /// <c>Audit</c> is reported although it runs at <c>CompensationRetry</c>'s own stage.
+    /// No declared <c>Audit</c> is reported, although one still shares a stage with a kind
+    /// that is.
     /// </summary>
     /// <remarks>
-    /// Asserted against the sample rather than only against a fixture, because this is the
-    /// claim the sample's README made wrongly for two work packages — "no <em>forward</em>
-    /// policy runs", which is a summary by stage, and <c>Audit</c> is stage 7. A rule that
-    /// cut by stage would be silent on every audit this bank declares.
+    /// <para>
+    /// <strong>Inverted, and the fact it pins is untouched.</strong> This asserted that the
+    /// sample's three audits <em>were</em> reported although they were stage 7 — the evidence
+    /// that the rule's cut was never a range of stages, because <c>CompensationRetry</c> shares
+    /// that stage and runs.
+    /// </para>
+    /// <para>
+    /// The cut is still not a range of stages, and the sample still demonstrates it: the one
+    /// call this rule reports carries a stage-1 <c>RateLimit</c> and a stage-3
+    /// <c>Idempotency</c> window, while a stage-5 <c>Cache</c> and a stage-7 <c>Audit</c> are
+    /// both silent. Any line drawn by stage number would now be wrong in the opposite
+    /// direction from the one it used to be wrong in.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void TheDeclaredAuditsAreReportedAlthoughTheyAreStageSevenPolicies() =>
+    public void NoDeclaredAuditIsReported() =>
         Report()
             .Where(static d => d.Id == "FLOWX1032")
             .Count(static d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture)
                 .Contains("Audit", StringComparison.Ordinal))
-            .ShouldBe(3, "LedgerPost twice and SettlementRegister once declare an Audit.");
+            .ShouldBe(0, "LedgerPost twice and SettlementRegister once declare an Audit, and " +
+                         "all three are now written.");
 
     /// <summary>
     /// Reusing the ledger set on the settlement step — the tempting edit — is FLOWX1033.

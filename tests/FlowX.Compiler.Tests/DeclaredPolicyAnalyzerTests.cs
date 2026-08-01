@@ -139,7 +139,10 @@ public sealed class DeclaredPolicyAnalyzerTests
         messages[0].ShouldContain("Policies.Admission");
         messages[0].ShouldContain("RateLimit");
         messages[0].ShouldContain("Idempotency");
-        messages[0].ShouldContain("Cache");
+
+        messages[0].Contains("Cache", StringComparison.Ordinal).ShouldBeFalse(
+            "The Cache in the set above is deliberate: this test is about the message naming " +
+            "the kinds that are dropped and only those, and stage 5 now executes.");
     }
 
     /// <summary>
@@ -166,43 +169,47 @@ public sealed class DeclaredPolicyAnalyzerTests
             .ShouldBeEmpty();
 
     /// <summary>
-    /// <c>Audit</c> is reported, and it is a stage-7 <c>Consistency</c> policy.
+    /// <c>Audit</c> is silent, and it is still a stage-7 <c>Consistency</c> policy.
     /// </summary>
     /// <remarks>
-    /// The test that pins the correction. The cut is by <em>what a policy wraps</em>, not by
-    /// which stage it runs in: <c>PolicyChain.ForStep</c> moves only <c>CompensationRetry</c>
-    /// onto the compensation's chain, so <c>Audit</c> stays on the step's chain — which
-    /// nothing reads. A rule written against "stages 1–6" would be silent here and would
-    /// leave the sample's audit declarations claiming an immutable financial record nothing
-    /// writes.
+    /// <para>
+    /// <strong>Inverted, and the correction it was written to pin is unaffected.</strong> This
+    /// test asserted that <c>Audit</c> <em>was</em> reported although it shared a stage with
+    /// <c>CompensationRetry</c>, which runs — the evidence that the cut was never a range of
+    /// stages. Stage 7's audit now runs too, so the assertion flips; the fact it was pinning
+    /// does not, because <c>RateLimit</c> at stage 1 is still reported while <c>Cache</c> at
+    /// stage 5 is not. No line drawn by stage number has ever separated the two halves, and
+    /// after this change it separates them in the other direction as well.
+    /// </para>
+    /// <para>
+    /// The redact list is kept in the declaration deliberately: it is the argument that used to
+    /// name nothing, and a set carrying one must now be as silent as one without.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void AuditIsReportedAlthoughItRunsAtTheSameStageAsCompensationRetry()
-    {
-        var messages = Messages(FlowWith(
+    public void AuditIsSilentAlthoughItRunsAtTheSameStageAsCompensationRetry() =>
+        Analyze(FlowWith(
             ".WithPolicy(Policies.Audited)",
             """
             public static readonly PolicySet Audited = PolicySet.Named("audited")
                 .Audit("financial", "Iban");
-            """));
+            """))
+            .ShouldBeEmpty();
 
-        messages.ShouldHaveSingleItem();
-        messages[0].ShouldContain("Audit");
-    }
-
-    /// <summary>Each of the four kinds nothing applies, on its own.</summary>
+    /// <summary>Each of the two kinds nothing applies, on its own.</summary>
     /// <remarks>
-    /// A theory rather than one set with all four in it, so that a rule which happened to
-    /// recognise three of them and miss the fourth fails on the row that names it. The five
-    /// kinds that are applied get the same treatment in the theory below, which is the half
-    /// that goes wrong silently: a rule reporting a policy that runs looks like a rule
-    /// working.
+    /// A theory rather than one set with both in it, so that a rule which happened to
+    /// recognise one of them and miss the other fails on the row that names it. The kinds that
+    /// are applied get the same treatment in the theory below, which is the half that goes
+    /// wrong silently: a rule reporting a policy that runs looks like a rule working.
+    /// <para>
+    /// <strong>Two rows shorter than it was.</strong> <c>Cache</c> and <c>Audit</c> moved to
+    /// the silence theory when stage 5 and stage 7's audit landed.
+    /// </para>
     /// </remarks>
     [Theory]
-    [InlineData("Cache(TimeSpan.FromSeconds(1))", "Cache")]
     [InlineData("RateLimit(permits: 5, TimeSpan.FromSeconds(1))", "RateLimit")]
     [InlineData("Idempotency(TimeSpan.FromHours(1))", "Idempotency")]
-    [InlineData("Audit(\"category\")", "Audit")]
     public void EveryKindNothingAppliesIsReported(string declaration, string kind)
     {
         var messages = Messages(FlowWith(
@@ -215,19 +222,22 @@ public sealed class DeclaredPolicyAnalyzerTests
         messages[0].ShouldContain(kind);
     }
 
-    /// <summary>Each of the four stage-4 kinds the engine now applies, on its own.</summary>
+    /// <summary>Each kind the engine now applies, on its own.</summary>
     /// <remarks>
-    /// <strong>Every row of this theory used to be a row of the one above.</strong> The
-    /// compensation retry has its own silence test further down, because it is silent for a
-    /// different reason — it needs a compensation to wrap, and FLOWX1033 reports when it has
-    /// none.
+    /// <strong>Every row of this theory used to be a row of the one above.</strong> The four
+    /// stage-4 kinds left it when the policy engine landed; <c>Cache</c> and <c>Audit</c> left
+    /// it when stage 5 and stage 7's audit did. The compensation retry has its own silence test
+    /// further down, because it is silent for a different reason — it needs a compensation to
+    /// wrap, and FLOWX1033 reports when it has none.
     /// </remarks>
     [Theory]
     [InlineData("Timeout(TimeSpan.FromSeconds(1))")]
     [InlineData("Retry(attempts: 2)")]
     [InlineData("CircuitBreaker(failureRatio: 0.5, breakDuration: TimeSpan.FromSeconds(1))")]
     [InlineData("Bulkhead(maxConcurrency: 4)")]
-    public void EveryStageFourKindIsSilent(string declaration) =>
+    [InlineData("Cache(TimeSpan.FromSeconds(1))")]
+    [InlineData("Audit(\"category\")")]
+    public void EveryExecutedKindIsSilent(string declaration) =>
         Analyze(FlowWith(
             ".WithPolicy(Policies.OneKind)",
             $"""
@@ -237,10 +247,10 @@ public sealed class DeclaredPolicyAnalyzerTests
 
     /// <summary>A mixed set names the inert half and not the half that executes.</summary>
     /// <remarks>
-    /// The shape <c>samples/banking</c>'s ledger steps have: an <c>Audit</c> that writes
-    /// nothing, beside a <c>Timeout</c> that is armed and a <c>CompensationRetry</c> that
-    /// runs. Naming either of the two that work would tell the author a control is off when
-    /// it is on.
+    /// The shape <c>samples/banking</c>'s ledger steps had until stage 7's audit landed: one
+    /// kind that does nothing beside a <c>Timeout</c> that is armed, an <c>Audit</c> that is
+    /// now written and a <c>CompensationRetry</c> that runs. Naming any of the three that work
+    /// would tell the author a control is off when it is on.
     /// </remarks>
     [Fact]
     public void AMixedSetNamesTheInertKindsOnly()
@@ -250,13 +260,15 @@ public sealed class DeclaredPolicyAnalyzerTests
             """
             public static readonly PolicySet Ledger = PolicySet.Named("ledger")
                 .Timeout(TimeSpan.FromSeconds(5))
+                .RateLimit(permits: 5, TimeSpan.FromSeconds(1))
                 .Audit("financial")
                 .CompensationRetry(attempts: 5);
             """));
 
         messages.ShouldHaveSingleItem();
-        messages[0].ShouldContain("Audit");
+        messages[0].ShouldContain("RateLimit");
         messages[0].ShouldNotContain("Timeout");
+        messages[0].ShouldNotContain("Audit");
         messages[0].ShouldNotContain("CompensationRetry");
     }
 
@@ -296,11 +308,11 @@ public sealed class DeclaredPolicyAnalyzerTests
             """
             .When(
                 ctx => ctx.Input.Quantity > 1,
-                bulk => bulk.Step<ReserveInventory>().WithPolicy(Policies.Cached))
+                bulk => bulk.Step<ReserveInventory>().WithPolicy(Policies.Admitted))
             """,
             """
-            public static readonly PolicySet Cached = PolicySet.Named("cached")
-                .Cache(TimeSpan.FromSeconds(30));
+            public static readonly PolicySet Admitted = PolicySet.Named("admitted")
+                .RateLimit(permits: 5, TimeSpan.FromSeconds(30));
             """))
             .ShouldBe(["FLOWX1032"]);
 
@@ -422,7 +434,7 @@ public sealed class DeclaredPolicyAnalyzerTests
             ".WithPolicy(Policies.Ledger)",
             """
             public static readonly PolicySet Ledger = PolicySet.Named("ledger")
-                .Audit("financial")
+                .RateLimit(permits: 5, TimeSpan.FromSeconds(1))
                 .CompensationRetry(attempts: 5);
             """))
             .ShouldBe(["FLOWX1032", "FLOWX1033"]);
@@ -462,7 +474,7 @@ public sealed class DeclaredPolicyAnalyzerTests
             ".WithPolicy(Policies.Forward)",
             """
             public static readonly PolicySet Forward = PolicySet.Named("forward")
-                .Audit("financial");
+                .RateLimit(permits: 5, TimeSpan.FromSeconds(1));
             """))
             .ShouldBe(["FLOWX1032"]);
 
@@ -502,7 +514,7 @@ public sealed class DeclaredPolicyAnalyzerTests
                 ".WithPolicy(Policies.Ledger)",
                 """
                 public static readonly PolicySet Ledger = PolicySet.Named("ledger")
-                    .Audit("financial")
+                    .RateLimit(permits: 5, TimeSpan.FromSeconds(1))
                     .CompensationRetry(attempts: 5);
                 """),
             new DeclaredPolicyAnalyzer());
@@ -541,10 +553,10 @@ public sealed class DeclaredPolicyAnalyzerTests
 
         const string policies = """
             public static readonly PolicySet Ledger = PolicySet.Named("ledger")
-                .Audit("financial");
+                .RateLimit(permits: 5, TimeSpan.FromSeconds(1));
 
             public static readonly PolicySet Undo = PolicySet.Named("undo")
-                .Audit("operational")
+                .Idempotency(TimeSpan.FromHours(1))
                 .CompensationRetry(attempts: 5);
             """;
 

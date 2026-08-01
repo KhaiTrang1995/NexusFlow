@@ -155,10 +155,12 @@ public sealed class PolicyStageFitnessTests
     /// engine gaining it goes silent on a policy that is still inert.
     /// </para>
     /// <para>
-    /// The real list is read off the two resolvers rather than typed out again: <c>StepPolicy</c>
-    /// publishes the four stage-4 descriptor kinds it reads as constants, and
-    /// <c>CompensationPolicy</c> publishes the one it reads. A fifth kind implemented without a
-    /// constant would slip past this — which is why they are constants.
+    /// The real list is read off the three resolvers rather than typed out again:
+    /// <c>StepPolicy</c> publishes the four stage-4 descriptor kinds and the stage-5 one it
+    /// reads as constants, <c>CompensationPolicy</c> publishes the one it reads, and
+    /// <c>StepAudit</c> publishes the stage-7 one. A kind implemented without a constant would
+    /// slip past this — which is why they are constants, and why each new resolver publishes
+    /// one on the day it starts reading a kind.
     /// </para>
     /// </remarks>
     [Fact]
@@ -170,6 +172,8 @@ public sealed class PolicyStageFitnessTests
             StepPolicy.RetryKind,
             StepPolicy.CircuitBreakerKind,
             StepPolicy.BulkheadKind,
+            StepPolicy.CacheKind,
+            StepAudit.AuditKind,
             CompensationPolicy.CompensationRetryKind,
         ];
 
