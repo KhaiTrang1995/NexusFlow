@@ -385,5 +385,17 @@ internal static class Plans
             StepNode.ForCapability(1, Validate),
         ]));
 
+    /// <summary>A journaled two-step flow: <c>0 validate · 1 validate</c>.</summary>
+    /// <remarks>
+    /// Its own id rather than a Durable variant of <see cref="TwoStep"/>, so a test that runs
+    /// both against one recorder can tell their spans and their series apart by name.
+    /// </remarks>
+    public static ExecutionPlan Durable() => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.durable", "1.0.0", ExecutionProfile.Durable, TimeSpan.FromMinutes(5)),
+        StepGraph.Create([
+            StepNode.ForCapability(0, Validate),
+            StepNode.ForCapability(1, Validate),
+        ]));
+
     public static FlowInvocation Invocation { get; } = new("corr-1", "idem-1", "acme");
 }

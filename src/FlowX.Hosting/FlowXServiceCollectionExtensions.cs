@@ -58,10 +58,22 @@ public static class FlowXServiceCollectionExtensions
 
         services.TryAddSingleton<IClock>(SystemClock.Instance);
 
+        // The seam ICompensationAlertSink was left for. Registered by default rather than
+        // opted into: docs/12-Observability.md §7 pages immediately on any occurrence of
+        // flowx_flow_compensation_failed_total, and a counter an application has to remember to
+        // wire is a counter that reads zero on the deployment that needed it. An application
+        // that registers its own sink — a pager, a dead-letter writer — wins, because TryAdd
+        // does not replace it.
+        services.TryAddSingleton<ICompensationAlertSink, CompensationFailureCounter>();
+
         services.TryAddSingleton(provider =>
         {
             var options = provider.GetRequiredService<IOptions<FlowXOptions>>().Value;
-            return new FlowEngine(provider.GetRequiredService<IClock>(), options.MaxPooledContexts);
+
+            return new FlowEngine(
+                provider.GetRequiredService<IClock>(),
+                options.MaxPooledContexts,
+                provider.GetService<ICompensationAlertSink>());
         });
 
         // The catalogue is registered whether or not anything is put in it. It is only read
@@ -128,9 +140,14 @@ public static class FlowXServiceCollectionExtensions
 
         // Both or neither. A journal with no lease store would write under a token nothing
         // issued; a lease store with no journal would fence nothing.
+        //
+        // The journal is wrapped here and nowhere else, which is what makes
+        // flowx_journal_commit_seconds a property of the contract rather than of one adapter.
+        // The wrap is a no-op unless something is listening, and an application that supplies
+        // its own FlowDurability above is left exactly as it built it.
         return journal is not null && leases is not null
             ? new FlowDurability(
-                journal,
+                JournalTelemetry.Wrap(journal),
                 leases,
                 provider.GetService<IRecoveryIndex>(),
                 provider.GetService<ITimerIndex>())
