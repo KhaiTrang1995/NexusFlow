@@ -1,10 +1,55 @@
 # Sample — Real-time telemetry aggregation
 
-**Claim proved:** 250 000 records/s/node with **bounded memory** under a
-deliberately slow downstream — windowing, watermarks and checkpointing are
+**Claim it is meant to prove:** 250 000 records/s/node with **bounded memory**
+under a deliberately slow downstream — windowing, watermarks and checkpointing are
 runtime services, not user code (budget B13, principle P9).
 
+> [!WARNING]
+> **This sample has no code, and it is the furthest from having any.**
+> `samples/realtime-stream/` is this file and nothing else. **There is no stream
+> engine**, and a flow declaring `Profile = ExecutionProfile.Streaming` says so
+> out loud: [`FLOWX1028`](../../docs/diagnostics/FLOWX1028.md) is a warning whose
+> whole subject is that the declaration reaches `ExecutionPlan` validation and the
+> manifest's `profile` field and **buys no behaviour** — nothing is checkpointed,
+> there is no window, and the flow runs once per trigger like any other. This
+> repository sets `TreatWarningsAsErrors`, so the flow below would not build
+> *inside this repository* without an `.editorconfig` downgrade carrying a
+> `FLOWX-DEBT` owner and expiry. That is deliberate: the diagnostic's own page
+> says *"no sample, test or reference application can quietly declare
+> `Streaming`."*
+>
+> **The DSL is not there either.** `.Window(...)` and `.Aggregate<T>(...)` are not
+> members of `IFlowBuilder<,>`; they are a row in
+> [08 §4](../../docs/08-Flow-Definition.md#4-the-full-builder-surface)'s builder
+> table — one row, marked `Streaming` — and a sketch in
+> [09 §9](../../docs/09-Trigger-Model.md#9-stream-trigger). `[StreamTrigger]`
+> compiles and publishes `"kind": "Stream"` with its source topic — its `Window`,
+> `Lateness`, `Checkpoint` and `Parallelism` are not read into the manifest at
+> all, and nothing consumes the trigger.
+>
+> | What has to exist first | Where it comes from |
+> |---|---|
+> | A stream engine: checkpoints, watermarks, window state, backpressure | **P7**, numbers **WP-110…WP-119** *reserved and unallocated* ([PLAN §6a](../../PLAN.md#6a-p4p9--what-this-plan-does-not-yet-contain)) |
+> | A design to build it from | **Does not exist.** PLAN §6a rates P7's packages as *invented* rather than recorded: nothing anywhere defines the checkpoint format, watermark generation, or how window state is journaled. One backpressure diagram and a window-semantics table are the whole of the specification |
+> | A Kafka consumer to put records in | **WP-72**, P3 ([event-driven](../event-driven/)) |
+> | Budget B13 measured at all | `StreamingBenchmarks` does not exist; [14 §8](../../docs/14-Performance.md#8-benchmark-suite-and-ci-gating) lists B13 among the budgets with **no gate**, becoming measurable at P7 |
+> | `FLOWX1028` deleted | The rule is *scheduled for deletion* when P7 lands. Its table row is the only executable-free reminder in the catalogue, and it says so |
+>
+> Every number in [Benchmarks](#benchmarks) below is a **budget stated in
+> advance**, not a measurement. Read the rest as the design P7 would be held to —
+> a design that, on this repository's own assessment, is not yet complete enough
+> to write work packages against.
+>
+> **The one thing on this page that is already true** is the argument in
+> [Backpressure](#backpressure--the-property-being-demonstrated): a test that
+> asserts the system *slows down* rather than that it is fast. That is the shape
+> P7's acceptance test should take, and it costs nothing to keep it written down.
+
 ## The flow
+
+> **Does not compile here.** `.Window(...)` and `.Aggregate<T>(...)` are not
+> members, and `Profile = ExecutionProfile.Streaming` raises `FLOWX1028`, which
+> this repository's `TreatWarningsAsErrors` turns into a build failure.
 
 ```csharp
 [Flow("telemetry.aggregate", Profile = ExecutionProfile.Streaming)]
@@ -26,6 +71,10 @@ public sealed partial class AggregateTelemetryFlow : Flow<TelemetryBatch, Device
 No offset management, no watermark bookkeeping, no checkpoint code, no manual
 backpressure. Those are Stream Engine responsibilities
 ([06 §10](../../docs/06-Execution-Engine.md#10-backpressure-streaming-profile)).
+*There is no Stream Engine, so today there is none of the bookkeeping and none of
+the guarantee — the declaration is a fact in a published contract and nothing
+else.* `.WithPolicy(Policies.BulkWrite)` is recorded in the plan and the manifest
+and applies nothing at run time; the forward path runs zero policies until P4.
 
 ## Backpressure — the property being demonstrated
 
@@ -38,6 +87,10 @@ flowchart LR
     P -. "below low-water mark" .-> K
     style P fill:#ef6c00,color:#fff
 ```
+
+> **Not runnable.** `StreamTestHost` is in no file under `tests/` or
+> `src/FlowX.Testing`, and neither is `WithSlowCapability`. There is no bounded
+> channel, no partition to pause and no consumer to pause it.
 
 ```csharp
 [Fact]
@@ -78,6 +131,12 @@ stateDiagram-v2
 
 ## Benchmarks
 
+> **Budgets, not results — and nothing measures any of them.** There is no
+> `StreamingBenchmarks` class; the filter below matches nothing.
+> [14 §8](../../docs/14-Performance.md#8-benchmark-suite-and-ci-gating) lists B13 among the budgets with no gate,
+> *"stated in advance, which is rule zero working as intended"*, becoming
+> measurable at P7.
+
 | Metric | Budget | Notes |
 |---|---|---|
 | Throughput | 250 000 rec/s/node | 1 KB records, 8 partitions |
@@ -91,6 +150,9 @@ dotnet run -c Release --project ../../tests/FlowX.Benchmarks -- --filter '*Strea
 ```
 
 ## Things to try
+
+*None of these can be tried yet — there is no project, no stream engine and no
+consumer. Kept as the acceptance list P7 would be written to.*
 
 1. Set `Parallelism = 1` and watch consumer lag grow — then watch KEDA scale
    workers on lag rather than CPU.
