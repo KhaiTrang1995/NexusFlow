@@ -1861,6 +1861,25 @@ plugin projects with no shared source; they read the conformance suite and do no
 WP-75 is not one of them — it needs the lease store, and putting it in the parallel batch
 is exactly the kind of optimism the DSL chain punished.
 
+### Four defects only a real sample could find — **fixed 2026-07-31, unnumbered**
+
+Recorded here because they belong to no work package: each is a defect in something already
+marked shipped, and every one was found by *building an application* rather than by testing
+the compiler.
+
+| Defect | Why unit tests missed it |
+|---|---|
+| `ctx.CapabilityId` named the step being **undone** during an unwind | The journal was right all along, so the audit trail read correctly while the context disagreed. `06 §7` was silent on which identity a compensation runs under — that silence is what let two readers disagree unnoticed |
+| `OnTimeout`, `Delay`, `AwaitSignal` compiled to nothing, **zero diagnostics** | Nothing had ever tried to *use* them. `AwaitSignal` additionally published a hardcoded one-hour timeout in place of the author's duration |
+| `.WithPolicy` never reached the plan | So WP-57's `CompensationRetry` shipped **unreachable from the DSL**, and `HasCompensationPolicies` was structurally always false |
+| `FLOWX1014` never checked the compensation side | Dormant while nothing could declare a `CompensationRetry`; **the third fix made it live** |
+
+**The pattern is the finding.** Each fix made the next defect *reachable* rather than
+creating it — the holes were always there and nothing could get to them. That is the
+argument for samples as a gate rather than as documentation, and it is why
+[§6a](#6a-p4p9--what-this-plan-does-not-yet-contain)'s note that eight of nine samples were
+a `README.md` was a correctness problem and not a tidiness one.
+
 ### `flowx verify --cost` — **shipped, unnumbered, and load-bearing in an ADR**
 
 Recorded here on 2026-07-31 because it existed in `src/FlowX.Cli/Verification/` and in

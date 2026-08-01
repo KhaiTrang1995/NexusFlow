@@ -24,7 +24,7 @@
 > without being made fast. See
 > [§5d](#5d-p2--durable-execution--nearly-complete-and-entirely-unmeasured).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** 1707/1707 passing (a large share against a live
+> **Build:** 0 warnings, 0 errors · **Tests:** 1868/1868 passing (a large share against a live
 > PostgreSQL 16.13 and Redis 7.0.15; 0 skipped). Without `FLOWX_POSTGRES_CONNECTION` the adapter suite skips
 > 79 with reasons; set to an unreachable server it **fails 80 and skips none**, on purpose ·
 > **Coverage:** **83.9 % line / 77.6 % branch** over `src/` and `plugins/`, measured
@@ -948,6 +948,18 @@ WP-53** and [amended by ADR-0016](docs/adr/ADR-0016-postgres-journal-adapter.md)
 listed in full because P1 handed each item over with a named blocker, and an inventory that
 exists only in a closing summary is one nobody reads.
 
+> **Four defects that only real samples could find, fixed 2026-07-31.** Building
+> `samples/banking` and `samples/workflow` exposed what unit-testing the compiler had not:
+> `ctx.CapabilityId` named the step being **undone** during an unwind, so a compensator
+> keyed on it produced the forward step's key, the store deduped the contra entry away, and
+> the engine reported `Succeeded` over money that never came back; `OnTimeout`, `Delay` and
+> `AwaitSignal` compiled to nothing with **zero diagnostics**, the last of them publishing a
+> hardcoded one-hour timeout in place of whatever the author declared; `.WithPolicy` never
+> reached the plan, so WP-57's `CompensationRetry` shipped **unreachable**; and `FLOWX1014`
+> never checked the compensation side at all, which the third fix turned from dormant into
+> live. *Each fix made the next defect reachable rather than creating it — the holes were
+> always there and nothing could get to them.*
+>
 > **P2's Must is one package from complete, and none of it is measured.** Of the twelve
 > Must packages, ten have shipped. **WP-50 has not started**, so B7, B8 and the chaos rig do
 > not exist — which is why **WP-62, P2's own Done-when, cannot run**: nothing kills a node,
@@ -1269,6 +1281,35 @@ everything else.*
 **One of eight is gated.** Three more are satisfied or partly satisfied and enforced by
 nothing, which is the state that decays silently — V1 already moved without anything
 noticing.
+
+---
+
+## 5g. Samples, the template, and the guideline
+
+- [x] **Three of nine samples have code** (was one). `ecommerce` (the baseline saga),
+      **`banking`** — a durable transfer saga: compensation in strict reverse order,
+      `[Sensitive]` redaction reaching a real PostgreSQL outbox row with **zero** IBAN
+      occurrences in any journal column, one event staged per instance — and **`workflow`**,
+      25 compiled nodes exercising the whole shipped DSL: `Switch`/`Case`/`Default`,
+      `Parallel`, `ForEach` containing `When`, `SubFlow`, `Fail`, compensation at six sites.
+      **Building them found four runtime defects**, all now fixed, none of which unit-testing
+      the compiler had surfaced
+- [x] **The six blocked samples stopped claiming a proof that never happened.** Each opened
+      with a present-tense *"Claim proved:"* line; design content is kept, the claim is gone,
+      and every code block using something that does not exist is marked. `event-driven` is
+      the sharpest case — `[KafkaTrigger]` **compiles and reaches the manifest** as
+      `"kind": "Bus"`, and grepping `TriggerKind` across Runtime, Hosting and plugins returns
+      nothing. The attribute is real and the transport is not
+- [x] **`dotnet new flowx` ships** — and this file said otherwise for longer than the command
+      was missing. *What was missing was the gate:* `templates/README.md` called `verify.sh`
+      "what CI should run" and CI never ran it, so the template could have rotted silently.
+      A `template` job now runs it
+- [x] **[`docs/24-Getting-Started.md`](docs/24-Getting-Started.md)**, with a gate that makes
+      it checkable: every fenced block must carry a `verify:` marker, so the page **cannot
+      grow an unchecked snippet**. Blocks marked as compiling go through `FlowPlanGenerator`
+      and all eleven analyzers, *and the generated code is compiled too*; blocks marked as
+      reporting a diagnostic must produce exactly that set. Both directions were confirmed by
+      breaking them
 
 ---
 
