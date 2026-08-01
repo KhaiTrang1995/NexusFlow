@@ -496,6 +496,41 @@ public sealed class FlowExecutionContext : FlowContext
         _state[typeof(T)] = value;
     }
 
+    /// <summary>
+    /// Seeds a delivered signal into the state bag, under the contract the flow declared.
+    /// </summary>
+    /// <param name="signal">The signal to seed.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one write to the bag whose type the engine does not have.</strong>
+    /// Everywhere else the split holds — the engine owns control flow and the dispatcher owns
+    /// types — and it holds here too in the direction that matters: the <em>contract</em> is
+    /// captured statically by <see cref="FlowSignal.Of{TSignal}"/>, at the call site that knows
+    /// it, and this method only stores it under the key <see cref="Set{T}"/> would have used.
+    /// It is not a reflecting setter and there is no boxing beyond the one the signal already
+    /// arrived in.
+    /// </para>
+    /// <para>
+    /// Reached once per delivered signal, on the durable resume path only. The ephemeral loop
+    /// budget B2 measures never has a signal to seed, because
+    /// <c>ExecutionPlan</c> refuses a suspension point outside <c>Durable</c>.
+    /// </para>
+    /// </remarks>
+    internal void Deliver(FlowSignal signal)
+    {
+        if (_guarded)
+        {
+            lock (_state)
+            {
+                _state[signal.Contract] = signal.Payload;
+            }
+
+            return;
+        }
+
+        _state[signal.Contract] = signal.Payload;
+    }
+
     /// <summary>Prepares a pooled instance for one execution.</summary>
     /// <param name="plan">The flow being executed.</param>
     /// <param name="invocation">Correlation, tenant and the caller's remaining budget.</param>

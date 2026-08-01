@@ -127,12 +127,14 @@ flow.Step<AssessRisk>()
 ```
 
 > The high-risk arm used to read `.AwaitSignal<ReviewDecision>(TimeSpan.FromHours(24))`,
-> which is the honest shape for a review a person performs — and it does not compile:
-> [`FLOWX1031`](diagnostics/FLOWX1031.md) is an error on `AwaitSignal`, inside a
-> conditional block as much as at the top level. Until
-> [WP-63](20-Roadmap.md#3-increment-detail), a decision a person makes arrives with the
-> request or through a second flow the reviewer's action triggers, which is what the
-> step above records. See [§3.5](#35-waiting).
+> which is the honest shape for a review a person performs — and for two phases it did not
+> compile, because [`FLOWX1031`](diagnostics/FLOWX1031.md) was an error on `AwaitSignal`.
+> **It compiles and waits since WP-63.** The example keeps the two-flow shape because it is
+> also a legitimate design and because this section is about conditionals rather than about
+> waiting; a flow that wants the wait writes it, and [§3.5](#35-waiting) is the account. The
+> one thing to know before moving it inside a conditional is that a suspension there suspends
+> the **whole instance**, not the arm — a resume re-evaluates the predicate against the
+> restored state bag and lands back in the same arm, which is what makes it work.
 
 Conditions may read **only** `ctx.State`, `ctx.Input` and prior step results
 (`FLOWX1011`). A condition that reads a clock, a static, or an external service
@@ -298,33 +300,47 @@ deliberately does not cover this one, exactly as it does not cover a fork.
 ### 3.5 Waiting
 
 > [!WARNING]
-> **None of this works, and the snippet below does not compile.** All three
-> constructs are reported by [`FLOWX1031`](diagnostics/FLOWX1031.md); durable
-> suspension and timers are [WP-63](20-Roadmap.md#3-increment-detail), which has not
-> started. The section stays because the shape is the one WP-63 builds, and deleting
-> it would leave the DSL publishing three methods no document describes.
+> **One of these three works, and the snippet below still does not compile clean.**
+> *This box read "none of this works" until WP-63 (2026-08-01).* `.AwaitSignal<T>(timeout)`
+> is honoured; `.Delay(...)` and `.OnTimeout(...)` are reported by
+> [`FLOWX1031`](diagnostics/FLOWX1031.md), because there is no scheduler and no timer table.
 
 ```csharp
-flow.AwaitSignal<PaymentConfirmed>(timeout: TimeSpan.FromMinutes(30))  // FLOWX1031, error
+flow.AwaitSignal<PaymentConfirmed>(timeout: TimeSpan.FromMinutes(30))  // honoured
         .OnTimeout(f => f.Step<CancelPendingOrder>())                  // FLOWX1031, warning
     .Delay(TimeSpan.FromHours(1))            // FLOWX1031, warning — no step is produced
     .Step<SendFollowUp>();
 ```
 
-| Construct | Intended | What the compiler does with it today |
+| Construct | Intended | What the compiler and the engine do with it today |
 |---|---|---|
-| `.AwaitSignal<T>(timeout)` | suspends until the signal arrives, holding no thread, no memory and no lease | Produced a step the engine completes immediately, in a plan carrying `TimeSpan.FromHours(1)` however long the author declared. Now an **error**, and no plan is emitted for the flow |
+| `.AwaitSignal<T>(timeout)` | suspends until the signal arrives, holding no thread, no memory and no lease | **This.** The instance is sealed `Suspended` at its resume frontier, the lease is given back, and `FlowHost.SignalAsync` resumes it through the same step loop a recovery scan uses. The plan carries the duration the author declared — it used to carry `TimeSpan.FromHours(1)` however long they wrote — and **nothing arms it**, because there is no timer |
 | `.OnTimeout(block)` | the branch taken when the signal never arrives | The block is **discarded** — its steps reach no plan, no dispatcher and no `flowx.manifest.json`. A **warning** |
 | `.Delay(duration)` | a durable timer holding no resources while it waits | **No step at all**, so the flow continues without waiting. A **warning** |
 
 `AwaitSignal` and `Delay` are declared `Durable`-only, and using `AwaitSignal` in an
 `Ephemeral` flow is [`FLOWX1017`](diagnostics/FLOWX1017.md) (error), because an
-in-memory wait cannot survive a deployment. **`Durable` does not buy the wait
-either** — that is what `FLOWX1031` reports, and what
-[06 §6](06-Execution-Engine.md#6-suspension-waiting-without-holding-resources) now
-says. Until WP-63 lands, express the wait outside the flow: split the process at the
-pause and trigger the second half from the arriving signal, and replace a `Delay`
-with a scheduled trigger.
+in-memory wait cannot survive a deployment. **`Durable` buys the wait**, which it did not
+until WP-63 — [06 §6](06-Execution-Engine.md#6-suspension-waiting-without-holding-resources)
+is the account, and `samples/workflow`'s `offer.accept` is the running example. A `Delay`
+still has to be expressed outside the flow: a scheduled trigger replaces it, and a scheduled
+sweep over instances that have been waiting too long replaces an `OnTimeout` branch.
+
+**What the signal delivers reaches the steps after the wait.** The payload is seeded into the
+state bag under the contract named in `.AwaitSignal<T>(...)`, so the next step binds it with
+`ctx.Get<T>()` exactly as it binds an earlier step's output — and it is journaled by the
+commit that records the suspension point, so a second crash does not lose it. That makes `T`
+a state-bag contract in the sense [`FLOWX1006`](diagnostics/FLOWX1006.md) checks: it must be
+declared by a source-generated `JsonSerializerContext`.
+
+**Three limits worth reading before you write a wait.** A flow with an `[HttpTrigger]` should
+not suspend — the generated endpoint answers `200` with the flow's projected output and a
+suspended flow has none. An **inline** composed child may not suspend, because the parent's
+composition row is written only when the child finishes, so a parent resumed past a waiting
+child would compose a second child instance; it is refused as
+`flow.suspension_inside_composition`, and a `Detached` child may wait. And the only budget
+enforced on a waiting instance is the flow's own `[FlowDeadline]`, checked at the boundary
+that decides whether to suspend.
 
 ### 3.6 Emitting events
 
@@ -386,11 +402,19 @@ deadline and failure semantics, and skipping it would drop business logic.
 [`FLOWX1026`](diagnostics/FLOWX1026.md) says so rather than the compiler guessing.
 
 > *This paragraph used to contrast `AwaitCompletion` with `AwaitSignal`, "which degenerates
-> honestly into a step that completes". It does not degenerate honestly — a flow written to
-> wait runs straight past the wait with a clean journal and a successful result, and the
-> plan carried a timeout the author never wrote. That is why `AwaitSignal` is now refused
-> too, by [`FLOWX1031`](diagnostics/FLOWX1031.md). The two constructs are in the same
-> position, not on opposite sides of a line.*
+> honestly into a step that completes". It did not degenerate honestly — a flow written to
+> wait ran straight past the wait with a clean journal and a successful result, and the plan
+> carried a timeout the author never wrote — so `AwaitSignal` was refused too, by
+> [`FLOWX1031`](diagnostics/FLOWX1031.md), and the two constructs were in the same position.*
+> **They are on opposite sides of a line again, and the line has moved.** WP-63 made
+> `AwaitSignal` suspend; `AwaitCompletion` is still refused, and now for a reason that can be
+> stated concretely rather than as "there is no suspension point". A parent records a
+> composition as **one** journal row, written when the child finishes. A parent that waited
+> for a child would have no row for the composition while it waited, so a parent resumed in
+> the meantime would compose a *second* child instance and repeat every effect the first one
+> had. The runtime refuses an inline child that suspends for exactly that reason —
+> `flow.suspension_inside_composition` — and `AwaitCompletion` needs the parent's row to be
+> splittable into "started" and "finished", which is a schema question and not an engine one.
 
 **A sub-flow is one node, and the child's steps are not in the parent's graph.** The parent
 compiles to a single `StepKind.SubFlow` with no target; the child has its own
@@ -508,7 +532,8 @@ edge out of it.
 | `.SubFlow<TFlow>(map, mode)` | compose flows | all |
 | `.Emit<TEvent>(map)` | publish a domain event | all |
 | `.EmitOnFailure<TEvent>(map)` | publish on failure path | all |
-| `.AwaitSignal<T>(timeout).OnTimeout(b)` | external wait | Durable — but **not honoured**: [`FLOWX1031`](diagnostics/FLOWX1031.md), an error on the `AwaitSignal` and a warning on the `OnTimeout` |
+| `.AwaitSignal<T>(timeout)` | external wait | Durable, and **honoured**: the instance suspends and a signal resumes it. The declared timeout reaches the plan and nothing arms it |
+| `.OnTimeout(b)` | the branch taken when the signal never arrives | Durable — but **not honoured**: [`FLOWX1031`](diagnostics/FLOWX1031.md) warns, and the block is discarded |
 | `.Delay(duration)` | durable timer | Durable — but **not honoured**: [`FLOWX1031`](diagnostics/FLOWX1031.md) warns, and no step is produced |
 | `.Window(spec)` / `.Aggregate(...)` | stream windowing | Streaming |
 | [`.Fail(error)`](#38-failing) | terminate with a business error, unwinding what completed | all |

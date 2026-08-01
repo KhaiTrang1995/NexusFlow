@@ -467,7 +467,7 @@ public sealed class FlowEngine
         return new JournalCursor(durable, StepScope.Root);
     }
 
-    /// <summary>Moves the instance to its terminal state once the loop and the unwind are done.</summary>
+    /// <summary>Records where the instance came to rest once the loop and the unwind are done.</summary>
     /// <remarks>
     /// <para>
     /// A refusal here becomes the flow's error even when every step succeeded. Being fenced
@@ -481,25 +481,44 @@ public sealed class FlowEngine
     /// below the fence can only be refused a second time — which would replace the error that
     /// explains what happened with a duplicate of itself.
     /// </para>
+    /// <para>
+    /// <strong>Not every state written here is terminal.</strong> A flow that stopped at a
+    /// suspension point is recorded <see cref="FlowInstanceState.Suspended"/> through the same
+    /// call, because that is what makes the wait a row rather than a thread — and because a
+    /// journal correctly refuses a write to an instance it believes is finished, so recording
+    /// a wait as anything terminal would make the resume that follows it impossible.
+    /// </para>
     /// </remarks>
     private static async ValueTask<FlowExecutionResult> SealAsync(
         JournalCursor cursor,
         FlowExecutionResult result,
         CancellationToken ct)
     {
+        var instanceId = cursor.Run!.InstanceId;
+
         if (result.Error is { } ended && Disowned(ended))
         {
-            return result;
+            return Stamped(result, instanceId);
         }
 
-        var refusal = await CloseInstanceAsync(cursor, TerminalState(result), ct).ConfigureAwait(false);
+        var refusal = await CloseInstanceAsync(cursor, InstanceStateFor(result), ct).ConfigureAwait(false);
 
         return refusal is null
-            ? result
-            : new FlowExecutionResult(refusal, result.CompletedSteps, result.Compensation);
+            ? Stamped(result, instanceId)
+            : new FlowExecutionResult(
+                refusal, result.CompletedSteps, result.Compensation, instanceId: instanceId);
     }
 
-    /// <summary>Moves one instance — root, composed or detached — to a terminal state.</summary>
+    /// <summary>Puts the instance's identity on the result a caller gets back.</summary>
+    /// <remarks>
+    /// The id is minted inside the host, so without this a caller has no way to name the
+    /// instance a signal belongs to — which makes a suspended flow unreachable rather than
+    /// merely opaque.
+    /// </remarks>
+    private static FlowExecutionResult Stamped(FlowExecutionResult result, Guid instanceId) =>
+        new(result.Error, result.CompletedSteps, result.Compensation, result.IsSuspended, instanceId);
+
+    /// <summary>Moves one instance — root, composed or detached — to the state it rests in.</summary>
     /// <remarks>
     /// The state bag is deliberately <see cref="JournalPayload.Empty"/>: the last committed
     /// step already carried the snapshot, and re-serialising the bag at the end would make
@@ -519,16 +538,25 @@ public sealed class FlowEngine
         return closed.IsSuccess ? null : closed.Error;
     }
 
-    /// <summary>Which terminal state a finished execution leaves on the instance row.</summary>
+    /// <summary>Which state an execution that has stopped leaves on the instance row.</summary>
     /// <remarks>
+    /// <para>
     /// <c>CompensationFailed</c> outranks the rest: it is the one terminal state with no
     /// automatic resolution — two systems now disagree about the same business fact — and
     /// recording it as a plain failure would hide the one outcome an operator has to be told
     /// about.
+    /// </para>
+    /// <para>
+    /// <c>Suspended</c> is tested first among the rest and is the one answer here that is not
+    /// terminal. It is also what keeps a waiting instance out of a recovery scan's candidate
+    /// set: both shipped indexes list <c>Pending</c>, <c>Running</c> and <c>Compensating</c>
+    /// only, so a flow waiting for a countersignature is not swept up every TTL and re-suspended.
+    /// </para>
     /// </remarks>
-    private static FlowInstanceState TerminalState(FlowExecutionResult result) => result switch
+    private static FlowInstanceState InstanceStateFor(FlowExecutionResult result) => result switch
     {
         { Compensation: CompensationOutcome.PartiallyFailed } => FlowInstanceState.CompensationFailed,
+        { IsSuspended: true } => FlowInstanceState.Suspended,
         { IsSuccess: true } => FlowInstanceState.Completed,
         { Error.Code: FlowErrors.DeadlineExceededCode } => FlowInstanceState.TimedOut,
         _ => FlowInstanceState.Failed,
@@ -601,12 +629,21 @@ public sealed class FlowEngine
             // not, so give them back. Gated on the plan so a flow that composes nothing
             // does not pay an iterator for the possibility that another flow does — which
             // is what keeps budget B2 a hard zero where it always was.
+            //
+            // A suspended flow gives them back too, and that is a limit rather than a
+            // choice: the invocation is returning, and a pooled context still held by a
+            // waiting instance would be a context the next flow never gets. It is the same
+            // gap ADR-0015 already records for a resumed parent that skips a completed
+            // child — the child's undo cannot be rebuilt from the parent's rows — reached
+            // through a second door.
             if (plan.HasSubFlow)
             {
                 ReleaseRetainedSubFlows(context);
             }
 
-            return new FlowExecutionResult(null, outcome.Completed, CompensationOutcome.NotRequired);
+            return outcome.Suspended
+                ? FlowExecutionResult.Suspended(outcome.Completed)
+                : new FlowExecutionResult(null, outcome.Completed, CompensationOutcome.NotRequired);
         }
 
         context.SetError(outcome.Failure);
@@ -663,17 +700,28 @@ public sealed class FlowEngine
 
     /// <summary>How a range of steps ended: the first failure in it, and how many ran.</summary>
     /// <remarks>
+    /// <para>
     /// A struct so a branch's result costs nothing to return. The whole flow is one range,
     /// <c>[0, Count)</c>, so the sequential path and a parallel branch are literally the
     /// same code — which is the point of the shape, and the reason a branch inherits the
     /// deadline check, the compensation recording and the exception handling for free
     /// rather than by being kept in step with them.
+    /// </para>
+    /// <para>
+    /// <strong>Three endings rather than two, since WP-63.</strong> A range that stopped at a
+    /// suspension point has neither failed nor finished, and the two existing answers both
+    /// say something untrue about it: a failure would unwind steps nothing went wrong with,
+    /// and a success would let the range after it run.
+    /// </para>
     /// </remarks>
-    private readonly struct RangeOutcome(Error? failure, int completed)
+    private readonly struct RangeOutcome(Error? failure, int completed, bool suspended = false)
     {
         public Error? Failure { get; } = failure;
 
         public int Completed { get; } = completed;
+
+        /// <summary>Whether the range stopped at an <see cref="StepKind.AwaitSignal"/> step.</summary>
+        public bool Suspended { get; } = suspended;
     }
 
     /// <summary>
@@ -726,6 +774,7 @@ public sealed class FlowEngine
     {
         var steps = plan.Graph.Steps;
         var completed = 0;
+        var suspended = false;
         Error? failure = null;
 
         // Not `for (i = from; i < end; i++)`. A conditional is compiled into this same flat
@@ -919,6 +968,29 @@ public sealed class FlowEngine
                 break;
             }
 
+            // The suspension point, and the whole of it. The step has no committed row — the
+            // skip above did not take — so either the signal it waits for is in this
+            // invocation, or the flow stops here.
+            //
+            // After the deadline check on purpose: an instance whose budget has already gone
+            // must time out rather than wait for a signal it can no longer act on, and a
+            // suspension is the one ending from which nothing else would ever look again.
+            //
+            // A delivered signal falls through to the ordinary path below. The dispatcher
+            // answers Success for a suspension point — there is no capability to call — and
+            // the commit that follows writes the row and the state-bag snapshot the signal is
+            // now in, which is why resumption needs no signal table of its own.
+            if (step.Kind == StepKind.AwaitSignal)
+            {
+                if (cursor.Run?.TakeSignal(step.SignalType) is not { } delivered)
+                {
+                    suspended = true;
+                    break;
+                }
+
+                context.Deliver(delivered);
+            }
+
             // Only read when there is a row to put it on. An ephemeral step does not pay a
             // clock read to measure a duration nobody records.
             var startedAt = cursor.IsJournaled ? _clock.UtcNow : default;
@@ -1002,7 +1074,7 @@ public sealed class FlowEngine
             i++;
         }
 
-        return new RangeOutcome(failure, completed);
+        return new RangeOutcome(failure, completed, suspended);
     }
 
     /// <summary>
@@ -1201,6 +1273,7 @@ public sealed class FlowEngine
         var errors = new Error?[targets.Length];
         var completed = 0;
         var succeeded = 0;
+        var suspended = false;
         Error? firstFailure = null;
 
         while (pending.Count > 0)
@@ -1213,7 +1286,18 @@ public sealed class FlowEngine
             completed += outcome.Completed;
             errors[Array.IndexOf(started, finished)] = outcome.Failure;
 
-            if (outcome.Failure is null)
+            // A branch that stopped at a suspension point is neither. Counting it as a
+            // success would let Quorum(2) be satisfied by a branch that is still waiting,
+            // and counting it as a failure would unwind a fork nothing went wrong in.
+            suspended |= outcome.Suspended;
+
+            if (outcome.Suspended)
+            {
+                // Deliberately not cancelled: the siblings have work of their own to
+                // finish, their rows are what a resume steps over, and cancelling them
+                // would make the resumed fork redo work this invocation had already done.
+            }
+            else if (outcome.Failure is null)
             {
                 succeeded++;
             }
@@ -1229,6 +1313,16 @@ public sealed class FlowEngine
             {
                 await StopSiblingsAsync(cancellation).ConfigureAwait(false);
             }
+        }
+
+        // A failure outranks a suspension: the fork has a reason to unwind, and a saga that
+        // waited for a signal it could no longer act on would be holding open a decision
+        // that has already been made. With no failure the fork itself suspends, and the
+        // merge is left un-judged — a strategy applied to a fork that has not finished
+        // would report `flow.merge_not_satisfied` for branches that are merely waiting.
+        if (suspended && firstFailure is null)
+        {
+            return new RangeOutcome(null, completed, suspended: true);
         }
 
         return new RangeOutcome(Verdict(plan, step, merge, errors, succeeded, firstFailure, context), completed);
@@ -1328,6 +1422,7 @@ public sealed class FlowEngine
     {
         var errors = step.ContinueOnError ? new Error?[source.Count] : null;
         var completed = 0;
+        var suspended = false;
         Error? firstFailure = null;
         Error? fatal = null;
 
@@ -1357,6 +1452,16 @@ public sealed class FlowEngine
 
             completed += outcome.Completed;
 
+            if (outcome.Suspended)
+            {
+                // The whole loop waits, not just this element. Running the elements behind a
+                // waiting one would commit their rows while an earlier iteration is still
+                // open, so a resumed loop would re-enter element 3 having already done
+                // element 4 — a `ForEach` is ordered by declaration and this keeps it so.
+                suspended = true;
+                break;
+            }
+
             if (outcome.Failure is null)
             {
                 continue;
@@ -1377,7 +1482,7 @@ public sealed class FlowEngine
             errors[element] = outcome.Failure;
         }
 
-        return new RangeOutcome(IterationVerdict(step, errors, firstFailure, fatal, context), completed);
+        return Iterated(step, errors, firstFailure, fatal, suspended, completed, context);
     }
 
     /// <summary>Runs the elements with a sliding window of at most <c>MaxDegreeOfParallelism</c>.</summary>
@@ -1417,6 +1522,7 @@ public sealed class FlowEngine
         var next = 0;
         var completed = 0;
         var stopped = false;
+        var suspended = false;
         Error? firstFailure = null;
         Error? fatal = null;
 
@@ -1464,6 +1570,16 @@ public sealed class FlowEngine
 
             completed += outcome.Completed;
 
+            if (outcome.Suspended)
+            {
+                // No more elements are started, and the ones in flight are drained rather
+                // than cancelled: their rows are what a resume steps over, and cancelling
+                // them would make the resumed loop redo work this invocation had done.
+                suspended = true;
+                stopped = true;
+                continue;
+            }
+
             if (outcome.Failure is null)
             {
                 continue;
@@ -1481,6 +1597,36 @@ public sealed class FlowEngine
             }
 
             errors[element] = outcome.Failure;
+        }
+
+        return Iterated(step, errors, firstFailure, fatal, suspended, completed, context);
+    }
+
+    /// <summary>
+    /// Turns a finished loop into the loop's own outcome, suspension included.
+    /// </summary>
+    /// <remarks>
+    /// A wrapper over <see cref="IterationVerdict"/> rather than a parameter on it, because
+    /// the verdict answers "what error, if any" and a suspension is not one. Keeping the two
+    /// apart is what stops <c>ContinueOnError</c> publishing a <see cref="ForEachOutcome"/>
+    /// for a loop that has not finished — a step after the loop would read it and decide
+    /// something about elements that are still waiting.
+    /// </remarks>
+    private static RangeOutcome Iterated(
+        StepNode step,
+        Error?[]? errors,
+        Error? firstFailure,
+        Error? fatal,
+        bool suspended,
+        int completed,
+        FlowExecutionContext context)
+    {
+        // A failure outranks a suspension, for the reason a fork's does: the loop has a
+        // reason to unwind, and waiting on a decision already made is not one of the
+        // endings a saga has.
+        if (suspended && fatal is null && firstFailure is null)
+        {
+            return new RangeOutcome(null, completed, suspended: true);
         }
 
         return new RangeOutcome(IterationVerdict(step, errors, firstFailure, fatal, context), completed);
@@ -1779,6 +1925,24 @@ public sealed class FlowEngine
                 source.Plan, source.Dispatcher, child, child, childCompensations,
                 0, source.Plan.Graph.Count, childCursor, ct).ConfigureAwait(false);
 
+            // An inline child cannot suspend, and this is where that is refused rather than
+            // where it goes wrong. The parent's composition row is written only when the
+            // child finishes, so a parent resumed past a waiting child would find no row for
+            // the composition and compose a *second* child instance — repeating every effect
+            // the first one had already had. Nothing in the journal could tell the two apart
+            // afterwards, which is why this is a refusal and not a limitation to document.
+            //
+            // A detached child is a different shape and is not refused: it has its own
+            // instance, its own lifecycle and no row the parent is waiting on, so it suspends
+            // and is signalled exactly as a flow a trigger started.
+            if (outcome.Suspended)
+            {
+                outcome = new RangeOutcome(
+                    FlowErrors.SuspensionInsideComposition(
+                        plan.Flow.Id, step.Index, source.Plan.Flow.Id),
+                    outcome.Completed);
+            }
+
             if (outcome.Failure is not null)
             {
                 // The child unwinds itself, here, before the parent hears about it. Its
@@ -1984,7 +2148,7 @@ public sealed class FlowEngine
             // tries to finish.
             if (cursor.IsJournaled)
             {
-                _ = await CloseInstanceAsync(cursor, TerminalState(result), CancellationToken.None)
+                _ = await CloseInstanceAsync(cursor, InstanceStateFor(result), CancellationToken.None)
                     .ConfigureAwait(false);
             }
         }

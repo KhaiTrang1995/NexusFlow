@@ -38,11 +38,12 @@ ephemeral one is not replayed at all.
 source file, which is most of why it is not an error;
 [the section below](#the-severity-of-flowx1012-which-is-not-the-determinism-sets-argument)
 is its argument, kept apart from the determinism set's on purpose.
-[FLOWX1031](FLOWX1031.md) is the twelfth and is the only entry that is not one severity: it
-covers three constructs the compiler cannot honour, and it is an **error** for the one that
-puts a value into the plan that the author did not write and a **warning** for the two it
-merely drops.
-[The section below](#the-severity-of-flowx1031-which-is-split) is that argument.
+[FLOWX1031](FLOWX1031.md) is the twelfth. It covered three constructs the compiler could not
+honour and was the only entry with two severities — an **error** for the one that put a value
+into the plan the author did not write, a **warning** for the two it merely dropped. **WP-63
+narrowed it to the two that are dropped**, so it is one severity again;
+[the section below](#the-severity-of-flowx1031-which-was-split) is what that argument was and
+which half of it survived.
 [FLOWX1032](FLOWX1032.md) is the thirteenth and is `FLOWX1028`'s argument taken one level
 down, from the flow's execution profile to a step's policy set;
 [its section](#the-severity-of-flowx1032-which-is-flowx1028s-argument-one-level-down) says
@@ -185,48 +186,46 @@ reference application, a compensable saga on `Ephemeral`. It stopped that build,
 the evidence that the rule reports on real code rather than on a fixture. What the sample
 did about it is on [the page](FLOWX1012.md#the-reference-sample-fires-this-rule).
 
-## The severity of `FLOWX1031`, which is split
+## The severity of `FLOWX1031`, which was split
 
-One rule, three constructs, and **two severities**: an **error** for `AwaitSignal`, a
-**warning** for `Delay` and `OnTimeout`. The full argument is
-[on the page](FLOWX1031.md#why-awaitsignal-is-an-error-and-the-other-two-are-warnings); what
-belongs here is why the split is not a way of avoiding the decision.
+**One rule, two constructs, one severity — since WP-63.** It covered three and had two
+severities: an **error** for `AwaitSignal`, a **warning** for `Delay` and `OnTimeout`. This
+section is kept rather than deleted because the argument is what decided the shape of the
+fix, and because a catalogue that quietly rewrites its own history teaches nobody what it got
+wrong.
 
-**The line is between a construct the compiler omits and one it falsifies.** `Delay` and
+**The line was between a construct the compiler omits and one it falsifies.** `Delay` and
 `OnTimeout` produce no step, so the generated plan says less than the source and nothing in
 it is untrue — the category [FLOWX1027](FLOWX1027.md) already occupies, at the severity C#
-gives `CS0162`. `AwaitSignal` produces a step that reaches the plan, the dispatcher and the
-manifest carrying `TimeSpan.FromHours(1)`, a value no author wrote, in place of one they
-did. Choosing severity per report rather than per rule is what
-[FLOWX1011](FLOWX1011.md) and [FLOWX1025](FLOWX1025.md) already do; what is new is that the
-proof is a property of the emitted artefact rather than of the flow's profile.
+gives `CS0162`. That half is unchanged and is the whole of the rule now. `AwaitSignal`
+produced a step that reached the plan and the dispatcher carrying `TimeSpan.FromHours(1)`, a
+value no author wrote, in place of one they did — and the error was what stopped the
+fabrication, because the compiler's step model had no field to carry the author's duration
+and `StepNode.ForAwaitSignal` demands one. That left two options, emit a plan containing a
+duration nobody wrote or emit no plan, and a warning would have been a rule that reports the
+falsification in the build log and then commits it in the generated source.
 
-**Why the error, against `FLOWX1028`'s precedent.** [FLOWX1028](FLOWX1028.md) is the nearest
-neighbour — a declaration the platform does not honour — and it is a warning on two
-arguments. The first, that an error erases the inventory the fixing phase will need, carries,
-and is why the other two constructs are warnings. The second does not: a `Streaming` flow
-*runs*, and runs correctly for every flow whose invocations are genuinely independent, so
-FLOWX1028 can offer "confirm the flow is correct as it is, and record that" as a real
-remedy. **No flow is correct with a seven-day wait compiled to no wait.** Every warning in
-this catalogue is a warning because some legitimate program exists in which the reported code
-is correct; `AwaitSignal` has none, which puts it under this file's opening sentence rather
-than under its exceptions.
+**WP-63 took the third option the model made unavailable.** `StepModel.SignalTimeout` carries
+the author's expression, the emitter copies it into the plan, and `FlowEngine` suspends at the
+step — so there is no fabrication to refuse and no wait that does not happen. The refusal in
+`FlowEmitter` is still there and still says the same thing; what changed is that nothing
+reaches it, because the DSL has no `AwaitSignal` overload without a timeout.
 
-**And the error is what removes the fabricated timeout.** The compiler's step model has no
-field for a signal timeout, so carrying the author's duration into the plan is WP-63's edit,
-not this one's. That leaves two options — emit a plan containing a duration nobody wrote, or
-emit no plan. A warning would have been a rule that reports the falsification in the build
-log and then commits it in the generated source, so the constant is gone from `FlowEmitter`
-and the flow gets no plan.
+**Narrowed rather than deleted, on `FLOWX1028`'s precedent.** That rule was narrowed to
+`Streaming` when `Durable` started running rather than deleted outright, because deleting it
+would have handed `Streaming` the silence `Durable` had. The same argument applies here:
+`Delay` and `OnTimeout` still reach no plan, no dispatcher and no manifest, and a rule that
+went away entirely would hand a discarded `OnTimeout` block the silence `AwaitSignal` used to
+have. What is left is a warning for exactly `FLOWX1028`'s first reason — an error erases the
+declaration the fixing phase needs to find, and `.Delay(...)` is the grep that finds the flows
+the timer half of WP-63 has to make work.
 
-**The cost, stated rather than avoided.** With `FLOWX1017` an error below `Durable` and this
-an error at it, `AwaitSignal` has no profile it can legally declare, and
-`AwaitSignalRequiresDurableCodeFixProvider` becomes a quick action whose result is a
-different diagnostic — the exact conflict `FLOWX1028`'s page retired by narrowing, and the
-thing `ExecutionProfileAnalyzerTests` calls a broken fix. The answer is that the quick
-action's premise — "the author wrote `AwaitSignal`, so the flow suspends" — is false, and
-this rule is what makes that visible; `AwaitSignal` having no legal profile is an accurate
-description of a platform with no suspension engine.
+**And the cost the split used to carry is gone.** With `FLOWX1017` an error below `Durable`
+and this an error at it, `AwaitSignal` had no profile it could legally declare, and
+`AwaitSignalRequiresDurableCodeFixProvider` was a quick action whose result was a different
+diagnostic — the thing `ExecutionProfileAnalyzerTests` calls a broken fix. The premise the
+provider's own remarks rest on, *"the author wrote `AwaitSignal`, so the flow suspends"*, is
+true now, so its output is a flow that compiles and waits.
 
 ## The severity of `FLOWX1032`, which is `FLOWX1028`'s argument one level down
 
@@ -295,7 +294,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1029](FLOWX1029.md) | Step input mapping produces the wrong contract | A `CS1503` inside generated source, about a call the developer cannot see |
 | [FLOWX1028](FLOWX1028.md) | Execution profile is declared but not honoured by the runtime | **A payment saga declaring `Durable` and losing its instance on the next deploy** |
 | [FLOWX1030](FLOWX1030.md) | Authorisation stance names no permission or policy | **A capability published as permission-protected that names no permission, and a `flowx diff` rule with nothing to compare when the grant moves** |
-| [FLOWX1031](FLOWX1031.md) | Suspension construct is declared but not honoured by the compiler | **A flow written to wait seven days for a countersignature running straight past the wait, with a clean journal, a published manifest and a successful result** |
+| [FLOWX1031](FLOWX1031.md) | Suspension construct is declared but not honoured by the compiler | A `.Delay(...)` that produces no step and an `.OnTimeout(...)` block absent from the plan, the dispatcher and the manifest. *Narrowed at WP-63: `AwaitSignal` is honoured — a durable flow suspends at it and a signal resumes it — so the half that described **a flow written to wait seven days running straight past the wait** is gone with the behaviour it described* |
 | [FLOWX1032](FLOWX1032.md) | Declared policy is not executed by the runtime | **A step declaring a three-second timeout, three retries and a circuit breaker, published in the manifest as wrapped in all three and dispatched once with no clock, no attempt count and no breaker** |
 | [FLOWX1033](FLOWX1033.md) | `CompensationRetry` is declared on a step with no compensation | **The one policy the runtime executes, dropped by the emitter in silence: a manifest promising five attempts at an undo, and a plan with no undo to attempt** |
 
@@ -407,8 +406,10 @@ compiler*: `.AwaitSignal<T>(timeout)`, `.Delay(duration)` and `.OnTimeout(block)
 of which compiled with no diagnostic and produced either no step or a step that completes
 immediately. It is none of the reservations, and it is not `FLOWX1017`: that rule asks which
 profile a suspension point may be declared under, and this one asks whether the compiler can
-honour it under any — which is why it does not read the profile. Its severity is **split**,
-and the argument is [below](#the-severity-of-flowx1031-which-is-split).
+honour it under any — which is why it does not read the profile. Its severity was **split**
+until WP-63 honoured `AwaitSignal` and narrowed it to the two that are still dropped; the
+argument, and which half of it survived, is
+[below](#the-severity-of-flowx1031-which-was-split).
 
 **`FLOWX1032` is claimed** — *declared policy is not executed by the runtime*: every kind a
 `.WithPolicy(...)` set declares except `CompensationRetry`, which is the only policy any code

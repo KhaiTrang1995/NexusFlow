@@ -997,12 +997,19 @@ policy. A `.WithPolicy(… .Retry(3))` on a forward step is a declaration the en
 ignores. The declaration is still worth writing: it is what the day the engine reads it will
 find.
 
-**No timers and no `AwaitSignal`.** `IFlowBuilder` declares `AwaitSignal<TSignal>(timeout)`
-and `Delay(duration)`. `FLOWX1017` correctly refuses an `AwaitSignal` on a non-durable flow —
-and on a durable one, the generated dispatcher returns success for the step immediately,
-because there is no suspension machinery. `.Delay(…)` is not modelled as a step at all.
-Neither waits. `SubFlowMode.AwaitCompletion` is refused outright by `FLOWX1026` for the same
-underlying reason. Durable *suspension* is a later work package.
+**No timers. `AwaitSignal` waits.** `IFlowBuilder` declares `AwaitSignal<TSignal>(timeout)`
+and `Delay(duration)`, and only the first of them does anything. A `Durable` flow that
+reaches an `AwaitSignal` **suspends**: the invocation returns, the instance is `Suspended` in
+the journal at its resume frontier holding no thread and no lease, and `FlowHost.SignalAsync`
+resumes it through the same step loop a recovery scan uses, seeding the signal's payload into
+the state bag for the steps after the wait to bind. `FLOWX1017` still refuses one on a
+non-durable flow, correctly — an in-memory wait does not survive a deployment.
+`.Delay(…)` is not modelled as a step at all and `.OnTimeout(…)`'s block is discarded, both
+reported as `FLOWX1031`: there is no scheduler, so the `timeout` you declare on an
+`AwaitSignal` reaches the plan and is armed by nothing, and the only budget enforced on a
+waiting instance is its own `[FlowDeadline]`. `SubFlowMode.AwaitCompletion` is still refused
+outright by `FLOWX1026`, and an inline composed child that suspends is refused at run time —
+give a flow that waits its own trigger, or compose it `Detached`.
 
 **No multi-tenancy.** `TenantId` is read from validated claims at the HTTP boundary and
 carried on the flow context. **Nothing consumes it**: no admission control, no quota, no

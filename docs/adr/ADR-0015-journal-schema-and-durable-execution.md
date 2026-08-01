@@ -316,7 +316,7 @@ honest content of the section now.*
 | Still not in | Owed to |
 |---|---|
 | ~~The transactional **outbox**~~ **delivered.** A `Durable` flow's `.Emit<T>()` stages its event in the same commit as the step row and `PostgresOutboxPublisher` drains it; `RedisStreamEventPublisher` (WP-56b) takes it from there to a broker, one Redis stream per `partition_key`, and `PublisherConformance` holds it and the recording double to one contract. [`FLOWX1024`](../diagnostics/FLOWX1024.md) is re-scoped to an `Ephemeral` flow and to a contract no serialiser context declares | WP-56 |
-| **`AwaitSignal`** and durable suspension ([`FLOWX1017`](../diagnostics/FLOWX1017.md)). A durable flow still runs to completion inside one invocation | WP-63 |
+| ~~**`AwaitSignal`** and durable suspension~~ **delivered on 2026-08-01, in half.** A durable flow no longer runs to completion inside one invocation: it stops at `.AwaitSignal<T>(timeout)`, is sealed `Suspended` at its resume frontier holding no thread, no pooled context and no lease, and `FlowHost.SignalAsync` resumes it through the **same** `FlowEngine.ExecuteAsync` a recovery scan uses. A delivered signal is journaled as the suspension point's own row, so there is no signal table and no schema change — the frontier that skips committed steps is what makes a second delivery inert. What is **not** in is the **timer**: `.Delay(...)` and `.OnTimeout(...)` still compile to nothing, the declared timeout reaches the plan and is armed by nothing, and the only enforced budget on a waiting instance is its `[FlowDeadline]`. [`FLOWX1031`](../diagnostics/FLOWX1031.md) is narrowed to those two rather than deleted. Three limits are named on its page: no manifest field for a signal, no `202` shape for an `[HttpTrigger]`ed flow that suspends, and an inline composed child that may not wait | WP-63 |
 | ~~The generated payload writer and `FLOWX1006`~~ **delivered on 2026-08-01.** Both exist; `FLOWX1006` is an error uniformly, because it reports only on `Durable` flows. Commitment 5 below is met by a different construction than it names — the writer hands named values to `JournalPayload` rather than composing a document through a FlowX-owned STJ context, so redaction stays structural and no second exit was opened. WP-59 also closed a defect this table could not have shown: `FlowHost` passed a literal `input: null`, so `flow_instance.input` was NULL on **every row ever written** | WP-59 |
 | **B7 and B8 — unreported rather than passed.** The harness they are measured against does not exist, so the read cost this record's "Revisit when" is written around has never been observed | WP-50 |
 | **Redis**, and with it the split-store arrangement `ILeaseStore` describes — a Redis lease store and a Postgres journal sharing no transaction | WP-54 |
@@ -363,6 +363,15 @@ measured.**
 - `AwaitSignal`, `Delay` and `SubFlowMode.AwaitCompletion` gain the durable suspension
   point they are refused for the absence of today
   ([FLOWX1026](../diagnostics/FLOWX1026.md), [FLOWX1017](../diagnostics/FLOWX1017.md)).
+  *Delivered for `AwaitSignal` at WP-63, and by exactly the construction this record's
+  Decision predicts: the suspension point is a step boundary like any other, so a delivered
+  signal is one `flow_step` row keyed `(instance, scope, step, attempt)` and resumption is
+  the same loop re-entered from the derived frontier. No table, no column and no migration
+  was added. `Delay` waits on the timer this package did not build, and
+  `SubFlowMode.AwaitCompletion` is unchanged — an inline composed child that suspends is
+  refused as `flow.suspension_inside_composition`, because the parent's composition row is
+  written only when the child finishes and a parent resumed past a waiting child would
+  compose a second child instance.*
 
 **Negative / accepted trade-offs**
 

@@ -313,6 +313,40 @@ public sealed record StepModel
     /// <summary>Signal identity for an <see cref="StepKindModel.AwaitSignal"/> step.</summary>
     public string? SignalType { get; private init; }
 
+    /// <summary>
+    /// The author's declared wait, copied verbatim from the <c>.AwaitSignal</c> call.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This field is what ends the fabrication FLOWX1031 was raised over.</strong>
+    /// <c>StepNode.ForAwaitSignal</c> demands a duration and the model had none, so the
+    /// emitter wrote <c>TimeSpan.FromHours(1)</c> for every suspension point whatever the
+    /// author declared. Between publishing a value nobody wrote and publishing nothing, the
+    /// compiler published nothing — and this is the third option, which is the one that was
+    /// always right and needed a field.
+    /// </para>
+    /// <para>
+    /// The expression, not an evaluated <c>TimeSpan</c>, for the reason every other copied
+    /// expression here is verbatim: the generator does not constant-fold, so a duration
+    /// written as <c>Policies.OfferWindow</c> reaches the plan as that and the plan means
+    /// what the source means.
+    /// </para>
+    /// </remarks>
+    public string? SignalTimeout { get; private init; }
+
+    /// <summary>
+    /// Fully-qualified contract of the signal an <see cref="StepKindModel.AwaitSignal"/> step
+    /// waits for, or <c>null</c> when it could not be resolved.
+    /// </summary>
+    /// <remarks>
+    /// The signal's payload is seeded into the state bag under this type, so it is a journaled
+    /// contract in exactly the sense a capability step's output is: <c>FLOWX1006</c> checks it
+    /// for membership of a generated JSON context, and the emitted <c>DescribeStep</c> and
+    /// <c>RestoreState</c> carry it. Without that, an instance resumed by a signal and then
+    /// crashed would come back having satisfied the wait and lost what it delivered.
+    /// </remarks>
+    public string? SignalContractTypeName { get; private init; }
+
     /// <summary>Named policy set applied via <c>.WithPolicy(...)</c>.</summary>
     public string? PolicySetName { get; private init; }
 
@@ -730,12 +764,28 @@ public sealed record StepModel
         };
     }
 
-    /// <summary>Models an <c>.AwaitSignal&lt;TSignal&gt;(...)</c> call.</summary>
-    public static StepModel AwaitSignal(int index, string signalType, string? location = null)
+    /// <summary>Models an <c>.AwaitSignal&lt;TSignal&gt;(timeout)</c> call.</summary>
+    /// <param name="index">Flat index of the suspension point.</param>
+    /// <param name="signalType">The signal's identity, <c>&lt;domain&gt;.&lt;signal&gt;</c>.</param>
+    /// <param name="timeoutExpression">
+    /// The author's declared wait, copied verbatim. Null only from a half-typed buffer — the
+    /// DSL has no <c>AwaitSignal</c> overload without a timeout — and the emitter refuses such
+    /// a model rather than inventing a duration for it.
+    /// </param>
+    /// <param name="contractTypeName">Fully-qualified <c>TSignal</c>, or null when unresolved.</param>
+    /// <param name="location"><c>file:line</c> of the call.</param>
+    public static StepModel AwaitSignal(
+        int index,
+        string signalType,
+        string? timeoutExpression = null,
+        string? contractTypeName = null,
+        string? location = null)
     {
         return new StepModel(index, StepKindModel.AwaitSignal)
         {
             SignalType = signalType,
+            SignalTimeout = timeoutExpression,
+            SignalContractTypeName = contractTypeName,
             Location = location,
         };
     }

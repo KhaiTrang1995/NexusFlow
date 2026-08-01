@@ -11,7 +11,8 @@ using Xunit;
 namespace FlowX.Compiler.Tests;
 
 /// <summary>
-/// FLOWX1031 — the three constructs the compiler cannot honour, and what it says about them.
+/// FLOWX1031 — the suspension constructs the compiler still cannot honour, and the one it
+/// now can.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -20,6 +21,15 @@ namespace FlowX.Compiler.Tests;
 /// this rule they compiled with no diagnostic of any kind. Two of them produced no step;
 /// the third produced one that completes immediately, carrying a timeout constant nobody
 /// wrote.
+/// </para>
+/// <para>
+/// <strong>WP-63 narrowed the rule to two of the three, and did not delete it.</strong>
+/// <c>AwaitSignal</c> is honoured: the engine suspends at it, the author's declared duration
+/// reaches the plan, and a delivered signal resumes the instance. <c>Delay</c> and
+/// <c>OnTimeout</c> are unchanged — there is still no timer — so the rule keeps the half
+/// that is still true, exactly as <c>FLOWX1028</c> was narrowed to <c>Streaming</c> rather
+/// than deleted on the day <c>Durable</c> started running. Deleting it outright would have
+/// handed a discarded <c>OnTimeout</c> block the silence <c>AwaitSignal</c> used to have.
 /// </para>
 /// <para>
 /// Every test here goes through the real generator over a real compilation, because the
@@ -35,37 +45,38 @@ public sealed class SuspensionConstructTests
 
     // ------------------------------------------------------------- it fires
 
-    /// <summary>A durable flow that awaits a signal is told the wait does not happen.</summary>
+    /// <summary>A durable flow that awaits a signal is no longer reported at all.</summary>
     /// <remarks>
-    /// The silent path, and the one the whole rule exists for: FLOWX1017 already refuses
-    /// <c>AwaitSignal</c> under every other profile, so <c>Durable</c> is where an author
-    /// who did everything right got nothing back.
+    /// The half of this rule WP-63 discharged. <c>FLOWX1017</c> still refuses
+    /// <c>AwaitSignal</c> under every other profile — an in-memory wait does not survive a
+    /// deployment — so <c>Durable</c> is the one profile it can declare, and it is now the
+    /// profile under which the wait actually happens.
     /// </remarks>
     [Fact]
-    public void ReportsFLOWX1031WhenADurableFlowAwaitsASignal()
+    public void IsSilentOnADurableFlowThatAwaitsASignal()
     {
         var run = GeneratorHarness.Run(Durable("""
                 .Step<ReserveInventory>()
                 .AwaitSignal<PaymentConfirmed>(TimeSpan.FromDays(7))
             """));
 
-        run.Ids.ShouldContain("FLOWX1031", run.Describe());
+        run.Ids.ShouldNotContain("FLOWX1031", run.Describe());
     }
 
     /// <summary>The report names the construct and points at the call, not at the class.</summary>
     [Fact]
-    public void TheAwaitSignalReportPointsAtTheCall()
+    public void TheDelayReportPointsAtTheCall()
     {
         var diagnostic = Only(Durable("""
                 .Step<ReserveInventory>()
-                .AwaitSignal<PaymentConfirmed>(TimeSpan.FromDays(7))
+                .Delay(TimeSpan.FromDays(1))
             """));
 
         diagnostic.Location.IsInSource.ShouldBeTrue(
             "A diagnostic with no source span shows up at the top of a build log rather " +
             "than on the line that has to change.");
 
-        Message(diagnostic).ShouldContain("AwaitSignal");
+        Message(diagnostic).ShouldContain("Delay");
     }
 
     /// <summary>A <c>Delay</c> is reported, under a durable profile or any other.</summary>
@@ -158,61 +169,111 @@ public sealed class SuspensionConstructTests
     // ---------------------------------------------------------- the severities
 
     /// <summary>
-    /// <c>AwaitSignal</c> is an error; <c>Delay</c> and <c>OnTimeout</c> are warnings.
+    /// What is left of the rule is warnings, and the error it used to raise is gone.
     /// </summary>
     /// <remarks>
-    /// The split is the line between omission and fabrication, and it is the whole of this
-    /// rule's severity argument — <c>docs/diagnostics/FLOWX1031.md</c> makes it at length.
-    /// A <c>Delay</c> that produces no step leaves a plan containing less than the author
-    /// wrote and nothing untrue. An <c>AwaitSignal</c> reaches the plan carrying a timeout
-    /// the compiler invented.
+    /// <para>
+    /// The split used to be the line between a construct the compiler omitted and one it
+    /// falsified: <c>AwaitSignal</c> reached the plan carrying a timeout the compiler
+    /// invented, so an error — no plan at all — was the only ending that published nothing
+    /// untrue. The model carries the author's duration now, so there is nothing to falsify
+    /// and nothing to be an error about.
+    /// </para>
+    /// <para>
+    /// <c>Delay</c> and <c>OnTimeout</c> are still omissions, which is the category
+    /// <c>FLOWX1027</c> occupies at the severity C# gives <c>CS0162</c>.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void AwaitSignalIsAnErrorAndTheOtherTwoAreWarnings()
+    public void TheTwoConstructsThatAreLeftAreWarnings()
     {
         Only(Durable("""
                 .Step<ReserveInventory>()
-                .AwaitSignal<PaymentConfirmed>(TimeSpan.FromDays(7))
-            """)).Severity.ShouldBe(DiagnosticSeverity.Error);
+                .Delay(TimeSpan.FromDays(1))
+            """)).Severity.ShouldBe(DiagnosticSeverity.Warning);
 
         Only(Durable("""
                 .Step<ReserveInventory>()
-                .Delay(TimeSpan.FromDays(1))
+                .AwaitSignal<PaymentConfirmed>(TimeSpan.FromDays(7))
+                    .OnTimeout(f => f.Step<ReleaseInventory>())
             """)).Severity.ShouldBe(DiagnosticSeverity.Warning);
     }
 
     // ------------------------------------------------------ and nothing is emitted
 
-    /// <summary>
-    /// No plan is generated for a flow that awaits a signal, so no invented timeout is
-    /// published.
-    /// </summary>
+    /// <summary>The plan carries the duration the author declared, verbatim.</summary>
     /// <remarks>
     /// <para>
-    /// This is the second defect, and it is separate from whether the construct works.
+    /// This was the second defect, and it was separate from whether the construct works.
     /// <c>FlowEmitter</c> wrote <c>TimeSpan.FromHours(1)</c> for every <c>AwaitSignal</c>,
-    /// whatever the author declared — a flow written to wait seven days produced a plan
-    /// that said one hour. Carrying the declared duration through needs a field on the
-    /// compiler's step model and a parameter through the emitter, which is WP-63's work.
-    /// Between emitting a value nobody wrote and emitting nothing, the compiler now emits
-    /// nothing.
+    /// whatever the author declared — a flow written to wait seven days produced a plan that
+    /// said one hour — because the compiler's step model had no field to carry a timeout and
+    /// <c>StepNode.ForAwaitSignal</c> demands one. It has the field now, and what reaches the
+    /// plan is the author's own expression copied across, the same treatment a
+    /// <c>ForEachOptions</c> and a <c>.Fail(...)</c> error already get.
     /// </para>
     /// <para>
-    /// A <c>Delay</c> is not in this test because it never fabricated anything: it was
-    /// dropped, and dropping it leaves the rest of the plan true.
+    /// The expression rather than an evaluated <c>TimeSpan</c>: the generator does not
+    /// constant-fold, so a duration written as <c>Policies.OfferWindow</c> reaches the plan as
+    /// that, and the plan means what the source means.
     /// </para>
     /// </remarks>
     [Fact]
-    public void NoPlanIsEmittedForAFlowThatAwaitsASignal()
+    public void ThePlanCarriesTheDurationTheAuthorDeclared()
     {
         var run = GeneratorHarness.Run(Durable("""
                 .Step<ReserveInventory>()
                 .AwaitSignal<PaymentConfirmed>(TimeSpan.FromDays(7))
+                .Step<CapturePayment>()
             """));
 
-        run.Sources.ShouldNotContain(
-            s => s.HintName.EndsWith(".Flow.g.cs", StringComparison.Ordinal),
-            "A plan carrying a timeout the author did not write is worse than no plan.");
+        run.Plan.ShouldContainText(
+            "StepNode.ForAwaitSignal(1, \"payment.confirmed\", TimeSpan.FromDays(7))",
+            "seven days is what the author wrote, and it is what the plan says.");
+    }
+
+    /// <summary>And the signal's contract is journaled like a step's output.</summary>
+    /// <remarks>
+    /// A delivered signal is seeded into the state bag under the contract
+    /// <c>.AwaitSignal&lt;TSignal&gt;(...)</c> named, and recorded by the same commit that
+    /// records the suspension point. Leaving it out of the snapshot would mean an instance
+    /// that resumed on a signal and then crashed came back without the value the signal
+    /// carried — the wait satisfied and its result lost.
+    /// </remarks>
+    [Fact]
+    public void TheSignalsContractIsJournaledLikeAStepsOutput()
+    {
+        var waiting = new FlowModel(
+            flowId: "offer.accept",
+            version: "1.0.0",
+            profile: "Durable",
+            deadline: "P30D",
+            containingNamespace: "Sample.Flows",
+            typeName: "AcceptOfferFlow",
+            inputTypeName: "Sample.Contracts.Offer",
+            outputTypeName: "Sample.Contracts.Acceptance",
+            steps:
+            [
+                StepModel.AwaitSignal(
+                    0,
+                    "payment.confirmed",
+                    timeoutExpression: "TimeSpan.FromDays(7)",
+                    contractTypeName: "Sample.Contracts.PaymentConfirmed"),
+            ]);
+
+        var context = new JsonContextModel(
+            "Sample.SampleJson", ["Sample.Contracts.PaymentConfirmed", "Sample.Contracts.Offer"]);
+
+        var source = FlowEmitter.Emit(waiting, [context]);
+
+        source.ShouldContainText(
+            "JournalState.Read<Sample.Contracts.PaymentConfirmed>",
+            "RestoreState reads the signal back, so a second crash does not lose it.");
+
+        source.ShouldContainText(
+            "ctx.TryGet<Sample.Contracts.PaymentConfirmed>(out var described)",
+            "and the commit that records the suspension point carries it, exactly as a " +
+            "capability step's own output is carried.");
     }
 
     /// <summary>A flow that only delays still gets its plan, minus the delay.</summary>
@@ -248,22 +309,29 @@ public sealed class SuspensionConstructTests
                 Case.Sensitive,
                 "A value the author wrote must not be replaced by a constant.");
 
-    /// <summary>And the emitter refuses rather than inventing one.</summary>
+    /// <summary>
+    /// The emitter still refuses an <c>AwaitSignal</c> it has no duration for — and nothing
+    /// produces one any more.
+    /// </summary>
     /// <remarks>
     /// <para>
-    /// The arm is unreachable through the generator — an <c>AwaitSignal</c> in a flow is an
-    /// error, and <c>FlowPlanGenerator</c> emits nothing for a flow whose analysis failed —
-    /// so this calls the emitter directly, which is the only way to ask what it would do.
+    /// <strong>The refusal was made unnecessary rather than deleted.</strong> It exists
+    /// because the only alternative to emitting the author's duration is emitting one they
+    /// did not write, which is the defect the whole rule was raised over. What changed at
+    /// WP-63 is the reason it never fires: the model carries the duration, and
+    /// <c>AwaitSignal&lt;TSignal&gt;(TimeSpan timeout)</c> has no overload without one, so a
+    /// model reaching here empty means a half-typed buffer in which C# is already saying
+    /// something more useful.
     /// </para>
     /// <para>
-    /// Asserting the refusal rather than leaving the arm as untested dead code is the point.
-    /// If a later change starts emitting <c>AwaitSignal</c> plans again, the choice in front
-    /// of whoever makes it should be "carry the author's duration" and not "put a constant
-    /// back"; a loud failure is what puts that choice in front of them.
+    /// Asserted rather than left as untested dead code, on purpose. If a later change loses
+    /// the duration on the way to the emitter, the choice in front of whoever made it should
+    /// be "carry the author's duration" and not "put a constant back"; a loud failure is what
+    /// puts that choice in front of them.
     /// </para>
     /// </remarks>
     [Fact]
-    public void TheEmitterRefusesAnAwaitSignalStepRatherThanInventingItsTimeout()
+    public void TheEmitterStillRefusesAnAwaitSignalItHasNoDurationFor()
     {
         var suspending = new FlowModel(
             flowId: "offer.accept",
@@ -274,10 +342,10 @@ public sealed class SuspensionConstructTests
             typeName: "AcceptOfferFlow",
             inputTypeName: "Sample.Contracts.Offer",
             outputTypeName: "Sample.Contracts.Acceptance",
-            steps: [StepModel.AwaitSignal(0, "payment.confirmed")]);
+            steps: [StepModel.AwaitSignal(0, "payment.confirmed", timeoutExpression: null)]);
 
         Should.Throw<InvalidOperationException>(() => FlowEmitter.Emit(suspending))
-            .Message.ShouldContain("FLOWX1031");
+            .Message.ShouldContain("the duration the author declared");
     }
 
     /// <summary>Reads a repository file, wherever the test binary happens to be built.</summary>

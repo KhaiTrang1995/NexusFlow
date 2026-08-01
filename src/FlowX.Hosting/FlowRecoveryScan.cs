@@ -215,11 +215,21 @@ public sealed class FlowRecoveryScan
     /// resumed flow ended.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A recovered saga that resumes and then fails its next step has been recovered: it
     /// reached a terminal state with a compensation history instead of sitting in
     /// <c>Running</c> for ever, which is the whole objective. Counting that as a scan failure
     /// would make the one metric an operator watches say "recovery is broken" every time a
     /// downstream system is.
+    /// </para>
+    /// <para>
+    /// <strong>So has one that resumed as far as a suspension point.</strong> A node that died
+    /// before a flow's <c>AwaitSignal</c> leaves a <c>Running</c> row this sweep does pick up,
+    /// and finishing the takeover means running it to where it is actually waiting and
+    /// recording that. It is not a success — nothing completed — and reading
+    /// <c>result.Error</c> on it would be reading a null, which is why it is answered before
+    /// the switch below rather than falling into it.
+    /// </para>
     /// </remarks>
     private async Task<Attempt> TakeOverAsync(
         Guid instanceId,
@@ -228,7 +238,7 @@ public sealed class FlowRecoveryScan
     {
         var result = await _host.ResumeAsync(instanceId, registration, ct).ConfigureAwait(false);
 
-        if (result.IsSuccess)
+        if (result.IsSuccess || result.IsSuspended)
         {
             return Attempt.Resumed;
         }

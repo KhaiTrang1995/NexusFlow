@@ -47,6 +47,18 @@ namespace Workflow;
 [JsonSerializable(typeof(ProvisionWorkspace))]
 [JsonSerializable(typeof(DeskAllocation))]
 [JsonSerializable(typeof(BuildingPass))]
+
+// offer.accept's contracts. OfferCountersigned is here for a reason none of the others is:
+// it is a *signal* contract, and a delivered signal is put into the state bag under it and
+// journaled by the commit that records the suspension point. So the flow's own wait depends
+// on this line — without it the value is in memory for one invocation and lost to the next
+// crash, which FLOWX1006 reports rather than allows.
+[JsonSerializable(typeof(OfferToAccept))]
+[JsonSerializable(typeof(OfferSent))]
+[JsonSerializable(typeof(OfferCountersigned))]
+[JsonSerializable(typeof(OnboardingStarted))]
+[JsonSerializable(typeof(AcceptedOffer))]
+[JsonSerializable(typeof(OfferPending))]
 internal sealed partial class WorkflowJsonContext : JsonSerializerContext;
 
 /// <summary>People records, in memory.</summary>
