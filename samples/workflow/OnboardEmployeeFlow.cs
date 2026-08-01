@@ -17,15 +17,15 @@ namespace Workflow;
 /// </para>
 /// <para>
 /// <strong>What is not below, and why it is not.</strong> <c>AwaitSignal</c>, <c>Delay</c>
-/// and <c>OnTimeout</c> — the three that would make this a multi-day process with human
-/// waits — are absent, and the reason changed at WP-63. <c>Delay</c> and <c>OnTimeout</c>
-/// are still absent because they do not work: there is no timer, and both are reported as
-/// <c>FLOWX1031</c>. <c>AwaitSignal</c> works, and is absent from <em>this</em> flow for a
-/// different reason: this flow carries an <c>[HttpTrigger]</c>, the generated endpoint
-/// answers <c>200</c> with the projected output, and a suspended flow has no output to
-/// project. The wait lives in <see cref="AcceptOfferFlow"/>, which has no trigger attribute
-/// and two hand-written routes in <c>Program.cs</c>. The README's second section is the
-/// account.
+/// and <c>OnTimeout</c> — the three that make a multi-day process with human waits — are
+/// absent, and by WP-63's end all three work. They are absent from <em>this</em> flow for one
+/// reason and it is about the transport: this flow carries an <c>[HttpTrigger]</c>, the
+/// generated endpoint answers <c>200</c> with the projected output, and a suspended flow has
+/// no output to project — its <c>.Return(...)</c> reads values the steps after the wait were
+/// going to produce. A <c>Delay</c> breaks that shape exactly as a suspension point does, so
+/// neither belongs here. The waits live in <see cref="AcceptOfferFlow"/>, which has no
+/// trigger attribute and two hand-written routes in <c>Program.cs</c>. The README's second
+/// section is the account, and <c>TheAbsentHalfTests</c> keeps the two flows apart.
 /// </para>
 /// <para>
 /// <strong>Everything below compiles to one flat <c>StepNode[]</c>.</strong> The conditional

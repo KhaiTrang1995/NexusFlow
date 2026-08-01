@@ -199,17 +199,16 @@ flowchart TD
 > rig that would show this under a `SIGKILL` is WP-50 and has not started
 > ([21 §8](21-Quality-Gates.md#8-reliability-gates)).
 >
-> **"Suspend/resume — yes (timers, signals)" is now half a mechanism.** *This box said
-> the whole cell was design, refused at build time.* Since WP-63 (2026-08-01) the
-> **signal** half runs: a `Durable` flow that reaches `.AwaitSignal<T>(timeout)`
-> suspends — the invocation returns, the instance is sealed `Suspended` at its resume
-> frontier holding no thread, no pooled context and no lease, and
-> `FlowHost.SignalAsync` re-enters the same step loop `FlowRecoveryScan` uses. The
-> **timer** half does not: `.Delay(...)` and `.OnTimeout(...)` still compile to
-> nothing and still say so as [`FLOWX1031`](diagnostics/FLOWX1031.md), so a wait's
-> declared duration reaches the plan and nothing arms it, and the only enforced
-> budget on a waiting instance is its own `[FlowDeadline]`. [§6](#6-suspension-waiting-without-holding-resources)
-> is the account.
+> **"Suspend/resume — yes (timers, signals)" is a mechanism.** *This box said the whole
+> cell was design, refused at build time; then, for a day, that half of it was.* Both
+> halves run since WP-63 (2026-08-02). A `Durable` flow that reaches
+> `.AwaitSignal<T>(timeout)` or `.Delay(duration)` suspends — the invocation returns,
+> the instance is sealed `Suspended` at its resume frontier holding no thread, no
+> pooled context and no lease, and it records **which wait it is parked at and when it
+> is due**. `FlowHost.SignalAsync` re-enters the same step loop `FlowRecoveryScan`
+> uses; so does `FlowTimerScan`, which is the sweep that finds the instances whose
+> instant has passed. [§6](#6-suspension-waiting-without-holding-resources) is the
+> account, including what a sweep interval means for how precise a wait is.
 >
 > **A `Durable` flow with no journal is refused**, not run ephemerally:
 > `flow.durability_not_configured`, before its first step. Since WP-55 that is a
@@ -378,49 +377,61 @@ byte-identical step inputs and identical control flow.
 > paragraph used to be the place that said so.** It read: *"`AwaitSignal` is refused
 > at build time under every profile … so a durable flow still runs to completion
 > inside one invocation."* It does not. A durable flow suspends at its suspension
-> point and is resumed by a signal, and what a resumed invocation replays is what
-> every other resume replays — the committed rows, the state-bag snapshot and the
-> control-flow delegates. The delivered signal itself is journaled as the
-> `AwaitSignal` step's own row, so it is replayed by the same mechanism as a step's
-> output and adds no fourth fidelity limit. [`FLOWX1017`](diagnostics/FLOWX1017.md)
-> still refuses `AwaitSignal` below `Durable`; [`FLOWX1031`](diagnostics/FLOWX1031.md)
-> no longer refuses it at `Durable`.
+> point and is resumed by a signal or by a clock, and what a resumed invocation
+> replays is what every other resume replays — the committed rows, the state-bag
+> snapshot and the control-flow delegates. The delivered signal itself is journaled as
+> the `AwaitSignal` step's own row, so it is replayed by the same mechanism as a step's
+> output and adds no fourth fidelity limit. A timer adds none either: the instant is on
+> the instance row rather than in the flow's own state, so nothing about it is replayed
+> — it is read once, by the engine, when it arrives back at the node it is parked at.
+> [`FLOWX1017`](diagnostics/FLOWX1017.md) still refuses `AwaitSignal` below `Durable`,
+> and now refuses `Delay` there too; the rule that used to refuse both at `Durable` is
+> deleted.
 
 ---
 
 ## 6. Suspension: waiting without holding resources
 
-> [!WARNING]
-> **The signal half of this section runs; the clock half does not, and the flow below
-> still does not compile clean.** *This box read "nothing in this section runs" until
-> WP-63 (2026-08-01).*
+> [!NOTE]
+> **All of this section runs.** *This box read "nothing in this section runs" until
+> WP-63 landed its signal half on 2026-08-01, and "the clock half does not" until it
+> landed the rest on 2026-08-02.*
 >
-> | Construct | What the compiler and the engine do with it today |
+> | Construct | What the compiler and the engine do with it |
 > |---|---|
-> | `.AwaitSignal<T>(timeout)` | **Honoured.** The plan carries the author's declared duration, `FlowEngine` has a `case StepKind.AwaitSignal`, and a `Durable` flow that reaches one with no committed row and no delivered signal stops there. No diagnostic |
-> | `.OnTimeout(block)` | **[`FLOWX1031`](diagnostics/FLOWX1031.md), warning.** The block is discarded: its steps reach no plan, no dispatcher and no manifest |
-> | `.Delay(duration)` | **[`FLOWX1031`](diagnostics/FLOWX1031.md), warning.** No step is produced at all, so the flow continues without waiting |
+> | `.AwaitSignal<T>(timeout)` | **Honoured.** The plan carries the author's declared duration and `FlowEngine` stops at the step. A delivered signal satisfies it; the declared duration expiring takes the `.OnTimeout` block, or ends the flow with `flow.signal_not_received` when there is none |
+> | `.OnTimeout(block)` | **Honoured.** The block is laid out immediately after the wait, and the wait carries the index a delivered signal jumps to. Both paths rejoin there, so an escalation that should end the flow says `.Fail(...)` — exactly as it would inside an `.Otherwise(...)` |
+> | `.Delay(duration)` | **Honoured.** One step of its own, carrying the author's expression. The instance parks and a sweep brings it back |
 >
-> **What runs.** The instance is sealed `Suspended` with its committed prefix intact;
-> the lease is released rather than renewed for the length of the wait; the pooled
-> context goes back to the pool. `FlowHost.SignalAsync` re-enters the same
-> `FlowEngine.ExecuteAsync` a recovery scan re-enters, steps over every
-> `(scope, step)` that committed, seeds the signal's payload into the state bag under
-> the contract the flow declared, and runs on. A waiting instance is not in any
-> recovery scan's candidate set, so it is not swept up and re-suspended every TTL.
+> **What a wait costs.** The instance is sealed `Suspended` with its committed prefix
+> intact; the lease is released rather than renewed for the length of the wait; the
+> pooled context goes back to the pool. What it gains is three values on its own row —
+> **which step it is parked at, in which iteration, and when it is due**. That is the
+> whole of a durable timer, and it is why there is **no timer table**: a wait is a
+> property of the instance that is waiting, and a separate table would need its own
+> transaction with the write that parks the instance, which is not optional — an
+> instance parked with nothing scheduled to wake it is a wait that never ends.
 >
-> **What does not.** There is **no scheduler engine and no timer table**, so the
-> `alt` arm of the diagram below never fires and the declared `timeout` reaches the
-> plan and the run time and is armed by nothing. The only enforced budget on a waiting
-> instance is its own `[FlowDeadline]`, checked at the step boundary that decides
-> whether to suspend — so a flow whose budget has gone times out rather than waiting.
-> There is also **no signal table**, and that one is by design rather than by
-> omission: a delivered signal is journaled as the `AwaitSignal` step's own row,
-> through the same `CommitAsync` every step boundary uses.
+> **What brings it back.** `FlowHost.SignalAsync` for a signal; `FlowTimerScan` for a
+> clock. Both call the same `FlowHost.ResumeAsync` a recovery scan calls, which enters
+> the same `FlowEngine.ExecuteAsync` a fresh instance enters. The sweep decides *which*
+> instances to look at again; the engine, standing on the node the instance is parked
+> at, decides whether the wait is over — so a sweep never has to know what a suspension
+> point means. There is also **no signal table**: a delivered signal is journaled as
+> the `AwaitSignal` step's own row, through the same `CommitAsync` every step boundary
+> uses.
 >
-> `samples/workflow`'s `offer.accept` is the running version of the flow below, minus
-> the `Delay` and the `OnTimeout`, and `tests/Workflow.Tests/SuspensionTests` measures
-> it against the real host and the real journal.
+> **A wait is a lower bound, never an upper one.** The sweep runs on
+> `FlowXOptions.TimerScanInterval` (ten seconds by default, jittered), so a
+> `.Delay(TimeSpan.FromSeconds(1))` elapses somewhere between one and eleven. That is
+> the same promise a scheduled trigger makes and the only one a sweep can keep. A host
+> whose journal implements no `ITimerIndex` makes no promise at all: it parks
+> instances correctly and never wakes them, which `FlowTimerScan.IsEnabled` reports.
+>
+> `samples/workflow`'s `offer.accept` is the running version of the flow below —
+> `.AwaitSignal`, an `.OnTimeout` that withdraws the offer, and a `.Delay` before
+> onboarding — and `tests/Workflow.Tests/SuspensionTests` measures it against the real
+> host, the real journal and the real sweep.
 >
 > **Two limits worth knowing before you write one.** An inline composed child may not
 > suspend — a parent records a composition as one row written when the child finishes,
@@ -446,36 +457,41 @@ sequenceDiagram
     autonumber
     participant FE as Flow Engine
     participant J as Journal
-    participant SE as Scheduler Engine
+    participant SE as Timer sweep
     participant EXT as External caller
 
     FE->>J: state=Suspended, awaiting EmailVerified, deadline +3d
-    FE->>SE: register timer(instance 42, +3d)
+    FE->>SE: the same write records wake_at = +3d, wake_step_id = the wait
     FE->>FE: release lease, free context to pool
     Note over FE: zero threads, zero memory held anywhere
     EXT->>FE: POST /flows/42/signals/EmailVerified
     FE->>J: commit the AwaitSignal step's own row, carrying the payload
     FE->>FE: the same ExecuteAsync a recovery scan uses resumes at the next step
     alt no signal within 3 days
-        SE->>FE: timer fires
+        SE->>FE: a sweep finds the row due
         FE->>FE: run OnTimeout branch → ExpireOnboarding
     end
 ```
 
-**Two arrows in that diagram are not built.** `register timer` and the whole `alt`
-block need a scheduler engine and a timer table, and there are neither — so a wait
-whose signal never arrives ends at the flow's own `[FlowDeadline]` rather than in an
-`OnTimeout` branch. Everything above the `alt` runs, and the arrow that used to read
-*"append signal, state=Pending"* is corrected rather than aspirational: a signal is not
-appended to a table of its own, it is the suspension point's journal row.
+**Every arrow in that diagram is built, and two of them are drawn loosely.** *"register
+timer"* is not a call to a scheduler engine: it is the same write that records
+`state=Suspended`, carrying three more columns, which is what makes parking an instance
+and scheduling its wake one transaction rather than two. And *"timer fires"* is a sweep
+finding the row rather than a callback the process was holding — `FlowTimerScan` runs on
+an interval and asks the journal which parked instances are due. The arrow that used to
+read *"append signal, state=Pending"* is corrected rather than aspirational: a signal is
+not appended to a table of its own, it is the suspension point's journal row.
 
 A suspended instance costs one row. A million suspended onboardings cost a
 million rows and zero compute — this is what makes long-running business
 processes affordable. *This paragraph used to end "that is the argument for building
-it, not a description of what it does".* It is now a description of the signal path:
-`offer.accept` in `samples/workflow` sends an offer out, suspends holding no lease,
-and is resumed days later by a countersignature that arrives on another request —
-against PostgreSQL, with the instance `Suspended` and one committed row in between.
+it, not a description of what it does", and then described only the signal path.* It
+now describes both: `offer.accept` in `samples/workflow` sends an offer out and
+suspends holding no lease; a countersignature arriving on another request resumes it
+into a settling period, where it parks again on a clock; and a sweep wakes it to start
+onboarding. An offer nobody signs is picked up by the same sweep when its window
+closes, and the escalation withdraws it — against PostgreSQL, with the instance
+`Suspended` and one committed row in between each pair.
 
 ---
 

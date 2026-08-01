@@ -997,19 +997,19 @@ policy. A `.WithPolicy(… .Retry(3))` on a forward step is a declaration the en
 ignores. The declaration is still worth writing: it is what the day the engine reads it will
 find.
 
-**No timers. `AwaitSignal` waits.** `IFlowBuilder` declares `AwaitSignal<TSignal>(timeout)`
-and `Delay(duration)`, and only the first of them does anything. A `Durable` flow that
-reaches an `AwaitSignal` **suspends**: the invocation returns, the instance is `Suspended` in
-the journal at its resume frontier holding no thread and no lease, and `FlowHost.SignalAsync`
-resumes it through the same step loop a recovery scan uses, seeding the signal's payload into
-the state bag for the steps after the wait to bind. `FLOWX1017` still refuses one on a
-non-durable flow, correctly — an in-memory wait does not survive a deployment.
-`.Delay(…)` is not modelled as a step at all and `.OnTimeout(…)`'s block is discarded, both
-reported as `FLOWX1031`: there is no scheduler, so the `timeout` you declare on an
-`AwaitSignal` reaches the plan and is armed by nothing, and the only budget enforced on a
-waiting instance is its own `[FlowDeadline]`. `SubFlowMode.AwaitCompletion` is still refused
-outright by `FLOWX1026`, and an inline composed child that suspends is refused at run time —
-give a flow that waits its own trigger, or compose it `Detached`.
+**Waits work; there is no scheduler engine behind them.** A `Durable` flow that reaches an
+`AwaitSignal<TSignal>(timeout)` or a `Delay(duration)` **suspends**: the invocation returns,
+the instance is `Suspended` in the journal at its resume frontier holding no thread and no
+lease, and it records which wait it is parked at and when it is due. `FlowHost.SignalAsync`
+resumes it on a signal; `FlowTimerScan` — a sweep on an interval, not a timer per instance —
+resumes it when the instant passes. An `.OnTimeout(…)` block runs when the declared duration
+expires, and a wait with no block ends the flow with `flow.signal_not_received`. `FLOWX1017`
+refuses either construct on a non-durable flow, correctly: an in-memory wait does not survive
+a deployment, and a timer outside a journal has nowhere to record when it is due. **What that
+costs you:** a wait is a lower bound, because it is resolved by a sweep —
+`FlowXOptions.TimerScanInterval` is ten seconds by default. `SubFlowMode.AwaitCompletion` is
+still refused outright by `FLOWX1026`, and an inline composed child that suspends is refused
+at run time — give a flow that waits its own trigger, or compose it `Detached`.
 
 **No multi-tenancy.** `TenantId` is read from validated claims at the HTTP boundary and
 carried on the flow context. **Nothing consumes it**: no admission control, no quota, no

@@ -144,18 +144,27 @@ public static class FlowAnalyzer
 
         var profile = ReadProfile(flowAttribute);
 
-        // FLOWX1017 — an in-memory wait does not survive a deployment. Searched across
-        // nested blocks too: a suspension point hidden inside a `When` is no more durable
-        // than one at the top level, and only looking at the top level is how a rule like
-        // this quietly stops applying the day branching lands.
+        // FLOWX1017 — an in-memory wait does not survive a deployment, and a timer outside a
+        // journal has nowhere to record when it is due. Searched across nested blocks too: a
+        // wait hidden inside a `When` is no more durable than one at the top level, and only
+        // looking at the top level is how a rule like this quietly stops applying the day
+        // branching lands.
+        //
+        // Both kinds, since the timer half of WP-63 made `Delay` a step. Before that there was
+        // nothing to report about it — the call reached the analyzer's `default:` arm and
+        // produced no step at all — so the rule named one construct because one was all a plan
+        // could carry.
         if (profile != "Durable" &&
-            steps.SelectMany(s => s.SelfAndNested).Any(s => s.Kind == StepKindModel.AwaitSignal))
+            steps.SelectMany(s => s.SelfAndNested)
+                .FirstOrDefault(s => s.Kind is StepKindModel.AwaitSignal or StepKindModel.Delay)
+                is { } wait)
         {
             diagnostics.Add(Diagnostic.Create(
                 FlowXDiagnostics.AwaitSignalRequiresDurable,
                 declaration.Identifier.GetLocation(),
                 flowType.Name,
-                profile));
+                profile,
+                wait.Kind == StepKindModel.Delay ? "Delay" : "AwaitSignal"));
 
             return AnalysisResult.Failure(diagnostics);
         }

@@ -193,14 +193,15 @@ error mapping and the idempotency filter.
 | `POST /api/v1/flows/{instanceId}/signals/{name}` | deliver a signal — **design only, see below** | Bearer | natural (state machine) | 202 | 404, 409 not suspended |
 
 > [!WARNING]
-> **The signal row is a design, and nothing generates that endpoint.** No instance is
-> ever `Suspended`, because no flow can declare a suspension point:
-> [`FLOWX1031`](diagnostics/FLOWX1031.md) is an error on `AwaitSignal` and a warning on
-> `Delay` and `OnTimeout`, and
-> [06 §6](06-Execution-Engine.md#6-suspension-waiting-without-holding-resources) says
-> why. There is no signal table for a delivered signal to be appended to either.
-> Durable suspension is [WP-63](20-Roadmap.md#3-increment-detail), and this row lands
-> with it.
+> **The signal row is real behaviour and nothing generates that endpoint.** *This box read
+> "no instance is ever `Suspended`, because no flow can declare a suspension point" until
+> WP-63.* A flow declares one, an instance reaches it and is sealed `Suspended`, and
+> `FlowHost.SignalAsync` delivers to it — but the **route** is still not generated, because
+> `MapFlowX` emits an endpoint per `[HttpTrigger]` and has no `202 Accepted` shape for a flow
+> that suspends. `samples/workflow/Program.cs` maps both routes by hand and is the worked
+> example. There is no signal table and there never will be: a delivered signal is journaled
+> as the suspension point's own `flow_step` row, which is why redelivery is inert without a
+> check written for it.
 >
 > The other three rows are real. Until WP-63, a process that has to wait for an external
 > party is expressed as two flows — the second one triggered by that party's own request —

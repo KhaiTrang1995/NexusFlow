@@ -166,7 +166,7 @@ release.
 **"Nothing is falsified."** Something is. The manifest publishes `CompensationRetry` on this
 step, at stage `Consistency`, and the plan the engine walks carries no compensation for it —
 so the published contract and the compiled artefact disagree about the same source line.
-That is precisely the property that made [FLOWX1031](FLOWX1031.md)'s `AwaitSignal` half an
+That is precisely the property that made the deleted `FLOWX1031`'s `AwaitSignal` half an
 error rather than a warning.
 
 **And the runtime already treats it as unrepresentable.** `StepNode.ForCapability` throws
@@ -181,8 +181,9 @@ reaches a build log.
 
 ## This rule is not deleted
 
-Unlike [FLOWX1028](FLOWX1028.md), [FLOWX1031](FLOWX1031.md) and [FLOWX1032](FLOWX1032.md),
-this one has no take-down row, because it does not describe a gap in the platform. When P4
+Unlike [FLOWX1028](FLOWX1028.md), [FLOWX1032](FLOWX1032.md) and the already-deleted
+`FLOWX1031`, this one has no take-down row, because it does not describe a gap in the
+platform. When P4
 lands the policy engine, FLOWX1032 is deleted and this rule becomes *more* load-bearing, not
 less: a compensation retry attached to nothing is still attached to nothing, and by then
 every other policy in the set will be running, which makes it likelier rather than less

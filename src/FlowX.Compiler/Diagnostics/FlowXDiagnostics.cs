@@ -415,12 +415,30 @@ public static class FlowXDiagnostics
         "engine already reports as defects rather than as outcomes.",
         DiagnosticSeverity.Warning);
 
-    /// <summary>FLOWX1017 — a suspension point in a non-durable flow.</summary>
+    /// <summary>FLOWX1017 — a wait in a non-durable flow.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Both kinds of wait, since WP-63's timer half.</strong> The rule was written for
+    /// <c>AwaitSignal</c> because that was the only wait a plan could carry; <c>.Delay</c>
+    /// compiled to nothing at all, so there was nothing to report about it. Now that it is a
+    /// step, it needs the same profile for the same reason — there is nowhere outside a journal
+    /// to record when a timer is due, so the only way to honour one in memory is to hold the
+    /// process for the duration, which is a <c>Task.Delay</c> wearing a plan node.
+    /// </para>
+    /// <para>
+    /// The title still names <c>AwaitSignal</c> alone, and the message names whichever
+    /// construct the flow declared. That is deliberate: the id and the title are what an
+    /// <c>.editorconfig</c> line and a build log carry, and renaming a shipped rule's title to
+    /// cover a second construct would break every search anybody has saved for the first.
+    /// </para>
+    /// </remarks>
     public static readonly DiagnosticDescriptor AwaitSignalRequiresDurable = Create(
         "FLOWX1017",
         "AwaitSignal requires the Durable profile",
-        "Flow '{0}' uses AwaitSignal but runs under the {1} profile",
-        "An in-memory wait does not survive a deployment, a crash or a scale-in. Set " +
+        "Flow '{0}' uses {2} but runs under the {1} profile",
+        "An in-memory wait does not survive a deployment, a crash or a scale-in, and a timer " +
+        "outside a journal has nowhere to record when it is due — so the only way to honour " +
+        "one in memory is to hold the process for the duration. Set " +
         "Profile = ExecutionProfile.Durable on the flow.");
 
     /// <summary>FLOWX1018 — a cache policy on a capability with side effects.</summary>

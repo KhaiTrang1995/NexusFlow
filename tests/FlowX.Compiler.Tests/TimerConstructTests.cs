@@ -170,14 +170,48 @@ public sealed class TimerConstructTests
 
     // ----------------------------------------------------------------- the profile
 
+    /// <summary>A <c>.Delay</c> below <c>Durable</c> is refused at build time.</summary>
+    /// <remarks>
+    /// <para>
+    /// <c>FLOWX1017</c> covers both kinds of wait since the timer half landed. It could not
+    /// cover <c>Delay</c> before, and not because anybody decided it should not: the call
+    /// produced no step, so there was nothing for a rule that reads the step model to see.
+    /// </para>
+    /// <para>
+    /// The message names the construct, so an author who wrote a <c>Delay</c> is not told
+    /// about an <c>AwaitSignal</c> they did not write.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ADelayBelowDurableIsRefusedAtBuildTime()
+    {
+        var run = GeneratorHarness.Run(FlowPlanGeneratorTests.WithFlow(Signal + "\n\n" +
+            """
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>()
+                    .Delay(TimeSpan.FromDays(1))
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1017", run.Describe());
+
+        run.Diagnostics
+            .Single(d => d.Id == "FLOWX1017")
+            .GetMessage(System.Globalization.CultureInfo.InvariantCulture)
+            .ShouldContain("Delay");
+    }
+
     /// <summary>
-    /// A <c>.Delay</c> below <c>Durable</c> is refused when the plan is built.
+    /// And refused again when the plan is built, which is where a hand-built one meets it.
     /// </summary>
     /// <remarks>
-    /// The run-time half of the rule <c>FLOWX1017</c> states at build time, and the same
-    /// argument: there is nowhere outside a journal to record when a timer is due, so the only
-    /// way to honour one in memory is to hold the process for the duration — which is a
-    /// <c>Task.Delay</c> wearing a plan node.
+    /// The run-time half of the same rule, and the same argument: there is nowhere outside a
+    /// journal to record when a timer is due, so the only way to honour one in memory is to
+    /// hold the process for the duration — which is a <c>Task.Delay</c> wearing a plan node.
     /// </remarks>
     [Fact]
     public void ADelayBelowDurableIsRefusedWhenThePlanIsBuilt() =>

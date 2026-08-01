@@ -236,10 +236,17 @@ would be the one nothing checks; that is
 [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md)'s own argument for deriving
 the resume position, applied to a signal.
 
-[`FLOWX1017`](diagnostics/FLOWX1017.md) still refuses `AwaitSignal` below `Durable`.
-[`FLOWX1031`](diagnostics/FLOWX1031.md) no longer refuses it at `Durable`, and is narrowed to
-`.Delay(...)` and `.OnTimeout(...)` — which do still need a table this schema has nowhere for,
-because a **timer** is a row someone has to sweep and a signal is not.
+[`FLOWX1017`](diagnostics/FLOWX1017.md) refuses either construct below `Durable`. The rule
+that used to refuse them *at* `Durable` is deleted, with the gap it described.
+
+**A timer did need something a signal did not, and it is three columns rather than a table.**
+`0005_suspended_wake.sql` adds `wake_at`, `wake_step_id` and `wake_scope` to `flow_instance`,
+and one partial index over `state = 'Suspended'` — the state
+`flow_instance_abandoned_idx` deliberately excludes. A wait is a property of the instance
+that is waiting, so putting it on that instance's row makes parking the instance and
+scheduling its wake **one write**; a separate table would have needed its own transaction with
+that write, and an instance parked with nothing scheduled to wake it is a wait that never
+ends.
 
 | Property | Guarantee |
 |---|---|
