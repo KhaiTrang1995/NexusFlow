@@ -14,7 +14,7 @@
 >
 > | Transport | What exists |
 > |---|---|
-> | **HTTP** ([§6](#6-http-trigger)) | **served, and generated.** `[HttpTrigger]` → `TriggerReader` → `EndpointEmitter` → `FlowXEndpoints.g.cs` → `plugins/FlowX.Http`. Route, body binding, `Idempotency-Key` enforcement when `Idempotent = true`, and RFC 7807 with `[Sensitive]` redaction are all real; `samples/ecommerce` and `samples/workflow` call the generated `app.MapFlowX()`. **The OpenAPI operation is not generated** — nothing in this repository writes an OpenAPI document, and `Version` is dropped by the reader rather than published, despite §6's *"Generated: … the OpenAPI operation"* and the same claim on `HttpTriggerAttribute` itself. §6's own box covers the signal row |
+> | **HTTP** ([§6](#6-http-trigger)) | **served, and generated.** `[HttpTrigger]` → `TriggerReader` → `EndpointEmitter` → `FlowXEndpoints.g.cs` → `plugins/FlowX.Http`. Route, body binding, `Idempotency-Key` enforcement when `Idempotent = true`, and RFC 7807 with `[Sensitive]` redaction are all real; `samples/ecommerce` and `samples/workflow` call the generated `app.MapFlowX()`. **A flow that suspends is served too, since WP-64** — `202` with where to continue it, and one generated delivery route per signal it waits for ([ADR-0022](adr/ADR-0022-http-shape-of-a-suspending-flow.md)); *this row used to say the signal endpoint was a design, and §6's own box has the correction*. **The OpenAPI operation is still not generated** — nothing in this repository writes an OpenAPI document, and `Version` is dropped by the reader rather than published, despite §6's *"Generated: … the OpenAPI operation"* and the same claim on `HttpTriggerAttribute` itself |
 > | **Bus** ([§7](#7-bus-trigger)) | **attribute only.** `[KafkaTrigger]` compiles and publishes `kind`, `transport`, `topic` and `group`; `MaxInFlight` and `DeadLetter` reach no artifact. There is no `FlowX.Kafka` — `plugins/` holds `FlowX.Http`, `FlowX.Postgres` and `FlowX.Redis` — so nothing consumes a topic, commits an offset or dead-letters, and §7's sequence diagram is specification. **WP-72**, P3 |
 > | **Schedule** ([§8](#8-schedule-trigger)) | **attribute only.** `[CronTrigger]` publishes `cron` and `timeZone`. `Overlap`, `MissedFire`, `Jitter` and `PerTenant` reach nothing at all: the manifest schema's `trigger` object has no property for them and no code reads them. Nothing fires a schedule, so "leader-elected, never double-fires" is a design — the lease store it names is real (`ILeaseStore`, both adapters), the scheduler that would take the lease is **WP-63** |
 > | **Stream** ([§9](#9-stream-trigger)) | **attribute only, over an unbuilt profile.** `[StreamTrigger]` publishes its source; `Window`, `Lateness`, `Checkpoint` and `Parallelism` are dropped. `ExecutionProfile.Streaming` is an enum member no code branches on, and `.Window(…)` / `.Aggregate(…)` are not members of `IFlowBuilder<TIn, TOut>` — **§9's example does not compile.** Streaming is **P7** |
@@ -190,21 +190,34 @@ error mapping and the idempotency filter.
 | `POST /api/v1/orders` | run `order.place` | Bearer (from capability stance) | `Idempotency-Key` **required** | 200 + result | 400 validation, 401, 403, 409 conflict, 429 quota, 503 unavailable |
 | `GET /api/v1/orders/{id}` | run `order.get` | Bearer | n/a (safe) | 200 | 404 |
 | `GET /api/v1/flows/{instanceId}` | instance status | operator scope | n/a | 200 | 404 |
-| `POST /api/v1/flows/{instanceId}/signals/{name}` | deliver a signal — **design only, see below** | Bearer | natural (state machine) | 202 | 404, 409 not suspended |
+| `POST {flow route}/{instanceId}/signals/{identity}` | deliver a signal to a waiting instance | Bearer | natural (the frontier) | 202 | 400 malformed body, 404 unknown instance or identity |
 
-> [!WARNING]
-> **The signal row is a design, and nothing generates that endpoint.** No instance is
-> ever `Suspended`, because no flow can declare a suspension point:
-> [`FLOWX1031`](diagnostics/FLOWX1031.md) is an error on `AwaitSignal` and a warning on
-> `Delay` and `OnTimeout`, and
-> [06 §6](06-Execution-Engine.md#6-suspension-waiting-without-holding-resources) says
-> why. There is no signal table for a delivered signal to be appended to either.
-> Durable suspension is [WP-63](20-Roadmap.md#3-increment-detail), and this row lands
-> with it.
+> [!IMPORTANT]
+> **This row was a design and is now generated. Two things it said were wrong, and the
+> route it printed was one of them.** *This box read "the signal row is a design, and
+> nothing generates that endpoint" until WP-64 (2026-08-01).*
+> There is no signal table and there never will be: a delivered signal is journaled as
+> the suspension point's own `flow_step` row, which is why a redelivery is inert without
+> a check written for it.
 >
-> The other three rows are real. Until WP-63, a process that has to wait for an external
-> party is expressed as two flows — the second one triggered by that party's own request —
-> which is what the trigger model already supports.
+> **It is not `/api/v1/flows/{instanceId}/…`.** There is no flow-instance resource
+> namespace — `GET /api/v1/flows/{instanceId}` above is still built by nothing — so the
+> delivery route hangs off **the flow's own route**:
+> `POST /api/v1/offers/{instanceId:guid}/signals/offer.countersigned` for
+> `samples/workflow`'s `offer.accept`. One route is generated per signal the flow waits
+> for, with the identity as a **literal segment**, which is what makes an identity nothing
+> waits for a `404` from the router before any code runs
+> ([ADR-0022](adr/ADR-0022-http-shape-of-a-suspending-flow.md)).
+>
+> **`409 not suspended` never existed and will not.** `FlowHost.SignalAsync` treats a
+> delivery to an instance that is not waiting for that signal as **inert, not an error** —
+> refusing would mean the host deciding what a flow is waiting for, and the journal already
+> answers that. So a redelivery is `202` and changes nothing, which is what makes
+> at-least-once transports safe. There is no `Idempotency-Key` rule on this route for the
+> same reason.
+>
+> The run route gains a third answer with it: a flow that suspends is `202` with the
+> instance and where to continue it, not `200` with an output it does not have.
 
 ```jsonc
 // POST /api/v1/orders  → 200
@@ -220,8 +233,31 @@ error mapping and the idempotency filter.
   "flowInstanceId": "fi_01HV8…" }
 ```
 
-Long-running durable flows return `202 Accepted` with a `Location` header
-pointing at the instance resource, rather than holding the connection open.
+Long-running durable flows return `202 Accepted` rather than holding the connection open.
+
+```jsonc
+// POST /api/v1/offers  → 202, when the flow stops at a wait
+{ "instanceId": "019fbd86-b1be-7398-a9bb-b90a96c6774c",
+  "status": "suspended",
+  "awaiting": [
+    { "signal": "offer.countersigned",
+      "deliverTo": "/api/v1/offers/019fbd86-b1be-7398-a9bb-b90a96c6774c/signals/offer.countersigned" }
+  ] }
+
+// POST /api/v1/offers/{instanceId}/signals/offer.countersigned  → 202
+{ "instanceId": "019fbd86-b1be-7398-a9bb-b90a96c6774c", "status": "completed" }
+```
+
+*This sentence used to end "with a `Location` header pointing at the **instance resource**".
+There is no instance resource — `GET /api/v1/flows/{instanceId}` is in the table above and is
+built by nothing — so `Location` points at the signal endpoint, which exists, and only when
+the flow declares exactly one wait. A header that can name one of three addresses misleads two
+callers out of three; `awaiting` in the body carries the whole set.*
+
+`awaiting` is read off the compiled plan, so it is the same set of identities
+`flowx.manifest.json` publishes as each `AwaitSignal` step's `signal`
+([ADR-0021](adr/ADR-0021-manifest-publishes-the-wait.md)) and the same set the endpoint
+generator emitted routes for: one declaration, three consumers.
 
 ---
 

@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-07-30
 **Deciders:** Platform architecture, Plugin team
+**Amended by:** [ADR-0022](ADR-0022-http-shape-of-a-suspending-flow.md)
 
 ## Context
 
@@ -62,3 +63,13 @@ Supporting rule: no flow or capability may reference a transport assembly
 
 **Revisit when:** more than 30 % of production flows require a transport-specific
 escape hatch — that would mean the abstraction is not paying for itself.
+
+*One kind of flow was outside this decision for a day and is now back inside it. A flow that
+suspends had no HTTP shape: the generated endpoint answers `200` with the flow's projected
+output, and a suspended flow has none, so `samples/workflow`'s `offer.accept` declared no
+`[HttpTrigger]` and mapped its routes by hand — this record's rejected option **B**, arrived
+at by the transport having no answer rather than by anyone choosing it.
+[ADR-0022](ADR-0022-http-shape-of-a-suspending-flow.md) gives it one — `202` with where to
+continue the flow, and a generated signal endpoint — without touching the decision above: the
+flow still declares an attribute the body cannot observe, and the transport still contributes
+translation and nothing else.*

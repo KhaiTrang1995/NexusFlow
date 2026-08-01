@@ -52,6 +52,65 @@ public sealed class ManifestTests
         OnboardEmployeeFlow.SensitiveMembers.ShouldBe(["NationalId"]);
     }
 
+    /// <summary>
+    /// The suspension point publishes what it waits for, and how long it declared to wait.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the assertion that stops
+    /// <a href="../../docs/adr/ADR-0021-manifest-publishes-the-wait.md">ADR-0021</a>'s two
+    /// fields repeating <c>authorization.value</c>'s history.</strong> That field was declared
+    /// by the schema, read by a Breaking <c>flowx diff</c> rule, and written by nothing — so
+    /// the rule could not fire on any manifest FlowX produced, and neither
+    /// <c>ManifestSchemaTests</c> nor <c>DiffCodeDocumentationTests</c> could see it. What was
+    /// missing was exactly this: an assertion that a <em>real compilation</em> puts the field
+    /// in the document, under the name the rule reads.
+    /// </para>
+    /// <para>
+    /// <c>timeout</c> is the interesting half. The flow declares
+    /// <c>Waits.Countersignature</c>, a named property rather than a literal, and the plan
+    /// carries that expression verbatim — so the value below exists only because the compiler
+    /// followed the constant one hop to <c>TimeSpan.FromDays(7)</c> and rendered it. Without
+    /// that hop this application would publish no <c>timeout</c> at all, and the field would
+    /// have a producer on paper and none in practice.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheSuspensionPointPublishesItsSignalAndItsDeclaredWait()
+    {
+        var wait = Flow("offer.accept").GetProperty("steps").EnumerateArray()
+            .Single(s => s.GetProperty("kind").GetString() == "AwaitSignal");
+
+        wait.GetProperty("signal").GetString().ShouldBe(Signals.OfferCountersigned);
+        wait.GetProperty("timeout").GetString().ShouldBe("P7D");
+
+        Waits.Countersignature.ShouldBe(
+            TimeSpan.FromDays(7),
+            "The published duration is the declared one folded, so a change to the constant " +
+            "that did not reach the manifest would leave these two disagreeing.");
+    }
+
+    /// <summary>
+    /// The flow that waits declares an ordinary <c>[HttpTrigger]</c>, like every other.
+    /// </summary>
+    /// <remarks>
+    /// It did not until WP-64: the generated endpoint answered <c>200</c> with a projected
+    /// output a suspended flow does not have, so the attribute was left off and
+    /// <c>Program.cs</c> mapped two routes by hand. The manifest is where that shows —
+    /// <c>offer.accept</c> had no <c>triggers</c> block at all, which read as "this flow
+    /// cannot be started from outside the process" for a flow whose whole point is being
+    /// started from outside the process.
+    /// </remarks>
+    [Fact]
+    public void TheFlowThatWaitsPublishesItsAddress()
+    {
+        var trigger = Flow("offer.accept").GetProperty("triggers").EnumerateArray().Single();
+
+        trigger.GetProperty("kind").GetString().ShouldBe("Http");
+        trigger.GetProperty("method").GetString().ShouldBe("POST");
+        trigger.GetProperty("route").GetString().ShouldBe("/api/v1/offers");
+    }
+
     /// <summary>The output contract has no secrets.</summary>
     [Fact]
     public void TheOutputContractHasNoSecrets() =>
@@ -306,5 +365,53 @@ public sealed class ManifestTests
             Kinds(Flow(id).GetProperty("steps"))
                 .ShouldNotContain("AwaitSignal", id + " declares a suspension point.");
         }
+    }
+
+    /// <summary>
+    /// A <c>.Delay(...)</c> is published as a <c>Delay</c>, not as a capability with no
+    /// capability.
+    /// </summary>
+    /// <remarks>
+    /// <c>StepKindName</c> had no arm for it, so its <c>_ =&gt; "Capability"</c> default
+    /// published <c>{"id": 3, "kind": "Capability"}</c> with the <c>capability</c> field
+    /// absent. That validates — the schema requires <c>capability</c> only where the kind
+    /// implies one — and it is false in the way that matters to a consumer: two manifests
+    /// diffed across a commit that moved a timer would report a capability step appearing and
+    /// disappearing. The schema has listed <c>"Delay"</c> in the step <c>kind</c> enum since
+    /// before anything emitted one, so nothing about the contract had to change.
+    /// </remarks>
+    [Fact]
+    public void ADelayIsPublishedAsItsOwnKind()
+    {
+        var delay = Flow("offer.accept").GetProperty("steps").EnumerateArray()
+            .Single(s => s.GetProperty("kind").GetString() == "Delay");
+
+        delay.TryGetProperty("capability", out _).ShouldBeFalse(
+            "a timer runs no capability, and publishing an absent one is how it came to be " +
+            "published as a capability step in the first place.");
+    }
+
+    /// <summary>
+    /// The steps of an <c>.OnTimeout(...)</c> block are placed in the step tree, not merely
+    /// counted in the capability list.
+    /// </summary>
+    /// <remarks>
+    /// <c>WriteBranches</c> had no <c>AwaitSignal</c> arm, so the block's steps reached no
+    /// <c>branches</c> array. Their capabilities still appeared in the manifest's top-level
+    /// capability list, because <c>FlowModel.AllSteps</c> walks <c>SelfAndNested</c> — so the
+    /// manifest named work it could not place, and a reader saw an escalation's capability
+    /// with nothing in the step tree that runs it. One entry rather than a conditional's two,
+    /// because a wait has no <c>Otherwise</c>: the other way out of it is the rest of the flow.
+    /// </remarks>
+    [Fact]
+    public void TheEscalationBlockIsInTheStepTree()
+    {
+        var wait = Flow("offer.accept").GetProperty("steps").EnumerateArray()
+            .Single(s => s.GetProperty("kind").GetString() == "AwaitSignal");
+
+        var branches = wait.GetProperty("branches").EnumerateArray().ToList();
+
+        branches.Count.ShouldBe(1, "a wait has one block; the other path out is the flow.");
+        Kinds(branches[0]).ShouldNotBeEmpty("the escalation runs something.");
     }
 }

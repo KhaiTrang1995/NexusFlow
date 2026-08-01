@@ -5,9 +5,10 @@
 > this says what is built.
 >
 > **Last updated:** 2026-08-01 · **Phase:** **P0 complete · P1 closed with one accepted
-> exception → P2 in progress: every package except WP-62 and WP-63 has landed at
-> least in part; WP-59 and WP-64 landed whole, and WP-50 landed its chaos rig without B7 or
-> B8** · **Commit:** see `git log`
+> exception → P2 in progress: WP-62 is the only package with nothing built. WP-59 and
+> WP-64 landed whole; WP-50 landed its chaos rig without B7 or B8; WP-63 landed its
+> suspension half without its timer half; and WP-56 gained the broker plugin its own
+> ADR names as the condition for reopening** · **Commit:** see `git log`
 >
 > **Durable execution runs against a real database, and is not yet end to end.** WP-52 made
 > `FlowX.Runtime` read `ExecutionProfile`: a `Durable` flow journals one row per
@@ -49,16 +50,16 @@
 > being made fast. See
 > [§5d](#5d-p2--durable-execution--nearly-complete-qr2-measured-on-demand-b7-and-b8-not-at-all).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** **1908/1908 passing across 16 assemblies**
+> **Build:** 0 warnings, 0 errors · **Tests:** **2004/2004 passing across 16 assemblies**
 > (a large share against a live PostgreSQL 16.13 and Redis 7.0.15; **0 failed, 0 skipped**).
-> *This read **1887**, which was the count before WP-59 merged. The figure here is
+> *This read **1908**, the count before durable suspension, the broker plugin and the two policy diagnostics merged. The figure here is
 > re-measured on the merged tree — `dotnet test FlowX.slnx -c Release` with both stores
 > reachable — rather than adjusted by the number of tests the package added.*
 > Without `FLOWX_POSTGRES_CONNECTION` the adapter suite skips **113 of its 120 with
 > reasons**; set to an unreachable server it **fails 114 and skips none**, on purpose.
 > *Those two figures read 79 and 80 until 2026-08-01: the suite grew and nobody re-ran the
 > probes. Both are re-measured rather than annotated.*
-> **The chaos rig is not in the 1908 and must not be** — `tests/FlowX.Chaos` is an `Exe`,
+> **The chaos rig is not in the 2004 and must not be** — `tests/FlowX.Chaos` is an `Exe`,
 > not a test project, so the ordinary suite is unchanged by it; it kills processes, and one
 > recorded run took 328 s and spawned 203 children ·
 > **Coverage:** **83.9 % line / 77.6 % branch** over `src/` and `plugins/`, measured
@@ -147,11 +148,21 @@ What changed is that it is no longer tracked as a blocker.*
       *Two of the three named here have since been fixed and this line did not say so:
       **ADR-0013** gained a `Revisit when` and **ADR-0016** a `Negative` section, both on
       2026-07-31.* See [PLAN open item 11](PLAN.md#9-open-items-blocking-the-plan)
-- [x] `docs/diagnostics/` — **30 pages** plus an index, one per raised diagnostic; every help
-      URI resolves, asserted by test. *This line read **23** and was not re-counted as
+- [x] `docs/diagnostics/` — **32 pages** plus an index, one per raised diagnostic; every help
+      URI resolves, asserted by test. **`FLOWX1032` and `FLOWX1033` landed 2026-08-01**, and
+      they are the pair that makes a declared policy honest at build time: `FLOWX1032`
+      (Warning) reports every kind a `.WithPolicy(...)` set declares **except**
+      `CompensationRetry`, which is the only kind any code path reads; `FLOWX1033` (Error)
+      reports `CompensationRetry` on a step with no compensation, where the emitter drops it
+      silently and the manifest publishes it anyway. Establishing the ground truth corrected
+      the framing the work started from: **the cut is by what a policy wraps, not by which
+      stage it runs in** — `PolicyChain.ForStep` filters by *kind*, so `Audit` is inert at
+      stage 7 alongside `CompensationRetry`, and a rule written against "stages 1–6 do not
+      run" would have been silent on every declared audit, 3 of the 7 in `samples/banking`.
+      *This line read **23** and was not re-counted as
       `FLOWX1007`–`FLOWX1009` (WP-58), `FLOWX1012` (WP-60), `FLOWX1030`, `FLOWX1031` and
       `FLOWX1006` (WP-59) were raised. Re-counted against the directory and against
-      `AnalyzerReleases.Unshipped.md`, which lists the same 30 ids — the two surfaces
+      `AnalyzerReleases.Unshipped.md`, which lists the same ids — the two surfaces
       `IdentifierAllocationTests` holds equal, and the reason the page count is checkable at
       all rather than remembered.*
 - [x] `docs/benchmarks/` — baseline, gate policy, and the honest caveats
@@ -1314,8 +1325,33 @@ exists only in a closing summary is one nobody reads.
       generated context declaring the event — and deliberately **not** on the one thing still
       missing, that no broker plugin implements `IEventPublisher`. Warning about that on
       every `.Emit` would be a warning the author cannot act on, which is how a rule gets
-      suppressed project-wide. So "reaches a broker" is still met as "reaches a publisher"
-      — [ADR-0018](docs/adr/ADR-0018-outbox-publication-and-ordering.md)
+      suppressed project-wide. ~~So "reaches a broker" is still met as "reaches a publisher"~~
+      — **a third half landed 2026-08-01 and it reaches a broker.** `RedisStreamEventPublisher`
+      (`plugins/FlowX.Redis`) publishes each staged event to **one Redis stream per
+      `partition_key`**, which *is* [ADR-0018](docs/adr/ADR-0018-outbox-publication-and-ordering.md)'s
+      decision 3 rather than an implementation of it: a Redis stream is totally ordered, so
+      per-key streams offer per-key order and nothing across keys. One stream for everything
+      would have offered the global order the record refuses. **No new project and no new
+      dependency** — `StackExchange.Redis` was already vetted in `docs/DEPENDENCIES.md`, and
+      `plugins/FlowX.Postgres` already holds five adapters, so the repo's own convention
+      settles "one plugin per technology". `FlowX.slnx` is unchanged.
+      **`PublisherConformance` holds two implementations** — the plugin and the recording
+      double, promoted from a test fixture to a reference implementation — across 10
+      assertions, and encodes the absence of global order **structurally**: `BrokerUnderTest.ReadAsync`
+      takes the key it is asking about, so there is no method that reads the whole broker
+      and no assertion about cross-key order can be written. A positive control publishes a
+      batch reversed *across* keys and passes; reversed *within* a key it is rejected by
+      name. **ADR-0018's revisit condition is met.**
+      *A defect only a real network could find:* a `List<OutboxRecord>` accepts nulls and a
+      stream entry does not, so a null `PartitionKey` threw `ArgumentException` from inside
+      `StackExchange.Redis`. It is now an *omitted* field rather than an empty one, so a
+      consumer can still tell "staged with no key" from "staged with the empty key". **One
+      double proves nothing about a broker.**
+      **Not proved end to end in one process:** nothing drives a PostgreSQL outbox into the
+      Redis publisher in a single test, because the two adapters gate on separate servers in
+      separate test projects. Every link is held and the seam is one interface with one
+      conformance suite behind it; the limitation is stated in `docs/17`, `docs/11` and the
+      ADR rather than left to read as end-to-end
 - [~] **WP-57** Compensation with its own policies. **Shipped 2026-07-31, and it resolved
       [open item 7](PLAN.md#9-open-items-blocking-the-plan)** — P2 built the slice rather
       than moving the item to P4. `PolicySet.CompensationRetry` is declared at
@@ -1455,8 +1491,29 @@ exists only in a closing summary is one nobody reads.
 
 **Roadmap Should:**
 
-- [ ] **WP-63** `AwaitSignal`, `Delay`, timers. Un-blocks `SubFlowMode.AwaitCompletion`
-      and makes `FLOWX1017`'s existing code fix buy something
+- [~] **WP-63** `AwaitSignal`, `Delay`, timers. **The suspension half shipped 2026-08-01;
+      the timer half has not.** A `Durable` flow reaching `.AwaitSignal<T>(timeout)` now
+      stops there — sealed `Suspended` at its resume frontier, holding no thread, no pooled
+      context and no lease — and `FlowHost.SignalAsync` resumes it through the **same**
+      `FlowEngine.ExecuteAsync` a recovery scan uses, as one private body with two overloads
+      rather than a second loop. A delivered signal is committed as the `AwaitSignal` step's
+      own `flow_step` row, so there is **no signal table and no migration**: the derived
+      frontier that already skipped committed steps is what makes a redelivery inert.
+      `FLOWX1017`'s code fix now produces a flow that compiles and waits, where for two
+      phases it produced a different error.
+      **Not built:** `.Delay(...)` and `.OnTimeout(...)` still compile to nothing, and the
+      timeout the author writes reaches the plan **armed by nothing** — the only enforced
+      budget on a waiting instance is its `[FlowDeadline]`. `FLOWX1031` is narrowed to those
+      two rather than deleted, and its page's deletion table now has one row done and one
+      outstanding. Three limits are named on that page rather than left to be found: no
+      manifest field for a signal, no `202` shape for an `[HttpTrigger]`ed flow that
+      suspends, and an inline composed child that may not wait (`flow.suspension_inside_composition`
+      — a parent resumed past a waiting child would compose a second child instance and
+      repeat its effects).
+      *An assertion written to prove a redelivery is rejected was **vacuous** — a
+      null-conditional short-circuited the whole chain — and hitting the running app showed
+      the opposite of what it claimed to check. Replaced with assertions that a redelivery
+      runs nothing, writes nothing and succeeds.*
 - [x] **WP-64** `flowx replay --mode inspect` — **shipped 2026-08-01.** The verb renders a
       durable instance from the journal, reading it **as rows** over the published migration
       contract through `Npgsql` and joining it against the manifest, which publishes the plan

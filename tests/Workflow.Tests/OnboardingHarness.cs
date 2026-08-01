@@ -494,6 +494,11 @@ internal sealed class RecordingDispatcher : IStepDispatcher
         // delivered — an unsatisfied one stops the loop before the dispatcher is reached — so
         // its presence in a trace is exactly the fact "this invocation carried the signal".
         StepKind.AwaitSignal => "await:" + step.SignalType,
+
+        // And a timer is only ever dispatched when it has come due, for the same reason: an
+        // unelapsed one stops the loop before the dispatcher is reached. Its presence in a
+        // trace is the fact "the wait was over by the time this invocation looked".
+        StepKind.Delay => "delay:" + StepNode.DelayIdentity,
         StepKind.Fail => "fail",
         _ => step.Kind.ToString().ToLowerInvariant(),
     };

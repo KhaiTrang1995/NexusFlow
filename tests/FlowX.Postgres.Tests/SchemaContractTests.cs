@@ -47,7 +47,7 @@ public sealed class SchemaContractTests
             Cancellation);
 
         var completed = await schema.Journal.CompleteAsync(
-            instance, new FencingToken(1), state, JournalPayload.Empty, Cancellation);
+            instance, new FencingToken(1), state, JournalPayload.Empty, wake: null, Cancellation);
 
         completed.IsSuccess.ShouldBeTrue(
             $"'{state}' must be storable. The enum and the CHECK constraint on " +

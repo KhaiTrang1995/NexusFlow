@@ -56,6 +56,18 @@ namespace Banking;
 /// <c>ExecuteTransferFlow</c> carries an argued suppression rather than a quiet one. A
 /// paragraph can go stale; a build cannot.
 /// </para>
+/// <para>
+/// <strong>Third: this file is one edit away from losing the one policy that runs, in three
+/// different directions.</strong> Applying a second set to a ledger leg discards the first
+/// (<a href="../../docs/diagnostics/FLOWX1034.md">FLOWX1034</a>); dropping the retry to one
+/// attempt publishes a retry the engine will not perform
+/// (<a href="../../docs/diagnostics/FLOWX1035.md">FLOWX1035</a>); and moving this file into a
+/// referenced assembly makes every declaration in it unreadable to the compiler, including
+/// that retry (<a href="../../docs/diagnostics/FLOWX1036.md">FLOWX1036</a>). All three
+/// compiled in silence until those rules were written, and
+/// <c>ReferenceSamplePolicyTests</c> makes each edit to this very file and asserts the
+/// report.
+/// </para>
 /// </remarks>
 public static class Policies
 {
@@ -92,6 +104,21 @@ public static class Policies
     /// <c>Idempotent = true</c> — <c>PolicyChain.ForCompensation</c> refuses the pairing
     /// otherwise, and it is handed the reversal's descriptor rather than the posting's for
     /// exactly that reason. This is the one line in the file that runs.
+    /// </para>
+    /// <para>
+    /// <strong>Five, and not one.</strong> <c>CompensationPolicy.IsRetrying</c> is
+    /// <c>Attempts &gt; 1</c>, so <c>attempts: 1</c> would leave
+    /// <c>ExecutionPlan.HasCompensationPolicies</c> false, the engine would take
+    /// <c>CompensationPolicy.None</c>, and both reversals would be dispatched exactly once —
+    /// while <c>ManifestWriter</c> published the kind with no parameters, so this bank's
+    /// contract would read as it does today.
+    /// <a href="../../docs/diagnostics/FLOWX1035.md">FLOWX1035</a> reports that edit; before
+    /// it, the number was the only thing standing between the manifest and a promise nothing
+    /// keeps. Five is <see cref="PolicySet.CompensationDefault"/>'s count and
+    /// <c>docs/06-Execution-Engine.md</c> §7 rule 2's, written out here because this set has
+    /// a timeout and an audit to declare in the same breath and a step carries one set —
+    /// applying the default <em>beside</em> this one would discard it, which is
+    /// <a href="../../docs/diagnostics/FLOWX1034.md">FLOWX1034</a>.
     /// </para>
     /// </remarks>
     public static readonly PolicySet LedgerPost = PolicySet.Named("ledger-post")

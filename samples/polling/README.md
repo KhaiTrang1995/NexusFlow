@@ -17,16 +17,14 @@ waiting.
 > ahead of its phase — it is a **proposal**, and reading it as anything else is
 > the mistake it invites.
 >
-> **There is no durable suspension**, and the two members that *are* declared no
-> longer pretend otherwise. `AwaitSignal<TSignal>(TimeSpan)` used to reach the plan,
-> the manifest and the diagram while `FlowEngine` had no case for
-> `StepKind.AwaitSignal`, so the step completed immediately — and the plan it reached
-> said `TimeSpan.FromHours(1)` however long the author had declared.
-> `Delay(TimeSpan)` reached nothing at all. Both were silent.
-> [`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) ended that: an **error** on
-> `AwaitSignal`, which now emits no plan rather than a fabricated one, and a
-> **warning** on `Delay` and `OnTimeout`, which produce no step. Nothing suspends,
-> nothing registers a timer, nothing wakes an instance up.
+> **Durable suspension exists; `PollUntil` does not.** *This box read "there is no durable
+> suspension" until WP-63.* `AwaitSignal<TSignal>(TimeSpan)` and `Delay(TimeSpan)` both
+> suspend a `Durable` flow now — one row, no thread, no lease, with the instant it is due on
+> the row — and `FlowHost.SignalAsync` or `FlowTimerScan` brings it back.
+> `samples/workflow`'s `offer.accept` is the running example. What this sample's flow above
+> uses is `PollUntil`, which is a **different member and does not exist**: it would be a
+> `Delay` inside a loop with a predicate, and neither the loop nor the predicate is
+> expressible against a suspension point today.
 >
 > The other refusals around the gap were already real:
 > [`FLOWX1017`](../../docs/diagnostics/FLOWX1017.md) is an **error** on
@@ -173,15 +171,12 @@ public async Task Waits_four_hours_in_milliseconds_and_holds_no_resources()
 
 *None of these can be tried yet. Kept as the acceptance list WP-63 is written to.*
 
-1. Change `Profile` to `Ephemeral` — build fails with `FLOWX1017`: timers require
-   durability, because an in-memory wait cannot survive a deployment. *This one is
-   half true today and worth being exact about: `FLOWX1017` is a shipped error and
-   `AwaitSignalRequiresDurableCodeFixProvider` offers the fix — but it fires on
-   `AwaitSignal`, not on the `PollUntil` written above, and the quick action's
-   destination is no longer clean. `Durable` does not suspend, so
-   [`FLOWX1031`](../../docs/diagnostics/FLOWX1031.md) is an error there too, and the
-   flow has no profile it can legally declare until WP-63 lands. That page argues why
-   that is the accurate description of the platform rather than a trap.*
+1. Change `Profile` to `Ephemeral` — build fails with `FLOWX1017`: waits require
+   durability, because an in-memory wait cannot survive a deployment and a timer outside a
+   journal has nowhere to record when it is due. *This one is now true of a flow that writes
+   `AwaitSignal` or `Delay` — `FLOWX1017` covers both and its quick action lands on a flow
+   that compiles and waits — but it still does not fire on the `PollUntil` written above,
+   because that member does not exist.*
 2. Deploy mid-wait (restart every node) — every suspended document resumes. *A
    killed node's instances **are** found and finished by another node's recovery
    scan today; what does not exist is the mid-wait to be killed in.*

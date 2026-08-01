@@ -58,6 +58,12 @@ public static class ServiceCollectionExtensions
                 provider => new PostgresRecoveryIndex(provider.GetRequiredService<NpgsqlDataSource>()));
         }
 
+        if (settings.RegisterTimerIndex)
+        {
+            services.AddSingleton<ITimerIndex>(
+                provider => new PostgresTimerIndex(provider.GetRequiredService<NpgsqlDataSource>()));
+        }
+
         services.AddSingleton(
             provider => new PostgresRetention(provider.GetRequiredService<NpgsqlDataSource>()));
         services.AddSingleton(provider => new PostgresMigrator(

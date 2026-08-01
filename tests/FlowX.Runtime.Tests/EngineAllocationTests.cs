@@ -859,6 +859,7 @@ public sealed class EngineAllocationTests
             FencingToken token,
             FlowInstanceState state,
             JournalPayload stateBag,
+            FlowWake? wake,
             CancellationToken cancellationToken) =>
             new(Result.Ok(_instance));
 

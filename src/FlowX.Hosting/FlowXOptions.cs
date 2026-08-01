@@ -90,6 +90,30 @@ public sealed class FlowXOptions
     /// are finished.
     /// </remarks>
     public int MaxConcurrentRecoveries { get; set; } = 8;
+
+    /// <summary>How often this node looks for parked instances whose wait has come due.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the resolution of every timer in every flow this node runs.</strong> A
+    /// <c>.Delay(TimeSpan.FromSeconds(1))</c> under a ten-second sweep waits somewhere between
+    /// one and eleven seconds — the wait is a lower bound, never an upper one, which is the
+    /// same promise a scheduled trigger makes and the only one a sweep can keep.
+    /// </para>
+    /// <para>
+    /// Applied with jitter for the reason <see cref="RecoveryScanInterval"/> is: identical
+    /// nodes on an identical interval converge, and a fleet that sweeps in lockstep is a
+    /// thundering herd wearing a timer.
+    /// </para>
+    /// </remarks>
+    public TimeSpan TimerScanInterval { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>How many due instances one sweep asks the journal for.</summary>
+    /// <remarks>
+    /// A page, never the backlog — the reason <see cref="RecoveryScanBatchSize"/> is bounded,
+    /// and one this sweep meets more often: a node that was down over a weekend comes back to
+    /// every timer that fell due while it was gone, all due at once.
+    /// </remarks>
+    public int TimerScanBatchSize { get; set; } = 64;
 }
 
 /// <summary>
@@ -188,6 +212,22 @@ internal sealed class FlowXOptionsValidator : IValidateOptions<FlowXOptions>
             failures.Add(
                 $"{nameof(FlowXOptions.RecoveryScanBatchSize)} must be greater than zero; it " +
                 $"is {options.RecoveryScanBatchSize}.");
+        }
+
+        if (options.TimerScanInterval <= TimeSpan.Zero)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.TimerScanInterval)} must be positive; it is " +
+                $"{options.TimerScanInterval}. A zero interval is a sweep loop with no pause " +
+                "in it, which is a denial of service aimed at your own journal.");
+        }
+
+        if (options.TimerScanBatchSize <= 0)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.TimerScanBatchSize)} must be greater than zero; it " +
+                $"is {options.TimerScanBatchSize}. Zero is not 'timers disabled' — leave the " +
+                "journal without an ITimerIndex for that.");
         }
 
         if (options.MaxConcurrentRecoveries <= 0)

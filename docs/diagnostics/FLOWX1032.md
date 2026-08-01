@@ -109,12 +109,23 @@ times on one line, which is how a catalogue gets suppressed wholesale.
 - A step with no `.WithPolicy(...)` at all.
 - A `.WithPolicy(...)` whose argument the compiler cannot resolve to a field or property
   initialiser declared in source — a set built at run time, one returned by a method, or one
-  arriving from a referenced assembly, `PolicySet.CompensationDefault` included.
-  `PolicySetReader` returns nothing rather than guessing, which is the same restriction
-  FLOWX1014 and FLOWX1019 already work under, and it is exactly where
-  `FlowEmitter.PolicyArguments` is silent too: a set whose kinds the compiler could not read
-  produces no policy argument at all. A report naming policies the compiler inferred would
-  name policies the author cannot find.
+  arriving from a referenced assembly. `PolicySetReader` returns nothing rather than guessing,
+  which is the same restriction FLOWX1014 and FLOWX1019 already work under, and it is exactly
+  where `FlowEmitter.PolicyArguments` is silent too: a set whose kinds the compiler could not
+  read produces no policy argument at all. A report naming policies the compiler inferred
+  would name policies the author cannot find. **The silence itself is now reported, by
+  [FLOWX1036](FLOWX1036.md)** — not as a claim about the kinds, which the compiler cannot
+  make, but as the fact that none of them reaches the plan or the manifest.
+- `PolicySet.CompensationDefault`, which is a referenced-assembly set and resolves anyway.
+  *This page said the opposite for two releases, and it was true: the set named as the
+  documented default for compensation reached no plan, so the one policy this runtime
+  executes did not execute.* `PolicySetReader` now carries the composition of `PolicySet`'s
+  own well-known sets, pinned by `PolicySetContentsAreThePinnedOnes`, so the set resolves to
+  its `CompensationRetry` and this rule is silent on it for the ordinary reason: it is a
+  compensation-only set.
+- Every `.WithPolicy(...)` on a step that has a later one — see
+  [FLOWX1034](FLOWX1034.md). The discarded set reaches neither the plan nor the manifest, and
+  this rule's message says both carry the kinds it names.
 
 ## How to fix it
 
@@ -139,8 +150,9 @@ In the order they should be considered:
    is long.
 
 There is no fix inside FlowX in this release, in the same sense as
-[FLOWX1024](FLOWX1024.md), [FLOWX1028](FLOWX1028.md) and [FLOWX1031](FLOWX1031.md): the
-feature the declaration waits on does not exist. **This rule ships with no code fix**, and
+[FLOWX1024](FLOWX1024.md) and [FLOWX1028](FLOWX1028.md), and in the sense `FLOWX1031` was in
+until the feature it waited on arrived and it was deleted: the feature the declaration waits
+on does not exist. **This rule ships with no code fix**, and
 that is deliberate — every mechanical edit that clears it is the deletion the first
 paragraph refuses.
 
@@ -184,16 +196,16 @@ that asked for a timeout, and an error would systematically delete it — leavin
 that implements the policy engine with no flow declaring a policy to implement it for.
 
 **The source is not wrong; it is written correctly for a platform that has the feature.**
-This is the half [FLOWX1031](FLOWX1031.md) explicitly could not use, and it is what puts
-this rule on FLOWX1028's side of that line rather than on `AwaitSignal`'s. *No flow is
+This is the half `FLOWX1031` explicitly could not use, and it is what puts this rule on
+FLOWX1028's side of that line rather than on `AwaitSignal`'s. *No flow is
 correct with a seven-day wait compiled to no wait* — but a great many flows are correct with
 a `RateLimit` enforced at the gateway instead of in-process, or a `Timeout` subsumed by a
 `[FlowDeadline]` that is already shorter. FLOWX1028's first remedy — "confirm the flow is
 correct as it is, and record that" — is an honest offer here, and option 1 above is it.
 
-**Nothing is falsified, which is the line FLOWX1031 drew for its error half.** That rule is
-an error for `AwaitSignal` because the emitted plan carries `TimeSpan.FromHours(1)`, a value
-no author wrote. Here the plan carries exactly the set the author declared, in exactly
+**Nothing is falsified, which is the line `FLOWX1031` drew for its error half.** That rule
+was an error for `AwaitSignal` because the emitted plan carried `TimeSpan.FromHours(1)`, a
+value no author wrote. Here the plan carries exactly the set the author declared, in exactly
 ADR-0011's stage order. The plan says less about *behaviour* than a reader assumes and
 nothing untrue about *declaration* — the category [FLOWX1027](FLOWX1027.md) occupies, at the
 severity C# gives `CS0162`.
@@ -210,7 +222,7 @@ can adopt incrementally.
 in [21-Quality-Gates](../21-Quality-Gates.md) notices it. Shipping this rule as `Info` would
 ship a rule that does nothing — a precise description of the state it was written to end.
 
-## Why this is not FLOWX1028, FLOWX1031 or FLOWX1014
+## Why this is not FLOWX1028, the deleted FLOWX1031, or FLOWX1014
 
 Three neighbours, and the boundaries are worth stating because all four are about a gap
 between what the source says and what the platform does.
@@ -218,7 +230,7 @@ between what the source says and what the platform does.
 | Rule | Asks |
 |---|---|
 | [FLOWX1028](FLOWX1028.md) | Is the flow's declared **execution profile** implemented? |
-| [FLOWX1031](FLOWX1031.md) | Can the compiler compile a **suspension construct** into a plan at all? |
+| `FLOWX1031` *(deleted — it can)* | Could the compiler compile a **suspension construct** into a plan at all? |
 | **FLOWX1032** | Will the runtime **apply** a policy the plan already carries correctly? |
 | [FLOWX1014](FLOWX1014.md) / [FLOWX1018](FLOWX1018.md) | Is a declared policy **safe** for the capability it wraps? |
 
@@ -245,6 +257,6 @@ long as the capability takes, and it goes red on the day a forward policy actual
 ---
 
 **Back to:** [diagnostics index](README.md) · [FLOWX1033](FLOWX1033.md) ·
-[FLOWX1014](FLOWX1014.md) · [FLOWX1028](FLOWX1028.md) · [FLOWX1031](FLOWX1031.md) ·
+[FLOWX1014](FLOWX1014.md) · [FLOWX1028](FLOWX1028.md) ·
 [Policy framework](../10-Policy-Framework.md) ·
 [ADR-0011](../adr/ADR-0011-fixed-policy-stage-order.md)

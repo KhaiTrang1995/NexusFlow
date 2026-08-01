@@ -415,12 +415,30 @@ public static class FlowXDiagnostics
         "engine already reports as defects rather than as outcomes.",
         DiagnosticSeverity.Warning);
 
-    /// <summary>FLOWX1017 — a suspension point in a non-durable flow.</summary>
+    /// <summary>FLOWX1017 — a wait in a non-durable flow.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Both kinds of wait, since WP-63's timer half.</strong> The rule was written for
+    /// <c>AwaitSignal</c> because that was the only wait a plan could carry; <c>.Delay</c>
+    /// compiled to nothing at all, so there was nothing to report about it. Now that it is a
+    /// step, it needs the same profile for the same reason — there is nowhere outside a journal
+    /// to record when a timer is due, so the only way to honour one in memory is to hold the
+    /// process for the duration, which is a <c>Task.Delay</c> wearing a plan node.
+    /// </para>
+    /// <para>
+    /// The title still names <c>AwaitSignal</c> alone, and the message names whichever
+    /// construct the flow declared. That is deliberate: the id and the title are what an
+    /// <c>.editorconfig</c> line and a build log carry, and renaming a shipped rule's title to
+    /// cover a second construct would break every search anybody has saved for the first.
+    /// </para>
+    /// </remarks>
     public static readonly DiagnosticDescriptor AwaitSignalRequiresDurable = Create(
         "FLOWX1017",
         "AwaitSignal requires the Durable profile",
-        "Flow '{0}' uses AwaitSignal but runs under the {1} profile",
-        "An in-memory wait does not survive a deployment, a crash or a scale-in. Set " +
+        "Flow '{0}' uses {2} but runs under the {1} profile",
+        "An in-memory wait does not survive a deployment, a crash or a scale-in, and a timer " +
+        "outside a journal has nowhere to record when it is due — so the only way to honour " +
+        "one in memory is to hold the process for the duration. Set " +
         "Profile = ExecutionProfile.Durable on the flow.");
 
     /// <summary>FLOWX1018 — a cache policy on a capability with side effects.</summary>
@@ -797,68 +815,6 @@ public static class FlowXDiagnostics
         "remaining profile.",
         DiagnosticSeverity.Warning);
 
-    /// <summary>FLOWX1031 — a suspension construct the compiler cannot compile into a plan.</summary>
-    /// <remarks>
-    /// <para>
-    /// <c>Delay</c> and <c>OnTimeout</c> are declared on <c>IFlowBuilder</c>, documented in
-    /// <c>08 §3.5</c>, and neither survives compilation: both reach <c>FlowAnalyzer</c>'s
-    /// <c>default:</c> arm and are skipped, so the call produces no step and an
-    /// <c>OnTimeout</c> block's steps reach no plan, no dispatcher and no manifest.
-    /// </para>
-    /// <para>
-    /// <strong>Narrowed at WP-63, not deleted, and the precedent is <c>FLOWX1028</c>.</strong>
-    /// This rule covered a third construct: <c>AwaitSignal</c> reached the plan, the
-    /// dispatcher and the manifest, and it reached them carrying
-    /// <c>TimeSpan.FromHours(1)</c> — a value no author wrote, in place of one they did —
-    /// because the compiler's step model had no field for a timeout and
-    /// <c>StepNode.ForAwaitSignal</c> demands one. That made it an <em>error</em>: publishing
-    /// no plan was the only ending that published nothing untrue. WP-63 gave the model the
-    /// field and the engine a suspension point, so a durable flow now stops at its
-    /// <c>AwaitSignal</c> and resumes on the signal, with the declared duration in the plan.
-    /// Deleting the whole rule on that day would have handed a discarded <c>OnTimeout</c>
-    /// block the silence <c>AwaitSignal</c> used to have, which is exactly what narrowing
-    /// <c>FLOWX1028</c> to <c>Streaming</c> avoided rather than deleting it.
-    /// </para>
-    /// <para>
-    /// <strong>A warning throughout now, which is <c>FLOWX1028</c>'s answer to the same
-    /// shape.</strong> The argument that carries is its first one: an error erases the
-    /// declaration the fixing phase needs to find, and <c>.Delay(...)</c> is the grep that
-    /// finds the flows the timer half of WP-63 has to make work. A dropped call also leaves a
-    /// plan that says less than the source and nothing untrue — the category
-    /// <c>FLOWX1027</c> occupies, at the severity C# gives <c>CS0162</c>.
-    /// </para>
-    /// <para>
-    /// <strong>And the cost this rule used to carry is gone.</strong> With
-    /// <see cref="AwaitSignalRequiresDurable"/> an error below <c>Durable</c> and this an
-    /// error at it, <c>AwaitSignal</c> had no profile it could legally declare and
-    /// <c>AwaitSignalRequiresDurableCodeFixProvider</c> was a quick action whose result was a
-    /// different diagnostic. The quick action's premise — "the author wrote
-    /// <c>AwaitSignal</c>, so the flow suspends" — is true now, so its output is a flow that
-    /// compiles and waits.
-    /// </para>
-    /// <para>
-    /// <strong>Deleted, not fixed, when the timer lands.</strong> A rule that outlives the gap
-    /// it describes is noise, and noise is what teaches people to suppress a catalogue. The
-    /// deletion table is on <c>docs/diagnostics/FLOWX1031.md</c>.
-    /// </para>
-    /// </remarks>
-    public static readonly DiagnosticDescriptor SuspensionIsNotHonoured = Create(
-        "FLOWX1031",
-        "Suspension construct is declared but not honoured by the compiler",
-        "Flow '{0}' declares '{1}', which this release cannot honour: {2}",
-        "Delay and OnTimeout express a flow that waits on a clock, and nothing implements a " +
-        "timer yet. Both compile to nothing — the call produces no step, and an OnTimeout " +
-        "block's steps are absent from the plan, from the generated dispatcher and from " +
-        "flowx.manifest.json. AwaitSignal is no longer one of them: WP-63 made a durable " +
-        "flow suspend at it and resume when the signal is delivered, with the timeout the " +
-        "author declared carried into the plan. Until the timer half lands, express a wait " +
-        "on a clock outside the flow — a scheduled trigger replaces a Delay, and a scheduled " +
-        "sweep over instances that have waited too long replaces an OnTimeout branch. Do not " +
-        "delete the construct and ship the rest: a flow that needed to wait and now does not " +
-        "is the same defect with the evidence removed. This rule is deleted, not fixed, on " +
-        "the day the timer lands.",
-        DiagnosticSeverity.Warning);
-
     /// <summary>FLOWX1032 — a declared policy the runtime applies to nothing.</summary>
     /// <remarks>
     /// <para>
@@ -878,9 +834,8 @@ public static class FlowXDiagnostics
     /// </para>
     /// <para>
     /// <strong>A warning, on <see cref="ProfileIsNotHonouredByTheRuntime"/>'s argument one
-    /// level down.</strong> Both of that rule's halves transfer, and unlike
-    /// <see cref="SuspensionIsNotHonoured"/> this one may use the second as well as the
-    /// first. An error's only repair is deleting the <c>.WithPolicy(...)</c> call, which
+    /// level down.</strong> Both of that rule's halves transfer, and unlike the deleted rule
+    /// over the suspension constructs, this one may use the second as well as the first. An error's only repair is deleting the <c>.WithPolicy(...)</c> call, which
     /// erases the inventory P4 needs to find; and the source is not wrong — a great many
     /// flows are correct with a <c>RateLimit</c> enforced by the gateway in front of the
     /// process or a <c>Timeout</c> subsumed by a shorter <c>[FlowDeadline]</c>, so "confirm
@@ -939,7 +894,7 @@ public static class FlowXDiagnostics
     /// no fixing phase — P4 implements the eight inert kinds; it does not give a
     /// non-compensable step an undo. There is no legitimate program — a retry over an undo
     /// that does not exist is not a design decision anyone defends. And something *is*
-    /// falsified, which is the property that made <see cref="SuspensionIsNotHonoured"/>'s
+    /// falsified, which is the property that made the deleted suspension rule's
     /// <c>AwaitSignal</c> half an error: the manifest and the plan disagree about the same
     /// source line.
     /// </para>
@@ -971,12 +926,156 @@ public static class FlowXDiagnostics
         "while the manifest publishes it, leaving the published contract promising a retried " +
         "undo the plan has no undo for. Either the step does have an inverse and it was not " +
         "declared, in which case add '.CompensateWith<T>()'; or it genuinely has none, in " +
-        "which case the set naming its policies should not promise one — split the set, or " +
-        "apply PolicySet.CompensationDefault alongside it on the steps that do have an undo. " +
+        "which case the set naming its policies should not promise one — split the set, and " +
+        "give the steps that do have an undo a set that declares the retry. Not a second " +
+        ".WithPolicy(PolicySet.CompensationDefault) beside the first: a step carries one " +
+        "policy set and the later call discards the earlier, which is FLOWX1034. " +
         "There is no suppression that makes the declaration work: the emitter still drops it, " +
         "so what a suppression buys is a manifest and a plan that disagree with no message " +
         "saying which is true.",
         DiagnosticSeverity.Error);
+
+    /// <summary>FLOWX1034 — a step declaring more than one policy set.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A declared control deleted, not merely unapplied.</strong>
+    /// <c>StepModel.WithPolicy</c> assigns <c>PolicySetName</c> and <c>PolicyKinds</c> rather
+    /// than adding to them, and <c>FlowAnalyzer.AttachPolicy</c> calls it once per
+    /// <c>.WithPolicy(...)</c>. So the last call on a step wins outright: everything the
+    /// earlier sets declared is gone before <c>FlowEmitter</c> and <c>ManifestWriter</c> run,
+    /// and a step that declared a five-second timeout compiles to a plan with no timeout and
+    /// publishes a contract with no timeout in it.
+    /// </para>
+    /// <para>
+    /// <strong>An error, where <see cref="PolicyIsNotExecutedByTheRuntime"/> is a
+    /// warning</strong>, on <see cref="CompensationRetryHasNoCompensation"/>'s line exactly.
+    /// That rule's warning neighbour keeps the declaration somewhere P4 can find it; here
+    /// there is nothing to keep. No release makes a discarded set apply, no author means to
+    /// write two sets and use one, and the repair is mechanical and local: merge them.
+    /// </para>
+    /// <para>
+    /// <strong>It was written down one rule over and not reported.</strong>
+    /// <c>docs/diagnostics/FLOWX1019.md</c> declines to count a second <c>.WithPolicy</c>
+    /// because "which set wins is a resolution question this rule has no answer to". The
+    /// answer is the later one, and a fact about the compiler belongs in a diagnostic rather
+    /// than in the stated limits of a rule about deadlines.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor StepDeclaresMoreThanOnePolicySet = Create(
+        "FLOWX1034",
+        "Step declares more than one policy set",
+        "'{0}' is discarded: this step's policy set is '{1}', because a second " +
+        ".WithPolicy(...) replaces the first rather than adding to it",
+        "A step carries one policy set. FlowAnalyzer writes it with StepModel.WithPolicy, " +
+        "which assigns the set and its kinds rather than accumulating them, so every " +
+        ".WithPolicy(...) but the last one on a step is discarded before the compiled plan " +
+        "and flowx.manifest.json are written. Nothing else says so: the discarded set has no " +
+        "plan node, no manifest entry and no FLOWX1014 or FLOWX1018 check, so a declared " +
+        "timeout, breaker, rate limit or audit disappears in silence. Merge the sets into " +
+        "one and name the merged set for the step — a PolicySet is a fluent chain, so the " +
+        "merge is textual and the result is one declaration a reviewer can read. Do not " +
+        "apply PolicySet.CompensationDefault as a second set: that is what this rule " +
+        "reports, and until it existed FLOWX1033 recommended it. There is no suppression " +
+        "that makes both sets apply; policy-set composition is a language feature this " +
+        "release does not have.",
+        DiagnosticSeverity.Error);
+
+    /// <summary>FLOWX1035 — a compensation retry that retries nothing.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The number is honest and the kind is not.</strong>
+    /// <c>CompensationPolicy.IsRetrying</c> is <c>Attempts &gt; 1</c>;
+    /// <c>ExecutionPlan.Create</c> ORs it across the graph into
+    /// <c>HasCompensationPolicies</c>; <c>FlowEngine.CompensateAsync</c> reads that one flag
+    /// and takes <c>CompensationPolicy.None</c> when it is false. So a single attempt is the
+    /// dispatch a step with no declared chain already gets, because <c>None</c> is one
+    /// attempt — and <c>ManifestWriter</c> publishes the kind and its stage with no
+    /// parameters, so the published contract cannot be told apart from five attempts.
+    /// </para>
+    /// <para>
+    /// <strong>A warning, not <see cref="CompensationRetryHasNoCompensation"/>'s error</strong>,
+    /// and the line is that rule's own. It is an error because the plan and the manifest
+    /// disagree about one source line — the declaration reaches no plan node while the
+    /// manifest publishes it. Here they agree: the chain is built, the descriptor is in it at
+    /// stage <c>Consistency</c>, and <c>PolicyChain.ForCompensation</c> has already checked
+    /// the compensating capability's idempotency. What is false is the inference a reader
+    /// draws from the kind's name, which is <see cref="PolicyIsNotExecutedByTheRuntime"/>'s
+    /// category and its severity.
+    /// </para>
+    /// <para>
+    /// <strong>Not fixed by redefining the parameter.</strong> <c>attempts</c> is documented
+    /// as "how many times the undo may be dispatched, including the first"; making one mean
+    /// two would silently double a reversal for every author who wrote the honest thing.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor CompensationRetryRetriesNothing = Create(
+        "FLOWX1035",
+        "CompensationRetry declares a single attempt",
+        "Step '{0}' declares CompensationRetry({1}) in '{2}', which retries nothing: the " +
+        "undo is dispatched once, and the manifest publishes it as retried",
+        "CompensationPolicy.IsRetrying is Attempts > 1, so an attempt count below two leaves " +
+        "ExecutionPlan.HasCompensationPolicies false and FlowEngine.CompensateAsync takes " +
+        "CompensationPolicy.None — one dispatch, which is exactly what a step with no " +
+        "declared chain gets. A count of zero or less behaves identically, because " +
+        "CompensationPolicy.From clamps it. Meanwhile ManifestWriter publishes " +
+        "{\"kind\":\"CompensationRetry\",\"stage\":\"Consistency\"} and no parameters, so a " +
+        "reviewer, a flowx diff and an agent all read a retried undo out of the published " +
+        "contract. Either raise the count — docs/06-Execution-Engine.md §7 rule 2 makes " +
+        "compensation retry more aggressive than forward retry at five attempts, which is " +
+        "what PolicySet.CompensationDefault declares — or delete the call, which stops the " +
+        "manifest promising a retry and changes nothing about how the undo is dispatched. " +
+        "There is no configuration, deployment or later release under which one attempt " +
+        "becomes a retry.",
+        DiagnosticSeverity.Warning);
+
+    /// <summary>FLOWX1036 — a policy set the compiler cannot read.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Five rules and two artifacts being quiet together.</strong>
+    /// <c>PolicySetReader</c> resolves a set by walking the fluent chain that built it, and a
+    /// symbol from a referenced assembly has no <c>DeclaringSyntaxReferences</c> — the
+    /// initialiser was compiled to IL in another build. So <c>FlowEmitter</c> emits no chain,
+    /// <c>ManifestWriter</c> writes no <c>policies</c> array, and FLOWX1014, FLOWX1018,
+    /// FLOWX1019, <see cref="PolicyIsNotExecutedByTheRuntime"/> and
+    /// <see cref="CompensationRetryHasNoCompensation"/> all decline to speak. That is not an
+    /// unchecked policy; it is an absent one, and a <c>CompensationRetry</c> inside such a set
+    /// — the one policy this runtime executes — does not run.
+    /// </para>
+    /// <para>
+    /// <strong>Silence was the deliberate choice, and it was the wrong one.</strong> The
+    /// reader returns nothing rather than guessing, which is right: a report naming kinds the
+    /// compiler inferred would name policies the author cannot find. But "I cannot read this
+    /// set" is itself a fact worth reporting, and it is the fact the author needs — it is not
+    /// a claim about the contents at all.
+    /// </para>
+    /// <para>
+    /// <strong>A warning, on <see cref="PolicyIsNotExecutedByTheRuntime"/>'s argument.</strong>
+    /// The source is not wrong: a shared policy library is a reasonable design that this
+    /// compiler cannot see into, and the repairs are structural rather than a token. An error
+    /// would fail builds over a program that needs no change to be correct on the day the
+    /// compiler can read a metadata set.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor PolicySetCannotBeRead = Create(
+        "FLOWX1036",
+        "Policy set cannot be read at compile time",
+        "'{0}' cannot be read at compile time, so none of the policies it declares reaches " +
+        "the compiled plan or flowx.manifest.json",
+        "PolicySetReader resolves a .WithPolicy(...) argument by walking the fluent chain " +
+        "that built the set. A set declared in a referenced assembly has no syntax to walk — " +
+        "its initialiser was compiled to IL, and Roslyn does not read IL — and a set " +
+        "returned by a method, held in a local or chosen by a conditional has no single " +
+        "initialiser either. Everything downstream then agrees, quietly: no PolicyChain is " +
+        "emitted, so a CompensationRetry in the set does not run and " +
+        "ExecutionPlan.HasCompensationPolicies stays false; no policies array is published, " +
+        "so flowx diff compares nothing; and FLOWX1014, which is what prevents a duplicate " +
+        "charge, has no set to inspect. Move the declaration into the assembly that declares " +
+        "the flow — a linked source file or a source-only package where several projects " +
+        "need one set — or use PolicySet.CompensationDefault, which FlowX declares and this " +
+        "compiler therefore knows the composition of. Do not assemble a set at run time: " +
+        "PolicySet composition is resolved at compile time by design, and only parameter " +
+        "values are runtime-configurable.",
+        DiagnosticSeverity.Warning);
 
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
@@ -1009,9 +1108,11 @@ public static class FlowXDiagnostics
         StepIsUnreachableAfterFail,
         StepInputMappingHasWrongType,
         ProfileIsNotHonouredByTheRuntime,
-        SuspensionIsNotHonoured,
         PolicyIsNotExecutedByTheRuntime,
-        CompensationRetryHasNoCompensation);
+        CompensationRetryHasNoCompensation,
+        StepDeclaresMoreThanOnePolicySet,
+        CompensationRetryRetriesNothing,
+        PolicySetCannotBeRead);
 
     private static DiagnosticDescriptor Create(
         string id,

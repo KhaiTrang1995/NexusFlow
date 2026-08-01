@@ -48,20 +48,53 @@ public sealed class SuspensionTests
             .SignalType
             .ShouldBe(Signals.OfferCountersigned);
 
-    /// <summary>And the duration the plan carries is the one the flow declared.</summary>
+    /// <summary>And the durations the plan carries are the ones the flow declared.</summary>
     /// <remarks>
-    /// The defect <c>FLOWX1031</c> was raised over: <c>FlowEmitter</c> wrote
+    /// The defect a deleted diagnostic was raised over: <c>FlowEmitter</c> wrote
     /// <c>TimeSpan.FromHours(1)</c> for every suspension point whatever the author declared, so
-    /// a flow written to wait seven days produced a plan that said one hour. Nothing arms this
-    /// duration yet — there is no timer — but the plan states what the source states, which is
-    /// the precondition for anything ever arming it.
+    /// a flow written to wait seven days produced a plan that said one hour. Both durations are
+    /// the author's now, and both are armed — the instance records which wait it is parked at
+    /// and when it is due, and a sweep is what comes back for it.
     /// </remarks>
     [Fact]
-    public void ThePlanCarriesTheSevenDaysTheFlowDeclared() =>
+    public void ThePlanCarriesTheDurationsTheFlowDeclared()
+    {
         AcceptOfferFlow.Plan.Graph.Steps
             .Single(step => step.Kind == StepKind.AwaitSignal)
             .SignalTimeout
             .ShouldBe(Waits.Countersignature);
+
+        AcceptOfferFlow.Plan.Graph.Steps
+            .Single(step => step.Kind == StepKind.Delay)
+            .Delay
+            .ShouldBe(Waits.Settling);
+    }
+
+    /// <summary>
+    /// The escalation is laid out after the wait, and the signal path skips it.
+    /// </summary>
+    /// <remarks>
+    /// The layout is what makes <c>.OnTimeout</c> mean what it says. If the wait fell through
+    /// to the block on the signal path, a countersigned offer would be withdrawn; if it
+    /// carried no target, a timeout would run the steps after the wait against a payload
+    /// nothing delivered. Asserted off the compiled plan of this sample's own flow, so it is
+    /// the layout the engine walks rather than one a fixture arranged.
+    /// </remarks>
+    [Fact]
+    public void TheEscalationSitsBetweenTheWaitAndTheStepsAfterIt()
+    {
+        var wait = AcceptOfferFlow.Plan.Graph.Steps.Single(step => step.Kind == StepKind.AwaitSignal);
+
+        wait.Target.ShouldBe(
+            wait.Index + 2,
+            "the block is one step — a Fail — so a delivered signal carries on two past the " +
+            "wait, and the block falls through to the same index.");
+
+        AcceptOfferFlow.Plan.Graph.Steps[wait.Index + 1].Kind.ShouldBe(
+            StepKind.Fail,
+            "the escalation is contiguous with the wait, because the other path out of a " +
+            "suspension point is the rest of the flow and has no end to jump over.");
+    }
 
     /// <summary>
     /// The request that starts the flow returns at the wait, holding nothing.
@@ -129,20 +162,116 @@ public sealed class SuspensionTests
         var started = await harness.StartAsync(AnOffer, ct);
         var resumed = await harness.SignalAsync(started.Result.InstanceId!.Value, Countersigned, ct);
 
-        resumed.Result.IsSuccess.ShouldBeTrue(resumed.Result.Error?.ToString() ?? resumed.Trace.ToString());
+        resumed.Result.IsFailure.ShouldBeFalse(resumed.Result.Error?.ToString() ?? resumed.Trace.ToString());
+
+        resumed.Result.IsSuspended.ShouldBeTrue(
+            "the signal satisfied the wait and the flow ran on into the settling period, " +
+            "which is a second wait — this time on a clock, with nothing to deliver.");
 
         resumed.Trace.Executed.ShouldBe(
-            ["await:offer.countersigned", "onboarding.start"],
+            ["await:offer.countersigned"],
             "offer.send is stepped over because its row is committed; the suspension point " +
             "is dispatched — which only happens when the invocation carries the signal it " +
-            "waits for — and the step after it runs.");
+            "waits for — and the flow stops at the delay before onboarding.start.");
+
+        // The signal it carried is in the journaled state bag, waiting for the step that
+        // binds it. It has to be: the node that took the delivery will not be the one that
+        // starts onboarding a day later.
+        harness.Clock.Advance(Waits.Settling);
+
+        var woken = await harness.WakeAsync(ct);
+
+        woken.Report.Woken.ShouldBe(1, woken.ToString());
+
+        woken.Trace.Executed.ShouldBe(
+            ["delay:flow.delay", "onboarding.start"],
+            "the sweep resumed the instance through the same ResumeAsync a recovery scan " +
+            "uses, the delay was over, and the step after it ran.");
 
         harness.Desk.OnboardingsBySignatory.ShouldBe(
             ["ada"],
             "onboarding.start read the name off the OfferCountersigned it bound — a contract " +
-            "no step produced, which the engine seeded from the delivered signal.");
+            "no step produced, which the engine seeded from the delivered signal and the " +
+            "commit that recorded the wait journaled with the rest of the bag.");
 
         harness.Journal.Instances[0].State.ShouldBe(FlowInstanceState.Completed);
+    }
+
+    /// <summary>
+    /// An offer nobody signs is withdrawn by the clock, and the block is what withdraws it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The half that used to compile to nothing.</strong> The wait carried the
+    /// author's seven days into the plan and nothing armed it, so an unsigned offer sat
+    /// <c>Suspended</c> until <c>[FlowDeadline("P30D")]</c> — three weeks past the window the
+    /// business declared, with the envelope open the whole time.
+    /// </para>
+    /// <para>
+    /// The unwind is the point of ending the block with a <c>.Fail</c> rather than letting it
+    /// fall through: <c>offer.withdraw</c> was put on the compensation stack before the flow
+    /// suspended, on a node that is gone, and it is rebuilt from the journal's committed rows
+    /// by the same frontier scan that decides which steps to skip.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AnOfferNobodySignsIsWithdrawnWhenTheWindowCloses()
+    {
+        var harness = OfferHarness.Create();
+        var ct = TestContext.Current.CancellationToken;
+
+        await harness.StartAsync(AnOffer, ct);
+
+        (await harness.WakeAsync(ct)).Report.Examined.ShouldBe(
+            0, "the window is still open, so nothing is due");
+
+        harness.Clock.Advance(Waits.Countersignature);
+
+        var woken = await harness.WakeAsync(ct);
+
+        woken.Report.Woken.ShouldBe(1, woken.ToString());
+
+        woken.Trace.Compensated.ShouldBe(
+            ["offer.withdraw"],
+            "the escalation failed the flow, and the entry it unwound was rebuilt from the " +
+            "journal rather than held in this node's memory.");
+
+        harness.Desk.OpenEnvelopes.ShouldBe(0, "the envelope that went out is closed");
+        harness.Desk.StartedOnboardings.ShouldBe(0, "and nobody was onboarded");
+
+        harness.Journal.Instances[0].State.ShouldBe(FlowInstanceState.Failed);
+    }
+
+    /// <summary>
+    /// A sweep that runs before the wait is due leaves the instance exactly where it was.
+    /// </summary>
+    /// <remarks>
+    /// The property that makes a ten-second sweep interval affordable against a table of
+    /// week-long waits: the candidate set is filtered at the store on an instant the instance
+    /// chose, so a healthy parked instance is never fetched, never leased and never resumed.
+    /// </remarks>
+    [Fact]
+    public async Task ASweepBeforeTheWaitIsDueTouchesNothing()
+    {
+        var harness = OfferHarness.Create();
+        var ct = TestContext.Current.CancellationToken;
+
+        var started = await harness.StartAsync(AnOffer, ct);
+
+        harness.Clock.Advance(Waits.Countersignature - TimeSpan.FromMinutes(1));
+
+        var woken = await harness.WakeAsync(ct);
+
+        woken.Report.Examined.ShouldBe(0, "a minute short of due is not due");
+        woken.Trace.Executed.ShouldBeEmpty();
+
+        harness.Journal.Instances[0].State.ShouldBe(FlowInstanceState.Suspended);
+
+        harness.Journal.Instances[0].Wake!.Value.StepId.ShouldBe(
+            started.Result.Wake!.Value.StepId,
+            "and the instant on the row is the one the invocation that parked it wrote — a " +
+            "wait that were re-derived on every look could be made to last for ever by " +
+            "looking at it.");
     }
 
     /// <summary>
@@ -172,12 +301,18 @@ public sealed class SuspensionTests
 
         harness.Substitute("onboarding.start", OfferErrors.OnboardingRefused("headcount frozen"));
 
-        var resumed = await harness.SignalAsync(started.Result.InstanceId!.Value, Countersigned, ct);
+        await harness.SignalAsync(started.Result.InstanceId!.Value, Countersigned, ct);
 
-        resumed.Result.IsFailure.ShouldBeTrue();
-        resumed.Result.Compensation.ShouldBe(CompensationOutcome.Succeeded);
+        // Two waits and two nodes, which is what makes this the hard case. The signature was
+        // taken by one invocation and the failure happens in another, a settling period later,
+        // and the entry that has to be unwound was registered by a third before either.
+        harness.Clock.Advance(Waits.Settling);
 
-        resumed.Trace.Compensated.ShouldBe(
+        var woken = await harness.WakeAsync(ct);
+
+        woken.Report.Woken.ShouldBe(1, woken.ToString());
+
+        woken.Trace.Compensated.ShouldBe(
             ["offer.withdraw"],
             "the entry was put back on the stack from the journal, not from this node's memory");
 
@@ -205,6 +340,10 @@ public sealed class SuspensionTests
         var instanceId = started.Result.InstanceId!.Value;
 
         await harness.SignalAsync(instanceId, Countersigned, ct);
+
+        harness.Clock.Advance(Waits.Settling);
+
+        await harness.WakeAsync(ct);
 
         var again = await harness.SignalAsync(instanceId, Countersigned, ct);
 
@@ -270,7 +409,8 @@ internal sealed class OfferHarness
     {
         Options = options;
         Index = new InMemoryRecoveryIndex(Journal);
-        Durability = new FlowDurability(Journal, Leases, Index);
+        Timers = new InMemoryTimerIndex(Journal);
+        Durability = new FlowDurability(Journal, Leases, Index, Timers);
         Host = new FlowHost(new FlowEngine(Clock), options, Durability);
     }
 
@@ -288,6 +428,14 @@ internal sealed class OfferHarness
 
     /// <summary>The one query a recovery scan needs, over the same journal.</summary>
     public InMemoryRecoveryIndex Index { get; }
+
+    /// <summary>The one query a timer sweep needs, over the same journal.</summary>
+    /// <remarks>
+    /// A second index over the same instances rather than a second store, because a durable
+    /// timer is a value on the instance row. The two sweeps partition the unfinished rows
+    /// between them: this one reads <c>Suspended</c>, which <see cref="Index"/> excludes.
+    /// </remarks>
+    public InMemoryTimerIndex Timers { get; }
 
     /// <summary>The host both calls go through — the same node, deliberately.</summary>
     public FlowHost Host { get; }
@@ -364,13 +512,30 @@ internal sealed class OfferHarness
 
     /// <summary>Runs one recovery sweep over the same stores.</summary>
     public ValueTask<RecoveryScanReport> SweepAsync(CancellationToken ct) =>
-        new FlowRecoveryScan(
-                Host,
-                new FlowCatalog().Add(AcceptOfferFlow.Plan, Wrap(new DurableTrace())),
-                Durability,
-                Options,
-                Clock)
+        new FlowRecoveryScan(Host, Catalogue(new DurableTrace()), Durability, Options, Clock)
             .RunOnceAsync(ct);
+
+    /// <summary>Runs one timer sweep over the same stores, and reports what it ran.</summary>
+    /// <remarks>
+    /// The trace comes back with the report because that is the only place a woken instance's
+    /// steps are observable: the sweep resumes through <c>FlowHost.ResumeAsync</c> and hands
+    /// its caller counts, exactly as it does in a deployment, so the flow's own behaviour has
+    /// to be read off the dispatcher the catalogue handed it.
+    /// </remarks>
+    public async ValueTask<TimerRun> WakeAsync(CancellationToken ct)
+    {
+        var trace = new DurableTrace();
+
+        var report = await new FlowTimerScan(Host, Catalogue(trace), Durability, Options, Clock)
+            .RunOnceAsync(ct)
+            .ConfigureAwait(false);
+
+        return new TimerRun(report, trace);
+    }
+
+    /// <summary>What a sweep resolves a journal row's flow id and version back into.</summary>
+    private FlowCatalog Catalogue(DurableTrace trace) =>
+        new FlowCatalog().Add(AcceptOfferFlow.Plan, Wrap(trace));
 
     private RecordingDispatcher Wrap(DurableTrace trace) => new(
         AcceptOfferFlow.Plan,
@@ -383,6 +548,26 @@ internal sealed class OfferHarness
             pair => pair.Key,
             pair => (CapabilityStandIn)((_, _) => ValueTask.FromResult(StepOutcome.Failed(pair.Value))),
             StringComparer.Ordinal));
+}
+
+/// <summary>What one timer sweep found, and what the instance it woke then did.</summary>
+internal sealed class TimerRun
+{
+    internal TimerRun(TimerScanReport report, DurableTrace trace)
+    {
+        Report = report;
+        Trace = trace;
+    }
+
+    /// <summary>The sweep's own counts.</summary>
+    public TimerScanReport Report { get; }
+
+    /// <summary>What the woken instance ran.</summary>
+    public DurableTrace Trace { get; }
+
+    /// <inheritdoc />
+    public override string ToString() =>
+        $"examined {Report.Examined}, woke {Report.Woken}\n{Trace}";
 }
 
 /// <summary>What one invocation of <c>offer.accept</c> did.</summary>

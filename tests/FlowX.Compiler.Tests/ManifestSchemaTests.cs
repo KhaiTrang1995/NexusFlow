@@ -44,6 +44,19 @@ public sealed class ManifestSchemaTests
         throw new FileNotFoundException("Could not locate schemas/flowx.manifest.schema.json.");
     }
 
+    /// <summary>
+    /// Evaluates one emitted manifest against the committed schema, failing with every
+    /// error the evaluation produced.
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than private so a sibling suite about one shape — a suspension
+    /// point's fields, say — can assert against the *committed* contract instead of
+    /// loading a second copy of it. A second loader is a second chance to validate
+    /// against a schema nobody ships.
+    /// </remarks>
+    /// <param name="manifest">The emitted document.</param>
+    internal static void Validate(string manifest) => ShouldValidate(manifest);
+
     private static void ShouldValidate(string manifest)
     {
         using var document = JsonDocument.Parse(manifest);
@@ -118,6 +131,68 @@ public sealed class ManifestSchemaTests
     [Fact]
     public void AFlowWithAParallelValidates()
         => ShouldValidate(ManifestWriter.Write("Sample.App", "1.0.0", [Models.Parallel()]));
+
+    /// <summary>
+    /// A fork that waits for a quorum validates, which it did not until the committed schema
+    /// stopped declaring <c>merge</c> twice.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The step object carried two <c>merge</c> keys</strong> — one described, with
+    /// <c>Quorum</c> in its enum, and one bare copy without it, thirty lines later. JSON
+    /// duplicate keys resolve last-wins in every parser this repository uses, so the schema
+    /// FlowX actually validated against was the copy: <c>FlowAnalyzer</c> maps
+    /// <c>MergeStrategy.Quorum(n)</c> to the name <c>"Quorum"</c>,
+    /// <c>ManifestWriter</c> writes it, and the document it produced did not validate against
+    /// the contract the repository publishes.
+    /// </para>
+    /// <para>
+    /// Nothing caught it. <c>AFlowWithAParallelValidates</c> uses <c>AllMustSucceed</c>, which
+    /// both copies admit, so the only manifest ever validated with a fork in it took the arm
+    /// where the two agreed. That is the shape of every defect
+    /// <a href="../../../docs/adr/ADR-0017-manifest-v1-freeze-criteria.md">ADR-0017</a> is
+    /// about: a contract clause with nothing exercising it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AForkThatWaitsForAQuorumValidates()
+    {
+        var quorum = new FlowModel(
+            "order.screen", "1.0.0", "Ephemeral", null, "Sample.Flows", "ScreenOrderFlow",
+            "Sample.Contracts.PlaceOrder", "Sample.Contracts.OrderPlacedResult",
+            [
+                StepModel.Parallel(
+                    0,
+                    [
+                        new ParallelBranchModel([Models.Validate(1)]),
+                        new ParallelBranchModel([Models.Capture(2)]),
+                    ],
+                    "MergeStrategy.Quorum(2)",
+                    "Quorum"),
+            ]);
+
+        ShouldValidate(ManifestWriter.Write("Sample.App", "1.0.0", [quorum]));
+    }
+
+    /// <summary>
+    /// The duration pattern <c>StepModel</c> holds a folded wait to is the schema's own.
+    /// </summary>
+    /// <remarks>
+    /// <c>FlowX.Compiler</c> targets netstandard2.0, loads into the compiler process and
+    /// reads no files, so it cannot consult <c>schemas/flowx.manifest.schema.json</c> at
+    /// build time and carries a copy of the pattern instead. This is the pin on that copy —
+    /// the arrangement <c>PolicyStagesMatchTheAbstraction</c> already uses for the policy
+    /// stage table, and for the same reason: an unpinned copy of a published constraint
+    /// drifts silently.
+    /// </remarks>
+    [Fact]
+    public void TheModelsDurationPatternIsTheSchemasOwn()
+    {
+        var declared = Schema.GetDefs()!["duration"].GetPatternValue();
+
+        declared.ShouldNotBeNull();
+        StepModel.Iso8601DurationPattern.ShouldBe(declared!);
+    }
 
     /// <summary>
     /// A composition reaches the manifest as the schema describes it: a step of kind

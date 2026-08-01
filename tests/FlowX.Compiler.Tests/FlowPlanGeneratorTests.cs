@@ -732,6 +732,159 @@ public sealed class FlowPlanGeneratorTests
     }
 
     /// <summary>
+    /// <c>PolicySet.CompensationDefault</c> — the set the documents recommend — reaches the
+    /// plan and retries the undo five times.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>docs/06-Execution-Engine.md</c> §7 rule 2 names this set as the documented default
+    /// for compensation, and <c>docs/diagnostics/FLOWX1033.md</c> offers it as one of the two
+    /// repairs for a set that promises an undo the step has not got. It lives in
+    /// <c>FlowX.Abstractions</c>, so in every consuming compilation it arrives as metadata and
+    /// its symbol has no <c>DeclaringSyntaxReferences</c> at all.
+    /// </para>
+    /// <para>
+    /// The assertion is on the loaded plan rather than on the emitted text, because the text
+    /// is not the claim: the claim is that the engine reads five attempts off the node while
+    /// unwinding, and only <c>HasCompensationPolicies</c> and <c>CompensationRetry.Attempts</c>
+    /// say so.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheDocumentedDefaultCompensationSetReachesThePlan()
+    {
+        var source = WithFlow("""
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>().CompensateWith<ReleaseInventory>()
+                        .WithPolicy(PolicySet.CompensationDefault)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """);
+
+        GeneratorHarness.GeneratedCompileErrorsIn(source).ShouldBeEmpty();
+
+        var plan = GeneratorHarness.GeneratedPlanFor(source, "Sample.PlaceOrderFlow");
+
+        plan.HasCompensationPolicies.ShouldBeTrue(
+            "The recommended way to retry an undo has to be a way that works.");
+
+        plan.Graph[0].CompensationRetry.Attempts.ShouldBe(
+            5,
+            "docs/06-Execution-Engine.md §7 rule 2 — five attempts, not the one a step with " +
+            "no declared chain gets.");
+    }
+
+    /// <summary>
+    /// Two <c>.WithPolicy(...)</c> calls on one step: the second replaces the first.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>FlowAnalyzer.AttachPolicy</c> calls <c>StepModel.WithPolicy</c>, which assigns
+    /// <c>PolicySetName</c> and <c>PolicyKinds</c> rather than adding to them, so a step
+    /// carries one set and it is the last one written. This is what
+    /// <c>docs/diagnostics/FLOWX1034.md</c> is about, and it is why FLOWX1033's repair is
+    /// "split the set" and not "apply another one alongside it".
+    /// </para>
+    /// <para>
+    /// Asserted on the manifest as well as the plan, because the two lose different things:
+    /// the plan loses the <c>Timeout</c> the step declared, and the published contract loses
+    /// the entry a reviewer would have read it from.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ASecondPolicySetOnOneStepReplacesTheFirst()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Ledger = PolicySet
+                    .Named("ledger")
+                    .Timeout(System.TimeSpan.FromSeconds(5));
+
+                public static readonly PolicySet Undo = PolicySet
+                    .Named("inventory-undo")
+                    .CompensationRetry(attempts: 5);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>().CompensateWith<ReleaseInventory>()
+                        .WithPolicy(Policies.Ledger)
+                        .WithPolicy(Policies.Undo)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Plan.ShouldNotContainText(
+            "Policies.Ledger",
+            "The first set reaches no plan node at all — the second call overwrote it.");
+
+        run.ManifestJson.ShouldNotBeNull().ShouldNotContain(
+            "\"kind\": \"Timeout\"",
+            customMessage: "And it reaches no published contract either.");
+    }
+
+    /// <summary>
+    /// <c>.CompensationRetry(attempts: 1)</c>: the manifest publishes a retried undo and the
+    /// plan dispatches it once.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The evidence behind <c>docs/diagnostics/FLOWX1035.md</c>, read off the two artifacts
+    /// that disagree rather than argued from the source. <c>CompensationPolicy.IsRetrying</c>
+    /// is <c>Attempts &gt; 1</c>, so a single attempt leaves
+    /// <c>ExecutionPlan.HasCompensationPolicies</c> false and <c>FlowEngine.CompensateAsync</c>
+    /// takes <c>CompensationPolicy.None</c> for every step in the plan — the same behaviour as
+    /// a step that declared no chain at all. <c>ManifestWriter.WritePolicies</c> publishes the
+    /// kind and its stage and no parameters, so nothing in the published contract distinguishes
+    /// this from five attempts.
+    /// </para>
+    /// <para>
+    /// Pinned rather than fixed. Making one attempt mean two would contradict the parameter's
+    /// own documentation — "how many times the undo may be dispatched, including the first" —
+    /// and would silently double a reversal for every author who wrote the honest thing.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ASingleAttemptIsPublishedAsARetryAndDispatchedOnce()
+    {
+        var source = WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Undo = PolicySet
+                    .Named("inventory-undo")
+                    .CompensationRetry(attempts: 1);
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>().CompensateWith<ReleaseInventory>()
+                        .WithPolicy(Policies.Undo)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """);
+
+        GeneratorHarness.Run(source).ManifestJson.ShouldNotBeNull().ShouldContain(
+            "\"kind\": \"CompensationRetry\"",
+            customMessage: "The published contract says this step's undo is retried.");
+
+        var plan = GeneratorHarness.GeneratedPlanFor(source, "Sample.PlaceOrderFlow");
+
+        plan.Graph[0].CompensationRetry.Attempts.ShouldBe(1);
+
+        plan.HasCompensationPolicies.ShouldBeFalse(
+            "And the plan the engine walks says it is dispatched once, which is what a step " +
+            "with no declared chain at all already gets.");
+    }
+
+    /// <summary>
     /// The compensation's descriptor states the compensation's own idempotency.
     /// </summary>
     /// <remarks>

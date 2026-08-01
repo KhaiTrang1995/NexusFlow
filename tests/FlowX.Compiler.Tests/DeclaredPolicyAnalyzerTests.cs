@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using FlowX.Compiler.Analysis;
 using Microsoft.CodeAnalysis;
@@ -283,22 +284,49 @@ public sealed class DeclaredPolicyAnalyzerTests
             .ShouldBeEmpty();
 
     /// <summary>
-    /// A set the compiler cannot resolve to a declared initialiser is silent.
+    /// A set the compiler cannot resolve to a declared initialiser names no inert kinds.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <c>PolicySetReader</c> returns nothing rather than guessing, which is the restriction
     /// FLOWX1014 and FLOWX1019 already work under and the one <c>FlowEmitter</c> works under:
-    /// it emits no chain for a set whose kinds it could not read. Reporting here would name
-    /// policies the author cannot find, and would fire on a set assembled at run time that
-    /// might contain nothing but a compensation retry.
+    /// it emits no chain for a set whose kinds it could not read. FLOWX1032 naming a kind here
+    /// would name a policy the author cannot find, and could name a set that in fact holds
+    /// nothing but a compensation retry.
+    /// </para>
+    /// <para>
+    /// <strong>It is not silent any more, and that is the change.</strong> This case used to
+    /// assert an empty report, which recorded five rules and two artifacts agreeing to say
+    /// nothing about a whole declared set. <a href="../../docs/diagnostics/FLOWX1036.md">FLOWX1036</a>
+    /// is the one report that is honest here: not <em>these kinds do not execute</em>, which
+    /// the compiler cannot know, but <em>none of this reaches anything</em>, which it can.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void AnUnresolvableSetIsSilent() =>
+    public void AnUnresolvableSetNamesNoInertKinds() =>
         Analyze(FlowWith(
             ".WithPolicy(Policies.Build())",
             """
             public static PolicySet Build() => PolicySet.Named("built").Timeout(TimeSpan.FromSeconds(1));
             """))
+            .ShouldBe(["FLOWX1036"]);
+
+    /// <summary>
+    /// <c>PolicySet.CompensationDefault</c> is silent, and it arrives as metadata.
+    /// </summary>
+    /// <remarks>
+    /// The set this file's own header calls "the one set in the whole DSL that does exactly
+    /// what it says". It is declared in <c>FlowX.Abstractions</c> and so has no
+    /// <c>DeclaringSyntaxReferences</c> in any consuming compilation;
+    /// <c>PolicySetReader</c> knows its composition anyway. Silent on all three of the rules
+    /// that could speak: it declares no inert kind, the step has a compensation, and it is
+    /// not unreadable.
+    /// </remarks>
+    [Fact]
+    public void TheDocumentedDefaultCompensationSetIsSilent() =>
+        Analyze(FlowWith(
+            ".CompensateWith<ReleaseInventory>().WithPolicy(PolicySet.CompensationDefault)",
+            "public static readonly int Unused = 0;"))
             .ShouldBeEmpty();
 
     // ------------------------------------------------------- FLOWX1033 must fire
@@ -387,20 +415,21 @@ public sealed class DeclaredPolicyAnalyzerTests
             """))
             .ShouldBe(["FLOWX1032"]);
 
-    /// <summary>An unresolvable set reports neither rule.</summary>
+    /// <summary>An unresolvable set reports neither FLOWX1032 nor FLOWX1033.</summary>
     /// <remarks>
-    /// Silent exactly where the emitter is silent. A set the compiler cannot read produces no
-    /// policy argument at all, so there is no drop to report and no carried chain to warn
-    /// about.
+    /// Silent exactly where the emitter is silent, on both of the rules that name what is in
+    /// a set: the compiler cannot see the <c>CompensationRetry</c>, so it cannot say the drop
+    /// happened, and it cannot list a carried kind either. What it can say — that the whole
+    /// set reaches nothing — is FLOWX1036 and is one report rather than two guesses.
     /// </remarks>
     [Fact]
-    public void AnUnresolvableSetReportsNeitherRule() =>
+    public void AnUnresolvableSetReportsNeitherContentRule() =>
         Analyze(FlowWith(
             ".WithPolicy(Policies.Build())",
             """
             public static PolicySet Build() => PolicySet.Named("built").CompensationRetry(attempts: 5);
             """))
-            .ShouldBeEmpty();
+            .ShouldBe(["FLOWX1036"]);
 
     // ------------------------------------------------------------------ severity
 
@@ -436,6 +465,413 @@ public sealed class DeclaredPolicyAnalyzerTests
             "No release executes a compensation retry that has no compensation, and " +
             "StepNode.ForCapability already refuses the shape.");
     }
+
+    // -------------------------------------------------------- FLOWX1034 must fire
+
+    /// <summary>A second <c>.WithPolicy(...)</c> on one step is reported.</summary>
+    /// <remarks>
+    /// <para>
+    /// <c>StepModel.WithPolicy</c> assigns rather than accumulates, so the first set reaches
+    /// no plan node and no manifest entry. <c>FlowPlanGeneratorTests</c> asserts the loss on
+    /// the emitted artifacts; this asserts that the build says so.
+    /// </para>
+    /// <para>
+    /// <strong>And FLOWX1032 speaks once, about the surviving set only.</strong> Both sets
+    /// declare a <c>Timeout</c>, so a rule that reported the discarded one too would report
+    /// twice here. It must not: FLOWX1032's message says the plan and the manifest carry the
+    /// kinds it names, and neither carries anything from a set the compiler threw away.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ASecondPolicySetOnOneStepIsReported()
+    {
+        var step = ".CompensateWith<ReleaseInventory>()" +
+                   ".WithPolicy(Policies.Ledger).WithPolicy(Policies.Undo)";
+
+        const string policies = """
+            public static readonly PolicySet Ledger = PolicySet.Named("ledger")
+                .Timeout(TimeSpan.FromSeconds(5));
+
+            public static readonly PolicySet Undo = PolicySet.Named("undo")
+                .Timeout(TimeSpan.FromSeconds(9))
+                .CompensationRetry(attempts: 5);
+            """;
+
+        Analyze(FlowWith(step, policies)).ShouldBe(["FLOWX1032", "FLOWX1034"]);
+
+        Messages(FlowWith(step, policies))
+            .Count(m => m.StartsWith("FLOWX1032", StringComparison.Ordinal))
+            .ShouldBe(1, "The discarded set is carried by nothing, so nothing carries it unapplied.");
+    }
+
+    /// <summary>The message names the set that is dropped and the one that replaces it.</summary>
+    /// <remarks>
+    /// Both, because either alone is unactionable: the author has written two names on one
+    /// step and needs to be told which of the two the compiler kept.
+    /// </remarks>
+    [Fact]
+    public void TheSupersededMessageNamesBothSets()
+    {
+        var message = Messages(FlowWith(
+            ".WithPolicy(Policies.Ledger).WithPolicy(Policies.Admission)",
+            """
+            public static readonly PolicySet Ledger = PolicySet.Named("ledger")
+                .Timeout(TimeSpan.FromSeconds(5));
+
+            public static readonly PolicySet Admission = PolicySet.Named("admission")
+                .RateLimit(permits: 5, TimeSpan.FromSeconds(1));
+            """))
+            .Single(m => m.StartsWith("FLOWX1034", StringComparison.Ordinal));
+
+        message.ShouldContain("Policies.Ledger");
+        message.ShouldContain("Policies.Admission");
+    }
+
+    /// <summary>The report lands on the call that is dropped, not on the one that survives.</summary>
+    /// <remarks>
+    /// Reporting on the survivor would put the message on the line that is working, and a
+    /// <c>#pragma</c> aimed at it would silence the wrong call.
+    /// </remarks>
+    [Fact]
+    public void TheSupersededReportLandsOnTheDroppedCall()
+    {
+        var source = FlowWith(
+            ".WithPolicy(Policies.Ledger).WithPolicy(Policies.Admission)",
+            """
+            public static readonly PolicySet Ledger = PolicySet.Named("ledger")
+                .Timeout(TimeSpan.FromSeconds(5));
+
+            public static readonly PolicySet Admission = PolicySet.Named("admission")
+                .RateLimit(permits: 5, TimeSpan.FromSeconds(1));
+            """);
+
+        var report = GeneratorHarness.Report(source, new DeclaredPolicyAnalyzer())
+            .Single(d => d.Id == "FLOWX1034");
+
+        source[report.Location.SourceSpan.Start..].ShouldStartWith(
+            "WithPolicy(Policies.Ledger)",
+            customMessage: "The first WithPolicy is the one whose set is thrown away, so it " +
+                           "is the one to point at.");
+    }
+
+    /// <summary>Three calls report twice: every set but the last is lost.</summary>
+    [Fact]
+    public void EverySupersededCallIsReported() =>
+        Messages(FlowWith(
+            ".WithPolicy(Policies.A).WithPolicy(Policies.B).WithPolicy(Policies.C)",
+            """
+            public static readonly PolicySet A = PolicySet.Named("a").Timeout(TimeSpan.FromSeconds(1));
+            public static readonly PolicySet B = PolicySet.Named("b").Timeout(TimeSpan.FromSeconds(2));
+            public static readonly PolicySet C = PolicySet.Named("c").Timeout(TimeSpan.FromSeconds(3));
+            """))
+            .Count(m => m.StartsWith("FLOWX1034", StringComparison.Ordinal))
+            .ShouldBe(2);
+
+    // ------------------------------------------------------ FLOWX1034 must not fire
+
+    /// <summary>One set per step is silent, whichever side of the compensation it sits on.</summary>
+    [Theory]
+    [InlineData(".CompensateWith<ReleaseInventory>().WithPolicy(Policies.Undo)")]
+    [InlineData(".WithPolicy(Policies.Undo).CompensateWith<ReleaseInventory>()")]
+    public void OneSetPerStepIsSilent(string step) =>
+        Analyze(FlowWith(
+            step,
+            """
+            public static readonly PolicySet Undo = PolicySet.Named("undo")
+                .CompensationRetry(attempts: 3);
+            """))
+            .ShouldBeEmpty();
+
+    /// <summary>Two sets on two steps is the ordinary case and reports nothing.</summary>
+    /// <remarks>
+    /// The walk is bounded by <c>IStepBuilder</c>'s two methods, so a <c>Step</c> between the
+    /// two calls ends the segment. Without that bound this rule would fire on every flow that
+    /// declares a policy twice, which is every flow in <c>samples/banking</c>.
+    /// </remarks>
+    [Fact]
+    public void TwoSetsOnTwoStepsAreSilent()
+    {
+        var source = Preamble + "\n\n" + """
+            public static class Policies
+            {
+                public static readonly PolicySet Undo = PolicySet.Named("undo")
+                    .CompensationRetry(attempts: 3);
+            }
+
+            [Flow("order.place", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "orders")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>().CompensateWith<ReleaseInventory>().WithPolicy(Policies.Undo)
+                    .Step<ReserveInventory>().CompensateWith<ReleaseInventory>().WithPolicy(Policies.Undo)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """;
+
+        Analyze(source).ShouldBeEmpty();
+    }
+
+    // -------------------------------------------------------- FLOWX1035 must fire
+
+    /// <summary>A compensation retry of one attempt is reported.</summary>
+    /// <remarks>
+    /// <c>CompensationPolicy.IsRetrying</c> is <c>Attempts &gt; 1</c>, so the plan's
+    /// <c>HasCompensationPolicies</c> stays false and the engine takes
+    /// <c>CompensationPolicy.None</c> — while the manifest publishes the kind with no
+    /// parameters and reads as a retried undo.
+    /// </remarks>
+    [Theory]
+    [InlineData("attempts: 1")]
+    [InlineData("1")]
+    [InlineData("attempts: 0")]
+    [InlineData("attempts: -1")]
+    public void ACompensationRetryThatRetriesNothingIsReported(string argument) =>
+        Analyze(FlowWith(
+            ".CompensateWith<ReleaseInventory>().WithPolicy(Policies.Undo)",
+            $"""
+            public static readonly PolicySet Undo = PolicySet.Named("undo")
+                .CompensationRetry({argument});
+            """))
+            .ShouldBe(["FLOWX1035"]);
+
+    /// <summary>The message names the step, the set and the count that was written.</summary>
+    [Fact]
+    public void TheSingleAttemptMessageNamesTheStepTheSetAndTheCount()
+    {
+        var message = Messages(FlowWith(
+            ".CompensateWith<ReleaseInventory>().WithPolicy(Policies.Undo)",
+            """
+            public static readonly PolicySet Undo = PolicySet.Named("undo")
+                .CompensationRetry(attempts: 1);
+            """))
+            .Single(m => m.StartsWith("FLOWX1035", StringComparison.Ordinal));
+
+        message.ShouldContain("ReserveInventory");
+        message.ShouldContain("Policies.Undo");
+        message.ShouldContain("1");
+    }
+
+    // ------------------------------------------------------ FLOWX1035 must not fire
+
+    /// <summary>Two attempts is a retry, and the one policy this runtime executes.</summary>
+    [Theory]
+    [InlineData("attempts: 2")]
+    [InlineData("attempts: 5")]
+    public void ARealCompensationRetryIsSilent(string argument) =>
+        Analyze(FlowWith(
+            ".CompensateWith<ReleaseInventory>().WithPolicy(Policies.Undo)",
+            $"""
+            public static readonly PolicySet Undo = PolicySet.Named("undo")
+                .CompensationRetry({argument});
+            """))
+            .ShouldBeEmpty();
+
+    /// <summary>
+    /// An attempt count that is not a literal is silent.
+    /// </summary>
+    /// <remarks>
+    /// A set whose count comes from configuration is exactly the case <c>FlowEmitter</c>
+    /// copies verbatim rather than folding, and the restriction FLOWX1019 works under: each
+    /// spelling this does not recognise costs a false negative, never a wrong number.
+    /// </remarks>
+    [Fact]
+    public void ANonLiteralAttemptCountIsSilent() =>
+        Analyze(FlowWith(
+            ".CompensateWith<ReleaseInventory>().WithPolicy(Policies.Undo)",
+            """
+            public static int Configured => 1;
+
+            public static readonly PolicySet Undo = PolicySet.Named("undo")
+                .CompensationRetry(Configured);
+            """))
+            .ShouldBeEmpty();
+
+    /// <summary>
+    /// A single attempt on a step with no compensation reports FLOWX1033 and not this.
+    /// </summary>
+    /// <remarks>
+    /// FLOWX1033 is the stronger statement and the error: the declaration reaches no plan
+    /// node at all, so how many attempts it asked for is not the interesting part. Two
+    /// reports on one line would leave the author choosing which to act on.
+    /// </remarks>
+    [Fact]
+    public void ASingleAttemptOnANonCompensableStepReportsTheDropOnly() =>
+        Analyze(FlowWith(
+            ".WithPolicy(Policies.Undo)",
+            """
+            public static readonly PolicySet Undo = PolicySet.Named("undo")
+                .CompensationRetry(attempts: 1);
+            """))
+            .ShouldBe(["FLOWX1033"]);
+
+    // -------------------------------------------------------- FLOWX1036 must fire
+
+    /// <summary>A set declared in a referenced assembly is reported.</summary>
+    /// <remarks>
+    /// The case the rule exists for and the one no single-compilation test can reach: the
+    /// symbol has no <c>DeclaringSyntaxReferences</c>, so the emitter writes no chain, the
+    /// manifest publishes no policies, and the set's <c>CompensationRetry</c> — the one policy
+    /// this runtime executes — does not run.
+    /// </remarks>
+    [Fact]
+    public void ASetFromAReferencedAssemblyIsReported() =>
+        AnalyzeConsumer(".CompensateWith<ReleaseInventory>().WithPolicy(Shared.Ledger)")
+            .ShouldBe(["FLOWX1036"]);
+
+    /// <summary>The message names the expression the author wrote.</summary>
+    [Fact]
+    public void TheUnreadableMessageNamesTheExpression() =>
+        MessagesFromConsumer(".CompensateWith<ReleaseInventory>().WithPolicy(Shared.Ledger)")
+            .Single(m => m.StartsWith("FLOWX1036", StringComparison.Ordinal))
+            .ShouldContain("Shared.Ledger");
+
+    // ------------------------------------------------------ FLOWX1036 must not fire
+
+    /// <summary>
+    /// <c>PolicySet.CompensationDefault</c> comes from a referenced assembly and resolves.
+    /// </summary>
+    /// <remarks>
+    /// The exemption, asserted against a real metadata reference rather than against the
+    /// in-tree source: <c>PolicySetReader</c> carries the composition of <c>PolicySet</c>'s
+    /// own well-known sets, and <c>PolicySetContentsAreThePinnedOnes</c> is what keeps that
+    /// carried copy honest.
+    /// </remarks>
+    [Fact]
+    public void TheDocumentedDefaultIsNotReportedAsUnreadable() =>
+        AnalyzeConsumer(".CompensateWith<ReleaseInventory>().WithPolicy(PolicySet.CompensationDefault)")
+            .ShouldBeEmpty();
+
+    /// <summary>A set declared in the compilation being built is silent.</summary>
+    [Fact]
+    public void ASetDeclaredInThisCompilationIsNotReportedAsUnreadable() =>
+        Analyze(FlowWith(
+            ".CompensateWith<ReleaseInventory>().WithPolicy(Policies.Undo)",
+            """
+            public static readonly PolicySet Undo = PolicySet.Named("undo")
+                .CompensationRetry(attempts: 5);
+            """))
+            .ShouldBeEmpty();
+
+    /// <summary>
+    /// An argument that does not bind to a policy set at all is silent.
+    /// </summary>
+    /// <remarks>
+    /// The compilation already reports it. A second message about a half-typed expression is
+    /// noise on every keystroke between <c>.WithPolicy(</c> and the name.
+    /// </remarks>
+    [Fact]
+    public void AnArgumentThatDoesNotBindIsSilent() =>
+        GeneratorHarness.Analyze(
+            FlowWith(".WithPolicy(Policies.NoSuchSet)", "public static readonly int Unused = 0;"),
+            new DeclaredPolicyAnalyzer())
+            .ShouldBeEmpty();
+
+    // ------------------------------------------------------------- the severities
+
+    /// <summary>
+    /// FLOWX1034 is an error; FLOWX1035 and FLOWX1036 are warnings.
+    /// </summary>
+    /// <remarks>
+    /// FLOWX1034 deletes a declared control from both published artifacts and has no
+    /// legitimate program, which is FLOWX1033's argument. The other two leave the source
+    /// correct — a shared policy library is a reasonable design, and an attempt count is a
+    /// value the author owns — which is FLOWX1032's.
+    /// </remarks>
+    [Fact]
+    public void TheNewSeveritiesFollowTheirNeighbours()
+    {
+        GeneratorHarness.Report(
+            FlowWith(
+                ".WithPolicy(Policies.A).WithPolicy(Policies.B)",
+                """
+                public static readonly PolicySet A = PolicySet.Named("a").Timeout(TimeSpan.FromSeconds(1));
+                public static readonly PolicySet B = PolicySet.Named("b").Timeout(TimeSpan.FromSeconds(2));
+                """),
+            new DeclaredPolicyAnalyzer())
+            .Single(d => d.Id == "FLOWX1034").Severity.ShouldBe(DiagnosticSeverity.Error);
+
+        GeneratorHarness.Report(
+            FlowWith(
+                ".CompensateWith<ReleaseInventory>().WithPolicy(Policies.Undo)",
+                """
+                public static readonly PolicySet Undo = PolicySet.Named("undo")
+                    .CompensationRetry(attempts: 1);
+                """),
+            new DeclaredPolicyAnalyzer())
+            .Single(d => d.Id == "FLOWX1035").Severity.ShouldBe(DiagnosticSeverity.Warning);
+
+        GeneratorHarness.Report(
+            ConsumerCompilation(".WithPolicy(Shared.Ledger)"),
+            new DeclaredPolicyAnalyzer())
+            .Single(d => d.Id == "FLOWX1036").Severity.ShouldBe(DiagnosticSeverity.Warning);
+    }
+
+    // ----------------------------------------- a policy set in a referenced assembly
+
+    /// <summary>A shared policy library, compiled to an image and referenced as one.</summary>
+    private static readonly Lazy<PortableExecutableReference> Library = new(CompileLibrary);
+
+    private static PortableExecutableReference CompileLibrary()
+    {
+        var compilation = GeneratorHarness.CompilationOf("Shared.Policies", [], ("Shared.cs", """
+            using System;
+            using FlowX;
+
+            namespace SharedLibrary;
+
+            public static class Shared
+            {
+                public static readonly PolicySet Ledger = PolicySet.Named("ledger")
+                    .Timeout(TimeSpan.FromSeconds(5))
+                    .CompensationRetry(attempts: 5);
+            }
+            """));
+
+        using var image = new System.IO.MemoryStream();
+        var emitted = compilation.Emit(image);
+
+        emitted.Success.ShouldBeTrue(string.Join(
+            "\n",
+            emitted.Diagnostics.Where(static d => d.Severity == DiagnosticSeverity.Error)));
+
+        return MetadataReference.CreateFromImage(image.ToArray());
+    }
+
+    private static Microsoft.CodeAnalysis.CSharp.CSharpCompilation ConsumerCompilation(string step)
+    {
+        var compilation = GeneratorHarness.CompilationOf(
+            "FlowX.AnalyzerTests",
+            [Library.Value],
+            ("/src/Flows/Sample.cs", Preamble.Replace(
+                "namespace Sample;",
+                "using SharedLibrary;\n\nnamespace Sample;",
+                StringComparison.Ordinal) + "\n\n" + $$"""
+                [Flow("order.place", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "orders")]
+                public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+                {
+                    protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                        .Step<ReserveInventory>(){{step}}
+                        .Return(ctx => new OrderResult("id"));
+                }
+                """));
+
+        compilation.GetDiagnostics()
+            .Where(static d => d.Severity == DiagnosticSeverity.Error)
+            .Select(static d => d.Id + ": " + d.GetMessage(System.Globalization.CultureInfo.InvariantCulture))
+            .ShouldBeEmpty();
+
+        return compilation;
+    }
+
+    private static string[] AnalyzeConsumer(string step) =>
+        [.. GeneratorHarness.Report(ConsumerCompilation(step), new DeclaredPolicyAnalyzer())
+            .Select(static d => d.Id)
+            .Distinct()
+            .OrderBy(static id => id, StringComparer.Ordinal)];
+
+    private static string[] MessagesFromConsumer(string step) =>
+        [.. GeneratorHarness.Report(ConsumerCompilation(step), new DeclaredPolicyAnalyzer())
+            .Select(static d => d.Id + ": " + d.GetMessage(System.Globalization.CultureInfo.InvariantCulture))];
 
     /// <summary>Both reports land on the <c>WithPolicy</c> identifier, not on the chain.</summary>
     /// <remarks>

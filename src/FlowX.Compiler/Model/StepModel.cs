@@ -42,6 +42,14 @@ public enum StepKindModel
     /// else here is a statement about what happens next.
     /// </remarks>
     Fail = 8,
+
+    /// <summary><c>.Delay(duration)</c>.</summary>
+    /// <remarks>
+    /// Appended rather than inserted beside <see cref="AwaitSignal"/>, because the members
+    /// are explicitly numbered and <c>flowx diff</c> compares manifests written by two builds
+    /// of the same source.
+    /// </remarks>
+    Delay = 9,
 }
 
 /// <summary>One branch of a <c>Parallel</c>: a block of steps that runs concurrently with its siblings.</summary>
@@ -318,7 +326,7 @@ public sealed record StepModel
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>This field is what ends the fabrication FLOWX1031 was raised over.</strong>
+    /// <strong>This field is what ended a fabrication.</strong>
     /// <c>StepNode.ForAwaitSignal</c> demands a duration and the model had none, so the
     /// emitter wrote <c>TimeSpan.FromHours(1)</c> for every suspension point whatever the
     /// author declared. Between publishing a value nobody wrote and publishing nothing, the
@@ -335,6 +343,29 @@ public sealed record StepModel
     public string? SignalTimeout { get; private init; }
 
     /// <summary>
+    /// The same wait, evaluated to an ISO-8601 duration, or <c>null</c> when it could not be.
+    /// Reaches the manifest as an <c>AwaitSignal</c> step's <c>timeout</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Two fields for one declaration, because two consumers need different things
+    /// from it</strong> (ADR-0021 §2.2). <see cref="SignalTimeout"/> is what the plan carries,
+    /// and it is verbatim because generated C# can evaluate <c>Waits.Countersignature</c>
+    /// itself. This is what the manifest carries, and it cannot be verbatim, because a
+    /// consumer reading JSON has never seen the assembly the symbol lives in — and a
+    /// <c>flowx diff</c> rule over a symbol name would fire on a rename and stay silent on a
+    /// change of value, which is the exact inversion of what the rule is for.
+    /// </para>
+    /// <para>
+    /// <c>null</c> whenever <c>DeclaredDuration</c> could not evaluate the expression, and the
+    /// manifest then omits the field. That is <c>merge</c>'s stance
+    /// (<see cref="MergeKindName"/>): an absent field is a consumer asking, a guessed one is a
+    /// consumer misled.
+    /// </para>
+    /// </remarks>
+    public string? SignalTimeoutIso { get; private init; }
+
+    /// <summary>
     /// Fully-qualified contract of the signal an <see cref="StepKindModel.AwaitSignal"/> step
     /// waits for, or <c>null</c> when it could not be resolved.
     /// </summary>
@@ -346,6 +377,18 @@ public sealed record StepModel
     /// crashed would come back having satisfied the wait and lost what it delivered.
     /// </remarks>
     public string? SignalContractTypeName { get; private init; }
+
+    /// <summary>
+    /// The author's declared wait, copied verbatim from the <c>.Delay</c> call.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="SignalTimeout"/> even though both are a duration a step waits
+    /// for, because they answer different questions — one bounds something else happening, the
+    /// other <em>is</em> what the step does — and one field would make the emitter's two arms
+    /// indistinguishable from each other. The expression, not a folded <c>TimeSpan</c>, for
+    /// the reason every other copied expression here is verbatim.
+    /// </remarks>
+    public string? DelayDuration { get; private init; }
 
     /// <summary>Named policy set applied via <c>.WithPolicy(...)</c>.</summary>
     public string? PolicySetName { get; private init; }
@@ -579,7 +622,7 @@ public sealed record StepModel
     /// </remarks>
     public int NextIndex =>
         Kind is StepKindModel.Condition or StepKindModel.Switch or StepKindModel.Parallel
-            or StepKindModel.ForEach
+            or StepKindModel.ForEach or StepKindModel.AwaitSignal
             ? JoinIndex
             : Index + 1;
 
@@ -774,21 +817,112 @@ public sealed record StepModel
     /// </param>
     /// <param name="contractTypeName">Fully-qualified <c>TSignal</c>, or null when unresolved.</param>
     /// <param name="location"><c>file:line</c> of the call.</param>
+    /// <param name="timeout">
+    /// The same wait as an ISO-8601 duration, for the manifest, or null when the compiler
+    /// could not evaluate the expression. Supplied rather than folded here, because following
+    /// a named constant to its declaration needs a semantic model and this layer has none.
+    /// </param>
+    /// <exception cref="System.ArgumentException">
+    /// <paramref name="timeout"/> is not an ISO-8601 duration the manifest schema accepts.
+    /// </exception>
+    /// <param name="onTimeout">
+    /// Steps of the <c>.OnTimeout(...)</c> block, already carrying their flat indices, or
+    /// empty when the author declared none.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The block is carried in <see cref="Then"/>, and that is reuse rather than
+    /// overloading.</strong> It is a block laid out contiguously after the node that owns it,
+    /// closed by nothing, whose steps have to appear in <see cref="SelfAndNested"/> so that
+    /// the descriptors, the dispatcher's switch and the manifest's capability list see them —
+    /// which is exactly what a conditional's <c>then</c> block is. A second collection meaning
+    /// the same thing would need every one of those readers to learn about it.
+    /// </para>
+    /// <para>
+    /// <see cref="JoinIndex"/> is derived here rather than passed in, for the reason
+    /// <see cref="Condition"/> derives its three layout numbers: it is a consequence of the
+    /// block, and a caller able to supply one that disagreed with the block it also supplied
+    /// could produce a plan that skips or repeats real steps.
+    /// </para>
+    /// </remarks>
     public static StepModel AwaitSignal(
         int index,
         string signalType,
         string? timeoutExpression = null,
         string? contractTypeName = null,
-        string? location = null)
+        string? location = null,
+        string? timeout = null,
+        IReadOnlyList<StepModel>? onTimeout = null)
     {
+        // Refused here rather than left to the schema, because the schema is validated by
+        // this repository's tests and never by an application's build — a folder that started
+        // producing `7.00:00:00` would ship into somebody's manifest and fail in their parser.
+        if (timeout != null && !Iso8601.IsMatch(timeout))
+        {
+            throw new System.ArgumentException(
+                $"'{timeout}' is not an ISO-8601 duration. The manifest's `timeout` field is " +
+                "`#/$defs/duration`, the same shape a flow's deadline uses.",
+                nameof(timeout));
+        }
+
+        var block = onTimeout ?? (IReadOnlyList<StepModel>)System.Array.Empty<StepModel>();
+
         return new StepModel(index, StepKindModel.AwaitSignal)
         {
             SignalType = signalType,
             SignalTimeout = timeoutExpression,
+            SignalTimeoutIso = timeout,
             SignalContractTypeName = contractTypeName,
+            Then = block,
+
+            // One past the block, which is where a delivered signal carries on — and where the
+            // block falls through to, because the two paths rejoin. With no block it is the
+            // ordinary next index, and the emitter writes no target at all: a target equal to
+            // the next index would read as an escalation that runs nothing.
+            JoinIndex = block.Count == 0 ? index + 1 : block[block.Count - 1].NextIndex,
             Location = location,
         };
     }
+
+    /// <summary>Models a <c>.Delay(duration)</c> call.</summary>
+    /// <param name="index">Flat index of the timer.</param>
+    /// <param name="durationExpression">
+    /// The author's declared wait, copied verbatim. Null only from a half-typed buffer — the
+    /// DSL has no <c>Delay</c> overload without a duration — and the emitter refuses such a
+    /// model rather than inventing one for it.
+    /// </param>
+    /// <param name="location"><c>file:line</c> of the call.</param>
+    /// <remarks>
+    /// One index and no block, like a capability. A timer is not a decision, it is a step that
+    /// takes a while — the difference being that the while is spent as a row rather than as a
+    /// process.
+    /// </remarks>
+    public static StepModel Delay(int index, string? durationExpression = null, string? location = null)
+    {
+        return new StepModel(index, StepKindModel.Delay)
+        {
+            DelayDuration = durationExpression,
+            Location = location,
+        };
+    }
+
+    /// <summary>The manifest schema's <c>duration</c> pattern, copied so the model can hold to it.</summary>
+    /// <remarks>
+    /// Duplicated from <c>schemas/flowx.manifest.schema.json</c>'s <c>#/$defs/duration</c> for
+    /// the reason <c>ManifestWriter.PolicyStages</c> is duplicated from <c>PolicySet</c>: this
+    /// assembly targets netstandard2.0, loads into the compiler process and reads no files.
+    /// Exposed rather than private because the copy has to be pinned to survive, and
+    /// <c>TheModelsDurationPatternIsTheSchemasOwn</c> is what pins it — it reads the committed
+    /// schema and fails if the two ever disagree.
+    /// </remarks>
+    public const string Iso8601DurationPattern =
+        @"^P(?!$)(\d+Y)?(\d+M)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+(\.\d+)?S)?)?$";
+
+    private static readonly System.Text.RegularExpressions.Regex Iso8601 =
+        new System.Text.RegularExpressions.Regex(
+            Iso8601DurationPattern,
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+            System.TimeSpan.FromSeconds(1));
 
     /// <summary>Models a <c>.When(predicate, then)</c> and the <c>.Otherwise(...)</c> that may follow.</summary>
     /// <param name="index">Flat index of the branch itself.</param>

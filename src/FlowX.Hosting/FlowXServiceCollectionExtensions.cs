@@ -79,6 +79,15 @@ public static class FlowXServiceCollectionExtensions
                 ResolveScan(provider),
                 provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
 
+        // A second loop rather than a second query on the first, because they are two sweeps
+        // over disjoint sets of rows on two intervals a deployment may reasonably set apart —
+        // and because a host that can wake parked instances but cannot take over abandoned
+        // ones, or the reverse, is a configuration each store decides for itself.
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowTimerService>(
+            static provider => new FlowTimerService(
+                ResolveTimerScan(provider),
+                provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
+
         services.TryAddSingleton<FlowXHealthCheck>();
 
         // Registering the type is not the same as registering the check. Before this,
@@ -120,7 +129,11 @@ public static class FlowXServiceCollectionExtensions
         // Both or neither. A journal with no lease store would write under a token nothing
         // issued; a lease store with no journal would fence nothing.
         return journal is not null && leases is not null
-            ? new FlowDurability(journal, leases, provider.GetService<IRecoveryIndex>())
+            ? new FlowDurability(
+                journal,
+                leases,
+                provider.GetService<IRecoveryIndex>(),
+                provider.GetService<ITimerIndex>())
             : null;
     }
 
@@ -133,6 +146,29 @@ public static class FlowXServiceCollectionExtensions
         }
 
         return new FlowRecoveryScan(
+            provider.GetRequiredService<FlowHost>(),
+            provider.GetRequiredService<FlowCatalog>(),
+            durability,
+            provider.GetRequiredService<IOptions<FlowXOptions>>().Value,
+            provider.GetRequiredService<IClock>());
+    }
+
+    /// <summary>The timer sweep, or null when this host has nothing to sweep with.</summary>
+    /// <remarks>
+    /// Null is the state a deployment is in when its journal implements no
+    /// <see cref="ITimerIndex"/>, and it is a supported one: durable flows still run and still
+    /// park, and a <c>.Delay(...)</c> waits for whatever else resumes the instance. It is
+    /// reported by <c>FlowTimerScan.IsEnabled</c> rather than refused, because a host that
+    /// runs no flow with a timer in it is not misconfigured.
+    /// </remarks>
+    private static FlowTimerScan? ResolveTimerScan(IServiceProvider provider)
+    {
+        if (ResolveDurability(provider) is not { CanWake: true } durability)
+        {
+            return null;
+        }
+
+        return new FlowTimerScan(
             provider.GetRequiredService<FlowHost>(),
             provider.GetRequiredService<FlowCatalog>(),
             durability,

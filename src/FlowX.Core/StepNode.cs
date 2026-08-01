@@ -140,6 +140,32 @@ public enum StepKind
     /// </para>
     /// </remarks>
     Fail = 9,
+
+    /// <summary>
+    /// Suspends until a wall-clock instant. Durable flows only.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><see cref="AwaitSignal"/> with nothing to deliver.</strong> Both stop the
+    /// invocation and leave the instance <see cref="FlowInstanceState.Suspended"/> at its
+    /// resume frontier; they differ only in what ends the wait. That is why they share the
+    /// engine's suspension path rather than having one each — a second way to park an
+    /// instance is a second way to get parking wrong.
+    /// </para>
+    /// <para>
+    /// <strong>Not a sleep.</strong> Nothing holds a thread, a pooled context or a lease
+    /// while it waits: the instance records the instant it must wake and a sweep resumes it
+    /// then, through the same <c>ExecuteAsync</c> a signal and a recovery scan re-enter. A
+    /// <c>Task.Delay</c> across a seven-day wait would be a thread's worth of process for a
+    /// row's worth of state.
+    /// </para>
+    /// <para>
+    /// Appended rather than inserted beside <see cref="AwaitSignal"/>, because the members
+    /// are explicitly numbered and a compiled plan a store or a manifest already describes
+    /// has to keep meaning what it meant.
+    /// </para>
+    /// </remarks>
+    Delay = 10,
 }
 
 /// <summary>
@@ -206,6 +232,17 @@ public sealed record StepNode
 
     /// <summary>How long an <see cref="StepKind.AwaitSignal"/> step waits before timing out.</summary>
     public TimeSpan? SignalTimeout { get; private init; }
+
+    /// <summary>How long a <see cref="StepKind.Delay"/> step waits.</summary>
+    /// <remarks>
+    /// Separate from <see cref="SignalTimeout"/> even though both are a duration a step waits,
+    /// because they are answers to different questions and one property would make
+    /// <see cref="ToString"/>, the engine's dispatch and every reader of a plan ambiguous about
+    /// which it was looking at — the distinction <see cref="CaseTargets"/> and
+    /// <see cref="BranchTargets"/> already draw. A signal timeout is a bound on something else
+    /// happening; this is the whole of what the step does.
+    /// </remarks>
+    public TimeSpan? Delay { get; private init; }
 
     /// <summary>
     /// Where control transfers, for the two control-flow kinds. <c>null</c> for every
@@ -370,8 +407,18 @@ public sealed record StepNode
     /// Empty only for the control-transfer kinds, which do no work and are never reported
     /// as having run.
     /// </para>
+    /// <para>
+    /// <strong>A <see cref="StepKind.Delay"/> names itself.</strong> It invokes nothing, emits
+    /// nothing and waits for nothing anybody sends, so there is no business identity to borrow
+    /// — but it does commit a row, and a row whose <c>capability_id</c> were empty would be the
+    /// one thing in an instance's history an operator could not name.
+    /// </para>
     /// </remarks>
-    public string Identity => Capability?.Id ?? EventType ?? SignalType ?? SubFlowId ?? string.Empty;
+    public string Identity => Capability?.Id ?? EventType ?? SignalType ?? SubFlowId ??
+        (Kind == StepKind.Delay ? DelayIdentity : string.Empty);
+
+    /// <summary>What a <see cref="StepKind.Delay"/> step is called in a journal row and a trace.</summary>
+    public const string DelayIdentity = "flow.delay";
 
     /// <summary>What runs when this step is undone, as one string.</summary>
     /// <remarks>
@@ -463,11 +510,40 @@ public sealed record StepNode
     /// <param name="index">Position in the graph.</param>
     /// <param name="signalType">Signal identity, <c>&lt;domain&gt;.&lt;signal&gt;</c>.</param>
     /// <param name="timeout">How long to wait. Must be positive.</param>
+    /// <param name="signalTarget">
+    /// Where control continues when the signal <em>does</em> arrive, when the author declared
+    /// an <c>.OnTimeout(...)</c> block. Must point forward. <c>null</c> when they declared
+    /// none, and then the signal path is the ordinary next index.
+    /// </param>
+    /// <exception cref="InvalidFlowPlanException">The target does not point forward.</exception>
     /// <remarks>
+    /// <para>
     /// Whether this step is <em>permitted</em> depends on the flow's execution
     /// profile, which the node cannot see. <see cref="ExecutionPlan"/> enforces it.
+    /// </para>
+    /// <para>
+    /// <strong>The target names the signal path, not the timeout path, and that is the
+    /// <see cref="ForBranch"/> layout read from the other side.</strong> A branch lays its
+    /// <c>then</c> block immediately after itself and carries its <em>false</em> target,
+    /// because only one of the two blocks can be contiguous. Here the block that has to be
+    /// contiguous is the timeout block — the steps after the wait are the rest of the flow and
+    /// have no end to jump over — so the timeout path is <c>Index + 1</c> and the target is
+    /// where the signal path lands, one past the block. The two rejoin there, so an author
+    /// whose escalation should end the flow writes <c>.Fail(...)</c> inside it exactly as they
+    /// would inside an <c>.Otherwise(...)</c>.
+    /// </para>
+    /// <para>
+    /// With no block there is nowhere for a timeout to go, and continuing as though the signal
+    /// had arrived would run steps that bind a payload nothing delivered. So a timeout with no
+    /// target ends the flow with <c>flow.signal_not_received</c>, and the completed compensable
+    /// steps unwind behind it.
+    /// </para>
     /// </remarks>
-    public static StepNode ForAwaitSignal(int index, string signalType, TimeSpan timeout)
+    public static StepNode ForAwaitSignal(
+        int index,
+        string signalType,
+        TimeSpan timeout,
+        int? signalTarget = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(index);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
@@ -476,6 +552,36 @@ public sealed record StepNode
         {
             SignalType = Identifiers.RequireIdentity(signalType, nameof(signalType)),
             SignalTimeout = timeout,
+            Target = signalTarget is { } target
+                ? RequireForwardTarget(index, target, "await signal")
+                : null,
+        };
+    }
+
+    /// <summary>Creates a durable timer.</summary>
+    /// <param name="index">Position in the graph.</param>
+    /// <param name="duration">How long to wait. Must be positive.</param>
+    /// <remarks>
+    /// <para>
+    /// No target, for the reason a capability has none: control resumes at the next index. A
+    /// timer is not a decision, it is a step that takes a while — the difference being that
+    /// the while is spent as a row rather than as a process.
+    /// </para>
+    /// <para>
+    /// Whether it is <em>permitted</em> depends on the flow's execution profile, which the
+    /// node cannot see. <see cref="ExecutionPlan"/> enforces it, on the same grounds it
+    /// enforces <see cref="StepKind.AwaitSignal"/>: an in-memory wait does not survive a
+    /// deployment, and one that is only in memory is a <c>Task.Delay</c> wearing a plan node.
+    /// </para>
+    /// </remarks>
+    public static StepNode ForDelay(int index, TimeSpan duration)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(duration, TimeSpan.Zero);
+
+        return new StepNode(index, StepKind.Delay)
+        {
+            Delay = duration,
         };
     }
 
@@ -833,7 +939,10 @@ public sealed record StepNode
     {
         StepKind.Capability => $"[{Index}] {Capability}",
         StepKind.Emit => $"[{Index}] emit {EventType}",
-        StepKind.AwaitSignal => $"[{Index}] await {SignalType} ({SignalTimeout})",
+        StepKind.AwaitSignal => Target is { } signalled
+            ? $"[{Index}] await {SignalType} ({SignalTimeout}), else {Index + 1}, signalled {signalled}"
+            : $"[{Index}] await {SignalType} ({SignalTimeout})",
+        StepKind.Delay => $"[{Index}] delay {Delay}",
         StepKind.Branch => $"[{Index}] branch, else {Target}",
         StepKind.Jump => $"[{Index}] jump {Target}",
         StepKind.Switch => $"[{Index}] switch {string.Join(", ", CaseTargets)}, else {Target}",

@@ -254,6 +254,40 @@ internal static class Models
         outputTypeName: "Sample.Contracts.OrderPlacedResult",
         steps: [Validate(0), Validate(1)]);
 
+    /// <summary>
+    /// A flow that suspends: <c>send · await(offer.countersigned) · start</c>.
+    /// </summary>
+    /// <remarks>
+    /// The shape <c>samples/workflow</c>'s <c>offer.accept</c> has, reduced to what the
+    /// manifest is asked about — a wait between two capability steps, with the declared
+    /// duration already folded to ISO-8601 by the analysis layer.
+    /// </remarks>
+    /// <param name="timeout">
+    /// The folded wait, or <c>null</c> for a declaration the compiler could not evaluate —
+    /// which is the case <c>ManifestWriter</c> must omit rather than guess at.
+    /// </param>
+    public static FlowModel Waiting(string? timeout = "P7D") => new(
+        flowId: "offer.accept",
+        version: "1.0.0",
+        profile: "Durable",
+        deadline: "P30D",
+        containingNamespace: "Sample.Flows",
+        typeName: "AcceptOfferFlow",
+        inputTypeName: "Sample.Contracts.OfferToAccept",
+        outputTypeName: "Sample.Contracts.AcceptedOffer",
+        steps:
+        [
+            StepModel.Capability(0, "Sample.Capabilities.SendOffer", "offer.send", "1.0.0", isIdempotent: true),
+            StepModel.AwaitSignal(
+                1,
+                "offer.countersigned",
+                timeoutExpression: "Waits.Countersignature",
+                contractTypeName: "Sample.Contracts.OfferCountersigned",
+                timeout: timeout),
+            StepModel.Capability(
+                2, "Sample.Capabilities.StartOnboarding", "onboarding.start", "1.0.0", isIdempotent: true),
+        ]);
+
     /// <summary>A single-step flow with no namespace, to exercise the degenerate shapes.</summary>
     public static FlowModel Minimal() => new(
         flowId: "ping.send",
