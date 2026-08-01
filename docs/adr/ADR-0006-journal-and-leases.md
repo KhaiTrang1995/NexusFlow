@@ -58,7 +58,7 @@ so Postgres, Redis, SQL Server or a custom store all behave identically.
 >   write path, and the conformance suite runs against **PostgreSQL 16.13** from a
 >   different assembly, unmodified — the arrangement a third party claiming
 >   conformance would use. Three clauses of the schema did not survive contact and
->   are amended in [ADR-0016](ADR-0016-postgres-journal-adapter.md)). Redis is still
+>   are amended in [ADR-0016](ADR-0016-postgres-journal-adapter.md). Redis is still
 >   WP-54, so there is one store and nothing yet to disagree with it.
 > - **A lease is acquired, renewed and released.** *"Nothing acquires a lease" and
 >   "resumption on another node has no mechanism yet" were true until WP-55.*
@@ -84,9 +84,9 @@ so Postgres, Redis, SQL Server or a custom store all behave identically.
 > store that is *correct*, which is a different claim from a number.
 >
 > The schema this journal actually has is not in this record: it is
-> [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md)), which fixes the key
+> [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md), which fixes the key
 > at `(instance_id, scope, step_id, attempt)`, and what a real database did to it is
-> [ADR-0016](ADR-0016-postgres-journal-adapter.md)).
+> [ADR-0016](ADR-0016-postgres-journal-adapter.md).
 
 ## Consequences
 

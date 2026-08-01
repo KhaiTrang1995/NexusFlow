@@ -2,7 +2,7 @@
 
 > **Constraint:** C6 — *Apache-2.0, no copyleft dependencies*, implication *"vets every
 > transitive dependency"* ([05 §2](05-Architecture.md)).
-> **Decision:** [ADR-0012](adr/ADR-0012-apache-2-license.md)).
+> **Decision:** [ADR-0012](adr/ADR-0012-apache-2-license.md).
 > **Gate:** `DependencyLicencesAreCompatible` in `tests/FlowX.Architecture.Tests`.
 
 ---

@@ -202,11 +202,11 @@ blocked and why. [PLAN.md](PLAN.md) is what to build next, and
 
 P0 exists to attempt to **falsify** the platform's central bet: that a source
 generator can emit an execution plan reaching ≤ 5 µs p99 with zero allocations.
-If it cannot, [ADR-0002](docs/adr/ADR-0002-compile-time-orchestration.md)) is
+If it cannot, [ADR-0002](docs/adr/ADR-0002-compile-time-orchestration.md) is
 wrong and the thesis is revisited before anything else is built. That is the
 point of doing it first.
 
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE). Rationale in
-[ADR-0012](docs/adr/ADR-0012-apache-2-license.md)).
+[ADR-0012](docs/adr/ADR-0012-apache-2-license.md).

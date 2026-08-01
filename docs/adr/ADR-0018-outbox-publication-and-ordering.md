@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-07-31
 **Deciders:** Runtime team, Platform architecture
-**Amends:** [ADR-0016](ADR-0016-postgres-journal-adapter.md)), Retention ·
+**Amends:** [ADR-0016](ADR-0016-postgres-journal-adapter.md), Retention ·
 [11 §5](../11-Distributed-Runtime.md#5-the-transactional-outbox)
 
 > WP-56 was supposed to make constraint **C4** — "no 2-phase commit; consistency is
@@ -27,7 +27,7 @@ Four forces met here and two of them pull against each other.
    extension point since before `FlowX.Abstractions` existed, alongside ten other contracts
    that also do not exist. `plugins/FlowX.Http` is the only transport in the repository.
 
-3. **[ADR-0009](ADR-0009-plugin-contracts.md)) forbids the obvious shortcut.** A publisher
+3. **[ADR-0009](ADR-0009-plugin-contracts.md) forbids the obvious shortcut.** A publisher
    contract defined inside `plugins/FlowX.Postgres` would make every future broker plugin
    depend on the PostgreSQL adapter to implement an interface that has nothing to do with
    PostgreSQL.

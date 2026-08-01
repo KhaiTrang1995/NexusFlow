@@ -278,7 +278,7 @@ the hold `ReserveInventory` took is then owned by nobody.
 The sample keeps `Ephemeral` and suppresses the rule with a stated reason rather than a
 `FLOWX-DEBT` marker: [docs/DEBT.md](../../docs/DEBT.md) is explicit that a trade recorded in
 an ADR is a *decision* rather than debt, and this one is
-[ADR-0003](../../docs/adr/ADR-0003-execution-profiles.md)). The reason is this sample's whole
+[ADR-0003](../../docs/adr/ADR-0003-execution-profiles.md). The reason is this sample's whole
 value — `dotnet run` serves an order with nothing behind it, and the only journal FlowX
 ships is PostgreSQL, so `Durable` here would mean a reference application that cannot place
 an order without a database, buying a crash-safe unwind for an inventory store that is a

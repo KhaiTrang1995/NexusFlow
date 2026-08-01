@@ -9,7 +9,7 @@ namespace FlowX.Cli.Tests;
 /// <remarks>
 /// <para>
 /// <strong>These tests are the compensating control
-/// [ADR-0020](../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md)) names.</strong> The
+/// [ADR-0020](../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md) names.</strong> The
 /// decision accepts that the CLI knows PostgreSQL column names and that no compiler check
 /// ties <c>Replay/JournalReader.cs</c> to <c>0001_initial_schema.sql</c>. A column rename
 /// therefore breaks the verb at run time, and this class is the only thing that notices —

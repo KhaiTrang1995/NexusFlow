@@ -35,12 +35,12 @@ public sealed class HttpTriggerAttribute(string method, string route) : TriggerA
 An enum passed to a constructor **is** attribute data. It survives compilation, is
 readable out of a referenced assembly, and needs nothing to run. That is what lets a
 trigger attribute FlowX does not ship reach the manifest at all — which
-[ADR-0004](../adr/ADR-0004-universal-trigger-model.md))'s "one trigger abstraction for
+[ADR-0004](../adr/ADR-0004-universal-trigger-model.md)'s "one trigger abstraction for
 every transport" requires, if it is to be true for transports FlowX does not ship.
 
 **This diagnostic is what is left over**: an attribute that declares no marker declares no
 family, and the compiler will not invent one.
-[ADR-0005](../adr/ADR-0005-manifest-as-build-artifact.md)) makes the manifest a build
+[ADR-0005](../adr/ADR-0005-manifest-as-build-artifact.md) makes the manifest a build
 artifact that downstream tools trust; a guessed `kind` would be a fact nobody declared,
 published in the document whose whole value is that it only contains declared facts.
 
@@ -229,7 +229,7 @@ not reach the manifest at all.
 metadata, so a generic projection of `MqttTriggerAttribute(string topic)` into a `topic`
 field is technically within reach. It is blocked on the manifest schema rather than on the
 compiler: `$defs/trigger` is `additionalProperties: false` over a closed property list, and
-widening it is an [ADR-0005](../adr/ADR-0005-manifest-as-build-artifact.md)) decision about
+widening it is an [ADR-0005](../adr/ADR-0005-manifest-as-build-artifact.md) decision about
 what a manifest promises — not something a trigger reader should settle by emitting a
 field.
 

@@ -9,7 +9,7 @@
 `ICapability<TIn, TOut>.ExecuteAsync` returns `ValueTask<Result<TOut>>`, so a capability
 that does not return a `Result` does not compile. This rule is the second half.
 
-[ADR-0007](../adr/ADR-0007-result-over-exceptions.md)) sets out what a thrown business
+[ADR-0007](../adr/ADR-0007-result-over-exceptions.md) sets out what a thrown business
 outcome costs, and none of it is style:
 
 | | Returned as `Result.Fail(Error)` | Thrown |
@@ -161,4 +161,4 @@ dotnet_diagnostic.FLOWX1016.severity = suggestion
 
 ---
 
-**Back to:** [diagnostics index](README.md) · [Capability model](../07-Capability-Model.md) · [ADR-0007](../adr/ADR-0007-result-over-exceptions.md))
+**Back to:** [diagnostics index](README.md) · [Capability model](../07-Capability-Model.md) · [ADR-0007](../adr/ADR-0007-result-over-exceptions.md)

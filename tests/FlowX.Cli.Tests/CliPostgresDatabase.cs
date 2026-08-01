@@ -18,7 +18,7 @@ namespace FlowX.Cli.Tests;
 /// </para>
 /// <para>
 /// <strong>Why the second half matters more here than anywhere else.</strong>
-/// [ADR-0020](../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md)) accepts one named
+/// [ADR-0020](../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md) accepts one named
 /// cost: the CLI now knows PostgreSQL column names, and nothing at compile time connects
 /// <c>Replay/JournalReader.cs</c> to <c>0001_initial_schema.sql</c>. The only check that
 /// catches a rename is a test that runs the verb against a migrated schema. If that test

@@ -3,10 +3,10 @@
 **Status:** Accepted
 **Date:** 2026-08-01
 **Deciders:** Repository owner · Platform architecture
-**Amends:** [ADR-0004](ADR-0004-universal-trigger-model.md)) ·
+**Amends:** [ADR-0004](ADR-0004-universal-trigger-model.md) ·
 [09 §8](../09-Trigger-Model.md#8-schedule-trigger)
 
-> **[ADR-0004](ADR-0004-universal-trigger-model.md)) chose one trigger abstraction for every
+> **[ADR-0004](ADR-0004-universal-trigger-model.md) chose one trigger abstraction for every
 > transport, and exactly one transport was bound.** `TriggerKind` declares eight;
 > `EndpointEmitter` turns `[HttpTrigger]` into a registration; `Bus`, `Schedule`, `Stream`,
 > `Change` and `Agent` were declaration only. `TriggerReader`'s own class remarks said so in
@@ -164,7 +164,7 @@ through
 with the minted id replaced by the derived one. `OpenAsync` is unchanged except for
 `suppliedId ?? Guid.CreateVersion7()`, so **there is no second way into a flow**: the lease is
 taken, the row is written with the lease's token as its opening fence, and the same
-`FlowEngine.ExecuteAsync` an HTTP request reaches is reached ([ADR-0015](ADR-0015-journal-schema-and-durable-execution.md))).
+`FlowEngine.ExecuteAsync` an HTTP request reaches is reached ([ADR-0015](ADR-0015-journal-schema-and-durable-execution.md)).
 
 What is removed is the store query. A durable timer reads an instant off a row and
 `ITimerIndex` serves that query; a schedule has no row to read, so this sweep touches no index
@@ -208,11 +208,11 @@ disjunction in it.
 
 ## 4. What this does to the manifest
 
-Nothing, and that is [ADR-0034](ADR-0034-the-manifest-publishes-a-schedules-address.md))'s
+Nothing, and that is [ADR-0034](ADR-0034-the-manifest-publishes-a-schedules-address.md)'s
 subject rather than this record's. Stated here only because the derivation reads two fields the
 manifest publishes: `cron` and `timeZone` were already written by `ManifestWriter` and already
 classified by `flowx diff`, so binding the transport adds no schema field and does not move
-[ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md))'s F1 count.
+[ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md)'s F1 count.
 
 ---
 
@@ -280,10 +280,10 @@ classified by `flowx diff`, so binding the transport adds no schema field and do
 
 ---
 
-**Back to:** [ADR index](README.md) · [ADR-0004](ADR-0004-universal-trigger-model.md)) ·
-[ADR-0006](ADR-0006-journal-and-leases.md)) ·
-[ADR-0015](ADR-0015-journal-schema-and-durable-execution.md)) ·
-[ADR-0032](ADR-0032-a-missed-schedule-fires-late.md)) ·
-[ADR-0033](ADR-0033-a-scheduled-flows-input-is-its-occurrence.md)) ·
+**Back to:** [ADR index](README.md) · [ADR-0004](ADR-0004-universal-trigger-model.md) ·
+[ADR-0006](ADR-0006-journal-and-leases.md) ·
+[ADR-0015](ADR-0015-journal-schema-and-durable-execution.md) ·
+[ADR-0032](ADR-0032-a-missed-schedule-fires-late.md) ·
+[ADR-0033](ADR-0033-a-scheduled-flows-input-is-its-occurrence.md) ·
 [09 §8](../09-Trigger-Model.md#8-schedule-trigger) ·
 [FLOWX1038](../diagnostics/FLOWX1038.md)

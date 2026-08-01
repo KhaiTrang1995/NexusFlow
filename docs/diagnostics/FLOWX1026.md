@@ -27,7 +27,7 @@ implemented; this is the third.
 `AwaitCompletion` means *the parent suspends until the child completes*. A suspension point
 is durable by definition — the parent stops holding a thread, a lease and a context, and
 something else resumes it later. That requires the journal, which is P2 work
-([ADR-0003](../adr/ADR-0003-execution-profiles.md))), the same thing
+([ADR-0003](../adr/ADR-0003-execution-profiles.md)), the same thing
 [FLOWX1017](FLOWX1017.md) blocks `AwaitSignal` on.
 
 The difference from `AwaitSignal` is why this is refused under **every** profile rather than

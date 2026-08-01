@@ -3,9 +3,9 @@
 **Status:** Accepted
 **Date:** 2026-08-01
 **Deciders:** Repository owner · Platform architecture
-**Amends:** [ADR-0004](ADR-0004-universal-trigger-model.md)) §4
+**Amends:** [ADR-0004](ADR-0004-universal-trigger-model.md) §4
 
-> **[ADR-0004](ADR-0004-universal-trigger-model.md))'s own table commits a `Schedule` trigger to
+> **[ADR-0004](ADR-0004-universal-trigger-model.md)'s own table commits a `Schedule` trigger to
 > **at-least-once** delivery, with *"missed-fire policy"* as its failure handling.** Nothing was
 > bound, so nothing had to answer for that. Binding it makes the row a promise, and this record
 > is what the promise costs.
@@ -15,7 +15,7 @@
 > and the first symptom is in next month's numbers. *Fire late* means a job written to assume it
 > runs at 02:00 runs at 06:40, which for a job that reads "yesterday" from a clock is a different
 > and equally silent kind of wrong — and is why
-> [ADR-0033](ADR-0033-a-scheduled-flows-input-is-its-occurrence.md)) exists and had to be decided
+> [ADR-0033](ADR-0033-a-scheduled-flows-input-is-its-occurrence.md) exists and had to be decided
 > alongside this.
 
 ---
@@ -33,7 +33,7 @@ that the expression names an instant in the past and no instance exists for it. 
 "at-least-once" for a schedule is entirely a statement about **what a node does when it comes
 back**, and it is unimplementable without a way to ask "did this occurrence already fire".
 
-[ADR-0031](ADR-0031-an-occurrence-names-the-instance-it-starts.md)) supplies that as a
+[ADR-0031](ADR-0031-an-occurrence-names-the-instance-it-starts.md) supplies that as a
 side-effect: the instance id is a function of the occurrence, so the question is a primary-key
 read.
 
@@ -150,7 +150,7 @@ three-hour outage it is not.
   every occurrence the expression has ever named. The horizon is that limit, made explicit and
   configurable instead of accidental.
 - **C. A durable per-schedule cursor — a `flowx_schedule` table with `last_fired_at`.**
-  *Rejected*, and it is [ADR-0031 §3](ADR-0031-an-occurrence-names-the-instance-it-starts.md))'s
+  *Rejected*, and it is [ADR-0031 §3](ADR-0031-an-occurrence-names-the-instance-it-starts.md)'s
   option B seen from this side. It would remove the horizon, which is genuinely attractive. What
   it costs is a second durable store for a fact `flow_instance` already holds, holding it worse:
   a cursor records only the newest firing, so `RunAll` could not be implemented against it after
@@ -188,7 +188,7 @@ three-hour outage it is not.
   no record of a firing that nothing was there to observe. The mitigation is that the number is
   declared, defaulted conservatively and documented here — not that the failure is detectable.
 - **A late firing runs with the occurrence's data and the present's world.** `ScheduledFire`
-  carries the instant that was due ([ADR-0033](ADR-0033-a-scheduled-flows-input-is-its-occurrence.md))),
+  carries the instant that was due ([ADR-0033](ADR-0033-a-scheduled-flows-input-is-its-occurrence.md)),
   so a flow that reasons from its input closes the right window — but the capabilities it calls
   see the system as it is now. A 06:40 run of an 02:00 job reads balances that have moved since.
   That is inherent to running late at all and is the reason `Skip` exists.
@@ -220,7 +220,7 @@ three-hour outage it is not.
 
 ---
 
-**Back to:** [ADR index](README.md) · [ADR-0004](ADR-0004-universal-trigger-model.md)) ·
-[ADR-0031](ADR-0031-an-occurrence-names-the-instance-it-starts.md)) ·
-[ADR-0033](ADR-0033-a-scheduled-flows-input-is-its-occurrence.md)) ·
+**Back to:** [ADR index](README.md) · [ADR-0004](ADR-0004-universal-trigger-model.md) ·
+[ADR-0031](ADR-0031-an-occurrence-names-the-instance-it-starts.md) ·
+[ADR-0033](ADR-0033-a-scheduled-flows-input-is-its-occurrence.md) ·
 [09 §8](../09-Trigger-Model.md#8-schedule-trigger)

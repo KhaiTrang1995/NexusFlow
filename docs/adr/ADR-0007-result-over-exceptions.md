@@ -48,7 +48,7 @@ transport: HTTP status, gRPC status, retryability, dead-lettering.
   layout [07 §4](../07-Capability-Model.md#4-contract-design) prescribes. No
   OpenAPI or SDK generation consumes it yet (**P8**), and the derivation is what
   puts budget B12 over its limit; see
-  [ADR-0014](ADR-0014-derived-error-catalogue-vs-build-budget.md)).*
+  [ADR-0014](ADR-0014-derived-error-catalogue-vs-build-budget.md).*
 - No allocation and no throw cost on the failure path — Q1 holds even when things
   go wrong, which is when latency matters most.
 - Retryability is a property of the category, so retry policy is correct by

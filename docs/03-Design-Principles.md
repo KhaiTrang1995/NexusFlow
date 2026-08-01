@@ -84,7 +84,7 @@ runtime handler scanning. NativeAOT works by construction.
 deliberate non-goal of v1. When that need is real it will be served by a
 *separate* interpreted profile with its own, explicitly worse, performance
 contract — never by degrading the compiled path. See
-[ADR-0002](adr/ADR-0002-compile-time-orchestration.md)).
+[ADR-0002](adr/ADR-0002-compile-time-orchestration.md).
 
 **Enforced by.** `NoReflectionOnHotPath`, an architecture test scanning IL for
 `System.Reflection`, `System.Runtime.Loader`, `Activator`, `AppDomain` and the C#
@@ -203,7 +203,7 @@ refused commit discards both; and `PostgresOutboxPublisher` drains it at-least-o
 a publisher`. That expired at WP-56b:* `plugins/FlowX.Redis` implements `IEventPublisher` over
 Redis Streams, one stream per `partition_key`, and `PublisherConformance` holds it and the
 recording double to one contract
-([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md))). *One thing is still not true and
+([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)). *One thing is still not true and
 is stated rather than left to be discovered.* Two shapes of `.Emit`
 still stage nothing — one on an `Ephemeral` flow, which keeps no transaction to stage
 into, and one whose contract no source-generated `JsonSerializerContext` declares.

@@ -22,7 +22,7 @@ yet (constraint C8).
 → [12 Observability](12-Observability.md) → [18 Cloud-Native](18-Cloud-Native.md) → [11 Distributed Runtime](11-Distributed-Runtime.md) → [16 Multi-Tenancy](16-Multi-Tenant.md)
 
 **"I want to extend it"** (1 h)
-→ [17 Plugin System](17-Plugin-System.md) → [09 Trigger Model §11](09-Trigger-Model.md#11-writing-a-trigger-plugin) → [ADR-0009](adr/ADR-0009-plugin-contracts.md))
+→ [17 Plugin System](17-Plugin-System.md) → [09 Trigger Model §11](09-Trigger-Model.md#11-writing-a-trigger-plugin) → [ADR-0009](adr/ADR-0009-plugin-contracts.md)
 
 ## Index
 

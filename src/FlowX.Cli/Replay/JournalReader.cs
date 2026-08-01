@@ -10,7 +10,7 @@ namespace FlowX.Cli.Replay;
 /// <para>
 /// <strong>This is the only file in the CLI that knows what a database is</strong>, and
 /// <c>ReplayUsageTests.NothingOutsideTheReplayReaderKnowsWhatADatabaseIs</c> keeps it that
-/// way. [ADR-0020](../../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md)) confines the
+/// way. [ADR-0020](../../../docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md) confines the
 /// store dependency here so that a fifth verb cannot acquire one by accident.
 /// </para>
 /// <para>

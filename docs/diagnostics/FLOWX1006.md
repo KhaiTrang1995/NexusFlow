@@ -8,7 +8,7 @@ A `Durable` flow journals its state bag and every step result. A value reaches t
 only as a `JournalPayload`, and `JournalPayload.Of<T>` requires the source-generated
 `JsonTypeInfo<T>` for the contract — there is no overload that reflects over a type. That
 requirement is what keeps the write path NativeAOT- and trim-safe (constraint **C2**) and
-what [ADR-0008](../adr/ADR-0008-serialization-and-schema.md)) chose.
+what [ADR-0008](../adr/ADR-0008-serialization-and-schema.md) chose.
 
 So a contract that no `JsonSerializerContext` in the compilation declares is a contract the
 generated payload writer cannot name metadata for. This rule reports that at build time,

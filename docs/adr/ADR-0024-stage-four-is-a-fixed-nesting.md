@@ -3,14 +3,14 @@
 **Status:** Accepted
 **Date:** 2026-08-01
 **Deciders:** Repository owner · Platform architecture
-**Amends:** [ADR-0011](ADR-0011-fixed-policy-stage-order.md)) ·
+**Amends:** [ADR-0011](ADR-0011-fixed-policy-stage-order.md) ·
 [10 §2](../10-Policy-Framework.md#2-fixed-stage-order--the-core-decision)
 
 ---
 
 ## 1. Context
 
-[ADR-0011](ADR-0011-fixed-policy-stage-order.md)) fixes the order of the seven *stages*.
+[ADR-0011](ADR-0011-fixed-policy-stage-order.md) fixes the order of the seven *stages*.
 `PolicyChain.Build` implements it as a stable sort on `(int)PolicyStage`, and the stability is
 deliberate — its own comment says two policies in the same stage "must keep their declared
 order, or the emitted plan differs between builds".
@@ -147,7 +147,7 @@ obvious; or [10 §2](../10-Policy-Framework.md#2-fixed-stage-order--the-core-dec
 
 ---
 
-**See also:** [ADR-0011](ADR-0011-fixed-policy-stage-order.md)) ·
-[ADR-0023](ADR-0023-policy-stages-hook-through-the-plan.md)) ·
-[ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)) ·
+**See also:** [ADR-0011](ADR-0011-fixed-policy-stage-order.md) ·
+[ADR-0023](ADR-0023-policy-stages-hook-through-the-plan.md) ·
+[ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) ·
 [FLOWX1019](../diagnostics/FLOWX1019.md) · [10 §5](../10-Policy-Framework.md#5-retry-safety)

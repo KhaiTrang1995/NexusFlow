@@ -17,7 +17,7 @@
 
 A `[CronTrigger]` is turned into a schedule registration by the same reading of the attribute
 that produces the manifest's `triggers` block, so a published schedule and a fired one cannot
-disagree ([ADR-0031](../adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md))). Two
+disagree ([ADR-0031](../adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md)). Two
 things stop a flow being registered, and they fail in opposite directions.
 
 ### The input contract is not `ScheduledFire`
@@ -35,7 +35,7 @@ a resumed instance would compute a different answer from the one it committed.
 
 The occurrence therefore arrives as the flow's input, is journalled on `flow_instance.input`
 like any other trigger's body, and is read back verbatim on a resume
-([ADR-0033](../adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md))).
+([ADR-0033](../adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md)).
 
 ### The flow does not declare `Durable`
 
@@ -105,9 +105,9 @@ schedule nobody can fire is not an address anyone should have been relying on.
 
 ## Related
 
-- [ADR-0031](../adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md)) — why an occurrence
+- [ADR-0031](../adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md) — why an occurrence
   names the instance, and why that needs a journal
-- [ADR-0033](../adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md)) — why the input
+- [ADR-0033](../adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md) — why the input
   contract is fixed by the platform
 - [FLOWX1007](FLOWX1007.md), [FLOWX1011](FLOWX1011.md) — the rules that stop a flow reading the
   clock, and therefore make the occurrence an input

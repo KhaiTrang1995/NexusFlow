@@ -31,7 +31,7 @@ repair is to delete the declaration P2 will need to find. [FLOWX1027](FLOWX1027.
 has no effect rather than code that is wrong, which is exactly what C#'s own
 `CS0162` is and exactly the severity C# gives it. [FLOWX1011](FLOWX1011.md) is an error in `Durable`
 flows and a warning in `Ephemeral` ones, which is the asymmetry
-[ADR-0003](../adr/ADR-0003-execution-profiles.md)) ratified for the determinism rules:
+[ADR-0003](../adr/ADR-0003-execution-profiles.md) ratified for the determinism rules:
 a durable flow is replayed and must take the branch it took the first time, an
 ephemeral one is not replayed at all.
 [FLOWX1012](FLOWX1012.md) is the one rule here whose remedy has a prerequisite outside the
@@ -48,7 +48,7 @@ where the two rules' reasoning is the same and where this one has to make its ow
 
 ## The severity of the determinism set
 
-[ADR-0003](../adr/ADR-0003-execution-profiles.md)) says the determinism rules are **errors
+[ADR-0003](../adr/ADR-0003-execution-profiles.md) says the determinism rules are **errors
 under `Durable` and informational under `Ephemeral`**.
 [06 §5](../06-Execution-Engine.md#5-the-determinism-boundary) repeats it, and then asks for
 the stance to be revisited **as a set** once the journal exists — "`FLOWX1011`'s deviation
@@ -159,7 +159,7 @@ strength of a profile that does not reach the thing being escalated about.
 
 1. **The source is not wrong.** A compensable `Ephemeral` flow compensates correctly on
    every ordinary failure — the capture declines, the unwind runs, the reservation comes
-   back. What it loses is the crash window. [ADR-0003](../adr/ADR-0003-execution-profiles.md))
+   back. What it loses is the crash window. [ADR-0003](../adr/ADR-0003-execution-profiles.md)
    records that trade deliberately, and `docs/DEBT.md` names it as the example of a
    *decision* rather than debt. An error would make a decision the ADR ratified
    inexpressible.
@@ -479,7 +479,7 @@ it does and asks whether anything can serve the address. It is not `FLOWX1017` e
 rule requires `Durable` for a construct in the flow's *body*, where this reads an attribute and
 has a second reason that has nothing to do with the profile.
 
-The next is `FLOWX1038`. The range is `FLOWX1001`–`FLOWX1099`.
+The next is `FLOWX1039`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

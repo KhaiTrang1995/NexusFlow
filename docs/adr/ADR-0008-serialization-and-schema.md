@@ -60,7 +60,7 @@ schema evolution follows the additive-only rules in
 > chose is therefore a compile error to bypass on that path rather than a convention, which
 > is more than the decision asked for and by a route it did not name. The outbox and replay
 > are still absent: `OutboxWrite` and an `outbox_event` table exist
-> ([ADR-0016](ADR-0016-postgres-journal-adapter.md))), nothing in the runtime stages a row
+> ([ADR-0016](ADR-0016-postgres-journal-adapter.md)), nothing in the runtime stages a row
 > ([FLOWX1024](../diagnostics/FLOWX1024.md)), and no replay command has been written. The
 > `schemaVersion` stamp this decision requires on **every** persisted payload is on neither:
 > `OutboxWrite.SchemaVersion` is declared on a contract nothing writes, and a journal row
@@ -76,11 +76,11 @@ schema evolution follows the additive-only rules in
 > WP-64:* `flowx replay --mode inspect` reads the journal **as rows**, over the published
 > migration contract, and joins it against the manifest — so it does not deserialise a
 > payload through this record's route at all, and publishes no journal document schema.
-> [ADR-0020](ADR-0020-cli-reads-the-journal-as-rows.md)) records why. The `schemaVersion`
+> [ADR-0020](ADR-0020-cli-reads-the-journal-as-rows.md) records why. The `schemaVersion`
 > stamp this decision requires on every persisted payload **is now written**, as a reserved
 > first member on every document, in the same pass that redacts. It versions the *envelope*,
 > not the contract: a contract's own version already sits beside every payload, and inventing
-> a second is what [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md)) F2 objects to.
+> a second is what [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md) F2 objects to.
 >
 > *It also said `[Sensitive]` redaction has "exactly one sink, the RFC 7807 body".* **There
 > are two since WP-52**, and the second holds the property by a different mechanism than

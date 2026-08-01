@@ -73,7 +73,7 @@ disagree eventually, and the weaker one is what a developer meets first.
 ## What does not belong here
 
 A documented trade-off recorded in an ADR is a **decision**, not debt. Ephemeral
-flows losing state on a crash is [ADR-0003](adr/ADR-0003-execution-profiles.md)),
+flows losing state on a crash is [ADR-0003](adr/ADR-0003-execution-profiles.md),
 not a debt entry. Mixing the two makes the register meaningless and the budget
 unenforceable — at which point the whole mechanism is theatre.
 

@@ -3,10 +3,10 @@
 **Status:** Accepted
 **Date:** 2026-08-01
 **Deciders:** Platform architecture, Tooling
-**Relates to:** [ADR-0005](ADR-0005-manifest-as-build-artifact.md)) ·
-[ADR-0015](ADR-0015-journal-schema-and-durable-execution.md)) ·
-[ADR-0016](ADR-0016-postgres-journal-adapter.md)) ·
-[ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md))
+**Relates to:** [ADR-0005](ADR-0005-manifest-as-build-artifact.md) ·
+[ADR-0015](ADR-0015-journal-schema-and-durable-execution.md) ·
+[ADR-0016](ADR-0016-postgres-journal-adapter.md) ·
+[ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md)
 
 > **This record answers one question and declines the next one.** It makes
 > `flowx replay --mode inspect` legal. It does **not** make `simulate`, `resume` or `fork`
@@ -58,7 +58,7 @@ only question here worth arguing.
 
 ### 3. What a journal schema commits you to that a manifest schema does not
 
-The manifest can carry [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md))'s eight freeze
+The manifest can carry [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md)'s eight freeze
 criteria because of what kind of object it is:
 
 - **The manifest is a build artifact.** It is regenerated from source on every build. Every
@@ -69,7 +69,7 @@ criteria because of what kind of object it is:
   repository can enforce and no migration can retract.
 
 And the shape is not settled. `plugins/FlowX.Postgres/Migrations` is on its **fourth**
-migration; [ADR-0016](ADR-0016-postgres-journal-adapter.md)) has amended the row shape twice
+migration; [ADR-0016](ADR-0016-postgres-journal-adapter.md) has amended the row shape twice
 already — `json` rather than `jsonb`, and a lease with no foreign key to the instance it
 precedes — and WP-63's timers are still to come. Publishing a versioned document over that
 now would be freezing the half of the system that is still moving in order to unblock a
@@ -206,7 +206,7 @@ to, or accepting that three of the four modes are not CLI verbs at all.
 a reader per store or the published document this record declined to write, and the argument
 in §3 has to be re-run against a shape that has stopped moving; **or** a `replay` mode has to
 execute rather than render (§5), which reopens the dependency question on terms this record
-does not address; **or** the manifest freeze ([ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md)))
+does not address; **or** the manifest freeze ([ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md))
 closes with `replay` still reading columns that nothing versions, because a frozen contract
 next to an unversioned one is the asymmetry that makes the second one look like a contract
 when it is not.

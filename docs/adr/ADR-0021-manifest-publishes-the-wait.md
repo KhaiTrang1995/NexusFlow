@@ -3,10 +3,10 @@
 **Status:** Accepted
 **Date:** 2026-08-01
 **Deciders:** Repository owner · Platform architecture
-**Amends:** [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md)) ·
+**Amends:** [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md) ·
 [22-CLI §2.2](../22-CLI.md#22-what-is-never-reported)
 
-> **This record exists because [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md))'s third
+> **This record exists because [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md)'s third
 > Revisit-when has fired.** That clause reads: *"the schema gains a field before the freeze —
 > every addition re-opens F1 and F5 for that field, and adding one is cheap only while
 > `schemaVersion` is `0.x`"*. WP-63 gave a `Durable` flow a suspension point; the manifest
@@ -29,7 +29,7 @@ A `Durable` flow can suspend. `.AwaitSignal<TSignal>(timeout)` compiles to a
 `StepKind.AwaitSignal` node, `FlowEngine` stops there, the instance is sealed `Suspended` at
 its resume frontier, and `FlowHost.SignalAsync` delivers a signal that resumes it
 ([06 §6](../06-Execution-Engine.md#6-suspension-waiting-without-holding-resources),
-[ADR-0015](ADR-0015-journal-schema-and-durable-execution.md))).
+[ADR-0015](ADR-0015-journal-schema-and-durable-execution.md)).
 
 `ManifestWriter.WriteStep` publishes that step as:
 
@@ -167,7 +167,7 @@ their deadline. It is the most silent failure this diff reports.
 
 *Added* (022) breaks the **caller**. A flow that ran to completion on the request that started
 it now stops in the middle: over HTTP the answer changes from `200` with the flow's output to
-`202` with an instance id ([ADR-0022](ADR-0022-http-shape-of-a-suspending-flow.md))), and the
+`202` with an instance id ([ADR-0022](ADR-0022-http-shape-of-a-suspending-flow.md)), and the
 work does not finish until somebody delivers a signal the baseline never told them about. A
 flow that already waited and now waits twice breaks the same caller the same way.
 
@@ -272,7 +272,7 @@ sentence this record was written to be able to say.
   signature movement, which is the class of finding this diff exists for.
 - **The two fields are the input the generated signal endpoint needs.** The same reading of
   the same steps produces the manifest entry and the route
-  ([ADR-0022](ADR-0022-http-shape-of-a-suspending-flow.md))), so there is no second copy of the
+  ([ADR-0022](ADR-0022-http-shape-of-a-suspending-flow.md)), so there is no second copy of the
   identity to drift — the arrangement `EndpointEmitter` already has with `triggers`.
 
 **Negative / accepted trade-offs**
@@ -314,7 +314,7 @@ sentence this record was written to be able to say.
 
 ---
 
-**Back to:** [ADR index](README.md) · [ADR-0005](ADR-0005-manifest-as-build-artifact.md)) ·
-[ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md)) ·
-[ADR-0022](ADR-0022-http-shape-of-a-suspending-flow.md)) · [22-CLI](../22-CLI.md) ·
+**Back to:** [ADR index](README.md) · [ADR-0005](ADR-0005-manifest-as-build-artifact.md) ·
+[ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md) ·
+[ADR-0022](ADR-0022-http-shape-of-a-suspending-flow.md) · [22-CLI](../22-CLI.md) ·
 [08 §3.5](../08-Flow-Definition.md#35-waiting)

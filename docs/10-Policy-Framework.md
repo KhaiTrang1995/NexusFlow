@@ -23,9 +23,9 @@
 > consulted and no audit record is written.
 > [`FLOWX1032`](diagnostics/FLOWX1032.md) reports exactly those four, narrowed
 > from the eight it reported when it was written.
-> [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md))
+> [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)
 > argues each of the four skips separately, including the one that looks like a
-> violation of [ADR-0011](adr/ADR-0011-fixed-policy-stage-order.md)): running a
+> violation of [ADR-0011](adr/ADR-0011-fixed-policy-stage-order.md): running a
 > retry without the stage-3 policy is safe because `FLOWX1014` refuses a retry
 > over a capability that is not idempotent, and because every attempt presents
 > the same `ctx.IdempotencyKey`.
@@ -86,7 +86,7 @@ flowchart LR
     style F fill:#0b4f9e,color:#fff
 ```
 
-The order is **not configurable** ([ADR-0011](adr/ADR-0011-fixed-policy-stage-order.md))).
+The order is **not configurable** ([ADR-0011](adr/ADR-0011-fixed-policy-stage-order.md)).
 
 **Within a stage there is no `order` value, and this document claimed one for three
 releases.** `PolicyDescriptor` carries `Kind`, `Stage` and `Parameters`, and no builder
@@ -94,7 +94,7 @@ method accepts a precedence. `PolicyChain` sorts by stage with a *stable* sort, 
 policies in one stage keep their declared order — which decides what the manifest publishes
 and nothing else. What decides which of them wraps which is fixed by kind:
 `Retry { CircuitBreaker { Bulkhead { Timeout { capability } } } }`, settled by
-[ADR-0024](adr/ADR-0024-stage-four-is-a-fixed-nesting.md)), which also says why an `order`
+[ADR-0024](adr/ADR-0024-stage-four-is-a-fixed-nesting.md), which also says why an `order`
 value is not merely missing but unwanted — three of the four possible nestings are the
 incidents this section exists to make unexpressible.
 
@@ -134,7 +134,7 @@ attribute, no descriptor kind: specification with no surface).
 | `Validate` | 3 | *undeclarable* | generated from contract annotations | field errors → RFC 7807 |
 | `Idempotency` | 3 | **declared only** | `window`, `scope` | replays the recorded result. Nothing is recorded or replayed. `ctx.IdempotencyKey` is stable and reaches the capability, but that is the engine's identity plumbing rather than this policy |
 | `Timeout` | 4 | **executes** | `duration` | armed per attempt, and clamped to what is left of the flow deadline — so §11's "a timeout longer than the deadline is a lie" is prevented rather than discouraged |
-| `Retry` | 4 | **executes** | `attempts`, `backoff`, `jitter`, `retryOn` | **requires `Idempotent = true`** (`FLOWX1014`). `attempts` includes the first. Outermost of the four ([ADR-0024](adr/ADR-0024-stage-four-is-a-fixed-nesting.md))), which is what makes `FLOWX1019`'s `timeout × attempts` arithmetic true |
+| `Retry` | 4 | **executes** | `attempts`, `backoff`, `jitter`, `retryOn` | **requires `Idempotent = true`** (`FLOWX1014`). `attempts` includes the first. Outermost of the four ([ADR-0024](adr/ADR-0024-stage-four-is-a-fixed-nesting.md)), which is what makes `FLOWX1019`'s `timeout × attempts` arithmetic true |
 | `CircuitBreaker` | 4 | **executes** | `failureRatio`, `samplingWindow`, `breakDuration` | keyed by capability id, per process. `minimumThroughput` is **not a parameter** — `PolicySet.CircuitBreaker` has none — and is the constant `StepPolicy.DefaultMinimumThroughput`. §6's composite `BreakerKey` is undeclarable |
 | `Bulkhead` | 4 | **executes** | `maxConcurrency`, `queueDepth` | isolates a slow dependency. One pool per capability, so two steps calling it share the bound. Past the queue depth a caller is refused rather than queued |
 | `Hedge` | 4 | *undeclarable* | `afterDelay`, `maxAttempts` | tail-latency cutting; idempotent only |
@@ -281,7 +281,7 @@ region trips the breaker for everyone.
 > the key this section argues *for*, and `Capability` is the row it marks "always included"
 > and the only one built. The breaker is also per process rather than per deployment:
 > sharing one would need a store, which is a plugin contract and a separate decision
-> ([ADR-0009](adr/ADR-0009-plugin-contracts.md))). The conservative direction — every node
+> ([ADR-0009](adr/ADR-0009-plugin-contracts.md)). The conservative direction — every node
 > discovers an outage for itself.
 
 | Key component | Effect |
@@ -306,7 +306,7 @@ infrastructure, which is why `ICompensationAlertSink` is a seam rather than a co
 > do; [`FLOWX1032`](diagnostics/FLOWX1032.md) reports every `.Idempotency(...)` an author
 > declares. What *is* real is the key itself: `ctx.IdempotencyKey` is stable across a flow
 > and across every attempt of a retried step, which is the engine's identity plumbing and
-> the mechanism [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md))
+> the mechanism [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)
 > §2.2 leans on.
 
 ```csharp

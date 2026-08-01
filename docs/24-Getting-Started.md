@@ -307,7 +307,7 @@ route, and `templates/verify.sh` asserts that it does not.
 Every build produces a manifest: the structure of the application as declared, with no
 behaviour in it. It comes from the same reading of your attributes that produced the plan,
 so it cannot describe a different program from the one that shipped
-([ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md))).
+([ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md)).
 
 **It is not a file on disk.** The compiler emits it as a generated type,
 `FlowX.Generated.FlowXManifest`, inside the assembly — so it travels with the binary and
@@ -716,7 +716,7 @@ there is no transaction for the event to be part of, and the diagnostic's messag
 > recording double to one contract. What is left is the list of brokers: there is no Kafka,
 > RabbitMQ, Service Bus, Event Hubs or SNS publisher — see
 > [§12 below](#12-what-flowx-cannot-do-yet) and
-> [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)).
+> [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md).
 
 ---
 

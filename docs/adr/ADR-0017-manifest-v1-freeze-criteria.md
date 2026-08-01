@@ -3,9 +3,9 @@
 **Status:** Accepted
 **Date:** 2026-07-31
 **Deciders:** Repository owner · Platform architecture
-**Amends:** [ADR-0005](ADR-0005-manifest-as-build-artifact.md)) ·
+**Amends:** [ADR-0005](ADR-0005-manifest-as-build-artifact.md) ·
 [13-AI-Native §3](../13-AI-Native.md#3-the-manifest-schema)
-**Amended by:** [ADR-0021](ADR-0021-manifest-publishes-the-wait.md))
+**Amended by:** [ADR-0021](ADR-0021-manifest-publishes-the-wait.md)
 
 > **The freeze was a deadline three documents used and none defined.**
 > [13-AI-Native](../13-AI-Native.md) gates its whole second half behind it and warns that
@@ -15,7 +15,7 @@
 > *"P8 approaches manifest v1.0 freeze"* as one of its four revisit triggers.
 > [20-Roadmap §3](../20-Roadmap.md#3-increment-detail) lists *"manifest v1.0 frozen"* first
 > among P8's Must items. **None of them says what has to be true for it to happen**, and
-> [ADR-0005](ADR-0005-manifest-as-build-artifact.md)) — the record that created the artifact
+> [ADR-0005](ADR-0005-manifest-as-build-artifact.md) — the record that created the artifact
 > — does not mention freezing at all. This record writes the criteria down so the date can
 > be read off the repository rather than guessed at.
 >
@@ -28,7 +28,7 @@
 > "satisfied but unenforced" row wearing a different hat.
 >
 > **One thing this record cannot fix, and names instead.**
-> [ADR-0014](ADR-0014-derived-error-catalogue-vs-build-budget.md)) is **Proposed**, and its
+> [ADR-0014](ADR-0014-derived-error-catalogue-vs-build-budget.md) is **Proposed**, and its
 > decision has been deliberately left unmade. It is the record that governs the `errors`
 > field, and freezing v1.0 is what makes that field unremovable. So the criteria below are
 > now the mechanism that will eventually force it — see [F8](#f8--no-field-whose-record-is-still-proposed-is-frozen).
@@ -44,7 +44,7 @@
 `schemas/flowx.manifest.schema.json` by `ManifestSchemaTests`, checked for completeness by
 `ManifestIsComplete`, scanned by `ManifestContainsNoSecrets`, and diffed for compatibility by
 `flowx diff` ([22-CLI §3](../22-CLI.md#3-the-classification-rules)). That much is real and is
-what [ADR-0005](ADR-0005-manifest-as-build-artifact.md)) delivered.
+what [ADR-0005](ADR-0005-manifest-as-build-artifact.md) delivered.
 
 Two facts decide what a freeze has to mean.
 
@@ -124,8 +124,8 @@ The obvious alternative is a section inside ADR-0005, and it was rejected for fo
    to be re-read every time a phase gate approaches, and it goes stale by design as producers
    land. Putting a list that must move inside a record that must not is how the two end up
    disagreeing.
-3. **Precedent.** [ADR-0016](ADR-0016-postgres-journal-adapter.md)) amended
-   [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md)) from a new record rather than
+3. **Precedent.** [ADR-0016](ADR-0016-postgres-journal-adapter.md) amended
+   [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md) from a new record rather than
    by editing it, and ADR-0015 carries an `Amended by:` header pointing back. The same
    arrangement is used here, for the same reason: the amended record keeps saying what it
    said, and the reader can see which clause moved and when.
@@ -159,7 +159,7 @@ in a table with no behaviour behind it."*
 **Today:** unmet. Thirteen fields, no such test.
 
 *The schema has since gained two — an `AwaitSignal` step's `signal` and `timeout`
-([ADR-0021](ADR-0021-manifest-publishes-the-wait.md))) — and **this count did not move**,
+([ADR-0021](ADR-0021-manifest-publishes-the-wait.md)) — and **this count did not move**,
 because both are written by `ManifestWriter` in the commit that declared them and both are
 classified by a `flowx diff` rule in the same commit. That is what this criterion asks of an
 addition, stated in advance rather than discovered at the bump. Note the shape the corpus test
@@ -231,7 +231,7 @@ nothing in the repository produces:
   met, and what is left of it is narrower and specific.** Four declarable kinds —
   `RateLimit`, `Idempotency`, `Cache` and `Audit` — still reach the array and are applied by
   nothing ([`FLOWX1032`](../diagnostics/FLOWX1032.md),
-  [ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md))), so freezing the
+  [ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)), so freezing the
   array would freeze a vocabulary the runtime honours five of the nine declarable kinds of.
   The schema's
   **top-level** `policies` — named policy sets — is still written by nothing, because named
@@ -321,7 +321,7 @@ that says the freeze is a *build-verified* event rather than an announcement.
 gone) at the moment of the bump.
 
 **Today there is exactly one such field, and one such record.**
-[ADR-0014](ADR-0014-derived-error-catalogue-vs-build-budget.md)) governs per-capability
+[ADR-0014](ADR-0014-derived-error-catalogue-vs-build-budget.md) governs per-capability
 `errors`; it is **Proposed**; its
 [§8](ADR-0014-derived-error-catalogue-vs-build-budget.md)#8-consequences) records that once
 v1.0 is frozen *"removing `errors` is a breaking change, so this decision is materially harder
@@ -363,7 +363,7 @@ Stated so that a later reader knows the omissions were chosen.
   not what the schema must *contain*. It belongs to ADR-0014's revisit conditions, not to this
   checklist, and folding it in here would be this record deciding that one by the back door.
 * **Any build-performance criterion.** What the manifest costs to produce is
-  [ADR-0014](ADR-0014-derived-error-catalogue-vs-build-budget.md))'s subject and budget B12's.
+  [ADR-0014](ADR-0014-derived-error-catalogue-vs-build-budget.md)'s subject and budget B12's.
   A freeze criterion that also gated build time would bundle two decisions in one record.
 * **A stable `application.version`, `commit` or `builtAt`.** These change on every build by
   design and `flowx diff` ignores all three (22-CLI §2.2). F1 covers whether they are
@@ -375,7 +375,7 @@ Stated so that a later reader knows the omissions were chosen.
 
 When the bump lands, **this record is amended in place** — not superseded — with the date, the
 commit, and the state of all eight criteria as verified on that day, in the way
-[ADR-0016](ADR-0016-postgres-journal-adapter.md)) records what ADR-0015 looked like against a
+[ADR-0016](ADR-0016-postgres-journal-adapter.md) records what ADR-0015 looked like against a
 real database. A criterion waived rather than met is recorded as waived, with who waived it.
 
 Anything discovered *after* the freeze that one of these criteria should have caught is
@@ -430,7 +430,7 @@ criterion. The list is only useful if the next freeze — the schema will have a
 - the schema gains a field before the freeze — every addition re-opens F1 and F5 for that
   field, and adding one is cheap only while `schemaVersion` is `0.x`.
   ***This one has fired**, on 2026-08-01, for an `AwaitSignal` step's `signal` and `timeout`.
-  [ADR-0021](ADR-0021-manifest-publishes-the-wait.md)) is the record it produced, and its §4
+  [ADR-0021](ADR-0021-manifest-publishes-the-wait.md) is the record it produced, and its §4
   answers for the addition against all eight criteria — which is what this clause was written
   to make somebody do*; or
 - the freeze happens. This record is then amended per [§5](#5-how-the-freeze-itself-is-recorded)
@@ -438,6 +438,6 @@ criterion. The list is only useful if the next freeze — the schema will have a
 
 ---
 
-**Back to:** [ADR index](README.md) · [ADR-0005](ADR-0005-manifest-as-build-artifact.md)) ·
-[ADR-0014](ADR-0014-derived-error-catalogue-vs-build-budget.md)) ·
+**Back to:** [ADR index](README.md) · [ADR-0005](ADR-0005-manifest-as-build-artifact.md) ·
+[ADR-0014](ADR-0014-derived-error-catalogue-vs-build-budget.md) ·
 [13-AI-Native](../13-AI-Native.md) · [22-CLI](../22-CLI.md) · [Roadmap](../20-Roadmap.md)

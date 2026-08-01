@@ -14,7 +14,7 @@
 > | § | State |
 > |---|---|
 > | [1 · distribution model](#1-the-distribution-model) | **exercised across a real process boundary, not deployed.** *This row said "nothing has run as two processes" and that the multi-node behaviour is "exercised by two hosts inside one test process". Both expired at WP-50 (2026-08-01):* `tests/FlowX.Chaos` runs worker processes and recovery-node processes as separate operating-system processes coordinating through nothing but a shared PostgreSQL, and kills the workers with `SIGKILL` — 10 000 flows per arm, 97 kills, [benchmarks/QR2-chaos.md](benchmarks/QR2-chaos.md). What is still not built is a *deployment*: there is no scheduler, no service discovery and no partitioning, Redis is still WP-54, and the outbox publishes to a test double rather than to a broker |
-> | [2 · the journal](#2-the-journal) | **built, against a real database.** WP-51 declared `IFlowJournal`, `ILeaseStore` and `FencingToken` in `src/FlowX.Abstractions/Durability/`; WP-52 made `FlowX.Runtime` read `ExecutionProfile` and commit one row per step boundary, and resume by replaying committed rows into the same step loop; WP-53 implemented both in `plugins/FlowX.Postgres/`, where 45 conformance assertions and 41 adapter tests run green against PostgreSQL 16.13. **The ERD below is no longer the drawn version** — it is migrations `0001`, `0002` and `0003`, after [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md)) superseded three of the drawn clauses and [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md)) found six more wrong against a real database |
+> | [2 · the journal](#2-the-journal) | **built, against a real database.** WP-51 declared `IFlowJournal`, `ILeaseStore` and `FencingToken` in `src/FlowX.Abstractions/Durability/`; WP-52 made `FlowX.Runtime` read `ExecutionProfile` and commit one row per step boundary, and resume by replaying committed rows into the same step loop; WP-53 implemented both in `plugins/FlowX.Postgres/`, where 45 conformance assertions and 41 adapter tests run green against PostgreSQL 16.13. **The ERD below is no longer the drawn version** — it is migrations `0001`, `0002` and `0003`, after [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md) superseded three of the drawn clauses and [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md) found six more wrong against a real database |
 > | [3 · leases and fencing](#3-leases-and-fencing) | **built.** *This row said that nothing acquires or renews a lease and nothing scans for an abandoned instance; WP-55 built all three.* `DurableLease` acquires, renews and releases; `FlowHost` takes the lease before the first step; `FlowRecoveryScan` and `FlowRecoveryService` are node-2's half of the diagram below. *A later row said one half had no PostgreSQL behind it — that the adapter implemented no `IRecoveryIndex`, so a Postgres-backed node fenced correctly and scanned for nothing. `PostgresRecoveryIndex` closed it, in a class of its own rather than on the journal, because a scan is not part of executing an instance* |
 > | [4 · exactly-once](#4-exactly-once-honestly) | **not built**, and unchanged by WP-52, WP-53 or WP-55: a process that dies after an effect and before its commit still re-executes the step. **WP-50 measured it rather than changing it.** Under real `SIGKILL`s at that exact instruction, with a non-idempotent effect recorded in its own PostgreSQL ledger, the step re-executes **exactly once per kill and never otherwise** — 20 duplicate effects from 20 kills at concurrency 1, and **0 from 20 kills** when the signal moves to the far side of the commit |
 > | [5 · the outbox](#5-the-transactional-outbox) | **built end to end, and proved against one broker.** The table is in the schema, `.Emit<T>()`'s generated `DescribeStep` builds the event, `FlowEngine.CommitStepAsync` stages it in the step's own transaction, and `PostgresOutboxPublisher` drains it at-least-once in per-`partition_key` order. *This row said no broker was built; `RedisStreamEventPublisher` (WP-56b) is one, one stream per `partition_key`, held to `PublisherConformance` alongside the recording double.* [`FLOWX1024`](diagnostics/FLOWX1024.md) survives, narrowed to the two cases that still stage nothing |
@@ -91,12 +91,12 @@ There is no gossip protocol, no consensus ring, no cluster membership, no
 placement service. Correctness rests on two well-understood primitives:
 **an append-only log** and **fenced leases**. This is a deliberate rejection of
 complexity that other runtimes take on — see
-[ADR-0006](adr/ADR-0006-journal-and-leases.md)).
+[ADR-0006](adr/ADR-0006-journal-and-leases.md).
 
 Both of those stores are real, and so is the alternative the diagram offers: the journal
 and a lease store are `plugins/FlowX.Postgres` (WP-53), and `plugins/FlowX.Redis` (WP-54)
 is a second lease store that passes the same conformance suite **unmodified**
-([ADR-0019](adr/ADR-0019-redis-lease-store.md))). The outbox drawn beside them has a
+([ADR-0019](adr/ADR-0019-redis-lease-store.md)). The outbox drawn beside them has a
 publisher (WP-56) that drains it at-least-once in per-`partition_key` order; what it hands
 events to is an `IEventPublisher` with no broker implementation, so the arrow to the broker
 is the one edge in this diagram with nothing behind it.
@@ -185,11 +185,11 @@ erDiagram
 **This is the shipped schema, not a sketch of one.** It is
 `plugins/FlowX.Postgres/Migrations/0001_initial_schema.sql` and
 `0002_expand_state_bag_sequence.sql`. Three clauses of the version drawn here were
-already superseded by [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md))
+already superseded by [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md)
 — the key gains `scope`, `resume_from_step` stops being the resume position, a `SubFlow`
 child is its own instance row. Six more did not survive contact with PostgreSQL 16.13,
 and they are corrected above rather than quietly redrawn
-([ADR-0016](adr/ADR-0016-postgres-journal-adapter.md))):
+([ADR-0016](adr/ADR-0016-postgres-journal-adapter.md)):
 
 - ***Payload columns were `jsonb`.*** They are `json`. `jsonb` is a parsed
   representation: it sorts object keys, re-renders separators and keeps only the last
@@ -233,7 +233,7 @@ attempt)`, same transaction, same state-bag snapshot — so the derived frontier
 which steps to skip is also what makes a redelivered signal inert, and no migration was
 needed. A second table would have been one fact stored in two places, and the stored copy
 would be the one nothing checks; that is
-[ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md))'s own argument for deriving
+[ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md)'s own argument for deriving
 the resume position, applied to a signal.
 
 [`FLOWX1017`](diagnostics/FLOWX1017.md) refuses either construct below `Durable`. The rule
@@ -270,7 +270,7 @@ ends.
 `0001` and applied by `PostgresRetention`, per flow with a `'*'` default, so an
 operator changes one without a deployment — `RetentionTests.TheDocumentedWindowsAreSeeded`
 is what keeps the table above and the seeded rows from drifting apart. *This table
-used to be the entire policy, and [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md))
+used to be the entire policy, and [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md)
 is blunt about what that was worth: "a table in a document deletes nothing."* A null
 window means "not on a timer" rather than "immediately", and the arithmetic gives that
 for free: `now() - NULL` is null and every comparison against it is false, so a
@@ -289,7 +289,7 @@ which discarding an unsent event becomes correct. `RetentionSweep.HeldForPending
 reports how many instances a sweep withheld, because the guard's own failure mode is a
 deployment that stages events and publishes none: it keeps every one of those instances
 for ever, and that number is where an operator sees it happening rather than inferring it
-from disk. See [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)), decision 5.
+from disk. See [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md), decision 5.
 
 Archival to cold storage is a plugin (`IJournalArchiver`), because the retention
 requirement is regulatory and differs per organisation. *That interface does not
@@ -362,7 +362,7 @@ split-brain bug; FlowX does not rely on it.
 *both* endings. A store that deleted the row on release would restart the counter, and
 the next acquisition would hand a returning zombie a token equal to its successor's —
 after which every check in the paragraph above passes
-([ADR-0016](adr/ADR-0016-postgres-journal-adapter.md))).
+([ADR-0016](adr/ADR-0016-postgres-journal-adapter.md)).
 
 | Parameter | Default | Trade-off |
 |---|---|---|
@@ -417,7 +417,7 @@ every incident review template:
 
 > **Built at WP-56, and connected to `.Emit<T>()` after it.** `PostgresOutboxPublisher`
 > implements the sequence below against `outbox_event`, and
-> [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)) records what it decided.
+> [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md) records what it decided.
 > **`.Emit<T>()` reaches it now.** The generated dispatcher's `DescribeStep` builds the
 > event body from the author's own expression, through the flow's serialiser context and
 > its `SensitiveMembers`; `FlowEngine.CommitStepAsync` puts it in `StepCommit.Outbox`, which
@@ -521,7 +521,7 @@ flowchart LR
 |---|---|---|
 | Ingress throughput | broker partitions; workers scale to partition count | partition count |
 | Flow concurrency | worker replicas × per-worker degree | journal write throughput |
-| Journal throughput | group commit, batched writes, per-tenant sharding | ~20–50k step-commits/s per Postgres primary. *This cell said "measured, not assumed", and it was neither: the figure is from the literature and it stays one.* A Postgres journal exists and has never been benchmarked — B7 and B8 have no harness (WP-50), which [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md)) records as the half of WP-53's exit criterion that is still unmet |
+| Journal throughput | group commit, batched writes, per-tenant sharding | ~20–50k step-commits/s per Postgres primary. *This cell said "measured, not assumed", and it was neither: the figure is from the literature and it stays one.* A Postgres journal exists and has never been benchmarked — B7 and B8 have no harness (WP-50), which [ADR-0016](adr/ADR-0016-postgres-journal-adapter.md) records as the half of WP-53's exit criterion that is still unmet |
 | Ordering | per partition key | no global order |
 | Suspended instances | rows only | storage, not compute |
 
@@ -575,7 +575,7 @@ Rules that make rolling updates non-events:
    switch reads, drop later — never a breaking migration in one release.
    **Migrations `0002` and `0003` are this schema's worked examples, and they exist
    outside `0001` for that reason**
-   ([ADR-0016](adr/ADR-0016-postgres-journal-adapter.md))): in `0002`,
+   ([ADR-0016](adr/ADR-0016-postgres-journal-adapter.md)): in `0002`,
    `state_bag_sequence` is added nullable with no default and backfilled from
    `max(sequence)` only for instances that already carry a snapshot; `0003` adds the
    index the recovery scan is actually planned against. Every statement in both is

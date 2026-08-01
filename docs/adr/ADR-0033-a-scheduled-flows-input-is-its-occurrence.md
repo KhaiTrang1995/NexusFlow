@@ -27,7 +27,7 @@ the flow it is about to start; the last three are the whole of what happened.
 The instant is the interesting one, and it is **not** the instant the sweep noticed it. A sweep
 runs every ten seconds by default, so an on-time firing is up to ten seconds late; a firing
 recovered after an outage is as late as
-[ADR-0032](ADR-0032-a-missed-schedule-fires-late.md))'s catch-up allows, which is hours. The
+[ADR-0032](ADR-0032-a-missed-schedule-fires-late.md)'s catch-up allows, which is hours. The
 occurrence and "now" are different numbers, and a job that confuses them closes a different
 window from the one it was asked to close.
 
@@ -86,7 +86,7 @@ number the first attempt bound.
 ### 2.2 `Cron` and `TimeZone` are carried, and not only for the flow
 
 A flow rarely needs them. They are there because they are two of the five terms the instance id
-is derived from ([ADR-0031](ADR-0031-an-occurrence-names-the-instance-it-starts.md))), and the id
+is derived from ([ADR-0031](ADR-0031-an-occurrence-names-the-instance-it-starts.md)), and the id
 is a hash: an operator holding a `flow_instance` row with a primary key of
 `c49bd6f1-9174-8d06-…` has no way to work out where it came from unless the row also says which
 declaration produced it. With all three in `input`, the key is recomputable by hand.
@@ -125,7 +125,7 @@ configuration under which a cron firing acquires a body.
 
 - **A. Let a scheduled flow declare any input, and start it with `default`.** *Rejected:* it
   journals an instance whose recorded request is a value nobody sent, which is
-  [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md))'s F2 failure — *"a constant standing in for
+  [ADR-0017](ADR-0017-manifest-v1-freeze-criteria.md)'s F2 failure — *"a constant standing in for
   a fact"* — moved from the manifest into the journal, where it is retained for months and read
   by an audit. It also loses the occurrence entirely, so §1.1's late-firing problem has no fix at
   all.
@@ -165,7 +165,7 @@ configuration under which a cron firing acquires a body.
 [09 §3](../09-Trigger-Model.md#3-declaring-triggers) prints a flow carrying `[HttpTrigger]`,
 `[KafkaTrigger]`, `[CronTrigger]` and `[AgentTrigger]` at once and calls it *"four transports,
 zero changes to the flow body … quality goal Q4, and it is the single most visible benefit of the
-model"*. [ADR-0004](ADR-0004-universal-trigger-model.md))'s first Positive says *"one flow serves
+model"*. [ADR-0004](ADR-0004-universal-trigger-model.md)'s first Positive says *"one flow serves
 HTTP, Kafka, cron and an AI agent simultaneously"*.
 
 That holds for every transport whose payload **the caller supplies**, and stops at the one whose
@@ -196,7 +196,7 @@ alternative was option **C** or **F**, and §3 says what each costs.
   them by hand.
 - **A late firing does the work it was asked to do.** A flow reasoning from `OccurrenceAt`
   produces the same answer at 02:00:03 and at 06:41, which is what makes
-  [ADR-0032](ADR-0032-a-missed-schedule-fires-late.md))'s "fire late" defensible at all. Without
+  [ADR-0032](ADR-0032-a-missed-schedule-fires-late.md)'s "fire late" defensible at all. Without
   this decision, that one would have had to be "skip".
 - **The determinism rules are not weakened to bind a transport.** `FLOWX1007` and `FLOWX1011`
   stand exactly as they were; the occurrence arrives through the one channel a replay already
@@ -236,9 +236,9 @@ alternative was option **C** or **F**, and §3 says what each costs.
 
 ---
 
-**Back to:** [ADR index](README.md) · [ADR-0004](ADR-0004-universal-trigger-model.md)) ·
-[ADR-0031](ADR-0031-an-occurrence-names-the-instance-it-starts.md)) ·
-[ADR-0032](ADR-0032-a-missed-schedule-fires-late.md)) ·
+**Back to:** [ADR index](README.md) · [ADR-0004](ADR-0004-universal-trigger-model.md) ·
+[ADR-0031](ADR-0031-an-occurrence-names-the-instance-it-starts.md) ·
+[ADR-0032](ADR-0032-a-missed-schedule-fires-late.md) ·
 [09 §3](../09-Trigger-Model.md#3-declaring-triggers) ·
 [09 §8](../09-Trigger-Model.md#8-schedule-trigger) ·
 [FLOWX1038](../diagnostics/FLOWX1038.md)

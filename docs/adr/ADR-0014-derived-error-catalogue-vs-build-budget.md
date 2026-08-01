@@ -88,7 +88,7 @@ were added, not that the generator got cheaper. `FlowPlanGenerator` was 74–82 
 total execution time in all six builds at both sizes before any marginal is taken, so every
 route to the budget still runs through it.* **What it buys:** the
 only field in the manifest that answers "what can go wrong here" — which is what
-[ADR-0007](ADR-0007-result-over-exceptions.md)) promised when it chose `Result<T>` partly
+[ADR-0007](ADR-0007-result-over-exceptions.md) promised when it chose `Result<T>` partly
 so that failures "are enumerable in the manifest, so error catalogues, OpenAPI responses
 and client SDKs are generated", and what
 [13-AI-Native](../13-AI-Native.md) and P8's `flowx query` consume downstream.
@@ -164,7 +164,7 @@ returns the pre-feature build time.
    ships `"errors": []`. An opt-out would give absence a second meaning, and the field's
    whole design is that it has three states, not two.
 2. **A fourth state means a schema change**, and the schema is a public contract
-   ([ADR-0005](ADR-0005-manifest-as-build-artifact.md))) that P8 freezes at v1.0. A
+   ([ADR-0005](ADR-0005-manifest-as-build-artifact.md)) that P8 freezes at v1.0. A
    manifest-level "error derivation was disabled" flag is the honest form of this option,
    and it is a breaking-shaped change made for a build-speed reason.
 3. **`flowx diff` cannot see the distinction today, and would be actively harmed.**
@@ -403,7 +403,7 @@ Stated so the decision is made with the uncertainty visible, not after it.
 - The manifest keeps a field that cannot be wrong: correct, or explicitly absent. Nothing
   else in the document has that property, and it is the one consumers act on when deciding
   what failures to handle.
-- [ADR-0007](ADR-0007-result-over-exceptions.md))'s stated benefit — enumerable failures —
+- [ADR-0007](ADR-0007-result-over-exceptions.md)'s stated benefit — enumerable failures —
   stops being an aspiration. It was one for the whole of P0.
 - The build-overhead budget becomes falsifiable at any project size instead of only at the
   size it happens to be measured on, which is a defect it had before this feature and
@@ -565,7 +565,7 @@ which is the whole function of a Revisit-when clause.
 4. **P8 approaches manifest v1.0 freeze — not fired, and not datable.** P8 has not started.
    What this record did not anticipate is that the deadline it set itself cannot be read at
    all: nothing states what must be true for the freeze to happen.
-   [ADR-0005](ADR-0005-manifest-as-build-artifact.md)) does not mention freezing, and
+   [ADR-0005](ADR-0005-manifest-as-build-artifact.md) does not mention freezing, and
    [13-AI-Native](../13-AI-Native.md) only warns that adding a field afterwards is expensive.
    Tracked as [PLAN open item 10](../../PLAN.md#9-open-items-blocking-the-plan), which is
    waiting on this record while this record waits on it.
@@ -578,7 +578,7 @@ and unmade, through a whole delivery phase — and on 2026-07-31 it was **remove
 [PLAN §9](../../PLAN.md#9-open-items-blocking-the-plan)'s open items**, which converts
 "not yet decided" into "deliberately left open". This record stays **Proposed** on that
 basis rather than by neglect.
-[ADR-0002](ADR-0002-compile-time-orchestration.md))'s build-overhead trigger has fired
+[ADR-0002](ADR-0002-compile-time-orchestration.md)'s build-overhead trigger has fired
 independently of all four and points here for the resolution, so this is now the record two
 decisions are waiting on.
 

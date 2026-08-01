@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-08-01
 **Deciders:** Repository owner · Platform architecture
-**Amends:** [ADR-0011](ADR-0011-fixed-policy-stage-order.md)) ·
+**Amends:** [ADR-0011](ADR-0011-fixed-policy-stage-order.md) ·
 [14-Performance §B2](../14-Performance.md)
 
 > **This is the third of the three decisions P4 could not inherit.** The stage order is
@@ -49,7 +49,7 @@ always was — one predictable always-false comparison, no retry bookkeeping, no
 A single `HasPolicies` flag would be the wrong shape, and the reason is specific rather than
 aesthetic: **most declared policies are still not executed.** `samples/banking` declares seven
 policy sets containing `RateLimit`, `Idempotency`, `Cache` and `Audit`; none of those four is
-implemented ([ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md))). A
+implemented ([ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)). A
 flag that were true because a step declared a `Cache` would send that step down the policy
 path to discover there is nothing to do — charging the flow for a policy nothing applies,
 which is precisely the cost this decision exists to avoid.
@@ -153,7 +153,7 @@ decided in exactly one file.
 * **A hand-built plan can disagree with a compiled one.** `StepPolicy.From` runs in
   `StepNode.ForCapability`, so any plan built any way gets it; but a caller who constructs
   `PolicyChain` themselves and expects declaration order to decide nesting will be wrong. That
-  is [ADR-0024](ADR-0024-stage-four-is-a-fixed-nesting.md))'s subject, not this one's.
+  is [ADR-0024](ADR-0024-stage-four-is-a-fixed-nesting.md)'s subject, not this one's.
 
 **Revisit when:** a stage needs to run *between* two steps rather than around one — an
 outbox or a batch coalescing across several — at which point the node is the wrong place to
@@ -164,7 +164,7 @@ point the four that exist should probably become one bit set.
 
 ---
 
-**See also:** [ADR-0011](ADR-0011-fixed-policy-stage-order.md)) ·
-[ADR-0024](ADR-0024-stage-four-is-a-fixed-nesting.md)) ·
-[ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)) ·
+**See also:** [ADR-0011](ADR-0011-fixed-policy-stage-order.md) ·
+[ADR-0024](ADR-0024-stage-four-is-a-fixed-nesting.md) ·
+[ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) ·
 [10 — Policy Framework](../10-Policy-Framework.md)

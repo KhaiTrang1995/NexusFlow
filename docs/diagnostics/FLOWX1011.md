@@ -63,7 +63,7 @@ would report the documented remedy.
 | `Durable` | **Error** | The flow is replayed. A branch that is not a function of flow state takes a different path on replay, a step input that is not a function of flow state is not byte-identical to the journaled one, and the journal and the execution disagree. |
 | `Ephemeral` | **Warning** | Nothing is replayed, so nothing diverges — but the flow is one attribute away from being replayed, and the run-time error already treats an impure predicate as a defect under either profile. |
 
-[ADR-0003](../adr/ADR-0003-execution-profiles.md)) and [06 §5](../06-Execution-Engine.md#5-the-determinism-boundary)
+[ADR-0003](../adr/ADR-0003-execution-profiles.md) and [06 §5](../06-Execution-Engine.md#5-the-determinism-boundary)
 originally said *informational* for the ephemeral case. It ships as a warning instead, for
 one blunt reason: `Ephemeral` is the only profile the runtime executes today, and an Info
 diagnostic never appears in a build log. Info would have shipped a rule that does nothing

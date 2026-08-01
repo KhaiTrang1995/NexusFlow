@@ -56,7 +56,7 @@ gantt
 | **Scope (Should)** | `FlowTestHost` (substitution only) — **shipped, two phases late**, in WP-49 at P1's close: it runs a compiled flow in-process against the real engine with capabilities substituted by capability id, and reports the trace ([23-Testing-Strategy](23-Testing-Strategy.md)). The documented `For<TFlow>()` shape did not survive contact with the emitted dispatcher and was corrected rather than faked · ~~`dotnet new flowx` template~~ — **still not shipped**, carried forward for a third time |
 | **Out** | durability, policies, other transports, branching |
 | **Done when** | `samples/ecommerce` runs a 3-step ephemeral flow over HTTP; B1 ≤ 5 µs and B2 = 0 alloc are green in CI; `flowx graph` renders it — **met** ([P0.md](benchmarks/P0.md): B1 172.3 ns, B2 exactly 0 B) |
-| **Kill criterion** | if generated dispatch cannot hit 5 µs / 0 alloc, [ADR-0002](adr/ADR-0002-compile-time-orchestration.md)) is wrong and the platform's thesis must be revisited **before** anything else is built |
+| **Kill criterion** | if generated dispatch cannot hit 5 µs / 0 alloc, [ADR-0002](adr/ADR-0002-compile-time-orchestration.md) is wrong and the platform's thesis must be revisited **before** anything else is built |
 
 ### P1 — Compiler hardening *(mitigates risk R1)*
 
@@ -90,7 +90,7 @@ gantt
 > [B12-scale.md](benchmarks/B12-scale.md). About 85 % of the per-flow cost is
 > `FlowPlanGenerator`, and most of that is the semantic binding
 > `ErrorCatalogueReader` performs to derive the manifest's `errors` field.
-> [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)) is the open
+> [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) is the open
 > decision about which gives way, the field or the budget. P1 does not exit until
 > one of them does.
 
@@ -107,7 +107,7 @@ gantt
 
 | | |
 |---|---|
-| **Must** | Kafka · RabbitMQ · Azure Service Bus · ~~Cron with leader election~~ **done, and without an election** ([ADR-0031](adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md))): `[CronTrigger]` generates a registration, `FlowScheduleScan` fires it, and exclusivity comes from the occurrence naming the instance rather than from a leader · the conformance suite as a published package |
+| **Must** | Kafka · RabbitMQ · Azure Service Bus · ~~Cron with leader election~~ **done, and without an election** ([ADR-0031](adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md)): `[CronTrigger]` generates a registration, `FlowScheduleScan` fires it, and exclusivity comes from the occurrence naming the instance rather than from a leader · the conformance suite as a published package |
 | **Should** | gRPC · MQTT · webhooks with signature verification |
 | **Done when** | `samples/event-driven` moves a flow HTTP → Kafka → cron with **zero** business-logic changes, proven by an unchanged-file assertion in CI. *The cron leg of that is now known to need two flows rather than one: a scheduled flow's input contract is fixed by the platform, so it cannot also bind an HTTP request body ([ADR-0033 §4](adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md)#4-the-consequence-that-contradicts-a-documented-claim)). The **capability** is the unchanged file, which is what the assertion should read* |
 
@@ -194,7 +194,7 @@ re-scored at every phase gate. Two have hard triggers:
 
 | Risk | Trigger | Action |
 |---|---|---|
-| R1 generator complexity | build overhead > 8 %, or > 3 generator bugs per phase | freeze features; invest in the generator's test harness and model layer — **⚠ this trigger has fired.** Build overhead is +46.6 % at 50 flows and +77 % at 200 ([B12-scale.md](benchmarks/B12-scale.md)). The named action has not been taken; what was done instead is a blocking *relative* gate ([generator-cost-gate.md](benchmarks/generator-cost-gate.md)) that stops it worsening, and [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)), which puts the choice between the derived catalogue and the budget in front of a decider |
+| R1 generator complexity | build overhead > 8 %, or > 3 generator bugs per phase | freeze features; invest in the generator's test harness and model layer — **⚠ this trigger has fired.** Build overhead is +46.6 % at 50 flows and +77 % at 200 ([B12-scale.md](benchmarks/B12-scale.md)). The named action has not been taken; what was done instead is a blocking *relative* gate ([generator-cost-gate.md](benchmarks/generator-cost-gate.md)) that stops it worsening, and [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md), which puts the choice between the derived catalogue and the budget in front of a decider |
 | R2 determinism leaks | any replay divergence in the conformance corpus | stop P2; strengthen analyzers before proceeding |
 | R5 journal bottleneck | B7 misses budget on target hardware | implement tenant sharding before P6 |
 | R4 adoption | fewer than 3 external pilots by P5 | reprioritise the MediatR bridge and migration tooling |

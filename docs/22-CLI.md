@@ -13,9 +13,9 @@ For four of its five verbs that means the manifest and nothing else; the fifth,
 deliberately: it consumes the manifest exactly as a third-party tool would, which is the
 strongest available evidence that the document is genuinely self-describing rather than
 only usable from inside this repository
-([ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md))). The architecture test
+([ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md)). The architecture test
 `CliLinksNoFlowXAssembly` holds that line, and still does —
-[ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md)) widened the tool's *inputs*
+[ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md) widened the tool's *inputs*
 without weakening its *links*, which is the distinction [§8](#8-flowx-replay-and-the-fitness-function--decided)
 is about.
 
@@ -80,9 +80,9 @@ delayed, they are answered elsewhere or unanswerable:
 
 | Check | Named in | Status |
 |---|---|---|
-| `--cost` | [ADR-0003](adr/ADR-0003-execution-profiles.md)), [18](18-Cloud-Native.md) | **built** — §7 |
-| `--complete` | [01](01-Vision.md), [03](03-Design-Principles.md), [13](13-AI-Native.md), [ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md)) | **superseded.** `ManifestIsComplete` does the job, and does it *in* the build rather than after it. A CLI verb would be a second implementation of one rule, run later, and reachable only by a pipeline that remembered to call it |
-| `--runtime` | [05](05-Architecture.md) (R7), [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md)) | **not buildable yet.** It compares the built manifest against the deployed one, and nothing records what is deployed. It needs a control plane, which no phase currently owns |
+| `--cost` | [ADR-0003](adr/ADR-0003-execution-profiles.md), [18](18-Cloud-Native.md) | **built** — §7 |
+| `--complete` | [01](01-Vision.md), [03](03-Design-Principles.md), [13](13-AI-Native.md), [ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md) | **superseded.** `ManifestIsComplete` does the job, and does it *in* the build rather than after it. A CLI verb would be a second implementation of one rule, run later, and reachable only by a pipeline that remembered to call it |
+| `--runtime` | [05](05-Architecture.md) (R7), [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) | **not buildable yet.** It compares the built manifest against the deployed one, and nothing records what is deployed. It needs a control plane, which no phase currently owns |
 
 `--complete` and `--runtime` are rejected **by name**, not as unknown options, and the
 error says where each check went. Somebody who read `--complete` in
@@ -129,7 +129,7 @@ ignore the output.
 |---|---|
 | `source` (file:line) | moves whenever anyone edits above a declaration; it is navigation metadata |
 | `application.version`, `commit`, `builtAt` | they change on every release by design |
-| a flow's `steps`, **except** an `AwaitSignal` step's `signal` and `timeout` | every other step describes what the flow *does*, and refactoring that is what FlowX exists to make safe. A wait describes what the flow **requires from outside** — the identity a sender addresses to continue it — which is the same kind of fact as a `trigger` and is compared for the same reason ([ADR-0021 §2.4](adr/ADR-0021-manifest-publishes-the-wait.md))). Moving a wait behind a `When`, or changing the steps around it, still reports nothing |
+| a flow's `steps`, **except** an `AwaitSignal` step's `signal` and `timeout` | every other step describes what the flow *does*, and refactoring that is what FlowX exists to make safe. A wait describes what the flow **requires from outside** — the identity a sender addresses to continue it — which is the same kind of fact as a `trigger` and is compared for the same reason ([ADR-0021 §2.4](adr/ADR-0021-manifest-publishes-the-wait.md)). Moving a wait behind a `When`, or changing the steps around it, still reports nothing |
 | a flow's `emits` and `errors` | both are aggregated by the compiler from steps and capabilities; the same facts appear once more, with versions, in `events` and each capability's `errors` |
 | array order anywhere | every list is compared as a set |
 
@@ -187,7 +187,7 @@ ignore the output.
 | `FLOWX-DIFF-203` | deadline changed | an operational budget tuned against production latency, not a promise — though shortening one can turn slow-but-successful executions into timeouts |
 | `FLOWX-DIFF-204` | deprecation notice added or removed | nothing breaks today; it is the signal to start migrating |
 | `FLOWX-DIFF-205` | schedule time zone changed | the schedule fires at a different wall-clock time, and its DST behaviour changes with it — operationally significant, contractually nothing |
-| `FLOWX-DIFF-206` | the wait a flow declared for a signal changed | an operational budget tuned against how long real people take, not a term of the contract — and **nothing arms it**, because there is no scheduler and no timer table ([06 §6](06-Execution-Engine.md#6-suspension-waiting-without-holding-resources)). A change into or out of `(none)` means the compiler's ability to evaluate the declaration moved, which is a fact about the build. [ADR-0021](adr/ADR-0021-manifest-publishes-the-wait.md)) records that this severity is re-argued the day a timer fires |
+| `FLOWX-DIFF-206` | the wait a flow declared for a signal changed | an operational budget tuned against how long real people take, not a term of the contract — and **nothing arms it**, because there is no scheduler and no timer table ([06 §6](06-Execution-Engine.md#6-suspension-waiting-without-holding-resources)). A change into or out of `(none)` means the compiler's ability to evaluate the declaration moved, which is a fact about the build. [ADR-0021](adr/ADR-0021-manifest-publishes-the-wait.md) records that this severity is re-argued the day a timer fires |
 | `FLOWX-DIFF-019` | **one side's error catalogue is withheld, so the two were not compared** | the compiler could not resolve a catalogue, which is a fact about the *build* and not about the contract. It sits out of numeric order because it belongs to the 01x error-catalogue family and to this severity |
 
 **`FLOWX-DIFF-019` exists because its absence was worse than a false negative.**
@@ -326,7 +326,7 @@ would turn both of those into an argument in a YAML file.
 flowx verify --cost --manifest artifacts/flowx.manifest.json
 ```
 
-[ADR-0003](adr/ADR-0003-execution-profiles.md)) makes durability opt-in and then names the
+[ADR-0003](adr/ADR-0003-execution-profiles.md) makes durability opt-in and then names the
 one thing that decision leaves open: nothing stops somebody opting in by accident.
 [18 §Cost](18-Cloud-Native.md) puts the number on it — a read-heavy flow mistakenly marked
 `Durable` can cost 100× its `Ephemeral` equivalent in storage and IOPS for zero benefit,
@@ -421,7 +421,7 @@ check is already right.
 ## 8. `flowx replay` and the fitness function — decided
 
 > This section used to record a *finding* and say that closing it was not this page's
-> call. It was closed by [ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md)), and
+> call. It was closed by [ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md), and
 > what follows is the outcome rather than the argument — the record carries that.
 
 **Neither of the two resolutions this section sketched was taken whole**, and the reason
@@ -444,8 +444,8 @@ the sketch, and it does not fit what a journal is. A JSON Schema describes a *do
 and **nothing writes a journal document** — there is no file for the schema to describe.
 Worse, it would be a stability promise about data at rest, made over a shape that is still
 moving: `plugins/FlowX.Postgres/Migrations` is on its fourth migration and
-[ADR-0016](adr/ADR-0016-postgres-journal-adapter.md)) has amended the row shape twice. The
-manifest can carry [ADR-0017](adr/ADR-0017-manifest-v1-freeze-criteria.md))'s freeze plan
+[ADR-0016](adr/ADR-0016-postgres-journal-adapter.md) has amended the row shape twice. The
+manifest can carry [ADR-0017](adr/ADR-0017-manifest-v1-freeze-criteria.md)'s freeze plan
 because it is rebuilt from source on every build; a journal holds rows written by every
 version that ever ran.
 
@@ -557,4 +557,4 @@ compensating control at all.
 
 ---
 
-**Back to:** [README](../README.md) · [AI-Native](13-AI-Native.md) · [Capability Model](07-Capability-Model.md) · [ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md)) · [ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md))
+**Back to:** [README](../README.md) · [AI-Native](13-AI-Native.md) · [Capability Model](07-Capability-Model.md) · [ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md) · [ADR-0020](adr/ADR-0020-cli-reads-the-journal-as-rows.md)

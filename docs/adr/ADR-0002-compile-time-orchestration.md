@@ -26,7 +26,7 @@
 > **Where the review is.** [PLAN §1](../../PLAN.md#1-what-p0-exists-to-prove)'s kill
 > criterion says "Revisit ADR-0002 first", and it is the only place in the repository that
 > connects the number to the record it is meant to reopen.
-> [ADR-0014](ADR-0014-derived-error-catalogue-vs-build-budget.md)) is the record that exists
+> [ADR-0014](ADR-0014-derived-error-catalogue-vs-build-budget.md) is the record that exists
 > to resolve it — the choice between the derived error catalogue and the ≤ 8 % budget, put
 > in front of a decider — and it is still **Proposed**.
 >

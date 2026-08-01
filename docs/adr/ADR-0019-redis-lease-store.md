@@ -3,17 +3,17 @@
 **Status:** Accepted
 **Date:** 2026-07-31
 **Deciders:** Runtime team, Platform architecture
-**Amends:** [ADR-0006](ADR-0006-journal-and-leases.md)) ·
-[ADR-0015](ADR-0015-journal-schema-and-durable-execution.md)), commitment 1's portability note
+**Amends:** [ADR-0006](ADR-0006-journal-and-leases.md) ·
+[ADR-0015](ADR-0015-journal-schema-and-durable-execution.md), commitment 1's portability note
 
-> [ADR-0016](ADR-0016-postgres-journal-adapter.md)) is this record's sibling: it is what the
+> [ADR-0016](ADR-0016-postgres-journal-adapter.md) is this record's sibling: it is what the
 > first store found out about a design, and this is what the **second** store found out
 > about a *suite*. The two questions are different, and only the second one can answer
 > whether "pluggable" was ever more than a claim.
 
 ## Context
 
-[ADR-0006](ADR-0006-journal-and-leases.md))'s central assertion is that the journal and lease
+[ADR-0006](ADR-0006-journal-and-leases.md)'s central assertion is that the journal and lease
 primitives are **store-independent**. Until WP-54 every abstraction in this repository had
 exactly one real implementation, so the assertion rested on nobody having tried — and
 `docs/17`'s own warning box said so: *"one implementation per abstraction, so 'no abstraction
@@ -37,7 +37,7 @@ assertions red, and only one of them is the obvious one:
 | `ASupersededTokenCannotRenew` | the zombie's token now *equals* its successor's, so the fence check admits it |
 | `ASupersededTokenCannotRelease` | same cause: it can release a lease another node holds |
 
-That is [ADR-0016](ADR-0016-postgres-journal-adapter.md))'s split brain reproduced in a
+That is [ADR-0016](ADR-0016-postgres-journal-adapter.md)'s split brain reproduced in a
 different technology, from a different cause, caught by an unmodified suite. It is the
 strongest evidence available that the fencing-token argument is store-independent rather
 than an artefact of one schema.
@@ -72,7 +72,7 @@ in-process counter that would pass the suite on one node and fail on two.
 
 ### 2. `StepScope.Root` renders as `-`, and the fold is at the client, not the server
 
-[ADR-0015](ADR-0015-journal-schema-and-durable-execution.md)) and ADR-0016 both record that
+[ADR-0015](ADR-0015-journal-schema-and-durable-execution.md) and ADR-0016 both record that
 commitment 1 works in PostgreSQL *partly by luck of dialect*: `Root` renders as the empty
 string, PostgreSQL treats `''` as distinct from `NULL`, and a store that folds the two
 rejects every root-scope row. WP-54 is the first adapter after the first, so this is where
@@ -134,6 +134,6 @@ turns an `ILeaseStore` into a second journal.
 ---
 
 **Back to:** [ADR index](README.md) ·
-[ADR-0006 — journal and leases](ADR-0006-journal-and-leases.md)) ·
-[ADR-0016 — what a real database said](ADR-0016-postgres-journal-adapter.md)) ·
+[ADR-0006 — journal and leases](ADR-0006-journal-and-leases.md) ·
+[ADR-0016 — what a real database said](ADR-0016-postgres-journal-adapter.md) ·
 [11 — Distributed Runtime](../11-Distributed-Runtime.md)

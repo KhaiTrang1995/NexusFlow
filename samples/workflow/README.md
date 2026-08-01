@@ -192,9 +192,9 @@ A declared wait reaches two artifacts by two routes. The plan carries the author
 *expression* and generated C# evaluates it at run time, so an environment read works there.
 The manifest carries the duration **folded at build time**, because a consumer reading JSON
 has never seen this assembly — and a method call cannot be folded. `flowx diff` then had no
-window to compare, and [ADR-0021](../../docs/adr/ADR-0021-manifest-publishes-the-wait.md))'s
+window to compare, and [ADR-0021](../../docs/adr/ADR-0021-manifest-publishes-the-wait.md)'s
 new field lost the only producer in the repository. That is exactly the *"a producer on paper
-and none in practice"* failure [ADR-0017](../../docs/adr/ADR-0017-manifest-v1-freeze-criteria.md))'s
+and none in practice"* failure [ADR-0017](../../docs/adr/ADR-0017-manifest-v1-freeze-criteria.md)'s
 **F1** exists to catch — arriving, as usual, by a route nobody had listed.
 
 Nothing warned. The compiler publishes nothing it cannot fold and says nothing about it,
@@ -332,7 +332,7 @@ after the wait were going to produce, so `FlowExecutionResult<TOut>.Value` threw
 therefore mapped both routes by hand, with a `RequestDelegate` because minimal-API delegate
 binding reflects over handler parameters and constraint C2 forbids it.
 
-`plugins/FlowX.Http` has the `202` path now ([ADR-0022](../../docs/adr/ADR-0022-http-shape-of-a-suspending-flow.md))),
+`plugins/FlowX.Http` has the `202` path now ([ADR-0022](../../docs/adr/ADR-0022-http-shape-of-a-suspending-flow.md)),
 so `offer.accept` carries an ordinary `[HttpTrigger("POST", "/api/v1/offers")]` and
 `app.MapFlowX()` publishes both routes. **The identity in the delivery route is read off the
 flow's own `.AwaitSignal<OfferCountersigned>` call**, so there is no second declaration of it
@@ -352,7 +352,7 @@ not a check written for signals.
 and `Waits.Countersignature` folded to a duration, because a consumer reading JSON has never
 seen this assembly. `flowx diff` reads both: a signal removed or added is Breaking
 (`FLOWX-DIFF-021`, `022`) and a changed window is Neutral (`FLOWX-DIFF-206`). See
-[ADR-0021](../../docs/adr/ADR-0021-manifest-publishes-the-wait.md)).
+[ADR-0021](../../docs/adr/ADR-0021-manifest-publishes-the-wait.md).
 
 **And the flow's own deadline is still the outer bound, on a different question.**
 `Waits.Countersignature` bounds the *wait* — seven days, after which the escalation runs.
@@ -417,7 +417,7 @@ Three separate failures, none of them reported:
    `ManifestWriter` publishes `"kind": "AwaitSignal"` and no duration at all, so the
    fabrication reached the plan and the generated source and stopped there. The manifest
    still publishes no signal identity and no timeout — that is owed, and it is a schema change
-   under [ADR-0017](../../docs/adr/ADR-0017-manifest-v1-freeze-criteria.md)) rather than a line
+   under [ADR-0017](../../docs/adr/ADR-0017-manifest-v1-freeze-criteria.md) rather than a line
    of emitter code.*
 
 **So a flow that used these compiled, ran green, and quietly did not wait.** That was worse
@@ -862,8 +862,8 @@ after the three runs in §5 every row has `flow_instance.input IS NULL` and
 | ~~`Delay` and `OnTimeout` — a timer table and a scheduler engine~~ **done at WP-63's second half**, and again by a narrower construction: there is **no timer table** and no scheduler engine. A wait is three columns on the instance row that is waiting — `wake_at`, `wake_step_id`, `wake_scope` — written by the same call that writes `Suspended`, and `FlowTimerScan` is a sweep on an interval rather than a timer per instance. `FLOWX1031` was deleted with the gap | WP-63 |
 | `Delay` — a durable timer, and a `case` in `FlowAnalyzer` that lays out a step rather than reporting one | WP-63, second half |
 | `OnTimeout` — a layout for the branch, and something to time out of | WP-63, second half |
-| ~~A signal identity and a duration in `flowx.manifest.json` — the step object is `additionalProperties: false`, so this is a schema decision under [ADR-0017](../../docs/adr/ADR-0017-manifest-v1-freeze-criteria.md))~~ **done at WP-64**, as [ADR-0021](../../docs/adr/ADR-0021-manifest-publishes-the-wait.md)): `signal` is always written, `timeout` is the folded duration or nothing, and three `flowx diff` rules read them. ADR-0017's F1 count of unproduced fields did not move | WP-64 |
-| ~~A `202 Accepted` shape in `plugins/FlowX.Http`, so an `[HttpTrigger]`ed flow may suspend. Until then `Program.cs` maps `offer.accept`'s two routes by hand~~ **done at WP-64**, as [ADR-0022](../../docs/adr/ADR-0022-http-shape-of-a-suspending-flow.md)): the hand-mapped routes are gone and both are generated | WP-64 |
+| ~~A signal identity and a duration in `flowx.manifest.json` — the step object is `additionalProperties: false`, so this is a schema decision under [ADR-0017](../../docs/adr/ADR-0017-manifest-v1-freeze-criteria.md)~~ **done at WP-64**, as [ADR-0021](../../docs/adr/ADR-0021-manifest-publishes-the-wait.md): `signal` is always written, `timeout` is the folded duration or nothing, and three `flowx diff` rules read them. ADR-0017's F1 count of unproduced fields did not move | WP-64 |
+| ~~A `202 Accepted` shape in `plugins/FlowX.Http`, so an `[HttpTrigger]`ed flow may suspend. Until then `Program.cs` maps `offer.accept`'s two routes by hand~~ **done at WP-64**, as [ADR-0022](../../docs/adr/ADR-0022-http-shape-of-a-suspending-flow.md): the hand-mapped routes are gone and both are generated | WP-64 |
 | An inline composed child that may wait — refused today as `flow.suspension_inside_composition`, because a parent's composition is one row written when the child finishes | unassigned; the same schema question `SubFlowMode.AwaitCompletion` needs |
 | A resumed flow that can bind step outputs (§7.1) | WP-59 |
 | A forward policy that *executes* — the chain is in the compiled plan (§3), and nothing arms it | P4 |

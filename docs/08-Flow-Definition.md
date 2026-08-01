@@ -192,7 +192,7 @@ node carrying a target per case plus a default target, and a `Jump` closing each
 case block. See [06 §3](06-Execution-Engine.md#3-the-execution-loop). The manifest
 publishes the *shape* — that the flow branches, and what is in each arm — and
 never the selector or the case values, because
-[a manifest is structure, never values](adr/ADR-0005-manifest-as-build-artifact.md)).
+[a manifest is structure, never values](adr/ADR-0005-manifest-as-build-artifact.md).
 
 ### 3.3 Parallel
 
@@ -355,7 +355,7 @@ POST /api/v1/offers/{instanceId:guid}/signals/offer.countersigned   -> 202 { ins
 The consequence is worth knowing before you add a wait to a flow that already has a trigger:
 **its HTTP surface follows its body.** Adding an `.AwaitSignal<T>` adds routes and changes what
 the existing route answers, which `flowx diff` reports as `FLOWX-DIFF-022`, Breaking. See
-[ADR-0022](adr/ADR-0022-http-shape-of-a-suspending-flow.md)).
+[ADR-0022](adr/ADR-0022-http-shape-of-a-suspending-flow.md).
 
 **Two limits that have not moved.** An **inline** composed child may not suspend, because the
 parent's composition row is written only when the child finishes, so a parent resumed past a
@@ -371,7 +371,7 @@ small: `TimeSpan.Zero`, the five `TimeSpan.From…` factories with a constant ar
 level of indirection through a named constant like `Waits.Countersignature`. Anything else — a
 method call, a conditional, a configuration lookup — publishes **no** `timeout` rather than a
 guess, because the plan carries the expression verbatim and a symbol name is not a duration to
-a tool that has never seen the assembly ([ADR-0021](adr/ADR-0021-manifest-publishes-the-wait.md))).
+a tool that has never seen the assembly ([ADR-0021](adr/ADR-0021-manifest-publishes-the-wait.md)).
 
 ### 3.6 Emitting events
 
@@ -406,7 +406,7 @@ its only exit replaces every marked member.
 >
 > **The gap is the broker.** `IEventPublisher` is declared and no plugin implements it, so
 > "published" today means "handed to a publisher"
-> ([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md))).
+> ([ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md)).
 >
 > **`EmitOnFailure` is not distinguished yet.** It compiles to the same `Emit` node in the
 > same position, so it publishes where it is written rather than on the failure path.
@@ -539,7 +539,7 @@ about to unwind — with a `#line` directive back to the line you wrote it on.
 `flowx.manifest.json` records `"kind": "Fail"` and nothing else: an `Error`
 carries a message, the messages in real systems interpolate order numbers and
 SKUs, and
-[a manifest is structure, never values](adr/ADR-0005-manifest-as-build-artifact.md)).
+[a manifest is structure, never values](adr/ADR-0005-manifest-as-build-artifact.md).
 That is the same line the capability error catalogue draws when it publishes a
 code and a category and never a message; publishing the *code* here would need a
 field the committed schema's step object does not have.
@@ -633,7 +633,7 @@ Every diagram in every FlowX application's documentation is produced this way.
 ## 7. Why C#, not YAML
 
 The natural instinct for a flow engine is a YAML or JSON DSL. FlowX rejects it
-as the *source of truth* — see [ADR-0010](adr/ADR-0010-csharp-dsl-over-yaml.md)).
+as the *source of truth* — see [ADR-0010](adr/ADR-0010-csharp-dsl-over-yaml.md).
 
 | Concern | C# DSL | YAML DSL |
 |---|---|---|

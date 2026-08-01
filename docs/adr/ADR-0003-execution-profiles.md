@@ -62,7 +62,7 @@ The default is `Ephemeral`: you opt *into* cost, never out of it.
   not use a scalar cursor, because one cannot describe a half-completed `Parallel`
   fork. WP-52 derives the position from committed journal rows and re-enters the
   same `ExecuteAsync` at index 0 —
-  [ADR-0015 commitment 2](ADR-0015-journal-schema-and-durable-execution.md)). The
+  [ADR-0015 commitment 2](ADR-0015-journal-schema-and-durable-execution.md). The
   mitigation this bullet claims held; the mechanism it named did not survive.*
 - **Determinism rules apply asymmetrically, and *informational* did not survive.**
   This bullet said `FLOWX1007–1009` would be errors in `Durable` flows and

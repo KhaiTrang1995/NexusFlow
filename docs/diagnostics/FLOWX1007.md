@@ -50,7 +50,7 @@ reconstruct.
 
 The reasoning is the determinism set's, not this row's, and it is written once on the
 [index](README.md#the-severity-of-the-determinism-set). In short: `Info` is what
-[ADR-0003](../adr/ADR-0003-execution-profiles.md)) asked for and never reaches a build log;
+[ADR-0003](../adr/ADR-0003-execution-profiles.md) asked for and never reaches a build log;
 a `Warning` still stops the build in a repository that sets `TreatWarningsAsErrors`, which
 this one does, while staying one `.editorconfig` line for a consumer who has decided
 otherwise; and the escalation is a *proof* obligation rather than a guess, because a
