@@ -5,6 +5,7 @@
 **Deciders:** Repository owner · Platform architecture
 **Amends:** [ADR-0005](ADR-0005-manifest-as-build-artifact.md) ·
 [13-AI-Native §3](../13-AI-Native.md#3-the-manifest-schema)
+**Amended by:** [ADR-0021](ADR-0021-manifest-publishes-the-wait.md)
 
 > **The freeze was a deadline three documents used and none defined.**
 > [13-AI-Native](../13-AI-Native.md) gates its whole second half behind it and warns that
@@ -156,6 +157,16 @@ why the second direction is not padding: *"a documented code that nothing emits 
 in a table with no behaviour behind it."*
 
 **Today:** unmet. Thirteen fields, no such test.
+
+*The schema has since gained two — an `AwaitSignal` step's `signal` and `timeout`
+([ADR-0021](ADR-0021-manifest-publishes-the-wait.md)) — and **this count did not move**,
+because both are written by `ManifestWriter` in the commit that declared them and both are
+classified by a `flowx diff` rule in the same commit. That is what this criterion asks of an
+addition, stated in advance rather than discovered at the bump. Note the shape the corpus test
+now has to take: `timeout` is written **conditionally**, when the author's declared duration
+folds at compile time, so a test asserting that every manifest carries it would fail on a
+manifest with no wait in it and one asserting nothing would pass vacuously. The corpus needs a
+fixture that waits.*
 
 ### F2 — No field is emitted as a constant standing in for a fact
 
@@ -409,7 +420,11 @@ criterion. The list is only useful if the next freeze — the schema will have a
 - **P8 starts with F3 or F4 still open**, at which point the roadmap's phase order and this
   checklist disagree and one of them must move, deliberately; or
 - the schema gains a field before the freeze — every addition re-opens F1 and F5 for that
-  field, and adding one is cheap only while `schemaVersion` is `0.x`; or
+  field, and adding one is cheap only while `schemaVersion` is `0.x`.
+  ***This one has fired**, on 2026-08-01, for an `AwaitSignal` step's `signal` and `timeout`.
+  [ADR-0021](ADR-0021-manifest-publishes-the-wait.md) is the record it produced, and its §4
+  answers for the addition against all eight criteria — which is what this clause was written
+  to make somebody do*; or
 - the freeze happens. This record is then amended per [§5](#5-how-the-freeze-itself-is-recorded)
   and its Revisit-when becomes the v2.0 question.
 
