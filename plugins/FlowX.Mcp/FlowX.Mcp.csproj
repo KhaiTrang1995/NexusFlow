@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>
+      FlowX agent trigger: an MCP tool surface projected from flowx.manifest.json, and
+      JSON-RPC tools/list and tools/call over HTTP.
+    </Description>
+    <PackageTags>flowx;mcp;agent;ai;json-rpc</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      A plugin depends on the runtime; the runtime never depends on a plugin. The same
+      direction FlowX.Http points in, and RuntimeDoesNotReferenceAnyPlugin enforces it.
+    -->
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+
+    <!--
+      MCP's Streamable HTTP transport is HTTP, and FlowX.Http already owns the one
+      translation from an HttpContext into a FlowInvocation: HttpTriggerReader, which
+      resolves the principal and the tenant from validated claims and from nothing else
+      (ADR-0028). Reusing it is what makes "an agent's call meets the same stance an HTTP
+      caller meets" true by construction rather than by comparison — the two transports do
+      not merely agree about identity, they are the same three lines reading it.
+
+      A second copy here would be a second TenantClaimTypes to keep equal, which on a
+      multi-tenant deployment is a data-isolation bug rather than a documentation defect.
+      Plugin depending on plugin, not on the runtime: RuntimeDoesNotReferenceAnyPlugin is
+      about src/ and is untouched, and the direction still points inward.
+    -->
+    <ProjectReference Include="../FlowX.Http/FlowX.Http.csproj" />
+  </ItemGroup>
+
+</Project>

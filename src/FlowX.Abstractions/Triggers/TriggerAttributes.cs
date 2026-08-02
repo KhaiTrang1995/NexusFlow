@@ -230,11 +230,38 @@ public enum ConfirmationMode
 }
 
 /// <summary>
-/// Exposes a flow as an agent tool over MCP. The tool descriptor, its JSON Schema and
-/// its permission requirement are generated from the flow and its capabilities, so the
-/// agent surface is exactly the flow surface — an agent cannot reach anything a human
-/// could not (docs/15-Security.md §7).
+/// Exposes a flow as an agent tool over MCP. The tool descriptor and its permission
+/// requirement are projected from <c>flowx.manifest.json</c>, so the agent surface is
+/// exactly the flow surface — an agent cannot reach anything a human could not
+/// (docs/15-Security.md §7).
 /// </summary>
+/// <remarks>
+/// <para>
+/// <strong>Served by <c>FlowX.Mcp</c>, and by nothing this assembly knows about.</strong>
+/// The compiler reads this attribute into the manifest's <c>triggers</c> block and emits a
+/// binding that hands the flow's plan, dispatcher and contract metadata to
+/// <c>FlowX.Mcp.FlowAgentToolRegistration</c>; the tool's name, description, required
+/// permissions, declared side effects and confirmation requirement are read back out of the
+/// manifest at run time. So there is one description of the tool rather than two, and it is
+/// the one <c>flowx diff</c> gates on.
+/// </para>
+/// <para>
+/// <strong>The descriptor carries no JSON Schema, and that is a limit of the manifest
+/// rather than of this attribute.</strong> docs/13-AI-Native.md §6 shows an
+/// <c>inputSchema</c> pointing into a top-level <c>schemas</c> map, which is one of the
+/// fields the committed schema declares and nothing writes (ADR-0017). Until it is written,
+/// the descriptor publishes the input contract's identity and an open object — everything
+/// the manifest knows. Generating a schema by reflecting over the contract would supply the
+/// missing field from a second source, published to agents and outside <c>flowx diff</c>.
+/// </para>
+/// <para>
+/// <strong>Authorisation is not declared here and cannot be.</strong> A call meets the
+/// stances the flow's capabilities declare, decided in the step loop against the agent's own
+/// claims — the same decision an HTTP request meets, reached by the same code (ADR-0027,
+/// ADR-0028). <see cref="Confirmation"/> below is a statement to the client, not a control:
+/// MCP puts human-in-the-loop on the side that has a human attached to it.
+/// </para>
+/// </remarks>
 [TriggerKind(TriggerKind.Agent)]
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
 public sealed class AgentTriggerAttribute : TriggerAttribute

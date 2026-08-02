@@ -90,7 +90,20 @@ namespace FlowX.Compiler.Analysis;
 /// <c>FLOWX1039</c> refuses the two declarations that could not be consumed.
 /// </para>
 /// <para>
-/// <c>Stream</c>, <c>Change</c> and <c>Agent</c> are still declaration only:
+/// <em>This paragraph named <c>Agent</c> third among the kinds that were declaration only.
+/// That expired on 2026-08-02.</em> <c>AgentToolEmitter</c> turns each <c>[AgentTrigger]</c>
+/// into a binding in <c>FlowXAgentTools.g.cs</c>, and <c>FlowX.Mcp</c> serves
+/// <c>tools/call</c> into the same <c>FlowEngine.ExecuteAsync</c> an HTTP request reaches.
+/// The copy rule is <em>stricter</em> than the other three's rather than the same: a route, a
+/// cron expression and a topic are copied off the <see cref="TriggerModel"/> this reader
+/// produced, because a router, a scheduler and a consumer each need an address before any
+/// manifest is read — and an agent tool has no address. Its name is the flow's own id and
+/// everything else about it is <c>trigger.description</c>, <c>capability.authorization</c>
+/// and <c>capability.sideEffects</c>, so nothing is copied at all and the published surface
+/// is read back out of the manifest at run time.
+/// </para>
+/// <para>
+/// <c>Stream</c> and <c>Change</c> are still declaration only:
 /// nothing binds them, so a flow declaring one of those declares an address nothing serves.
 /// (<c>Manual</c> needs no binding, and <c>Cli</c>'s summary names
 /// <c>flowx run</c>, which is not one of the CLI's verbs.) The manifest publishes the

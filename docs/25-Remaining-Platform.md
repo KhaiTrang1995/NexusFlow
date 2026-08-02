@@ -17,7 +17,7 @@ type", but "does anything read it at run time".
 |---|---|---|---|
 | 1 | **Multi-tenancy** | plumbed, unenforced | The only *correctness* gap left: nothing stops one tenant's flow reading another's rows. A data-isolation bug is not a missing feature |
 | 2 | **Logs** | absent | Third leg of observability; traces and metrics run. Blocked on one decision, not effort |
-| 3 | **AI surface (MCP)** | declared, unbound | `AgentTrigger` exists and nothing serves it. [13](13-AI-Native.md) specifies the descriptor and the `tools/call` sequence in full |
+| 3 | ~~**AI surface (MCP)**~~ | **built** — `plugins/FlowX.Mcp`, 2026-08-02 | *This row said `AgentTrigger` existed and nothing served it.* `tools/list` is a projection of the manifest and `tools/call` enters the one `FlowEngine.ExecuteAsync` with the agent's principal. See §3 |
 | 4 | **`Stream` and `Change` triggers** | declared, unbound | Two of eight kinds. `Change` is CDC over the outbox, which already exists |
 | 5 | **Stream engine** | absent | **Not next.** Nothing defines the checkpoint format, watermark generation or how window state is journaled — implementing it means inventing it |
 | 6 | **Studio** | absent | **Not next.** Sixteen one-line mentions and no design |
@@ -26,6 +26,11 @@ type", but "does anything read it at run time".
 were priority 1 because theirs was the only item that **deleted a diagnostic**: `FLOWX1032`
 existed to tell a user their declaration did nothing, and every release shipping it shipped
 an admission. All four execute, and the rule is deleted with the gap.
+
+**The AI surface left it too**, and row 3 is kept rather than removed because the recurring
+shape named at the top of this document — *a contract declared, published and diffed, with
+the wire cut at the last inch* — is what it was an instance of, and what its §3 now records
+having closed.
 
 ## 1. Multi-tenancy — the design
 
@@ -202,6 +207,36 @@ The manifest is already a complete, byte-pinned description of every flow, its
 input contract and its authorisation stance — so `tools/list` is a projection
 of an existing artifact rather than a second source of truth. **The stance is
 the same one HTTP enforces**: an agent gets no separate authorisation path.
+
+### What was built, and where the design was short
+
+The design above holds. Three things it did not say, discovered in building it:
+
+- **`McpToolCatalog.From(string)` takes the manifest and takes nothing else.**
+  That signature is the whole guarantee: no `Assembly`, no `ExecutionPlan`, no
+  service provider, so there is no second input a descriptor could be computed
+  from. It is checked as well as documented — one test mutates each manifest
+  field and requires the descriptor field it feeds to move, and reads the field
+  list off the implementation so a new field cannot be added without a case.
+- **The generated binding copies nothing but the flow id.** `EndpointEmitter`,
+  `ScheduleEmitter` and `BusEmitter` each copy the trigger's *address* into the
+  user's assembly, because a router, a scheduler and a consumer need it before
+  any manifest is read. An agent tool has no address, so `AgentToolEmitter`
+  copies no part of the tool's surface — emitting the description and the
+  annotations would have been cheaper at run time and would have created exactly
+  the second copy this section rules out.
+- **"The stance is the same one HTTP enforces" is stronger than it reads.** It is
+  not that the two transports agree about identity: `MapFlowXMcp` builds its
+  `FlowInvocation` with `HttpTriggerReader`, the same three lines an
+  `[HttpTrigger]` route uses, so the principal and the tenant are resolved once
+  for both. Two copies would have been two `TenantClaimTypes` lists to keep
+  equal, which on a multi-tenant deployment is a data-isolation bug rather than a
+  documentation defect.
+
+And one limit the diagram cannot show: the descriptor's `inputSchema` names the
+input contract instead of `$ref`-ing a JSON Schema, because the manifest's
+top-level `schemas` map is still unwritten. [13 §6](13-AI-Native.md) carries the
+detail.
 
 ## 4. `Stream` and `Change` triggers
 
