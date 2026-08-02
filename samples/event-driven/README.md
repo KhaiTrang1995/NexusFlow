@@ -5,6 +5,27 @@
 HTTP to Kafka to cron changes **zero lines of business logic**, asserted mechanically
 in CI.
 
+> [!NOTE]
+> **Two of the three transports have since been built, and the warning box after
+> this one is kept as written rather than edited.** *"`plugins/` holds three plugins
+> and `FlowX.Http` is the only transport among them"* is false: there are four, and
+> `plugins/FlowX.Redis` serves a bus — `RedisStreamEventPublisher` drains the outbox
+> onto a stream and `RedisStreamBusConsumer` starts a flow per delivery, deriving the
+> instance id so a redelivery starts nothing new
+> ([ADR-0035](../../docs/adr/ADR-0035-a-delivery-names-the-instance-it-starts.md)).
+> Cron is served too — see [scheduler](../scheduler/).
+>
+> **And the zero-lines claim is demonstrated one attribute at a time.**
+> `samples/ecommerce` runs the same event chain over a broker and over the outbox
+> itself: `RepriceOrderFlow` and `ProjectOrderFlow` take the same input, the same
+> capability shape and the same profile, and differ by `[BusTrigger]` against
+> `[ChangeTrigger]` and by nothing else. Both are consumers of one
+> `.Emit<OrderPlaced>` that names neither of them.
+>
+> **What is left is Kafka specifically, and WP-71** — the mechanical CI assertion
+> this page is built around, which is still unwritten and is the reason the claim
+> above is demonstrated rather than *asserted*.
+
 > [!WARNING]
 > **This sample has no code.** `samples/event-driven/` is this file and nothing
 > else: no project, no flow, no capability, no test, and no CI assertion. The
@@ -118,8 +139,8 @@ flowchart LR
 ```
 
 Drawn by hand, for now. `flowx graph` renders one manifest as a flowchart and has
-no `--events` switch; the CLI has four verbs — `graph`, `manifest`, `diff`,
-`verify` ([22-CLI](../../docs/22-CLI.md)). The estate-wide topology above is what
+no `--events` switch; the CLI has five verbs — `graph`, `manifest`, `diff`,
+`verify` and `replay` ([22-CLI](../../docs/22-CLI.md)). The estate-wide topology above is what
 those manifests make *possible*, not something any command assembles today, so
 this diagram can and does drift.
 

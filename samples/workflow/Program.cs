@@ -3,6 +3,7 @@ using FlowX.Generated;
 using FlowX.Hosting;
 using FlowX.Postgres;
 using FlowX.Runtime;
+using Microsoft.AspNetCore.Authentication;
 using Workflow;
 
 var builder = WebApplication.CreateSlimBuilder(args);
@@ -47,6 +48,23 @@ builder.Services.AddFlowX(options =>
         options.ScheduleScanInterval = scheduleSweep;
     }
 });
+
+// Authentication, which is the only reason this application has a principal at all.
+//
+// The stances are on the capabilities — offer.validate admits any authenticated caller, the six
+// writes each name a permission — and the engine decides them against HttpContext.User before
+// each step is dispatched. Nothing here names a route or a permission: a rule attached to an
+// endpoint would hold over HTTP and not over the cron schedule below, which is exactly the
+// transport-attached authorisation a capability stance exists to replace.
+//
+// offer.window.close needs none of this. It is started by an occurrence, its one capability
+// declares Authorization.Internal, and it therefore fires and settles with no principal in the
+// path at all — which is what makes a scheduled flow deployable under an enforced authorisation
+// model rather than an exception to it.
+builder.Services
+    .AddAuthentication(PeopleOpsTokenHandler.SchemeName)
+    .AddScheme<AuthenticationSchemeOptions, PeopleOpsTokenHandler>(
+        PeopleOpsTokenHandler.SchemeName, null);
 
 // The journal, and the whole reason this sample has a dependency samples/ecommerce does not.
 //
@@ -182,6 +200,11 @@ if (Environment.GetEnvironmentVariable("FLOWX_SAMPLE_SCHEDULE_CRON") is { Length
         CloseOfferWindowFlow.Plan,
         app.Services.GetRequiredService<CloseOfferWindowFlow.Dispatcher>());
 }
+
+// Runs the scheme above, so HttpContext.User carries the token's claims by the time the
+// generated endpoints read them. Without this line the handler is registered and never invoked,
+// every request is anonymous, and every onboarding is refused at its first step.
+app.UseAuthentication();
 
 app.MapHealthChecks("/health");
 

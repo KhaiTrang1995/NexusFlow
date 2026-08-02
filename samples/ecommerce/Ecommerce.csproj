@@ -30,6 +30,16 @@
     <ProjectReference Include="../../plugins/FlowX.Http/FlowX.Http.csproj" />
 
     <!--
+      The agent surface. Referenced here rather than only from a test project because
+      Directory.Build.props sets IsAotCompatible=false on everything named *.Tests, so no
+      test in this repository can say whether FlowX.Mcp publishes under NativeAOT. This
+      project is the only assembly that is published that way, so the reference is the
+      statement: `dotnet publish -r linux-x64` links the MCP endpoint, the tool catalogue
+      and the manifest projection, or it does not build.
+    -->
+    <ProjectReference Include="../../plugins/FlowX.Mcp/FlowX.Mcp.csproj" />
+
+    <!--
       The compiler is referenced as an ANALYZER, not as a library. That is what makes
       this sample the real test of the generator: it runs inside this project's build,
       against this project's source, exactly as it would for any consumer.

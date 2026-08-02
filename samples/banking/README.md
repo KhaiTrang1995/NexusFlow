@@ -11,6 +11,13 @@ one that journals, branches, switches, rejects and emits.
 > section where each one is retracted rather than quietly dropped. A sample README
 > that documents features the sample does not have is worse than no sample — and in a
 > banking sample it is worse than that.
+>
+> **And the reverse happened too.** The transcripts here carried no credential, because
+> nothing read one. Authorisation is decided in the step loop now, so every one of them
+> answered `403` at the first step until this sample gained a scheme — a README describing
+> a sample that no longer runs, which is the same defect from the other side. The token
+> above is what fixes it, and
+> [the tenant it also carries](#every-transfer-names-its-bank) is the second half.
 
 ```bash
 export FLOWX_POSTGRES_CONNECTION="Host=localhost;Port=5432;Database=postgres;Username=postgres"
@@ -20,6 +27,7 @@ dotnet run --project samples/banking
 curl -X POST http://localhost:5000/api/v1/transfers \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: transfer-7f3a' \
+  -H 'Authorization: Bearer operator-de-token' \
   -d '{"debtorIban":"GB33BUKB20201555555555",
        "creditorIban":"DE89370400440532013000",
        "amount":120.50,"currency":"EUR","channel":1}'
@@ -51,9 +59,10 @@ opposite reason, and [FLOWX1012](../../docs/diagnostics/FLOWX1012.md) argues bot
 |---|---|
 | `Contracts.cs` | The records on the wire and between steps. No behaviour. |
 | `Capabilities.cs` | Eight capabilities, four ports, and every business rule. |
-| `Policies.cs` | The declared policy sets — and what they do at run time, which is nothing. |
+| `Policies.cs` | The declared policy sets. Every stage they declare into executes. |
 | `ExecuteTransferFlow.cs` | The control flow: order, condition, rejection, recovery, the event. |
-| `Program.cs` | Composition. Registrations, the migration, and `MapFlowX()`. |
+| `Authentication.cs` | Three demonstration tokens, carrying permissions and a tenant. A stand-in for an OIDC handler. |
+| `Program.cs` | Composition. Registrations, the isolation level, the migration, and `MapFlowX()`. |
 | `Infrastructure.cs` | In-memory ledger, screening, directory, register, and the JSON context. |
 
 ## The flow
@@ -134,6 +143,7 @@ credit is refused *after* the debit is already posted.
 curl -X POST http://localhost:5000/api/v1/transfers \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: transfer-closed' \
+  -H 'Authorization: Bearer operator-de-token' \
   -d '{"debtorIban":"GB94BARC10201530093459",
        "creditorIban":"FR7630006000011234567890189",
        "amount":250,"currency":"EUR","channel":0}'
@@ -383,12 +393,89 @@ flow. No such attribute exists, and there is no flow-level policy surface at all
 policies attach to steps through `.WithPolicy(...)`. The nearest expressible thing is
 `Policies.Admission` on the first step, and it counts nothing.
 
-### Authorisation is declared, not checked
+### Authorisation is checked, and this section used to say the opposite
+
+*This section read "Nothing reads it at run time. `curl` reaches this endpoint with no
+credentials at all, which is what the transcripts above show."* Every word of that is now
+false, and the transcripts were changed rather than the sentence, because the sample was the
+thing that had stopped working: the stances were enforced, this application registered no
+authentication scheme, and every transfer answered `403 authorization.not_authenticated` at
+`transfer.validate`.
 
 Every capability names a stance and `FLOWX1010` fails the build without one, so
-`ledger.post_debit` cannot ship without `Permission = "ledger:post"`. Nothing reads
-it at run time. `curl` reaches this endpoint with no credentials at all, which is
-what the transcripts above show.
+`ledger.post_debit` cannot ship without `Permission = "ledger:post"` — and the engine decides
+that stance against the invocation's principal before the step is dispatched. Three tokens
+in `Authentication.cs` are what make the three outcomes reachable with `curl`:
+
+| Token | What happens |
+|---|---|
+| *(none)* | `403 tenant.required` — this deployment isolates by tenant, and admission refuses before any step |
+| `clerk-de-token` | `403 authorization.permission_denied` at `ledger.post_debit`, naming `ledger:post`. Screened, validated, and no money moved |
+| `operator-de-token` | The transfer settles |
+
+The clerk is the one worth trying. It is authenticated and it is refused, which is the
+difference between a door and a permission model — and the refusal happens at the third step
+rather than at the endpoint, because the stance belongs to the capability and not to the
+route. `TransferTenancyTests.TheClerksTokenIsAuthenticatedAndCannotPostToTheLedger` pins it,
+and `BothOperatorsHoldEveryPermissionThisBankNames` reads the grants out of the manifest so
+that a capability added with a fifth permission fails naming the grant nobody holds.
+
+`BankTokenHandler` is a stand-in for an OIDC handler and is not a security control: no
+signature, no issuer, no expiry. A real deployment deletes the file and calls
+`AddJwtBearer`, and nothing else in the application moves.
+
+### Every transfer names its bank
+
+This deployment declares **`TenantIsolation.Row`** — `docs/16 §2`'s L1 — and the tenant comes
+off the same validated claims the permissions do. `tid` is a claim, never a header and never
+the payload, because a caller-supplied tenant is the shape of a cross-tenant read
+([ADR-0046](../../docs/adr/ADR-0046-a-tenant-is-resolved-at-admission.md)). A call naming no
+tenant is refused with `tenant.required` rather than defaulted, and every journal row carries
+the resolved value:
+
+```
+     correlation_id     | tenant_id |   state
+------------------------+-----------+-----------
+ 0HNNGFNCEKLOB:00000001 | bank-de   | Completed
+ 0HNNGFNCEKLOA:00000001 | bank-de   | Failed
+```
+
+**And the level is one environment variable, which is the claim `docs/16 §2` makes.**
+
+```bash
+FLOWX_SAMPLE_TENANCY=schema dotnet run --project samples/banking
+```
+
+changes `FlowXOptions.TenantIsolation` and `PostgresJournalOptions.TenantSchemas`, and
+nothing else — not a flow, not a capability, not a contract. At `Schema` each bank's rows
+live in a schema of their own, provisioned on first use, with a connection pool of its own:
+
+```
+                   List of schemas
+               Name               |       Owner
+----------------------------------+-------------------
+ flowx                            | postgres
+ flowx_t_bank_uk_84eee2569f9bb56f | postgres
+```
+
+Two lines rather than one on purpose: where the tables live is the store's decision and how
+far apart the tenants are is the deployment's, and a store quietly serving L2 out of one
+shared table is the silent downgrade the level exists to prevent. `FlowDurability` refuses to
+start when the two disagree.
+
+**Isolation is not fairness, and this sample declares both.** Row-level security stops one
+bank reading another's rows and does nothing whatever about one bank consuming every slot on
+the node. `Program.cs` therefore also sets all five bounds — admissions per second, a quota
+per hour, in-flight concurrency, a share of each recovery page, and a per-tenant weight — and
+`TransferTenancyTests.ABankPastItsFairShareIsRefusedAndTheOtherBankIsNot` is the half that
+matters: a bound that took every tenant down when one exhausted it would be an outage wearing
+fairness's name.
+
+At `Row` the isolation is the database's rather than the runtime's. The journal narrows each
+connection to the unprivileged `flowx_tenant` role — created by migration `0008`, `NOLOGIN`,
+and unable to bypass row-level security — so a capability with a bug still cannot reach
+another bank's rows. A superuser would have bypassed every policy and reported success, which
+is why the role exists at all.
 
 ### The audit trail is thinner than it looks — one row thinner than it was
 
@@ -434,21 +521,31 @@ A consumer of that event must deduplicate on `transferId`, which is in the body 
 exactly this reason. `TransferJournalTests.ARetriedTransferUnderOneKeyMovesMoneyOnce`
 asserts all three facts together.
 
-### `flowx query` and `flowx replay` do not exist
+### `flowx query` does not exist, and `flowx replay` now does
 
 The preceding version of this file offered
 `flowx query "capabilities with permission ledger:post"` for access review and
-`flowx replay --mode inspect` for reconciliation. The CLI ships three verbs:
-`manifest`, `graph` and `diff`. The access-review question is answerable today by
-reading `capabilities[].authorization` out of the manifest — which is a real answer,
-just not a one-line one.
+`flowx replay --mode inspect` for reconciliation, and then said neither existed and that the
+CLI shipped three verbs. *Half of that is now wrong in the other direction*: the CLI ships
+five — `manifest`, `graph`, `diff`, `verify` and `replay`, and `replay --instance <id> --mode
+inspect` is exactly the reconciliation verb this file said was absent. `flowx query` is still
+not a thing, and the access-review question is answerable by reading
+`capabilities[].authorization` out of the manifest — which is a real answer, just not a
+one-line one.
 
-### Nothing drains the outbox
+### Nothing in *this application* drains the outbox
 
-The event is staged, correctly, in the step's transaction. No broker plugin ships
-(`docs/17-Plugin-System.md §2`), so `PostgresOutboxPublisher` has nothing to publish
-to and `Program.cs` does not start one. The rows sit in `flowx.outbox_event` with
-`published_at` null, where you can see them:
+The event is staged, correctly, in the step's transaction, and `Program.cs` starts no
+publisher — so the rows sit in `flowx.outbox_event` with `published_at` null, where you can
+see them.
+
+*This paragraph used to give the reason as "no broker plugin ships
+(`docs/17-Plugin-System.md §2`), so `PostgresOutboxPublisher` has nothing to publish to".
+That is false.* `plugins/FlowX.Redis` ships `RedisStreamEventPublisher` and
+`RedisStreamBusConsumer`, and `samples/ecommerce` declares the consuming half under a
+`[BusTrigger]`. What is true of this sample is narrower and is a choice: a bank that
+published its settlement events would need a broker running for `dotnet run` to be honest,
+and one `AddFlowXPostgresOutbox` plus one `AddFlowXRedisStreams` is where that starts.
 
 ```
         type        |                                    payload
@@ -578,6 +675,9 @@ reads the rows back off the store the endpoint wrote to.
 | `TransferEndpointTests` | status codes, media types and wire shape, over a real server |
 | `ManifestTests` | the published document, and where it disagrees with the plan |
 | `InfrastructureTests` | the in-memory adapters that make the idempotency claims true |
+| `TransferAdmissionTests` | what `Policies.Admission` refuses, and the window this flow cannot declare |
+| `TransferAuditTests` | what an audit record carries, and what `redact` removes from it |
+| `TransferTenancyTests` | the isolation level and the five fairness bounds, over the wire, as `Program.cs` sets them |
 
 ---
 
@@ -660,8 +760,13 @@ flowchart TD
 `⚡` marks a declared side effect. Nobody drew that: the rejection arm, the three
 switch branches — including the unlabelled edge a `Book` transfer takes straight to
 the debit — and both undos come from the `[Capability]` attributes and the `Define`
-body, through the manifest. The one thing the diagram cannot show is that none of the
-declared policies run.
+body, through the manifest.
+
+*This paragraph ended "The one thing the diagram cannot show is that none of the declared
+policies run", which contradicted the table five sections above it from the day the last
+stage landed.* What the diagram cannot show is the six timeouts, retries, breakers, audits
+and limits wrapped around those nodes, all of which execute — and which arm of the switch a
+given transfer took, which is what the journal is for.
 
 ---
 

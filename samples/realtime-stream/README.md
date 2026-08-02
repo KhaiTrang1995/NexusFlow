@@ -4,6 +4,22 @@
 under a deliberately slow downstream — windowing, watermarks and checkpointing are
 runtime services, not user code (budget B13, principle P9).
 
+> [!NOTE]
+> **The engine has since been built, and the warning box after this one is kept as
+> written rather than edited.** *"There is no stream engine"* is false, and so is
+> `FLOWX1028`'s subject as that box describes it: the rule narrowed rather than being
+> deleted, and now fires on a flow declaring `Streaming` with **no `[StreamTrigger]`**
+> — a flow with no source to checkpoint, no watermark and no window. A flow that
+> declares both builds clean. The engine reads a source under a bounded channel,
+> windows on event time, starts one journaled instance per closed window and
+> checkpoints the prefix it has finished with; `plugins/FlowX.Redis` is a source and
+> `plugins/FlowX.Postgres` holds the checkpoint.
+>
+> **What is left is this page's number.** 250 000 rec/s/node under a slow sink is
+> budget **B13**, and no sample, benchmark or CI job measures it — which is why this
+> directory still has no code, and why the box below is worth reading for what the
+> claim would have to survive.
+
 > [!WARNING]
 > **This sample has no code, and it is the furthest from having any.**
 > `samples/realtime-stream/` is this file and nothing else. **There is no stream

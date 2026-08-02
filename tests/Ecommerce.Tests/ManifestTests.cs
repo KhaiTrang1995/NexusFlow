@@ -138,7 +138,11 @@ public sealed class ManifestTests
         // shipping the build agent's directory layout to whoever reads it.
         var source = Flow.GetProperty("source").GetString().ShouldNotBeNull();
 
-        source.ShouldBe("PlaceOrderFlow.cs:52");
+        // The file and a line, and not a line number pinned here: a doc comment above the
+        // declaration moves the second and changes nothing this test is about. What it is
+        // about is that neither half is the build agent's directory layout.
+        source.ShouldStartWith("PlaceOrderFlow.cs:");
+        source.Split(':')[1].ShouldNotBeEmpty();
         source.ShouldNotStartWith("/");
         source.ShouldNotContain(":\\");
     }
@@ -218,9 +222,11 @@ public sealed class ManifestTests
     [Fact]
     public void PublishesTheAddressTheFlowDeclares()
     {
-        var trigger = Flow.GetProperty("triggers")[0];
+        // Selected by kind rather than taken at index 0: this flow declares two triggers now,
+        // and the order the emitter writes them in is the emitter's business.
+        var trigger = Flow.GetProperty("triggers").EnumerateArray()
+            .Single(t => t.GetProperty("kind").GetString() == "Http");
 
-        trigger.GetProperty("kind").GetString().ShouldBe("Http");
         trigger.GetProperty("method").GetString().ShouldBe("POST");
         trigger.GetProperty("route").GetString().ShouldBe("/api/v1/orders");
         trigger.GetProperty("idempotent").GetBoolean().ShouldBeTrue();

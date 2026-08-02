@@ -1,7 +1,7 @@
 # FlowXStarter
 
-A FlowX application: one flow, two capabilities, their contracts, and the HTTP endpoint
-that runs them.
+A FlowX application: one flow, two capabilities, their contracts, and the two transports
+that run them — an HTTP endpoint and an MCP agent tool.
 
 ```bash
 dotnet run
@@ -36,8 +36,8 @@ Both tokens are two constants in `Authentication.cs`; see [Authentication](#auth
 |---|---|
 | `Contracts.cs` | The records on the wire and between steps. No behaviour. |
 | `Capabilities.cs` | Two capabilities and the one port they depend on. All the business rules. |
-| `OpenTicketFlow.cs` | The control flow: order, and where recovery would go. |
-| `Program.cs` | Composition. Registrations, and `MapFlowX()` for every declared endpoint. |
+| `OpenTicketFlow.cs` | The control flow: order, and where recovery would go. Two triggers, one body. |
+| `Program.cs` | Composition. Registrations, `MapFlowX()` and `MapFlowXMcp()`. |
 | `Infrastructure.cs` | The in-memory adapter and the JSON context. |
 | `Authentication.cs` | Two demonstration tokens. A stand-in for your identity provider — delete it. |
 
@@ -52,6 +52,31 @@ that produced the `triggers` block of the manifest. Change the method or the rou
 flow, rebuild, and the served address moves with it: `Program.cs` never named it. The
 file exists only because this project references `FlowX.Http`; a project without an HTTP
 transport gets no such file.
+
+## The same flow, as an agent tool
+
+`OpenTicketFlow` also carries an `[AgentTrigger]`, so it is published as the MCP tool
+`ticket_open` at `POST /mcp`:
+
+```bash
+curl -X POST http://localhost:5000/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+The tool's name, its description, the permissions it needs and whether a human should confirm
+it are all read out of the manifest this build produced — `FlowXAgentTools.g.cs` binds the
+plan and the contracts and carries none of that text. So the description a model reads and
+the document a reviewer reads are one artifact.
+
+`tools/call` runs the flow through the same engine the endpoint does, and the authorisation
+decision is the same one: send the call with `Bearer reader-token` and it comes back as a
+result carrying `isError` and `authorization.permission_denied`, from `ticket.record`, at the
+step the HTTP request is refused at. A refusal is a business outcome, so it is a result rather
+than a protocol error — the call did happen, and that is its answer.
+
+Delete the `[AgentTrigger]` and the `FlowX.Mcp` reference and everything above stops existing.
+Nothing below the attribute changes, which is the point of it being an attribute.
 
 ## The next thing to change
 
@@ -100,6 +125,15 @@ permissions, and that mapping is not something the engine can see.
   step with `flow.durability_not_configured`, so the attribute and the registration change
   together. The only journal that ships is PostgreSQL, which is why this project does not
   declare it: `dotnet run` would need a database.
-* Retry, timeout and circuit-breaker policies reach the plan and are not executed. What
-  does execute is the flow deadline, and — on a flow that declares compensation —
-  `CompensationRetry`.
+* Retry, timeout, circuit-breaker, rate-limit, cache, idempotency and audit policies all
+  execute — every stage a `PolicySet` can declare into does. *This bullet used to say they
+  reached the plan and were not executed, which stopped being true when the last stage
+  landed.* Two of them need a store you register: a step declaring a `RateLimit` with no
+  `IRateLimiterStore` is refused rather than admitted, and an audited step whose
+  `IAuditSink` is missing fails rather than running unrecorded. Both refusals are
+  deliberate — a control that reads as configured and does nothing is worse than none.
+* This application is single-tenant. `FlowXOptions.TenantIsolation` is `None`, which costs
+  exactly nothing: no resolver is reached and no claim is walked. Setting it to `Row` makes
+  a tenant mandatory — every call must carry a `tid` claim or be refused — and enforces the
+  separation in PostgreSQL, so it changes with the journal rather than on its own.
+  `samples/banking` is that arrangement end to end, at both levels.

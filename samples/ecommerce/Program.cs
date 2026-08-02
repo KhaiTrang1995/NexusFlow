@@ -1,6 +1,7 @@
 using Ecommerce;
 using FlowX.Generated;
 using FlowX.Hosting;
+using FlowX.Mcp;
 using Microsoft.AspNetCore.Authentication;
 
 var builder = WebApplication.CreateSlimBuilder(args);
@@ -60,6 +61,16 @@ var telemetry = SampleTelemetry.Start();
 
 builder.Services.AddSingleton(telemetry);
 
+// Every flow this application declares an [AgentTrigger] on, bound to the tool the manifest
+// publishes for it. Generated — one method per trigger, plus the compiled-in manifest constant
+// the surface projects `tools/list` from, so what a model is told and what the build published
+// are one document rather than two.
+//
+// Nothing here names order.place, its description, its permissions or its confirmation
+// requirement. All four are read out of FlowXManifest.Json at run time, which is what stops an
+// agent's view of this application drifting from the artifact a reviewer reads.
+builder.Services.AddFlowXAgentTools();
+
 var app = builder.Build();
 
 // Runs the scheme above, so HttpContext.User carries the token's claims by the time the
@@ -83,6 +94,18 @@ app.MapGet("/metrics", (SampleTelemetry collected) =>
 // restated. Nothing in this file mentions order.place, and nothing in it can drift from
 // the flow.
 app.MapFlowX();
+
+// The agent surface: one route, JSON-RPC in, JSON-RPC out, serving `initialize`, `tools/list`
+// and `tools/call` over MCP's Streamable HTTP transport.
+//
+// It makes no authorisation decision of its own. `tools/call` builds its invocation with the
+// same HttpTriggerReader an [HttpTrigger] route uses, from the same validated claims, into the
+// same FlowInvocation field the step loop decides against — so `order.place` refuses an agent
+// holding no payment.write at `payment.capture`, after the inventory hold is taken and the
+// compensation gives it back, exactly as it refuses a shopper-token request. That equality is
+// the point of the surface being a transport rather than an API, and
+// tests/Ecommerce.Tests/AgentSurfaceTests is where it is asserted against both in one process.
+app.MapFlowXMcp();
 
 // Every bus subscription this application declares, generated from the [BusTrigger] on the flow
 // that declares it. The topic and the group come from the same reading of that attribute which

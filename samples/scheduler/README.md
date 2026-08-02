@@ -4,6 +4,24 @@
 overlap policy, missed-fire recovery, per-tenant fan-out and DST correctness are
 platform services, not job-framework glue.
 
+> [!NOTE]
+> **The scheduler has since been built, and the warning box after this one is kept
+> as written rather than edited.** *"There is no scheduler"* is false. A
+> `[CronTrigger]` generates a registration, every node computes the same occurrence,
+> and every node derives the same instance id from it — so a firing happens once
+> across a cluster because the lease store and then the journal's primary key refuse
+> the losers, which is leader election's outcome without a leader
+> ([ADR-0031](../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md)).
+> A firing that fell due while every node was down happens late.
+>
+> `samples/workflow`'s `offer.window.close` is that, running: no route, no hosted
+> service, and no line in its `Program.cs` naming a time. `tests/Workflow.Tests/ScheduleTests`
+> is where three replicas over one PostgreSQL are held to six firings rather than
+> eighteen. `PerTenant` fan-out is served too, over the tenant registry at L2.
+>
+> **What is left is this page's larger claim**: `Overlap` and `Jitter`
+> as declared options, and DST correctness stated rather than assumed.
+
 > [!WARNING]
 > **This sample has no code.** `samples/scheduler/` is this file and nothing else.
 > **There is no scheduler.** Nothing anywhere in `src/` or `plugins/` reads a cron
@@ -151,8 +169,12 @@ public async Task Skips_overlapping_runs_and_records_why()
 
 ## Things to try
 
-*None of these can be tried yet — there is no project and no scheduler. Kept as
-the acceptance list WP-75 is written to.*
+*None of these can be tried here — there is no project. Item 1 is still the
+acceptance list it always was: `Overlap` and `Jitter` are declared on the attribute
+and reach nothing. **Item 2 can be tried elsewhere**, because `MissedFire` is read
+into the schedule and narrows what a sweep fires — `samples/workflow` is where a
+schedule fires once across three nodes and a firing that fell due while every node
+was down happens late.*
 
 1. Set `Overlap = OverlapPolicy.Concurrent` and simulate a 25-hour run — watch
    instances stack, and see why `Skip` is the default.

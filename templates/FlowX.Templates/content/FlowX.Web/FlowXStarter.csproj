@@ -44,6 +44,14 @@
     <PackageReference Include="FlowX.Http" Version="$(FlowXVersion)" />
 
     <!--
+      MapFlowXMcp: the agent transport, over MCP. It is here to make the point the line
+      above makes — a transport is a package reference and an attribute, and the flow does
+      not change. Delete this reference and the [AgentTrigger] on OpenTicketFlow and the
+      application still serves POST /api/v1/tickets exactly as it did.
+    -->
+    <PackageReference Include="FlowX.Mcp" Version="$(FlowXVersion)" />
+
+    <!--
       The compiler is an ANALYZER, not a library: it runs inside this build, reads your
       Define method and emits the plan, the dispatcher and the manifest. PrivateAssets
       keeps it out of anything that references this project, and out of what you ship.

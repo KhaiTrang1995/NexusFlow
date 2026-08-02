@@ -63,6 +63,11 @@
       },
       "triggers": [
         {
+          "kind": "Agent",
+          "description": "Place an order for a quantity of a stock-keeping unit and capture payment for it. Reserves inventory before charging, and releases the reservation if the charge fails.",
+          "confirmation": "RequiredForSideEffects"
+        },
+        {
           "kind": "Http",
           "method": "POST",
           "route": "/api/v1/orders",
@@ -100,7 +105,38 @@
         "order.invalid_quantity",
         "payment.declined"
       ],
-      "source": "PlaceOrderFlow.cs:52"
+      "source": "PlaceOrderFlow.cs:73"
+    },
+    {
+      "id": "order.project",
+      "version": "1.0.0",
+      "profile": "Durable",
+      "deadline": "PT30S",
+      "input": {
+        "type": "FlowX.BusMessage"
+      },
+      "output": {
+        "type": "Ecommerce.OrderProjection"
+      },
+      "triggers": [
+        {
+          "kind": "Change",
+          "topic": "order.placed",
+          "group": "projection"
+        }
+      ],
+      "steps": [
+        {
+          "id": 0,
+          "kind": "Capability",
+          "capability": "order.project@1.0.0"
+        }
+      ],
+      "emits": [],
+      "errors": [
+        "order.event_has_no_body"
+      ],
+      "source": "ProjectOrderFlow.cs:48"
     },
     {
       "id": "order.reprice",
@@ -165,6 +201,23 @@
         {
           "code": "inventory.out_of_stock",
           "category": "Conflict"
+        }
+      ]
+    },
+    {
+      "id": "order.project",
+      "version": "1.0.0",
+      "input": "FlowX.BusMessage",
+      "output": "Ecommerce.OrderProjection",
+      "authorization": {
+        "mode": "Internal"
+      },
+      "idempotent": true,
+      "sideEffects": [],
+      "errors": [
+        {
+          "code": "order.event_has_no_body",
+          "category": "Validation"
         }
       ]
     },

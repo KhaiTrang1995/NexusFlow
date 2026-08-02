@@ -43,12 +43,33 @@ namespace Ecommerce;
 /// than left to be inferred, and the argument in full is on
 /// <a href="../../docs/diagnostics/FLOWX1012.md">the diagnostic's page</a>.
 /// </para>
+/// <para>
+/// <strong>The <c>[AgentTrigger]</c> is the second transport, and it is one line for the same
+/// reason the first one is.</strong> An agent reaches this flow as the MCP tool
+/// <c>order_place</c> over <c>POST /mcp</c>; the name, the description, the declared side
+/// effects and the confirmation requirement are projected out of <c>flowx.manifest.json</c>,
+/// so what a model is told and what the build published are one document. Neither the flow
+/// body nor any capability changes — including <c>payment.capture</c>'s
+/// <c>payment.write</c> stance, which refuses an under-privileged agent at the same step and
+/// with the same unwind it refuses an under-privileged HTTP caller.
+/// </para>
+/// <para>
+/// <strong>And it is what proves <c>plugins/FlowX.Mcp</c> publishes under NativeAOT.</strong>
+/// Every test project sets <c>IsAotCompatible=false</c> (<c>Directory.Build.props</c>), so no
+/// test can make that statement; this project is the repository's only AOT-published assembly
+/// (constraint C2) and CI publishes it, which makes the agent surface's AOT-cleanliness a
+/// property of the build rather than a claim.
+/// </para>
 /// </remarks>
 #pragma warning disable FLOWX1012 // Deliberate: an ephemeral saga, argued in docs/diagnostics/FLOWX1012.md
 [Flow("order.place", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral, Owner = "orders")]
 #pragma warning restore FLOWX1012
 [FlowDeadline("PT30S")]
 [HttpTrigger("POST", "/api/v1/orders", Idempotent = true)]
+[AgentTrigger(
+    Description =
+        "Place an order for a quantity of a stock-keeping unit and capture payment for it. " +
+        "Reserves inventory before charging, and releases the reservation if the charge fails.")]
 public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult>
 {
     /// <inheritdoc />
