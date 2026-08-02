@@ -57,6 +57,15 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      rabbitmq:
+        image: rabbitmq:3.12
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 30
 
     steps:
       - uses: actions/checkout@v4
@@ -112,6 +121,7 @@ jobs:
         env:
           FLOWX_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres"
           FLOWX_REDIS_CONNECTION: "localhost:6379"
+          FLOWX_RABBITMQ_CONNECTION: "amqp://guest:guest@localhost:5672/"
         run: |
           # pipefail explicitly: the default shell takes the exit status of the LAST
           # command in a pipeline, so without it a failing test suite would be reported as
