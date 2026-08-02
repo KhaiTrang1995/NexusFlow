@@ -156,6 +156,13 @@ jobs:
             set +e
             python3 scripts/check-chaos-qr2.py "/tmp/$state.json" > "/tmp/$state.txt" 2>&1
             code=$?
+            # Each fabricated verdict gets its own summary file. Under Actions the
+            # publisher writes the verdict a person reads to GITHUB_STEP_SUMMARY and
+            # prints only the annotation, so without this the three fake verdicts
+            # landed in the real job summary and the assertions below read stdout —
+            # an artifact that never carries the heading they were matching.
+            : > "/tmp/$state.summary"
+            GITHUB_STEP_SUMMARY="/tmp/$state.summary" \
             python3 scripts/publish-chaos-verdict.py --code "$code" \
               --results "/tmp/$state.json" --verdict "/tmp/$state.txt" \
               --owner "${{ github.repository_owner }}" > "/tmp/$state.published" 2>&1
@@ -163,7 +170,7 @@ jobs:
             set -e
 
             echo "--- $state: checker $code, job $published"
-            tail -6 "/tmp/$state.published"
+            head -1 "/tmp/$state.summary"
 
             if [ "$state" = "pass" ] && [ "$published" -ne 0 ]; then
               echo "::error::A PASS must leave the job green."
@@ -180,19 +187,29 @@ jobs:
           # failure. Matched on the heading rather than on the word appearing anywhere: the
           # checker prints an arm's refusals beside its failures, so a document that is both
           # carries the word INCONCLUSIVE inside a FAIL legitimately.
-          # Quoting the line it actually read: this assertion failed for a fortnight
-          # against a file whose heading was demonstrably right when the same script
-          # ran outside Actions, and it could not say what it had seen.
+          # Read from the summary, which is where the verdict goes under Actions, and
+          # quote the line actually found — the previous form matched stdout and so
+          # asserted nothing this job runs.
           heading() { head -1 "$1" | sed -n 's/^## QR2 chaos .* \([A-Z]*\)$/\1/p'; }
 
-          if [ "$(heading /tmp/fail.published)" != "FAIL" ]; then
-            echo "::error::A FAIL was not reported as a FAIL. The first line was: $(head -1 /tmp/fail.published)"
+          if [ "$(heading /tmp/fail.summary)" != "FAIL" ]; then
+            echo "::error::A FAIL was not reported as a FAIL. The verdict began: $(head -1 /tmp/fail.summary)"
             exit 1
           fi
 
-          if [ "$(heading /tmp/inconclusive.published)" != "INCONCLUSIVE" ] \
-             || ! grep -q 'produced no verdict' /tmp/inconclusive.published; then
-            echo "::error::An INCONCLUSIVE run was not reported as one. Folding it into either of the other two is the failure both this job and check-chaos-qr2.py exist to prevent. The first line was: $(head -1 /tmp/inconclusive.published)"
+          if [ "$(heading /tmp/inconclusive.summary)" != "INCONCLUSIVE" ] \
+             || ! grep -q 'produced no verdict' /tmp/inconclusive.summary; then
+            echo "::error::An INCONCLUSIVE run was not reported as one. Folding it into either of the other two is the failure both this job and check-chaos-qr2.py exist to prevent. The verdict began: $(head -1 /tmp/inconclusive.summary)"
+            exit 1
+          fi
+
+          # The run page carries one line per verdict, and it is the only part a
+          # person sees without opening anything.
+          # Both non-PASS states annotate at error level on purpose; the title is what
+          # tells them apart, so the title is what this asserts.
+          if ! grep -q '^::error title=QR2 FAIL::' /tmp/fail.published \
+             || ! grep -q '^::error title=QR2 INCONCLUSIVE::' /tmp/inconclusive.published; then
+            echo "::error::A non-PASS verdict did not annotate the run page."
             exit 1
           fi
 
