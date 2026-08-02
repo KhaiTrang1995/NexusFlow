@@ -1317,6 +1317,71 @@ public static class FlowXDiagnostics
         "is a manifest publishing a stream subscription and a host that reads nothing.",
         DiagnosticSeverity.Error);
 
+    /// <summary>
+    /// FLOWX1046 — an agent tool declares <c>ConfirmationMode.Never</c> over declared side effects.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one declaration that switches the consent gate off, reported where it is
+    /// written.</strong> A tool descriptor's <c>confirmationRequired</c> is the flow's declared
+    /// mode resolved against the union of its capabilities' <c>SideEffects</c>:
+    /// <c>RequiredForSideEffects</c> — the attribute's default — is true exactly when that union
+    /// is non-empty, and <c>Never</c> is false unconditionally. So a flow that charges a card and
+    /// declares <c>Never</c> publishes <c>confirmationRequired: false</c>, no client prompts, and
+    /// a deployment running <c>ConfirmationPolicy.Elicit</c> has nothing to enforce. The
+    /// declaration is legal, the build succeeds, and the consequence is invisible in the file
+    /// that contains it — which is the shape a diagnostic exists for.
+    /// </para>
+    /// <para>
+    /// <strong>Two declarations, in two files, written by two people.</strong> The trigger says
+    /// how much consent is wanted and the capabilities say what there is to consent to, and
+    /// neither author can see the other's decision. That is also why the rule reads the flow's
+    /// chain rather than the flow's own attributes: the answer is not in this type.
+    /// </para>
+    /// <para>
+    /// <strong>A warning, not an error, and the reason is that the declaration is sometimes
+    /// right.</strong> A side effect is any declared consequence outside the process — a cache
+    /// write and a search-index update are side effects, and prompting a human before each one is
+    /// how a consent gate is trained away. The author who means it writes one <c>#pragma</c> with
+    /// a reason, which is a decision a reviewer can read; an error would make a legitimate design
+    /// inexpressible, which <c>CompensationDurabilityAnalyzer</c> gives as its own reason for the
+    /// same severity. <c>TreatWarningsAsErrors</c> is set in this repository, so it stops the
+    /// build here regardless.
+    /// </para>
+    /// <para>
+    /// <strong>What it does not report.</strong> A flow that declares no <c>Confirmation</c> at
+    /// all — the default is <c>RequiredForSideEffects</c>, which is the safe answer, and reporting
+    /// on it would fire on every agent tool with a consequence and mean nothing. And a flow whose
+    /// capabilities declare no side effect, where <c>Never</c> is exactly the accurate
+    /// declaration: <c>ticket.search</c> in <c>samples/ai-agent</c> is that flow, and it must stay
+    /// silent or the rule has taught its readers to suppress it.
+    /// </para>
+    /// <para>
+    /// <c>ManifestReview</c> reports the same condition from a manifest rather than from source
+    /// (<c>ai.agent_tool_declares_no_confirmation</c>). Both are worth having and they see
+    /// different things: this one stops a build in the repository that owns the flow, and that one
+    /// reads a document from any build, including one whose source the reader does not have.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor AgentToolDeclaresNoConfirmation = Create(
+        "FLOWX1046",
+        "Agent tool declares no confirmation over declared side effects",
+        "Flow '{0}' is published as an agent tool with ConfirmationMode.Never and reaches {1}, " +
+        "which declares the side effects {2}",
+        "A tool descriptor's confirmationRequired is computed from the flow's declared " +
+        "ConfirmationMode and the union of its capabilities' declared SideEffects. " +
+        "ConfirmationMode.Never makes it false whatever the flow does, so the descriptor tells " +
+        "every client that this call needs no human — and a client that trusts the annotation, " +
+        "which is what the annotation is for, will not prompt before it. A server configured " +
+        "with ConfirmationPolicy.Elicit is equally silenced: it elicits for the tools whose " +
+        "descriptor asks for it, and this one does not. Remove the argument to get the " +
+        "attribute's default of RequiredForSideEffects, which is true exactly while the flow has " +
+        "a declared consequence and becomes false on its own if the consequence is removed. If " +
+        "the effects genuinely do not warrant a human — a cache write, a search-index update — " +
+        "suppress this with a #pragma naming which effect and why, because that is a decision a " +
+        "reviewer should be able to read.",
+        DiagnosticSeverity.Warning);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1355,7 +1420,8 @@ public static class FlowXDiagnostics
         ScheduledFlowCannotBeFired,
         BusFlowCannotBeConsumed,
         ChangeFlowCannotBeObserved,
-        StreamFlowCannotBeWindowed);
+        StreamFlowCannotBeWindowed,
+        AgentToolDeclaresNoConfirmation);
 
     private static DiagnosticDescriptor Create(
         string id,

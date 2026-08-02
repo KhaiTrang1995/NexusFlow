@@ -340,6 +340,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1040](FLOWX1040.md) | `Idempotency` is declared on a flow whose result cannot be recorded without redaction | **A replayed transfer answering with an IBAN of `[redacted]` and a `200`: the second caller's money moves to a placeholder, every step reports success, and nothing anywhere says a value was fabricated** |
 | [FLOWX1041](FLOWX1041.md) | Change-triggered flow cannot be observed | **A published change subscription with nothing registered behind it: a flow that cannot bind the change and is never started, or an ephemeral one started again every time the cursor is re-read from an uncommitted position — with no error, no duplicate row and nothing anywhere to count** |
 | [FLOWX1042](FLOWX1042.md) | Stream-triggered flow cannot be windowed | **A published stream subscription with nothing registered behind it: a flow that cannot bind a window, a non-`Streaming` one whose rebuilt window aggregates a second time after every crash, or a window shape the engine does not implement — a stream nobody reads, and nothing anywhere saying why** |
+| [FLOWX1046](FLOWX1046.md) | Agent tool declares no confirmation over declared side effects | **A tool a model may call to move money, publishing `confirmationRequired: false`: no client prompts, a server enforcing confirmation has nothing to enforce, and the flow that says so and the capability that charges the card are in two different files** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -568,7 +569,21 @@ shape the engine does not implement, which is a property of the attribute rather
 why only tumbling windows survive. It is an **error** where `FLOWX1028` is a warning, and the
 difference is that every one of these three has a fix that produces a flow the engine runs today.
 
-The next is `FLOWX1043`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1046` is claimed** — *agent tool declares no confirmation over declared side effects*:
+`[AgentTrigger(Confirmation = ConfirmationMode.Never)]` on a flow whose steps reach a capability
+declaring `SideEffects`. A tool descriptor's `confirmationRequired` is the declared mode resolved
+against that union — `RequiredForSideEffects`, the attribute's default, is true exactly while the
+union is non-empty — so `Never` publishes `false` for a call with a consequence, no client prompts
+before it, and a deployment running `ConfirmationPolicy.Elicit` elicits nothing.
+[ADR-0060](../adr/ADR-0060-the-server-asks-the-caller-for-what-it-does-not-have.md) is the decision
+that makes the annotation load-bearing. It is none of the reservations, and it is not `FLOWX1030`:
+that rule asks whether an authorisation stance names anything, and this presupposes the stance is
+fine and asks whether a *human* is told. It is a **warning** where `FLOWX1042` is an error, and the
+difference is that the declaration is sometimes right — a cache write and a search-index update are
+declared side effects too — so the author who means it writes one `#pragma` with a reason, which is
+a decision a reviewer can read.
+
+The next is `FLOWX1047`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 
