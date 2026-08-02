@@ -21,7 +21,7 @@ namespace FlowX.Runtime;
 /// result for the length of the window. The capability is what the step is *about*, is stable
 /// across a graph edit, and is what <c>CircuitBreakerState</c> and <c>BulkheadGate</c> are
 /// already keyed by. See
-/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0037-an-idempotency-record-is-keyed-by-the-invocations-key.md">ADR-0037</a>
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md">ADR-0041</a>
 /// §1.4.
 /// </para>
 /// <para>

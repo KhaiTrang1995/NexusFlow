@@ -38,7 +38,7 @@ public sealed class TheSuiteRejectsAProcessLocalLimiterTests
     /// </summary>
     /// <remarks>
     /// <strong>This is the assertion that made stage 1 shippable.</strong>
-    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0035-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0035</a>
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>
     /// argues that a process-local limiter is not merely weaker than a shared one but
     /// <em>anti-conservative</em> — it admits more than the declaration says, by a factor nothing
     /// declares — and that shipping one behind a <c>RateLimit(permits, window)</c> is the

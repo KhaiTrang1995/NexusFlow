@@ -200,8 +200,7 @@ public sealed class EngineAllocationTests
     /// 1 and stage 3 landed by adding fields to <c>StepPolicy</c> and counting two more kinds in
     /// <c>IsActive</c> — which is
     /// <a href="../../docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>'s
-    /// "widening is mechanical" taken literally, and is why no plan flag went with them
-    /// (<a href="../../docs/adr/ADR-0036-stage-one-and-stage-three-run-outside-the-retry.md">ADR-0036</a>).
+    /// "widening is mechanical" taken literally, and is why no plan flag went with them.
     /// The failure mode that widening invites is an <c>IsActive</c> that has drifted into
     /// meaning "some step declared something", at which point <c>HasStepPolicies</c> is true for
     /// every flow in <c>samples/banking</c> and gates nothing.

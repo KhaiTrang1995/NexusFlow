@@ -77,7 +77,7 @@ public static class FlowXServiceCollectionExtensions
             // declared rate across n nodes behind a declaration that reads as a deployment-wide
             // bound, and a default in-memory idempotency store would deduplicate one caller in n.
             // A step that declares either policy with no store registered is refused rather than
-            // run (ADR-0035 §2.2), which is loud, and one registration fixes it.
+            // run (ADR-0040 §2.2), which is loud, and one registration fixes it.
             return new FlowEngine(
                 provider.GetRequiredService<IClock>(),
                 options.MaxPooledContexts,

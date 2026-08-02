@@ -45,7 +45,7 @@ CREATE TABLE ratelimit_bucket (
 -- `expires_at` is the record's window and `claimed_until` is the claim's lease, and they are
 -- two columns rather than one because they are two lifetimes with different jobs. A claim
 -- lapses in seconds — a node that takes a key and dies must not wedge every repeat of it for a
--- declared PT24H — while a record lives for the whole declared window. ADR-0037 §2.2.
+-- declared PT24H — while a record lives for the whole declared window. ADR-0041 §2.2.
 --
 -- `text` rather than `json` or `jsonb` for the record, and for ADR-0016's reason applied to a
 -- different column: the store is not entitled to parse what it holds. What it is handed has

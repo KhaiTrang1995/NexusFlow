@@ -282,9 +282,20 @@ public interface IStepDispatcher
     /// </returns>
     /// <remarks>
     /// <para>
-    /// <strong>Called only for a <c>Durable</c> flow, at the step boundary, before the
-    /// commit.</strong> An <c>Ephemeral</c> flow never reaches it — the engine does not ask,
-    /// so budget B2's hard zero is untouched by the existence of a journal.
+    /// <strong>Called at the step boundary by two callers, and this sentence used to name
+    /// one.</strong> It read "called only for a <c>Durable</c> flow, at the step boundary,
+    /// before the commit", which was a statement about the journal rather than about this
+    /// member — and <c>PLAN §6a</c> and
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>
+    /// both read it as a constraint and concluded that stage 3 had no per-step result seam. It
+    /// does: this member and <see cref="RestoreState"/> are one, and a stage-3 idempotency
+    /// window uses them under either profile.
+    /// </para>
+    /// <para>
+    /// <strong>Budget B2's hard zero is untouched, structurally.</strong> The journal asks only
+    /// for a <c>Durable</c> flow; the idempotency window asks only when a step's resolved
+    /// <c>StepPolicy</c> declares one, which is gated by <c>ExecutionPlan.HasStepPolicies</c>
+    /// exactly as stage 4 is. An ephemeral flow that declares no policy reaches neither caller.
     /// </para>
     /// <para>
     /// <strong>Here rather than on the engine, for the reason nothing else typed is on the
@@ -369,6 +380,18 @@ public interface IStepDispatcher
     /// The mirror of <see cref="DescribeStep"/>, and the only call that turns stored JSON
     /// back into the typed values the steps after the frontier bind to. The engine cannot do
     /// it for the same reason it cannot write it.
+    /// </para>
+    /// <para>
+    /// <strong>The redaction in the parameter's description is a loss the journal accepts and a
+    /// stage-3 replay refuses.</strong> A resumed instance has no alternative — its effects have
+    /// already happened and the node that held the real values is gone — so it takes the
+    /// placeholder and <c>JournalState</c> says so. An idempotency replay does have one, which
+    /// is to dispatch the capability again, so returning the placeholder to a caller as if it
+    /// were the value would be choosing a fabricated answer over a second call. The engine
+    /// therefore records through <c>JournalPayload.TryToReplayableJson</c>, which refuses a
+    /// document the redaction pass had to change, and never reaches this method with one. See
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0042</a>
+    /// §1.3.
     /// </para>
     /// <para>
     /// Called once, before the first step of a resumed execution, and only when the instance

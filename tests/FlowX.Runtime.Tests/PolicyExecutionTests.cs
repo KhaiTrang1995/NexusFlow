@@ -516,8 +516,8 @@ public sealed class PolicyExecutionTests
             "A Cache and an Audit are declared and neither is executed, so the step loop must " +
             "not take the policy path for them. The flag counts what runs, and widening " +
             "StepPolicy.IsActive for stage 1 and stage 3 must not have quietly made it count " +
-            "declarations instead — which is the one way ADR-0036's widening could have cost " +
-            "budget B2.");
+            "declarations instead — which is the one way widening IsActive for two more kinds " +
+            "could have cost budget B2.");
 
         Plan(Everything).HasStepPolicies.ShouldBeTrue(
             "The same chain plus stage 4 does take it.");

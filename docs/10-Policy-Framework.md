@@ -1,6 +1,6 @@
 # 10 — Policy Framework
 
-> **Status:** Accepted · **stage 4 executed in full, four declarable kinds still inert** · **Audience:** application engineers, SRE
+> **Status:** Accepted · **stages 1, 3 and 4 executed; two declarable kinds still inert** · **Audience:** application engineers, SRE
 > **Answers:** how are cross-cutting concerns declared, ordered and made safe?
 
 > [!IMPORTANT]
@@ -17,18 +17,34 @@
 > real plan, and `samples/banking` settles a transfer whose screening provider
 > fails once.
 >
-> **Four declarable kinds are still executed by nothing:** `RateLimit` (stage 1),
-> `Idempotency` (stage 3), `Cache` (stage 5) and `Audit` (stage 7). No rate is
-> counted, no recorded result is replayed for a repeated key, no cache is
-> consulted and no audit record is written.
-> [`FLOWX1032`](diagnostics/FLOWX1032.md) reports exactly those four, narrowed
-> from the eight it reported when it was written.
+> **Stage 1 — `Admission` — and stage 3 — `Integrity` — are applied too, against
+> a store the deployment shares.** A declared `RateLimit` takes a permit from a
+> distributed token bucket before the step is dispatched, and refuses with
+> `policy.rate_limited` when the budget is spent. A declared `Idempotency` window
+> claims the key, replays a recorded result for a repeat, and refuses a
+> concurrent presentation. Both sit outside the retry loop. Neither has an
+> in-memory fallback: a step declaring one with no store registered is refused
+> rather than run, because a limiter counting in a process admits n × the
+> declared rate across n nodes
+> ([ADR-0040](adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md)).
+> `IRateLimiterStore` and `IIdempotencyStore` are the seams; Redis and PostgreSQL
+> back them, held to `RateLimiterConformance` and `IdempotencyStoreConformance`.
+>
+> **A flow that declares a `[Sensitive]` contract member may not declare an
+> `Idempotency` window** — [`FLOWX1040`](diagnostics/FLOWX1040.md), an error.
+> Stage 3 records the state bag through `JournalPayload`, whose only exit
+> replaces every marked member with `[redacted]` at every depth, so replaying
+> such a record would answer a later caller with the placeholder
+> ([ADR-0042](adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md)).
+>
+> **Two declarable kinds are still executed by nothing:** `Cache` (stage 5) and
+> `Audit` (stage 7). No cache is consulted and no audit record is written.
+> [`FLOWX1032`](diagnostics/FLOWX1032.md) reports exactly those two.
 > [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)
-> argues each of the four skips separately, including the one that looks like a
-> violation of [ADR-0011](adr/ADR-0011-fixed-policy-stage-order.md): running a
-> retry without the stage-3 policy is safe because `FLOWX1014` refuses a retry
-> over a capability that is not idempotent, and because every attempt presents
-> the same `ctx.IdempotencyKey`.
+> argues the remaining skips, and its §2.2 — a retry outside the stage-3 policy
+> is safe because `FLOWX1014` refuses a retry over a capability that is not
+> idempotent, and because every attempt presents the same `ctx.IdempotencyKey` —
+> is what holds for every flow `FLOWX1040` refuses a window to.
 >
 > **Eight catalogue rows in §3 cannot be declared at all.** `PolicySet` offers
 > nine builder methods, and there is no policy attribute anywhere in
@@ -53,10 +69,10 @@
 > read at all — one in a referenced assembly or built at run time — which reaches
 > no plan, no manifest and none of the rules above it.
 >
-> Read §2's stage order as the contract the engine is built to. Read §5, §6 and
-> §11 as behaviour, with §6's composite `BreakerKey` excepted — the breaker is
+> Read §2's stage order as the contract the engine is built to. Read §5, §6, §7
+> and §11 as behaviour, with §6's composite `BreakerKey` excepted — the breaker is
 > keyed by capability id and there is no syntax for the other three components.
-> Read §7 and §8 as specification: they describe the two stages that do not run.
+> Read §8 as specification: it describes the one stage that does not run.
 
 ---
 
@@ -120,28 +136,28 @@ ADR-0011 is scheduled for review after three documented counterexamples.
 ## 3. The policy catalogue
 
 Seventeen rows, and **only nine of them can be written down**: `PolicySet` has nine builder
-methods and there is no policy attribute in `FlowX.Abstractions`. The **Status** column says
-which is which — *executes*, *declared only* (an author can write it and nothing applies it,
-which is [`FLOWX1032`](diagnostics/FLOWX1032.md)), or *undeclarable* (no builder method, no
-attribute, no descriptor kind: specification with no surface).
+methods and there is no policy attribute in `FlowX.Abstractions`. Seven of the nine execute.
+The **Status** column says which is which — *executes*, *declared only* (an author can write it
+and nothing applies it, which is [`FLOWX1032`](diagnostics/FLOWX1032.md)), or *undeclarable* (no
+builder method, no attribute, no descriptor kind: specification with no surface).
 
 | Policy | Stage | Status | Key parameters | Notes |
 |---|---|---|---|---|
-| `RateLimit` | 1 | **declared only** | `permits`, `window`, `scope` (global/tenant/principal/key) | token bucket; returns 429 + `Retry-After`. Nothing counts. Stage 1 is not implemented |
+| `RateLimit` | 1 | **executes** | `permits`, `window`, `scope` (global/tenant/principal) | token bucket in a shared store, refilling continuously; refuses with `policy.rate_limited` carrying a `Retry-After`. Keyed by capability id and the declared scope, so two flows calling one dependency share the bound. A `key` scope is not expressible. Needs an `IRateLimiterStore`; a step declaring one without it is **refused**, never admitted ([ADR-0040](adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md)) |
 | `Quota` | 1 | *undeclarable* | `budget`, `period`, `scope` | long-window fairness across tenants |
 | `Authorize` | 2 | *undeclarable* | derived from the capability's stance | deny-by-default; audited. The stance reaches the manifest and no boundary checks it |
 | `Consent` | 2 | *undeclarable* | `purpose` | GDPR purpose-limitation checks |
 | `Validate` | 3 | *undeclarable* | generated from contract annotations | field errors → RFC 7807 |
-| `Idempotency` | 3 | **declared only** | `window`, `scope` | replays the recorded result. Nothing is recorded or replayed. `ctx.IdempotencyKey` is stable and reaches the capability, but that is the engine's identity plumbing rather than this policy |
+| `Idempotency` | 3 | **executes** | `window`, `scope` | records the flow's state bag as of the end of the step and replays it for a repeated key; refuses a concurrent presentation. Keyed by `ctx.IdempotencyKey` + capability id + scope ([ADR-0041](adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md)). **Only a success is recorded** — a failed step frees its key. Needs an `IIdempotencyStore`, and is **refused at build time by [`FLOWX1040`](diagnostics/FLOWX1040.md)** on a flow declaring a `[Sensitive]` contract member |
 | `Timeout` | 4 | **executes** | `duration` | armed per attempt, and clamped to what is left of the flow deadline — so §11's "a timeout longer than the deadline is a lie" is prevented rather than discouraged |
 | `Retry` | 4 | **executes** | `attempts`, `backoff`, `jitter`, `retryOn` | **requires `Idempotent = true`** (`FLOWX1014`). `attempts` includes the first. Outermost of the four ([ADR-0024](adr/ADR-0024-stage-four-is-a-fixed-nesting.md)), which is what makes `FLOWX1019`'s `timeout × attempts` arithmetic true |
 | `CircuitBreaker` | 4 | **executes** | `failureRatio`, `samplingWindow`, `breakDuration` | keyed by capability id, per process. `minimumThroughput` is **not a parameter** — `PolicySet.CircuitBreaker` has none — and is the constant `StepPolicy.DefaultMinimumThroughput`. §6's composite `BreakerKey` is undeclarable |
 | `Bulkhead` | 4 | **executes** | `maxConcurrency`, `queueDepth` | isolates a slow dependency. One pool per capability, so two steps calling it share the bound. Past the queue depth a caller is refused rather than queued |
 | `Hedge` | 4 | *undeclarable* | `afterDelay`, `maxAttempts` | tail-latency cutting; idempotent only |
 | `Fallback` | 4 | *undeclarable* | capability or constant | explicit degraded mode |
-| `Cache` | 5 | **declared only** | `ttl`, `scope` | tenant-scoped by default. Nothing is cached or consulted. `FLOWX1018` still refuses one on a capability with side effects |
+| `Cache` | 5 | **declared only** | `ttl`, `scope` | tenant-scoped by default. Nothing is cached or consulted. `FLOWX1018` still refuses one on a capability with side effects. When it lands it meets [ADR-0042](adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md)'s question — a cache records a result too — and must not answer it differently |
 | `Batch` | 5 | *undeclarable* | `size`, `window` | coalesces N invocations into one |
-| `Audit` | 7 | **declared only** | `category`, `redact` | immutable audit record. **Stage 7 and still inert:** it wraps the *step*, so it stays on `StepNode.Policies`, which the step loop reads only for stage 4. `FLOWX1032` reports it, and it is the reason the cut cannot be written as a range of stages |
+| `Audit` | 7 | **declared only** | `category`, `redact` | immutable audit record. **Stage 7 and still inert:** it wraps the *step*, so it stays on `StepNode.Policies`, which `StepPolicy.From` reads past. `FLOWX1032` reports it, and it is the reason the cut cannot be written as a range of stages — stage 1 and stage 3 run, stage 5 does not, and stage 7 does both |
 | `Outbox` | 7 | *undeclarable* | — | implicit on `.Emit` in durable flows, and real — but it is the emit step's own commit rather than a policy anybody declares |
 | `CompensationRetry` | 7 | **executes** | `attempts`, `backoff`, `retryOn` | wraps the step's *compensation*, so it requires the **compensating** capability to declare `Idempotent = true`. Defaults: 5 attempts (more aggressive than forward retry, [06 §7](06-Execution-Engine.md#7-compensation-semantics) rule 2), full jitter, `Conflict`/`Unavailable`/`Internal` |
 
@@ -298,19 +314,37 @@ infrastructure, which is why `ICompensationAlertSink` is a seam rather than a co
 
 ---
 
-## 7. Idempotency policy — *specification*
+## 7. Idempotency policy
 
-> [!NOTE]
-> **Nothing below runs.** The `[Idempotency]` attribute does not exist, no store is
-> consulted, and no recorded result is replayed. The sequence diagram is what stage 3 will
-> do; [`FLOWX1032`](diagnostics/FLOWX1032.md) reports every `.Idempotency(...)` an author
-> declares. What *is* real is the key itself: `ctx.IdempotencyKey` is stable across a flow
-> and across every attempt of a retried step, which is the engine's identity plumbing and
-> the mechanism [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)
-> §2.2 leans on.
+> [!IMPORTANT]
+> **The sequence below runs, and two things about the code block under it do not.**
+> There is no `[Idempotency]` attribute — the window is declared through
+> `PolicySet.Idempotency(window, scope)` and `.WithPolicy(...)`, like every other policy —
+> and there is no `Store = "…"` parameter: which store is a registration
+> (`AddFlowXRedisPolicyStores`, `AddFlowXPostgresPolicyStores`), not a declaration, because
+> a flow that named its own store would be a flow whose graph changed with its deployment.
+>
+> **The key is `ctx.IdempotencyKey`, narrowed by the capability id and the declared scope**
+> ([ADR-0041](adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md)). Not a
+> second identity: the one that already existed, is stable across a flow and across every
+> attempt of a retried step, and reaches the capability. The capability id is what keeps two
+> policed steps of one flow from replaying each other's result.
+>
+> **Only a success is recorded.** A step that failed frees its key, so the next caller runs
+> it — §8's "negative caching: off" one stage earlier and sharper, because a recorded failure
+> would be replayed for the whole declared window and the caller's only remedy is to present
+> the key again.
+>
+> **A flow declaring a `[Sensitive]` contract member may not declare a window at all**, and
+> that is [`FLOWX1040`](diagnostics/FLOWX1040.md). See the note after the diagram.
 
 ```csharp
+// Specification: there is no attribute, and no policy names its own store.
 [Idempotency(Window = "PT24H", Scope = IdempotencyScope.Tenant, Store = "redis")]
+
+// Real:
+public static readonly PolicySet Admission = PolicySet.Named("admission")
+    .Idempotency(window: TimeSpan.FromHours(24), scope: IdempotencyScope.Tenant);
 ```
 
 ```mermaid
@@ -339,9 +373,27 @@ sequenceDiagram
 ```
 
 The in-flight state matters: without it, two concurrent requests with the same
-key both execute. This is the most common bug in hand-rolled idempotency.
+key both execute. This is the most common bug in hand-rolled idempotency, and it is the
+assertion `IdempotencyStoreConformance.ConcurrentCallersOfOneKeyProduceExactlyOneClaim` exists
+to make — a store whose `BeginAsync` is a read followed by a write passes every sequential test
+in that file and fails that one, under exactly the concurrency the policy is declared for.
 
----
+### What a replay may not do
+
+> [!WARNING]
+> **A replayed result must be the result, or there must be no replay.** Everything a flow records
+> goes through `JournalPayload`, whose only exit replaces every member named in the flow's
+> `SensitiveMembers` with `[redacted]` — matched case-insensitively, at every depth. On a flow
+> that marks any member of its input or output contract the recorded state bag is therefore not
+> what the step produced, and replaying it hands a later step the placeholder as if somebody had
+> computed it. Two mechanisms refuse that: [`FLOWX1040`](diagnostics/FLOWX1040.md) refuses the
+> declaration at build time, and `JournalPayload.TryToReplayableJson` refuses the recording at
+> run time — a strictly narrower exit than `ToJson` that yields nothing when the pass had to
+> replace something. The rule is silent on a set the compiler cannot read
+> ([`FLOWX1036`](diagnostics/FLOWX1036.md)), which is why both exist.
+> [ADR-0042](adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md)
+> decides it, including why the durable resume path — which does restore a redacted bag — is not
+> a precedent.
 
 ## 8. Cache safety — *specification*
 
@@ -366,14 +418,16 @@ Declaring `Cache` on a capability with side effects is `FLOWX1018` (error).
 
 ---
 
-## 9. Observing policies — *four of seven metrics emit*
+## 9. Observing policies — *six of seven metrics emit*
 
 > [!NOTE]
-> **The four rows whose policy executes are emitted; the three whose policy does not are not
-> named at all.** A breaker opening, a retry attempting, a bulkhead refusing and a timeout
-> firing each produce a measurement — which they did not before
-> [ADR-0026](adr/ADR-0026-policy-metrics-name-only-what-executes.md), and the note that used to
-> stand here said so. The other three describe stages
+> **The six rows whose policy executes are emitted; the one whose policy does not is not named
+> at all.** A breaker opening, a retry attempting, a bulkhead refusing, a timeout firing, a
+> caller refused by a rate limit and a step answered from an idempotency record each produce a
+> measurement. The last two arrived with stage 1 and stage 3, which is
+> [ADR-0026](adr/ADR-0026-policy-metrics-name-only-what-executes.md)'s own revisit condition
+> firing: that record left them unnamed because "a rate-limit rejection counter describes a
+> decision no code makes", and code now makes it. The cache pair still describes a stage
 > [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) skips, and an
 > instrument that exists and is never written to publishes an empty series that reads as a
 > healthy one. **The span-event half of this section is still unbuilt.**
@@ -386,10 +440,10 @@ has to be instrumented by hand:
 | `flowx_policy_invocations_total` | counter | `policy`, `stage`, `capability`, `outcome` | **yes** — on refusal *and* on clean application, so a refusal rate has a denominator |
 | `flowx_retry_attempts_total` | counter | `capability`, `attempt`, `error_code` | **yes** — attempts beyond the first only; the first dispatch is not a retry |
 | `flowx_circuit_state` | gauge (0/1/2) | `capability`, `key` | **yes** — recorded on transition, not per scrape. `key` equals `capability` until §6's composite key is expressible |
-| `flowx_ratelimit_rejected_total` | counter | `scope`, `tenant` | no — stage 1 is not executed, and `scope` presupposes a decision nobody has made |
+| `flowx_ratelimit_rejected_total` | counter | `scope`, `tenant` | **yes** — refusals only, because `flowx_policy_invocations_total` already carries the admissions as their denominator. `scope` is the declared `RateLimitScope` by name, which is the decision that had not been made when this row was written |
 | `flowx_cache_hits_total` / `_misses_total` | counter | `capability`, `scope` | no — stage 5 is not executed |
 | `flowx_bulkhead_queue_depth` | gauge | `capability` | **yes** — on the queueing path only, so an uncontended pool publishes nothing rather than a flat zero |
-| `flowx_idempotency_replays_total` | counter | `capability`, `scope` | no — stage 3 is not executed |
+| `flowx_idempotency_replays_total` | counter | `capability`, `scope` | **yes** — on the replay only. A first presentation of a key is not a replay, and an in-flight refusal is not one either: nothing was returned, so it is counted by `flowx_policy_invocations_total`'s `rejected` outcome |
 
 Policy decisions are *specified* to appear as span events on the step span too, so that a
 trace shows *why* a call took 3.2 s: two retries with 400 ms and 900 ms of backoff. **No span
@@ -445,7 +499,7 @@ resilience tests; FlowX removes the excuse.
 | Timeout longer than the flow deadline | the step is killed by the deadline anyway; the timeout is a lie | keep step timeouts well under the flow budget |
 | Retry without a breaker | retries amplify an outage into a self-DDoS | always pair them |
 | Cache on a capability with side effects | silent data corruption | `FLOWX1018` blocks it |
-| Rate limiting only globally | one tenant starves the rest | `Scope = Tenant` |
+| Rate limiting only globally | one tenant starves the rest | `RateLimitScope.Tenant`, which is the default, or `Principal` |
 | Policies defined inline per step | drift across the codebase | named `PolicySet` constants |
 
 ---

@@ -112,7 +112,7 @@ public sealed class ReferenceSamplePolicyTests
     /// call. <c>Policies.Admission</c> declared a <c>RateLimit</c> and an <c>Idempotency</c>
     /// window; the limit is executed now, and the window was <em>deleted</em> rather than
     /// executed, because <c>ExecuteTransfer</c> marks two IBANs <c>[Sensitive]</c> and
-    /// <c>FLOWX1039</c> refuses a window whose recorded result would carry <c>[redacted]</c>
+    /// <c>FLOWX1040</c> refuses a window whose recorded result would carry <c>[redacted]</c>
     /// where an account number was.
     /// </para>
     /// <para>

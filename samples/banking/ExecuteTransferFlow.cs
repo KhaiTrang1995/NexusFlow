@@ -45,7 +45,7 @@ namespace Banking;
 /// gone entirely: its <c>RateLimit</c> is enforced against a shared store, and the
 /// <c>Idempotency</c> window beside it was deleted rather than left unenforced, because this
 /// flow marks two IBANs <c>[Sensitive]</c> and
-/// <a href="../../docs/diagnostics/FLOWX1039.md">FLOWX1039</a> refuses a window whose
+/// <a href="../../docs/diagnostics/FLOWX1040.md">FLOWX1040</a> refuses a window whose
 /// recorded result would carry <c>[redacted]</c> where a value was.
 /// </para>
 /// </remarks>
@@ -73,7 +73,7 @@ public sealed partial class ExecuteTransferFlow : Flow<ExecuteTransfer, Transfer
         //     cannot have one. See Policies.Admission: ExecuteTransfer marks two IBANs
         //     [Sensitive], so every document this flow records carries [redacted] where an
         //     account number was, and replaying that would answer a second caller with a
-        //     placeholder and a 200. FLOWX1039 is a build error that says so, and the
+        //     placeholder and a 200. FLOWX1040 is a build error that says so, and the
         //     duplicate the window was reaching for is already held shut by FLOWX1014 and
         //     by the stable ctx.IdempotencyKey (ADR-0025 §2.2).
         //

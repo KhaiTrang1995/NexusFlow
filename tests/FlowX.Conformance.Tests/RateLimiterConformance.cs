@@ -17,7 +17,7 @@ namespace FlowX.Conformance;
 /// n × the declared rate, the factor is the replica count, and nothing declares it or reports
 /// it. A store that passes every other test here and fails that one is exactly the
 /// implementation
-/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0035-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0035</a>
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>
 /// refuses.
 /// </para>
 /// <para>
@@ -319,7 +319,7 @@ public abstract class RateLimiterConformance
 
     /// <summary>A store that cannot be reached answers with an error, not an exception.</summary>
     /// <remarks>
-    /// The engine turns this into a refusal (ADR-0035 §2.2), which it can only do if it is a
+    /// The engine turns this into a refusal (ADR-0040 §2.2), which it can only do if it is a
     /// value. A store that threw would take the failure onto the defect path beside
     /// <c>capability.unhandled</c>, where a policy decision does not belong — and a caller that
     /// caught it would be one edit away from admitting on doubt.

@@ -1,4 +1,4 @@
-# ADR-0035: A rate limit is enforced against a shared store, or it is not enforced at all
+# ADR-0040: A rate limit is enforced against a shared store, or it is not enforced at all
 
 **Status:** Accepted
 **Date:** 2026-08-01
@@ -186,6 +186,5 @@ record decided the shape of only one of them.
 [ADR-0011](ADR-0011-fixed-policy-stage-order.md) ·
 [ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) ·
 [ADR-0026](ADR-0026-policy-metrics-name-only-what-executes.md) ·
-[ADR-0036](ADR-0036-stage-one-and-stage-three-run-outside-the-retry.md) ·
 [FLOWX1032](../diagnostics/FLOWX1032.md) ·
 [10 — Policy Framework](../10-Policy-Framework.md)

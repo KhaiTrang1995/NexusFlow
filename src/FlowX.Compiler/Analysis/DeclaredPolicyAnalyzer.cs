@@ -108,7 +108,7 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
             "Bulkhead",
             CompensationRetryKind);
 
-    /// <summary><c>PolicySet.Idempotency</c>'s method name, which FLOWX1039 is about.</summary>
+    /// <summary><c>PolicySet.Idempotency</c>'s method name, which FLOWX1040 is about.</summary>
     /// <remarks>
     /// <see cref="CompensationRetryKind"/>'s reason: <see cref="PolicySetReader"/> returns what
     /// the author literally called, and this assembly targets netstandard2.0 and cannot see
@@ -446,7 +446,7 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     }
 
     /// <summary>
-    /// FLOWX1039 — an <c>Idempotency</c> window on a flow that marks a contract member
+    /// FLOWX1040 — an <c>Idempotency</c> window on a flow that marks a contract member
     /// <c>[Sensitive]</c>.
     /// </summary>
     /// <remarks>
@@ -456,7 +456,7 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     /// of <c>Flow&lt;TIn, TOut&gt;</c> and hands the same array to every payload the flow writes.
     /// So the question "can this flow record a result faithfully" has one answer for the whole
     /// flow, and asking it per step would be answering a narrower question than the mechanism
-    /// asks. ADR-0038 §1.4 rejects the narrower rule and says why.
+    /// asks. ADR-0042 §1.4 rejects the narrower rule and says why.
     /// </para>
     /// <para>
     /// <strong>Silent when the enclosing flow cannot be found.</strong> A <c>.WithPolicy(...)</c>

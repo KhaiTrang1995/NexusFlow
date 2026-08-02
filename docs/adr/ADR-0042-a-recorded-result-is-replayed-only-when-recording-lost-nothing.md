@@ -1,4 +1,4 @@
-# ADR-0038: A recorded result is replayed only when recording it lost nothing, and a flow that declares a `[Sensitive]` member may not declare an `Idempotency`
+# ADR-0042: A recorded result is replayed only when recording it lost nothing, and a flow that declares a `[Sensitive]` member may not declare an `Idempotency`
 
 **Status:** Accepted
 **Date:** 2026-08-01
@@ -27,8 +27,8 @@ What was true is that `DescribeStep`'s own remarks say *"Called only for a `Dura
 the step boundary, before the commit."* That is a statement about its only caller, not a
 constraint on the member, and this record makes it a statement about two callers. Nothing about
 budget B2 changes: the seam is reached only when a step's resolved `StepPolicy` declares an
-idempotency window, which is gated by `ExecutionPlan.HasStepPolicies` exactly as stage 4 is
-([ADR-0036](ADR-0036-stage-one-and-stage-three-run-outside-the-retry.md)).
+idempotency window, which is gated by `ExecutionPlan.HasStepPolicies` exactly as stage 4 is — gated by
+`ExecutionPlan.HasStepPolicies` exactly as stage 4 is.
 
 ### 1.2 The blocker that is real
 
@@ -121,9 +121,9 @@ recording a document it could not honestly replay. Loud, on the first execution,
 that would have created the bad record — not silently degraded, and not deferred to the second
 caller who would have received the fabrication.
 
-### 2.2 The report: `FLOWX1039`, at build time
+### 2.2 The report: `FLOWX1040`, at build time
 
-[`FLOWX1039`](../diagnostics/FLOWX1039.md) is an **error** on a `.WithPolicy(...)` declaring an
+[`FLOWX1040`](../diagnostics/FLOWX1040.md) is an **error** on a `.WithPolicy(...)` declaring an
 `Idempotency` on a flow whose input or output contract declares a `[Sensitive]` member.
 
 Flow-wide, per §1.4's last rejection: `SensitiveMembers` is read off the flow's two contracts
@@ -163,7 +163,7 @@ charge — the rule reports, the constructor refuses — and it is made here for
   redacted one. A store cannot get at more than it could yesterday.
 * **`samples/banking` demonstrates the decision rather than dodging it.** Its flow marks two
   IBANs, so it cannot declare a replayable window, and its `Policies.Admission` says so with
-  FLOWX1039 named. That is a better thing for a banking sample to teach than a happy path.
+  FLOWX1040 named. That is a better thing for a banking sample to teach than a happy path.
 * **ADR-0025 §2.2's argument is unaffected and is now load-bearing in a second way.** The stable
   key and `FLOWX1014` are still what hold the duplicate-charge row shut for the flows that
   cannot declare a window, and this record does not weaken either.
@@ -203,6 +203,6 @@ because it will meet exactly this question and must not answer it differently.
 [ADR-0015](ADR-0015-journal-schema-and-durable-execution.md) ·
 [ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) ·
 [ADR-0030](ADR-0030-policy-stance-is-refused-at-build-time.md) ·
-[ADR-0037](ADR-0037-an-idempotency-record-is-keyed-by-the-invocations-key.md) ·
-[FLOWX1039](../diagnostics/FLOWX1039.md) ·
+[ADR-0041](ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md) ·
+[FLOWX1040](../diagnostics/FLOWX1040.md) ·
 [10 — Policy Framework](../10-Policy-Framework.md)

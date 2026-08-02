@@ -149,7 +149,7 @@ public sealed class FlowEngine
     /// A missing alert sink leaves a deployment blind about a state the instance row still
     /// records; a missing limiter would leave one admitting every caller behind a declaration
     /// that reads as a deployment-wide bound. Degraded and wrong are not the same absence. See
-    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0035-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0035</a>
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>
     /// §2.2.
     /// </para>
     /// <para>
@@ -1108,8 +1108,14 @@ public sealed class FlowEngine
             // field the plan already holds. A flow that declares no executed policy reaches
             // StepPolicy.None, the loop below runs exactly once, and the execution is
             // byte-for-byte the one it always was — which is what keeps budget B2 a hard zero
-            // for the shapes that have always had it. Six kinds are counted now rather than
-            // four, and no second flag went with them (ADR-0036).
+            // for the shapes that have always had it.
+            //
+            // Six kinds are counted now rather than four, and no second flag went with them.
+            // That is ADR-0023's own "widening is mechanical" taken literally, so its "a third
+            // flag of this shape is proposed" revisit condition did not fire: stage 1 and stage 3
+            // arrive on the same PolicyChain that StepPolicy.From already walks, unlike a stance,
+            // which is resolved from a capability attribute and therefore needed
+            // HasAuthorizedSteps of its own.
             var policy = plan.HasStepPolicies ? step.StepPolicy : StepPolicy.None;
 
             // Stage 1 · Admission. Before the authorisation below, which is ADR-0011's order and
@@ -1338,7 +1344,7 @@ public sealed class FlowEngine
 
                 if (recorded is not null && stepFailure is null && !abandoned)
                 {
-                    // The step worked and the record could not be written honestly — ADR-0038's
+                    // The step worked and the record could not be written honestly — ADR-0042's
                     // guard, or a store that stopped answering. Reported rather than swallowed:
                     // a policy that silently recorded nothing would leave the declaration
                     // looking satisfied, which is the whole of what ADR-0025 rejects.
@@ -1395,7 +1401,7 @@ public sealed class FlowEngine
     /// The third is the one worth stating: a limiter that cannot reach its server does not know
     /// whether this caller is inside the budget, and admitting on doubt turns an outage of the
     /// limiter into an unbounded flood of whatever it was bounding — see
-    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0035-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0035</a>
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>
     /// §2.2.
     /// </para>
     /// <para>
@@ -1528,7 +1534,7 @@ public sealed class FlowEngine
     /// <remarks>
     /// <para>
     /// <strong>Only a success is recorded</strong>
-    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0037-an-idempotency-record-is-keyed-by-the-invocations-key.md">ADR-0037</a>
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md">ADR-0041</a>
     /// §2.3). A recorded failure would be replayed for the whole declared window, so one
     /// transient outage at the moment a key was first presented would make that key unusable
     /// for as long as the author declared — and the caller's remedy, presenting it again, is
@@ -1538,7 +1544,7 @@ public sealed class FlowEngine
     /// <para>
     /// <strong>The document goes out through <c>TryToReplayableJson</c> and never through
     /// <c>ToJson</c></strong>
-    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0038-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0038</a>).
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0042</a>).
     /// A payload the redaction pass had to change is not what the step produced, and replaying
     /// it would hand a later step the literal <c>[redacted]</c> as if it were the value. There
     /// is no third option here: the record is honest or the step fails.

@@ -22,7 +22,7 @@ namespace Banking.Tests;
 /// <c>.Idempotency(TimeSpan.FromHours(24))</c>. Stage 3 executes too — so it would have run —
 /// and it was <em>deleted</em> rather than left in, because
 /// <see cref="ExecuteTransfer"/> marks two IBANs <c>[Sensitive]</c> and
-/// <c>FLOWX1039</c> refuses a window whose recorded result would carry <c>[redacted]</c> where
+/// <c>FLOWX1040</c> refuses a window whose recorded result would carry <c>[redacted]</c> where
 /// an account number was. <see cref="TheIdempotencyWindowThisFlowCannotDeclare"/> is that fact
 /// as an assertion rather than as a comment.
 /// </para>
@@ -131,7 +131,7 @@ public sealed class TransferAdmissionTests
     /// <remarks>
     /// <para>
     /// <strong>Written as an assertion because the alternative is a comment nobody re-checks.</strong>
-    /// <c>FLOWX1039</c> is a build error, so the day somebody adds
+    /// <c>FLOWX1040</c> is a build error, so the day somebody adds
     /// <c>.Idempotency(...)</c> back to <c>Policies.Admission</c> the build stops — but the day
     /// somebody takes the <c>[Sensitive]</c> markers <em>off</em> the input contract, nothing
     /// stops, and this bank starts writing account numbers into every journal row, every emitted
@@ -150,7 +150,7 @@ public sealed class TransferAdmissionTests
             "These two are why Policies.Admission carries no Idempotency window. Every payload " +
             "this flow records is handed this array, JournalPayload replaces a matching member " +
             "at every depth with '[redacted]', and a stage-3 replay would hand a later step the " +
-            "placeholder as if it were the account number. FLOWX1039 refuses the declaration; " +
+            "placeholder as if it were the account number. FLOWX1040 refuses the declaration; " +
             "this asserts the fact the rule reads.");
 
         typeof(ExecuteTransfer).GetProperty(nameof(ExecuteTransfer.DebtorIban))

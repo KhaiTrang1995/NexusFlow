@@ -211,28 +211,27 @@ narrower and this is the exact split:
 | `Timeout(PT3S)` · `Retry(3)` · `CircuitBreaker(0.5, PT30S)` | `ExternalRead` | **yes** — the screening call is bounded, retried and breakered |
 | `Timeout(PT5S)` | `LedgerPost`, `SettlementRegister` | **yes** — each ledger write and the settlement write is bounded |
 | `CompensationRetry(5)` | `LedgerPost` | **yes** — since WP-57 |
+| `RateLimit(20, PT1S, Principal)` | `Admission` | **yes** — twenty per principal per second, counted in a store every replica shares. The twenty-first is refused before `transfer.validate` is entered |
 | `Audit("financial", …)` | `LedgerPost`, `SettlementRegister` | no — **this bank writes no policy-driven audit record** |
-| `RateLimit(20, PT1S)` · `Idempotency(PT24H)` | `Admission` | no — nothing is counted, nothing is replayed |
+| ~~`Idempotency(PT24H)`~~ | ~~`Admission`~~ | **deleted.** Stage 3 executes, so it would have run — but `ExecuteTransfer` marks two IBANs `[Sensitive]`, so every document this flow records carries `[redacted]` where an account number was, and a replay would answer the second caller with that placeholder and a `200`. [FLOWX1040](../../docs/diagnostics/FLOWX1040.md) refuses it at build time |
 
 **The cut is a list of kinds, not a range of stages, and this section used to get
 that wrong in two different ways.** It once said "no *forward* policy runs", which
 was wrong because `Audit` is a stage-7 `Consistency` policy — the same stage as the
-`CompensationRetry` that does run. Now the reverse trap is available too: `RateLimit`
-is stage 1 and inert while `Timeout` is stage 4 and armed. No line drawn by stage
-number separates the two halves.
+`CompensationRetry` that does run. The reverse trap has since swapped ends: stages 1, 3
+and 4 all run and stage 5 does not, so `Cache` is inert with executed stages on either
+side of it. No line drawn by stage number separates the two halves.
 
 **The compiler says all of this, and it is an error in this repository.**
 [FLOWX1032](../../docs/diagnostics/FLOWX1032.md) reports every declared policy the
 runtime does not apply. It reported all seven of this flow's `.WithPolicy(...)` calls
-when it was written; it reports four now, and the three that went quiet are the
-`ExternalRead` ones. `ExecuteTransferFlow.cs` carries two narrow argued pragmas rather
-than one over the whole method — one for the rate limit and the idempotency window,
-one for the audits — and the `Switch` in between carries none at all, which is the
-visible half of the change. Keeping the four declarations is the first of the three
-answers [the diagnostic's page](../../docs/diagnostics/FLOWX1032.md#how-to-fix-it)
-asks for: the limit belongs in front of the process, the endpoint is already
-`Idempotent = true` at the transport, and deleting the audits would delete the record
-the stage that implements them will need.
+when it was written, then four, and reports **three** now — the `Audit` on the two
+ledger legs and on the settlement write. `ExecuteTransferFlow.cs` carries **one**
+pragma, over the three steps that declare an audit; the first step's is gone entirely,
+because its rate limit is enforced and its idempotency window is deleted rather than
+unenforced. Keeping the three audit declarations is the first of the three answers
+[the diagnostic's page](../../docs/diagnostics/FLOWX1032.md#how-to-fix-it) asks for:
+deleting them would delete the record the stage that implements them will need.
 
 ### And a transfer that used to fail now settles
 
@@ -326,7 +325,8 @@ one-line edit of *this* file rather than against a fixture.
 |---|---|---|
 | `.WithPolicy(Policies.LedgerPost).WithPolicy(PolicySet.CompensationDefault)` on a ledger leg | The second call **replaces** the first — `StepModel.WithPolicy` assigns rather than accumulates — so the leg loses its five-second timeout and its financial audit from the plan *and* from the manifest, in exchange for a retry it already had | [FLOWX1034](../../docs/diagnostics/FLOWX1034.md), an error. *This is the edit [FLOWX1033's page](../../docs/diagnostics/FLOWX1033.md) used to recommend* |
 | `.CompensationRetry(attempts: 1)` in `Policies.LedgerPost` | `IsRetrying` is `Attempts > 1`, so `HasCompensationPolicies` stays false, the engine takes `CompensationPolicy.None`, and both reversals are dispatched once — while the manifest still publishes `{"kind":"CompensationRetry"}` with no parameters and reads exactly as it does today | [FLOWX1035](../../docs/diagnostics/FLOWX1035.md), a warning |
-| `Policies.cs` moved into a shared library and referenced as an assembly | Its symbols carry no syntax, so all seven declarations reach no plan node and no manifest entry — the timeouts, the retry, the breaker, the audits, the rate limit *and* the compensation retry — and FLOWX1032 goes quiet with them, because the compiler cannot name a kind it could not read. This edit now costs the sample real behaviour rather than only its published contract | [FLOWX1036](../../docs/diagnostics/FLOWX1036.md), a warning |
+| `Policies.cs` moved into a shared library and referenced as an assembly | Its symbols carry no syntax, so all seven declarations reach no plan node and no manifest entry — the timeouts, the retry, the breaker, the audits, the rate limit *and* the compensation retry — and FLOWX1032 goes quiet with them, because the compiler cannot name a kind it could not read. Since stage 1 landed this edit silently removes an *enforced* bound | [FLOWX1036](../../docs/diagnostics/FLOWX1036.md), a warning |
+| `[property: Sensitive]` removed from `ExecuteTransfer` | The build does **not** stop: FLOWX1040 goes quiet, an idempotency window becomes declarable, and every journal row, emitted event and RFC 7807 body starts carrying account numbers. `TransferAdmissionTests.TheIdempotencyWindowThisFlowCannotDeclare` asserts `SensitiveMembers` directly for exactly this reason | nothing — a test, not a diagnostic |
 
 `PolicySet.CompensationDefault` — the five-attempt default
 [06 §7](../../docs/06-Execution-Engine.md) rule 2 names — is now usable as a step's whole

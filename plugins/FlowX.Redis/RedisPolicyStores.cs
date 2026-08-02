@@ -31,7 +31,7 @@ public sealed record RedisPolicyOptions
 /// count, and nothing declares it or reports it. That is the half-executing policy
 /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>
 /// rejects, in its worst form, and
-/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0035-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0035</a>
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>
 /// is the record.
 /// </para>
 /// <para>
@@ -139,7 +139,7 @@ public sealed class RedisRateLimiterStore : IRateLimiterStore
 /// <strong>What this store is handed is already redacted and it has no way to tell.</strong> The
 /// record is an opaque string that has been through <see cref="JournalPayload"/>'s single exit,
 /// and the engine will not write one that exit had to change
-/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0038-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0038</a>).
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0042</a>).
 /// A store that parsed the record would be a store that could leak it, which is why this one
 /// stores bytes.
 /// </para>

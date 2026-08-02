@@ -152,7 +152,7 @@ public static class Policies
     /// <strong>Twenty principals a second is now enforced, across every replica.</strong> The
     /// limit is counted in a shared store — this application registers the Redis one — so the
     /// twenty is the deployment's and not each node's.
-    /// <a href="../../docs/adr/ADR-0035-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0035</a>
+    /// <a href="../../docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>
     /// is why it could not ship as a process-local counter: a breaker that is per process is
     /// slower to protect and never wrong, and a limiter that is per process admits n × the
     /// declared rate across n nodes, with the factor being the replica count and nothing
@@ -164,7 +164,7 @@ public static class Policies
     /// absence is the most interesting thing in this file.</strong> It read
     /// <c>.Idempotency(TimeSpan.FromHours(24))</c>, and stage 3 now executes — so it would
     /// have run. It is removed because it cannot run <em>here</em>, and
-    /// <a href="../../docs/diagnostics/FLOWX1039.md">FLOWX1039</a> is a build error that says
+    /// <a href="../../docs/diagnostics/FLOWX1040.md">FLOWX1040</a> is a build error that says
     /// so: <see cref="ExecuteTransfer"/> marks two IBANs <c>[Sensitive]</c>, so
     /// <c>ExecuteTransferFlow.SensitiveMembers</c> is non-empty, so every document this flow
     /// records has <c>[redacted]</c> where an account number was — including the state bag a
@@ -175,7 +175,7 @@ public static class Policies
     /// </para>
     /// <para>
     /// That is worse than no idempotency at all, which is exactly what
-    /// <a href="../../docs/adr/ADR-0038-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0038</a>
+    /// <a href="../../docs/adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0042</a>
     /// decides: without the window the step is simply dispatched again — the posting
     /// capabilities declare <c>Idempotent = true</c> and keep that promise — and the second
     /// caller gets the real answer for the second time. **The duplicate this window was

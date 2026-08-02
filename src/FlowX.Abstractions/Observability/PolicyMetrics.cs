@@ -9,13 +9,23 @@ namespace FlowX.Observability;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Four instruments, not seven, and the absences are the same discipline
-/// <see cref="FlowXMetrics"/> applies.</strong> §9 lists a rate-limit counter, a cache
-/// hit/miss pair and an idempotency replay counter. Their policies are not executed, so the
-/// instruments are not created: an instrument that exists and is never written to publishes an
-/// empty series, and an empty series is indistinguishable from a healthy one. A dashboard
-/// showing <c>flowx_ratelimit_rejected_total == 0</c> would be evidence that no request was
-/// ever refused, when the truth is that nothing ever refuses.
+/// <strong>Six instruments, not seven, and the absence is the same discipline
+/// <see cref="FlowXMetrics"/> applies.</strong> The one §9 row with no instrument here is the
+/// cache hit/miss pair: stage 5 is not executed, so the instrument is not created, because one
+/// that exists and is never written to publishes an empty series and an empty series is
+/// indistinguishable from a healthy one.
+/// </para>
+/// <para>
+/// <strong>Two of them were absent for exactly that reason until stage 1 and stage 3
+/// landed.</strong>
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md">ADR-0026</a>
+/// left <c>flowx_ratelimit_rejected_total</c> and <c>flowx_idempotency_replays_total</c>
+/// unnamed on the argument that "a dashboard showing
+/// <c>flowx_ratelimit_rejected_total == 0</c> would be evidence that no request was ever
+/// refused, when the truth is that nothing ever refuses" — and, for the limiter, that its
+/// <c>scope</c> label "presupposes a decision nobody has made". Both policies execute now and
+/// the scope is decided, so that record's own revisit condition has fired and the omission has
+/// become an addition.
 /// </para>
 /// <para>
 /// <strong>Separate from <see cref="FlowXMetrics"/> because the tables are separate.</strong>

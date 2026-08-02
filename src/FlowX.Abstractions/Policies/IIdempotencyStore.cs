@@ -46,7 +46,7 @@ public readonly record struct IdempotencyEntry(
 /// <c>ctx.IdempotencyKey</c> — which is stable across a flow and across every attempt of a
 /// retried step, and reaches the capability already — narrowed by the capability id and the
 /// declared <see cref="IdempotencyScope"/>. A store never parses it. See
-/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0037-an-idempotency-record-is-keyed-by-the-invocations-key.md">ADR-0037</a>.
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md">ADR-0041</a>.
 /// </para>
 /// <para>
 /// <strong>Only a success is ever recorded.</strong> A step that failed calls
@@ -69,8 +69,8 @@ public readonly record struct IdempotencyEntry(
 /// redacting exit, and the engine will not write one that exit had to change — a replayed
 /// <c>[redacted]</c> returned as if it were the value is a fabricated answer rather than a
 /// degraded policy. See
-/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0038-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0038</a>
-/// and <a href="https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1039.md">FLOWX1039</a>.
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0042</a>
+/// and <a href="https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1040.md">FLOWX1040</a>.
 /// </para>
 /// <para>
 /// A step declaring an idempotency window with no store registered is <strong>refused</strong>,

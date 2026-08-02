@@ -30,7 +30,7 @@ namespace FlowX.Conformance;
 /// <strong>What this suite never asserts is the shape of a record.</strong> The contract takes
 /// and returns an opaque string, and what goes in it — a state-bag document that has been
 /// through <see cref="JournalPayload"/>'s redacting exit — is the engine's business and
-/// ADR-0038's. A store that inspected it would be a store that could leak it.
+/// ADR-0042's. A store that inspected it would be a store that could leak it.
 /// </para>
 /// </remarks>
 public abstract class IdempotencyStoreConformance
@@ -254,7 +254,7 @@ public abstract class IdempotencyStoreConformance
 
     /// <summary>An abandoned claim leaves the key free.</summary>
     /// <remarks>
-    /// This is what makes "only a success is recorded" implementable (ADR-0037 §2.3). A failed
+    /// This is what makes "only a success is recorded" implementable (ADR-0041 §2.3). A failed
     /// step gives its key back, so the next caller runs it — and a store that kept the claim
     /// would make one transient failure lock a key out for the whole in-flight lease.
     /// </remarks>

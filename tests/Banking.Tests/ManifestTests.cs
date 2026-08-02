@@ -246,7 +246,7 @@ public sealed class ManifestTests
         // Moves whenever the file's header does — most recently when stage 1 and stage 3
         // landed, and the remarks stopped saying four kinds are inert and started saying one
         // is, because the Idempotency window beside the rate limit was deleted rather than
-        // executed (FLOWX1039). The number is the assertion, not an incidental: a source
+        // executed (FLOWX1040). The number is the assertion, not an incidental: a source
         // pointer that drifts from the declaration it names is a pointer a reader follows to
         // the wrong line.
         source.ShouldBe("ExecuteTransferFlow.cs:55");

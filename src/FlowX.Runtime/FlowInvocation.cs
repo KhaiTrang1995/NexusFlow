@@ -595,7 +595,7 @@ public static class FlowErrors
     /// <remarks>
     /// <para>
     /// <strong>The guard
-    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0038-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0038</a>
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0042</a>
     /// exists for, and it fails a step that worked.</strong> That is the correct direction and
     /// it is genuinely a cost: the capability has been dispatched, the effect happened, and the
     /// step is then reported as failed with the completed compensable steps unwinding behind it.
@@ -605,7 +605,7 @@ public static class FlowErrors
     /// <para>
     /// <see cref="ErrorCategory.Internal"/>, because it is a defect in the flow's declaration
     /// rather than anything the caller did or the dependency failed to do — and because
-    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1039.md">FLOWX1039</a>
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/diagnostics/FLOWX1040.md">FLOWX1040</a>
     /// should have caught it at build time. Reaching this at run time means the rule was silent:
     /// a set the compiler could not read, or a hand-built plan.
     /// </para>
@@ -621,7 +621,7 @@ public static class FlowErrors
                 : $"Capability '{capabilityId}' declares an Idempotency window and its flow " +
                   "declares a [Sensitive] member, so the recorded result would carry " +
                   $"'{JournalPayload.Redacted}' where a value was. Replaying that would hand a " +
-                  "later step a placeholder as if it were the value — see FLOWX1039, which " +
+                  "later step a placeholder as if it were the value — see FLOWX1040, which " +
                   "reports this at build time whenever the compiler can read the policy set.",
             ErrorCategory.Internal)
             .With("capabilityId", capabilityId);

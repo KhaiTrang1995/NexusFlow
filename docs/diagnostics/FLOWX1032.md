@@ -1,23 +1,29 @@
 # FLOWX1032 — Declared policy is not executed by the runtime
 
-> **Severity:** Warning · **Category:** FlowX · **Since:** 0.1.0 · **Narrowed:** P4
-> **Applies to:** the four policy kinds no code path applies — `RateLimit` (stage 1),
-> `Idempotency` (stage 3), `Cache` (stage 5) and `Audit` (stage 7).
+> **Severity:** Warning · **Category:** FlowX · **Since:** 0.1.0 · **Narrowed:** P4, twice
+> **Applies to:** the two policy kinds no code path applies — `Cache` (stage 5) and `Audit`
+> (stage 7).
 > **No longer applies to:** `Timeout`, `Retry`, `CircuitBreaker` and `Bulkhead`, which the
-> policy engine now executes, or `CompensationRetry`, which the unwind has executed since
-> WP-57.
-> **Scheduled for deletion:** when the last four kinds execute — see
+> policy engine executes; `CompensationRetry`, which the unwind has executed since WP-57; and
+> `RateLimit` and `Idempotency`, which stage 1 and stage 3 now execute against a shared store.
+> **Scheduled for deletion:** when the last two kinds execute — see
 > [When this rule is deleted](#when-this-rule-is-deleted). This is scaffolding for the part
 > of a phase that has not landed, not a rule about your code.
 
 > [!NOTE]
-> **This rule used to report eight kinds and now reports four.** `Timeout`, `Retry`,
+> **This rule used to report eight kinds, then four, and now reports two.** `Timeout`, `Retry`,
 > `CircuitBreaker` and `Bulkhead` left it when the policy engine landed
-> `PolicyStage.Resilience`. If you are reading this because a `Retry` stopped being
-> reported: it is not being ignored, it is being executed —
-> [10 §5](../10-Policy-Framework.md#5-retry-safety) is now behaviour, and the `Idempotent = true`
-> that [FLOWX1014](FLOWX1014.md) made you justify is now load-bearing rather than
-> precautionary.
+> `PolicyStage.Resilience`; `RateLimit` and `Idempotency` left it when stage 1 and stage 3
+> landed against a shared store.
+>
+> **If a `RateLimit` stopped being reported: it is enforced now, and the enforcement needs a
+> registration.** A step declaring one with no `IRateLimiterStore` registered is *refused* —
+> `policy.ratelimit_unavailable` — because a limiter that is not wired up must not read as a
+> limit that passed. Register one with `AddFlowXRedisPolicyStores` or
+> `AddFlowXPostgresPolicyStores`.
+>
+> **If an `Idempotency` window became a build error, that is [FLOWX1040](FLOWX1040.md)** — a
+> different rule, with a real fix, and not this one at a higher severity.
 >
 > **[FLOWX1014](FLOWX1014.md) and [FLOWX1018](FLOWX1018.md) are unaffected and are the ones
 > that matter more than they did.** They check a declared policy's *safety precondition* and
@@ -26,7 +32,7 @@
 
 ## What it means
 
-`.WithPolicy(Policies.PaymentGateway)` names a set of policies for a step. Four of the nine
+`.WithPolicy(Policies.PaymentGateway)` names a set of policies for a step. Two of the nine
 kinds `PolicySet` offers reach the compiled plan and the manifest and are then read by no
 code at run time.
 
@@ -34,7 +40,7 @@ code at run time.
 `StepNode.StepPolicy` in the step loop, and `ExecutionPlan.HasCompensationPolicies` and
 `StepNode.CompensationRetry` on the failure path. Underneath them `PolicyChain.Ordered` is
 read in exactly two places in the whole of `src/` — `StepPolicy.From` and
-`CompensationPolicy.From` — and between them they read five kinds.
+`CompensationPolicy.From` — and between them they read seven kinds.
 
 | What the DSL promises | What runs today |
 |---|---|
@@ -43,17 +49,17 @@ read in exactly two places in the whole of `src/` — `StepPolicy.From` and
 | `.CircuitBreaker(...)` — stops calling a failing dependency | **Executes.** Keyed by capability id, per process. `minimumThroughput` is a constant rather than a parameter, and [10 §6](../10-Policy-Framework.md#6-circuit-breaker-scope)'s composite `BreakerKey` does not exist |
 | `.Bulkhead(...)` — bounds concurrency | **Executes.** One pool per capability, refusing rather than queueing past `queueDepth` |
 | `.CompensationRetry(n)` | **Executes.** See [FLOWX1033](FLOWX1033.md) for the one case where it does not |
+| `.RateLimit(...)` — limits invocation rate | **Executes.** A token bucket in a store every node shares, consulted once per step and before the authorisation stance, refusing with `policy.rate_limited` and a `Retry-After`. A missing store refuses rather than admits |
+| `.Idempotency(window)` — replays a recorded result for a repeated key | **Executes.** Keyed by `ctx.IdempotencyKey` + capability + scope; records only a success; refuses a concurrent presentation. Refused at build time by [FLOWX1040](FLOWX1040.md) on a flow that declares a `[Sensitive]` contract member |
 | `.Cache(ttl)` — replays a recorded result | Nothing is cached or consulted |
-| `.RateLimit(...)` — limits invocation rate | Nothing is counted |
-| `.Idempotency(window)` — replays a recorded result for a repeated key | Nothing is recorded or replayed. `ctx.IdempotencyKey` is stable and is handed to the capability, but that is the engine's identity plumbing, not this policy |
 | `.Audit(category, redact)` — writes an immutable audit record | No record is written by a policy |
 
 **The line is a list of kinds, not a range of stages**, and that is the part that is easy to
 get wrong — in both directions. `Audit` is a `PolicyStage.Consistency` policy, stage 7, the
-same stage as `CompensationRetry`, which executes; and `RateLimit` at stage 1 is inert while
-`Timeout` at stage 4 is not. No line drawn by stage number separates the two halves, so the
-rule carries an enumerated set, `DeclaredPolicyAnalyzer.ExecutedKinds`, pinned against
-`StepPolicy`'s and `CompensationPolicy`'s own constants by `PolicyStageFitnessTests`.
+same stage as `CompensationRetry`, which executes; and `Cache` at stage 5 is inert while
+stages 1, 3 and 4 on either side of it are not. No line drawn by stage number separates the two
+halves, so the rule carries an enumerated set, `DeclaredPolicyAnalyzer.ExecutedKinds`, pinned
+against `StepPolicy`'s and `CompensationPolicy`'s own constants by `PolicyStageFitnessTests`.
 
 **Why stage 4 could be executed while stages 1, 3 and 5 were not** is
 [ADR-0025](../adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md), which
@@ -90,9 +96,15 @@ step declaring a one-hour cache calls the dependency every time.
 ```csharp
 public static class Policies
 {
+    // Silent: stage 1 and stage 3 execute. What this set needs is a registered store, not a
+    // suppression — see the note at the top.
     public static readonly PolicySet Admission = PolicySet.Named("admission")
         .RateLimit(permits: 20, TimeSpan.FromSeconds(1))
         .Idempotency(TimeSpan.FromHours(24));
+
+    public static readonly PolicySet Deferred = PolicySet.Named("deferred")
+        .Cache(TimeSpan.FromSeconds(60))
+        .Audit("financial");
 
     // Silent: every kind in it is executed.
     public static readonly PolicySet ExternalRead = PolicySet.Named("external-read")
@@ -109,7 +121,7 @@ public sealed partial class ExecuteTransferFlow : Flow<ExecuteTransfer, Transfer
 {
     protected override void Define(IFlowBuilder<ExecuteTransfer, TransferResult> flow) => flow
         .Step<ValidateTransfer>()
-            .WithPolicy(Policies.Admission)       // FLOWX1032 — RateLimit, Idempotency
+            .WithPolicy(Policies.Deferred)        // FLOWX1032 — Cache, Audit
         .Step<ScreenSanctions>()
             .WithPolicy(Policies.ExternalRead)    // silent — all three kinds execute
         .Step<PostDebit>()
@@ -159,10 +171,9 @@ declarations are how P4 will find the flows that asked for a timeout.
 In the order they should be considered:
 
 1. **Confirm the flow is survivable with the policy unenforced, and record that.** For a
-   large class of steps it is: a `RateLimit` whose real enforcement lives in the gateway in
-   front of the process, an `Idempotency` window a caller already gets from an idempotent
-   HTTP endpoint, a `Cache` on a read whose cost nobody is complaining about. If that is
-   true here, keep the declaration and downgrade the rule — below.
+   large class of steps it is: a `Cache` on a read whose cost nobody is complaining about, an
+   `Audit` the capability writes itself. If that is true here, keep the declaration and
+   downgrade the rule — below.
 2. **Move the control to where it is real.** A rate limit belongs in front of the process; a
    cache can be a dependency the capability holds; an audit record can be written by the
    capability itself. A control that exists in a manifest protects nothing.
@@ -186,9 +197,9 @@ Because this is a statement about a platform gap rather than about a line of cod
 it:
 
 ```ini
-# FLOWX-DEBT(payments, 2026-12-31): these flows declare a RateLimit and an Idempotency
-#   window that no stage executes yet. The limit is enforced at the gateway and the
-#   endpoint is already idempotent. Reviewed and accepted until stages 1 and 3 land.
+# FLOWX-DEBT(payments, 2026-12-31): these flows declare a Cache that no stage consults.
+#   The reads it covers are cheap and the capability holds its own cache where it matters.
+#   Reviewed and accepted until stage 5 lands.
 [src/Flows/Payments/**.cs]
 dotnet_diagnostic.FLOWX1032.severity = suggestion
 ```
@@ -214,16 +225,16 @@ error here is deleting the `.WithPolicy(...)` call or emptying the set. `.WithPo
 visible in the code, in the manifest and in a rendered diagram is the list of the steps that
 asked for a cache or a rate limit, and an error would systematically delete it — leaving the
 work that implements stages 1, 3 and 5 with no flow declaring a policy to implement it for.
-**This argument has now been paid off once**: the flows that declared a `Timeout` and a
-`Retry` under this rule are the flows that got one, because the declarations were still
-there.
+**This argument has now been paid off twice**: the flows that declared a `Timeout` and a
+`Retry` under this rule are the flows that got one, and the flows that declared a `RateLimit`
+are the flows whose limit is now enforced — in both cases because the declarations were still
+there when the stage arrived.
 
 **The source is not wrong; it is written correctly for a platform that has the feature.**
 This is the half `FLOWX1031` explicitly could not use, and it is what puts this rule on
 FLOWX1028's side of that line rather than on `AwaitSignal`'s. *No flow is
 correct with a seven-day wait compiled to no wait* — but a great many flows are correct with
-a `RateLimit` enforced at the gateway instead of in-process, or an `Idempotency` window the
-transport already provides. FLOWX1028's first remedy — "confirm the flow is correct as it
+a `Cache` the capability holds itself, or an audit record the capability writes. FLOWX1028's first remedy — "confirm the flow is correct as it
 is, and record that" — is an honest offer here, and option 1 above is it.
 
 **Nothing is falsified, which is the line `FLOWX1031` drew for its error half.** That rule
@@ -271,18 +282,25 @@ catalogue.
 | Event | Action | Status |
 |---|---|---|
 | The policy engine lands `PolicyStage.Resilience` | Narrow the rule to the kinds still inert, rather than deleting it — the WP-52 / `FLOWX1028` precedent | **Done.** `Timeout`, `Retry`, `CircuitBreaker` and `Bulkhead` left the rule; `RateLimit`, `Idempotency`, `Cache` and `Audit` remain |
-| Stage 1 executes | Drop `RateLimit` from `DeclaredPolicyAnalyzer.ExecutedKinds`' complement | Outstanding |
-| Stage 3 executes | Drop `Idempotency` | Outstanding |
+| Stage 1 executes | Drop `RateLimit` from `DeclaredPolicyAnalyzer.ExecutedKinds`' complement | **Done.** [ADR-0040](../adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md): a shared `IRateLimiterStore`, two implementations, and a refusal when neither is registered |
+| Stage 3 executes | Drop `Idempotency` | **Done.** [ADR-0041](../adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md). It also gained a rule of its own — [FLOWX1040](FLOWX1040.md) — for the flows whose results cannot be recorded without redaction |
 | Stage 5 executes | Drop `Cache` | Outstanding |
 | Stage 7's `Audit` executes | Drop `Audit`, and then delete `FLOWX1032`, `DeclaredPolicyAnalyzer`, this page and the release-tracking row — nothing is left for it to report | Outstanding |
 
 `PolicyExecutionTests` in `tests/FlowX.Runtime.Tests` is the executable half of this
-reminder, and it works in both directions. `ACacheIsNotConsultedAndARateLimitCountsNothing`
-and `AnAuditIsAStageSevenPolicyAndStillExecutesNowhere` assert on the real engine that the
-four remaining kinds do nothing, and go red on the day one of them does;
+reminder, and it works in both directions. `ACacheIsNotConsulted` and
+`AnAuditIsAStageSevenPolicyAndStillExecutesNowhere` assert on the real engine that the two
+remaining kinds do nothing, and go red on the day one of them does;
 `AZeroLengthTimeoutStopsTheStepBeforeItBegins` and the tests beside it assert that the four
-that left really run, and go red if one silently stops. The narrowing above happened because
-the first sort went red, which is what they are for.
+stage-4 kinds really run. `AdmissionAndIntegrityTests` is where `RateLimit` and `Idempotency`
+moved when they left the first sort for the second — a limiter that never refuses and a key
+that never replays are indistinguishable from the inert versions they replaced, so every
+assertion there names a dispatch count rather than an outcome.
+
+**Both narrowings happened because the first sort went red**, which is what those tests are
+for. The second one went red on four tests at once, and one of them —
+`ACacheIsNotConsultedAndARateLimitCountsNothing` — had to be split rather than inverted,
+because half of what it asserted became false and the other half did not.
 
 ---
 

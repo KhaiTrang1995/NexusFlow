@@ -9,7 +9,7 @@ using Xunit;
 namespace FlowX.Compiler.Tests;
 
 /// <summary>
-/// FLOWX1039 — an <c>Idempotency</c> window on a flow whose result cannot be recorded without
+/// FLOWX1040 — an <c>Idempotency</c> window on a flow whose result cannot be recorded without
 /// redaction.
 /// </summary>
 /// <remarks>
@@ -27,7 +27,7 @@ namespace FlowX.Compiler.Tests;
 /// <c>SensitiveMembers</c> is read off the flow's input and output contracts and applied to
 /// every document the flow writes, so those two are the whole of what makes a flow
 /// unrecordable — and a rule that read a step's own contracts instead would be answering a
-/// narrower question than the mechanism asks. ADR-0038 §1.4 rejects the narrower rule and says
+/// narrower question than the mechanism asks. ADR-0042 §1.4 rejects the narrower rule and says
 /// why: the match is by name, at every depth, over a graph reaching referenced assemblies, and a
 /// traversal wrong in the permissive direction ships a silently fabricated replay.
 /// </para>
@@ -104,7 +104,7 @@ public sealed class IdempotencyRedactionAnalyzerTests
     /// <summary>A marked input contract and a declared window is the reported case.</summary>
     [Fact]
     public void AWindowOnAFlowThatMarksItsInputIsReported() =>
-        Analyze(FlowOver(MarkedInput, PlainOutput, Window)).ShouldContain("FLOWX1039");
+        Analyze(FlowOver(MarkedInput, PlainOutput, Window)).ShouldContain("FLOWX1040");
 
     /// <summary>It is an error, not a warning.</summary>
     /// <remarks>
@@ -152,7 +152,7 @@ public sealed class IdempotencyRedactionAnalyzerTests
             PlainInput,
             "public sealed record TransferResult([property: Sensitive] string Id);",
             Window))
-            .ShouldContain("FLOWX1039");
+            .ShouldContain("FLOWX1040");
 
     // ------------------------------------------------------------------------ it is silent
 
@@ -164,7 +164,7 @@ public sealed class IdempotencyRedactionAnalyzerTests
     /// </remarks>
     [Fact]
     public void AWindowOnAFlowThatMarksNothingIsSilent() =>
-        Analyze(FlowOver(PlainInput, PlainOutput, Window)).ShouldNotContain("FLOWX1039");
+        Analyze(FlowOver(PlainInput, PlainOutput, Window)).ShouldNotContain("FLOWX1040");
 
     /// <summary>A marked flow with no window is silent.</summary>
     [Fact]
@@ -174,7 +174,7 @@ public sealed class IdempotencyRedactionAnalyzerTests
             PlainOutput,
             """public static readonly PolicySet Admission = PolicySet.Named("a").RateLimit(permits: 5, TimeSpan.FromSeconds(1));"""))
             .ShouldNotContain(
-                "FLOWX1039",
+                "FLOWX1040",
                 "stage 1 records nothing, so redaction cannot reach it. A rule that fired here " +
                 "would refuse a rate limit for a reason that belongs to a different stage.");
 
@@ -206,7 +206,7 @@ public sealed class IdempotencyRedactionAnalyzerTests
                 StringComparison.Ordinal);
 
         Analyze(source).ShouldNotContain(
-            "FLOWX1039",
+            "FLOWX1040",
             "Validated is neither the flow's input nor its output, so it does not reach " +
             "SensitiveMembers and nothing this flow writes is redacted because of it.");
     }
@@ -216,7 +216,7 @@ public sealed class IdempotencyRedactionAnalyzerTests
     /// <strong>This is why the run-time guard is not optional.</strong> The rule inherits
     /// <c>PolicySetReader</c>'s silence — a set in a referenced assembly has no initialiser to
     /// walk — so a marked flow can reach production with a window the analyzer never saw.
-    /// <c>JournalPayload.TryToReplayableJson</c> is what refuses it there, and ADR-0038 §2.3 is
+    /// <c>JournalPayload.TryToReplayableJson</c> is what refuses it there, and ADR-0042 §2.3 is
     /// why the two mechanisms are deliberately not the same one.
     /// </remarks>
     [Fact]
@@ -236,7 +236,7 @@ public sealed class IdempotencyRedactionAnalyzerTests
         var reported = Analyze(source);
 
         reported.ShouldNotContain(
-            "FLOWX1039",
+            "FLOWX1040",
             "the compiler could not read the set, so it cannot say whether it holds a window — " +
             "and a rule that guessed would be an error raised on an inference.");
 

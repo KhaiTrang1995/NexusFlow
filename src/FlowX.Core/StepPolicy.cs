@@ -20,9 +20,9 @@ namespace FlowX;
 /// <strong>Three stages on one object, and deliberately no second object.</strong> Stage 1,
 /// stage 3 and stage 4 all arrive on one <see cref="PolicyChain"/>, so a second resolved field
 /// on the node would be a second walk of the array this one already walks, and
-/// <see cref="IsActive"/> would then have to consult two objects to answer one question. See
-/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0036-stage-one-and-stage-three-run-outside-the-retry.md">ADR-0036</a>,
-/// which is also why no plan flag was added beside <see cref="ExecutionPlan.HasStepPolicies"/>.
+/// <see cref="IsActive"/> would then have to consult two objects to answer one question. It is
+/// also why no plan flag was added beside <see cref="ExecutionPlan.HasStepPolicies"/> — see
+/// <see cref="IsActive"/>.
 /// </para>
 /// <para>
 /// <strong>Resolved once, when the plan is built.</strong> It hangs off
@@ -198,8 +198,9 @@ public sealed class StepPolicy
     /// plan flag went with them — which is
     /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>'s
     /// "widening is mechanical" being taken up literally, and is why that record's "a third flag
-    /// of this shape is proposed" trigger did not fire. See
-    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0036-stage-one-and-stage-three-run-outside-the-retry.md">ADR-0036</a>.
+    /// of this shape is proposed" trigger did not fire. A stance needed
+    /// <c>ExecutionPlan.HasAuthorizedSteps</c> of its own because it is resolved from a
+    /// capability attribute and has no chain to be read out of; a policy always has one.
     /// </para>
     /// </remarks>
     public bool IsActive =>

@@ -40,7 +40,7 @@ public readonly record struct RateLimitVerdict(bool Admitted, long Remaining, Ti
 /// store call fails: a limiter that cannot reach its server does not know whether the caller is
 /// inside the budget, and admitting on doubt turns an outage of the limiter into an unbounded
 /// flood of whatever it was bounding. See
-/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0035-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0035</a>.
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>.
 /// </para>
 /// <para>
 /// <strong>One method, and it both decides and consumes.</strong> A separate "may I" and "I did"

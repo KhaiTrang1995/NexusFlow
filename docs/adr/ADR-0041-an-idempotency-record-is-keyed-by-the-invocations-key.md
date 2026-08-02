@@ -1,4 +1,4 @@
-# ADR-0037: An idempotency record is keyed by the invocation's own key, narrowed by capability and scope, and holds only a success
+# ADR-0041: An idempotency record is keyed by the invocation's own key, narrowed by capability and scope, and holds only a success
 
 **Status:** Accepted
 **Date:** 2026-08-01
@@ -127,7 +127,7 @@ would need a discriminant, and every consumer would have to branch on it correct
 
 ### 2.4 A missing store is a refusal
 
-As for the rate limiter ([ADR-0035](ADR-0035-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md)
+As for the rate limiter ([ADR-0040](ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md)
 §2.2): a step declaring an idempotency window with no `IIdempotencyStore` registered fails with
 `policy.idempotency_unavailable` rather than being dispatched, and a store error is a refusal
 rather than a dispatch. Dispatching on doubt is the duplicate charge the policy was declared to
@@ -182,7 +182,6 @@ compare-and-set — and would change every method here.
 
 **See also:** [ADR-0009](ADR-0009-plugin-contracts.md) ·
 [ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) ·
-[ADR-0035](ADR-0035-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md) ·
-[ADR-0036](ADR-0036-stage-one-and-stage-three-run-outside-the-retry.md) ·
-[ADR-0038](ADR-0038-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md) ·
+[ADR-0040](ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md) ·
+[ADR-0042](ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md) ·
 [10 — Policy Framework](../10-Policy-Framework.md)

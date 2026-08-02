@@ -1,4 +1,4 @@
-# FLOWX1039 — `Idempotency` is declared on a flow whose result cannot be recorded without redaction
+# FLOWX1040 — `Idempotency` is declared on a flow whose result cannot be recorded without redaction
 
 > **Severity:** Error · **Category:** FlowX · **Since:** P4
 > **Applies to:** a `.WithPolicy(...)` whose set declares an `Idempotency`, on a flow whose
@@ -65,7 +65,7 @@ public static class Policies
 {
     public static readonly PolicySet Admission = PolicySet.Named("transfer-admission")
         .RateLimit(permits: 20, TimeSpan.FromSeconds(1), RateLimitScope.Principal)
-        .Idempotency(TimeSpan.FromHours(24));    // ← FLOWX1039
+        .Idempotency(TimeSpan.FromHours(24));    // ← FLOWX1040
 }
 
 [Flow("transfer.execute", Profile = ExecutionProfile.Durable)]
@@ -140,21 +140,21 @@ correct program. That argument does not transfer, and the reason is
 | [FLOWX1032](FLOWX1032.md) | Is the **stage** this policy runs in implemented? |
 | [FLOWX1014](FLOWX1014.md) | Does the **capability** tolerate being called twice? |
 | [FLOWX1018](FLOWX1018.md) | Does the **capability** have side effects a cache would corrupt? |
-| **FLOWX1039** | Can the **platform record** what this flow produced, without changing it? |
+| **FLOWX1040** | Can the **platform record** what this flow produced, without changing it? |
 
 The three neighbours are all questions about the declaration's subject. This one is a question
 about the platform's ability to serve it, and it is the only one of the four whose answer
 depends on a contract the policy does not mention.
 
-A step can be FLOWX1039 and FLOWX1032 at once — an `Idempotency` and a `Cache` in one set — and
+A step can be FLOWX1040 and FLOWX1032 at once — an `Idempotency` and a `Cache` in one set — and
 the two report separately, because they are different facts and have different expiry dates.
 
 ## When this rule is deleted
 
 | Event | Action | Status |
 |---|---|---|
-| A read path for `[Sensitive]` values ships — envelope encryption, a key-management plugin — so a recorded value can be restored as itself | Delete this rule, `JournalPayload.TryToReplayableJson`, the runtime guard and this page. [ADR-0038](../adr/ADR-0038-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md) re-opens, along with the durable-resume loss its §1.3 distinguishes itself from | Outstanding |
-| `SensitiveMembers` stops being flow-wide | Narrow the rule to the steps whose results a marked name can reach. ADR-0038 §1.4's last rejection has to be re-argued first — a traversal that is wrong in the permissive direction ships the worked example above, silently | Outstanding |
+| A read path for `[Sensitive]` values ships — envelope encryption, a key-management plugin — so a recorded value can be restored as itself | Delete this rule, `JournalPayload.TryToReplayableJson`, the runtime guard and this page. [ADR-0042](../adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md) re-opens, along with the durable-resume loss its §1.3 distinguishes itself from | Outstanding |
+| `SensitiveMembers` stops being flow-wide | Narrow the rule to the steps whose results a marked name can reach. ADR-0042 §1.4's last rejection has to be re-argued first — a traversal that is wrong in the permissive direction ships the worked example above, silently | Outstanding |
 
 `IdempotencyReplayTests.ARedactedResultIsNeverRecorded` in `tests/FlowX.Runtime.Tests` is the
 executable half of this page: it drives a flow whose state bag carries a marked member through a
@@ -166,4 +166,4 @@ on the day the guard is removed, whether or not this rule is still raised.
 **Back to:** [diagnostics index](README.md) · [FLOWX1032](FLOWX1032.md) ·
 [FLOWX1014](FLOWX1014.md) · [FLOWX1036](FLOWX1036.md) ·
 [Policy framework](../10-Policy-Framework.md) ·
-[ADR-0038](../adr/ADR-0038-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md)
+[ADR-0042](../adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md)

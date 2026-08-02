@@ -918,7 +918,7 @@ public static class FlowXDiagnostics
         DiagnosticSeverity.Warning);
 
     /// <summary>
-    /// FLOWX1039 — an <c>Idempotency</c> window on a flow whose result cannot be recorded
+    /// FLOWX1040 — an <c>Idempotency</c> window on a flow whose result cannot be recorded
     /// without redaction.
     /// </summary>
     /// <remarks>
@@ -936,7 +936,7 @@ public static class FlowXDiagnostics
     /// the flow's input and output contracts and matched by name, case-insensitively, at every
     /// depth, against every document the flow writes. A per-step rule would have to traverse a
     /// contract graph reaching referenced assemblies, generics and collections, and a traversal
-    /// wrong in the permissive direction ships a silently fabricated replay. See ADR-0038 §1.4.
+    /// wrong in the permissive direction ships a silently fabricated replay. See ADR-0042 §1.4.
     /// </para>
     /// <para>
     /// The build-time rule is the report and not the guarantee: a policy set the compiler cannot
@@ -945,7 +945,7 @@ public static class FlowXDiagnostics
     /// </para>
     /// </remarks>
     public static readonly DiagnosticDescriptor IdempotencyCannotRecordARedactedResult = Create(
-        "FLOWX1039",
+        "FLOWX1040",
         "Idempotency is declared on a flow whose result cannot be recorded without redaction",
         "'{0}' declares an Idempotency window on '{1}', which declares '{2}' [Sensitive]. The " +
         "recorded result would carry '[redacted]' where that value was, and replaying it would " +

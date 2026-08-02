@@ -337,7 +337,7 @@ public sealed class JournalPayload
     /// available at the moment of the choice, which is to dispatch the capability again, so
     /// returning <see cref="Redacted"/> to a caller as if it were the value would be choosing a
     /// fabricated answer over a second call. See
-    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0038-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0038</a>.
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0042</a>.
     /// </para>
     /// <para>
     /// An empty payload answers <c>false</c> rather than yielding an empty document, for the

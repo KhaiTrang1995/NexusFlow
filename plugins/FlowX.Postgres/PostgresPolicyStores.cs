@@ -178,7 +178,7 @@ public sealed class PostgresRateLimiterStore : IRateLimiterStore
 /// <para>
 /// <strong>The record is <c>text</c> and is never parsed.</strong> What this store is handed has
 /// already been through <see cref="JournalPayload"/>'s single redacting exit
-/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0038-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0038</a>),
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0042</a>),
 /// and a store that parsed it would be a store that could reshape it — so a replay could hand
 /// back something the engine's generated reader reads differently from what was written. That is
 /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0016-postgres-journal-adapter.md">ADR-0016</a>'s

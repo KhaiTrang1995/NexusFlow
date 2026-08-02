@@ -408,7 +408,7 @@ public sealed class AdmissionAndIntegrityTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>ADR-0038's guard, and the executable half of FLOWX1039.</strong> The flow below
+    /// <strong>ADR-0042's guard, and the executable half of FLOWX1040.</strong> The flow below
     /// declares <c>DebtorIban</c> sensitive, so the document that would be recorded carries
     /// <c>[redacted]</c> where the value was. Replaying it would hand a later step the
     /// placeholder as if somebody had computed it — a fabricated answer, returned with a
@@ -519,7 +519,7 @@ public sealed class AdmissionAndIntegrityTests
 
     /// <summary>The key is the invocation's own, narrowed by the capability.</summary>
     /// <remarks>
-    /// Two things at once, and both are ADR-0037's. The key <em>contains</em>
+    /// Two things at once, and both are ADR-0041's. The key <em>contains</em>
     /// <c>ctx.IdempotencyKey</c>, rather than something minted beside it — the plan's
     /// instruction was to use the stable key that already exists. And it contains the capability
     /// id, so two policed steps of one flow under one invocation key do not share a record and
