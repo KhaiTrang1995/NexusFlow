@@ -63,7 +63,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: Restore
         run: dotnet restore FlowX.slnx
@@ -103,6 +103,7 @@ jobs:
         run: dotnet test tests/FlowX.Architecture.Tests --configuration Release --no-build --logger "console;verbosity=detailed"
 
       - name: Unit and integration tests
+        id: tests
         # Both connection strings are set, which is what makes the services above worth
         # having. The suites' own three-way rule then does the rest of the work: unset
         # means skip with a reason, and **set with no server reachable means FAIL, never
@@ -129,7 +130,7 @@ jobs:
         # The threshold is deliberately loose. It is not "zero skips" — a suite is entitled
         # to skip a case for a reason of its own — it is "not the ~166 that mean no store
         # was reachable at all".
-        if: always()
+        if: always() && steps.tests.outcome != 'skipped'
         run: |
           # Reads the run that already happened rather than running the suite a second
           # time — a guard that doubles the job's wall clock is a guard someone deletes.
@@ -156,7 +157,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: The template generates a project that builds clean and serves a request
         # templates/README.md called this "the acceptance test, and what CI should run",
@@ -183,7 +184,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: Trim and AOT analyzers must be clean
         # Constraint C2. For libraries the real gate is the analyzer, which
@@ -291,7 +292,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: The sample's manifest must stay compatible with its committed baseline
         # ADR-0005 makes the manifest a build artifact so it can be COMPARED. Until
@@ -336,7 +337,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'   # the flow-graph step below runs the CLI
+          global-json-file: global.json   # the flow-graph step below runs the CLI
 
       - name: Mermaid diagrams parse
         # 70+ diagrams. A diagram that does not render is a broken document, and GitHub
