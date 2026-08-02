@@ -344,11 +344,12 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1048](FLOWX1048.md) | Triggers on one flow require different input contracts | **Two transports on one class that cannot both be served, and four rules whose advice alternates between them: `FLOWX1038` says declare it as `Flow<ScheduledFire, TOut>` and `FLOWX1039` says declare it as `Flow<BusMessage, TOut>`, and neither can see the other** |
 | [FLOWX1046](FLOWX1046.md) | Agent tool declares no confirmation over declared side effects | **A tool a model may call to move money, publishing `confirmationRequired: false`: no client prompts, a server enforcing confirmation has nothing to enforce, and the flow that says so and the capability that charges the card are in two different files** |
 | [FLOWX1045](FLOWX1045.md) | Schedule jitter cannot be read | **Every replica of a deployment failing to become ready over a compile-time constant — `FlowSchedule.Create` throws on a `Jitter` it cannot read, and the value was a literal on the attribute the whole way; or a declared `PT0S` that reads as a spread and is not one** |
+| [FLOWX1049](FLOWX1049.md) | Stream lateness, checkpoint or parallelism cannot be read | **Every replica failing to become ready over `Lateness = "10s"` — the short form `Window` takes and the one spelling this property does not, printed in docs/09 §9 until `ADR-0065`; or a `Parallelism` of zero, which is a subscription that reads a stream and never runs a flow** |
 
 | [FLOWX1043](FLOWX1043.md) | Poll interval outlasts the poll's own timeout | A `PollUntil` whose first gap is longer than its budget: the instance wakes past it, so the loop is one call followed by the `OnTimeout` block — and one attempt then an escalation reads in a journal exactly like a dependency that never answered |
 | [FLOWX1044](FLOWX1044.md) | `PollUntil` requires an idempotent capability | **A second OCR job, a second charge or a second reservation on every attempt of a loop built to make tens of them** — the repetition `Idempotent = true` declares to be safe, asked of a construct that repeats after every success rather than only after a failure |
 
-The next is `FLOWX1049`. The range is `FLOWX1001`–`FLOWX1099`.
+The next is `FLOWX1050`. The range is `FLOWX1001`–`FLOWX1099`.
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -646,7 +647,19 @@ and reads oddly, and this produces a flow that runs correctly the first time and
 OCR job on the second attempt. [ADR-0058](../adr/ADR-0058-a-poll-is-one-wait-not-a-race-between-two.md)
 is the decision the pair belongs to.
 
-The next is `FLOWX1049`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1049` is claimed** — *stream lateness, checkpoint or parallelism cannot be read*: a
+`[StreamTrigger]` whose `Lateness` or `Checkpoint` is not a non-negative ISO-8601 duration, or
+whose `Parallelism` is below one. It is `FLOWX1045` one transport over, including the reason it is
+its own id rather than part of `FLOWX1042`: that rule asks whether the *flow* could be windowed
+and judges the window's shape family, this asks whether *this declaration's* remaining three
+arguments can be read, and a flow may declare two streams. `StreamWindowSpec.Read` takes four
+arguments and the split between the two rules is exactly the split between the first and the other
+three. Zero is refused for `Parallelism` and accepted for both durations, which is `Read`'s own
+boundary. [ADR-0065](../adr/ADR-0065-a-window-is-declared-where-it-is-served.md) is the decision
+the value belongs to, and the reason this rule was worth writing: the page that taught the
+declaration printed `Lateness = "10s"`, which no build and no test read.
+
+The next is `FLOWX1050`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

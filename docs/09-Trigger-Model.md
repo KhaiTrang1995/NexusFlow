@@ -21,7 +21,7 @@
 > | **HTTP** ([§6](#6-http-trigger)) | **served, and generated.** `[HttpTrigger]` → `TriggerReader` → `EndpointEmitter` → `FlowXEndpoints.g.cs` → `plugins/FlowX.Http`. Route, body binding, `Idempotency-Key` enforcement when `Idempotent = true`, and RFC 7807 with `[Sensitive]` redaction are all real; `samples/ecommerce` and `samples/workflow` call the generated `app.MapFlowX()`. **A flow that suspends is served too, since WP-64** — `202` with where to continue it, and one generated delivery route per signal it waits for ([ADR-0022](adr/ADR-0022-http-shape-of-a-suspending-flow.md)); *this row used to say the signal endpoint was a design, and §6's own box has the correction*. **The OpenAPI operation is still not generated** — nothing in this repository writes an OpenAPI document, and `Version` is dropped by the reader rather than published, despite §6's *"Generated: … the OpenAPI operation"* and the same claim on `HttpTriggerAttribute` itself |
 > | **Bus** ([§7](#7-bus-trigger)) | **served, and generated.** `[BusTrigger]` and `[KafkaTrigger]` → `TriggerReader` → `BusEmitter` → `FlowXSubscriptions.g.cs` → `FlowBusScan` → an `IBusConsumer`, and `samples/ecommerce` calls the generated `services.AddFlowXSubscriptions()`. *This row said "attribute only" and that "nothing consumes a topic, commits an offset or dead-letters"; all of it expired on 2026-08-01 except the offset, which is Kafka's word for something Redis Streams does with `XACK`.* `plugins/FlowX.Redis` consumes, acknowledges and dead-letters; there is still no `FlowX.Kafka`, and a `[KafkaTrigger]` on a host wired for another broker is refused at startup rather than served by it. **`MaxInFlight` and `DeadLetter` still reach no artifact** — both are tuning `FlowXOptions` now owns ([ADR-0039](adr/ADR-0039-a-bus-subscription-publishes-no-new-manifest-field.md)), and the dead-letter destination is derived from the source stream rather than read. §7's sequence diagram remains specification in its details: there is no in-memory retry per policy and no partition pause, only a delivery limit |
 > | **Schedule** ([§8](#8-schedule-trigger)) | **served, and generated.** `[CronTrigger]` → `TriggerReader` → `ScheduleEmitter` → `FlowXSchedules.g.cs` → `FlowScheduleScan`, and `samples/workflow` calls the generated `services.AddFlowXSchedules()`. `cron`, `timeZone` and `MissedFire` are all read; the first two publish, the third executes. **There is no leader and no election** — *this row said "leader-elected, never double-fires" was a design, and what replaced it is not an election*: every node computes the same occurrence, derives the same instance id from it, and the lease store and the journal's primary key refuse all but one ([ADR-0031](adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md)). `PerTenant` fans one occurrence out over the tenant directory; `Overlap` and `Jitter` execute too, since `samples/scheduler` — *this row said both "still reach nothing at all"* |
-> | **Stream** ([§9](#9-stream-trigger)) | **served, and generated.** *This row said "attribute only, over an unbuilt profile" until 2026-08-02.* `[StreamTrigger]` → `TriggerReader` → `StreamEmitter` → `FlowXStreamSubscriptions.g.cs` → `FlowStreamScan` → an `IStreamSource`, and `ExecutionProfile.Streaming` is journaled exactly as `Durable` is, which is what makes a rebuilt window deduplicate ([ADR-0055](adr/ADR-0055-a-window-names-the-instance-it-starts.md)). `Window`, `Lateness`, `Checkpoint` and `Parallelism` all reach the registration and none of them reaches the manifest, because they are tuning rather than address ([ADR-0034](adr/ADR-0034-the-manifest-publishes-a-schedules-address.md)'s rule, one transport over). **The engine is narrower than §9 below, and `FLOWX1042` is where a declaration finds out**: tumbling windows only — sliding, session and global are refused, because only a tumbling window's identity is a function of the event time alone. The watermark is observed event time and never a clock, so a stream that goes quiet leaves its last window open indefinitely ([ADR-0056](adr/ADR-0056-the-watermark-is-observed-never-wall-clock.md)). A flow declares `Flow<StreamWindowBatch, TOut>` and aggregates in a capability; `.Window(…)` / `.Aggregate(…)` are still not members of `IFlowBuilder<TIn, TOut>` — **§9's example still does not compile** |
+> | **Stream** ([§9](#9-stream-trigger)) | **served, and generated.** *This row said "attribute only, over an unbuilt profile" until 2026-08-02.* `[StreamTrigger]` → `TriggerReader` → `StreamEmitter` → `FlowXStreamSubscriptions.g.cs` → `FlowStreamScan` → an `IStreamSource`, and `ExecutionProfile.Streaming` is journaled exactly as `Durable` is, which is what makes a rebuilt window deduplicate ([ADR-0055](adr/ADR-0055-a-window-names-the-instance-it-starts.md)). `Window`, `Lateness`, `Checkpoint` and `Parallelism` all reach the registration and none of them reaches the manifest, because they are tuning rather than address ([ADR-0034](adr/ADR-0034-the-manifest-publishes-a-schedules-address.md)'s rule, one transport over). **The engine is narrower than §9 below, and `FLOWX1042` is where a declaration finds out**: tumbling windows only — sliding, session and global are refused, because only a tumbling window's identity is a function of the event time alone. The watermark is observed event time and never a clock, so a stream that goes quiet leaves its last window open indefinitely ([ADR-0056](adr/ADR-0056-the-watermark-is-observed-never-wall-clock.md)). A flow declares `Flow<StreamWindowBatch, TOut>` and aggregates in a capability. `.Window(…)` / `.Aggregate(…)` are not members of `IFlowBuilder<TIn, TOut>` and are not coming — *this row said §9's example did not compile, which was true until [ADR-0065](adr/ADR-0065-a-window-is-declared-where-it-is-served.md) decided the trigger declaration was right and corrected the example*; `TriggerModelDocTests` compiles the bytes on the page |
 > | **Agent** ([§10](#10-agent-trigger)) | **served, and generated.** *This row said "attribute only" and that "there is no MCP server, no tool descriptor and no JSON Schema generation"; all of it had expired before 2026-08-02 and the row was the last place still saying so.* `[AgentTrigger]` → `TriggerReader` → `AgentToolEmitter` → `FlowXAgentTools.g.cs` → `FlowAgentToolRegistration` → `McpServer`, and a tool call reaches the same `IStepDispatcher` an HTTP request does. §10's two properties are both read: `description` becomes the descriptor's, and `confirmation` decides `ConfirmationRequired` except that `Never` and `Always` override — the default is *confirm whenever the flow declares a consequence*. **`inputSchema` carries the contract's identity rather than a `$ref`**, because the `schemas` map it would point into is still one of the unwritten manifest fields — see [13-AI-Native](13-AI-Native.md), which names that same exception |
 > | **Change** ([§4](#4-trigger-kinds-and-their-semantics)) | **served, and generated.** *This row said "a kind with no attribute" until 2026-08-02.* `[ChangeTrigger]` → `TriggerReader` → `ChangeEmitter` → `FlowXChangeSubscriptions.g.cs` → `FlowChangeScan` → an `IChangeFeed`, and `samples/ecommerce` calls the generated `services.AddFlowXChangeSubscriptions()`. What it observes is the **outbox** — the change feed this platform already produces — read forward from a durable cursor without writing `published_at`, so a change subscription and `PostgresOutboxPublisher` coexist over one table ([ADR-0047](adr/ADR-0050-a-change-trigger-observes-the-outbox.md)). **Nothing is acknowledged and there is no dead-letter path:** a feed is a log with a cursor, the cursor advances past the longest prefix that reached a recorded outcome, and a change whose flow failed *as a value* is progress ([ADR-0048](adr/ADR-0048-a-change-feed-advances-a-cursor.md)). One subscription is read by one node at a time, so it scales by adding subscriptions rather than nodes — weaker than [ADR-0037](adr/ADR-0037-the-consumer-offers-per-key-order.md)'s per-partition concurrency and the honest cost of a cursor. The one `IChangeFeed` that ships is PostgreSQL's; a file watcher and CDC remain the summary's words rather than code |
 > | **Cli**, **Manual** | **kinds with no attribute.** Both are `TriggerKind` members and values of the manifest schema's closed `kind` enum, so a third-party `TriggerAttribute` carrying `[TriggerKind]` can declare one and reach the manifest with it. `FlowX.Abstractions` ships nothing that does, and `TriggerKind.Cli`'s summary names `flowx run`, which is not one of the CLI's five verbs ([22-CLI](22-CLI.md)) |
@@ -494,28 +494,52 @@ that never becomes ready rather than from a job that never runs.
 ## 9. Stream trigger
 
 ```csharp
-[Flow("telemetry.aggregate", Profile = ExecutionProfile.Streaming)]
-[StreamTrigger("device.telemetry", Window = "tumbling:1m", Lateness = "10s",
+[Flow("telemetry.aggregate", Version = "1.0.0", Profile = ExecutionProfile.Streaming)]
+[StreamTrigger("device.telemetry", Window = "tumbling:1m", Lateness = "PT10S",
     Checkpoint = "PT5S", Parallelism = 8)]
-public sealed partial class AggregateTelemetryFlow : Flow<TelemetryBatch, Aggregate>
+public sealed partial class AggregateTelemetryFlow : Flow<StreamWindowBatch, DeviceStats>
 {
-    protected override void Define(IFlowBuilder<TelemetryBatch, Aggregate> flow) => flow
-        .Window(w => w.Tumbling(TimeSpan.FromMinutes(1)).AllowLateness(TimeSpan.FromSeconds(10)))
-        .Aggregate<DeviceStats>((acc, r) => acc.Add(r))
+    protected override void Define(IFlowBuilder<StreamWindowBatch, DeviceStats> flow) => flow
+        .Step<FoldReadings>()
         .Step<PersistAggregate>()
-        .Emit<AggregateComputed>();
+        .Emit<AggregateComputed>(ctx => new AggregateComputed(
+            ctx.Input.Source, ctx.Input.WindowStart, ctx.Get<DeviceStats>().Readings))
+        .Return(ctx => ctx.Get<DeviceStats>());
 }
 ```
 
-| Window | Semantics |
-|---|---|
-| `Tumbling(d)` | fixed, non-overlapping |
-| `Sliding(size, advance)` | overlapping |
-| `Session(gap)` | activity-bounded |
-| `Global` | unbounded with explicit triggers |
+**The window is declared on the trigger and nowhere else, and the fold is a
+capability.** `IFlowBuilder` has no `.Window(…)` and no `.Aggregate(…)`: a window
+closes *before* the instance exists, so a node for it would sit in a plan the step
+loop steps over for ever, and an accumulator lambda is the `.Do(lambda)` this
+builder exists to refuse. `FoldReadings` is where the arithmetic lives, and
+`StreamWindowBatch` — an interval and the records the watermark closed it over —
+is the only input contract a stream-triggered flow can take. `FLOWX1042` reports
+anything narrower; [ADR-0065](adr/ADR-0065-a-window-is-declared-where-it-is-served.md)
+is the decision and its argument.
 
-Watermarks drive window closure; records later than `Lateness` are routed to a
-side output rather than dropped silently. Backpressure per
+`Window` takes the short form `tumbling:1m`. `Lateness` and `Checkpoint` are
+ISO-8601 and accept no second spelling; `FLOWX1049` reports a value
+`FlowStreamCatalog` would refuse at startup.
+
+| Window | Semantics | Today |
+|---|---|---|
+| `tumbling:<d>` | fixed, non-overlapping | **served** |
+| sliding (size, advance) | overlapping | refused — `FLOWX1042` |
+| session (gap) | activity-bounded | refused — `FLOWX1042` |
+| global | unbounded with explicit triggers | refused — `FLOWX1042` |
+
+The three refusals are not a backlog item. A sliding or session window assigns a
+record to a window whose bounds are not a function of the event time alone, so a
+window rebuilt after a crash would not derive the id that deduplicates it
+([ADR-0055](adr/ADR-0055-a-window-names-the-instance-it-starts.md)); a global
+window is never closed by a watermark, so the checkpoint would never advance.
+
+Watermarks drive window closure and are **observed event time, never wall-clock**
+([ADR-0056](adr/ADR-0056-the-watermark-is-observed-never-wall-clock.md)) — a quiet
+stream leaves its last window open until data closes it, rather than a clock.
+Records later than `Lateness` are routed to a side output rather than dropped
+silently. Backpressure per
 [06 §10](06-Execution-Engine.md#10-backpressure-streaming-profile).
 
 ---

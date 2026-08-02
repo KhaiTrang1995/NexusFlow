@@ -1528,6 +1528,61 @@ public static class FlowXDiagnostics
         "throws either way.",
         DiagnosticSeverity.Error);
 
+    /// <summary>
+    /// FLOWX1049: a <c>[StreamTrigger]</c> declares a <c>Lateness</c>, <c>Checkpoint</c> or
+    /// <c>Parallelism</c> that <c>StreamWindowSpec.Read</c> refuses.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><see cref="ScheduleJitterCannotBeRead"/>'s rule, one transport over.</strong> Same
+    /// shape, same reason for being its own id, same consequence: the three values reach
+    /// <c>FlowStreamCatalog.Add</c> at composition time and are thrown on there, so a deployment
+    /// finds out from a pod that never becomes ready over values that were compile-time constants
+    /// the whole way.
+    /// </para>
+    /// <para>
+    /// <strong>It covers exactly what <see cref="StreamFlowCannotBeWindowed"/> does not.</strong>
+    /// <c>StreamWindowSpec.Read</c> takes four arguments; FLOWX1042 judges the first, because a
+    /// window shape this engine cannot serve is a different defect with a different fix. This
+    /// rule judges the other three, and they are one rule rather than three because the
+    /// consequence is identical — <c>Add</c> throws, no subscription is registered, the stream is
+    /// never read — and an author who legitimately suppressed it for one would suppress it for
+    /// all.
+    /// </para>
+    /// <para>
+    /// <strong>Zero is refused for <c>Parallelism</c> and accepted for the two durations</strong>,
+    /// which is <c>Read</c>'s own boundary rather than a second opinion about it.
+    /// <c>Parallelism = 0</c> reads as "the engine decides" and is a subscription that reads a
+    /// stream and never runs a flow; <c>Lateness = "PT0S"</c> is the ordinary declaration for a
+    /// stream that is already in order, and <c>Checkpoint = "PT0S"</c> means commit after every
+    /// window. Only a negative duration is refused. An omitted property carries the attribute's
+    /// default and is silent.
+    /// </para>
+    /// <para>
+    /// <strong>docs/09 §9 printed <c>Lateness = "10s"</c> for four months.</strong> It is the
+    /// short form <c>Window</c> takes and the one spelling <c>Lateness</c> does not, which is
+    /// precisely the mistake a reader copies from a page — and nothing between that page and a
+    /// failed deployment read the value
+    /// (<a href="../adr/ADR-0065-a-window-is-declared-where-it-is-served.md">ADR-0065</a>).
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor StreamWindowArgumentCannotBeRead = Create(
+        "FLOWX1049",
+        "Stream lateness, checkpoint or parallelism cannot be read",
+        "Flow '{0}' declares {1} on a [StreamTrigger] and this host would refuse the " +
+        "registration: {2}",
+        "Lateness and Checkpoint are ISO-8601 durations — PT10S, PT5S, PT1M — and Parallelism is " +
+        "a count of at least one. Unlike Window, which takes the short form tumbling:1m, the two " +
+        "durations accept no second spelling: one value written two ways is two ways for a " +
+        "manifest diff to report a change nobody made. A value StreamWindowSpec.Read cannot read " +
+        "reaches FlowStreamCatalog.Add at composition time and is thrown on there, because a " +
+        "subscription this host cannot read in full should be a pod that never becomes ready " +
+        "rather than a stream that is never consumed. Both halves of that failure are avoidable " +
+        "here: all three are compile-time constants. Write an ISO-8601 duration that is not " +
+        "negative, a Parallelism of one or more, or omit the property to take the default. A " +
+        "suppression buys nothing: the registration throws either way.",
+        DiagnosticSeverity.Error);
+
     /// <summary>FLOWX1043 — a poll whose first gap is longer than the poll's own timeout.</summary>
     /// <remarks>
     /// <para>
@@ -1638,6 +1693,7 @@ public static class FlowXDiagnostics
         AgentToolDeclaresNoConfirmation,
         SubjectCannotBeRecorded,
         ScheduleJitterCannotBeRead,
+        StreamWindowArgumentCannotBeRead,
         PollIntervalOutlastsItsTimeout,
         PollRequiresIdempotency);
 

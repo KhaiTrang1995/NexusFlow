@@ -109,6 +109,7 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
             FlowXDiagnostics.ChangeFlowCannotBeObserved,
             FlowXDiagnostics.StreamFlowCannotBeWindowed,
             FlowXDiagnostics.ScheduleJitterCannotBeRead,
+            FlowXDiagnostics.StreamWindowArgumentCannotBeRead,
             FlowXDiagnostics.TriggerInputContractsConflict);
 
     /// <inheritdoc />
@@ -175,6 +176,7 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
         ReportUnconsumableSubscriptions(context, type, attributes);
         ReportUnobservableChangeSubscriptions(context, type, attributes);
         ReportUnwindowableStreams(context, type, attributes);
+        ReportUnreadableWindowArguments(context, type, attributes);
     }
 
     /// <summary>
@@ -457,6 +459,143 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
               "derive the id that deduplicates it, and a global window is never closed by a " +
               "watermark so nothing would ever run — declare Window = \"tumbling:<duration>\"";
     }
+
+    /// <summary>
+    /// Reports FLOWX1049 on each <c>[StreamTrigger]</c> argument <c>StreamWindowSpec.Read</c>
+    /// would refuse and <see cref="ReportUnwindowableStreams"/> does not judge.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ReportUnreadableJitter"/>'s arrangement, one transport over: per attribute
+    /// rather than per flow, and reported whether or not the flow is windowable at all, because
+    /// the two are independent defects with independent fixes.
+    /// </para>
+    /// <para>
+    /// <strong>One report per attribute, naming the first argument it would be refused
+    /// for.</strong> <c>Read</c> stops at the first failure too, so a declaration with two bad
+    /// values gets the same message from this rule and from the host — and an author repairing
+    /// one and rebuilding is told about the other, which is the order the values are validated
+    /// in rather than a rule that hides one behind another.
+    /// </para>
+    /// </remarks>
+    private static void ReportUnreadableWindowArguments(
+        SymbolAnalysisContext context, INamedTypeSymbol type, ImmutableArray<AttributeData> attributes)
+    {
+        foreach (var attribute in attributes)
+        {
+            if (attribute.AttributeClass?.ToDisplayString() != StreamTriggerAttributeName)
+            {
+                continue;
+            }
+
+            if (UnreadableWindowArgument(attribute) is not { } refusal)
+            {
+                continue;
+            }
+
+            context.ReportDiagnostic(Diagnostic.Create(
+                FlowXDiagnostics.StreamWindowArgumentCannotBeRead,
+                LocationOf(attribute, type, context.CancellationToken),
+                FlowIdOf(type, attributes),
+                refusal.Declaration,
+                refusal.Reason));
+        }
+    }
+
+    /// <summary>What this declaration writes, and why the host would refuse it.</summary>
+    private readonly struct Refusal(string declaration, string reason)
+    {
+        /// <summary>The property and the value, as the author wrote them.</summary>
+        public string Declaration { get; } = declaration;
+
+        /// <summary>Why <c>StreamWindowSpec.Read</c> would not take it.</summary>
+        public string Reason { get; } = reason;
+    }
+
+    /// <summary>
+    /// The first of <c>Lateness</c>, <c>Checkpoint</c> and <c>Parallelism</c> the host would
+    /// refuse, or <c>null</c> when it would take all three.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Checked in <c>StreamWindowSpec.Read</c>'s own order</strong>, so the value this
+    /// names is the value the host would name.
+    /// </para>
+    /// <para>
+    /// <strong>Parsed here rather than by calling the runtime's reader, which this assembly
+    /// cannot reference.</strong> <see cref="System.Xml.XmlConvert.ToTimeSpan"/> is what
+    /// <c>StreamWindowSpec.Read</c> calls and it is available on netstandard2.0, so the two are
+    /// the same function rather than two parsers to keep in step —
+    /// <see cref="UnreadableJitterReason"/> takes the same route for the same reason. The
+    /// <em>window</em> is the one argument that cannot be checked this way, because its short
+    /// form has no framework parser; <c>FLOWX1042</c> judges only its shape family for that
+    /// reason.
+    /// </para>
+    /// </remarks>
+    private static Refusal? UnreadableWindowArgument(AttributeData attribute)
+    {
+        if (Argument(attribute, "Lateness") is string lateness &&
+            UnreadableDurationReason(lateness) is { } latenessReason)
+        {
+            return new Refusal($"Lateness = \"{lateness}\"", latenessReason);
+        }
+
+        if (Argument(attribute, "Checkpoint") is string checkpoint &&
+            UnreadableDurationReason(checkpoint) is { } checkpointReason)
+        {
+            return new Refusal($"Checkpoint = \"{checkpoint}\"", checkpointReason);
+        }
+
+        return Argument(attribute, "Parallelism") is int parallelism && parallelism < 1
+            ? new Refusal(
+                $"Parallelism = {parallelism.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+                "it must be at least one. Zero is not 'the engine decides' — it is a " +
+                "subscription that reads a stream and never runs a flow")
+            : null;
+    }
+
+    /// <summary>Why this duration is not one the host can read, or <c>null</c> when it is.</summary>
+    /// <remarks>
+    /// <strong>Zero is accepted, unlike <see cref="UnreadableJitterReason"/>'s.</strong> A jitter
+    /// of nothing asks for a spread and gets none; a lateness of nothing is the ordinary
+    /// declaration for a stream already in order, and a checkpoint of nothing means commit after
+    /// every window. Only a negative value is refused, which is <c>StreamWindowSpec.Read</c>'s
+    /// own boundary rather than a second opinion about it.
+    /// </remarks>
+    private static string? UnreadableDurationReason(string value)
+    {
+        if (value.Trim().Length == 0)
+        {
+            return "it is empty. Omit the property to take the attribute's default";
+        }
+
+        System.TimeSpan duration;
+
+        try
+        {
+            duration = System.Xml.XmlConvert.ToTimeSpan(value);
+        }
+        catch (System.FormatException)
+        {
+            return "it is not an ISO-8601 duration — write PT10S, PT5S or PT1M. The short form " +
+                   "Window takes, '1m', is not a second spelling this property accepts";
+        }
+        catch (System.OverflowException)
+        {
+            return "it does not fit in a TimeSpan";
+        }
+
+        return duration < System.TimeSpan.Zero
+            ? "it is negative, and neither a lateness allowance nor a commit interval can run " +
+              "backwards"
+            : null;
+    }
+
+    /// <summary>One named argument's value, or <c>null</c> when the declaration omits it.</summary>
+    private static object? Argument(AttributeData attribute, string name) => attribute.NamedArguments
+        .Where(pair => pair.Key == name)
+        .Select(static pair => pair.Value.Value)
+        .FirstOrDefault();
 
     /// <summary>Whether the flow declares <c>Profile = ExecutionProfile.Streaming</c>.</summary>
     private static bool IsStreaming(ImmutableArray<AttributeData> attributes) => attributes
