@@ -50,7 +50,7 @@
 > being made fast. See
 > [§5d](#5d-p2--durable-execution--nearly-complete-qr2-measured-on-demand-b7-and-b8-not-at-all).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** **2271/2271 passing across 17 assemblies**
+> **Build:** 0 warnings, 0 errors · **Tests:** **2587/2587 passing across 19 assemblies**
 > (a large share against a live PostgreSQL 16.13 and Redis 7.0.15; **0 failed, 0 skipped**).
 > *This read **2004**, the count before the timer half, the manifest's wait, the 202 shape, three policy rules, the QR2 nightly and the telemetry seam merged. The figure here is
 > re-measured on the merged tree — `dotnet test FlowX.slnx -c Release` with both stores
@@ -1627,30 +1627,33 @@ executes it, not when something publishes it.*
 | Broker publication | **runs** | `RedisStreamEventPublisher`, one stream per `partition_key`; `PublisherConformance` holds two implementations |
 | HTTP trigger | **runs** | `EndpointEmitter`; `202` for a flow that suspends; generated signal routes |
 | Schedule trigger | **runs** | `ScheduleEmitter`; one instance per occurrence across a fleet, no leader |
-| **Policy engine · stage 4** | **runs** | `Timeout`, `Retry`, `CircuitBreaker`, `Bulkhead` |
-| **Policy engine · stages 1, 3, 5, 7** | **declared, inert** | `RateLimit`, `Idempotency`, `Cache`, `Audit` — `FLOWX1032` reports all four at build time |
-| **Authorisation** | **runs, partly** | `Authenticated` and `Permission` refuse; `Public` and `Internal` permit; `Policy` refused at build time (`FLOWX1037`) |
+| **Policy engine · all eight kinds** | **runs** | stage 4's four plus `RateLimit`, `Idempotency`, `Cache`, `Audit`. `FLOWX1032` deleted with the gap it reported |
+| **Authorisation** | **runs** | `Authenticated` and `Permission` refuse; `Public` and `Internal` permit by construction; `Policy` refused at build time (`FLOWX1037`). A fail-open where `Policy` permitted everybody is fixed |
 | Manifest | **runs** | a build artifact, byte-pinned, diffed by 40-odd rules |
 | Telemetry · traces and metrics | **runs** | 11 of 13 metrics, 10 of 13 attributes; B6's allocation half gated |
-| **Telemetry · logs** | **absent** | [12 §4](docs/12-Observability.md#4-logs) is unbuilt, and blocked on a decision: `AbstractionsHasNoDependencies` forbids a package reference and `Microsoft.Extensions.Logging.Abstractions` is one |
-| **Bus / Stream / Change / Agent triggers** | **declared, unbound** | four of eight `TriggerKind` members; a flow declaring one declares an address nothing serves |
-| **Multi-tenancy** | **absent** | `ITenantResolver`, four isolation levels and RLS are specified in [16](docs/16-Multi-Tenant.md) and implemented by nothing |
+| **Telemetry · logs** | **runs** | `FlowXLog` over `DiagnosticSource`; `src/FlowX.Logging` bridges to `ILogger` without moving `AbstractionsHasNoDependencies` |
+| **Triggers** | **7 of 8 bound** | HTTP, Schedule, Bus, Change, Agent, Manual, Cli. **`Stream` alone is unbound**, blocked on the stream engine |
+| **Multi-tenancy** | **runs** | resolution at admission, `Row` and `Schema` isolation, five of six fairness mechanisms. `Database` refused as a topology, not a level ([ADR-0051](docs/adr/ADR-0051-database-isolation-is-a-topology-not-a-runtime-level.md)) |
 | **Stream engine** | **absent** | no checkpoint format, no watermark, no windowing — P7, and the least specified phase |
-| **AI surface / MCP** | **absent** | [13](docs/13-AI-Native.md) specifies the tool descriptor and the `tools/call` sequence; nothing serves it |
+| **AI surface / MCP** | **runs** | `plugins/FlowX.Mcp`; `tools/list` is a projection of the manifest and `tools/call` meets the same authorisation stance HTTP does |
 | **Studio** | **absent** | sixteen one-line mentions and no design |
 
-**What is planned next**, in the order the gaps argue for rather than by phase number:
+**What is planned next.** Every subsystem above either runs or is one of two the roadmap
+cannot yet specify. What is left is narrower than a phase:
 
-1. **The four inert policy kinds**, which deletes `FLOWX1032`. `Audit` also closes the hole
-   this week's authorisation work opened and named: *who authorised a step now has two
-   answers across a wait, and no audit event records either.* `RateLimit` needs a
-   **distributed** store — a process-local limiter admits n× the declared rate across n
-   nodes, which is worse than none.
-2. **A third transport (`Bus`).** `KafkaTriggerAttribute` exists and `RedisStreamEventPublisher`
-   proves the output half; the input half is unbound, so a flow can publish to a broker and
-   cannot be started by one.
-3. **Multi-tenancy.** The largest wholly-unbuilt subsystem with a real specification behind it.
-4. **Logs**, once the abstraction question is decided.
+1. **A non-HTTP trigger cannot start a flow in a tenanted deployment.** Change, bus and
+   schedule start with no principal, so the tenant resolver refuses them — and the refusal
+   is not a holding disposition, so a change cursor commits past work that never ran. Only
+   HTTP carries a caller. This is the widest gap left.
+2. **Failure isolation in the tenant sweeps.** `PostgresTenantRecoveryIndex` and
+   `PostgresTenantTimerIndex` return the first tenant's failure and abandon the page.
+3. **Journal write budget per tenant** — [16 §4](docs/16-Multi-Tenant.md)'s sixth fairness
+   mechanism. A shared budget costs a limiter round trip per step commit; a process-local
+   one is what [ADR-0040](docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md)
+   refuses. It needs a decision, not code.
+4. **Stream engine**, and `Stream` behind it — **not next**. Nothing defines the checkpoint
+   format, watermark generation or window journaling, so building it means inventing it.
+5. **Studio** — **not next**. Sixteen one-line mentions and no design.
 
 ## 5f. The vision's success criteria · current state
 
