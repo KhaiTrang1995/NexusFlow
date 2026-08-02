@@ -23,6 +23,10 @@ namespace FlowX;
 /// The event body exactly as the store held it, or null for a contract with no body. Deliberately
 /// a string and not a deserialised object — see the remarks.
 /// </param>
+/// <param name="TenantId">
+/// Whose event this is, as the publishing side wrote it onto the delivery, or null when the
+/// producing deployment did not isolate.
+/// </param>
 /// <remarks>
 /// <para>
 /// <strong>A bus-triggered flow must take this as its input</strong>, and <c>FLOWX1039</c>
@@ -47,6 +51,15 @@ namespace FlowX;
 /// see which message started the instance — including the <see cref="EventId"/> the row's own
 /// primary key was derived from.
 /// </para>
+/// <para>
+/// <strong><see cref="TenantId"/> is a broker field this platform's own publisher wrote, and
+/// that is the whole of why it may be believed.</strong> <c>docs/16 §3</c> allows a bus tenant
+/// from "a message header set by a FlowX producer" and forbids one from "untrusted payload
+/// fields" — so it travels beside the body rather than in it, is written from
+/// <c>OutboxRecord.TenantId</c> at publication, and is read back by the consumer plugin. A
+/// producer outside this platform that sets the field is a producer the deployment chose to
+/// subscribe to, which is the same trust it already extends to every other field on the entry.
+/// </para>
 /// </remarks>
 public sealed record BusMessage(
     Guid EventId,
@@ -54,4 +67,5 @@ public sealed record BusMessage(
     string Type,
     string SchemaVersion,
     string? PartitionKey,
-    string? Payload);
+    string? Payload,
+    string? TenantId = null);

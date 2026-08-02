@@ -139,6 +139,10 @@ public sealed class TriggerModel : IEquatable<TriggerModel>
 /// declaration back to it. A flow may declare several schedules.
 /// </param>
 /// <param name="MissedFire">The declared <c>MissedFirePolicy</c> member, by name.</param>
+/// <param name="PerTenant">
+/// Whether the declaration asked for one firing per tenant, and therefore a fan-out over the
+/// host's <c>ITenantDirectory</c> rather than a single instance per occurrence.
+/// </param>
 /// <remarks>
 /// Separate from <see cref="TriggerModel"/> because that model is address and admission only,
 /// and a missed-fire policy is neither: it decides what this deployment does about work that is
@@ -148,7 +152,7 @@ public sealed class TriggerModel : IEquatable<TriggerModel>
 /// remarks say operational tuning is deliberately absent, one field away from
 /// <c>ManifestWriter</c> writing it.
 /// </remarks>
-public sealed record ScheduleDeclaration(string Cron, string MissedFire);
+public sealed record ScheduleDeclaration(string Cron, string MissedFire, bool PerTenant = false);
 
 /// <summary>Every trigger one flow declares, keyed by the flow's business identity.</summary>
 /// <remarks>

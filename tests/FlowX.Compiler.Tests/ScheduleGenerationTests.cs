@@ -144,6 +144,37 @@ public sealed class ScheduleGenerationTests
             .ShouldContain("global::FlowX.MissedFirePolicy.RunAll");
     }
 
+    /// <summary><c>PerTenant</c> reaches the registration, and its absence reaches it too.</summary>
+    /// <remarks>
+    /// <strong>It was declared and inert.</strong> The attribute has carried this property since
+    /// the trigger model shipped and nothing read it, so a <c>[CronTrigger(PerTenant = true)]</c>
+    /// fired once for the whole deployment — under no tenant, which an isolating host then
+    /// refused. It is the term <c>FlowScheduleScan</c> fans out on, so a registration that
+    /// dropped it would put the schedule back where it was with nothing failing.
+    /// </remarks>
+    [Theory]
+    [InlineData("[CronTrigger(\"0 2 * * *\", PerTenant = true)]", "true")]
+    [InlineData("[CronTrigger(\"0 2 * * *\")]", "false")]
+    public void TheDeclaredPerTenantFlagReachesTheRegistration(string declaration, string expected)
+    {
+        var source = Scheduled.Replace(
+            "[CronTrigger(\"0 2 * * *\", TimeZone = \"Europe/Berlin\")]",
+            declaration,
+            StringComparison.Ordinal);
+
+        var generated = SchedulesIn(RunOn(source, HostingStub)).ShouldNotBeNull();
+
+        generated.ShouldContain("global::FlowX.MissedFirePolicy.RunOnce,");
+
+        generated
+            .Split('\n')
+            .Select(static line => line.Trim())
+            .ShouldContain(
+                expected + ");",
+                "the flag is the registration's last argument, so its line is the one that " +
+                "decides whether the occurrence fans out.");
+    }
+
     /// <summary>
     /// A scheduled flow whose input is not <c>ScheduledFire</c> is reported, not skipped.
     /// </summary>

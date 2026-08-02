@@ -169,7 +169,8 @@ public static class ScheduleEmitter
         writer.Line("            .GetRequiredService<" + flow + ".Dispatcher>(provider),");
         writer.Line("        " + Quote(schedule.Cron) + ",");
         writer.Line("        " + Quote(schedule.TimeZone) + ",");
-        writer.Line("        global::FlowX.MissedFirePolicy." + schedule.MissedFire + ");");
+        writer.Line("        global::FlowX.MissedFirePolicy." + schedule.MissedFire + ",");
+        writer.Line("        " + (schedule.PerTenant ? "true" : "false") + ");");
     }
 
     private static string Quote(string value) =>

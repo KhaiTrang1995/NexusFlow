@@ -92,13 +92,18 @@ public sealed class RecordingBusConsumer : IBusConsumer
     /// How many separate entries to stage, all carrying the same identity — which is what a broker
     /// offering one message to ten nodes looks like from here.
     /// </param>
+    /// <param name="tenantId">
+    /// The tenant the publishing side wrote onto the entry, or null for a message from a
+    /// deployment that does not isolate.
+    /// </param>
     /// <returns>The identity staged, so a caller can redeliver it.</returns>
     public Guid Stage(
         string topic,
         string? partitionKey = null,
         Guid? eventId = null,
         string? payload = null,
-        int copies = 1)
+        int copies = 1,
+        string? tenantId = null)
     {
         var identity = eventId ?? Guid.NewGuid();
 
@@ -110,7 +115,8 @@ public sealed class RecordingBusConsumer : IBusConsumer
 
                 _entries[token] = new Entry(
                     partitionKey,
-                    new BusMessage(identity, topic, topic, "1.0.0", partitionKey, payload),
+                    new BusMessage(
+                        identity, topic, topic, "1.0.0", partitionKey, payload, tenantId),
                     Unreadable: null,
                     Deliveries: 0);
             }

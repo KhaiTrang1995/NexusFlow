@@ -200,10 +200,11 @@ public static class TriggerReader
     /// (<a href="../../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0031</a>).
     /// </para>
     /// <para>
-    /// <c>MissedFire</c> is the only property here because it is the only one this release's
-    /// runtime reads. <c>Overlap</c>, <c>Jitter</c> and <c>PerTenant</c> are declared on the same
-    /// attribute and reach nothing, which <c>docs/09-Trigger-Model.md §8</c> records rather than
-    /// this method pretending otherwise.
+    /// <c>MissedFire</c> and <c>PerTenant</c> are the properties here because they are the ones
+    /// this release's runtime reads — the first decides what happens to a firing that is late,
+    /// the second whether an occurrence is one instance or one per tenant. <c>Overlap</c> and
+    /// <c>Jitter</c> are declared on the same attribute and reach nothing, which
+    /// <c>docs/09-Trigger-Model.md §8</c> records rather than this method pretending otherwise.
     /// </para>
     /// </remarks>
     public static IReadOnlyList<ScheduleDeclaration> ReadSchedules(INamedTypeSymbol? flow)
@@ -223,7 +224,8 @@ public static class TriggerReader
                 continue;
             }
 
-            schedules.Add(new ScheduleDeclaration(cron, MissedFireName(attribute)));
+            schedules.Add(new ScheduleDeclaration(
+                cron, MissedFireName(attribute), PerTenantFlag(attribute)));
         }
 
         return schedules;
@@ -253,6 +255,19 @@ public static class TriggerReader
             _ => "RunOnce",
         };
     }
+
+    /// <summary>Whether the declaration asked for one firing per tenant.</summary>
+    /// <remarks>
+    /// Read from the named argument rather than defaulted to the deployment's isolation level,
+    /// which the compiler cannot see and which is a run-time setting anyway: whether a schedule
+    /// is per tenant is the author's statement about the <em>work</em>, and a nightly
+    /// reconciliation is per tenant on a host that isolates and still per tenant on one that
+    /// does not — where the directory is empty and the fan-out fires nothing.
+    /// </remarks>
+    private static bool PerTenantFlag(AttributeData attribute) => attribute.NamedArguments
+        .Where(pair => pair.Key == "PerTenant")
+        .Select(pair => pair.Value.Value)
+        .FirstOrDefault() is true;
 
     /// <summary>Whether an attribute derives from <c>FlowX.TriggerAttribute</c>.</summary>
     /// <remarks>

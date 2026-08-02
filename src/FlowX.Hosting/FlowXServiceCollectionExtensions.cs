@@ -136,6 +136,13 @@ public static class FlowXServiceCollectionExtensions
         // nothing and needs no branch.
         services.TryAddSingleton<FlowScheduleCatalog>();
 
+        // TryAdd, so a store that knows the tenant set better wins whichever order the two
+        // registrations run in: AddFlowXPostgres registers its own over tenant_schema with a
+        // plain AddSingleton, which is resolved in preference to this one when it comes second
+        // and suppresses this one when it comes first.
+        services.TryAddSingleton<ITenantDirectory>(static provider => new DeclaredTenantDirectory(
+            [.. provider.GetRequiredService<IOptions<FlowXOptions>>().Value.Tenants]));
+
         // A third loop, and not a query on either of the first two. A schedule occurrence is
         // computed rather than read off a row, so this sweep touches no index at all — folding
         // it into FlowTimerService would mean one loop whose interval means two different
@@ -293,7 +300,12 @@ public static class FlowXServiceCollectionExtensions
             provider.GetRequiredService<FlowScheduleCatalog>(),
             durability,
             provider.GetRequiredService<IOptions<FlowXOptions>>().Value,
-            provider.GetRequiredService<IClock>());
+            provider.GetRequiredService<IClock>(),
+
+            // Optional, because a per-tenant schedule is the only thing that reads it and most
+            // deployments declare none. A host that wired one and no directory fires nothing
+            // rather than firing once with no tenant.
+            provider.GetService<ITenantDirectory>());
     }
 
     /// <summary>The bus pass, or null when this host has no broker or no journal.</summary>
@@ -516,6 +528,9 @@ public static class FlowScheduleRegistration
     /// <param name="cron">The five-field expression, exactly as the manifest published it.</param>
     /// <param name="timeZone">The IANA zone the expression is read in.</param>
     /// <param name="missedFire">Behaviour after downtime.</param>
+    /// <param name="perTenant">
+    /// Whether one occurrence is one firing per tenant, from <c>CronTriggerAttribute.PerTenant</c>.
+    /// </param>
     /// <returns>The same provider, so registrations chain.</returns>
     /// <exception cref="ArgumentException">
     /// The expression or the zone could not be read, or the flow does not declare
@@ -528,14 +543,16 @@ public static class FlowScheduleRegistration
         Func<IServiceProvider, IStepDispatcher> dispatcher,
         string cron,
         string timeZone,
-        MissedFirePolicy missedFire)
+        MissedFirePolicy missedFire,
+        bool perTenant = false)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(dispatcher);
 
         services.GetRequiredService<FlowScheduleCatalog>().Add(
-            FlowSchedule.Create(plan.Flow.Id, plan.Flow.Version, cron, timeZone, missedFire),
+            FlowSchedule.Create(
+                plan.Flow.Id, plan.Flow.Version, cron, timeZone, missedFire, perTenant),
             plan,
             dispatcher(services));
 

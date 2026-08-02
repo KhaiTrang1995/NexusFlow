@@ -89,6 +89,19 @@ public static class RedisKeys
     public const string PayloadField = "payload";
 
     /// <summary>
+    /// The field holding the tenant the emitting instance belonged to, absent when it had none.
+    /// </summary>
+    /// <remarks>
+    /// <strong>A field beside the body and never inside it</strong> — <c>docs/16 §3</c> allows a
+    /// bus tenant from "a message header set by a FlowX producer" and forbids one from an
+    /// untrusted payload field, and the difference is exactly this: the entry's fields are
+    /// written by the publisher from <c>OutboxRecord.TenantId</c>, while the payload is whatever
+    /// a flow emitted. A consumer that read the tenant out of the JSON would be believing the
+    /// event author.
+    /// </remarks>
+    public const string TenantIdField = "tenant-id";
+
+    /// <summary>
     /// The stream one partition key's events are appended to.
     /// </summary>
     /// <param name="keyPrefix">The configured prefix, from <see cref="RedisStreamOptions"/>.</param>

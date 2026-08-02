@@ -278,6 +278,28 @@ public sealed class FlowXOptions
     public TenantIsolation TenantIsolation { get; set; } = TenantIsolation.None;
 
     /// <summary>
+    /// The tenants a <c>[CronTrigger(PerTenant = true)]</c> schedule fans out over. Empty by
+    /// default, which fires nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one place a deployment has to name its tenants, and only because a cron
+    /// occurrence knows nothing about who it is for.</strong> Every other tenanted path derives
+    /// its tenant from the work in front of it — a claim, a schema, a broker field — and needs
+    /// no list at all. This one is a fan-out, and a fan-out needs a set.
+    /// </para>
+    /// <para>
+    /// <strong>Ignored where a store can answer better.</strong> At
+    /// <see cref="TenantIsolation.Schema"/> the set is <c>tenant_schema</c>, so
+    /// <c>AddFlowXPostgres</c> registers an <see cref="ITenantDirectory"/> over the registry and
+    /// a tenant provisioned a moment ago gets its firing without a redeploy. This list is what
+    /// answers at <see cref="TenantIsolation.Row"/>, where no such registry exists and a tenant
+    /// that has never run a flow is indistinguishable from one that does not exist.
+    /// </para>
+    /// </remarks>
+    public IList<string> Tenants { get; } = [];
+
+    /// <summary>
     /// What each tenant is bounded to, so that one cannot starve another. Nothing, by default.
     /// </summary>
     /// <remarks>

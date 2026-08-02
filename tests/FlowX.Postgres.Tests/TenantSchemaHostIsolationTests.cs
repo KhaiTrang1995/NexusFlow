@@ -206,8 +206,8 @@ public sealed class TenantSchemaHostIsolationTests
     }
 
     /// <summary>
-    /// Turning tenant schemas on swaps every node-wide loop for its fan-out, and makes the one
-    /// that cannot fan out refuse instead of observing an empty table.
+    /// Turning tenant schemas on swaps every node-wide loop for its fan-out, including the one
+    /// that used to refuse.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -216,15 +216,15 @@ public sealed class TenantSchemaHostIsolationTests
     /// which is answerable offline.
     /// </para>
     /// <para>
-    /// <strong>The change feed's refusal is the half worth having, and its reason is not the
-    /// one ADR-0051 §4 gave.</strong> The publisher fans out — a claim was always confined to one
-    /// table — so "it claims rows and advances a position" cannot be what disqualifies a loop.
-    /// What disqualifies the feed is delivery: a change observed in a tenant's schema has to
-    /// start a flow in that tenant, and a change scan carries no principal to be admitted with.
+    /// <strong>The change feed's refusal is gone, and the cursor was never why it was
+    /// there.</strong> ADR-0053 §2 refused it on delivery — a change observed in a tenant's
+    /// schema has to start a flow in that tenant, and a change scan carries no principal to be
+    /// admitted with. <c>FlowInvocation.TenantAttested</c> is that admission path, so the feed
+    /// fans out here for the reason the publisher already did.
     /// </para>
     /// </remarks>
     [Fact]
-    public void TurningTenantSchemasOnFansOutEveryLoopExceptTheOneThatCannotDeliver()
+    public void TurningTenantSchemasOnFansOutEveryLoopIncludingTheChangeFeed()
     {
         var services = new ServiceCollection();
 
@@ -265,14 +265,15 @@ public sealed class TenantSchemaHostIsolationTests
             "the publisher drains every tenant's outbox at this level. Refusing it left a " +
             "deployment that isolates by schema with no way to publish at all.");
 
-        var refused = Should.Throw<InvalidOperationException>(
-            () => provider.GetRequiredService<IChangeFeed>());
+        provider.GetRequiredService<IChangeFeed>().Feed.ShouldBe(
+            PostgresChangeFeed.FeedName,
+            "the feed resolves at this level rather than throwing. It reads each tenant's " +
+            "outbox_event in turn and carries the tenant it read from onto every change, which " +
+            "is what the host starts the observing flow in.");
 
-        refused.Message.ShouldContain(
-            "tenant.required",
-            Case.Sensitive,
-            "the refusal must name the decision that is missing rather than restate that the " +
-            $"control schema is empty, or the next reader repeats the analysis.\n{refused.Message}");
+        provider.GetRequiredService<ITenantDirectory>().ShouldBeOfType<PostgresTenantDirectory>(
+            "and a per-tenant schedule fans out over tenant_schema rather than over a list in " +
+            "FlowXOptions that goes stale the moment a tenant is provisioned at run time.");
     }
 
     // -----------------------------------------------------------------------------------

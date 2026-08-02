@@ -219,6 +219,97 @@ public sealed class TenantAdmissionTests
     }
 
     // -----------------------------------------------------------------------------------
+    // A trigger with no caller attests its tenant
+    // -----------------------------------------------------------------------------------
+
+    /// <summary>
+    /// An attested tenant is admitted with no principal anywhere, and travels onward as the
+    /// flow's own.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The gap this closes.</strong> Only HTTP carries a caller, so before this the
+    /// three platform-initiated triggers reached the resolver with no claims and were refused —
+    /// a change, a broker message and a cron occurrence could not start a flow in a tenanted
+    /// deployment at all. What each of them supplies is not a claim and not an assertion either:
+    /// no caller is involved, and the value came from the schema the change was read out of, the
+    /// field the publisher wrote, or the directory the schedule was fanned out over.
+    /// </remarks>
+    [Fact]
+    public async Task AnAttestedTenantIsAdmittedWithNoPrincipal()
+    {
+        var host = NewHost(TenantIsolation.Row);
+        var dispatcher = new NoopDispatcher();
+
+        var outcome = await host.RunAsync(
+            EphemeralPlan(), dispatcher, Attesting(TenantA), Cancellation);
+
+        outcome.IsSuccess.ShouldBeTrue(
+            outcome.IsFailure ? outcome.Error!.ToString() : string.Empty);
+
+        dispatcher.TenantId.ShouldBe(
+            TenantA, "and it is the tenant the trigger named, not one the host defaulted to.");
+    }
+
+    /// <summary>
+    /// An attestation naming no tenant is refused, not admitted untenanted.
+    /// </summary>
+    /// <remarks>
+    /// <strong>This refusal is what makes a trigger hold its work.</strong> A change scan reads
+    /// <c>tenant.required</c> and leaves its cursor where it was; a bus scan leaves the message
+    /// unacknowledged. Admitting it instead — the answer a continuation gets, because a
+    /// continuation's absent tenant means the deployment does not isolate — would write rows no
+    /// tenant can read back and report success.
+    /// </remarks>
+    [Fact]
+    public async Task AnAttestationThatNamesNoTenantIsRefused()
+    {
+        var host = NewHost(TenantIsolation.Row);
+
+        var outcome = await host.RunAsync(
+            EphemeralPlan(), new NoopDispatcher(), Attesting(tenantId: null), Cancellation);
+
+        outcome.IsFailure.ShouldBeTrue();
+        outcome.Error!.Code.ShouldBe(TenantErrors.TenantRequiredCode);
+    }
+
+    /// <summary>
+    /// An attested start still has every step's stance decided, and an authenticated step under
+    /// one is refused.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The reason attestation is a second flag rather than a reuse of
+    /// <c>IsContinuation</c>.</strong> That flag would have carried the tenant with one field
+    /// fewer and would also have suppressed authorisation — correct for a sweep resuming an
+    /// instance the platform already admitted, and wrong for a start, where nothing has decided
+    /// anything yet. A cron occurrence is not a caller, so a step that requires one is refused
+    /// rather than run on its behalf.
+    /// </para>
+    /// <para>
+    /// The refusal is the same <c>Forbidden</c> an anonymous HTTP call gets at the same step,
+    /// which is the point: an attested start is a start.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AnAttestedStartDoesNotSkipStepAuthorization()
+    {
+        var host = NewHost(TenantIsolation.Row);
+        var dispatcher = new NoopDispatcher();
+
+        var outcome = await host.RunAsync(
+            AuthenticatedPlan(), dispatcher, Attesting(TenantA), Cancellation);
+
+        outcome.IsFailure.ShouldBeTrue(
+            "the step declares Authorization.Authenticated and an attested start carries no " +
+            "principal, so the stance is decided against an absence and refuses.");
+
+        outcome.Error!.Category.ShouldBe(ErrorCategory.Forbidden);
+
+        dispatcher.Executed.ShouldBe(
+            0, "and the capability never ran, which is what a bypass would have let happen.");
+    }
+
+    // -----------------------------------------------------------------------------------
     // Fixtures
     // -----------------------------------------------------------------------------------
 
@@ -239,8 +330,25 @@ public sealed class TenantAdmissionTests
             "order.place", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromMinutes(5)),
         StepGraph.Create([StepNode.ForCapability(0, Validate)]));
 
+    /// <summary>The same flow with a step no anonymous caller may reach.</summary>
+    private static ExecutionPlan AuthenticatedPlan() => ExecutionPlan.Create(
+        FlowDescriptor.Create(
+            "order.place", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromMinutes(5)),
+        StepGraph.Create([
+            StepNode.ForCapability(
+                0,
+                CapabilityDescriptor.Create(
+                    "order.validate", "1.0.0", isIdempotent: true, Authorization.Authenticated)),
+        ]));
+
     /// <summary>An invocation from nobody, naming no tenant — what an anonymous call is.</summary>
     private static FlowInvocation Anonymous() => new("corr-1", "idem-1");
+
+    /// <summary>
+    /// What a change scan, a bus scan or a schedule sweep produces: a tenant and no caller.
+    /// </summary>
+    private static FlowInvocation Attesting(string? tenantId) =>
+        new("corr-1", "idem-1", tenantId, TenantAttested: true);
 
     /// <summary>
     /// An invocation from a caller whose validated claims place it in one tenant, optionally

@@ -20,19 +20,25 @@ namespace FlowX.Hosting;
 /// here as a unit rather than reassembled at each firing: a schedule that lost its version
 /// between registration and derivation would fold a canary onto the version it was replacing.
 /// </para>
+/// <param name="PerTenant">
+/// Whether one occurrence is one firing per tenant, from <c>CronTriggerAttribute.PerTenant</c>.
+/// </param>
 /// <para>
-/// <strong>What is deliberately absent.</strong> <c>Overlap</c>, <c>Jitter</c> and
-/// <c>PerTenant</c> are declared on <c>CronTriggerAttribute</c> and are not here, because
-/// nothing reads them: this release binds <c>Schedule</c> and does not bind those three
-/// (<c>docs/09-Trigger-Model.md §8</c>). Carrying them would put a value on this record that
-/// no code branches on, which is the shape of debt the deleted <c>FLOWX1032</c> existed to report.
+/// <strong>What is deliberately absent.</strong> <c>Overlap</c> and <c>Jitter</c> are declared
+/// on <c>CronTriggerAttribute</c> and are not here, because nothing reads them: this release
+/// binds <c>Schedule</c> and does not bind those two (<c>docs/09-Trigger-Model.md §8</c>).
+/// Carrying them would put a value on this record that no code branches on, which is the shape
+/// of debt the deleted <c>FLOWX1032</c> existed to report. <c>PerTenant</c> was in that list
+/// until <see cref="FlowScheduleScan"/> learned to fan out, and is now the term that decides
+/// whether an occurrence produces one instance or one per tenant.
 /// </para>
 /// </remarks>
 public sealed record FlowSchedule(
     string FlowId,
     string FlowVersion,
     CronSchedule Cron,
-    MissedFirePolicy MissedFire)
+    MissedFirePolicy MissedFire,
+    bool PerTenant = false)
 {
     /// <summary>Reads a declared schedule, throwing on an expression or zone it cannot read.</summary>
     /// <param name="flowId">The flow's business identity.</param>
@@ -40,6 +46,7 @@ public sealed record FlowSchedule(
     /// <param name="cron">A five-field cron expression.</param>
     /// <param name="timeZone">An IANA time zone id.</param>
     /// <param name="missedFire">Behaviour after downtime.</param>
+    /// <param name="perTenant">Whether one occurrence fires once per tenant.</param>
     /// <returns>The schedule.</returns>
     /// <exception cref="ArgumentException">
     /// The expression or the zone could not be read. Thrown rather than returned because this
@@ -53,7 +60,8 @@ public sealed record FlowSchedule(
         string flowVersion,
         string cron,
         string timeZone,
-        MissedFirePolicy missedFire)
+        MissedFirePolicy missedFire,
+        bool perTenant = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(flowId);
         ArgumentException.ThrowIfNullOrWhiteSpace(flowVersion);
@@ -67,13 +75,15 @@ public sealed record FlowSchedule(
                 nameof(cron));
         }
 
-        return new FlowSchedule(flowId, flowVersion, parsed.Value, missedFire);
+        return new FlowSchedule(flowId, flowVersion, parsed.Value, missedFire, perTenant);
     }
 
     /// <summary>The id the instance for one firing of this schedule is started under.</summary>
     /// <param name="occurrence">The instant the expression named.</param>
-    public Guid InstanceIdFor(DateTimeOffset occurrence) => ScheduleOccurrence.InstanceIdFor(
-        FlowId, FlowVersion, Cron.Expression, Cron.TimeZoneId, occurrence);
+    /// <param name="tenantId">Whose firing, or null for a schedule that fires once.</param>
+    public Guid InstanceIdFor(DateTimeOffset occurrence, string? tenantId = null) =>
+        ScheduleOccurrence.InstanceIdFor(
+            FlowId, FlowVersion, Cron.Expression, Cron.TimeZoneId, occurrence, tenantId);
 
     /// <summary>The input the flow started by one firing binds.</summary>
     /// <param name="occurrence">The instant the expression named.</param>

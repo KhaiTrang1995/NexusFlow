@@ -48,15 +48,25 @@ internal static class ChangeFeedSql
     /// through would be refused by the journal's primary key rather than by a row lock.
     /// </para>
     /// </remarks>
+    /// <remarks>
+    /// <strong>The join is where a change trigger's tenant comes from.</strong>
+    /// <c>outbox_event</c> carries no <c>tenant_id</c> and deliberately never will — 0008's own
+    /// comment says why, and the policy on this table already reaches the instance row through
+    /// exactly this foreign key. So the feed reads it the same way the policy decides it, which
+    /// makes "whose change is this" and "who may see this change" one fact rather than two that
+    /// can disagree. At schema isolation the column is that schema's tenant and the join is
+    /// redundant; at row isolation it is the only place the answer exists.
+    /// </remarks>
     public const string ReadFrom =
         """
-        SELECT event_id, type, schema_version, partition_key, payload::text,
-               staged_xid::text, staged_seq
-          FROM outbox_event
-         WHERE type = @type
-           AND staged_xid < pg_snapshot_xmin(pg_current_snapshot())
-           AND (staged_xid, staged_seq) > (@position_xid::xid8, @position_seq)
-         ORDER BY staged_xid, staged_seq
+        SELECT e.event_id, e.type, e.schema_version, e.partition_key, e.payload::text,
+               e.staged_xid::text, e.staged_seq, i.tenant_id
+          FROM outbox_event e
+          JOIN flow_instance i ON i.instance_id = e.instance_id
+         WHERE e.type = @type
+           AND e.staged_xid < pg_snapshot_xmin(pg_current_snapshot())
+           AND (e.staged_xid, e.staged_seq) > (@position_xid::xid8, @position_seq)
+         ORDER BY e.staged_xid, e.staged_seq
          LIMIT @batch
         """;
 

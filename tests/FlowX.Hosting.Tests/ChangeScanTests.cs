@@ -69,30 +69,65 @@ public sealed class ChangeScanTests
     }
 
     /// <summary>
-    /// A deployment that isolates by tenant starts no flow from a change, and moves its cursor
-    /// past the change anyway.
+    /// A change carrying the tenant it was read from starts a flow in that tenant on a
+    /// deployment that isolates.
     /// </summary>
     /// <remarks>
+    /// <strong>The whole of what unblocked <c>AddFlowXPostgresChangeFeed</c>.</strong> A change
+    /// scan has no principal and never will, so before <c>FlowInvocation.TenantAttested</c> the
+    /// resolver refused every one of these — at <see cref="TenantIsolation.Row"/>, which
+    /// shipped, as much as at <see cref="TenantIsolation.Schema"/>. What the flag carries is
+    /// where the change was found rather than what anybody claimed, and it grants none of
+    /// <c>IsContinuation</c>'s authorisation bypass.
     /// <para>
-    /// <strong>This is why <c>AddFlowXPostgresChangeFeed</c> is still refused at
-    /// <see cref="TenantIsolation.Schema"/>, and the refusal cites it.</strong> The blocker is
-    /// not the cursor — <c>change_cursor</c> is keyed by subscription and one row per tenant
-    /// schema is the same key in a different table — it is that a change scan carries no
-    /// principal, so <c>ClaimTenantResolver</c> refuses every invocation under an isolating
-    /// deployment whether it names a tenant or not. Nothing about schemas causes this: it is
-    /// asserted at <see cref="TenantIsolation.Row"/>, which shipped, and is the same at every
-    /// level above <see cref="TenantIsolation.None"/>.
-    /// </para>
-    /// <para>
-    /// <strong>The second assertion is the one that makes fanning the feed out worse than
-    /// refusing it.</strong> <c>tenant.required</c> is not among the dispositions that hold, so
-    /// the pass reads the refusal as progress and commits past a change no flow ever ran. A
-    /// per-tenant feed would do that to every change of every tenant, silently — where the
-    /// refusal leaves the rows in the table.
+    /// <see cref="TenantIsolation.Row"/> here because the in-memory journal enforces that level
+    /// and no more, so declaring <see cref="TenantIsolation.Schema"/> against it is refused by
+    /// the host's own constructor. The schema case is proved against a real database in
+    /// <c>tests/Ecommerce.Tests/ChangeStartsAFlowTests</c>.
     /// </para>
     /// </remarks>
     [Fact]
-    public async Task AChangeStartsNoFlowWhereTheDeploymentIsolatesByTenant()
+    public async Task AChangeStartsItsFlowInTheTenantItWasReadFrom()
+    {
+        var fixture = Fixture.Create(isolation: TenantIsolation.Row);
+
+        fixture.Feed.Stage(Source, "tenant-a");
+
+        var report = await fixture.PassAsync();
+
+        report.Started.ShouldBe(1);
+
+        fixture.Journal.Instances.ShouldHaveSingleItem().TenantId.ShouldBe(
+            "tenant-a",
+            "the instance row is written in the tenant the change came out of, so a change " +
+            "trigger under isolation writes rows that tenant can read back.");
+
+        fixture.Feed.Committed.ShouldHaveSingleItem(
+            "and the cursor moves, because the change reached a recorded outcome.");
+    }
+
+    /// <summary>
+    /// A change that names no tenant on an isolating deployment holds the cursor rather than
+    /// losing the change.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the silent loss ADR-0053 §2 described, and the assertion is the cursor
+    /// rather than the refusal.</strong> <c>tenant.required</c> reached
+    /// <c>DispositionFor</c>'s default arm and was counted as progress, so the pass committed
+    /// past a change no flow ever ran — and a fanned-out feed would have done that to every
+    /// tenant. Refusing to start is correct; committing the cursor afterwards is what made it a
+    /// data-loss bug.
+    /// </para>
+    /// <para>
+    /// A stopped subscription is the deliberate cost. It is visible — the change is still in the
+    /// table, the cursor has not moved, and the pass reports <c>Held</c> — and it is repaired by
+    /// a deployment that gives the emitting instances a tenant, which is the only repair that
+    /// exists.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AnUntenantedChangeHoldsTheCursorWhereTheDeploymentIsolates()
     {
         var fixture = Fixture.Create(isolation: TenantIsolation.Row);
 
@@ -101,17 +136,38 @@ public sealed class ChangeScanTests
         var report = await fixture.PassAsync();
 
         report.Observed.ShouldBe(1, "the feed offered the change; admission is what refused it.");
+        report.Started.ShouldBe(0);
+        report.Held.ShouldBe(1);
 
         fixture.Journal.Instances.ShouldBeEmpty(
-            "a change scan carries no claims, so an isolating deployment refuses the start " +
-            "with tenant.required. There is no principal for it to carry and no continuation " +
-            "it could claim to be — a continuation also skips step authorisation, which a " +
-            "flow that is starting must not.");
+            "an attested invocation naming no tenant is refused rather than admitted " +
+            "untenanted, which would write rows no tenant can read back.");
 
-        fixture.Feed.Committed.ShouldHaveSingleItem(
-            "and the cursor moved past it. The refusal is classified as progress, so a feed " +
-            "fanned out across tenant schemas would advance every tenant's cursor over work " +
-            "that never happened.");
+        fixture.Feed.Committed.ShouldBeEmpty(
+            "and the cursor did not move. This is the assertion: a committed cursor over a " +
+            "change that never ran loses the work with nothing anywhere recording that it did.");
+    }
+
+    /// <summary>A change behind a held one is not run out of order.</summary>
+    /// <remarks>
+    /// The hold has to stop the batch as well as the commit. Running the second change of a key
+    /// while the first is held would deliver them backwards, and the cursor could then be
+    /// committed past neither.
+    /// </remarks>
+    [Fact]
+    public async Task AChangeBehindAHeldOneIsNotStarted()
+    {
+        var fixture = Fixture.Create(isolation: TenantIsolation.Row);
+
+        fixture.Feed.Stage(Source);
+        fixture.Feed.Stage(Source, "tenant-a");
+
+        var report = await fixture.PassAsync();
+
+        report.Started.ShouldBe(0, "the tenanted change sits behind the one that was held.");
+        report.Held.ShouldBe(1);
+        fixture.Journal.Instances.ShouldBeEmpty();
+        fixture.Feed.Committed.ShouldBeEmpty();
     }
 
     /// <summary>The instance the change started is the one every node derives for it.</summary>
@@ -525,11 +581,12 @@ public sealed class ChangeScanTests
         public string Feed => "recording";
 
         /// <summary>Stages one change, and returns the identity it carries.</summary>
-        public Guid Stage(string type)
+        public Guid Stage(string type, string? tenantId = null)
         {
             var eventId = Guid.NewGuid();
 
-            _changes.Add(new BusMessage(eventId, type, type, "1.0.0", "instance-1", "{}"));
+            _changes.Add(
+                new BusMessage(eventId, type, type, "1.0.0", "instance-1", "{}", tenantId));
 
             return eventId;
         }
@@ -545,7 +602,11 @@ public sealed class ChangeScanTests
                 .Select((change, index) => new ObservedChange(
                     change,
                     new ChangePosition((_cursor + index + 1).ToString(
-                        System.Globalization.CultureInfo.InvariantCulture))))
+                        System.Globalization.CultureInfo.InvariantCulture)),
+
+                    // A real feed reads the tenant out of the schema or the instance row it found
+                    // the change in; a double carries whatever was staged.
+                    change.TenantId))
                 .ToList();
 
             return ValueTask.FromResult(Result.Ok<IReadOnlyList<ObservedChange>>(offered));

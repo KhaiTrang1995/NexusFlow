@@ -42,6 +42,15 @@ namespace FlowX.Postgres;
 /// them would hold a transaction open across the flows, which is the one thing a durable
 /// execution engine must never do.
 /// </para>
+/// <para>
+/// <strong>Every change names its tenant, which is what makes a change trigger usable under
+/// isolation at all.</strong> The read joins <c>flow_instance</c> and takes the emitting
+/// instance's <c>tenant_id</c> — the same foreign key 0008's policy decides visibility through —
+/// so the host starts the observing flow in the tenant whose data the change came out of, with
+/// no claim anywhere in the path and nothing a caller could have set. At
+/// <see cref="TenantIsolation.Schema"/> the feed additionally fans out over the tenant registry;
+/// see the second constructor for why a batch is always one tenant's.
+/// </para>
 /// </remarks>
 public sealed class PostgresChangeFeed : IChangeFeed
 {
@@ -56,7 +65,9 @@ public sealed class PostgresChangeFeed : IChangeFeed
     /// </remarks>
     private static readonly Position Beginning = new(0, 0);
 
-    private readonly NpgsqlDataSource _dataSource;
+    private readonly NpgsqlDataSource? _dataSource;
+    private readonly PostgresTenantStores? _stores;
+    private int _rotation;
 
     /// <summary>Creates a feed over a data source.</summary>
     /// <param name="dataSource">
@@ -71,6 +82,31 @@ public sealed class PostgresChangeFeed : IChangeFeed
         _dataSource = dataSource;
     }
 
+    /// <summary>Creates a feed that reads each tenant's schema in turn.</summary>
+    /// <param name="stores">The per-tenant pools, and the registry that lists them.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="stores"/> is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>One pass reads one tenant, and that is what keeps the cursor a cursor.</strong>
+    /// A read that merged several tenants' changes would hand the host one ordered list whose
+    /// positions belong to different <c>change_cursor</c> rows, and the host's contract is to
+    /// commit exactly one position — the last change it finished with. So the fan-out visits
+    /// tenants in a rotating order and returns the first tenant that has anything, which makes
+    /// every batch one tenant's and every commit that tenant's own row.
+    /// </para>
+    /// <para>
+    /// <strong>The rotation is what stops a busy tenant starving the rest.</strong>
+    /// <see cref="PostgresOutboxPublisher"/>'s reasoning exactly: without it the first tenant in
+    /// the registry with a permanent backlog would be the only one ever read.
+    /// </para>
+    /// </remarks>
+    public PostgresChangeFeed(PostgresTenantStores stores)
+    {
+        ArgumentNullException.ThrowIfNull(stores);
+
+        _stores = stores;
+    }
+
     /// <inheritdoc />
     public string Feed => FeedName;
 
@@ -81,33 +117,38 @@ public sealed class PostgresChangeFeed : IChangeFeed
         ArgumentNullException.ThrowIfNull(subscription);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(max);
 
-        var connection = await _dataSource.OpenConnectionAsync(cancellationToken)
-            .ConfigureAwait(false);
-
-        await using var closing = connection.ConfigureAwait(false);
-
-        var position = await CursorAsync(connection, subscription, cancellationToken)
-            .ConfigureAwait(false);
-
-        using var command = connection.CreateCommand();
-
-        command.CommandText = ChangeFeedSql.ReadFrom;
-        command.Parameters.Add(Db.Text("type", subscription.Source));
-        command.Parameters.Add(Db.Text("position_xid", position.Xid));
-        command.Parameters.Add(Db.Long("position_seq", position.Seq));
-        command.Parameters.Add(Db.Int("batch", max));
-
-        var changes = new List<ObservedChange>();
-
-        var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        await using var closingReader = reader.ConfigureAwait(false);
-
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        if (_stores is null)
         {
-            changes.Add(Read(reader, subscription));
+            return await ReadFromAsync(_dataSource!, subscription, max, tenantId: null, cancellationToken)
+                .ConfigureAwait(false);
         }
 
-        return Result.Ok<IReadOnlyList<ObservedChange>>(changes);
+        // Re-read every pass rather than cached, for KnownTenantsAsync's own stated reason: a
+        // tenant another node provisioned five seconds ago has changes this node must observe.
+        var tenants = await _stores.KnownTenantsAsync(cancellationToken).ConfigureAwait(false);
+
+        if (tenants.Count == 0)
+        {
+            return Result.Ok<IReadOnlyList<ObservedChange>>([]);
+        }
+
+        var offset = (int)((uint)Interlocked.Increment(ref _rotation) % (uint)tenants.Count);
+
+        for (var i = 0; i < tenants.Count; i++)
+        {
+            var tenant = tenants[(i + offset) % tenants.Count];
+            var store = await _stores.ForAsync(tenant, cancellationToken).ConfigureAwait(false);
+
+            var read = await ReadFromAsync(store, subscription, max, tenant, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (read.IsFailure || read.Value.Count > 0)
+            {
+                return read;
+            }
+        }
+
+        return Result.Ok<IReadOnlyList<ObservedChange>>([]);
     }
 
     /// <inheritdoc />
@@ -130,7 +171,16 @@ public sealed class PostgresChangeFeed : IChangeFeed
                 nameof(position));
         }
 
-        var connection = await _dataSource.OpenConnectionAsync(cancellationToken)
+        // The tenant travels inside the opaque position rather than on the method, because the
+        // host has no tenant to pass: IChangeFeed.CommitAsync takes a subscription and a
+        // position, and adding a third parameter would put the fan-out into a contract every
+        // other feed would then have to carry. A position is defined as this feed's to render
+        // and this feed's to read back, so it is exactly the right place to keep it.
+        var dataSource = parsed.TenantId is { Length: > 0 } tenant && _stores is not null
+            ? await _stores.ForAsync(tenant, cancellationToken).ConfigureAwait(false)
+            : _dataSource!;
+
+        var connection = await dataSource.OpenConnectionAsync(cancellationToken)
             .ConfigureAwait(false);
 
         await using var closing = connection.ConfigureAwait(false);
@@ -147,6 +197,43 @@ public sealed class PostgresChangeFeed : IChangeFeed
         // Zero rows is the monotonicity guard refusing to move the cursor backwards, which is
         // success: a node that raced a faster one has nothing to record.
         return Result.Ok(moved > 0);
+    }
+
+    /// <summary>One schema's next batch, cursor read and changes read.</summary>
+    private static async ValueTask<Result<IReadOnlyList<ObservedChange>>> ReadFromAsync(
+        NpgsqlDataSource dataSource,
+        ChangeSubscription subscription,
+        int max,
+        string? tenantId,
+        CancellationToken cancellationToken)
+    {
+        var connection = await dataSource.OpenConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        await using var closing = connection.ConfigureAwait(false);
+
+        var position = await CursorAsync(connection, subscription, tenantId, cancellationToken)
+            .ConfigureAwait(false);
+
+        using var command = connection.CreateCommand();
+
+        command.CommandText = ChangeFeedSql.ReadFrom;
+        command.Parameters.Add(Db.Text("type", subscription.Source));
+        command.Parameters.Add(Db.Text("position_xid", position.Xid));
+        command.Parameters.Add(Db.Long("position_seq", position.Seq));
+        command.Parameters.Add(Db.Int("batch", max));
+
+        var changes = new List<ObservedChange>();
+
+        var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await using var closingReader = reader.ConfigureAwait(false);
+
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            changes.Add(Read(reader, subscription));
+        }
+
+        return Result.Ok<IReadOnlyList<ObservedChange>>(changes);
     }
 
     /// <summary>
@@ -197,6 +284,7 @@ public sealed class PostgresChangeFeed : IChangeFeed
     private static async ValueTask<Position> CursorAsync(
         NpgsqlConnection connection,
         ChangeSubscription subscription,
+        string? tenantId,
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
@@ -208,8 +296,11 @@ public sealed class PostgresChangeFeed : IChangeFeed
         await using var closing = reader.ConfigureAwait(false);
 
         return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
-            ? new Position(ulong.Parse(reader.GetString(0), CultureInfo.InvariantCulture), reader.GetInt64(1))
-            : Beginning;
+            ? new Position(
+                ulong.Parse(reader.GetString(0), CultureInfo.InvariantCulture),
+                reader.GetInt64(1),
+                tenantId)
+            : Beginning with { TenantId = tenantId };
     }
 
     /// <summary>One outbox row, as the flow it starts will receive it.</summary>
@@ -222,18 +313,24 @@ public sealed class PostgresChangeFeed : IChangeFeed
     /// </remarks>
     private static ObservedChange Read(NpgsqlDataReader reader, ChangeSubscription subscription)
     {
+        var tenantId = Db.NullableString(reader, 7);
+
         var message = new BusMessage(
             reader.GetGuid(0),
             subscription.Source,
             reader.GetString(1),
             reader.GetString(2),
             Db.NullableString(reader, 3),
-            Db.NullableString(reader, 4));
+            Db.NullableString(reader, 4),
+            tenantId);
 
         var position = new Position(
-            ulong.Parse(reader.GetString(5), CultureInfo.InvariantCulture), reader.GetInt64(6));
+            ulong.Parse(reader.GetString(5), CultureInfo.InvariantCulture),
+            reader.GetInt64(6),
+            tenantId);
 
-        return new ObservedChange(message, new ChangePosition(position.ToString()));
+        return new ObservedChange(
+            message, new ChangePosition(position.ToString()), tenantId);
     }
 
     /// <summary>
@@ -253,26 +350,41 @@ public sealed class PostgresChangeFeed : IChangeFeed
     /// package would have to keep in step with the driver.
     /// </para>
     /// </remarks>
-    private readonly record struct Position(ulong Transaction, long Seq)
+    /// <param name="Transaction">The transaction that staged the change.</param>
+    /// <param name="Seq">Its position within that transaction.</param>
+    /// <param name="TenantId">
+    /// Whose <c>change_cursor</c> row this position belongs to, or null in a single-schema
+    /// deployment. Rendered as a third field so that <see cref="CommitAsync"/> can find the
+    /// schema the cursor lives in without <see cref="IChangeFeed"/> growing a tenant parameter
+    /// no other feed would have anything to put in.
+    /// </param>
+    private readonly record struct Position(ulong Transaction, long Seq, string? TenantId = null)
     {
         /// <summary>The transaction id, as the server reads and writes it.</summary>
         public string Xid => Transaction.ToString(CultureInfo.InvariantCulture);
 
         /// <summary>Parses a position this feed rendered, or null for anything else.</summary>
+        /// <remarks>
+        /// Split into three at most, so a tenant id containing a colon comes back whole. The
+        /// first two fields cannot contain one, which is what makes the split unambiguous from
+        /// the left.
+        /// </remarks>
         public static Position? TryParse(string? value)
         {
-            if (value?.Split(':') is not { Length: 2 } parts ||
+            if (value?.Split(':', 3) is not { Length: >= 2 } parts ||
                 !ulong.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var transaction) ||
                 !long.TryParse(parts[1], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var seq))
             {
                 return null;
             }
 
-            return new Position(transaction, seq);
+            return new Position(
+                transaction, seq, parts.Length == 3 && parts[2].Length > 0 ? parts[2] : null);
         }
 
         /// <inheritdoc />
-        public override string ToString() =>
-            string.Create(CultureInfo.InvariantCulture, $"{Transaction}:{Seq}");
+        public override string ToString() => TenantId is { Length: > 0 } tenant
+            ? string.Create(CultureInfo.InvariantCulture, $"{Transaction}:{Seq}:{tenant}")
+            : string.Create(CultureInfo.InvariantCulture, $"{Transaction}:{Seq}");
     }
 }
