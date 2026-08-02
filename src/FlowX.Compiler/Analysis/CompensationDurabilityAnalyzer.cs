@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using FlowX.Compiler.Diagnostics;
+using FlowX.Compiler.Model;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -87,11 +88,29 @@ namespace FlowX.Compiler.Analysis;
 /// may not be.
 /// </para>
 /// <para>
-/// <strong>Not narrowed to <c>Ephemeral</c>.</strong> The condition is "not <c>Durable</c>",
-/// matching FLOWX1017's, because <c>Streaming</c> runs on the ephemeral engine and loses a
-/// pending compensation in exactly the same way. Such a flow is reported by
-/// <see cref="ExecutionProfileAnalyzer"/> as well, and the two say different things — that
-/// the profile buys nothing, and that this particular thing is what it costs.
+/// <strong>The condition is "does this journal?", not "is this <c>Durable</c>?", and
+/// <c>Streaming</c> is therefore silent.</strong> It was written as the second and defended
+/// with "<c>Streaming</c> runs on the ephemeral engine", which P7 falsified: every link in the
+/// second paragraph's chain is keyed on the journal and none on the profile.
+/// <c>FlowEngine.OpenJournal</c> asks <c>ExecutionProfiles.IsJournaled</c>, the emitter
+/// describes the state bag — the flow's own input included — off the same question,
+/// <c>PostgresRecoveryIndex</c> lists an unfinished instance on
+/// <c>state IN ('Pending', 'Running', 'Compensating')</c> with no profile in the predicate,
+/// <c>FlowStreamSubscriptionRegistration.Add</c> registers the plan in <c>FlowCatalog</c>
+/// precisely so <c>FlowRecoveryScan</c> can resume such a row, and the skip in the step loop
+/// pushes a completed compensable step back onto the unwind stack off <c>cursor.IsJournaled</c>.
+/// The window a surviving node rebuilds does not race that unwind: its derived id meets
+/// <c>flow_instance</c>'s primary key and <c>FlowStreamScan.DispositionFor</c> deduplicates it
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0055-a-window-names-the-instance-it-starts.md">ADR-0055</a>).
+/// </para>
+/// <para>
+/// <strong>The remedy settles it on its own.</strong> <c>Profile = Durable</c> on a
+/// stream-triggered flow is <c>FLOWX1042</c>, emits no subscription, and is refused by
+/// <c>FlowStreamCatalog.Add</c> at start-up — so the rule was prescribing an edit that breaks
+/// the trigger, which is the "fix that is a lie" the first paragraph says kept this id
+/// reserved. A <c>Streaming</c> flow that no stream starts is still
+/// <see cref="ExecutionProfileAnalyzer"/>'s, the profile buying nothing; its instances are
+/// journaled per invocation, so this rule has nothing to add there either.
 /// </para>
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
@@ -102,15 +121,6 @@ public sealed class CompensationDurabilityAnalyzer : DiagnosticAnalyzer
     private const string CompensateWith = "CompensateWith";
     private const string FlowXNamespace = "FlowX";
     private const string BuilderInterfaceSuffix = "Builder";
-
-    /// <summary><c>ExecutionProfile.Durable</c>, as it appears in attribute metadata.</summary>
-    /// <remarks>
-    /// The only value that silences this rule, so it is the only one worth naming. Every
-    /// other value — including one added to the enum later, and including a cast outside it
-    /// — leaves the flow on the engine that keeps its compensation stack in memory, which is
-    /// what the rule is about.
-    /// </remarks>
-    private const int DurableProfile = 1;
 
     /// <summary>
     /// The profile a flow that names none is running under: ADR-0003 makes durability
@@ -168,7 +178,7 @@ public sealed class CompensationDurabilityAnalyzer : DiagnosticAnalyzer
             return;
         }
 
-        var profile = ProfileOtherThanDurable(flowAttribute);
+        var profile = ProfileThatKeepsNoJournal(flowAttribute);
 
         if (profile is null)
         {
@@ -201,7 +211,7 @@ public sealed class CompensationDurabilityAnalyzer : DiagnosticAnalyzer
     }
 
     /// <summary>
-    /// The flow's profile when it is not <c>Durable</c>, or <see langword="null"/> when
+    /// The flow's profile when nothing on it is journaled, or <see langword="null"/> when
     /// there is nothing to report.
     /// </summary>
     /// <remarks>
@@ -210,18 +220,19 @@ public sealed class CompensationDurabilityAnalyzer : DiagnosticAnalyzer
     /// reported rather than skipped, and this is the one place where this rule and
     /// <see cref="ExecutionProfileAnalyzer"/> deliberately disagree. That rule stays silent
     /// there because it asks "which profile is unimplemented", and an unnamed value is not
-    /// an answer to that question. This one asks "is this flow durable", and an unnamed
-    /// value is a perfectly clear <em>no</em>: whatever it is, the engine will not journal
-    /// it, and the compensation stack will not survive the process.
+    /// an answer to that question. This one asks "does this flow journal", and an unnamed
+    /// value is a perfectly clear <em>no</em>: <c>ExecutionProfiles.Journals</c> answers
+    /// <c>false</c> for a name this build does not know, which is the direction that leaves
+    /// the compensation stack in memory and this rule speaking about it.
     /// </para>
     /// <para>
-    /// The name is read back off the enum symbol for the same reason
-    /// <see cref="ExecutionProfileAnalyzer"/> does it: a profile added later is one this
-    /// rule should report on the day it is added, and only <c>Durable</c> is hard-coded,
-    /// which is the safe direction for the list to be wrong in.
+    /// The name is read back off the enum symbol first and then put to the same predicate the
+    /// generator and the emitter ask, so the three cannot drift: a profile that starts
+    /// journaling is silenced here on the day it is added to that one method rather than on
+    /// the day somebody remembers this file.
     /// </para>
     /// </remarks>
-    private static string? ProfileOtherThanDurable(AttributeData flowAttribute)
+    private static string? ProfileThatKeepsNoJournal(AttributeData flowAttribute)
     {
         foreach (var argument in flowAttribute.NamedArguments)
         {
@@ -238,12 +249,9 @@ public sealed class CompensationDurabilityAnalyzer : DiagnosticAnalyzer
                 return null;
             }
 
-            if (value == DurableProfile)
-            {
-                return null;
-            }
+            var declared = NameOf(argument.Value, value);
 
-            return NameOf(argument.Value, value);
+            return ExecutionProfiles.Journals(declared) ? null : declared;
         }
 
         return DefaultProfileName;

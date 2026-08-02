@@ -106,15 +106,31 @@ until someone notices.
 so silence means `Ephemeral`. This is the one rule in the catalogue whose subject is the
 default: every other profile rule is quiet about it and speaks up about a declaration.
 
-**`Streaming` triggers it as well**, because the condition is *not `Durable`* rather than
-*is `Ephemeral`*. `Streaming` has no engine and runs on the ephemeral one, so it loses a
-pending compensation identically. Such a flow also gets [FLOWX1028](FLOWX1028.md); the two
-say different things — that the profile buys nothing at all, and that this is one of the
-specific things it costs.
+**Silent:** a `Durable` or `Streaming` flow with compensation; any flow without compensation,
+under any profile; a `CompensateWith` on something that is not a FlowX builder (the call is
+resolved semantically, not matched by name).
 
-**Silent:** a `Durable` flow with compensation; any flow without compensation, under any
-profile; a `CompensateWith` on something that is not a FlowX builder (the call is resolved
-semantically, not matched by name).
+> [!NOTE]
+> **`Streaming` triggered this rule until 2026-08-02, and the justification was wrong.** The
+> condition was *not `Durable`* rather than *does this journal?*, defended with "`Streaming`
+> runs on the ephemeral engine" — a sentence P7 falsified. A window's flow journals a row per
+> step boundary; `PostgresRecoveryIndex` lists an unfinished instance on
+> `state IN ('Pending', 'Running', 'Compensating')` with no profile in the predicate;
+> `FlowStreamSubscriptionRegistration.Add` registers the plan in `FlowCatalog` for the stated
+> purpose of letting `FlowRecoveryScan` take such an instance over; and the resume puts each
+> skipped compensable step back onto the unwind stack off `cursor.IsJournaled`. The window a
+> surviving node rebuilds does not race that unwind — its derived id meets `flow_instance`'s
+> primary key and `FlowStreamScan.DispositionFor` reads that as *deduplicated*
+> ([ADR-0055](../adr/ADR-0055-a-window-names-the-instance-it-starts.md)). So the loss this
+> rule reported does not happen, and the fix it prescribed was one the flow could not take:
+> `Profile = Durable` on a stream-triggered flow is [FLOWX1042](FLOWX1042.md), emits no
+> subscription, and is refused by `FlowStreamCatalog.Add` at start-up.
+> [FLOWX1017](FLOWX1017.md) and `ExecutionPlan.Create` had the same literal and changed the
+> same day the runtime did; this was the last of them.
+>
+> A `Streaming` flow that *no* stream starts is still [FLOWX1028](FLOWX1028.md) — the profile
+> buying nothing — but its instances are journaled per invocation, so its compensations survive
+> and this rule has nothing to add.
 
 ## How to fix it
 

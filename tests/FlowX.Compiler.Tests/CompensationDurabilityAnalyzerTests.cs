@@ -8,7 +8,7 @@ using Xunit;
 namespace FlowX.Compiler.Tests;
 
 /// <summary>
-/// FLOWX1012 — compensation declared on a flow whose profile is not <c>Durable</c>.
+/// FLOWX1012 — compensation declared on a flow whose profile keeps no journal.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -139,17 +139,41 @@ public sealed class CompensationDurabilityAnalyzerTests
     public void ACompensableFlowThatNamesNoProfileIsReported() =>
         Analyze(SagaWith("""[Flow("order.place")]""")).ShouldBe(["FLOWX1012"]);
 
-    /// <summary><c>Streaming</c> too, because the condition is "not Durable".</summary>
+    /// <summary>
+    /// But not <c>Streaming</c>, because a window's flow is journaled and its compensations
+    /// survive a node death exactly as a durable flow's do.
+    /// </summary>
     /// <remarks>
-    /// <c>Streaming</c> has no engine and runs on the ephemeral one, so it loses a pending
-    /// compensation in exactly the same way. FLOWX1028 also reports such a flow; the two say
-    /// different things — that the profile buys nothing, and that this is one of the things it
-    /// costs — which is why neither defers to the other.
+    /// <para>
+    /// <strong>This test asserted the opposite until 2026-08-02, on the claim that
+    /// "<c>Streaming</c> has no engine and runs on the ephemeral one".</strong> P7 built the
+    /// engine and the claim stopped being true; what makes this a decision rather than a
+    /// typo is that every link in the chain the rule promises is keyed on
+    /// <c>ExecutionProfiles.IsJournaled</c> and not one of them on <c>Durable</c>.
+    /// <c>FlowEngine.OpenJournal</c> asks it and opens the cursor, the emitter describes the
+    /// state bag off <c>FlowModel.IsJournaled</c> so a resumed window has its input and its
+    /// step results back, <c>PostgresRecoveryIndex</c> lists a <c>Compensating</c> row with
+    /// no profile in the predicate, <c>FlowStreamSubscriptionRegistration.Add</c> puts the
+    /// plan in <c>FlowCatalog</c> so the sweep can turn that row into one, and the skip in
+    /// the step loop pushes a completed compensable step back onto the unwind stack off
+    /// <c>cursor.IsJournaled</c>. The rebuilt window does not race that: its derived id meets
+    /// the journal's primary key, so <c>FlowStreamScan.DispositionFor</c> deduplicates it
+    /// (<c>ADR-0055</c>) rather than re-entering a flow whose unwind is half-run.
+    /// </para>
+    /// <para>
+    /// The remedy settles it on its own. <c>Profile = Durable</c> is what this rule's message
+    /// recommends, and on a stream-triggered flow it is <c>FLOWX1042</c>, emits no
+    /// subscription, and is refused by <c>FlowStreamCatalog.Add</c> at start-up — so the rule
+    /// was reporting a loss that does not happen and prescribing an edit that breaks the
+    /// trigger. <c>FLOWX1028</c> still covers a <c>Streaming</c> flow that no stream starts,
+    /// which is the profile buying nothing; that is a different finding and this rule was
+    /// never its second opinion.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void ACompensableStreamingFlowIsReported() =>
+    public void ACompensableStreamingFlowIsNotReported() =>
         Analyze(SagaWith("""[Flow("order.place", Profile = ExecutionProfile.Streaming)]"""))
-            .ShouldBe(["FLOWX1012"]);
+            .ShouldBeEmpty();
 
     /// <summary>The message names the flow, the compensation it found, and the profile.</summary>
     /// <remarks>
@@ -224,8 +248,10 @@ public sealed class CompensationDurabilityAnalyzerTests
     /// <remarks>
     /// C# permits <c>(ExecutionProfile)7</c>. <c>ExecutionProfileAnalyzer</c> is deliberately
     /// silent there because it asks which profile is unimplemented and an unnamed value is not
-    /// an answer; this rule asks whether the flow is durable, and an unnamed value is a clear
-    /// no. Whatever it is, nothing journals it and the unwind stack dies with the process.
+    /// an answer; this rule asks whether the flow journals, and an unnamed value is a clear no.
+    /// <c>ExecutionProfiles.Journals</c> answers <c>false</c> for a name this build does not
+    /// know, so widening the predicate to admit <c>Streaming</c> did not widen it to admit a
+    /// cast — the unwind stack still dies with the process.
     /// </remarks>
     [Fact]
     public void AProfileOutsideTheEnumIsReported()
