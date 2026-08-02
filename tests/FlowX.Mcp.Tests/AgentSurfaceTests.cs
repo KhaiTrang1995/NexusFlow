@@ -335,11 +335,17 @@ public sealed class AgentSurfaceTests : IAsyncLifetime
     }
 
     /// <summary>A method nobody serves is answered, not thrown.</summary>
+    /// <remarks>
+    /// The example was <c>resources/list</c> until 2026-08-02, when this surface began serving
+    /// it. <c>prompts/list</c> is the replacement and is a real MCP method this server declares
+    /// no capability for — a made-up name would have tested the same branch and told a reader
+    /// nothing about which parts of the protocol are absent.
+    /// </remarks>
     [Fact]
     public async Task AnUnservedMethodIsAStatedError()
     {
         var (_, body) = await _host.RpcAsync(
-            """{"jsonrpc":"2.0","id":14,"method":"resources/list"}""", permissions: null, Ct);
+            """{"jsonrpc":"2.0","id":14,"method":"prompts/list"}""", permissions: null, Ct);
 
         using (body)
         {
