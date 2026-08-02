@@ -34,6 +34,28 @@ public sealed record FlowInstanceStart
     /// <summary>The trigger input, recorded immutably.</summary>
     public JournalPayload Input { get; init; } = JournalPayload.Empty;
 
+    /// <summary>
+    /// The handle this instance's data subject is erased by, or null when the input named
+    /// none.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Derived from <see cref="Input"/> — <see cref="JournalPayload.SubjectDigest"/> — rather
+    /// than supplied beside it, so the two cannot disagree about which record this is. It is
+    /// carried as its own property instead of being read off the payload by each store,
+    /// because a store that forgot to read it would write rows nothing can ever erase and
+    /// nothing would report a problem: a column present and always null is the shape this
+    /// repository has shipped before.
+    /// </para>
+    /// <para>
+    /// A store that indexes it can answer "everything about this person" as a lookup. A store
+    /// that ignores it is not wrong — it is a store that does not implement
+    /// <see cref="ISubjectErasure"/>, which is a fact about that store rather than a silent
+    /// loss.
+    /// </para>
+    /// </remarks>
+    public string? SubjectDigest { get; init; }
+
     /// <summary>Ties every row of this instance to the request that started it.</summary>
     public string CorrelationId { get; init; } = string.Empty;
 

@@ -184,6 +184,8 @@ public sealed class DurableExecution
         ArgumentNullException.ThrowIfNull(journal);
         ArgumentNullException.ThrowIfNull(plan);
 
+        var recorded = input ?? JournalPayload.Empty;
+
         var start = new FlowInstanceStart
         {
             InstanceId = instanceId,
@@ -191,7 +193,13 @@ public sealed class DurableExecution
             FlowVersion = plan.Flow.Version,
             Token = token,
             TenantId = invocation.TenantId,
-            Input = input ?? JournalPayload.Empty,
+            Input = recorded,
+            // Derived here rather than by each store, so a store that never learned about
+            // erasure writes a null handle instead of a wrong one. The payload is the only
+            // thing that can compute it: the digest is taken from the input before the
+            // redaction pass, inside the type that holds the value, and neither this method
+            // nor the store ever sees the identifier it was computed from.
+            SubjectDigest = recorded.SubjectDigest,
             CorrelationId = invocation.CorrelationId,
             DeadlineAt = invocation.Deadline,
         };

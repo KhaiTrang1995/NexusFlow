@@ -20,6 +20,51 @@ namespace FlowX.Postgres;
 internal static class OutboxSql
 {
     /// <summary>
+    /// Whether the outbox row <c>e</c> is still owed to somebody.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Here rather than in either caller, because two callers now ask it.</strong>
+    /// <c>PostgresRetention</c> asks it to decide whether an instance may be deleted;
+    /// <c>PostgresSubjectErasure</c> asks it to decide whether an event body may be emptied.
+    /// The two acts differ and the question does not, and two copies of a predicate that were
+    /// meant to agree are two predicates that will not: a deployment could then find retention
+    /// holding a row erasure had already emptied.
+    /// </para>
+    /// <para>
+    /// <strong>The publisher's half is a column and the subscriptions' half is a join</strong>,
+    /// and they are or-ed because either consumer alone is reason enough. A deployment that
+    /// declares no publisher passes <c>false</c> and the first disjunct disappears; one that
+    /// declares no subscriptions passes empty arrays and the second is a join over nothing.
+    /// Both empty means nothing consumes the outbox and no row is owed, which is the honest
+    /// answer to a deployment that stages events and reads them nowhere.
+    /// </para>
+    /// <para>
+    /// <strong>A subscription with no cursor row has read nothing</strong>, which is the
+    /// <c>LEFT JOIN</c> and the null test: <c>PostgresChangeFeed</c> starts such a subscription
+    /// at the beginning of what the outbox still holds, so every row of its type is owed to it.
+    /// The comparison is the feed's own, inverted — it offers rows <em>after</em> the cursor,
+    /// so a row at or before it has been read.
+    /// </para>
+    /// <para>
+    /// Answered per candidate instance against <c>outbox_event_instance_idx</c> from
+    /// <c>0001</c>, and per subscription against <c>change_cursor</c>'s primary key. The arrays
+    /// are a parameter rather than a generated <c>IN</c> list, so the statement is a constant
+    /// whatever a deployment declares.
+    /// </para>
+    /// </remarks>
+    public const string OwedToAConsumer =
+        """
+        ((@publisher AND e.published_at IS NULL)
+          OR EXISTS (SELECT 1
+                       FROM unnest(@cursors::uuid[], @sources::text[]) AS s(subscription_id, source)
+                       LEFT JOIN change_cursor c ON c.subscription_id = s.subscription_id
+                      WHERE s.source = e.type
+                        AND (c.subscription_id IS NULL
+                             OR (c.position_xid, c.position_seq) < (e.staged_xid, e.staged_seq))))
+        """;
+
+    /// <summary>
     /// Claims a batch of pending events for this transaction, in staging order.
     /// </summary>
     /// <remarks>

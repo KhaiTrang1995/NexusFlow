@@ -339,6 +339,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1039](FLOWX1039.md) | Bus-triggered flow cannot be consumed | **A published `topic` with no subscription registered behind it: a flow that cannot bind the message and is never started, or an ephemeral one started again on every redelivery — with no error, no duplicate row and nothing anywhere to count** |
 | [FLOWX1040](FLOWX1040.md) | `Idempotency` is declared on a flow whose result cannot be recorded without redaction | **A replayed transfer answering with an IBAN of `[redacted]` and a `200`: the second caller's money moves to a placeholder, every step reports success, and nothing anywhere says a value was fabricated** |
 | [FLOWX1041](FLOWX1041.md) | Change-triggered flow cannot be observed | **A published change subscription with nothing registered behind it: a flow that cannot bind the change and is never started, or an ephemeral one started again every time the cursor is re-read from an uncommitted position — with no error, no duplicate row and nothing anywhere to count** |
+| [FLOWX1047](FLOWX1047.md) | Data subject is declared where the runtime cannot record it | **A deployment that runs perfectly and cannot answer an erasure request** — the marker names two members, or the output contract, or a member that is not a string, or a flow that keeps no journal, so the handle is never written and the rows can never be found. Discovered when somebody exercises the right, by which time the identifier the handle would have been computed from has been redacted for months |
 | [FLOWX1042](FLOWX1042.md) | Stream-triggered flow cannot be windowed | **A published stream subscription with nothing registered behind it: a flow that cannot bind a window, a non-`Streaming` one whose rebuilt window aggregates a second time after every crash, or a window shape the engine does not implement — a stream nobody reads, and nothing anywhere saying why** |
 | [FLOWX1048](FLOWX1048.md) | Triggers on one flow require different input contracts | **Two transports on one class that cannot both be served, and four rules whose advice alternates between them: `FLOWX1038` says declare it as `Flow<ScheduledFire, TOut>` and `FLOWX1039` says declare it as `Flow<BusMessage, TOut>`, and neither can see the other** |
 | [FLOWX1046](FLOWX1046.md) | Agent tool declares no confirmation over declared side effects | **A tool a model may call to move money, publishing `confirmationRequired: false`: no client prompts, a server enforcing confirmation has nothing to enforce, and the flow that says so and the capability that charges the card are in two different files** |
@@ -582,7 +583,6 @@ the capability chain, one adapter step in, and not over a single flow class. Kin
 contract are not in conflict — `Bus` and `Change` both take `BusMessage`, which is the
 two-subscriber arrangement `samples/event-driven` ships.
 
-The next is `FLOWX1049`. The range is `FLOWX1001`–`FLOWX1099`.
 **`FLOWX1046` is claimed** — *agent tool declares no confirmation over declared side effects*:
 `[AgentTrigger(Confirmation = ConfirmationMode.Never)]` on a flow whose steps reach a capability
 declaring `SideEffects`. A tool descriptor's `confirmationRequired` is the declared mode resolved
@@ -597,7 +597,18 @@ difference is that the declaration is sometimes right — a cache write and a se
 declared side effects too — so the author who means it writes one `#pragma` with a reason, which is
 a decision a reviewer can read.
 
-The next is `FLOWX1047`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1047` is claimed** — *data subject is declared where the runtime cannot record it*: a
+`[Subject]` marker the runtime would have to ignore. Four shapes, one rule and one suppression,
+unlike `FLOWX1038`–`FLOWX1042`, which are four rules about four attributes precisely so that a
+suppression of one does not silence another. These four are one rule about one attribute — *the
+handle will never be written* — and a project that legitimately suppressed it for one of them
+would legitimately suppress it for all of them, because the consequence is identical in every
+case: rows no erasure can ever find.
+[ADR-0061](../adr/ADR-0061-a-subject-is-erased-by-digest-and-a-residency-is-a-refusal.md) is the
+decision. It is an **error** on `FLOWX1038`'s argument: every shape has a one-line fix that
+produces a flow this runtime serves today.
+
+The next is `FLOWX1049`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

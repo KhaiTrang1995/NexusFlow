@@ -916,7 +916,36 @@ public sealed class FlowHost
             invocation = invocation with { TenantId = tenant };
         }
 
-        return null;
+        return Residency(invocation.TenantId);
+    }
+
+    /// <summary>
+    /// Refuses a tenant whose data may not be processed where this deployment runs.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>After resolution and before every bound, which is the only place it can be.</strong>
+    /// Before resolution there is no tenant to compare; after the bulkhead a refused call has
+    /// already spent a permit it will not use. It sits inside <c>Resolve</c> rather than beside
+    /// it because the two answer one question — "may this caller's work run here at all" — and
+    /// splitting them would leave a second caller of the resolver that forgot the second half.
+    /// </para>
+    /// <para>
+    /// The guard is a count, so a deployment that pins nothing pays one integer comparison per
+    /// admission and no dictionary lookup.
+    /// </para>
+    /// </remarks>
+    private Error? Residency(string? tenantId)
+    {
+        if (!_options.Residency.IsEnabled || tenantId is not { Length: > 0 })
+        {
+            return null;
+        }
+
+        return _options.Residency.RequiredRegion(tenantId) is { } required
+            && !string.Equals(required, _options.Residency.Region, StringComparison.Ordinal)
+                ? TenantErrors.ResidencyRefused(tenantId, required, _options.Residency.Region)
+                : null;
     }
 
     /// <summary>

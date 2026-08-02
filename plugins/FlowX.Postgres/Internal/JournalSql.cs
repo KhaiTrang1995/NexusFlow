@@ -49,11 +49,11 @@ internal static class JournalSql
         """
         INSERT INTO flow_instance (
             instance_id, flow_id, flow_version, tenant_id, state, fence,
-            input, correlation_id, trace_id, deadline_at,
+            input, subject_digest, correlation_id, trace_id, deadline_at,
             parent_instance_id, parent_scope, parent_step_id)
         VALUES (
             @instance, @flow_id, @flow_version, @tenant_id, @state, @fence,
-            @input, @correlation_id, @trace_id, @deadline_at,
+            @input, @subject_digest, @correlation_id, @trace_id, @deadline_at,
             @parent_instance, @parent_scope, @parent_step)
         """;
 

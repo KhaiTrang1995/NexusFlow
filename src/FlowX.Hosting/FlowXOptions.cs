@@ -359,6 +359,20 @@ public sealed class FlowXOptions
     /// that resolves no tenant, so a single-tenant host never reaches this object at all.
     /// </remarks>
     public TenantFairness Fairness { get; } = new();
+
+    /// <summary>
+    /// Which region this deployment is, and which tenants may only be served by it. Nothing,
+    /// by default.
+    /// </summary>
+    /// <remarks>
+    /// <strong>A refusal at admission, and never a route.</strong> Setting
+    /// <see cref="TenantResidency.Region"/> and pinning a tenant makes this deployment decline
+    /// that tenant's work with <c>tenant.residency_refused</c> when the pin names somewhere
+    /// else. It selects no store and forwards nothing — see <see cref="TenantResidency"/> for
+    /// why that is the only thing a runtime can honestly offer here, and why it does not
+    /// reopen ADR-0051.
+    /// </remarks>
+    public TenantResidency Residency { get; } = new();
 }
 
 /// <summary>
@@ -609,6 +623,7 @@ internal sealed class FlowXOptionsValidator : IValidateOptions<FlowXOptions>
         }
 
         ValidateFairness(options, failures);
+        ValidateResidency(options, failures);
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success
@@ -625,6 +640,54 @@ internal sealed class FlowXOptionsValidator : IValidateOptions<FlowXOptions>
     /// believe the noisy neighbour was handled. That is the "declared and inert" shape the
     /// tenancy work exists to remove, so it fails the pod rather than the customer.
     /// </remarks>
+    /// <summary>
+    /// Refuses a residency configuration that could not refuse anything.
+    /// </summary>
+    /// <remarks>
+    /// Both checks catch the same class of mistake as <see cref="ValidateFairness"/>'s first
+    /// one: a control that is written down, reads as enforced, and cannot fire. A pin with no
+    /// region to compare against would refuse every pinned tenant on every deployment, which
+    /// looks like an outage rather than a misconfiguration; a pin on a host that resolves no
+    /// tenant would refuse nobody, which looks like compliance.
+    /// </remarks>
+    private static void ValidateResidency(FlowXOptions options, List<string> failures)
+    {
+        if (!options.Residency.IsEnabled)
+        {
+            return;
+        }
+
+        if (options.TenantIsolation == TenantIsolation.None)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.Residency)} pins a tenant to a region and " +
+                $"{nameof(FlowXOptions.TenantIsolation)} is None, so no tenant is ever resolved " +
+                "and no pin could be applied. Declare an isolation level, or remove the pins — " +
+                "a residency rule with nothing to key on is a compliance control that silently " +
+                "permits everything.");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.Residency.Region))
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.Residency)} pins a tenant to a region and " +
+                $"{nameof(TenantResidency.Region)} is not set, so this deployment does not know " +
+                "where it is and every pinned tenant would be refused. Set the region this " +
+                "deployment runs in.");
+        }
+
+        foreach (var (tenant, region) in options.Residency.Requirements)
+        {
+            if (string.IsNullOrWhiteSpace(region))
+            {
+                failures.Add(
+                    $"{nameof(FlowXOptions.Residency)} pins tenant '{tenant}' to a blank " +
+                    "region, which no deployment can ever match. Name a region, or leave the " +
+                    "tenant unpinned.");
+            }
+        }
+    }
+
     private static void ValidateFairness(FlowXOptions options, List<string> failures)
     {
         var fairness = options.Fairness;

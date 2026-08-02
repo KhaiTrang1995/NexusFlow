@@ -123,6 +123,12 @@ public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
         command.Parameters.Add(Db.Text("state", StoredEnums.ToText(FlowInstanceState.Pending)));
         command.Parameters.Add(Db.Long("fence", start.Token.Value));
         command.Parameters.Add(Db.Json("input", start.Input.ToJson()));
+
+        // The one handle this row can be erased by, and the only column written from something
+        // the store is not allowed to see: the digest was computed inside JournalPayload,
+        // before the redaction pass, from a member whose value arrives here as '[redacted]'.
+        // Null for a flow that identifies nobody, which is most of them.
+        command.Parameters.Add(Db.Text("subject_digest", start.SubjectDigest));
         command.Parameters.Add(Db.Text("correlation_id", start.CorrelationId));
         command.Parameters.Add(Db.Text("trace_id", start.TraceId));
         command.Parameters.Add(Db.Timestamp("deadline_at", start.DeadlineAt));

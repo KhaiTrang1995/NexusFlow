@@ -45,8 +45,10 @@ public sealed class FlowModel
         string? returnLocation = null,
         IReadOnlyList<string>? usings = null,
         IReadOnlyList<string>? sensitiveInputMembers = null,
-        IReadOnlyList<string>? sensitiveOutputMembers = null)
+        IReadOnlyList<string>? sensitiveOutputMembers = null,
+        string? subjectMember = null)
     {
+        SubjectMember = subjectMember;
         FlowId = flowId;
         Version = version;
         Profile = profile;
@@ -170,6 +172,18 @@ public sealed class FlowModel
 
     /// <summary>Output-contract members carrying <c>[Sensitive]</c>, ordinally sorted.</summary>
     public IReadOnlyList<string> SensitiveOutputMembers { get; }
+
+    /// <summary>
+    /// The input-contract member carrying <c>[Subject]</c>, or <c>null</c> when the contract
+    /// declares none.
+    /// </summary>
+    /// <remarks>
+    /// One name rather than a list, because more than one is refused by <c>FLOWX1047</c>
+    /// before a model is built: two candidate handles for one record is two answers to
+    /// "whose is this", and a runtime picking either of them would erase by whichever the
+    /// serialiser happened to write first.
+    /// </remarks>
+    public string? SubjectMember { get; }
 
     /// <summary>
     /// The <c>using</c> directives of the file that declared the flow, in source order.

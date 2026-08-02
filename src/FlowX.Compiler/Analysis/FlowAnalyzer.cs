@@ -76,6 +76,7 @@ public static class FlowAnalyzer
     private const string FlowAttribute = "FlowX.FlowAttribute";
     private const string FlowDeadlineAttribute = "FlowX.FlowDeadlineAttribute";
     private const string SensitiveAttribute = "FlowX.SensitiveAttribute";
+    private const string SubjectAttribute = "FlowX.SubjectAttribute";
 
     /// <summary>Analyses one flow type.</summary>
     /// <param name="flowType">The class carrying <c>[Flow]</c>.</param>
@@ -171,6 +172,7 @@ public static class FlowAnalyzer
 
         var contracts = ReadFlowContracts(flowType);
         var returnClause = FindReturnClause(links);
+        var subject = ResolveSubject(flowType, declaration, profile, contracts, diagnostics);
 
         var model = new FlowModel(
             flowId: flowAttribute.ConstructorArguments[0].Value as string ?? flowType.Name,
@@ -185,6 +187,7 @@ public static class FlowAnalyzer
             outputTypeName: contracts.Output,
             sensitiveInputMembers: contracts.SensitiveInput,
             sensitiveOutputMembers: contracts.SensitiveOutput,
+            subjectMember: subject,
             steps: steps,
             declarationLocation: FormatLocation(declaration.Identifier.GetLocation()),
             returnProjection: returnClause?.Text,
@@ -2063,11 +2066,179 @@ public static class FlowAnalyzer
                     Display(current.TypeArguments[0]),
                     Display(current.TypeArguments[1]),
                     ReadSensitiveMembers(current.TypeArguments[0]),
-                    ReadSensitiveMembers(current.TypeArguments[1]));
+                    ReadSensitiveMembers(current.TypeArguments[1]),
+                    ReadMarkedMembers(current.TypeArguments[0], SubjectAttribute),
+                    ReadMarkedMembers(current.TypeArguments[1], SubjectAttribute));
             }
         }
 
-        return new FlowContracts("object", "object", [], []);
+        return new FlowContracts("object", "object", [], [], [], []);
+    }
+
+    /// <summary>
+    /// Decides which member names this flow's data subject, reporting <c>FLOWX1047</c> for a
+    /// declaration the runtime would have to ignore.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Four refusals, one message, and the order they are checked in is the order a reader
+    /// would want them: what is wrong with the contract first, then what is wrong with the flow
+    /// carrying it. A flow that trips two of them is told about the contract, because that is
+    /// the one whose fix is not "delete the marker".
+    /// </para>
+    /// <para>
+    /// The location is the marked member's own declaration wherever there is one, so the squiggle
+    /// lands on the attribute the author wrote. A contract from a referenced assembly has no
+    /// syntax in this compilation, and then the flow's own identifier carries it — which is also
+    /// the only sensible place for the profile refusal, whose subject is the flow rather than
+    /// the member.
+    /// </para>
+    /// </remarks>
+    private static string? ResolveSubject(
+        INamedTypeSymbol flowType,
+        ClassDeclarationSyntax declaration,
+        string profile,
+        FlowContracts contracts,
+        List<Diagnostic> diagnostics)
+    {
+        var flowLocation = declaration.Identifier.GetLocation();
+
+        if (contracts.SubjectOutput.Length > 0)
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.SubjectCannotBeRecorded,
+                contracts.SubjectOutput[0].Location ?? flowLocation,
+                flowType.Name,
+                string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    SubjectReasons.OnOutputFormat,
+                    contracts.Output)));
+        }
+
+        if (contracts.SubjectInput.Length == 0)
+        {
+            return null;
+        }
+
+        if (contracts.SubjectInput.Length > 1)
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.SubjectCannotBeRecorded,
+                contracts.SubjectInput[1].Location ?? flowLocation,
+                flowType.Name,
+                string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    SubjectReasons.AmbiguousFormat,
+                    contracts.Input,
+                    string.Join(", ", contracts.SubjectInput.Select(m => "'" + m.Name + "'")))));
+
+            return null;
+        }
+
+        var marked = contracts.SubjectInput[0];
+
+        if (!string.Equals(marked.TypeName, "string", System.StringComparison.Ordinal))
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.SubjectCannotBeRecorded,
+                marked.Location ?? flowLocation,
+                flowType.Name,
+                string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    SubjectReasons.NotAStringFormat,
+                    marked.Name,
+                    marked.TypeName)));
+
+            return null;
+        }
+
+        if (!string.Equals(profile, "Durable", System.StringComparison.Ordinal))
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.SubjectCannotBeRecorded,
+                flowLocation,
+                flowType.Name,
+                string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    SubjectReasons.NotJournaledFormat,
+                    profile)));
+
+            return null;
+        }
+
+        return marked.Name;
+    }
+
+    /// <summary>
+    /// The contract's members carrying <paramref name="attribute"/>, in declaration order, with
+    /// the type and the source location each one was declared at.
+    /// </summary>
+    /// <remarks>
+    /// Both spellings are read for <see cref="ReadSensitiveMembers"/>'s reason: a positional
+    /// record's marker sits on the primary constructor parameter, written
+    /// <c>[property: Subject]</c>, and Roslyn surfaces it on the generated property — but an
+    /// author who wrote it on a plain property and got nothing would reasonably conclude the
+    /// attribute does not work.
+    /// </remarks>
+    private static MarkedMember[] ReadMarkedMembers(ITypeSymbol contract, string attribute)
+    {
+        var marked = new List<MarkedMember>();
+
+        foreach (var member in contract.GetMembers())
+        {
+            if (member is not IPropertySymbol and not IFieldSymbol)
+            {
+                continue;
+            }
+
+            var onMember = member.GetAttributes()
+                .Any(a => a.AttributeClass?.ToDisplayString() == attribute);
+
+            var onParameter = contract
+                .GetMembers(".ctor")
+                .OfType<IMethodSymbol>()
+                .SelectMany(c => c.Parameters)
+                .Any(parameter =>
+                    string.Equals(parameter.Name, member.Name, System.StringComparison.OrdinalIgnoreCase) &&
+                    parameter.GetAttributes()
+                        .Any(a => a.AttributeClass?.ToDisplayString() == attribute));
+
+            if (!onMember && !onParameter)
+            {
+                continue;
+            }
+
+            var type = member switch
+            {
+                IPropertySymbol property => property.Type,
+                IFieldSymbol field => field.Type,
+                _ => null,
+            };
+
+            marked.Add(new MarkedMember(
+                member.Name,
+                type is null ? "?" : type.ToDisplayString(),
+                member.Locations.FirstOrDefault(l => l.IsInSource)));
+        }
+
+        return marked.ToArray();
+    }
+
+    /// <summary>A contract member carrying a marker, and where it was written.</summary>
+    private sealed class MarkedMember
+    {
+        internal MarkedMember(string name, string typeName, Location? location)
+        {
+            Name = name;
+            TypeName = typeName;
+            Location = location;
+        }
+
+        internal string Name { get; }
+
+        internal string TypeName { get; }
+
+        internal Location? Location { get; }
     }
 
     /// <summary>
@@ -2119,15 +2290,23 @@ public static class FlowAnalyzer
         return names.ToArray();
     }
 
-    /// <summary>A flow's input and output contracts, and which of their members are sensitive.</summary>
+    /// <summary>A flow's input and output contracts, and what each of them marks.</summary>
     private sealed class FlowContracts
     {
-        internal FlowContracts(string input, string output, string[] sensitiveInput, string[] sensitiveOutput)
+        internal FlowContracts(
+            string input,
+            string output,
+            string[] sensitiveInput,
+            string[] sensitiveOutput,
+            MarkedMember[] subjectInput,
+            MarkedMember[] subjectOutput)
         {
             Input = input;
             Output = output;
             SensitiveInput = sensitiveInput;
             SensitiveOutput = sensitiveOutput;
+            SubjectInput = subjectInput;
+            SubjectOutput = subjectOutput;
         }
 
         internal string Input { get; }
@@ -2137,6 +2316,10 @@ public static class FlowAnalyzer
         internal string[] SensitiveInput { get; }
 
         internal string[] SensitiveOutput { get; }
+
+        internal MarkedMember[] SubjectInput { get; }
+
+        internal MarkedMember[] SubjectOutput { get; }
     }
 
     private static string Display(ITypeSymbol symbol) =>

@@ -1438,6 +1438,51 @@ public static class FlowXDiagnostics
         "reviewer should be able to read.",
         DiagnosticSeverity.Warning);
 
+    /// <summary>FLOWX1047 — a <c>[Subject]</c> the runtime could not read or could not record.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The failure this prevents is silence.</strong> Every other declaration mistake
+    /// in this catalogue produces something an operator eventually notices — a flow that will
+    /// not start, a trigger that fires nothing, a policy that refuses. This one produces a
+    /// system that runs perfectly and cannot answer an erasure request, and the moment it is
+    /// discovered is the moment somebody exercises the right, months of rows later, when the
+    /// repair is a migration and a backfill that cannot be done: the identifiers the handles
+    /// would have been computed from were redacted on the way in and are gone.
+    /// </para>
+    /// <para>
+    /// <strong>An error, on <c>FLOWX1038</c>'s argument rather than a new one.</strong> Each of
+    /// the four reasons has a one-line fix that produces a flow this runtime serves today, and
+    /// none of them is a correct program written for a platform that does not have the feature
+    /// yet — the platform has it. Suppressing buys a marked contract and a null column.
+    /// </para>
+    /// <para>
+    /// <strong>It says nothing about a flow that marks nothing.</strong> Most flows have no
+    /// data subject, and a rule that asked every <c>Durable</c> flow to name one would be
+    /// inventing a requirement the regulation does not make: a funds transfer's journal is
+    /// about an account, not about a person the platform can identify. Declaring the subject is
+    /// the application's call; declaring one the runtime will ignore is what this refuses.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor SubjectCannotBeRecorded = Create(
+        "FLOWX1047",
+        "Data subject is declared where the runtime cannot record it",
+        "Flow '{0}' declares a [Subject] that will never be recorded: {1}",
+        "A [Subject] marker is what makes the right to erasure implementable: the runtime " +
+        "digests the marked member of the flow's input, before the redaction pass and without " +
+        "an accessor for the value, and writes the digest onto the instance row — so 'every " +
+        "record about this person' is an indexed lookup rather than a scan of every document " +
+        "in the journal, and a member that is both [Subject] and [Sensitive] is stored as " +
+        "'[redacted]' and stays erasable. That only works if the marker names exactly one " +
+        "string member of the input contract of a flow that keeps a journal. Each of the four " +
+        "shapes this rule refuses breaks one of those conditions, and each breaks it silently: " +
+        "the flow runs, the rows are written, the column is null, and nothing reports a " +
+        "problem until somebody exercises the right and the answer has to be 'we cannot find " +
+        "it'. By then the repair is not a code change — the identifiers the handles would have " +
+        "been computed from were redacted on the way in. Fix it by marking a single string " +
+        "member of the input contract on a Durable flow. Suppressing this does not make the " +
+        "column non-null.",
+        DiagnosticSeverity.Error);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1478,7 +1523,8 @@ public static class FlowXDiagnostics
         ChangeFlowCannotBeObserved,
         StreamFlowCannotBeWindowed,
         TriggerInputContractsConflict,
-        AgentToolDeclaresNoConfirmation);
+        AgentToolDeclaresNoConfirmation,
+        SubjectCannotBeRecorded);
 
     private static DiagnosticDescriptor Create(
         string id,
