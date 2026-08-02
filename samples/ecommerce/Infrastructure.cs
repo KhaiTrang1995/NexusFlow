@@ -52,6 +52,7 @@ internal sealed partial class EcommerceJsonContext : JsonSerializerContext;
 [JsonSerializable(typeof(OrderPlaced))]
 [JsonSerializable(typeof(BusMessage))]
 [JsonSerializable(typeof(RepricedOrder))]
+[JsonSerializable(typeof(OrderProjection))]
 [JsonSerializable(typeof(ValidatedOrder))]
 public sealed partial class EcommerceJournalJsonContext : JsonSerializerContext;
 

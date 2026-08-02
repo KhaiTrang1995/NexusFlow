@@ -223,6 +223,33 @@ public sealed class FlowXOptions
     public int BusMaxDeliveries { get; set; } = 5;
 
     /// <summary>
+    /// How often a node asks its change feed whether anything has been staged.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="BusScanInterval"/>'s argument, one transport over. It is <em>half</em> the
+    /// worst-case latency from a change committing to its flow starting: the other half is the
+    /// feed's own visibility barrier, which for the PostgreSQL feed is the lifetime of the oldest
+    /// transaction still open when the change landed
+    /// (<c>docs/adr/ADR-0048-a-change-feed-advances-a-cursor.md</c>) and which no setting here
+    /// shortens.
+    /// </para>
+    /// <para>
+    /// It is not a redelivery interval. A change is re-offered only when the cursor was not
+    /// committed past it, which is a crash rather than a timer.
+    /// </para>
+    /// </remarks>
+    public TimeSpan ChangeScanInterval { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>How many changes one pass takes from each subscription.</summary>
+    /// <remarks>
+    /// Changes are run one at a time and in order, and the cursor is committed once at the end of
+    /// the batch, so this is how much work one node does under one subscription lease and how
+    /// much is re-read after a crash. What is not taken this pass is taken on the next.
+    /// </remarks>
+    public int ChangeReadBatchSize { get; set; } = 16;
+
+    /// <summary>
     /// How far apart this deployment keeps its tenants' data.
     /// </summary>
     /// <remarks>
@@ -419,6 +446,22 @@ internal sealed class FlowXOptionsValidator : IValidateOptions<FlowXOptions>
                 $"{nameof(FlowXOptions.BusMaxDeliveries)} must be greater than zero; it is " +
                 $"{options.BusMaxDeliveries}. Zero would dead-letter every message on its first " +
                 "delivery, before anything had a chance to run it.");
+        }
+
+        if (options.ChangeScanInterval <= TimeSpan.Zero)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.ChangeScanInterval)} must be positive; it is " +
+                $"{options.ChangeScanInterval}. A zero interval is a poll loop with no pause in " +
+                "it, which is a denial of service aimed at your own journal.");
+        }
+
+        if (options.ChangeReadBatchSize <= 0)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.ChangeReadBatchSize)} must be greater than zero; it is " +
+                $"{options.ChangeReadBatchSize}. Zero is not 'change subscriptions disabled' — " +
+                "register no change subscription for that.");
         }
 
         if (options.MaxConcurrentRecoveries <= 0)

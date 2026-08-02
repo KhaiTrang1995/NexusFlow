@@ -34,19 +34,49 @@ public sealed class ManifestTests
         .EnumerateArray()
         .Single(flow => flow.GetProperty("id").GetString() == "order.place");
 
-    /// <summary>The sample declares three flows, and the manifest publishes all three.</summary>
+    /// <summary>The sample declares four flows, and the manifest publishes all four.</summary>
     /// <remarks>
     /// The assertion the index above used to make implicitly and wrongly. It is also where the
-    /// bus chain becomes visible in the contract document: <c>order.confirm</c> emits
-    /// <c>order.placed</c> and <c>order.reprice</c> subscribes to it, and nothing in either
-    /// flow names the other.
+    /// two chains become visible in the contract document: <c>order.confirm</c> emits
+    /// <c>order.placed</c>, <c>order.reprice</c> subscribes to it over a broker and
+    /// <c>order.project</c> observes the same event in the outbox — and nothing in any of the
+    /// flows names another.
     /// </remarks>
     [Fact]
     public void TheManifestNamesEveryFlowTheSampleDeclares() => Manifest.RootElement
         .GetProperty("flows")
         .EnumerateArray()
         .Select(flow => flow.GetProperty("id").GetString())
-        .ShouldBe(["order.confirm", "order.place", "order.reprice"], ignoreOrder: true);
+        .ShouldBe(
+            ["order.confirm", "order.place", "order.project", "order.reprice"], ignoreOrder: true);
+
+    /// <summary>The observing flow publishes a change address and nothing beyond it.</summary>
+    /// <remarks>
+    /// <strong>The manifest gains no field for a change subscription either</strong>
+    /// (<c>docs/adr/ADR-0050-a-change-trigger-observes-the-outbox.md</c> decision 4). It is the
+    /// same three properties the bus subscription publishes, with a different <c>kind</c> — which
+    /// is what makes swapping the attribute a one-line edit rather than a contract change, and
+    /// what keeps <c>flowx diff</c> able to classify a removed change subscription with rules it
+    /// already has. The schema is <c>additionalProperties: false</c>, and F1 counts a declared
+    /// field nothing writes.
+    /// </remarks>
+    [Fact]
+    public void TheChangeSubscriptionPublishesItsAddressAndNothingElse()
+    {
+        var trigger = Manifest.RootElement
+            .GetProperty("flows")
+            .EnumerateArray()
+            .Single(flow => flow.GetProperty("id").GetString() == "order.project")
+            .GetProperty("triggers")[0];
+
+        trigger.EnumerateObject()
+            .Select(property => property.Name)
+            .ShouldBe(["kind", "topic", "group"], ignoreOrder: true);
+
+        trigger.GetProperty("kind").GetString().ShouldBe("Change");
+        trigger.GetProperty("topic").GetString().ShouldBe("order.placed");
+        trigger.GetProperty("group").GetString().ShouldBe("projection");
+    }
 
     /// <summary>The consuming flow publishes a bus address and nothing beyond it.</summary>
     /// <remarks>

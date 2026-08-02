@@ -68,6 +68,16 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
         "FlowX.KafkaTriggerAttribute",
     ];
 
+    /// <summary>The attribute a change subscription is declared with.</summary>
+    /// <remarks>
+    /// Matched by name rather than by <c>[TriggerKind(TriggerKind.Change)]</c>, for
+    /// <see cref="BusTriggerAttributeNames"/>'s reason: a third-party <c>Change</c> attribute
+    /// reaching the manifest with its kind produces no registration either, because
+    /// <c>TriggerReader</c> has no shape for its arguments, and FLOWX1025 is the rule that covers
+    /// it with something the author can act on.
+    /// </remarks>
+    private const string ChangeTriggerAttributeName = "FlowX.ChangeTriggerAttribute";
+
     private const string BusMessageName = "FlowX.BusMessage";
 
     private const string FlowBaseName = "FlowX.Flow";
@@ -77,7 +87,8 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
         ImmutableArray.Create(
             FlowXDiagnostics.TriggerDeclaresNoKind,
             FlowXDiagnostics.ScheduledFlowCannotBeFired,
-            FlowXDiagnostics.BusFlowCannotBeConsumed);
+            FlowXDiagnostics.BusFlowCannotBeConsumed,
+            FlowXDiagnostics.ChangeFlowCannotBeObserved);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -131,6 +142,81 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
 
         ReportUnfireableSchedules(context, type, attributes);
         ReportUnconsumableSubscriptions(context, type, attributes);
+        ReportUnobservableChangeSubscriptions(context, type, attributes);
+    }
+
+    /// <summary>
+    /// Reports FLOWX1041 on each change trigger the host would have nothing to do with.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ReportUnconsumableSubscriptions"/>'s shape and reasons. The conditions are the
+    /// same two and the <em>consequence</em> of the second is not — a re-read rather than a
+    /// redelivery — which is why the reason text is written out here rather than shared.
+    /// </remarks>
+    private static void ReportUnobservableChangeSubscriptions(
+        SymbolAnalysisContext context, INamedTypeSymbol type, ImmutableArray<AttributeData> attributes)
+    {
+        var reason = UnobservableReason(type, attributes);
+
+        if (reason is null)
+        {
+            return;
+        }
+
+        foreach (var attribute in attributes)
+        {
+            if (attribute.AttributeClass?.ToDisplayString() != ChangeTriggerAttributeName)
+            {
+                continue;
+            }
+
+            context.ReportDiagnostic(Diagnostic.Create(
+                FlowXDiagnostics.ChangeFlowCannotBeObserved,
+                LocationOf(attribute, type, context.CancellationToken),
+                FlowIdOf(type, attributes),
+                reason));
+        }
+    }
+
+    /// <summary>
+    /// Why nothing could observe this flow's change subscriptions, or <c>null</c> when something
+    /// can.
+    /// </summary>
+    /// <remarks>
+    /// The order <see cref="UnconsumableReason"/> checks in, and for its reason: a flow whose
+    /// input is wrong cannot be started at all, and a flow whose profile is wrong would be
+    /// started again on every re-read.
+    /// </remarks>
+    private static string? UnobservableReason(
+        INamedTypeSymbol type, ImmutableArray<AttributeData> attributes)
+    {
+        if (!attributes.Any(static a =>
+                a.AttributeClass?.ToDisplayString() == ChangeTriggerAttributeName))
+        {
+            return null;
+        }
+
+        if (InputOf(type) is not { } input)
+        {
+            // The base type did not resolve, so C# is already reporting something more useful
+            // about the same span and this rule would be piling on.
+            return null;
+        }
+
+        if (input.ToDisplayString() != BusMessageName)
+        {
+            return
+                $"its input contract is '{input.ToDisplayString()}' and a change is an outbox row " +
+                "with only the message to give it — declare it as Flow<BusMessage, TOut> and " +
+                "deserialise the payload in a capability";
+        }
+
+        return IsDurable(attributes)
+            ? null
+            : "it does not declare ExecutionProfile.Durable, so nothing journals its instances, " +
+              "the instance id a change derives is inert, and — because the cursor is committed " +
+              "after the flows have run — every crash in between would start the flow again — " +
+              "declare Profile = ExecutionProfile.Durable";
     }
 
     /// <summary>

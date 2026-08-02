@@ -1212,6 +1212,57 @@ public static class FlowXDiagnostics
         "manifest publishing a subscription and a host that consumes nothing.",
         DiagnosticSeverity.Error);
 
+    /// <summary>
+    /// FLOWX1041: a flow declares a change trigger that nothing could observe.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><see cref="BusFlowCannotBeConsumed"/>'s rule, one transport over</strong>, and a
+    /// separate id rather than a widened one for that rule's own reason: a suppression is per id,
+    /// a flow may declare both a bus trigger and a change trigger, and silencing one must not
+    /// silence the other.
+    /// </para>
+    /// <para>
+    /// <strong>The two reasons are the same two, and the second has a different mechanism.</strong>
+    /// A change is an outbox row and has nothing but the message to give, so the input must be
+    /// <c>BusMessage</c> — which is also why swapping the two attributes is a one-line edit. And
+    /// an <c>Ephemeral</c> flow starts perfectly well and starts again every time the cursor is
+    /// re-read from an uncommitted position: a change feed commits its cursor <em>after</em> the
+    /// flows have run
+    /// (<a href="../adr/ADR-0048-a-change-feed-advances-a-cursor.md">ADR-0048</a>), which is the
+    /// only order that cannot lose work, and the id a change derives
+    /// (<a href="../adr/ADR-0049-a-change-names-the-instance-it-starts.md">ADR-0049</a>) is what
+    /// makes the re-read a refusal instead of a second run — inert without a journal.
+    /// </para>
+    /// <para>
+    /// <strong>It is not the rule that refuses a flow observing a type it emits.</strong> That is
+    /// a registration-time refusal in <c>FlowChangeCatalog.Add</c>, which reads the emitted types
+    /// off the <c>ExecutionPlan</c> that will run
+    /// (<a href="../adr/ADR-0050-a-change-trigger-observes-the-outbox.md">ADR-0047</a>).
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor ChangeFlowCannotBeObserved = Create(
+        "FLOWX1041",
+        "Change-triggered flow cannot be observed",
+        "Flow '{0}' declares a change trigger and no subscription is registered for it: {1}",
+        "A [ChangeTrigger] is turned into a change-subscription registration by the same " +
+        "reading of the attribute that produces the manifest's triggers block, so a declared " +
+        "subscription and a served one cannot disagree — but only for a flow the host can " +
+        "actually start. Two things stop it. A flow whose input contract is not " +
+        "FlowX.BusMessage has nothing to bind: a change is an outbox row, handed over with its " +
+        "body undeserialised because turning that body into a typed contract needs a " +
+        "JsonTypeInfo only generated code can name. Declare the flow as Flow<BusMessage, TOut> " +
+        "and deserialise the payload in a capability, where a serialiser context is in scope and " +
+        "the failure is a Result. And a flow that does not declare ExecutionProfile.Durable " +
+        "journals no instance, so the instance id a change derives is inert and there is no " +
+        "primary key to refuse a re-read: because the cursor is committed after the flows have " +
+        "run, every crash in between starts the flow again, with no error, no duplicate row and " +
+        "nothing anywhere to count. Declare Profile = ExecutionProfile.Durable. There is no " +
+        "suppression that makes either work — the generator emits no registration either way, " +
+        "so what a suppression buys is a manifest publishing a change subscription and a host " +
+        "that observes nothing.",
+        DiagnosticSeverity.Error);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1248,7 +1299,8 @@ public static class FlowXDiagnostics
         CompensationRetryRetriesNothing,
         PolicySetCannotBeRead,
         ScheduledFlowCannotBeFired,
-        BusFlowCannotBeConsumed);
+        BusFlowCannotBeConsumed,
+        ChangeFlowCannotBeObserved);
 
     private static DiagnosticDescriptor Create(
         string id,

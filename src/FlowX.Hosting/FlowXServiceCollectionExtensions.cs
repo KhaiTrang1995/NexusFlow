@@ -145,6 +145,19 @@ public static class FlowXServiceCollectionExtensions
                 ResolveBusScan(provider),
                 provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
 
+        // Registered whether or not anything is put in it, for FlowScheduleCatalog's reason.
+        services.TryAddSingleton<FlowChangeCatalog>();
+
+        // A fifth loop, and not a query on any of the first four. A change pass reads a cursor
+        // and a table rather than a broker or an index of ours, and its latency floor is the
+        // store's oldest open transaction rather than a poll interval — so a deployment that
+        // wants sub-second consumption from a broker and a slower sweep over the outbox can say
+        // so (ADR-0048).
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowChangeService>(
+            static provider => new FlowChangeService(
+                ResolveChangeScan(provider),
+                provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
+
         services.TryAddSingleton<FlowXHealthCheck>();
 
         // Registering the type is not the same as registering the check. Before this,
@@ -305,6 +318,82 @@ public static class FlowXServiceCollectionExtensions
             consumer,
             durability,
             provider.GetRequiredService<IOptions<FlowXOptions>>().Value);
+    }
+
+    /// <summary>The change pass, or null when this host has no feed or no journal.</summary>
+    /// <remarks>
+    /// <see cref="ResolveBusScan"/>'s two ways to be null, unchanged. No <see cref="IChangeFeed"/>
+    /// is the ordinary state of an application that observes nothing, and no journal is not a
+    /// supported configuration for a change subscription at all — <c>FlowChangeCatalog.Add</c> is
+    /// where an application that meant to observe finds out.
+    /// </remarks>
+    private static FlowChangeScan? ResolveChangeScan(IServiceProvider provider)
+    {
+        if (provider.GetService<IChangeFeed>() is not { } feed ||
+            ResolveDurability(provider) is not { } durability)
+        {
+            return null;
+        }
+
+        return new FlowChangeScan(
+            provider.GetRequiredService<FlowHost>(),
+            provider.GetRequiredService<FlowChangeCatalog>(),
+            feed,
+            durability,
+            provider.GetRequiredService<IOptions<FlowXOptions>>().Value);
+    }
+}
+
+/// <summary>
+/// What generated change-subscription registration code calls, and the only thing it knows about
+/// this assembly.
+/// </summary>
+/// <remarks>
+/// <see cref="FlowBusSubscriptionRegistration"/>'s shape and reasons. The generator knows this
+/// assembly only by the string <c>"FlowX.Hosting.FlowChangeSubscriptionRegistration"</c>, which it
+/// looks up in the user's own compilation before emitting anything.
+/// </remarks>
+public static class FlowChangeSubscriptionRegistration
+{
+    /// <summary>Registers one declared change subscription on this node.</summary>
+    /// <param name="services">The built container, which is where the dispatcher comes from.</param>
+    /// <param name="plan">The compiled flow.</param>
+    /// <param name="dispatcher">Resolves the flow's generated dispatcher.</param>
+    /// <param name="source">The observed event type, exactly as the manifest published it.</param>
+    /// <param name="group">The subscription group, exactly as the manifest published it.</param>
+    /// <returns>The same provider, so registrations chain.</returns>
+    /// <exception cref="ArgumentException">
+    /// The flow does not declare <c>Durable</c>, or it emits the type it observes. Both are
+    /// startup failures on purpose — see <see cref="FlowChangeCatalog.Add"/>.
+    /// </exception>
+    /// <remarks>
+    /// <strong>There is no transport to check</strong>, unlike
+    /// <see cref="FlowBusSubscriptionRegistration.Add"/>: a change trigger names no feed family,
+    /// so there is nothing on the declaration for a wired <see cref="IChangeFeed"/> to disagree
+    /// with.
+    /// </remarks>
+    public static IServiceProvider Add(
+        IServiceProvider services,
+        ExecutionPlan plan,
+        Func<IServiceProvider, IStepDispatcher> dispatcher,
+        string source,
+        string group)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(dispatcher);
+
+        services.GetRequiredService<FlowChangeCatalog>().Add(
+            new ChangeSubscription(plan.Flow.Id, plan.Flow.Version, source, group),
+            plan,
+            dispatcher(services));
+
+        // An observed instance is a durable instance like any other: a node that dies holding one
+        // has abandoned it, and a recovery sweep can only take it over if this node can turn its
+        // (flow_id, flow_version) back into a plan.
+        services.GetRequiredService<FlowCatalog>().Add(plan, dispatcher(services));
+
+        return services;
     }
 }
 

@@ -32,7 +32,7 @@ namespace FlowX.Compiler.Analysis;
 /// <para>
 /// <strong>Kind is general; argument shape is not.</strong> Knowing an attribute is
 /// <c>Bus</c> says nothing about what its constructor arguments mean, so the switch in
-/// <see cref="Shape"/> still recognises only the five attributes <c>FlowX.Abstractions</c>
+/// <see cref="Shape"/> still recognises only the attributes <c>FlowX.Abstractions</c>
 /// ships, whose shape is part of the platform contract. A plugin trigger publishes its
 /// kind and nothing else — an honest partial record rather than an absence, and rather
 /// than a guess at which positional argument is a topic. Projecting a plugin's arguments
@@ -103,8 +103,20 @@ namespace FlowX.Compiler.Analysis;
 /// is read back out of the manifest at run time.
 /// </para>
 /// <para>
-/// <c>Stream</c> and <c>Change</c> are still declaration only:
-/// nothing binds them, so a flow declaring one of those declares an address nothing serves.
+/// <em>This paragraph named <c>Change</c> beside <c>Stream</c> among the kinds that were
+/// declaration only. That expired on 2026-08-02.</em> <c>ChangeEmitter</c> turns each
+/// <c>[ChangeTrigger]</c> into a registration in <c>FlowXChangeSubscriptions.g.cs</c>, and
+/// <c>FlowChangeScan</c> drives an <c>IChangeFeed</c> over the outbox into the same
+/// <c>FlowEngine.ExecuteAsync</c> an HTTP request reaches. The copy rule is the bus's: the
+/// source and the group are taken off the <see cref="TriggerModel"/> this reader produced,
+/// because they are two of the four values every node derives a change's instance id from
+/// (<a href="../../../docs/adr/ADR-0049-a-change-names-the-instance-it-starts.md">ADR-0049</a>)
+/// and two of the four the cursor is keyed on. <c>FLOWX1041</c> refuses the two declarations
+/// that could not be observed.
+/// </para>
+/// <para>
+/// <c>Stream</c> is still declaration only:
+/// nothing binds it, so a flow declaring it declares an address nothing serves.
 /// (<c>Manual</c> needs no binding, and <c>Cli</c>'s summary names
 /// <c>flowx run</c>, which is not one of the CLI's verbs.) The manifest publishes the
 /// declaration either way,
@@ -127,7 +139,7 @@ public static class TriggerReader
     /// all: that is <see cref="KindOf"/>'s answer, and an attribute outside this list still
     /// reaches the manifest with its declared kind.
     /// <c>EveryTriggerAttributeTheAbstractionShipsHasAKnownShape</c> reflects over
-    /// <c>FlowX.Abstractions</c> and fails if a sixth attribute is added without being
+    /// <c>FlowX.Abstractions</c> and fails if a further attribute is added without being
     /// added here, which would otherwise publish a bare kind for an attribute whose shape
     /// is part of the platform contract.
     /// </remarks>
@@ -135,6 +147,7 @@ public static class TriggerReader
     [
         "FlowX.AgentTriggerAttribute",
         "FlowX.BusTriggerAttribute",
+        "FlowX.ChangeTriggerAttribute",
         "FlowX.CronTriggerAttribute",
         "FlowX.HttpTriggerAttribute",
         "FlowX.KafkaTriggerAttribute",
@@ -353,7 +366,7 @@ public static class TriggerReader
     }
 
     /// <summary>
-    /// The declared address of one of the five attributes whose shape is part of the
+    /// The declared address of one of the attributes whose shape is part of the
     /// platform contract, or <c>null</c> for an attribute whose arguments this build cannot
     /// interpret.
     /// </summary>
@@ -382,6 +395,15 @@ public static class TriggerReader
             "FlowX.KafkaTriggerAttribute" => new TriggerModel(
                 kind,
                 transport: "kafka",
+                topic: Positional(attribute, 0),
+                group: Named(attribute, "Group")),
+
+            // A change subscription's address is an event type and a group, which are the two
+            // fields a bus subscription already publishes — so it reaches the manifest through
+            // `topic` and `group` and adds no property to a schema that is
+            // additionalProperties: false (ADR-0047 decision 4).
+            "FlowX.ChangeTriggerAttribute" => new TriggerModel(
+                kind,
                 topic: Positional(attribute, 0),
                 group: Named(attribute, "Group")),
 

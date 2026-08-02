@@ -250,6 +250,120 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
             committed.IsFailure ? committed.Error.ToString() : string.Empty);
     }
 
+    /// <summary>
+    /// Opens an instance an outbox row may be staged against, and nothing else.
+    /// </summary>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The instance id.</returns>
+    /// <remarks>
+    /// <c>outbox_event.instance_id</c> carries a foreign key, so a staged row needs a real
+    /// instance behind it. The lease is taken and the row opened through the adapter, for
+    /// <see cref="AbandonAsync"/>'s reason: a fixture that inserted the row itself could pass
+    /// against a shape the journal does not produce.
+    /// </remarks>
+    public async ValueTask<Guid> StageableInstanceAsync(CancellationToken cancellationToken)
+    {
+        var instance = Guid.NewGuid();
+
+        var lease = await Leases.AcquireAsync(
+            instance, "test-node", TimeSpan.FromMinutes(5), cancellationToken);
+
+        lease.IsSuccess.ShouldBeTrue(lease.IsFailure ? lease.Error.ToString() : string.Empty);
+
+        var started = await Journal.StartAsync(
+            new FlowInstanceStart
+            {
+                InstanceId = instance,
+                FlowId = RecoveryStore.FlowId,
+                FlowVersion = RecoveryStore.FlowVersion,
+                Token = lease.Value.Token,
+            },
+            cancellationToken);
+
+        started.IsSuccess.ShouldBeTrue(started.IsFailure ? started.Error.ToString() : string.Empty);
+
+        return instance;
+    }
+
+    /// <summary>
+    /// Stages one outbox row in its own committed transaction.
+    /// </summary>
+    /// <param name="instance">The instance the event belongs to.</param>
+    /// <param name="type">The event type, which is a change subscription's address.</param>
+    /// <param name="payload">The body, as JSON.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The event's identity.</returns>
+    public async ValueTask<Guid> StageAsync(
+        Guid instance, string type, string payload, CancellationToken cancellationToken)
+    {
+        await using var staging = await BeginAsync(cancellationToken);
+
+        var eventId = await staging.StageAsync(instance, type, payload, cancellationToken);
+
+        await staging.CommitAsync(cancellationToken);
+
+        return eventId;
+    }
+
+    /// <summary>
+    /// Opens a transaction against this schema that the caller commits when it chooses.
+    /// </summary>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The open transaction.</returns>
+    /// <remarks>
+    /// The arrangement the snapshot barrier exists for, and the only one in which the gap it
+    /// closes is reachable: one transaction staging and holding while another stages and
+    /// commits behind it.
+    /// </remarks>
+    public async ValueTask<StagingTransaction> BeginAsync(CancellationToken cancellationToken)
+    {
+        var connection = await DataSource.OpenConnectionAsync(cancellationToken);
+        var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        return new StagingTransaction(connection, transaction);
+    }
+
+    /// <summary>
+    /// The payloads of one type's staged events that are below the visibility barrier, oldest
+    /// first.
+    /// </summary>
+    /// <param name="type">The event type.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The payloads, in the order a feed would offer them.</returns>
+    /// <remarks>
+    /// The barrier and the ordering are both the feed's, written out here rather than called
+    /// through <c>PostgresChangeFeed</c> so that the property is asserted about the database
+    /// rather than about the adapter that relies on it.
+    /// </remarks>
+    public async ValueTask<IReadOnlyList<string>> BelowBarrierAsync(
+        string type, CancellationToken cancellationToken)
+    {
+        await using var connection = await DataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+
+        command.CommandText =
+            """
+            SELECT payload::text
+              FROM outbox_event
+             WHERE type = @type
+               AND staged_xid < pg_snapshot_xmin(pg_current_snapshot())
+             ORDER BY staged_xid, staged_seq
+            """;
+
+        command.Parameters.AddWithValue("type", type);
+
+        var payloads = new List<string>();
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            payloads.Add(reader.GetString(0));
+        }
+
+        return payloads;
+    }
+
     /// <summary>Runs a statement against this schema.</summary>
     /// <param name="sql">The statement.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
@@ -303,5 +417,72 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
         }
 
         await DataSource.DisposeAsync();
+    }
+}
+
+/// <summary>
+/// A transaction the test holds open, so that a row can be staged and not yet committed.
+/// </summary>
+/// <remarks>
+/// Staged with raw SQL rather than through <c>PostgresFlowJournal</c>, because
+/// <c>CommitStepAsync</c> opens and commits its own transaction — which is exactly the thing
+/// this type exists to keep the test in control of. The columns written are the ones the
+/// journal writes; <c>staged_seq</c> and <c>staged_xid</c> come from their defaults, which is
+/// how a writer that has never heard of them behaves and is the property the expand-only
+/// migration claims.
+/// </remarks>
+internal sealed class StagingTransaction : IAsyncDisposable
+{
+    private readonly NpgsqlConnection _connection;
+    private readonly NpgsqlTransaction _transaction;
+
+    internal StagingTransaction(NpgsqlConnection connection, NpgsqlTransaction transaction)
+    {
+        _connection = connection;
+        _transaction = transaction;
+    }
+
+    /// <summary>Stages one event inside this transaction.</summary>
+    /// <param name="instance">The instance the event belongs to.</param>
+    /// <param name="type">The event type.</param>
+    /// <param name="payload">The body, as JSON.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The event's identity.</returns>
+    public async ValueTask<Guid> StageAsync(
+        Guid instance, string type, string payload, CancellationToken cancellationToken)
+    {
+        var eventId = Guid.NewGuid();
+
+        await using var command = _connection.CreateCommand();
+
+        command.Transaction = _transaction;
+        command.CommandText =
+            """
+            INSERT INTO outbox_event
+                (event_id, instance_id, sequence, ordinal, type, schema_version, partition_key, payload)
+            VALUES (@event, @instance, 1, 0, @type, '1.0.0', @key, @payload::json)
+            """;
+
+        command.Parameters.AddWithValue("event", eventId);
+        command.Parameters.AddWithValue("instance", instance);
+        command.Parameters.AddWithValue("type", type);
+        command.Parameters.AddWithValue("key", instance.ToString());
+        command.Parameters.AddWithValue("payload", payload);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+
+        return eventId;
+    }
+
+    /// <summary>Commits, making everything staged here visible.</summary>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    public Task CommitAsync(CancellationToken cancellationToken) =>
+        _transaction.CommitAsync(cancellationToken);
+
+    /// <inheritdoc />
+    public async ValueTask DisposeAsync()
+    {
+        await _transaction.DisposeAsync();
+        await _connection.DisposeAsync();
     }
 }

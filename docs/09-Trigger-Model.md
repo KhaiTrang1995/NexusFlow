@@ -6,11 +6,12 @@
 
 > [!WARNING]
 > **[ADR-0004](adr/ADR-0004-universal-trigger-model.md)'s "one trigger abstraction for
-> every transport" is true of the *declaration* and, so far, of two transports.** Five
-> trigger attributes ship in `FlowX.Abstractions`, the compiler reads all five into
-> `flowx.manifest.json`, and **three of them reach a running transport.** *This box said "one
-> of them" until 2026-08-01, when `[CronTrigger]` was bound, and "two of them" for the few hours
-> between that and `[BusTrigger]`.* There is no
+> every transport" is true of the *declaration* and, so far, of two transports.** Seven
+> trigger attributes ship in `FlowX.Abstractions`, the compiler reads all seven into
+> `flowx.manifest.json`, and **every one but `[StreamTrigger]` reaches a running transport.**
+> *This box said "one of them" until 2026-08-01, when `[CronTrigger]` was bound, "two of them"
+> for the few hours between that and `[BusTrigger]`, and "three of them" until
+> `[ChangeTrigger]` shipped on 2026-08-02.* There is no
 > Trigger Engine: no type under `src/` or `plugins/` normalises, admits, dedupes or binds,
 > and §11's `ITriggerSource` / `ITriggerSink` are declared nowhere.
 >
@@ -21,7 +22,8 @@
 > | **Schedule** ([§8](#8-schedule-trigger)) | **served, and generated.** `[CronTrigger]` → `TriggerReader` → `ScheduleEmitter` → `FlowXSchedules.g.cs` → `FlowScheduleScan`, and `samples/workflow` calls the generated `services.AddFlowXSchedules()`. `cron`, `timeZone` and `MissedFire` are all read; the first two publish, the third executes. **There is no leader and no election** — *this row said "leader-elected, never double-fires" was a design, and what replaced it is not an election*: every node computes the same occurrence, derives the same instance id from it, and the lease store and the journal's primary key refuse all but one ([ADR-0031](adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md)). `Overlap`, `Jitter` and `PerTenant` still reach nothing at all |
 > | **Stream** ([§9](#9-stream-trigger)) | **attribute only, over an unbuilt profile.** `[StreamTrigger]` publishes its source; `Window`, `Lateness`, `Checkpoint` and `Parallelism` are dropped. `ExecutionProfile.Streaming` is an enum member no code branches on, and `.Window(…)` / `.Aggregate(…)` are not members of `IFlowBuilder<TIn, TOut>` — **§9's example does not compile.** Streaming is **P7** |
 > | **Agent** ([§10](#10-agent-trigger)) | **attribute only.** `[AgentTrigger]` publishes `description` and `confirmation`. There is no MCP server, no tool descriptor and no JSON Schema generation; `MCP` occurs under `src/` only inside doc comments. §10's two properties are consequences of a surface nothing serves. **P8** — see [13-AI-Native](13-AI-Native.md), which states the same thing about `AgentTriggerAttribute` |
-> | **Change**, **Cli**, **Manual** | **kinds with no attribute.** All three are `TriggerKind` members and values of the manifest schema's closed `kind` enum, so a third-party `TriggerAttribute` carrying `[TriggerKind]` can declare one and reach the manifest with it. `FlowX.Abstractions` ships nothing that does, and `TriggerKind.Cli`'s summary names `flowx run`, which is not one of the CLI's five verbs ([22-CLI](22-CLI.md)) |
+> | **Change** ([§4](#4-trigger-kinds-and-their-semantics)) | **served, and generated.** *This row said "a kind with no attribute" until 2026-08-02.* `[ChangeTrigger]` → `TriggerReader` → `ChangeEmitter` → `FlowXChangeSubscriptions.g.cs` → `FlowChangeScan` → an `IChangeFeed`, and `samples/ecommerce` calls the generated `services.AddFlowXChangeSubscriptions()`. What it observes is the **outbox** — the change feed this platform already produces — read forward from a durable cursor without writing `published_at`, so a change subscription and `PostgresOutboxPublisher` coexist over one table ([ADR-0047](adr/ADR-0050-a-change-trigger-observes-the-outbox.md)). **Nothing is acknowledged and there is no dead-letter path:** a feed is a log with a cursor, the cursor advances past the longest prefix that reached a recorded outcome, and a change whose flow failed *as a value* is progress ([ADR-0048](adr/ADR-0048-a-change-feed-advances-a-cursor.md)). One subscription is read by one node at a time, so it scales by adding subscriptions rather than nodes — weaker than [ADR-0037](adr/ADR-0037-the-consumer-offers-per-key-order.md)'s per-partition concurrency and the honest cost of a cursor. The one `IChangeFeed` that ships is PostgreSQL's; a file watcher and CDC remain the summary's words rather than code |
+> | **Cli**, **Manual** | **kinds with no attribute.** Both are `TriggerKind` members and values of the manifest schema's closed `kind` enum, so a third-party `TriggerAttribute` carrying `[TriggerKind]` can declare one and reach the manifest with it. `FlowX.Abstractions` ships nothing that does, and `TriggerKind.Cli`'s summary names `flowx run`, which is not one of the CLI's five verbs ([22-CLI](22-CLI.md)) |
 > | **gRPC** | **does not exist, at any level.** [§4](#4-trigger-kinds-and-their-semantics) gives `Grpc` its own row with its own delivery, reply and ordering semantics. There is no `Grpc` member of `TriggerKind`, no such value in the schema's `kind` enum and no attribute; `TriggerKind.Http` folds *"REST, gRPC, GraphQL, webhook"* into one kind. Read that row as a ninth kind that was never declared rather than a declared one that is unimplemented — it is the reason this box is here |
 >
 > **§2's envelope is a type, not a value.** `TriggerEnvelope` and `TriggerHeaders` are
@@ -172,7 +174,7 @@ is the single most visible benefit of the model.**
 | `Bus` | at-least-once | optional (reply-to) | per partition/key | retry → DLQ after N |
 | `Stream` | at-least-once + checkpoint | no | per partition | pause → retry → poison topic |
 | `Schedule` | at-least-once | no | none | missed-fire policy |
-| `Change` | at-least-once | no | per key | retry → DLQ |
+| `Change` | at-least-once | no | per key | cursor holds; no DLQ |
 | `Agent` | at-most-once | yes | none | structured refusal or error |
 | `Cli` / `Manual` | at-most-once | yes | none | surfaced to the operator |
 
