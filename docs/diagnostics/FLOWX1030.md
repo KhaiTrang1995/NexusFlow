@@ -57,7 +57,7 @@ If no named grant is actually required, the honest stance is one that says so:
 
 ```csharp
 Authorization = Authorization.Authenticated   // any authenticated principal
-Authorization = Authorization.Internal        // not reachable from outside
+Authorization = Authorization.Internal        // composed into flows, never addressed alone
 ```
 
 Changing the mode to silence this rule is only wrong when the capability really does

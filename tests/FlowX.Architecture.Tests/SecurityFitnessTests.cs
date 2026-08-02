@@ -481,6 +481,89 @@ public sealed class SecurityFitnessTests
         }
     }
 
+    // ------------------------------------------------- what makes Internal safe to permit
+
+    /// <summary>
+    /// No capability carries a trigger attribute: a trigger addresses a flow, never a
+    /// capability.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the premise <see cref="Authorization.Internal"/> rests on, and it was
+    /// load-bearing while being asserted by nothing.</strong> The stance permits every
+    /// caller at the step — <c>StepAuthorization.AdmitsEveryCaller</c> — and that is only
+    /// safe because there is no way to address a capability from outside a flow. The stance
+    /// is therefore not enforced by a check; it is enforced by this shape, and the honest
+    /// place to guard it is here rather than in a doc comment claiming a control that does
+    /// not exist.
+    /// </para>
+    /// <para>
+    /// <strong>What failure means.</strong> A capability carrying <c>[HttpTrigger]</c> or
+    /// <c>[AgentTrigger]</c> would be directly reachable, and at that moment <c>Internal</c>
+    /// would be a published stance permitting an anonymous caller. The fix is not to weaken
+    /// this gate. It is to decide what <c>Internal</c> then means, and to change
+    /// <c>AdmitsEveryCaller</c> with it.
+    /// </para>
+    /// <para>
+    /// <strong>It does not claim internal capabilities are unreachable from an agent.</strong>
+    /// They are, transitively, exactly as they are from HTTP:
+    /// <c>samples/workflow/OnboardEmployeeFlow</c> is HTTP-triggered and steps through three
+    /// of them. What is exposed is the flow, and what guards it is the flow's own steps —
+    /// which is why there is no gate here named for the stronger property, and why
+    /// <c>FlowX.Mcp</c> filters nothing.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void NoTriggerAttributeAddressesACapability()
+    {
+        var triggered = SourceSurvey.Capabilities
+            .SelectMany(static c => c.AttributeNames
+                .Where(IsTriggerAttribute)
+                .Select(name => $"{c.Where} carries [{name}]"))
+            .ToArray();
+
+        triggered.ShouldBeEmpty(
+            "A trigger addresses a flow and never a capability (ADR-0004), which is the only " +
+            "reason Authorization.Internal can permit every caller at the step. A capability " +
+            "reachable by a trigger makes that stance a hole:" + Environment.NewLine +
+            string.Join(Environment.NewLine, triggered));
+    }
+
+    /// <summary>
+    /// Every trigger attribute is named for the convention
+    /// <see cref="NoTriggerAttributeAddressesACapability"/> matches on.
+    /// </summary>
+    /// <remarks>
+    /// What stops that gate decaying into one that checks six names it happens to know.
+    /// The survey is syntactic and cannot resolve a base type, so it matches on the name —
+    /// and a seventh trigger called <c>[WebhookEntry]</c> would be waved through in silence.
+    /// This asserts the convention the match depends on, so the gap fails here instead.
+    /// </remarks>
+    [Fact]
+    public void EveryTriggerAttributeIsNamedForTheConventionTheGateMatches()
+    {
+        var triggers = Abstractions.GetExportedTypes()
+            .Where(static t => typeof(TriggerAttribute).IsAssignableFrom(t))
+            .Where(static t => t != typeof(TriggerAttribute))
+            .ToList();
+
+        triggers.ShouldNotBeEmpty("The trigger attributes have moved or been renamed.");
+
+        foreach (var trigger in triggers)
+        {
+            IsTriggerAttribute(trigger.Name).ShouldBeTrue(
+                $"{trigger.Name} derives from TriggerAttribute but is not named '*Trigger' or " +
+                "'*TriggerAttribute', so NoTriggerAttributeAddressesACapability — which reads " +
+                "source syntactically and cannot resolve a base type — would not recognise it " +
+                "on a capability. Rename it, or teach both gates the new shape together.");
+        }
+    }
+
+    /// <summary><c>[HttpTrigger]</c> and <c>[HttpTriggerAttribute]</c>, qualified or not.</summary>
+    private static bool IsTriggerAttribute(string attributeName) =>
+        attributeName.EndsWith("Trigger", StringComparison.Ordinal)
+        || attributeName.EndsWith("TriggerAttribute", StringComparison.Ordinal);
+
     private static bool IsIsoDate(string? value) =>
         value is not null
         && DateOnly.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _);

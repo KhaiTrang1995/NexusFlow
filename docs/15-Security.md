@@ -81,7 +81,7 @@ flowchart TB
 | **R** | disputed business action | journal records principal, tenant, input hash, decision and timestamp per step |
 | **I** | cache leakage across tenants/principals | cache key includes tenant **and** permission set; `Scope = Tenant` default; `FLOWX1018` blocks caching side-effecting capabilities |
 | **D** | one tenant starving others | per-tenant quotas and bulkheads at admission (stage 1, before any work) |
-| **E** | reaching an internal capability from outside | `Authorization.Internal` capabilities are unreachable from any trigger and excluded from the agent surface |
+| **E** | reaching an internal capability from outside | no trigger addresses a capability — a trigger addresses a flow ([ADR-0004](adr/ADR-0004-universal-trigger-model.md)), asserted by `NoTriggerAttributeAddressesACapability`. What is exposed is the flow, so an `Internal` step is guarded by the flow's trigger and by the stances of the flow's own steps, not by its own |
 
 ### Boundary 3 — Data
 
@@ -147,7 +147,7 @@ anonymous callers.
 | `Authenticated` | **Decided.** Refuses an invocation whose principal is absent or unauthenticated |
 | `Permission` | **Decided.** Refuses a principal not holding the named grant, read from a `permission`, `permissions`, `scope` or `scp` claim |
 | `Internal` | **Decided, and it permits.** See below |
-| `Policy` | **Not enforceable.** [`FLOWX1037`](diagnostics/FLOWX1037.md) refuses it at build time |
+| `Policy` | **Not enforceable, so it refuses.** [`FLOWX1037`](diagnostics/FLOWX1037.md) refuses it at build time; a plan that reaches the engine carrying one anyway is stopped with `authorization.stance_not_enforceable`, never permitted |
 
 The check runs in `FlowEngine`'s step loop, before the dispatch and outside the retry loop,
 gated by `ExecutionPlan.HasAuthorizedSteps` — [ADR-0027](adr/ADR-0027-authorisation-runs-in-the-step-loop.md).
@@ -168,8 +168,16 @@ validated claims — [ADR-0028](adr/ADR-0028-identity-arrives-on-the-invocation.
   satisfied by construction of the trigger model rather than by a check. `samples/workflow`
   settles it beyond argument: `OnboardEmployeeFlow` is HTTP-triggered and calls
   `hardware.order`, `equipment.assign` and `welcome.send` — all three `Internal` — as ordinary
-  forward steps. The stance's other half, exclusion from the agent tool surface, is a
-  compile-time concern and that surface does not exist yet.
+  forward steps. The stance's other half — exclusion from the agent tool surface — was
+  never a control either, and the agent surface existing does not make it one: a tool is a
+  **flow** (`FlowAgentTool.FlowId`), so no capability of any stance appears there to be
+  excluded, and an agent reaches an `Internal` capability exactly as HTTP does, through a
+  flow that composes it. `FlowX.Mcp` filters nothing, deliberately —
+  [25 §3](25-Remaining-Platform.md) rules out a second authorisation path for agents.
+  What the stance rests on is asserted instead: `NoTriggerAttributeAddressesACapability`
+  fails the build the day something makes a capability directly addressable, which is the
+  day `Internal` would have to start refusing.
+  [ADR-0047](adr/ADR-0047-internal-is-a-composition-stance.md).
 - **There is no audit event.** `Audit` is a stage-7 policy that
   [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) leaves
   unexecuted, and no store persists one. A refusal is a returned `Error` and appears in

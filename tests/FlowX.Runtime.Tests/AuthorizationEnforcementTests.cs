@@ -52,6 +52,9 @@ public sealed class AuthorizationEnforcementTests
     private static CapabilityDescriptor Internal { get; } = CapabilityDescriptor.Create(
         "inventory.release", "1.0.0", isIdempotent: true, Authorization.Internal);
 
+    private static CapabilityDescriptor GovernedByAPolicy { get; } = CapabilityDescriptor.Create(
+        "ledger.post", "1.0.0", isIdempotent: false, Authorization.Policy, "LedgerApprovers");
+
     // ------------------------------------------------------------------------ principals
 
     /// <summary>Nobody. What an unauthenticated HTTP request produces.</summary>
@@ -292,7 +295,146 @@ public sealed class AuthorizationEnforcementTests
         dispatcher.Executed.ShouldBe([0]);
     }
 
+    // ---------------------------------------------------------------------------- Policy
+
+    /// <summary>
+    /// A <see cref="Authorization.Policy"/> step that reaches the engine refuses, rather than
+    /// permitting because nothing here can evaluate it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>FLOWX1037 is a compiler diagnostic, and a plan built by hand did not go
+    /// through the analyzer.</strong> That sentence is already written in
+    /// <see cref="CapabilityDescriptor.Create"/>, which re-enforces FLOWX1030 at plan
+    /// construction for exactly this reason. The same reasoning applies with more force
+    /// here: FLOWX1030 refusing late costs a malformed plan, whereas this refusing late
+    /// costs an unauthorised execution.
+    /// </para>
+    /// <para>
+    /// <strong>The refusal must come from the stance, not from the absence of one.</strong>
+    /// <see cref="StepAuthorization.Decide"/>'s default arm returns
+    /// <c>authorization.stance_not_enforceable</c> and is written to fail closed — but it is
+    /// only reached if the stance survives <see cref="StepAuthorization.From"/>. A stance
+    /// that is dropped before the decision is a stance the engine never asks about.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task APolicyStanceRefusesRatherThanPermittingWhenItReachesTheEngine()
+    {
+        var dispatcher = new RecordingDispatcher();
+
+        var result = await Run(OneStep(GovernedByAPolicy), SignedIn, dispatcher);
+
+        result.IsFailure.ShouldBeTrue(
+            "A stance the engine cannot evaluate must stop the step. Permitting it means a " +
+            "capability that published 'a named policy must be satisfied' ran for a caller " +
+            "no policy was ever evaluated against.");
+
+        result.Error!.Category.ShouldBe(ErrorCategory.Forbidden);
+        dispatcher.Executed.ShouldBeEmpty();
+    }
+
     // ------------------------------------------------------------------- the whole set
+
+    /// <summary>Every member of <see cref="Authorization"/>, so a sixth arrives here too.</summary>
+    public static TheoryData<Authorization> EveryStance()
+    {
+        var data = new TheoryData<Authorization>();
+
+        foreach (var stance in Enum.GetValues<Authorization>())
+        {
+            data.Add(stance);
+        }
+
+        return data;
+    }
+
+    /// <summary>
+    /// What a stance does to an anonymous caller is exactly what
+    /// <see cref="StepAuthorization.AdmitsEveryCaller"/> says it does.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the pin between the stance's meaning and its behaviour.</strong> The
+    /// meaning of <see cref="Authorization.Internal"/> lived in a doc comment, the behaviour
+    /// lived in two switch arms, and they disagreed for as long as nobody read both: the
+    /// summary claimed the trigger engine rejected it at admission and the compiler stripped
+    /// it from the agent tool surface, and neither control was ever built. A sentence cannot
+    /// be run. This can.
+    /// </para>
+    /// <para>
+    /// <strong>It goes through <see cref="StepAuthorization.From"/>, which is where the
+    /// previous defect lived.</strong> Asking <see cref="StepAuthorization.Decide"/> directly
+    /// would have passed throughout: <c>Decide</c>'s default arm always refused
+    /// <see cref="Authorization.Policy"/>. What permitted it was <c>From</c> dropping the
+    /// stance before <c>Decide</c> was reached, so the only assertion that can catch it is
+    /// one that resolves a descriptor the way the plan builder does.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(EveryStance))]
+    public void EveryStanceTreatsAnAnonymousCallerAsItsPartitionSaysItDoes(Authorization stance)
+    {
+        var capability = CapabilityDescriptor.Create(
+            "ledger.post",
+            "1.0.0",
+            isIdempotent: false,
+            stance,
+            StepAuthorization.NeedsAName(stance) ? "named-grant" : null);
+
+        var resolved = StepAuthorization.From(capability);
+        var admitsEveryone = StepAuthorization.AdmitsEveryCaller(stance);
+
+        resolved.CanRefuse.ShouldBe(
+            !admitsEveryone,
+            $"Authorization.{stance} " + (admitsEveryone
+                ? "admits every caller, so it must cost the plan nothing."
+                : "does not admit every caller, so the plan must ask it."));
+
+        var decision = resolved.Decide(Anonymous, "ledger.post");
+
+        if (admitsEveryone)
+        {
+            decision.ShouldBeNull(
+                $"Authorization.{stance} admits every caller, so an anonymous one too.");
+        }
+        else
+        {
+            decision.ShouldNotBeNull(
+                $"Authorization.{stance} does not admit every caller, so it must refuse an " +
+                "anonymous one — whether because the caller fails it or because nothing " +
+                "here can evaluate it. Permitting is the one answer it may not give.");
+        }
+    }
+
+    /// <summary>
+    /// Every stance lands in exactly one of the three outcomes this type can produce.
+    /// </summary>
+    /// <remarks>
+    /// Admits everyone, decided against the principal, or refused as unenforceable. The
+    /// overlap is what the old shape got wrong: <see cref="Authorization.Policy"/> was
+    /// neither decided nor permissive, and a test of the form "decided, and not one of the
+    /// permissive two" silently sorted it into the permissive bucket.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(EveryStance))]
+    public void EveryStanceLandsInExactlyOneOutcome(Authorization stance)
+    {
+        var outcomes = new (string Name, bool Holds)[]
+        {
+            ("admits every caller", StepAuthorization.AdmitsEveryCaller(stance)),
+            ("decided against the principal",
+                StepAuthorization.IsDecidedAtRunTime(stance)
+                && !StepAuthorization.AdmitsEveryCaller(stance)),
+            ("refused as unenforceable", StepAuthorization.IsRefusedAtBuildTime(stance)),
+        };
+
+        outcomes.Count(static o => o.Holds).ShouldBe(
+            1,
+            $"Authorization.{stance} holds [{string.Join(", ", outcomes.Where(static o => o.Holds).Select(static o => o.Name))}]. " +
+            "A stance in none of them is one nothing enforces; a stance in two is one whose " +
+            "enforcement depends on which predicate the caller happened to ask.");
+    }
 
     /// <summary>
     /// Every member of <see cref="Authorization"/> is either decided by the engine or named
