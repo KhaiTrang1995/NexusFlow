@@ -48,9 +48,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(settings);
         services.AddSingleton(_ => BuildDataSource(connectionString, settings));
 
-        // Schema-per-tenant changes three registrations and nothing else: the journal gains the
-        // pools it hands out, and both sweeps become fan-outs because they are the two things
-        // here that are node-wide rather than per-call. The lease store is deliberately not
+        // Schema-per-tenant changes three registrations here and one in AddFlowXPostgresOutbox:
+        // the journal gains the pools it hands out, and every loop that is node-wide rather than
+        // per-call — both sweeps, and the publisher — becomes a fan-out. The lease store is not
         // among them — a lease is taken before the instance row exists and holds no tenant data
         // (ADR-0046 §2.6), so it stays in the control schema, node-wide and shared, which is
         // also the only place a lease on an instance whose tenant is not yet known could live.
@@ -156,6 +156,12 @@ public static class ServiceCollectionExtensions
     /// long-running work. Starting a polling loop as a side effect of building a container is
     /// the same mistake as migrating from one, and the remarks on this class say why.
     /// </para>
+    /// <para>
+    /// <strong>At <see cref="TenantIsolation.Schema"/> it drains every tenant's outbox rather
+    /// than the control schema's empty one.</strong> The batch size becomes each tenant's own,
+    /// and the rest of the guarantee is unchanged because a claim was always confined to one
+    /// table — see <see cref="PostgresOutboxPublisher"/>.
+    /// </para>
     /// </remarks>
     public static IServiceCollection AddFlowXPostgresOutbox(
         this IServiceCollection services,
@@ -166,10 +172,20 @@ public static class ServiceCollectionExtensions
         var settings = options ?? new PostgresOutboxOptions();
 
         services.AddSingleton(settings);
-        services.AddSingleton(provider => new PostgresOutboxPublisher(
-            RequiresOneSchema(provider, nameof(AddFlowXPostgresOutbox), "drains outbox_event"),
-            provider.GetRequiredService<IEventPublisher>(),
-            provider.GetRequiredService<PostgresOutboxOptions>()));
+
+        // Decided in the factory rather than here, because this method may be called before
+        // AddFlowXPostgres and the level lives on that call's options.
+        services.AddSingleton(provider =>
+        {
+            var broker = provider.GetRequiredService<IEventPublisher>();
+            var batch = provider.GetRequiredService<PostgresOutboxOptions>();
+
+            return provider.GetRequiredService<PostgresJournalOptions>().TenantSchemas.IsEnabled
+                ? new PostgresOutboxPublisher(
+                    provider.GetRequiredService<PostgresTenantStores>(), broker, batch)
+                : new PostgresOutboxPublisher(
+                    provider.GetRequiredService<NpgsqlDataSource>(), broker, batch);
+        });
 
         return services;
     }
@@ -237,45 +253,66 @@ public static class ServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.AddSingleton<IChangeFeed>(provider => new PostgresChangeFeed(
-            RequiresOneSchema(provider, nameof(AddFlowXPostgresChangeFeed), "reads outbox_event")));
+            RequiresOneSchema(provider, nameof(AddFlowXPostgresChangeFeed))));
 
         return services;
     }
 
     /// <summary>
-    /// Returns the control data source, or refuses a loop that would poll an empty table.
+    /// Returns the control data source, or refuses a feed that would observe an empty table.
     /// </summary>
     /// <param name="provider">Where the options and the data source come from.</param>
     /// <param name="registration">Which extension method is being refused.</param>
-    /// <param name="what">What that registration does with the table, for the message.</param>
     /// <returns>The control schema's data source.</returns>
     /// <exception cref="InvalidOperationException">
     /// Each tenant has a schema of its own, so the control schema's table is empty.
     /// </exception>
     /// <remarks>
-    /// <strong>Refused rather than fanned out, and the difference from the two sweeps is the
-    /// point.</strong> A recovery scan and a timer sweep are stateless reads that merge cleanly
-    /// across schemas; the outbox publisher and the change feed both <em>claim</em> rows and
-    /// advance a position, so one of them per tenant is a different loop with a different
-    /// ordering guarantee, not the same loop asked twice. That is a design nobody has decided,
-    /// and a publisher that silently drained an empty table would be the "declared and inert"
-    /// failure these levels exist to remove.
+    /// <para>
+    /// <strong>The cursor is not what stops this fanning out.</strong> ADR-0051 §4 refused the
+    /// feed and the publisher together, on the grounds that both claim rows and advance a
+    /// position. The publisher now fans out — that reason did not survive contact with it — and
+    /// the cursor would too: <c>change_cursor</c> is keyed by subscription, so one row per
+    /// tenant schema is the same key in a different table, and the visibility barrier is over
+    /// transaction ids, which are <em>cluster-wide</em> rather than per schema: the predicate
+    /// therefore means the same thing in every tenant's schema and cannot skip a row. It is
+    /// conservative in one direction only — one tenant holding a write transaction open holds
+    /// every tenant's barrier down, which costs latency and never correctness, and which no
+    /// fan-out could repair because the counter was never the schema's.
+    /// </para>
+    /// <para>
+    /// <strong>What stops it is delivery, and it is one level up.</strong> A change read from
+    /// tenant <em>A</em>'s schema has to start a flow <em>in</em> tenant A, and
+    /// <c>FlowChangeScan</c> starts one with no principal — so <c>ClaimTenantResolver</c>
+    /// refuses any invocation naming a tenant, at <see cref="TenantIsolation.Row"/> as much as
+    /// here. The one path that carries a tenant without claims is
+    /// <c>FlowInvocation.IsContinuation</c>, and that also skips step authorisation: correct for
+    /// a sweep resuming an instance already admitted, wrong for a start. A fanned-out feed would
+    /// therefore hand the host changes it refuses one at a time, and <c>FlowChangeScan</c>
+    /// counts <c>tenant.required</c> as progress — so the cursor would advance past every change
+    /// that never ran. Losing them quietly is worse than the empty table, which is why this is
+    /// still a refusal and why the refusal now names the decision that is actually missing.
+    /// </para>
     /// </remarks>
     private static NpgsqlDataSource RequiresOneSchema(
         IServiceProvider provider,
-        string registration,
-        string what)
+        string registration)
     {
         if (provider.GetRequiredService<PostgresJournalOptions>().TenantSchemas.IsEnabled)
         {
             throw new InvalidOperationException(
-                $"{registration} {what} in the control schema, and this deployment gives every " +
-                $"tenant a schema of its own ({nameof(PostgresJournalOptions)}." +
+                $"{registration} reads outbox_event in the control schema, and this deployment " +
+                $"gives every tenant a schema of its own ({nameof(PostgresJournalOptions)}." +
                 $"{nameof(PostgresJournalOptions.TenantSchemas)}), so that table is empty and " +
-                "always will be. Draining it would report success and publish nothing. " +
-                "Per-tenant publication is not built: the loop claims rows and advances a " +
-                "position, so one per tenant is a different contract rather than the same one " +
-                "fanned out.");
+                "always will be. It is not the cursor that stops this being fanned out — " +
+                "change_cursor is keyed by subscription, and one per tenant schema is the same " +
+                "key in a different table. It is delivery: a change observed in a tenant's " +
+                "schema must start a flow in that tenant, a change scan carries no principal, " +
+                "and the only invocation that carries a tenant without claims is a continuation " +
+                "— which also skips step authorisation, so a start must not use it. A fanned-out " +
+                "feed would offer changes the host refuses with tenant.required, which a change " +
+                "scan counts as progress, and the cursor would move past every one of them. " +
+                "AddFlowXPostgresOutbox does fan out at this level and is unaffected.");
         }
 
         return provider.GetRequiredService<NpgsqlDataSource>();

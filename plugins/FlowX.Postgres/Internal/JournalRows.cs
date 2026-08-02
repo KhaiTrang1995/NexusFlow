@@ -85,6 +85,12 @@ internal static class JournalRows
 
     /// <summary>Reads a row claimed by <see cref="OutboxSql.ClaimPending"/>.</summary>
     /// <param name="reader">The reader, positioned on the row.</param>
+    /// <param name="tenantId">
+    /// Whose schema the claim ran in, or null where every tenant shares one outbox. Supplied
+    /// rather than selected, for <see cref="Step"/>'s reason: every row of a claim came from
+    /// one schema, so a column would be a value per row for a fact stated once — and there is
+    /// no such column to select.
+    /// </param>
     /// <returns>The pending event.</returns>
     /// <remarks>
     /// The same record as <see cref="Outbox"/> with one column fewer: the claim selects only
@@ -93,7 +99,7 @@ internal static class JournalRows
     /// <see cref="IEventPublisher"/> states that every event in a batch is pending, and this
     /// is where that is true by construction rather than by convention.
     /// </remarks>
-    public static OutboxRecord PendingOutbox(NpgsqlDataReader reader) => new()
+    public static OutboxRecord PendingOutbox(NpgsqlDataReader reader, string? tenantId) => new()
     {
         EventId = reader.GetGuid(0),
         InstanceId = reader.GetGuid(1),
@@ -101,5 +107,6 @@ internal static class JournalRows
         SchemaVersion = reader.GetString(3),
         PartitionKey = Db.NullableString(reader, 4),
         PayloadJson = Db.NullableString(reader, 5),
+        TenantId = tenantId,
     };
 }
