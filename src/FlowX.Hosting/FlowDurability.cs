@@ -77,6 +77,47 @@ public sealed class FlowDurability
     /// <summary>Whether this host can run a timer sweep at all.</summary>
     public bool CanWake => TimerIndex is not null;
 
+    /// <summary>Whether the journal behind this host can isolate one tenant from another.</summary>
+    /// <remarks>
+    /// False for an in-memory journal and for any store with nothing to scope with. A
+    /// deployment declaring <see cref="TenantIsolation.Row"/> over such a store still gets
+    /// admission-time refusal — an untenanted call is still refused, and a caller still cannot
+    /// name a tenant its claims do not support — but it does not get the database's second
+    /// wall, and this is what says so rather than leaving it to be discovered.
+    /// </remarks>
+    public bool CanIsolateTenants => Journal is ITenantScopedJournal;
+
+    /// <summary>
+    /// The journal, bound to one tenant when the store can bind it.
+    /// </summary>
+    /// <param name="tenantId">
+    /// The resolved tenant, or <c>null</c> for a deployment that does not isolate.
+    /// </param>
+    /// <returns>
+    /// A scoped journal, or the unscoped one when there is no tenant to scope to or no store
+    /// able to scope.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>A null tenant returns the unscoped journal here, which is the opposite of what
+    /// <see cref="ITenantScopedJournal.ForTenant"/> means by null — and the asymmetry is
+    /// deliberate.</strong> This method's null means "this deployment declares
+    /// <see cref="TenantIsolation.None"/>, there is no tenant in the system at all"; that
+    /// one's means "bind me to the rows that have no tenant". A single-tenant host must reach
+    /// its journal exactly as it always did, and paying a bind statement per call to be
+    /// restricted to the only rows that exist would be a cost for nothing.
+    /// </para>
+    /// <para>
+    /// The consequence is that scoping is driven entirely by whether a tenant was
+    /// <em>resolved</em>, and <c>FlowHost</c> resolves one or refuses the call. There is no
+    /// path on which an isolating deployment reaches this with null.
+    /// </para>
+    /// </remarks>
+    public IFlowJournal JournalFor(string? tenantId) =>
+        tenantId is { Length: > 0 } && Journal is ITenantScopedJournal scoped
+            ? scoped.ForTenant(tenantId)
+            : Journal;
+
     /// <summary>The lease policy these options describe.</summary>
     /// <param name="options">The validated host options.</param>
     internal static LeasePolicy PolicyFor(FlowXOptions options) => new()

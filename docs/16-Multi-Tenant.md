@@ -1,34 +1,42 @@
 # 16 — Multi-Tenancy
 
-> **Status:** Accepted as a specification · **one of seven layers exists** ·
+> **Status:** Accepted as a specification · **row isolation is enforced; the fairness
+> and residency layers are not** ·
 > **Audience:** platform engineers, SaaS architects
 > **Answers:** what isolation levels exist, and what does the platform guarantee at each?
 
-> [!WARNING]
-> **The platform currently guarantees nothing about tenant isolation.** What
-> exists: `TenantId` is read from validated claims at the HTTP boundary
-> (`HttpTriggerReader`) and carried on `TriggerHeaders` and the flow context.
-> **Nothing consumes it.** There is no admission control, no quota, no rate
-> limit, no cache to key, no telemetry to label and no
-> residency binding — so every isolation level in §2 is currently the same level,
-> and it is "none enforced by the platform".
+> [!IMPORTANT]
+> **Row-level isolation is now enforced, and nothing else in this document is.**
 >
-> *This box also said there is "no journal **store** to partition" and that "no store
-> persists" `tenant_id`. Both expired at WP-53: `plugins/FlowX.Postgres` persists it on the
-> instance row, and `PostgresRecoveryIndex` can filter on it.* **The conclusion is unchanged
-> and its supporting fact is not** — nothing partitions or shards on that column, and the
-> runtime never passes the tenant filter the store would accept.
+> A deployment setting `FlowXOptions.TenantIsolation = TenantIsolation.Row` gets:
+> `ITenantResolver` deriving the tenant from validated claims at admission and **refusing**
+> a call that names none or names one the claims do not support (§3); every journal
+> connection bound to the resolved tenant; and PostgreSQL row-level security refusing what
+> the runtime somehow did not (§5, migration `0006`). Tenant *A* cannot read, resume or
+> recover tenant *B*'s instance — asserted in both directions against a real database, and
+> through the recovery scan and the timer sweep as well as the ordinary path.
+> [ADR-0043](adr/ADR-0046-a-tenant-is-resolved-at-admission.md) records the decisions,
+> **including three places where §5's DDL does not isolate as written**.
 >
-> `ITenantResolver` and `ITenantStoreResolver` are not declared anywhere;
-> `CrossTenantAccessIsDenied` is not written and is recorded as blocked in
-> [21 §2.4](21-Quality-Gates.md#24-gates-named-here-but-not-yet-enforced). The
-> layers land with **P4** (admission, quotas, cache) and **P6** (journal
-> partitioning, RLS, residency, the fairness test).
+> *This box previously said the platform "guarantees nothing about tenant isolation", that
+> `TenantId` was carried and "nothing consumes it", and that `ITenantResolver` was "not
+> declared anywhere". Those expired on 2026-08-02. Two earlier corrections it carried remain
+> accurate: `plugins/FlowX.Postgres` has persisted `tenant_id` on the instance row since
+> WP-53, and `PostgresRecoveryIndex` could always filter on it — the runtime now passes that
+> filter.*
 >
-> An application built on FlowX today must enforce its own tenant scoping inside
-> its capabilities. That is exactly the `WHERE TenantId = @t` this document opens
-> by warning about, and saying so is better than letting the opening paragraph
-> imply otherwise.
+> **Still not built**, and every one of them is a real gap rather than a detail:
+> no quota, no per-tenant rate limit, no bulkhead, no weighted fair queueing — so §4's
+> fairness is entirely unenforced and quality goal Q8 is not met; no cache or idempotency
+> store to key (§6); no residency binding, so L4 is a deployment convention; and
+> `TenantIsolation.Schema` and `.Database` are **declarable and refused at startup**, because
+> `ITenantStoreResolver` is still not declared anywhere. Nothing partitions or shards the
+> journal — [11 §6](11-Distributed-Runtime.md) names sharding and stops, so building it would
+> be invention.
+>
+> A tenant source that is not a claim is also absent: a **bus or schedule trigger is refused**
+> in an isolating deployment, because the sources §3's table gives them do not exist yet. It
+> fails closed and it is the largest known gap.
 
 ---
 
@@ -98,9 +106,17 @@ design's main payoff.
 ```csharp
 public interface ITenantResolver
 {
-    ValueTask<TenantId?> ResolveAsync(in TriggerEnvelope envelope, CancellationToken ct);
+    TenantResolution Resolve(in FlowInvocation invocation);
 }
 ```
+
+*This signature was `ValueTask<TenantId?> ResolveAsync(in TriggerEnvelope, CancellationToken)`
+until it was built. Three changes, argued in
+[ADR-0043 §2.1–2.2](adr/ADR-0046-a-tenant-is-resolved-at-admission.md): it takes the
+`FlowInvocation` because `FlowHost` — the one point every activation passes through — never
+sees a `TriggerEnvelope`; it returns a **`TenantResolution`** rather than a nullable, because
+"refused" and "this deployment does not isolate" must not be the same value; and it is
+synchronous, because I/O at admission is what §4 warns against.*
 
 | Trigger kind | Default source | Never |
 |---|---|---|
@@ -152,15 +168,39 @@ rate limiting becomes the DoS.
 ### L1 — row level
 
 ```sql
--- Journal tables carry tenant_id as the partition key.
 ALTER TABLE flow_instance ENABLE ROW LEVEL SECURITY;
-CREATE POLICY tenant_isolation ON flow_instance
-  USING (tenant_id = current_setting('flowx.tenant_id'));
+ALTER TABLE flow_instance FORCE  ROW LEVEL SECURITY;
+CREATE POLICY flow_instance_tenant_isolation ON flow_instance
+    USING      (tenant_id IS NOT DISTINCT FROM nullif(current_setting('flowx.tenant_id', true), ''))
+    WITH CHECK (tenant_id IS NOT DISTINCT FROM nullif(current_setting('flowx.tenant_id', true), ''));
 ```
 
-The runtime sets `flowx.tenant_id` on the connection for the duration of the
-flow. Defence in depth: even a capability with a bug cannot read another tenant's
-rows, because the database refuses.
+The runtime sets `flowx.tenant_id` on the connection **and narrows itself to the
+unprivileged `flowx_tenant` role** for the duration of the flow. Defence in depth: even a
+capability with a bug cannot read another tenant's rows, because the database refuses.
+
+> [!WARNING]
+> **The three-line version this section used to give isolates nothing.** It read
+> `ENABLE ROW LEVEL SECURITY` plus
+> `USING (tenant_id = current_setting('flowx.tenant_id'))`, and applied verbatim it returns
+> every tenant's rows to the account that runs the migrations. Each correction above is
+> load-bearing:
+>
+> 1. **A superuser bypasses RLS unconditionally, and a table's owner bypasses it without
+>    `FORCE`.** That is the ordinary connection for a journal. Hence `FORCE`, and hence the
+>    `flowx_tenant` role — without the role narrowing, `FORCE` protects nothing either.
+> 2. **`current_setting(name)` raises `42704` when the setting is absent**, so every
+>    statement on an unscoped connection would error. The two-argument form returns `NULL`.
+> 3. **`=` is wrong for a nullable partition key.** Single-tenant rows carry
+>    `tenant_id IS NULL`, and `NULL = NULL` is `NULL`, which a policy reads as *no*.
+>    `IS NOT DISTINCT FROM` means what the `=` was written to mean; `nullif(…, '')` folds the
+>    two spellings of "no tenant" together, because `RESET` restores a custom setting to the
+>    empty string rather than to `NULL`.
+>
+> `flow_step` and `outbox_event` carry no `tenant_id` and inherit the instance's through the
+> foreign key. `flow_lease` is deliberately **not** isolated: a lease is acquired before the
+> instance row exists, so a policy joining the two would refuse the first acquisition of every
+> instance. See [ADR-0043 §2.6](adr/ADR-0046-a-tenant-is-resolved-at-admission.md).
 
 ### L2 — schema/database per tenant
 

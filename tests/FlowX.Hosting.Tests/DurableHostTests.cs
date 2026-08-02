@@ -829,13 +829,14 @@ public sealed class DurableHostTests
         var result = await host.ResumeAsync(
             Guid.NewGuid(),
             new FlowRegistration(DurablePlan(), new CountingDispatcher()),
-            TestContext.Current.CancellationToken);
+            ct: TestContext.Current.CancellationToken);
 
         result.IsFailure.ShouldBeTrue();
         result.Error!.Code.ShouldBe("flow.durability_not_configured");
 
         await Should.ThrowAsync<ArgumentNullException>(async () =>
-            await host.ResumeAsync(Guid.NewGuid(), null!, TestContext.Current.CancellationToken));
+            await host.ResumeAsync(
+                Guid.NewGuid(), null!, ct: TestContext.Current.CancellationToken));
     }
 
     // ---------------------------------------------------------------------------------

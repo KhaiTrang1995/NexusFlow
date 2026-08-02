@@ -34,6 +34,8 @@ having closed.
 | 1 | **Four policy kinds** — `RateLimit`, `Idempotency`, `Cache`, `Audit` | declared, inert | The only item that **deletes a diagnostic**. `FLOWX1032` exists to tell a user their declaration does nothing; every release shipping it ships an admission |
 | 2 | **Multi-tenancy** | plumbed, unenforced | The only *correctness* gap left: nothing stops one tenant's flow reading another's rows. A data-isolation bug is not a missing feature |
 | 3 | ~~**Logs**~~ | **built** | Was "absent, blocked on one decision, not effort". The decision was taken as designed in [§2](#2-logs--the-design): `FlowXLog` emits through `DiagnosticSource` and `src/FlowX.Logging` bridges to `ILogger` |
+| 2 | **Multi-tenancy** | ~~plumbed, unenforced~~ · **`Row` isolation built** | *Was: "the only correctness gap left — nothing stops one tenant's flow reading another's rows."* Resolution, refusal and row isolation landed on 2026-08-02 ([ADR-0043](adr/ADR-0046-a-tenant-is-resolved-at-admission.md)), which corrects the design below in three places. Fairness (§4 of [16](16-Multi-Tenant.md)) and the `Schema`/`Database` levels remain unbuilt |
+| 3 | **Logs** | absent | Third leg of observability; traces and metrics run. Blocked on one decision, not effort |
 | 4 | **AI surface (MCP)** | declared, unbound | `AgentTrigger` exists and nothing serves it. [13](13-AI-Native.md) specifies the descriptor and the `tools/call` sequence in full |
 | 5 | **`Stream` and `Change` triggers** | declared, unbound | Two of eight kinds. `Change` is CDC over the outbox, which already exists |
 | 6 | **Stream engine** | absent | **Not next.** Nothing defines the checkpoint format, watermark generation or how window state is journaled — implementing it means inventing it |
@@ -61,10 +63,21 @@ flowchart LR
     S -->|"SET LOCAL flowx.tenant"| DB
 ```
 
-**The seam that does not exist is `ITenantResolver`.** Everything else in that
-diagram is built: `TriggerEnvelope.TenantId`, `FlowContext.TenantId`,
+**The seam that did not exist was `ITenantResolver`.** Everything else in that
+diagram was already built: `TriggerEnvelope.TenantId`, `FlowContext.TenantId`,
 `JournalWrites.TenantId`, `flow_instance.tenant_id` and its index have been
 there since migration `0001`, and `FlowTelemetry` already tags spans with it.
+
+> [!NOTE]
+> **Built on 2026-08-02, and the design below is corrected in three places** by
+> [ADR-0043](adr/ADR-0046-a-tenant-is-resolved-at-admission.md), which should be read with it.
+> The class view's `Resolve(TriggerEnvelope)` became `Resolve(in FlowInvocation)`, because
+> `FlowHost` — the point both sequence diagrams place the resolver at — never sees a
+> `TriggerEnvelope`. The resolver **derives** the tenant from claims and treats what arrived on
+> the invocation as an assertion to check, rather than reading it. And the RLS in
+> [16 §5](16-Multi-Tenant.md#5-data-isolation) that the last diagram's `SET LOCAL` refers to
+> does not isolate as it was written there — a superuser or table owner bypasses it entirely,
+> so the runtime also narrows itself to an unprivileged role.
 
 ### Class view
 

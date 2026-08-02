@@ -21,6 +21,20 @@ internal static class JournalSql
     /// <summary>PostgreSQL's <c>unique_violation</c>, the append-only refusal.</summary>
     public const string UniqueViolation = "23505";
 
+    /// <summary>
+    /// PostgreSQL's <c>insufficient_privilege</c>, which is what a row-level security
+    /// <c>WITH CHECK</c> raises when a write would produce a row the writer could not read.
+    /// </summary>
+    /// <remarks>
+    /// Migration <c>0006</c>'s policies are the only thing in this schema that raises it, and
+    /// they raise it for exactly one mistake: opening an instance under a tenant the
+    /// connection is not scoped to. It is caught and returned as
+    /// <see cref="TenantErrors.CrossTenantDenied"/> rather than propagating, because a refusal
+    /// is a value and only a broken store is an exception (ADR-0007) — and this is the store
+    /// working correctly and saying no.
+    /// </remarks>
+    public const string InsufficientPrivilege = "42501";
+
     /// <summary>The <c>flow_instance</c> columns a read returns, in reader order.</summary>
     private const string InstanceColumns =
         """

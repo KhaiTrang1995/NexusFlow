@@ -38,9 +38,10 @@ namespace FlowX.Postgres;
 /// Commands are disposed synchronously because disposing one performs no I/O.
 /// </para>
 /// </remarks>
-public sealed class PostgresFlowJournal : IFlowJournal
+public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
 {
     private readonly NpgsqlDataSource _dataSource;
+    private readonly TenantScope _scope;
 
     /// <summary>Creates a journal over a data source.</summary>
     /// <param name="dataSource">
@@ -49,11 +50,22 @@ public sealed class PostgresFlowJournal : IFlowJournal
     /// connections the lease store is still using.
     /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is null.</exception>
+    /// <remarks>
+    /// Unscoped. A journal built this way reaches every row in the schema, which is what a
+    /// single-tenant deployment wants and what every caller got before
+    /// <see cref="ForTenant"/> existed. A deployment isolating by tenant obtains a scoped one
+    /// and never uses this instance to execute anything.
+    /// </remarks>
     public PostgresFlowJournal(NpgsqlDataSource dataSource)
+        : this(dataSource, TenantScope.None)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
+    }
 
+    private PostgresFlowJournal(NpgsqlDataSource dataSource, TenantScope scope)
+    {
         _dataSource = dataSource;
+        _scope = scope;
     }
 
     /// <inheritdoc />
@@ -92,6 +104,20 @@ public sealed class PostgresFlowJournal : IFlowJournal
             // The primary key refused it. Starting twice would replace a history rather
             // than extend it, which is the one thing an append-only table cannot do.
             return DurabilityErrors.InstanceExists(start.InstanceId);
+        }
+        catch (PostgresException failure)
+            when (failure.SqlState == JournalSql.InsufficientPrivilege)
+        {
+            // The tenant policy's WITH CHECK refused it: this connection is scoped to one
+            // tenant and the row names another. Unreachable when the host resolved the tenant
+            // that opened the instance, which is why it is a refusal rather than a diagnostic
+            // — but it is the database refusing to write a row nobody could read back, and
+            // that is worth returning honestly instead of throwing.
+            //
+            // A null TenantId here is the mirror case: an untenanted instance opened through a
+            // scoped journal. "(none)" rather than an empty string, because the message names
+            // what the row asked for and an empty pair of quotes reads as a missing message.
+            return TenantErrors.CrossTenantDenied(start.TenantId ?? "(none)");
         }
 
         return await ReadInstanceAsync(start.InstanceId, cancellationToken).ConfigureAwait(false);
@@ -339,8 +365,51 @@ public sealed class PostgresFlowJournal : IFlowJournal
         return staged;
     }
 
-    private ValueTask<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken) =>
-        _dataSource.OpenConnectionAsync(cancellationToken);
+    /// <inheritdoc />
+    /// <remarks>
+    /// A new instance over the same data source, never a mutation of this one. The unscoped
+    /// journal stays unscoped because the recovery scan, the timer sweep and the outbox
+    /// publisher are node-wide and hold it; scoping it in place would silently narrow their
+    /// sweeps to whichever tenant happened to execute last.
+    /// </remarks>
+    public IFlowJournal ForTenant(string? tenantId) =>
+        new PostgresFlowJournal(_dataSource, TenantScope.For(tenantId));
+
+    /// <summary>
+    /// Opens a connection and binds it to this journal's tenant, if it has one.
+    /// </summary>
+    /// <remarks>
+    /// The bind is inside the acquire so that no statement anywhere in this class can reach a
+    /// connection that has not been through it — which is the property that makes the
+    /// database, rather than this file's discipline, the thing enforcing isolation. An
+    /// unscoped journal reaches <see cref="TenantScope.IsScoped"/> and returns, so a
+    /// single-tenant deployment issues exactly the statements it always did.
+    /// </remarks>
+    private async ValueTask<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken)
+    {
+        var connection = await _dataSource.OpenConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!_scope.IsScoped)
+        {
+            return connection;
+        }
+
+        try
+        {
+            await _scope.ApplyAsync(connection, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // An unbound connection must not escape: it would run the caller's next statement
+            // as the privileged role with no tenant set, which is the one state where every
+            // policy in migration 0006 is inert.
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        return connection;
+    }
 
     /// <summary>Reads what the fence statement reported, without deciding any I/O.</summary>
     private static Result<FencingToken> InterpretFence(

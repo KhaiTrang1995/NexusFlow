@@ -29,6 +29,7 @@ public sealed class FlowHost
     private readonly FlowXOptions _options;
     private readonly FlowDurability? _durability;
     private readonly LeasePolicy _policy;
+    private readonly ITenantResolver _tenants;
     private readonly object _sync = new();
     private readonly HashSet<DurableLease> _leases = [];
 
@@ -55,7 +56,17 @@ public sealed class FlowHost
     /// leaves a <c>Durable</c> flow refused with <c>flow.durability_not_configured</c>, which
     /// is the honest answer for a host that has registered no journal.
     /// </param>
-    public FlowHost(FlowEngine engine, FlowXOptions options, FlowDurability? durability = null)
+    /// <param name="tenants">
+    /// How a tenant is decided for each invocation. Defaults to
+    /// <see cref="ClaimTenantResolver"/> over the level <paramref name="options"/> declares,
+    /// which for the default <see cref="TenantIsolation.None"/> resolves nothing and refuses
+    /// nobody.
+    /// </param>
+    public FlowHost(
+        FlowEngine engine,
+        FlowXOptions options,
+        FlowDurability? durability = null,
+        ITenantResolver? tenants = null)
     {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(options);
@@ -64,6 +75,7 @@ public sealed class FlowHost
         _options = options;
         _durability = durability;
         _policy = FlowDurability.PolicyFor(options);
+        _tenants = tenants ?? new ClaimTenantResolver(options.TenantIsolation);
     }
 
     /// <summary>How many flows are executing right now.</summary>
@@ -102,6 +114,11 @@ public sealed class FlowHost
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(dispatcher);
+
+        if (Admit(ref invocation) is { } refusal)
+        {
+            return FlowExecutionResult.Rejected(refusal);
+        }
 
         if (!TryEnter())
         {
@@ -236,6 +253,11 @@ public sealed class FlowHost
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(dispatcher);
 
+        if (Admit(ref invocation) is { } refusal)
+        {
+            return FlowExecutionResult.Rejected(refusal);
+        }
+
         if (!TryEnter())
         {
             return FlowExecutionResult.Rejected(Draining);
@@ -315,6 +337,11 @@ public sealed class FlowHost
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(dispatcher);
+
+        if (Admit(ref invocation) is { } refusal)
+        {
+            return FlowExecutionResult.Rejected<TOut>(refusal);
+        }
 
         if (!TryEnter())
         {
@@ -411,11 +438,33 @@ public sealed class FlowHost
     /// quieter one than never being picked up.
     /// </para>
     /// </remarks>
+    /// <param name="tenantId">
+    /// The tenant the instance belongs to, as the scan that found it read from the candidate
+    /// row, or <c>null</c> for a deployment that does not isolate.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The tenant is supplied rather than discovered, and it has to be.</strong> The
+    /// journal is bound to a tenant <em>before</em> the instance row is read — that is what
+    /// makes another tenant's instance invisible rather than merely refused — so reading the
+    /// row to find out which tenant to bind to would be the cross-tenant read this is
+    /// preventing, performed in order to prevent it. <c>AbandonedInstance.TenantId</c> and
+    /// <c>DueInstance.TenantId</c> have carried the value for exactly this since they were
+    /// written; until now nothing passed it on.
+    /// </para>
+    /// <para>
+    /// A scan is node-wide platform work and is not a tenant, so it legitimately resumes every
+    /// tenant's instances — each one scoped to its own. A scan that must not see a tenant at
+    /// all is narrowed at the store instead, through
+    /// <see cref="AbandonedInstanceQuery.TenantId"/>.
+    /// </para>
+    /// </remarks>
     public ValueTask<FlowExecutionResult> ResumeAsync(
         Guid instanceId,
         FlowRegistration registration,
+        string? tenantId = null,
         CancellationToken ct = default) =>
-        ResumeAsync(instanceId, registration, signal: null, principal: null, ct);
+        ResumeAsync(instanceId, registration, signal: null, principal: null, tenantId, ct);
 
     /// <summary>
     /// Delivers a signal to an instance that is waiting for one, and runs it on from there.
@@ -427,11 +476,11 @@ public sealed class FlowHost
     /// <returns>
     /// How the instance ended — which may be <c>IsSuspended</c> again, if the flow has a
     /// second wait after this one — or a rejection, in the same set
-    /// <see cref="ResumeAsync(Guid, FlowRegistration, CancellationToken)"/> returns.
+    /// <see cref="ResumeAsync(Guid, FlowRegistration, string, CancellationToken)"/> returns.
     /// </returns>
     /// <remarks>
     /// <para>
-    /// <strong>This is <see cref="ResumeAsync(Guid, FlowRegistration, CancellationToken)"/>
+    /// <strong>This is <see cref="ResumeAsync(Guid, FlowRegistration, string, CancellationToken)"/>
     /// with a signal attached, and deliberately nothing more.</strong> A signal is not a
     /// different way of running an instance: the lease is acquired, its token raises the
     /// fence, the frontier is read, and the same <c>FlowEngine.ExecuteAsync</c> a recovery
@@ -485,15 +534,16 @@ public sealed class FlowHost
     {
         ArgumentNullException.ThrowIfNull(signal);
 
-        return ResumeAsync(instanceId, registration, signal, principal, ct);
+        return ResumeAsync(instanceId, registration, signal, principal, tenantId: null, ct);
     }
 
-    /// <inheritdoc cref="ResumeAsync(Guid, FlowRegistration, CancellationToken)" />
+    /// <inheritdoc cref="ResumeAsync(Guid, FlowRegistration, string, CancellationToken)" />
     private async ValueTask<FlowExecutionResult> ResumeAsync(
         Guid instanceId,
         FlowRegistration registration,
         FlowSignal? signal,
         ClaimsPrincipal? principal,
+        string? tenantId,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(registration);
@@ -502,6 +552,23 @@ public sealed class FlowHost
         {
             return FlowExecutionResult.Rejected(
                 FlowErrors.DurabilityNotConfigured(registration.Plan.Flow.Id));
+        }
+
+        // Admitted before the lease is taken, on the same terms a fresh execution is. A signal
+        // carries a deliverer and is decided against that deliverer's claims; a sweep carries
+        // nobody and continues under the tenant its candidate row named. What this refuses is
+        // the case in between — somebody authenticated delivering a signal to an instance in a
+        // tenant their claims do not place them in.
+        var admission = new FlowInvocation(
+            instanceId.ToString(),
+            instanceId.ToString(),
+            tenantId,
+            Principal: principal,
+            IsContinuation: signal is null && principal is null);
+
+        if (Admit(ref admission) is { } refusal)
+        {
+            return FlowExecutionResult.Rejected(refusal);
         }
 
         if (!TryEnter())
@@ -526,7 +593,12 @@ public sealed class FlowHost
 
             try
             {
-                var resumed = await lease.ResumeAsync(_durability.Journal, ct).ConfigureAwait(false);
+                // Bound before the row is read, so an instance belonging to another tenant is
+                // not there to be resumed rather than being read and then refused. The journal
+                // answers journal.instance_not_found, which is the truthful answer under the
+                // policy and discloses nothing about whether the id exists elsewhere.
+                var journal = JournalFor(admission.TenantId);
+                var resumed = await lease.ResumeAsync(journal, ct).ConfigureAwait(false);
 
                 if (resumed.IsFailure)
                 {
@@ -672,6 +744,80 @@ public sealed class FlowHost
         return drained && detached;
     }
 
+    /// <summary>
+    /// Decides the invocation's tenant, or refuses it before anything is allocated.
+    /// </summary>
+    /// <param name="invocation">
+    /// What the trigger produced. Replaced on success by one carrying the <em>resolved</em>
+    /// tenant rather than the asserted one, so that everything downstream — the instance row,
+    /// the scoped connection, the span's tenant tag — reads the value the claims supported and
+    /// not the value the caller sent.
+    /// </param>
+    /// <returns>The refusal, or <c>null</c> when the call is admitted.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>At admission, before the lease and before the journal row.</strong>
+    /// <c>docs/16 §3</c> requires it — "<em>unresolvable tenant → rejected at admission, before
+    /// a flow instance exists</em>" — and the requirement is not stylistic: a refusal after the
+    /// lease has been taken leaves an instance id fenced under a tenant that was never
+    /// admitted, and one after <c>StartAsync</c> leaves a row.
+    /// </para>
+    /// <para>
+    /// <strong>Not in the step loop, and this is the one place this feature parts company with
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0027-authorisation-runs-in-the-step-loop.md">ADR-0027</a>.</strong>
+    /// That record put authorisation in the step loop because a stance belongs to a
+    /// <em>capability</em> and a flow's steps are chosen at run time, so no earlier point knows
+    /// which stances apply. A tenant belongs to the invocation as a whole: every step of the
+    /// flow has the same one, no branch can change it, and there is no union to over-refuse or
+    /// intersection to under-refuse. ADR-0027 §1.1's objection therefore does not transfer, and
+    /// ADR-0027's own "revisit when" anticipated this case by name. See ADR-0043.
+    /// </para>
+    /// </remarks>
+    private Error? Admit(ref FlowInvocation invocation)
+    {
+        var resolved = _tenants.Resolve(in invocation);
+
+        if (resolved.Refused)
+        {
+            // Which of the two refusals it is follows from the one fact the host holds: a call
+            // that named a tenant and was refused named one its claims do not support, and a
+            // call that named none was missing the claim entirely. The two lead to different
+            // repairs — "ask for a token in the right tenant" against "ask for a token with a
+            // tenant claim" — so they are different codes rather than one with a message.
+            return (invocation.TenantId is { Length: > 0 } asserted
+                    ? TenantErrors.CrossTenantDenied(asserted)
+                    : TenantErrors.TenantRequired(_options.TenantIsolation))
+                .With("reason", resolved.Reason);
+        }
+
+        if (resolved.TenantId is { Length: > 0 } tenant
+            && !string.Equals(invocation.TenantId, tenant, StringComparison.Ordinal))
+        {
+            invocation = invocation with { TenantId = tenant };
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The journal this execution commits to: scoped to its tenant, but only where the
+    /// deployment declared that it isolates.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The level is the switch, and the tenant is not.</strong> Gating on
+    /// <c>tenantId is not null</c> alone would be wrong in a way that is easy to miss:
+    /// <c>HttpTriggerReader</c> populates <see cref="FlowInvocation.TenantId"/> from claims on
+    /// every deployment, isolating or not, and a journal's rows may carry a tenant that
+    /// predates any of this. A single-tenant host would then start binding connections and
+    /// assuming a restricted role because its tokens happen to have a <c>tid</c> claim — a
+    /// round trip per call, and a set of policies applied to a deployment that never asked for
+    /// them. <see cref="TenantIsolation.None"/> takes the path it always took.
+    /// </remarks>
+    private IFlowJournal JournalFor(string? tenantId) =>
+        _options.TenantIsolation == TenantIsolation.None
+            ? _durability!.Journal
+            : _durability!.JournalFor(tenantId);
+
     /// <summary>Whether this execution journals: the flow asked for it and the host can.</summary>
     /// <remarks>
     /// One comparison on the ephemeral path, against a field the plan already holds — the
@@ -736,8 +882,18 @@ public sealed class FlowHost
         // input needs a JsonTypeInfo<TIn> and only generated code can name one. What comes
         // back is a JournalPayload carrying the flow's SensitiveMembers, so the stored input
         // is redacted by the same single exit as every other payload.
+        // Scoped to the tenant admission resolved, so every statement this instance's execution
+        // ever issues — the opening row, each step commit, the outbox rows, the completion —
+        // travels a connection the database has already restricted. The tenant is not passed to
+        // the journal's methods and cannot be got wrong at a call site, because no call site
+        // sees it.
         var begun = await lease
-            .BeginAsync(durability.Journal, plan, invocation, dispatcher.DescribeInput(input), ct)
+            .BeginAsync(
+                JournalFor(invocation.TenantId),
+                plan,
+                invocation,
+                dispatcher.DescribeInput(input),
+                ct)
             .ConfigureAwait(false);
 
         if (begun.IsFailure)

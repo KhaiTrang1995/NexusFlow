@@ -61,6 +61,7 @@ public sealed class PostgresMigrator
         new(5, "suspended_wake", "0005_suspended_wake.sql"),
         new(6, "policy_stores", "0006_policy_stores.sql"),
         new(7, "result_cache", "0007_result_cache.sql"),
+        new(8, "tenant_row_level_security", "0008_tenant_row_level_security.sql"),
     ];
 
     /// <summary>The schema version this build of the adapter reads and writes.</summary>

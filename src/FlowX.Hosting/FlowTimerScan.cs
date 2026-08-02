@@ -18,7 +18,7 @@ namespace FlowX.Hosting;
 /// when the node restarted.
 /// </para>
 /// <para>
-/// <strong>It resumes through <see cref="FlowHost.ResumeAsync(Guid, FlowRegistration, CancellationToken)"/>,
+/// <strong>It resumes through <see cref="FlowHost.ResumeAsync(Guid, FlowRegistration, string, CancellationToken)"/>,
 /// which is the same call <see cref="FlowRecoveryScan"/> makes and the same one
 /// <c>FlowHost.SignalAsync</c> is.</strong> There is no third way into an instance. The lease
 /// is acquired, its token raises the fence, the frontier is read, and the engine walks the
@@ -155,7 +155,7 @@ public sealed class FlowTimerScan
             }
 
             wakes ??= new List<Task<Attempt>>(capacity);
-            wakes.Add(WakeAsync(candidate.InstanceId, registration, ct));
+            wakes.Add(WakeAsync(candidate.InstanceId, registration, candidate.TenantId, ct));
         }
 
         if (wakes is null)
@@ -235,12 +235,19 @@ public sealed class FlowTimerScan
     /// answered before the switch below rather than falling into it.
     /// </para>
     /// </remarks>
+    /// <remarks>
+    /// <strong>The candidate's tenant is carried through to the resume</strong> for the reason
+    /// <c>FlowRecoveryScan.TakeOverAsync</c> carries it: the woken instance runs against a
+    /// journal bound to its own tenant, and the value is already on the row this sweep fetched.
+    /// </remarks>
     private async Task<Attempt> WakeAsync(
         Guid instanceId,
         FlowRegistration registration,
+        string? tenantId,
         CancellationToken ct)
     {
-        var result = await _host.ResumeAsync(instanceId, registration, ct).ConfigureAwait(false);
+        var result = await _host.ResumeAsync(instanceId, registration, tenantId, ct)
+            .ConfigureAwait(false);
 
         if (result.IsSuccess || result.IsSuspended)
         {
