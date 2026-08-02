@@ -10,6 +10,20 @@ namespace FlowX.Postgres.Tests;
 /// </summary>
 public sealed class RetentionTests
 {
+    /// <summary>The type the subscription below observes, and the one the fixtures emit.</summary>
+    private const string Observed = "order.placed";
+
+    /// <summary>
+    /// One change subscription, as a host that declares <c>[ChangeTrigger]</c> would register it.
+    /// </summary>
+    /// <remarks>
+    /// The same value is handed to the feed and to retention, which is the point: the cursor key
+    /// is derived from these four terms in two places, and a test that used two subscriptions
+    /// that merely looked alike would pass while they disagreed.
+    /// </remarks>
+    private static readonly ChangeSubscription Subscription =
+        new("orders.project", "1.0.0", Observed, "projection");
+
     private static CancellationToken Cancellation => TestContext.Current.CancellationToken;
 
     /// <summary>The document's numbers are the numbers in the table.</summary>
@@ -249,6 +263,175 @@ public sealed class RetentionTests
 
         sweep.FailedInstances.ShouldBe(0, "200 days is past the 180-day window, and it stays.");
         sweep.HeldForPendingEvents.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// A host with a change subscription and no broker purges what its cursor is past, and keeps
+    /// what it is not.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The defect ADR-0050 recorded and this is the fix for.</strong> <c>published_at</c>
+    /// was the flag for "nobody needs this row", and a deployment whose only consumer is a change
+    /// subscription never sets it — so under ADR-0018's guard every instance such a host ever ran
+    /// was held for ever, growing without limit and reported only as
+    /// <see cref="RetentionSweep.HeldForPendingEvents"/>.
+    /// </para>
+    /// <para>
+    /// Both halves are asserted in one arrangement on purpose. Two instances, two events, and a
+    /// cursor committed past the first only: a sweeper that purged on "no publisher is declared"
+    /// alone would take both, and one that still held on <c>published_at</c> would take neither.
+    /// Only reading the cursor's <em>position</em> gives one and one.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AHostWithNoBrokerPurgesWhatItsCursorIsPast()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation);
+
+        var read = await CompletedInstanceAsync(schema, 40, emits: Observed);
+        var unread = await CompletedInstanceAsync(schema, 40, emits: Observed);
+
+        var retention = schema.RetentionFor(new RetentionConsumers
+        {
+            Publisher = false,
+            Subscriptions = [Subscription],
+        });
+
+        var before = await retention.PurgeAsync(Cancellation);
+
+        before.CompletedInstances.ShouldBe(
+            0, "the subscription has read nothing, so both events are still owed to it.");
+
+        before.HeldForPendingEvents.ShouldBe(2);
+
+        // The real feed, so the cursor row this sweep reads is the one the feed writes — the two
+        // derive the same key independently and nothing else would catch them disagreeing.
+        var offered = await OfferedAsync(schema, max: 1);
+
+        (await schema.ChangeFeed.CommitAsync(Subscription, offered[0].Position, Cancellation))
+            .Value.ShouldBeTrue("the cursor moved to the first change.");
+
+        var sweep = await retention.PurgeAsync(Cancellation);
+
+        sweep.CompletedInstances.ShouldBe(
+            1, "the subscription is past the first event, and nothing else is owed it.");
+
+        sweep.HeldForPendingEvents.ShouldBe(
+            1, "and the second is still ahead of the cursor, so its instance stays.");
+
+        (await schema.Journal.ReadInstanceAsync(read, Cancellation)).IsFailure.ShouldBeTrue();
+
+        (await schema.Journal.ReadInstanceAsync(unread, Cancellation)).IsSuccess.ShouldBeTrue(
+            "a purge here would destroy a change the subscription has not been offered yet, " +
+            "which is the silent data loss the guard exists for.");
+
+        (await schema.ScalarAsync("SELECT count(*) FROM outbox_event", Cancellation))
+            .ShouldBe(1L, "and the unread event is still there to be read.");
+    }
+
+    /// <summary>
+    /// The published window does not delete a row a change subscription has not read.
+    /// </summary>
+    /// <remarks>
+    /// The same rule from the other side, and the trade-off ADR-0050 accepted: the seven-day
+    /// window belongs to the publisher, and a subscription reading the same table has a position
+    /// and no window at all. A sweep that applied the window alone would take the row out from
+    /// under a subscription that was down for a week — silently, because the cursor is the only
+    /// evidence and nothing alerts on it.
+    /// </remarks>
+    [Fact]
+    public async Task ThePublishedWindowWaitsForTheSubscriptionsThatReadTheSameRows()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation);
+
+        // Ten days, so the instance is inside its own window and the only question is the row's.
+        await CompletedInstanceAsync(schema, 10, emits: Observed);
+
+        (await schema.OutboxPublisher(new RecordingEventPublisher())
+            .PublishPendingAsync(Cancellation))
+            .Published.ShouldBe(1);
+
+        await schema.ExecuteAsync(
+            "UPDATE outbox_event SET published_at = now() - interval '8 days'", Cancellation);
+
+        var retention = schema.RetentionFor(new RetentionConsumers
+        {
+            Subscriptions = [Subscription],
+        });
+
+        (await retention.PurgeAsync(Cancellation)).PublishedEvents.ShouldBe(
+            0, "eight days is past the seven-day window, and the subscription has not read it.");
+
+        var offered = await OfferedAsync(schema, max: 1);
+
+        await schema.ChangeFeed.CommitAsync(Subscription, offered[0].Position, Cancellation);
+
+        (await retention.PurgeAsync(Cancellation)).PublishedEvents.ShouldBe(
+            1, "both consumers are past it now, so the window is the only question again.");
+    }
+
+    /// <summary>
+    /// A deployment that declares no subscription over a type is not held by one.
+    /// </summary>
+    /// <remarks>
+    /// The liveness half. A host with three subscriptions and a fourth event type nothing
+    /// observes must not keep those instances for ever — which is what a sweeper that held every
+    /// unpublished row whenever any cursor existed would do.
+    /// </remarks>
+    [Fact]
+    public async Task AnEventNoDeclaredConsumerReadsHoldsNothing()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation);
+
+        var instance = await CompletedInstanceAsync(schema, 40, emits: "order.cancelled");
+
+        var sweep = await schema
+            .RetentionFor(new RetentionConsumers { Publisher = false, Subscriptions = [Subscription] })
+            .PurgeAsync(Cancellation);
+
+        sweep.CompletedInstances.ShouldBe(
+            1,
+            "the subscription observes 'order.placed' and this instance emitted something else, " +
+            "so nothing this deployment runs will ever read the row.");
+
+        sweep.HeldForPendingEvents.ShouldBe(0);
+
+        (await schema.Journal.ReadInstanceAsync(instance, Cancellation)).IsFailure.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Reads the feed until the barrier has cleared, or reports what it saw instead.
+    /// </summary>
+    /// <param name="schema">The schema to read.</param>
+    /// <param name="max">How many changes to ask for.</param>
+    /// <returns>The changes the feed offered.</returns>
+    /// <remarks>
+    /// <c>pg_snapshot_xmin</c> is cluster-wide, so any transaction open anywhere on the server —
+    /// including another test's — holds a freshly staged row back. <c>ChangeFeedTests</c> takes
+    /// the same wait for the same reason: without it this asserts the barrier's timing rather
+    /// than retention.
+    /// </remarks>
+    private static async Task<IReadOnlyList<ObservedChange>> OfferedAsync(
+        PostgresTestSchema schema, int max)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+
+        while (true)
+        {
+            var read = await schema.ChangeFeed.ReadAsync(Subscription, max, Cancellation);
+
+            read.IsSuccess.ShouldBeTrue(read.IsFailure ? read.Error.ToString() : string.Empty);
+
+            if (read.Value.Count > 0 || DateTimeOffset.UtcNow >= deadline)
+            {
+                read.Value.ShouldNotBeEmpty("the feed never offered the staged change.");
+
+                return read.Value;
+            }
+
+            await Task.Delay(25, Cancellation);
+        }
     }
 
     /// <summary>Records an instance that finished a given number of days ago.</summary>

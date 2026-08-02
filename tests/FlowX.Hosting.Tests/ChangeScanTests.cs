@@ -300,6 +300,94 @@ public sealed class ChangeScanTests
             .ShouldBe(1);
     }
 
+    /// <summary>
+    /// Two flows that between them observe and emit each other's type are refused at the second
+    /// registration.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>ADR-0050 decision 3 recorded this as unbounded and unsolved</strong>: "the
+    /// catalogue sees one registration at a time and cannot see the pair". It sees every
+    /// registration made before this one, which is a graph — a subscription's source is a node
+    /// and its plan's <c>Emit</c> set is its edges. Neither flow here observes what it emits, so
+    /// the direct check passes both and the loop runs for ever with every instance legitimately
+    /// distinct.
+    /// </para>
+    /// <para>
+    /// The refusal names both flows and both types, because an operator reading a pod that will
+    /// not start has to know which two registrations to look at and cannot get that from either
+    /// one alone.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AnIndirectCycleAcrossTwoFlowsIsRefused()
+    {
+        var catalogue = new FlowChangeCatalog().Add(
+            new ChangeSubscription("orders.project", "1.0.0", Source, Group),
+            Emitting("orders.project", "order.projected"),
+            new RecordingDispatcher());
+
+        var refusal = Should.Throw<ArgumentException>(() => catalogue.Add(
+            new ChangeSubscription("orders.audit", "1.0.0", "order.projected", Group),
+            Emitting("orders.audit", Source),
+            new RecordingDispatcher()));
+
+        refusal.Message.ShouldContain("'orders.audit' observes 'order.projected' and emits 'order.placed'");
+        refusal.Message.ShouldContain("'orders.project' observes 'order.placed' and emits 'order.projected'");
+
+        catalogue.Count.ShouldBe(1, "the registration that closes the cycle is the one refused.");
+    }
+
+    /// <summary>A chain of three that does not come back is registered.</summary>
+    /// <remarks>
+    /// <strong>The half that stops this being "a change-triggered flow may not emit".</strong>
+    /// Observe, transform, emit, observe again is the ordinary projection pipeline and it is
+    /// exactly what the graph above looks like minus one edge. A check that refused it would be
+    /// far worse than the defect it fixes.
+    /// </remarks>
+    [Fact]
+    public void AChainThatDoesNotCloseIsRegistered()
+    {
+        new FlowChangeCatalog()
+            .Add(
+                new ChangeSubscription("orders.project", "1.0.0", Source, Group),
+                Emitting("orders.project", "order.projected"),
+                new RecordingDispatcher())
+            .Add(
+                new ChangeSubscription("orders.audit", "1.0.0", "order.projected", Group),
+                Emitting("orders.audit", "order.audited"),
+                new RecordingDispatcher())
+            .Add(
+                new ChangeSubscription("orders.archive", "1.0.0", "order.audited", Group),
+                Emitting("orders.archive", "order.archived"),
+                new RecordingDispatcher())
+            .Count
+            .ShouldBe(3, "nothing observes 'order.archived', so the chain ends.");
+    }
+
+    /// <summary>Re-registering a subscription is not a cycle with the version it replaces.</summary>
+    /// <remarks>
+    /// Last registration wins, so the edge being replaced is not part of the graph the incoming
+    /// one joins. A cycle check that counted it would refuse every second registration of an
+    /// emitting subscription — which the host does whenever a plan is re-registered.
+    /// </remarks>
+    [Fact]
+    public void RegisteringTheSameSubscriptionTwiceIsNotACycle()
+    {
+        var subscription = new ChangeSubscription("orders.project", "1.0.0", Source, Group);
+
+        new FlowChangeCatalog()
+            .Add(subscription, Emitting("orders.project", "order.projected"), new RecordingDispatcher())
+            .Add(subscription, Emitting("orders.project", "order.projected"), new RecordingDispatcher())
+            .Count
+            .ShouldBe(1);
+    }
+
+    /// <summary>A durable plan that emits one type.</summary>
+    private static ExecutionPlan Emitting(string flowId, string emits) => ExecutionPlan.Create(
+        FlowDescriptor.Create(flowId, "1.0.0", ExecutionProfile.Durable, TimeSpan.FromMinutes(5)),
+        StepGraph.Create([StepNode.ForCapability(0, Project), StepNode.ForEmit(1, emits)]));
+
     private static ExecutionPlan Plan(ExecutionProfile profile) => ExecutionPlan.Create(
         FlowDescriptor.Create("orders.project", "1.0.0", profile, TimeSpan.FromMinutes(5)),
         StepGraph.Create([StepNode.ForCapability(0, Project)]));

@@ -86,8 +86,9 @@ public static class ServiceCollectionExtensions
                 : new PostgresTimerIndex(provider.GetRequiredService<NpgsqlDataSource>()));
         }
 
-        services.AddSingleton(
-            provider => new PostgresRetention(provider.GetRequiredService<NpgsqlDataSource>()));
+        services.AddSingleton(provider => new PostgresRetention(
+            provider.GetRequiredService<NpgsqlDataSource>(),
+            provider.GetService<RetentionConsumers>()));
         services.AddSingleton(provider => new PostgresMigrator(
             provider.GetRequiredService<NpgsqlDataSource>(),
             provider.GetRequiredService<PostgresJournalOptions>()));
@@ -169,6 +170,41 @@ public static class ServiceCollectionExtensions
             RequiresOneSchema(provider, nameof(AddFlowXPostgresOutbox), "drains outbox_event"),
             provider.GetRequiredService<IEventPublisher>(),
             provider.GetRequiredService<PostgresOutboxOptions>()));
+
+        return services;
+    }
+
+    /// <summary>
+    /// Tells <see cref="PostgresRetention"/> what reads this deployment's outbox.
+    /// </summary>
+    /// <param name="services">The container being built.</param>
+    /// <param name="consumers">The publisher and the change subscriptions, if any.</param>
+    /// <returns>The same collection, for chaining.</returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>Not inferred from the registrations above, because they are per node and this is
+    /// per deployment.</strong> <see cref="AddFlowXPostgresOutbox"/> says this process publishes;
+    /// it does not say no other process does, and a node that inferred "no publisher" from its
+    /// own container would purge events another node's publisher owed a broker. The same is true
+    /// of subscriptions, which is why the set is stated here rather than read from the host's
+    /// change catalogue.
+    /// </para>
+    /// <para>
+    /// <strong>Declining to call this is a decision with a default</strong> —
+    /// <see cref="RetentionConsumers.Default"/>, one publisher and no subscriptions, which holds
+    /// unpublished rows for ever rather than discarding them. A host with change subscriptions
+    /// and no broker is exactly the deployment that has to call it.
+    /// </para>
+    /// </remarks>
+    public static IServiceCollection AddFlowXPostgresRetentionConsumers(
+        this IServiceCollection services,
+        RetentionConsumers consumers)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(consumers);
+
+        services.AddSingleton(consumers);
 
         return services;
     }

@@ -283,13 +283,18 @@ before the incident is investigated.
 outbox rows, and that used to include any never published — accepted on the grounds that
 nothing published them, so nothing was lost, with the guard left as a note for WP-56.
 WP-56 landed the publisher, so the premise is spent: **both purges now refuse an instance
-that still holds an unpublished event**, whatever its state and however far past its
-window it is. The refusal is deliberately **not scoped to a window** — there is no age at
-which discarding an unsent event becomes correct. `RetentionSweep.HeldForPendingEvents`
+that still holds an event one of this deployment's consumers has not consumed**, whatever
+its state and however far past its window it is. The refusal is deliberately **not scoped
+to a window** — there is no age at which discarding an unsent event becomes correct. Who
+those consumers are is `RetentionConsumers`, stated at registration: the publisher's
+progress is `published_at` and a change subscription's is its `change_cursor` row, and a
+host with a `[ChangeTrigger]` subscription and no broker sets the first column never — so
+reading "owed" off it alone held every instance such a host ran for ever, and let the
+published-row window delete rows a subscription had not read. `RetentionSweep.HeldForPendingEvents`
 reports how many instances a sweep withheld, because the guard's own failure mode is a
-deployment that stages events and publishes none: it keeps every one of those instances
-for ever, and that number is where an operator sees it happening rather than inferring it
-from disk. See [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md), decision 5.
+declared consumer that is not draining: it keeps every one of those instances for ever,
+and that number is where an operator sees it happening rather than inferring it from disk.
+See [ADR-0018](adr/ADR-0018-outbox-publication-and-ordering.md), decision 5.
 
 Archival to cold storage is a plugin (`IJournalArchiver`), because the retention
 requirement is regulatory and differs per organisation. *That interface does not
