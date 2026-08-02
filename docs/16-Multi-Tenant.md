@@ -1,12 +1,14 @@
 # 16 — Multi-Tenancy
 
-> **Status:** Accepted as a specification · **row isolation is enforced; the fairness
-> and residency layers are not** ·
+> **Status:** Accepted as a specification · **row isolation and fairness are enforced;
+> the residency layer is not** ·
 > **Audience:** platform engineers, SaaS architects
 > **Answers:** what isolation levels exist, and what does the platform guarantee at each?
 
 > [!IMPORTANT]
-> **Row-level isolation is now enforced, and nothing else in this document is.**
+> **Row-level isolation and §4's fairness are enforced; most of the rest of this document
+> is not.** `FlowXOptions.Fairness` is where a deployment turns the second on, and it is
+> off by default, because a single-tenant deployment must not pay for it.
 >
 > A deployment setting `FlowXOptions.TenantIsolation = TenantIsolation.Row` gets:
 > `ITenantResolver` deriving the tenant from validated claims at admission and **refusing**
@@ -26,8 +28,11 @@
 > filter.*
 >
 > **Still not built**, and every one of them is a real gap rather than a detail:
-> no quota, no per-tenant rate limit, no bulkhead, no weighted fair queueing — so §4's
-> fairness is entirely unenforced and quality goal Q8 is not met; no cache or idempotency
+> of §4's six mechanisms the journal write budget is absent, and it is the one whose
+> absence is a decision rather than an omission — a shared budget costs a limiter round
+> trip per step commit and a per-process one is
+> [ADR-0040](adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md)'s
+> anti-conservative limiter; no cache or idempotency
 > store to key (§6); no residency binding, so L4 is a deployment convention; and
 > `TenantIsolation.Schema` and `.Database` are **declarable and refused at startup**, because
 > `ITenantStoreResolver` is still not declared anywhere. Nothing partitions or shards the

@@ -367,6 +367,56 @@ public sealed class PolicyExecutionTests
             "An open breaker stops calling. If every run still dispatched, nothing opened.");
     }
 
+    /// <summary>
+    /// With breakers keyed per tenant, one tenant's failing downstream does not refuse another
+    /// tenant's calls.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>docs/16 §4</c>'s fifth mechanism, in one sentence: "one tenant's bad downstream does
+    /// not trip everyone". Keyed by capability alone — the default, and correct where the
+    /// dependency is shared — the second tenant here is refused a call it would have completed,
+    /// which is an outage it is not having.
+    /// </para>
+    /// <para>
+    /// <strong>Both arrangements are asserted, because the widening is a trade and not a
+    /// fix.</strong> A shared breaker is <em>faster</em> to protect a shared dependency: the
+    /// first tenant's failures spare every other tenant the calls. A test that only showed the
+    /// per-tenant behaviour would read as though the shared key were a defect.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ATenantScopedBreakerDoesNotRefuseAnotherTenantsCalls()
+    {
+        var plan = Plan(Forward(PolicySet.Named("b")
+            .CircuitBreaker(failureRatio: 0.5, breakDuration: TimeSpan.FromSeconds(30))));
+
+        var shared = new FlowEngine(new FakeClock(T0));
+        var perTenant = new FlowEngine(new FakeClock(T0), breakersPerTenant: true);
+
+        for (var run = 0; run < StepPolicy.DefaultMinimumThroughput + 2; run++)
+        {
+            await shared.ExecuteAsync(plan, new RecordingDispatcher().FailAt(0, Unavailable), Acme, Ct);
+            await perTenant.ExecuteAsync(plan, new RecordingDispatcher().FailAt(0, Unavailable), Acme, Ct);
+        }
+
+        var refusedForEveryone = await shared.ExecuteAsync(plan, new RecordingDispatcher(), Globex, Ct);
+
+        refusedForEveryone.Error!.Code.ShouldBe(
+            FlowErrors.CircuitOpenCode,
+            "one breaker per capability: the tenant that broke nothing is refused too");
+
+        var admitted = await perTenant.ExecuteAsync(plan, new RecordingDispatcher(), Globex, Ct);
+
+        admitted.IsSuccess.ShouldBeTrue(
+            "one breaker per capability and tenant: the failing tenant's breaker is open and " +
+            "the quiet tenant's has seen nothing to open it.");
+    }
+
+    private static FlowInvocation Acme { get; } = new("corr-1", "idem-1", TenantId: "acme");
+
+    private static FlowInvocation Globex { get; } = new("corr-2", "idem-2", TenantId: "globex");
+
     /// <summary>A breaker closes again once its break duration has passed.</summary>
     /// <remarks>
     /// The half that makes a breaker a breaker rather than a kill switch. Asserted on the

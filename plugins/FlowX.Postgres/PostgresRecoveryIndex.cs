@@ -145,6 +145,31 @@ public sealed class PostgresRecoveryIndex : IRecoveryIndex
           LIMIT @limit
          """;
 
+    /// <summary>
+    /// The same page, with no tenant allowed to occupy more than
+    /// <see cref="AbandonedInstanceQuery.PerTenantLimit"/> of it.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="PostgresTimerIndex"/>'s fair statement, over staleness instead of due time and
+    /// for the same reason: <c>ORDER BY … LIMIT n</c> returns the oldest <em>n</em> rows in the
+    /// table, so a tenant with more than <em>n</em> abandoned instances owns every page and the
+    /// sweep never learns another tenant is waiting. Issued only when a non-zero
+    /// <see cref="AbandonedInstanceQuery.PerTenantLimit"/> asks for it, because it reads every
+    /// stale row rather than stopping at <em>n</em>.
+    /// </remarks>
+    private const string ListAbandonedFairly =
+        $"""
+         SELECT {CandidateColumns}
+           FROM (SELECT {CandidateColumns},
+                        ROW_NUMBER() OVER (PARTITION BY tenant_id ORDER BY updated_at) AS tenant_rank
+                   FROM flow_instance
+                  WHERE {Unfinished}
+                    AND updated_at < @idle_before) ranked
+          WHERE tenant_rank <= @per_tenant
+          ORDER BY updated_at
+          LIMIT @limit
+         """;
+
     private readonly NpgsqlDataSource _dataSource;
 
     /// <summary>Creates a recovery index over a data source.</summary>
@@ -183,6 +208,10 @@ public sealed class PostgresRecoveryIndex : IRecoveryIndex
     public static string Statement(bool tenantScoped) =>
         tenantScoped ? ListAbandonedForTenant : ListAbandoned;
 
+    /// <summary>The statement a fair sweep issues. See <see cref="Statement"/>.</summary>
+    /// <returns>The SQL, ready to be prefixed with <c>EXPLAIN</c>.</returns>
+    public static string FairStatement() => ListAbandonedFairly;
+
     /// <inheritdoc />
     /// <remarks>
     /// Answers "looks abandoned", and cannot answer more than that: leases live in
@@ -213,13 +242,25 @@ public sealed class PostgresRecoveryIndex : IRecoveryIndex
 
         using var command = connection.CreateCommand();
 
-        command.CommandText = query.TenantId is null ? ListAbandoned : ListAbandonedForTenant;
+        // A scan scoped to one tenant is already capped at that tenant's share; asking for the
+        // window function as well would be the same question twice.
+        var fair = query.TenantId is null && query.PerTenantLimit > 0;
+
+        command.CommandText = query.TenantId is not null
+            ? ListAbandonedForTenant
+            : fair ? ListAbandonedFairly : ListAbandoned;
+
         command.Parameters.Add(Db.Timestamp("idle_before", query.IdleBefore));
         command.Parameters.Add(Db.Int("limit", query.Limit));
 
         if (query.TenantId is not null)
         {
             command.Parameters.Add(Db.Text("tenant", query.TenantId));
+        }
+
+        if (fair)
+        {
+            command.Parameters.Add(Db.Int("per_tenant", query.PerTenantLimit));
         }
 
         var candidates = new List<AbandonedInstance>();

@@ -92,7 +92,8 @@ public sealed class InMemoryTimerIndex : ITimerIndex
         // that returns the same head for ever.
         candidates.Sort(static (left, right) => left.WakeAt.CompareTo(right.WakeAt));
 
-        return new(Result.Ok<IReadOnlyList<DueInstance>>(
-            candidates.Count <= query.Limit ? candidates : candidates[..query.Limit]));
+        var page = FairPage.Take(candidates, static c => c.TenantId, query.PerTenantLimit, query.Limit);
+
+        return new(Result.Ok<IReadOnlyList<DueInstance>>(page));
     }
 }

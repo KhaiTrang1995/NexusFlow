@@ -142,6 +142,13 @@ public sealed class FlowRecoveryScan
             // acquisition can settle the second.
             IdleBefore = _clock.UtcNow - _options.LeaseTtl,
             Limit = _options.RecoveryScanBatchSize,
+
+            // Zero unless a deployment declared a share, and zero is the page this scan always
+            // asked for. The cap belongs on the query and not on what is done with its answer:
+            // the page is the oldest work in the table, so a tenant whose backlog is longer than
+            // the page owns every row of it, and no scheduling applied afterwards can select a
+            // candidate that was never fetched.
+            PerTenantLimit = _options.Fairness.PerTenantScanShare,
         };
 
         var listed = await index.ListAbandonedAsync(query, ct).ConfigureAwait(false);
@@ -160,6 +167,7 @@ public sealed class FlowRecoveryScan
 
         var offset = Random.Shared.Next(candidates.Count);
         var capacity = _options.MaxConcurrentRecoveries;
+        var order = Order(candidates, offset);
 
         List<Task<Attempt>>? takeovers = null;
         var examined = 0;
@@ -167,7 +175,7 @@ public sealed class FlowRecoveryScan
 
         for (var i = 0; i < candidates.Count && (takeovers?.Count ?? 0) < capacity; i++)
         {
-            var candidate = candidates[(i + offset) % candidates.Count];
+            var candidate = candidates[order[i]];
 
             examined++;
 
@@ -218,6 +226,40 @@ public sealed class FlowRecoveryScan
             NotRunnable = notRunnable,
             Failed = failed,
         });
+    }
+
+    /// <summary>
+    /// Which order to spend this scan's slots in.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The rotation is not fairness and never was.</strong> Walking the page from a
+    /// random row spreads a fleet of nodes across it, which is why it exists and why it is kept;
+    /// what it produces is <em>proportional</em> share, so a tenant holding nine tenths of the
+    /// page takes nine tenths of this node's slots and the tenant behind it waits on a backlog it
+    /// did not create. <see cref="TenantFairShare"/> interleaves the page's tenants instead, and
+    /// applies the same rotation to the tenant order so that the anti-stampede property survives
+    /// the change.
+    /// </remarks>
+    private int[] Order(IReadOnlyList<AbandonedInstance> candidates, int offset) =>
+        _options.Fairness.IsEnabled
+            ? TenantFairShare.Order(
+                candidates,
+                static candidate => candidate.TenantId,
+                _options.Fairness.WeightOf,
+                offset)
+            : Rotated(candidates.Count, offset);
+
+    /// <summary>The order this scan always walked: the page, from a random row.</summary>
+    private static int[] Rotated(int count, int offset)
+    {
+        var order = new int[count];
+
+        for (var i = 0; i < count; i++)
+        {
+            order[i] = (i + offset) % count;
+        }
+
+        return order;
     }
 
     /// <summary>Puts what a sweep did onto its span, and hands the report back unchanged.</summary>

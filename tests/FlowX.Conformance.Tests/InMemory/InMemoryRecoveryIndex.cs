@@ -84,8 +84,9 @@ public sealed class InMemoryRecoveryIndex : IRecoveryIndex
         // returns the same head for ever.
         candidates.Sort(static (left, right) => left.UpdatedAt.CompareTo(right.UpdatedAt));
 
-        return new(Result.Ok<IReadOnlyList<AbandonedInstance>>(
-            candidates.Count <= query.Limit ? candidates : candidates[..query.Limit]));
+        var page = FairPage.Take(candidates, static c => c.TenantId, query.PerTenantLimit, query.Limit);
+
+        return new(Result.Ok<IReadOnlyList<AbandonedInstance>>(page));
     }
 
     /// <summary>

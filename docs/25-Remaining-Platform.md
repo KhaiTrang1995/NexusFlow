@@ -17,11 +17,12 @@ type", but "does anything read it at run time".
 |---|---|---|---|
 | — | Four policy kinds · multi-tenancy · logs · AI surface | **built 2026-08-02** | `FLOWX1032` deleted with the gap it reported. Sections 1–3 below are kept as the design, each with a note where the implementation corrected it |
 | — | **`Authorization.Internal`'s meaning** | **decided 2026-08-02** | [ADR-0047](adr/ADR-0047-internal-is-a-composition-stance.md). It is a **composition** stance — the capability is never addressed on its own — so permitting at the step was correct and the summary's two claimed controls were not. Neither is built, deliberately: a trigger addresses a flow, and a tool **is** a flow, so nothing is there to reject or exclude. The premise is now `NoTriggerAttributeAddressesACapability` rather than a doc comment. A fail-open found alongside it is fixed: `CanRefuse` counted `Policy` as permissive because it was undecidable, so a `Policy` capability permitted everybody |
-| 2 | **`Change` trigger** | declared, unbound | Cheapest transport left: the outbox already stages every event in the step's transaction, so CDC is a second consumer of a table that exists |
-| 3 | **Tenant fairness, `Schema`/`Database` isolation** | unbuilt | `Row` isolation landed; [16 §4](16-Multi-Tenant.md)'s six fairness mechanisms did not, and the two higher levels are refused at startup rather than implemented |
-| 4 | **`Stream` trigger** | blocked | Needs the stream engine below |
-| 5 | **Stream engine** | absent | **Not next.** Nothing defines the checkpoint format, watermark generation or how window state is journaled — implementing it means inventing it |
-| 6 | **Studio** | absent | **Not next.** Sixteen one-line mentions and no design |
+| — | **`Change` trigger** | **built 2026-08-02** | Cheapest transport left: the outbox already stages every event in the step's transaction, so CDC is a second consumer of a table that exists |
+| 1 | **`Schema` / `Database` isolation** | unbuilt | Refused at startup rather than implemented. A deployment needing either gets a clear error and no feature |
+| 2 | **Journal write budget per tenant** | unbuilt | [16 §4](16-Multi-Tenant.md)'s sixth fairness mechanism. A shared budget costs a limiter round trip per step commit, doubling the latency of the write it protects; a process-local one is what [ADR-0040](adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md) refuses. No record decides a third option |
+| 3 | **`Stream` trigger** | blocked | Needs the stream engine below |
+| 4 | **Stream engine** | absent | **Not next.** Nothing defines the checkpoint format, watermark generation or how window state is journaled — implementing it means inventing it |
+| 5 | **Studio** | absent | **Not next.** Sixteen one-line mentions and no design |
 
 
 ## 1. Multi-tenancy — the design

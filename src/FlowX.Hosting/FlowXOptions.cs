@@ -276,6 +276,18 @@ public sealed class FlowXOptions
     /// </para>
     /// </remarks>
     public TenantIsolation TenantIsolation { get; set; } = TenantIsolation.None;
+
+    /// <summary>
+    /// What each tenant is bounded to, so that one cannot starve another. Nothing, by default.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Read only where <see cref="TenantIsolation"/> is not
+    /// <see cref="TenantIsolation.None"/>.</strong> Isolation and fairness are separate
+    /// guarantees — the first stops a tenant reading another's rows and does nothing about a
+    /// tenant consuming every slot — but there is nothing to be fair between on a deployment
+    /// that resolves no tenant, so a single-tenant host never reaches this object at all.
+    /// </remarks>
+    public TenantFairness Fairness { get; } = new();
 }
 
 /// <summary>
@@ -482,8 +494,88 @@ internal sealed class FlowXOptionsValidator : IValidateOptions<FlowXOptions>
             failures.Add(TenantErrors.IsolationNotSupported(options.TenantIsolation).Message);
         }
 
+        ValidateFairness(options, failures);
+
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);
+    }
+
+    /// <summary>
+    /// Refuses a fairness configuration that cannot do what it says at startup.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The first check is the one that matters.</strong> A deployment that declares a
+    /// per-tenant bound on a host that resolves no tenant has configured a limit with no key to
+    /// spend it under; nothing would be applied, nothing would say so, and the operator would
+    /// believe the noisy neighbour was handled. That is the "declared and inert" shape the
+    /// tenancy work exists to remove, so it fails the pod rather than the customer.
+    /// </remarks>
+    private static void ValidateFairness(FlowXOptions options, List<string> failures)
+    {
+        var fairness = options.Fairness;
+
+        if (fairness.IsEnabled && options.TenantIsolation == TenantIsolation.None)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.Fairness)} declares a per-tenant bound and " +
+                $"{nameof(FlowXOptions.TenantIsolation)} is None, so no tenant is ever resolved " +
+                "and no bound could be applied. Declare an isolation level, or remove the " +
+                "bounds — a limit with nothing to key on is a limit that silently does nothing.");
+        }
+
+        if (fairness.PermitsPerWindow < 0)
+        {
+            failures.Add(
+                $"{nameof(TenantFairness.PermitsPerWindow)} cannot be negative; it is " +
+                $"{fairness.PermitsPerWindow}. Zero is how a deployment declares no rate limit.");
+        }
+
+        if (fairness.PermitsPerWindow > 0 && fairness.Window <= TimeSpan.Zero)
+        {
+            failures.Add(
+                $"{nameof(TenantFairness.Window)} must be positive; it is {fairness.Window}. " +
+                "Permits granted over no time is an unbounded rate wearing a bound.");
+        }
+
+        if (fairness.QuotaPerWindow < 0)
+        {
+            failures.Add(
+                $"{nameof(TenantFairness.QuotaPerWindow)} cannot be negative; it is " +
+                $"{fairness.QuotaPerWindow}. Zero is how a deployment declares no quota.");
+        }
+
+        if (fairness.QuotaPerWindow > 0 && fairness.QuotaWindow <= TimeSpan.Zero)
+        {
+            failures.Add(
+                $"{nameof(TenantFairness.QuotaWindow)} must be positive; it is " +
+                $"{fairness.QuotaWindow}.");
+        }
+
+        if (fairness.MaxConcurrency < 0)
+        {
+            failures.Add(
+                $"{nameof(TenantFairness.MaxConcurrency)} cannot be negative; it is " +
+                $"{fairness.MaxConcurrency}. Zero is how a deployment declares no bulkhead.");
+        }
+
+        if (fairness.PerTenantScanShare < 0)
+        {
+            failures.Add(
+                $"{nameof(TenantFairness.PerTenantScanShare)} cannot be negative; it is " +
+                $"{fairness.PerTenantScanShare}. Zero is the page a sweep always asked for.");
+        }
+
+        foreach (var (tenant, weight) in fairness.Weights)
+        {
+            if (weight <= 0)
+            {
+                failures.Add(
+                    $"{nameof(TenantFairness.Weights)}['{tenant}'] is {weight}. A weight of " +
+                    "zero or less expresses 'never schedule this tenant', which is a suspension " +
+                    "and not a weight — and it would be delivered as the starvation this " +
+                    "setting exists to prevent.");
+            }
+        }
     }
 }
