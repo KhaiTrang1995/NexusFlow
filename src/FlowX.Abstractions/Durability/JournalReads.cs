@@ -151,6 +151,20 @@ public sealed record OutboxRecord
 
     /// <summary>When it was published, or null while it is pending.</summary>
     public DateTimeOffset? PublishedAt { get; init; }
+
+    /// <summary>
+    /// Whose outbox this row was claimed from, where a deployment keeps one per tenant.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Not a column, and that is why it is here rather than derived by a broker
+    /// adapter.</strong> <c>outbox_event</c> carries no <c>tenant_id</c>: at
+    /// <see cref="TenantIsolation.Row"/> the tenant is the emitting instance's, and at
+    /// <see cref="TenantIsolation.Schema"/> it is the schema the row was read from — which is
+    /// knowledge only the store that fanned out the claim has. Without it a publisher draining
+    /// every tenant's outbox hands a broker one undifferentiated stream, and nothing downstream
+    /// can route, partition or refuse per tenant. Null at every level that keeps one outbox.
+    /// </remarks>
+    public string? TenantId { get; init; }
 }
 
 /// <summary>

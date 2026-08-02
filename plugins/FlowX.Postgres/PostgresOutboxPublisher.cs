@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Npgsql;
 
 namespace FlowX.Postgres;
@@ -49,12 +50,36 @@ namespace FlowX.Postgres;
 /// lists DLQ as part of the <c>PublisherConformance</c> suite that has not been written, and
 /// it is not part of this package.
 /// </para>
+/// <para>
+/// <strong>At <see cref="TenantIsolation.Schema"/> it is the same loop asked once per
+/// tenant.</strong> Every tenant has an <c>outbox_event</c> of its own, so the claim, the
+/// <c>SKIP LOCKED</c> and the per-key hold are all evaluated inside one tenant's schema and
+/// nothing about any of them changes — a smaller table asked the same question. What the
+/// fan-out adds is three properties the single-schema loop had for free: the registry is
+/// re-read every pass, so a tenant provisioned by another node a second ago is drained by this
+/// one; the visiting order rotates, so a tenant with a permanent backlog cannot hold the batch
+/// budget of the tenant behind it; and a tenant whose database call fails is recorded and
+/// stepped over rather than ending the pass, because one tenant being down must not stop the
+/// other nine publishing.
+/// </para>
+/// <para>
+/// <strong>Ordering across tenants is not offered, and never was.</strong> ADR-0018 promises
+/// staging order within one <c>partition_key</c> and nothing else. Two tenants that happen to
+/// choose the same key string are two streams rather than one — at
+/// <see cref="TenantIsolation.Row"/> they shared a table and the <c>NOT EXISTS</c> hold made one
+/// wait behind the other, which was an accident of colocation rather than a guarantee. Here they
+/// do not meet.
+/// </para>
 /// </remarks>
 public sealed class PostgresOutboxPublisher
 {
-    private readonly NpgsqlDataSource _dataSource;
+    private readonly NpgsqlDataSource? _dataSource;
+    private readonly PostgresTenantStores? _stores;
     private readonly IEventPublisher _publisher;
     private readonly PostgresOutboxOptions _options;
+
+    /// <summary>Where the next fan-out starts, so that no tenant is always visited last.</summary>
+    private int _rotation;
 
     /// <summary>Creates a publisher over a data source and a broker adapter.</summary>
     /// <param name="dataSource">
@@ -77,22 +102,114 @@ public sealed class PostgresOutboxPublisher
         _options = options ?? new PostgresOutboxOptions();
     }
 
+    /// <summary>Creates a publisher that drains every registered tenant's outbox in turn.</summary>
+    /// <param name="stores">The per-tenant pools, and the registry that lists them.</param>
+    /// <param name="publisher">Where acknowledged events go.</param>
+    /// <param name="options">Batch size and poll interval, applied per tenant per pass.</param>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <remarks>
+    /// <see cref="PostgresOutboxOptions.BatchSize"/> becomes each tenant's own batch rather than
+    /// the pass's, which is what <see cref="PostgresTenantRecoveryIndex"/> does with
+    /// <c>PerTenantLimit</c> and for the same reason: the limit bounds how many rows one claim
+    /// holds locks over, and a claim is per schema.
+    /// </remarks>
+    public PostgresOutboxPublisher(
+        PostgresTenantStores stores,
+        IEventPublisher publisher,
+        PostgresOutboxOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(stores);
+        ArgumentNullException.ThrowIfNull(publisher);
+
+        _stores = stores;
+        _publisher = publisher;
+        _options = options ?? new PostgresOutboxOptions();
+    }
+
     /// <summary>
-    /// Claims one batch, publishes it and marks what the broker acknowledged.
+    /// Claims one batch, publishes it and marks what the broker acknowledged — once per
+    /// tenant, where the deployment gives each tenant an outbox of its own.
     /// </summary>
     /// <param name="cancellationToken">Cancels the pass.</param>
-    /// <returns>What the pass claimed and what it published.</returns>
+    /// <returns>What the pass claimed and published, summed over the tenants it visited.</returns>
     /// <remarks>
     /// The whole pass is one transaction, and every early return leaves it to be rolled back
     /// by its disposal. That is the property the crash test exercises: there is no path
     /// through this method that marks an event published without the claim that produced it
     /// committing at the same instant, and no path that loses an event by marking one that
-    /// did not arrive.
+    /// did not arrive. One transaction <em>per tenant</em> under the fan-out, which is the same
+    /// sentence: two tenants' rows were never in one claim to begin with.
     /// </remarks>
     public async ValueTask<OutboxPass> PublishPendingAsync(
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        (await SweepAsync(cancellationToken).ConfigureAwait(false)).Pass;
+
+    /// <summary>One pass, and whether any schema it visited filled its batch.</summary>
+    private ValueTask<Sweep> SweepAsync(CancellationToken cancellationToken) =>
+        _stores is null
+            ? PassAsync(_dataSource!, tenantId: null, cancellationToken)
+            : FanOutAsync(_stores, cancellationToken);
+
+    /// <summary>
+    /// Every registered tenant's outbox, in a rotating order, with a failing tenant stepped over.
+    /// </summary>
+    private async ValueTask<Sweep> FanOutAsync(
+        PostgresTenantStores stores,
+        CancellationToken cancellationToken)
     {
-        var connection = await _dataSource.OpenConnectionAsync(cancellationToken)
+        // Re-read every pass rather than cached, for KnownTenantsAsync's own stated reason: a
+        // tenant another node provisioned five seconds ago has events this node must drain.
+        var tenants = await stores.KnownTenantsAsync(cancellationToken).ConfigureAwait(false);
+
+        if (tenants.Count == 0)
+        {
+            return Sweep.Nothing;
+        }
+
+        var offset = (int)((uint)Interlocked.Increment(ref _rotation) % (uint)tenants.Count);
+
+        var claimed = 0;
+        var published = 0;
+        var saturated = false;
+        Error? failure = null;
+
+        for (var i = 0; i < tenants.Count; i++)
+        {
+            var tenant = tenants[(i + offset) % tenants.Count];
+
+            try
+            {
+                var store = await stores.ForAsync(tenant, cancellationToken).ConfigureAwait(false);
+                var sweep = await PassAsync(store, tenant, cancellationToken).ConfigureAwait(false);
+
+                claimed += sweep.Pass.Claimed;
+                published += sweep.Pass.Published;
+                saturated |= sweep.Saturated;
+                failure ??= sweep.Pass.Failure;
+            }
+            catch (Exception unreachable)
+                when (unreachable is DbException or InvalidOperationException or TimeoutException)
+            {
+                // The tenant fails, not the pass. A schema that was dropped, a pool that is
+                // exhausted or a database that stopped answering is one tenant's problem, and
+                // letting it out of here would make every tenant after it in the rotation wait
+                // for that repair. A broker that throws is deliberately not caught: that is not
+                // a tenant failing, it is the publisher this loop exists to feed, and the
+                // at-least-once guarantee is built on the transaction unwinding with it.
+                failure ??= PostgresOutboxErrors.TenantUnreachable(tenant, unreachable);
+            }
+        }
+
+        return new Sweep(new OutboxPass(claimed, published, failure), saturated);
+    }
+
+    /// <summary>One schema's claim, publish and mark, in one transaction.</summary>
+    private async ValueTask<Sweep> PassAsync(
+        NpgsqlDataSource dataSource,
+        string? tenantId,
+        CancellationToken cancellationToken)
+    {
+        var connection = await dataSource.OpenConnectionAsync(cancellationToken)
             .ConfigureAwait(false);
 
         await using var closing = connection.ConfigureAwait(false);
@@ -102,11 +219,12 @@ public sealed class PostgresOutboxPublisher
 
         await using var closingTransaction = transaction.ConfigureAwait(false);
 
-        var claimed = await ClaimAsync(connection, cancellationToken).ConfigureAwait(false);
+        var claimed = await ClaimAsync(connection, tenantId, cancellationToken)
+            .ConfigureAwait(false);
 
         if (claimed.Count == 0)
         {
-            return OutboxPass.Empty;
+            return Sweep.Nothing;
         }
 
         var published = await _publisher.PublishAsync(claimed, cancellationToken)
@@ -118,20 +236,22 @@ public sealed class PostgresOutboxPublisher
             // so every claimed row is pending again the moment the lock is released. The
             // error is the publisher's to report — a caller that wants it can ask the
             // publisher, and a caller that wants throughput wants the next pass.
-            return new OutboxPass(claimed.Count, 0, published.Error);
+            return new Sweep(new OutboxPass(claimed.Count, 0, published.Error), Saturated: false);
         }
 
         var acknowledged = Prefix(claimed, published.Value);
 
         if (acknowledged.Length == 0)
         {
-            return new OutboxPass(claimed.Count, 0, null);
+            return new Sweep(new OutboxPass(claimed.Count, 0, null), Saturated: false);
         }
 
         await MarkAsync(connection, acknowledged, cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
-        return new OutboxPass(claimed.Count, acknowledged.Length, null);
+        return new Sweep(
+            new OutboxPass(claimed.Count, acknowledged.Length, null),
+            acknowledged.Length >= _options.BatchSize);
     }
 
     /// <summary>
@@ -152,7 +272,9 @@ public sealed class PostgresOutboxPublisher
     /// interval bounds idle latency without throttling a backlog; a pass that claimed a full
     /// batch and published none — a refusing broker, or a batch entirely held behind older
     /// siblings — waits, because retrying that at full speed is a hot loop against a
-    /// condition that needs time to change.
+    /// condition that needs time to change. Under the fan-out the same question is asked of
+    /// each tenant separately and answered <c>true</c> if any of them filled its batch, because
+    /// a sum across ten idle tenants and one saturated one is neither number.
     /// </para>
     /// <para>
     /// <strong>Cancellation ends the loop, it does not fault it.</strong> A shutdown that
@@ -169,9 +291,9 @@ public sealed class PostgresOutboxPublisher
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                var pass = await PublishPendingAsync(cancellationToken).ConfigureAwait(false);
+                var sweep = await SweepAsync(cancellationToken).ConfigureAwait(false);
 
-                if (pass.Published >= _options.BatchSize)
+                if (sweep.Saturated)
                 {
                     continue;
                 }
@@ -210,6 +332,7 @@ public sealed class PostgresOutboxPublisher
 
     private async ValueTask<IReadOnlyList<OutboxRecord>> ClaimAsync(
         NpgsqlConnection connection,
+        string? tenantId,
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
@@ -224,7 +347,7 @@ public sealed class PostgresOutboxPublisher
 
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            claimed.Add(JournalRows.PendingOutbox(reader));
+            claimed.Add(JournalRows.PendingOutbox(reader, tenantId));
         }
 
         return claimed;
@@ -242,6 +365,37 @@ public sealed class PostgresOutboxPublisher
 
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>A pass, plus the one fact the polling loop needs and a caller does not.</summary>
+    /// <param name="Pass">What the pass claimed and published.</param>
+    /// <param name="Saturated">
+    /// Whether some schema filled its batch, which is <see cref="RunAsync"/>'s signal to come
+    /// straight back rather than wait. Not on <see cref="OutboxPass"/>, because summing
+    /// <see cref="OutboxPass.Published"/> across tenants and comparing it to a per-tenant batch
+    /// size is the comparison this field exists to stop anybody making.
+    /// </param>
+    private readonly record struct Sweep(OutboxPass Pass, bool Saturated)
+    {
+        /// <summary>A pass that found nothing, in any schema it looked at.</summary>
+        public static Sweep Nothing => new(OutboxPass.Empty, Saturated: false);
+    }
+}
+
+/// <summary>What the fan-out reports when one tenant's outbox could not be reached.</summary>
+/// <remarks>
+/// A value rather than a throw, because the throw is what the fan-out is catching: the pass
+/// carries on to the next tenant, and this is how the one it stepped over is not lost. Named
+/// separately from <c>PostgresPolicyErrors</c> so that an operator grepping a log for a tenant
+/// that stopped publishing finds one code.
+/// </remarks>
+internal static class PostgresOutboxErrors
+{
+    public static Error TenantUnreachable(string tenantId, Exception failure) => new Error(
+        "postgres.outbox_tenant_unavailable",
+        $"Tenant '{tenantId}' outbox could not be drained on this pass: {failure.Message}. " +
+        "Every other tenant was still visited; this one is retried on the next pass.",
+        ErrorCategory.Unavailable)
+        .With("tenantId", tenantId);
 }
 
 /// <summary>What one pass of the outbox publisher did.</summary>
@@ -254,9 +408,10 @@ public sealed class PostgresOutboxPublisher
 /// <paramref name="Claimed"/>, and always committed together with the mark.
 /// </param>
 /// <param name="Failure">
-/// Why the broker took nothing, when it took nothing because it refused. Null when the
-/// publisher answered — including when it answered with a count of zero, which is a
-/// publisher declining rather than failing.
+/// Why the broker took nothing, when it took nothing because it refused — or, under the
+/// per-tenant fan-out, the first tenant whose outbox could not be reached, whose other tenants
+/// were still drained. Null when the publisher answered — including when it answered with a
+/// count of zero, which is a publisher declining rather than failing.
 /// </param>
 public readonly record struct OutboxPass(int Claimed, int Published, Error? Failure)
 {

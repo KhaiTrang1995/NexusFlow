@@ -1,3 +1,4 @@
+using FlowX.Conformance.InMemory;
 using FlowX.Hosting;
 using FlowX.Runtime;
 using Microsoft.Extensions.DependencyInjection;
@@ -205,8 +206,8 @@ public sealed class TenantSchemaHostIsolationTests
     }
 
     /// <summary>
-    /// Turning tenant schemas on is what swaps both sweeps for their fan-outs, and what makes
-    /// the two loops that cannot fan out refuse instead of draining an empty table.
+    /// Turning tenant schemas on swaps every node-wide loop for its fan-out, and makes the one
+    /// that cannot fan out refuse instead of observing an empty table.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -215,15 +216,15 @@ public sealed class TenantSchemaHostIsolationTests
     /// which is answerable offline.
     /// </para>
     /// <para>
-    /// <strong>The refusals are the half worth having.</strong> The outbox publisher and the
-    /// change feed read <c>outbox_event</c> in the control schema, which at this level is empty
-    /// and always will be — so wiring one would report success and publish nothing, which is the
-    /// exact failure the isolation levels exist to remove, arriving through a registration
-    /// rather than through a setting.
+    /// <strong>The change feed's refusal is the half worth having, and its reason is not the
+    /// one ADR-0051 §4 gave.</strong> The publisher fans out — a claim was always confined to one
+    /// table — so "it claims rows and advances a position" cannot be what disqualifies a loop.
+    /// What disqualifies the feed is delivery: a change observed in a tenant's schema has to
+    /// start a flow in that tenant, and a change scan carries no principal to be admitted with.
     /// </para>
     /// </remarks>
     [Fact]
-    public void TurningTenantSchemasOnSwapsTheSweepsAndRefusesTheLoopsThatCannotFanOut()
+    public void TurningTenantSchemasOnFansOutEveryLoopExceptTheOneThatCannotDeliver()
     {
         var services = new ServiceCollection();
 
@@ -240,6 +241,7 @@ public sealed class TenantSchemaHostIsolationTests
                 TenantSchemas = new TenantSchemaOptions { IsEnabled = true },
             });
 
+        services.AddSingleton<IEventPublisher>(new RecordingEventPublisher());
         services.AddFlowXPostgresOutbox();
         services.AddFlowXPostgresChangeFeed();
 
@@ -259,12 +261,18 @@ public sealed class TenantSchemaHostIsolationTests
                 "and the journal must report the level it now enforces, because that is what " +
                 "stops a host declaring more than its store delivers.");
 
-        Should.Throw<InvalidOperationException>(() => provider.GetRequiredService<IChangeFeed>())
-            .Message.ShouldNotBeNullOrWhiteSpace();
+        provider.GetRequiredService<PostgresOutboxPublisher>().ShouldNotBeNull(
+            "the publisher drains every tenant's outbox at this level. Refusing it left a " +
+            "deployment that isolates by schema with no way to publish at all.");
 
-        Should.Throw<InvalidOperationException>(
-            () => provider.GetRequiredService<PostgresOutboxPublisher>())
-            .Message.ShouldNotBeNullOrWhiteSpace();
+        var refused = Should.Throw<InvalidOperationException>(
+            () => provider.GetRequiredService<IChangeFeed>());
+
+        refused.Message.ShouldContain(
+            "tenant.required",
+            Case.Sensitive,
+            "the refusal must name the decision that is missing rather than restate that the " +
+            $"control schema is empty, or the next reader repeats the analysis.\n{refused.Message}");
     }
 
     // -----------------------------------------------------------------------------------

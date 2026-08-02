@@ -68,6 +68,52 @@ public sealed class ChangeScanTests
         message.Topic.ShouldBe(Source, "the feed fills the topic from the subscription's source.");
     }
 
+    /// <summary>
+    /// A deployment that isolates by tenant starts no flow from a change, and moves its cursor
+    /// past the change anyway.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is why <c>AddFlowXPostgresChangeFeed</c> is still refused at
+    /// <see cref="TenantIsolation.Schema"/>, and the refusal cites it.</strong> The blocker is
+    /// not the cursor — <c>change_cursor</c> is keyed by subscription and one row per tenant
+    /// schema is the same key in a different table — it is that a change scan carries no
+    /// principal, so <c>ClaimTenantResolver</c> refuses every invocation under an isolating
+    /// deployment whether it names a tenant or not. Nothing about schemas causes this: it is
+    /// asserted at <see cref="TenantIsolation.Row"/>, which shipped, and is the same at every
+    /// level above <see cref="TenantIsolation.None"/>.
+    /// </para>
+    /// <para>
+    /// <strong>The second assertion is the one that makes fanning the feed out worse than
+    /// refusing it.</strong> <c>tenant.required</c> is not among the dispositions that hold, so
+    /// the pass reads the refusal as progress and commits past a change no flow ever ran. A
+    /// per-tenant feed would do that to every change of every tenant, silently — where the
+    /// refusal leaves the rows in the table.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AChangeStartsNoFlowWhereTheDeploymentIsolatesByTenant()
+    {
+        var fixture = Fixture.Create(isolation: TenantIsolation.Row);
+
+        fixture.Feed.Stage(Source);
+
+        var report = await fixture.PassAsync();
+
+        report.Observed.ShouldBe(1, "the feed offered the change; admission is what refused it.");
+
+        fixture.Journal.Instances.ShouldBeEmpty(
+            "a change scan carries no claims, so an isolating deployment refuses the start " +
+            "with tenant.required. There is no principal for it to carry and no continuation " +
+            "it could claim to be — a continuation also skips step authorisation, which a " +
+            "flow that is starting must not.");
+
+        fixture.Feed.Committed.ShouldHaveSingleItem(
+            "and the cursor moved past it. The refusal is classified as progress, so a feed " +
+            "fanned out across tenant schemas would advance every tenant's cursor over work " +
+            "that never happened.");
+    }
+
     /// <summary>The instance the change started is the one every node derives for it.</summary>
     [Fact]
     public async Task TheInstanceIsNamedByTheChange()
@@ -309,13 +355,14 @@ public sealed class ChangeScanTests
     {
         private FlowChangeScan? _resident;
 
-        private Fixture(bool failing)
+        private Fixture(bool failing, TenantIsolation isolation)
         {
             Options = new FlowXOptions
             {
                 ApplicationName = "Tests",
                 NodeName = "node",
                 ShutdownDrainTimeout = TimeSpan.FromSeconds(5),
+                TenantIsolation = isolation,
             };
 
             Durability = new FlowDurability(Journal, Leases);
@@ -344,9 +391,10 @@ public sealed class ChangeScanTests
 
         public RecordingDispatcher Dispatcher { get; }
 
-        public static Fixture Create(bool failing = false)
+        public static Fixture Create(
+            bool failing = false, TenantIsolation isolation = TenantIsolation.None)
         {
-            var fixture = new Fixture(failing);
+            var fixture = new Fixture(failing, isolation);
 
             fixture.Subscriptions.Add(
                 new ChangeSubscription("orders.project", "1.0.0", Source, Group),

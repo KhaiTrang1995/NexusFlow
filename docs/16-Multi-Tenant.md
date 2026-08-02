@@ -38,7 +38,10 @@
 > per tenant, whose pod declares `None`
 > ([ADR-0051](adr/ADR-0051-database-isolation-is-a-topology-not-a-runtime-level.md)).
 > `TenantIsolation.Schema` **is enforced** as of 2026-08-02, and at that level the outbox
-> publisher and the change feed are refused rather than fanned out. Nothing partitions or shards the
+> publisher fans out across tenant schemas while the change feed is refused, because a change has
+> to start a flow in its own tenant and a change scan carries no claims to be admitted with
+> ([ADR-0052](adr/ADR-0052-the-outbox-fans-out-and-the-change-feed-cannot-yet.md)).
+> Nothing partitions or shards the
 > journal — [11 §6](11-Distributed-Runtime.md) names sharding and stops, so building it would
 > be invention.
 >
