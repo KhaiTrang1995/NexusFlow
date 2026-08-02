@@ -216,4 +216,86 @@ public sealed class EndpointGenerationTests
             "Without a .Return(...) there is no generated Projection for the endpoint to " +
             "write a body with.");
     }
+
+    /// <summary>A durable flow whose poll declares a second way for its wait to end.</summary>
+    private const string PollingFlow = """
+        using System;
+        using System.Threading;
+        using System.Threading.Tasks;
+        using FlowX;
+
+        namespace Polled;
+
+        public sealed record ScanRequest(string JobId);
+        public sealed record ScanStatus(string JobId, bool Done);
+        public sealed record ScanFinished(string JobId);
+
+        [Capability("scan.status", Version = "1.0.0",
+            Authorization = Authorization.Internal, Idempotent = true)]
+        public sealed class CheckScan : ICapability<ScanRequest, ScanStatus>
+        {
+            public ValueTask<Result<ScanStatus>> ExecuteAsync(
+                ScanRequest input, CapabilityContext ctx, CancellationToken ct) =>
+                ValueTask.FromResult(Result.Ok(new ScanStatus(input.JobId, true)));
+        }
+
+        [System.Text.Json.Serialization.JsonSerializable(typeof(ScanRequest))]
+        [System.Text.Json.Serialization.JsonSerializable(typeof(ScanStatus))]
+        [System.Text.Json.Serialization.JsonSerializable(typeof(ScanFinished))]
+        public partial class PolledJsonContext : System.Text.Json.Serialization.JsonSerializerContext
+        {
+        }
+
+        [Flow("scan.run", Version = "1.0.0", Profile = ExecutionProfile.Durable)]
+        [HttpTrigger("POST", "/api/v1/scans")]
+        public sealed partial class RunScanFlow : Flow<ScanRequest, ScanStatus>
+        {
+            protected override void Define(IFlowBuilder<ScanRequest, ScanStatus> flow) => flow
+                .PollUntil<CheckScan>(
+                    until: ctx => ctx.Get<ScanStatus>().Done,
+                    interval: Backoff.Exponential("PT5S", "PT5M"),
+                    timeout: TimeSpan.FromHours(4))
+                    .OrSignal<ScanFinished>()
+                .Return(ctx => ctx.Get<ScanStatus>());
+        }
+        """;
+
+    /// <summary>
+    /// A poll's second ending gets the route a suspension point's does.
+    /// </summary>
+    /// <remarks>
+    /// The instance really is parked and a delivery really does continue it, so an address for
+    /// it is the same kind of fact as an <c>AwaitSignal</c>'s — and withholding one would leave
+    /// the flow declaring a webhook fast path with nowhere for the webhook to arrive.
+    /// </remarks>
+    [Fact]
+    public void APollsSecondEndingGetsTheRouteASuspensionPointsDoes()
+    {
+        var endpoints = EndpointsIn(RunOn(PollingFlow, HttpTransport))!;
+
+        endpoints.ShouldContainText(
+            "\"/api/v1/scans/{instanceId:guid}/signals/scan.finished\",",
+            "the identity is a literal segment, exactly as a wait's is.");
+
+        endpoints.ShouldContainText(
+            "MapFlowSignal<global::Polled.ScanFinished>(",
+            "closed over the contract the poll declared, so the payload is deserialised with " +
+            "no reflection.");
+    }
+
+    /// <summary>And a poll with one ending publishes no route.</summary>
+    /// <remarks>
+    /// The <c>202</c> a poll answers with lists no signal for exactly this reason: it is
+    /// waiting for a clock and there is nothing to address. A route generated anyway would be
+    /// an endpoint that accepts a delivery no step will ever take.
+    /// </remarks>
+    [Fact]
+    public void APollWithOneEndingPublishesNoSignalRoute() =>
+        EndpointsIn(RunOn(
+                PollingFlow.Replace(
+                    "        .OrSignal<ScanFinished>()\n", string.Empty, StringComparison.Ordinal),
+                HttpTransport))!
+            .ShouldNotContainText(
+                "signals/",
+                "nothing is waiting for a delivery, so nothing advertises an address for one.");
 }

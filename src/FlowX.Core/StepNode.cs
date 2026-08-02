@@ -288,7 +288,18 @@ public sealed record StepNode
     /// <summary>The event published by an <see cref="StepKind.Emit"/> step.</summary>
     public string? EventType { get; private init; }
 
-    /// <summary>The signal awaited by an <see cref="StepKind.AwaitSignal"/> step.</summary>
+    /// <summary>
+    /// The signal awaited by an <see cref="StepKind.AwaitSignal"/> step, or the one a
+    /// <see cref="StepKind.Poll"/> step will also end on.
+    /// </summary>
+    /// <remarks>
+    /// One property for both kinds because it is one fact — the identity a transport addresses a
+    /// delivery to — and because the engine reads it the same way in both places: one
+    /// <c>DurableExecution.TakeSignal</c> call on the arrival path. A second property would be a
+    /// second thing for the manifest, the generated route and <c>flowx diff</c> to learn about,
+    /// for a string that means exactly what this one means. <c>null</c> on a poll that declared
+    /// no <c>.OrSignal&lt;T&gt;()</c>, and then nothing is taken and the wait has one ending.
+    /// </remarks>
     public string? SignalType { get; private init; }
 
     /// <summary>How long an <see cref="StepKind.AwaitSignal"/> step waits before timing out.</summary>
@@ -496,6 +507,12 @@ public sealed record StepNode
     /// — but it does commit a row, and a row whose <c>capability_id</c> were empty would be the
     /// one thing in an instance's history an operator could not name.
     /// </para>
+    /// <para>
+    /// <strong>A <see cref="StepKind.Poll"/> is empty unless it declared an
+    /// <c>.OrSignal&lt;T&gt;()</c>, and then it is the signal.</strong> A poll node commits a row
+    /// in exactly one case — the wait ended on a delivery — so the only row this can ever name
+    /// says which signal ended it, and a poll with one ending commits nothing and needs no name.
+    /// </para>
     /// </remarks>
     public string Identity => Capability?.Id ?? EventType ?? SignalType ?? SubFlowId ??
         (Kind == StepKind.Delay ? DelayIdentity : string.Empty);
@@ -692,6 +709,10 @@ public sealed record StepNode
     /// none, and then the satisfied path is <c>index + 2</c> — the index after the one-step
     /// body.
     /// </param>
+    /// <param name="signalType">
+    /// The identity of a signal that also ends this wait, from <c>.OrSignal&lt;T&gt;()</c>, or
+    /// <c>null</c> when the predicate and the budget are the only two endings.
+    /// </param>
     /// <exception cref="InvalidFlowPlanException">The target does not lie past the body.</exception>
     /// <remarks>
     /// <para>
@@ -714,12 +735,23 @@ public sealed record StepNode
     /// the node cannot see. <see cref="ExecutionPlan"/> enforces it, on the grounds it enforces
     /// the other two waits: an in-memory poll is a held thread with a plan node on it.
     /// </para>
+    /// <para>
+    /// <strong><paramref name="signalType"/> adds a second way for this one wait to end, not a
+    /// second wait.</strong> It is still one node, one <see cref="PollTimeout"/> and one parked
+    /// row carrying one wake instant; what the identity buys is that the arrival path asks
+    /// <c>TakeSignal</c> as well as the predicate, and a delivery ends the wait where the next
+    /// attempt would otherwise have been scheduled. A fork over a signal branch and a poll
+    /// branch would be two branches sharing one <c>wake_at</c>, which is what
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0058-a-poll-is-one-wait-not-a-race-between-two.md">ADR-0058</a>
+    /// refused; this is what it named instead.
+    /// </para>
     /// </remarks>
     public static StepNode ForPoll(
         int index,
         Backoff interval,
         TimeSpan timeout,
-        int? satisfiedTarget = null)
+        int? satisfiedTarget = null,
+        string? signalType = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(index);
         ArgumentNullException.ThrowIfNull(interval);
@@ -750,6 +782,9 @@ public sealed record StepNode
             PollInterval = interval,
             PollTimeout = timeout,
             Target = satisfiedTarget,
+            SignalType = signalType is null
+                ? null
+                : Identifiers.RequireIdentity(signalType, nameof(signalType)),
         };
     }
 
@@ -1111,11 +1146,11 @@ public sealed record StepNode
             ? $"[{Index}] await {SignalType} ({SignalTimeout}), else {Index + 1}, signalled {signalled}"
             : $"[{Index}] await {SignalType} ({SignalTimeout})",
         StepKind.Delay => $"[{Index}] delay {Delay}",
-        StepKind.Poll => Target is { } satisfied
+        StepKind.Poll => (Target is { } satisfied
             ? $"[{Index}] poll {Index + 1} every {PollInterval?.BaseDelay}..{PollInterval?.MaxDelay} " +
               $"for {PollTimeout}, else {Index + 2}, satisfied {satisfied}"
             : $"[{Index}] poll {Index + 1} every {PollInterval?.BaseDelay}..{PollInterval?.MaxDelay} " +
-              $"for {PollTimeout}",
+              $"for {PollTimeout}") + (SignalType is null ? string.Empty : $", or {SignalType}"),
         StepKind.Branch => $"[{Index}] branch, else {Target}",
         StepKind.Jump => $"[{Index}] jump {Target}",
         StepKind.Switch => $"[{Index}] switch {string.Join(", ", CaseTargets)}, else {Target}",

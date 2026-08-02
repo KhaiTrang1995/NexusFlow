@@ -348,8 +348,9 @@ to `PolicyChain`'s two rejections — and all three are errors.
 
 | [FLOWX1043](FLOWX1043.md) | Poll interval outlasts the poll's own timeout | A `PollUntil` whose first gap is longer than its budget: the instance wakes past it, so the loop is one call followed by the `OnTimeout` block — and one attempt then an escalation reads in a journal exactly like a dependency that never answered |
 | [FLOWX1044](FLOWX1044.md) | `PollUntil` requires an idempotent capability | **A second OCR job, a second charge or a second reservation on every attempt of a loop built to make tens of them** — the repetition `Idempotent = true` declares to be safe, asked of a construct that repeats after every success rather than only after a failure |
+| [FLOWX1050](FLOWX1050.md) | Step binds a contract only one of a poll's two endings produces | **A flow that works when the webhook fires and throws when the polling does its job** — `.OrSignal<TSignal>()` seeds the bag only on the ending a delivery caused, and both endings continue at the same step |
 
-The next is `FLOWX1050`. The range is `FLOWX1001`–`FLOWX1099`.
+The next is `FLOWX1051`. The range is `FLOWX1001`–`FLOWX1099`.
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -659,7 +660,18 @@ boundary. [ADR-0065](../adr/ADR-0065-a-window-is-declared-where-it-is-served.md)
 the value belongs to, and the reason this rule was worth writing: the page that taught the
 declaration printed `Lateness = "10s"`, which no build and no test read.
 
-The next is `FLOWX1050`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1050` is claimed** — *step binds a contract only one of a poll's two endings produces*: a
+`.PollUntil<T>(…).OrSignal<TSignal>()` leaves its wait two ways, and both continue at the same
+index. The predicate ending leaves the attempt's own output in the state bag; the delivery ending
+leaves `TSignal` as well. A step after the poll that binds `TSignal` therefore runs on one of them
+and throws on the other — the other being the path a poll exists for. It is `FLOWX1020`'s argument
+narrowed to the one construct that produces conditionally, and is reported *instead of*
+`FLOWX1020` on that line rather than beside it, because the type genuinely is in the bag and the
+two rules would otherwise give opposite advice. An **error**, for `FLOWX1020`'s reason: there is
+nothing probabilistic about which paths exist.
+[ADR-0066](../adr/ADR-0066-a-polls-second-ending-is-a-row.md) is the decision it belongs to.
+
+The next is `FLOWX1051`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

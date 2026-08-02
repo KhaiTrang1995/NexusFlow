@@ -327,7 +327,10 @@ public sealed record StepModel
     /// <summary><c>file:line</c> of the factory expression, for its <c>#line</c> directive.</summary>
     public string? EventFactoryLocation { get; private init; }
 
-    /// <summary>Signal identity for an <see cref="StepKindModel.AwaitSignal"/> step.</summary>
+    /// <summary>
+    /// Signal identity for an <see cref="StepKindModel.AwaitSignal"/> step, and for a
+    /// <see cref="StepKindModel.Poll"/> that declared an <c>.OrSignal&lt;TSignal&gt;()</c>.
+    /// </summary>
     public string? SignalType { get; private init; }
 
     /// <summary>
@@ -376,7 +379,8 @@ public sealed record StepModel
 
     /// <summary>
     /// Fully-qualified contract of the signal an <see cref="StepKindModel.AwaitSignal"/> step
-    /// waits for, or <c>null</c> when it could not be resolved.
+    /// waits for — or a <see cref="StepKindModel.Poll"/> also ends on — or <c>null</c> when
+    /// there is none or it could not be resolved.
     /// </summary>
     /// <remarks>
     /// The signal's payload is seeded into the state bag under this type, so it is a journaled
@@ -996,6 +1000,13 @@ public sealed record StepModel
     /// Steps of the <c>.OnTimeout(...)</c> block, already carrying their flat indices, or empty
     /// when the author declared none.
     /// </param>
+    /// <param name="signalType">
+    /// Identity of the signal an <c>.OrSignal&lt;TSignal&gt;()</c> declared, or null when the
+    /// poll has one ending.
+    /// </param>
+    /// <param name="signalContractTypeName">
+    /// Fully-qualified <c>TSignal</c>, or null when there is none or it could not be resolved.
+    /// </param>
     /// <exception cref="System.ArgumentException">
     /// <paramref name="timeout"/> is not an ISO-8601 duration the manifest schema accepts.
     /// </exception>
@@ -1023,7 +1034,9 @@ public sealed record StepModel
         string? predicateLocation = null,
         string? location = null,
         string? timeout = null,
-        IReadOnlyList<StepModel>? onTimeout = null)
+        IReadOnlyList<StepModel>? onTimeout = null,
+        string? signalType = null,
+        string? signalContractTypeName = null)
     {
         // Refused here rather than left to the schema, for AwaitSignal's reason: the schema is
         // validated by this repository's tests and never by an application's build.
@@ -1050,6 +1063,13 @@ public sealed record StepModel
             PollInterval = interval,
             PollTimeout = timeoutExpression,
             PollTimeoutIso = timeout,
+
+            // The same two properties an AwaitSignal fills, and deliberately not a second pair.
+            // A poll's alternative ending is an inbound address in exactly the sense a
+            // suspension point's is, so the manifest's `signal` field, the generated route and
+            // the state bag's membership all read it without learning a new name.
+            SignalType = signalType,
+            SignalContractTypeName = signalContractTypeName,
 
             // One past the escalation block, which is where a satisfied poll carries on — and
             // where the block falls through to, because the two paths rejoin. With no block it

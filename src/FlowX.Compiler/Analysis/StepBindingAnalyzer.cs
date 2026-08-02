@@ -80,6 +80,13 @@ namespace FlowX.Compiler.Analysis;
 /// the suspension means even though nothing delivers a signal in this release. Counting
 /// it the other way would report a flow whose durable machinery does not exist yet.
 /// </item>
+/// <item>
+/// A poll's <c>.OrSignal&lt;TSignal&gt;()</c> is counted as producing its signal too, and
+/// also as the one thing here that produces <em>conditionally</em>: the value is in the bag
+/// on the ending a delivery caused and absent on the ending the predicate caused, and both
+/// continue at the same step. A later step binding it gets <c>FLOWX1050</c> rather than
+/// <c>FLOWX1020</c>, because the flow can produce it — just not always.
+/// </item>
 /// </list>
 /// <para>
 /// <strong>Why the step's capability is resolved speculatively.</strong> The one thing
@@ -118,7 +125,9 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
 
     /// <inheritdoc />
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } =
-        ImmutableArray.Create(FlowXDiagnostics.StepInputIsNeverProduced);
+        ImmutableArray.Create(
+            FlowXDiagnostics.StepInputIsNeverProduced,
+            FlowXDiagnostics.StepBindsOnlyThePollsSignal);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -194,6 +203,14 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
         var available = new HashSet<ISymbol>(SymbolEqualityComparer.Default) { flowInput };
         var produced = new List<ITypeSymbol> { flowInput };
 
+        // A third collection, for the one construct that produces a contract on some of its
+        // endings and not others. A poll's `.OrSignal<TSignal>()` seeds the bag only when a
+        // delivery is what ended the wait, and both endings continue at the same step — so
+        // `TSignal` is available to a later step in the sense that it type-checks and unavailable
+        // in the sense that binding it throws half the time. Keeping it in `available` as well is
+        // what stops FLOWX1020 also firing on the same line and giving the opposite advice.
+        var conditional = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+
         foreach (var link in links)
         {
             switch (link.MethodName)
@@ -206,7 +223,7 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
                 // ends the walk at the default arm below, which is the conservative answer
                 // every other block already gets.
                 case "PollUntil":
-                    if (!CheckStep(context, flowType, link, available, produced, scope))
+                    if (!CheckStep(context, flowType, link, available, produced, conditional, scope))
                     {
                         return;
                     }
@@ -218,6 +235,24 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
                     {
                         return;
                     }
+
+                    break;
+
+                case "OrSignal":
+                    // The poll's second ending. Recorded as produced, because a step binding it
+                    // does compile and does run — and as conditional, because it runs on one of
+                    // the two paths out of the wait and throws on the other. FLOWX1050 is that
+                    // distinction; a walk that recorded only the first half would say nothing,
+                    // and one that recorded only the second would report FLOWX1020 on a value
+                    // the flow genuinely can produce.
+                    var signal = ResolvedTypeArgument(link, context.SemanticModel, scope);
+
+                    if (!Produce(signal, available, produced))
+                    {
+                        return;
+                    }
+
+                    conditional.Add(signal!);
 
                     break;
 
@@ -253,6 +288,7 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
         ChainLink link,
         HashSet<ISymbol> available,
         List<ITypeSymbol> produced,
+        HashSet<ISymbol> conditional,
         int scope)
     {
         if (link.TypeArguments.Count == 0)
@@ -283,6 +319,24 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
                 flowType.Name,
                 string.Join(", ", produced.Select(Display))));
         }
+
+        // FLOWX1050 — the type is in the bag, but only on the ending a delivered signal caused.
+        // Reported instead of FLOWX1020 rather than beside it: the two would tell the author
+        // opposite things about the same line, and this is the one that names the ending the
+        // value is missing on.
+        else if (link.TypeArguments.Count == 1 && conditional.Contains(contract.Value.Input))
+        {
+            context.ReportDiagnostic(Diagnostic.Create(
+                FlowXDiagnostics.StepBindsOnlyThePollsSignal,
+                link.TypeArguments[0].GetLocation(),
+                Display(capability!),
+                Display(contract.Value.Input),
+                flowType.Name));
+        }
+
+        // Once a step returns it unconditionally, it is no longer conditional: every ending
+        // reaches this step, so every ending has the value from here on.
+        conditional.Remove(contract.Value.Output);
 
         return Produce(contract.Value.Output, available, produced);
     }

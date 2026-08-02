@@ -751,6 +751,51 @@ public sealed class StepGraphTests
             .ToString()
             .ShouldBe("[1] poll 2 every 00:00:05..00:05:00 for 04:00:00, else 3, satisfied 5");
 
+    /// <summary>A poll that declared a second ending names it, and one that did not names none.</summary>
+    /// <remarks>
+    /// The identity is the only thing that tells the engine to ask the invocation for a signal
+    /// at all, so a poll carrying one and a poll carrying none have to be distinguishable by
+    /// looking at the node — which is what a reader of a plan is doing.
+    /// </remarks>
+    [Fact]
+    public void APollWithASecondEndingNamesTheSignalThatEndsIt()
+    {
+        var polling = StepNode.ForPoll(
+            1, Backoff.Exponential("PT5S", "PT5M"), TimeSpan.FromHours(4), 5, "ocr.completed");
+
+        polling.SignalType.ShouldBe("ocr.completed");
+
+        polling.ToString().ShouldBe(
+            "[1] poll 2 every 00:00:05..00:05:00 for 04:00:00, else 3, satisfied 5, or ocr.completed");
+
+        StepNode.ForPoll(1, Backoff.Exponential("PT5S", "PT5M"), TimeSpan.FromHours(4), 5)
+            .SignalType
+            .ShouldBeNull("a poll with one ending must not read as one that waits for a delivery");
+    }
+
+    /// <summary>
+    /// The row a signal-ended poll commits names the signal, because that is the only row it
+    /// ever writes.
+    /// </summary>
+    /// <remarks>
+    /// A poll that ends on its predicate or on its budget commits nothing of its own, so the
+    /// only <c>capability_id</c> this node can ever put in an instance's history is the
+    /// identity of the delivery that ended the wait. A poll with one ending has no identity and
+    /// needs none.
+    /// </remarks>
+    [Fact]
+    public void APollsOnlyRowIsNamedAfterTheSignalThatEndedIt()
+    {
+        StepNode.ForPoll(
+                1, Backoff.Exponential("PT5S", "PT5M"), TimeSpan.FromHours(4), 5, "ocr.completed")
+            .Identity
+            .ShouldBe("ocr.completed");
+
+        StepNode.ForPoll(1, Backoff.Exponential("PT5S", "PT5M"), TimeSpan.FromHours(4), 5)
+            .Identity
+            .ShouldBeEmpty();
+    }
+
     [Fact]
     public void TheGraphIsImmutableOnceBuilt()
     {

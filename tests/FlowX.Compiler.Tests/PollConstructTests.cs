@@ -296,6 +296,176 @@ public sealed class PollConstructTests
             .ShouldContain("FLOWX1011");
 
     /// <summary>
+    /// <c>.OrSignal&lt;T&gt;()</c> puts the signal on the poll's own node and spends no index.
+    /// </summary>
+    /// <remarks>
+    /// One wait with two endings is one node: the attempt is still <c>index + 1</c>, the
+    /// escalation still follows it, and the identity rides on the node the engine already asks
+    /// about. A second index would be a second wait, which is the fork ADR-0058 refused.
+    /// </remarks>
+    [Fact]
+    public void ASecondEndingRidesOnThePollsOwnNodeAndSpendsNoIndex()
+    {
+        var run = GeneratorHarness.Run(Durable("""
+                .PollUntil<ReserveInventory>(
+                    until: ctx => ctx.Get<Reservation>().Sku.Length > 0,
+                    interval: Backoff.Exponential("PT5S", "PT5M"),
+                    timeout: TimeSpan.FromHours(4))
+                    .OrSignal<OrderPlaced>()
+                    .OnTimeout(f => f.Step<ReleaseInventory>())
+                .Step<CapturePayment>()
+            """));
+
+        Reported(run).ShouldBeEmpty(run.Describe());
+
+        run.Plan.ShouldContainText(
+            "satisfiedTarget: 3, signalType: \"order.placed\"",
+            "the signal is a modifier on the poll's node: index 1 is still the attempt, 2 the " +
+            "escalation, 3 where both endings rejoin.");
+
+        run.Plan.ShouldContainText(
+            "StepNode.ForCapability(3, Descriptors.Step3)",
+            "and the step after the poll is where the layout already put it, so `.OrSignal` " +
+            "moved nothing.");
+    }
+
+    /// <summary>A poll with a signal and no escalation writes the signal and no target.</summary>
+    /// <remarks>
+    /// The two optional arguments are independent: declaring a second way out of the wait says
+    /// nothing about what happens when the budget runs out, and a target written to carry a
+    /// signal would claim a block that is not there.
+    /// </remarks>
+    [Fact]
+    public void APollWithASignalAndNoEscalationStillCarriesNoTarget()
+    {
+        var plan = GeneratorHarness.Run(Durable("""
+                .PollUntil<ReserveInventory>(
+                    until: ctx => ctx.Get<Reservation>().Sku.Length > 0,
+                    interval: Backoff.Exponential("PT5S", "PT5M"),
+                    timeout: TimeSpan.FromHours(4))
+                    .OrSignal<OrderPlaced>()
+            """)).Plan;
+
+        plan.ShouldContainText(
+            "signalType: \"order.placed\"",
+            "the second ending is on the node whether or not there is an escalation.");
+        plan.ShouldNotContainText("satisfiedTarget:", "no block, no target — unchanged.");
+    }
+
+    /// <summary>
+    /// The signal's contract joins the state bag's membership, so the row that records the
+    /// ending carries the payload.
+    /// </summary>
+    /// <remarks>
+    /// The ending a delivery causes commits the poll node's own row, and the snapshot on it is
+    /// the only thing that carries the delivered value past the next node death. A contract
+    /// missing from <c>StateBag</c> would be a row written with the payload silently absent.
+    /// </remarks>
+    [Fact]
+    public void ThePollsSignalContractIsJournaledLikeAWaitsIs()
+    {
+        var plan = GeneratorHarness.Run(WithJsonContext("""
+                .PollUntil<ReserveInventory>(
+                    until: ctx => ctx.Get<Reservation>().Sku.Length > 0,
+                    interval: Backoff.Exponential("PT5S", "PT5M"),
+                    timeout: TimeSpan.FromHours(4))
+                    .OrSignal<OrderPlaced>()
+            """)).Plan;
+
+        plan.ShouldContainText(
+            "ctx.TryGet<Sample.OrderPlaced>(out var",
+            "the state-bag snapshot writes the signal's contract, which is what a resume " +
+            "reads back through RestoreState.");
+    }
+
+    /// <summary>The manifest publishes the poll's second ending as the address it is.</summary>
+    /// <remarks>
+    /// The same <c>signal</c> field an <c>AwaitSignal</c> publishes, for its reason: it is how
+    /// the flow is reached from outside, which is the one kind of fact about a step
+    /// <c>flowx diff</c> compares. A poll with one ending publishes no field at all, which is
+    /// the difference a reader should see.
+    /// </remarks>
+    [Fact]
+    public void TheManifestPublishesThePollsSignalAndOmitsItWhenThereIsNone()
+    {
+        GeneratorHarness.Run(Durable("""
+                .PollUntil<ReserveInventory>(
+                    until: ctx => ctx.Get<Reservation>().Sku.Length > 0,
+                    interval: Backoff.Exponential("PT5S", "PT5M"),
+                    timeout: TimeSpan.FromHours(4))
+                    .OrSignal<OrderPlaced>()
+            """))
+            .ManifestJson!
+            .ShouldContainText(
+                "\"signal\": \"order.placed\"",
+                "the identity a transport addresses a delivery to, published where a reader " +
+                "compares it between versions.");
+
+        GeneratorHarness.Run(Durable("""
+                .PollUntil<ReserveInventory>(
+                    until: ctx => ctx.Get<Reservation>().Sku.Length > 0,
+                    interval: Backoff.Exponential("PT5S", "PT5M"),
+                    timeout: TimeSpan.FromHours(4))
+            """))
+            .ManifestJson!
+            .ShouldNotContain(
+                "\"signal\"",
+                Case.Sensitive,
+                "a poll with one ending has no inbound address, and publishing one would " +
+                "advertise a route nothing serves.");
+    }
+
+    /// <summary>
+    /// FLOWX1050 — a step after the poll binding a contract only the delivery ending leaves.
+    /// </summary>
+    /// <remarks>
+    /// The flow compiles as C#, runs when the webhook fires, and throws when the polling does
+    /// its job — which is the ordinary path. It is <c>FLOWX1020</c>'s argument narrowed to the
+    /// one construct that produces conditionally, and is reported instead of it: the type
+    /// genuinely is in the bag on one of the two paths, so the older rule's advice would be
+    /// wrong.
+    /// </remarks>
+    [Fact]
+    public void AStepBindingOnlyThePollsSignalIsRefused()
+    {
+        var reported = GeneratorHarness.Analyze(
+            WithReceiver("""
+                .PollUntil<ReserveInventory>(
+                    until: ctx => ctx.Get<Reservation>().Sku.Length > 0,
+                    interval: Backoff.Exponential("PT5S", "PT5M"),
+                    timeout: TimeSpan.FromHours(4))
+                    .OrSignal<OrderPlaced>()
+                .Step<RecordPlacement>()
+            """),
+            new FlowX.Compiler.Analysis.StepBindingAnalyzer());
+
+        reported.ShouldContain("FLOWX1050");
+        reported.ShouldNotContain("FLOWX1020", "the two would give opposite advice on one line.");
+    }
+
+    /// <summary>
+    /// And a step binding what both endings leave is not reported.
+    /// </summary>
+    /// <remarks>
+    /// A signal can only end a wait an instance is parked in, and parking follows a committed
+    /// attempt — so the polled capability's output is in the bag on both paths. A rule that
+    /// fired here would refuse the shape the construct is for.
+    /// </remarks>
+    [Fact]
+    public void AStepBindingWhatBothEndingsLeaveIsNotReported() =>
+        GeneratorHarness.Analyze(
+            WithReceiver("""
+                .PollUntil<ReserveInventory>(
+                    until: ctx => ctx.Get<Reservation>().Sku.Length > 0,
+                    interval: Backoff.Exponential("PT5S", "PT5M"),
+                    timeout: TimeSpan.FromHours(4))
+                    .OrSignal<OrderPlaced>()
+                .Step<ReleaseInventory>()
+            """),
+            new FlowX.Compiler.Analysis.StepBindingAnalyzer())
+            .ShouldBeEmpty();
+
+    /// <summary>
     /// What the generator reported, minus the state-bag rule this scaffold cannot satisfy.
     /// </summary>
     /// <remarks>
@@ -334,4 +504,48 @@ public sealed class PollConstructTests
                     .Return(ctx => new OrderResult("id"));
             }
             """);
+
+    /// <summary>A capability whose input is the signal contract, so a step can bind it.</summary>
+    /// <remarks>
+    /// Declared here rather than in the shared preamble because it exists for exactly one rule:
+    /// nothing else in this repository has a reason for a capability that consumes an event
+    /// contract, and putting one in the preamble would make every other flow's binding table
+    /// larger for it.
+    /// </remarks>
+    private const string Receiver = """
+        [Capability("order.record", Version = "1.0.0",
+            Authorization = Authorization.Internal, Idempotent = true)]
+        public sealed class RecordPlacement : ICapability<OrderPlaced, OrderResult>
+        {
+            public ValueTask<Result<OrderResult>> ExecuteAsync(OrderPlaced input, CapabilityContext ctx, CancellationToken ct)
+                => ValueTask.FromResult(Result.Ok(new OrderResult(input.Sku)));
+        }
+        """;
+
+    /// <summary>The <see cref="Durable"/> scaffold with a capability that binds the signal.</summary>
+    private static string WithReceiver(string steps) => Durable(steps).Replace(
+        Schedules, Schedules + "\n\n" + Receiver, System.StringComparison.Ordinal);
+
+    /// <summary>
+    /// The <see cref="Durable"/> scaffold with a source-generated serialiser context, so the
+    /// state-bag half of the generated dispatcher is emitted at all.
+    /// </summary>
+    /// <remarks>
+    /// Without a context declaring the contracts, <c>JournaledContracts</c> finds none and
+    /// <c>DescribeStep</c> falls to its "this flow journals nothing serialisable" arm — which is
+    /// truthful, and would make an assertion about the snapshot pass or fail for the wrong
+    /// reason.
+    /// </remarks>
+    private static string WithJsonContext(string steps) => Durable(steps).Replace(
+        Schedules,
+        Schedules + "\n\n" + """
+            [System.Text.Json.Serialization.JsonSerializable(typeof(PlaceOrder))]
+            [System.Text.Json.Serialization.JsonSerializable(typeof(OrderResult))]
+            [System.Text.Json.Serialization.JsonSerializable(typeof(Reservation))]
+            [System.Text.Json.Serialization.JsonSerializable(typeof(OrderPlaced))]
+            public sealed partial class SampleJsonContext : System.Text.Json.Serialization.JsonSerializerContext
+            {
+            }
+            """,
+        System.StringComparison.Ordinal);
 }
