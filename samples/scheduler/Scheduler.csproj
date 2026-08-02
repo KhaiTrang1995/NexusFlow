@@ -1,0 +1,68 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Scheduler</RootNamespace>
+    <AssemblyName>Scheduler</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      No web SDK and no ASP.NET Core reference, unlike samples/workflow. This application
+      has no inbound transport at all: nothing calls it, there is no route to map and no
+      principal to authenticate. A cron expression starts it, which is the claim the
+      sample exists to make, and adding an HTTP host to prove that would be adding the
+      thing whose absence is the point.
+
+      NativeAOT is off for samples/workflow's reason: the flow declares Durable, a durable
+      flow is refused without a journal, and the only journal FlowX ships is PostgreSQL —
+      so this project references Npgsql. samples/ecommerce stays the AOT arm.
+    -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The in-memory ledger, bank and report desk are internal: they are the fixture, not
+      the sample's story. The test project sees them rather than this project widening
+      its surface to be testable — the bargain samples/workflow strikes.
+    -->
+    <InternalsVisibleTo Include="Scheduler.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The generic host, not the web one. FlowX.Hosting takes only Hosting.Abstractions —
+      a library takes the contract, not the container — so an application that runs
+      FlowX's background sweeps has to bring an implementation, and this is the smallest
+      one that is not a web server.
+    -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+
+    <!--
+      The journal, and the reason this sample cannot start without a database. A schedule
+      fires once across a fleet because flow_instance's primary key refuses every node but
+      one; with no journal there is no primary key, and FlowScheduleScan.IsEnabled is false
+      so the node sweeps for nothing at all.
+    -->
+    <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+
+    <!--
+      The compiler as an ANALYZER, so the generator runs inside this project's build
+      against this project's source. It is what turns the [CronTrigger] below into
+      AddFlowXSchedules() — including the Overlap and Jitter arguments, which nothing
+      generated before this sample existed.
+    -->
+    <ProjectReference Include="../../src/FlowX.Compiler/FlowX.Compiler.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      Condition="'$(FlowXGeneratorDisabled)' != 'true'" />
+  </ItemGroup>
+
+</Project>

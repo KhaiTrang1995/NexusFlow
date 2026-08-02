@@ -114,4 +114,4 @@ schedule nobody can fire is not an address anyone should have been relying on.
 - [FLOWX1017](FLOWX1017.md) — the other rule that requires `Durable`, for the other construct
   that cannot work without a journal
 - [09 §8](../09-Trigger-Model.md#8-schedule-trigger) — what a schedule declaration binds, and
-  which of its six properties still bind nothing
+  what each of its six properties binds to
