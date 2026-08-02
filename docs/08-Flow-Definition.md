@@ -568,7 +568,6 @@ edge out of it.
 | `.AwaitSignal<T>(timeout)` | external wait | Durable, and **honoured**: the instance suspends, a signal resumes it, and the declared timeout takes the `.OnTimeout` block — or ends the flow with `flow.signal_not_received` when there is none |
 | `.OnTimeout(b)` | the branch taken when the signal never arrives | Durable. Laid out after the wait; both paths rejoin past it |
 | `.Delay(duration)` | durable timer | Durable — [`FLOWX1017`](diagnostics/FLOWX1017.md) below it, for the reason a suspension point is refused there |
-| `.Window(spec)` / `.Aggregate(...)` | stream windowing | Streaming |
 | [`.Fail(error)`](#38-failing) | terminate with a business error, unwinding what completed | all |
 | `.Return(projection)` | produce the flow output | all |
 
@@ -576,6 +575,15 @@ Deliberately **absent**: `.Do(lambda)`. Arbitrary inline code inside a flow woul
 be invisible to the manifest, untestable in isolation and undetectable by
 determinism analysis. If it is worth executing, it is worth naming — make it a
 capability.
+
+**Also absent, and for that same reason: `.Window(spec)` and `.Aggregate(…)`.** This
+row listed them as Streaming constructs and neither has ever been a member. A window
+closes *before* the flow instance exists, so it is declared on `[StreamTrigger]` where
+the subscription that serves it is; an accumulator lambda is `.Do(lambda)` under
+another name, so a fold over a closed window's records is an ordinary
+`.Step<TCapability>()` over the `StreamWindowBatch` the engine hands the flow.
+[ADR-0065](adr/ADR-0065-a-window-is-declared-where-it-is-served.md) is the decision,
+and [09 §9](09-Trigger-Model.md#9-stream-trigger) is the declaration it leaves behind.
 
 ---
 
