@@ -167,6 +167,100 @@ public sealed class StartupValidationTests
         report.Entries.ShouldContainKey("flowx");
     }
 
+    /// <summary>
+    /// A per-tenant bound on a deployment that resolves no tenant is refused at startup.
+    /// </summary>
+    /// <remarks>
+    /// It has no key to spend under, so nothing would be applied and nothing would say so — the
+    /// "declared and inert" shape arriving through the very setting meant to remove it. An
+    /// operator who configured a noisy-neighbour bound and got none is the failure this class
+    /// exists to convert into a pod that never becomes ready.
+    /// </remarks>
+    [Fact]
+    public async Task RefusesToStartWithAPerTenantBoundAndNoTenants()
+    {
+        using var host = BuildHost(options =>
+        {
+            options.ApplicationName = "Sample.App";
+            options.Fairness.MaxConcurrency = 4;
+        });
+
+        var error = await Should.ThrowAsync<OptionsValidationException>(
+            async () => await host.StartAsync(TestContext.Current.CancellationToken));
+
+        error.Message.Contains(nameof(FlowXOptions.TenantIsolation), StringComparison.Ordinal)
+            .ShouldBeTrue($"the message must name the setting that is wrong.\n{error.Message}");
+    }
+
+    /// <summary>A tenant weight of zero is refused rather than honoured.</summary>
+    /// <remarks>
+    /// It would express "never schedule this tenant", which is a suspension —
+    /// <c>docs/16 §7</c>'s lifecycle state, whose contract is that in-flight durable flows still
+    /// complete — and it would be delivered as parked instances that are silently never woken.
+    /// That is the starvation the setting exists to prevent, arriving through the setting.
+    /// </remarks>
+    [Fact]
+    public async Task RefusesToStartWithATenantWeightOfZero()
+    {
+        using var host = BuildHost(options =>
+        {
+            options.ApplicationName = "Sample.App";
+            options.TenantIsolation = TenantIsolation.Row;
+            options.Fairness.PerTenantScanShare = 4;
+            options.Fairness.Weights["acme"] = 0;
+        });
+
+        await Should.ThrowAsync<OptionsValidationException>(
+            async () => await host.StartAsync(TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>
+    /// A per-tenant rate limit with no shared limiter registered is refused at startup.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Not an options failure, because the options cannot see a registration.</strong>
+    /// A budget each node kept for itself would be the declared limit multiplied by the replica
+    /// count (ADR-0040), so the alternative to failing here is a commercial promise the
+    /// deployment silently cannot keep. The bulkhead is deliberately not covered by this check:
+    /// it is per node and needs no store.
+    /// </remarks>
+    [Fact]
+    public async Task RefusesToStartWithAPerTenantRateLimitAndNoSharedLimiter()
+    {
+        using var host = BuildHost(options =>
+        {
+            options.ApplicationName = "Sample.App";
+            options.TenantIsolation = TenantIsolation.Row;
+            options.Fairness.PermitsPerWindow = 100;
+        });
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(
+            async () => await host.StartAsync(TestContext.Current.CancellationToken));
+
+        error.Message.Contains("IRateLimiterStore", StringComparison.Ordinal).ShouldBeTrue(
+            $"the message must name the registration that is missing.\n{error.Message}");
+    }
+
+    /// <summary>A bulkhead alone needs no store, and starts.</summary>
+    /// <remarks>
+    /// The other half of the check above. Concurrency is a property of one process's threads and
+    /// sockets, so there is nothing shared to consult and requiring a limiter for it would make
+    /// the cheapest of the three bounds the most expensive to adopt.
+    /// </remarks>
+    [Fact]
+    public async Task ABulkheadAloneNeedsNoSharedLimiter()
+    {
+        using var host = BuildHost(options =>
+        {
+            options.ApplicationName = "Sample.App";
+            options.TenantIsolation = TenantIsolation.Row;
+            options.Fairness.MaxConcurrency = 4;
+        });
+
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
     [Fact]
     public void CallingAddFlowXTwiceRegistersTheHealthProbeOnce()
     {

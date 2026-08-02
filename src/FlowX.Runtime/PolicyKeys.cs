@@ -40,6 +40,20 @@ internal static class PolicyKeys
     /// <summary>The prefix every idempotency record carries.</summary>
     internal const string IdempotencyPrefix = "flowx:idem";
 
+    /// <summary>The prefix a tenant's admission rate bucket carries.</summary>
+    /// <remarks>
+    /// Distinct from <see cref="RateLimitPrefix"/> rather than a <c>RateLimitScope.Tenant</c>
+    /// bucket with an empty capability. The two are the same mechanism over the same store —
+    /// see <see cref="TenantFairness.PermitsPerWindow"/> — and they are deliberately not the
+    /// same <em>budget</em>: a tenant's admission bucket is spent by every flow it starts, and
+    /// folding it into a step's bucket would make one capability's declared limit silently
+    /// bound the whole tenant.
+    /// </remarks>
+    internal const string TenantRatePrefix = "flowx:tenant:rate";
+
+    /// <summary>The prefix a tenant's long-window quota bucket carries.</summary>
+    internal const string TenantQuotaPrefix = "flowx:tenant:quota";
+
     /// <summary>The component an invocation that carried no tenant or principal keys under.</summary>
     /// <remarks>
     /// A one-character component that no present value can produce, because every present value
@@ -72,6 +86,27 @@ internal static class PolicyKeys
 
         return Build(RateLimitPrefix, scope.ToString(), capabilityId, discriminant);
     }
+
+    /// <summary>The bucket one tenant's admission rate is counted in.</summary>
+    /// <param name="tenantId">The resolved tenant. Never null — admission has refused that.</param>
+    public static string TenantRate(string tenantId) => Build(TenantRatePrefix, tenantId);
+
+    /// <summary>The bucket one tenant's long-window quota is counted in.</summary>
+    /// <param name="tenantId">The resolved tenant. Never null — admission has refused that.</param>
+    public static string TenantQuota(string tenantId) => Build(TenantQuotaPrefix, tenantId);
+
+    /// <summary>The breaker key for one capability under one tenant.</summary>
+    /// <param name="capabilityId">The dependency being guarded.</param>
+    /// <param name="tenantId">The invocation's tenant.</param>
+    /// <remarks>
+    /// <c>docs/10 §6</c> describes a composite breaker key — <c>Capability | Downstream | Tenant
+    /// | Partition</c> — and this is the second component becoming expressible. Built here
+    /// rather than by concatenation at the call site so that a tenant id containing the
+    /// separator cannot be made to collide with another tenant's breaker, which would trip one
+    /// tenant's calls on another's failures: the precise inversion of what the widening is for.
+    /// </remarks>
+    public static string Breaker(string capabilityId, string tenantId) =>
+        Build("flowx:cb", capabilityId, tenantId);
 
     /// <summary>The record one step's idempotency window is stored under.</summary>
     /// <param name="idempotencyKey">

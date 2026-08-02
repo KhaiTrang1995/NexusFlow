@@ -104,6 +104,29 @@ public sealed record DueInstanceQuery
 
     /// <summary>Restrict the sweep to one tenant, or null for every tenant this node serves.</summary>
     public string? TenantId { get; init; }
+
+    /// <summary>
+    /// How many of <see cref="Limit"/> one tenant may occupy, or zero for no cap.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><see cref="Limit"/> plus an ordering is a first-in-first-out queue, and a
+    /// first-in-first-out queue starves.</strong> The page is the oldest work in the table, so a
+    /// tenant with a backlog longer than <see cref="Limit"/> owns every row of every page and a
+    /// quieter tenant's instance is not merely served late — it is never fetched, and no amount
+    /// of fairness applied to the page can select a candidate that is not in it. That is
+    /// <c>docs/16 §4</c>'s noisy neighbour arriving through the one place the sweep cannot see
+    /// it, and it is why this cap belongs to the query rather than to the caller.
+    /// </para>
+    /// <para>
+    /// <strong>Zero is the default and means the page this contract always returned.</strong> A
+    /// single-tenant deployment sets nothing, the store issues the statement it always issued,
+    /// and no window function is planned. A store that ignored a non-zero value would be a
+    /// deployment believing it had bought fairness it does not have, so
+    /// <c>RecoveryIndexConformance</c> asserts it rather than describing it.
+    /// </para>
+    /// </remarks>
+    public int PerTenantLimit { get; init; }
 }
 
 /// <summary>A parked instance whose wake instant has passed.</summary>

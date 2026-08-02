@@ -107,6 +107,45 @@ public sealed class PostgresTimerIndex : ITimerIndex
           LIMIT @limit
          """;
 
+    /// <summary>
+    /// The same page, with no tenant allowed to occupy more than
+    /// <see cref="DueInstanceQuery.PerTenantLimit"/> of it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The <c>LIMIT</c> is what starves, and the window function is what stops it.</strong>
+    /// <c>ORDER BY wake_at LIMIT n</c> hands back the oldest <em>n</em> rows in the table; a
+    /// tenant holding more than <em>n</em> overdue instances therefore owns every row of every
+    /// page, and the sweep never learns that any other tenant is waiting. No scheduling applied
+    /// to the page can repair that, because the candidate it would schedule is not in it.
+    /// </para>
+    /// <para>
+    /// <strong>It costs more, and only the deployment that asked for it pays.</strong> The
+    /// <c>ROW_NUMBER</c> cannot be satisfied from <c>flow_instance_due_idx</c>'s ordering alone,
+    /// so this statement reads every due row rather than stopping at <em>n</em> — which is the
+    /// honest price of knowing what is behind the head of the queue. It is issued only when a
+    /// non-zero <see cref="DueInstanceQuery.PerTenantLimit"/> asks for it; a single-tenant
+    /// deployment issues <see cref="ListDue"/> and its plan is unchanged.
+    /// </para>
+    /// <para>
+    /// <c>PARTITION BY tenant_id</c> puts every untenanted row in one partition, because
+    /// <c>ROW_NUMBER</c> treats <c>NULL</c> as a partition value. That is the intended reading:
+    /// untenanted work is one tenant's worth of work and is capped like any other.
+    /// </para>
+    /// </remarks>
+    private const string ListDueFairly =
+        $"""
+         SELECT {CandidateColumns}
+           FROM (SELECT {CandidateColumns},
+                        ROW_NUMBER() OVER (PARTITION BY tenant_id ORDER BY wake_at) AS tenant_rank
+                   FROM flow_instance
+                  WHERE {Suspended}
+                    AND wake_at <= @due_before) ranked
+          WHERE tenant_rank <= @per_tenant
+          ORDER BY wake_at
+          LIMIT @limit
+         """;
+
     private readonly NpgsqlDataSource _dataSource;
 
     /// <summary>Creates a timer index over a data source.</summary>
@@ -139,6 +178,10 @@ public sealed class PostgresTimerIndex : ITimerIndex
     /// </remarks>
     public static string Statement(bool tenantScoped) => tenantScoped ? ListDueForTenant : ListDue;
 
+    /// <summary>The statement a fair sweep issues. See <see cref="Statement"/>.</summary>
+    /// <returns>The SQL, ready to be prefixed with <c>EXPLAIN</c>.</returns>
+    public static string FairStatement() => ListDueFairly;
+
     /// <inheritdoc />
     public async ValueTask<Result<IReadOnlyList<DueInstance>>> ListDueAsync(
         DueInstanceQuery query,
@@ -161,13 +204,26 @@ public sealed class PostgresTimerIndex : ITimerIndex
 
         using var command = connection.CreateCommand();
 
-        command.CommandText = query.TenantId is null ? ListDue : ListDueForTenant;
+        // A sweep scoped to one tenant is already capped at that tenant's share, so the window
+        // function is not planned for it: PerTenantLimit and TenantId together would ask the
+        // same question twice.
+        var fair = query.TenantId is null && query.PerTenantLimit > 0;
+
+        command.CommandText = query.TenantId is not null
+            ? ListDueForTenant
+            : fair ? ListDueFairly : ListDue;
+
         command.Parameters.Add(Db.Timestamp("due_before", query.DueBefore));
         command.Parameters.Add(Db.Int("limit", query.Limit));
 
         if (query.TenantId is not null)
         {
             command.Parameters.Add(Db.Text("tenant", query.TenantId));
+        }
+
+        if (fair)
+        {
+            command.Parameters.Add(Db.Int("per_tenant", query.PerTenantLimit));
         }
 
         var candidates = new List<DueInstance>();

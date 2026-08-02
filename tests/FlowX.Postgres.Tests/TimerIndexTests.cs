@@ -188,8 +188,53 @@ public sealed class TimerIndexTests
             $"be free of. Plan was:{Environment.NewLine}{plan}");
     }
 
+    /// <summary>
+    /// A per-tenant cap puts a quiet tenant into a page its own wake instant could not reach.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The window function is the only untestable-by-inspection part of this
+    /// adapter.</strong> <c>ORDER BY wake_at LIMIT n</c> returns the <em>n</em> most overdue rows
+    /// in the table, so the tenant with the longest backlog owns every page and the sweep never
+    /// learns another tenant is waiting — which is the starvation
+    /// <c>FlowX.Hosting.Tests.TenantFairnessTests</c> demonstrates end to end. This asserts the
+    /// half of the repair that lives in SQL, against a real PostgreSQL rather than against the
+    /// reference index.
+    /// </para>
+    /// <para>
+    /// The first list is the arrangement and not a spare assertion: without it, a fair page
+    /// containing the quiet tenant would be evidence of nothing, because the unfair one might
+    /// have contained it too.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task APerTenantCapPutsAQuietTenantIntoThePage()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation);
+
+        for (var i = 0; i < 4; i++)
+        {
+            await ParkAsync(schema, new FlowWake(StepScope.Root, 1, Due(-600 + i)), "acme");
+        }
+
+        var quiet = await ParkAsync(schema, new FlowWake(StepScope.Root, 1, Due(-10)), "globex");
+
+        var unfair = await ListAsync(schema, limit: 3);
+
+        unfair.ShouldAllBe(candidate => candidate.TenantId == "acme",
+            "three slots and the three most overdue rows all belong to one tenant");
+
+        var fair = await ListAsync(schema, limit: 3, perTenantLimit: 2);
+
+        fair.ShouldContain(candidate => candidate.InstanceId == quiet);
+        fair.Count(candidate => candidate.TenantId == "acme").ShouldBe(2, "the cap");
+    }
+
     /// <summary>Starts an instance and parks it at a wait, through the journal's own writes.</summary>
-    private static async Task<Guid> ParkAsync(PostgresTestSchema schema, FlowWake wake)
+    private static async Task<Guid> ParkAsync(
+        PostgresTestSchema schema,
+        FlowWake wake,
+        string? tenantId = null)
     {
         var instance = Guid.CreateVersion7();
 
@@ -199,6 +244,7 @@ public sealed class TimerIndexTests
                 InstanceId = instance,
                 FlowId = "offer.accept",
                 FlowVersion = "1.0.0",
+                TenantId = tenantId,
                 Token = new FencingToken(1),
             },
             Cancellation);
@@ -215,10 +261,19 @@ public sealed class TimerIndexTests
     }
 
     /// <summary>The sweep's own query, as a sweep issues it.</summary>
-    private static async Task<IReadOnlyList<DueInstance>> ListAsync(PostgresTestSchema schema)
+    private static async Task<IReadOnlyList<DueInstance>> ListAsync(
+        PostgresTestSchema schema,
+        int limit = 64,
+        int perTenantLimit = 0)
     {
         var listed = await new PostgresTimerIndex(schema.DataSource).ListDueAsync(
-            new DueInstanceQuery { DueBefore = DateTimeOffset.UtcNow }, Cancellation);
+            new DueInstanceQuery
+            {
+                DueBefore = DateTimeOffset.UtcNow,
+                Limit = limit,
+                PerTenantLimit = perTenantLimit,
+            },
+            Cancellation);
 
         return listed.Value;
     }

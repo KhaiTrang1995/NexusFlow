@@ -30,6 +30,7 @@ public sealed class FlowHost
     private readonly FlowDurability? _durability;
     private readonly LeasePolicy _policy;
     private readonly ITenantResolver _tenants;
+    private readonly TenantAdmissionControl? _fairness;
     private readonly object _sync = new();
     private readonly HashSet<DurableLease> _leases = [];
 
@@ -62,11 +63,18 @@ public sealed class FlowHost
     /// which for the default <see cref="TenantIsolation.None"/> resolves nothing and refuses
     /// nobody.
     /// </param>
+    /// <param name="limiter">
+    /// Where a per-tenant rate limit and quota are spent. Consulted only where
+    /// <see cref="FlowXOptions.Fairness"/> declares one; the startup validator refuses a
+    /// deployment that declares a budget and registers no store, so a null here on a bounded
+    /// host is a host built by hand and is refused per call rather than admitted unbounded.
+    /// </param>
     public FlowHost(
         FlowEngine engine,
         FlowXOptions options,
         FlowDurability? durability = null,
-        ITenantResolver? tenants = null)
+        ITenantResolver? tenants = null,
+        IRateLimiterStore? limiter = null)
     {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(options);
@@ -76,6 +84,14 @@ public sealed class FlowHost
         _durability = durability;
         _policy = FlowDurability.PolicyFor(options);
         _tenants = tenants ?? new ClaimTenantResolver(options.TenantIsolation);
+
+        // Null on a single-tenant deployment and on one that bounds nothing, so admission's
+        // whole fairness path is a null check rather than a branch on four settings. B2 is
+        // untouched structurally: an Ephemeral flow on a host with no isolation reaches the
+        // engine past exactly the comparisons it always did.
+        _fairness = options.TenantIsolation != TenantIsolation.None && options.Fairness.BoundsAdmission
+            ? new TenantAdmissionControl(options.Fairness, limiter)
+            : null;
     }
 
     /// <summary>How many flows are executing right now.</summary>
@@ -115,13 +131,19 @@ public sealed class FlowHost
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(dispatcher);
 
-        if (Admit(ref invocation) is { } refusal)
+        var admitted = await AdmitAsync(invocation, ct).ConfigureAwait(false);
+
+        if (admitted.Refusal is { } refusal)
         {
             return FlowExecutionResult.Rejected(refusal);
         }
 
+        invocation = admitted.Invocation;
+
         if (!TryEnter())
         {
+            admitted.Permit.Release();
+
             return FlowExecutionResult.Rejected(Draining);
         }
 
@@ -175,6 +197,7 @@ public sealed class FlowHost
         finally
         {
             Exit();
+            admitted.Permit.Release();
         }
     }
 
@@ -253,13 +276,19 @@ public sealed class FlowHost
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(dispatcher);
 
-        if (Admit(ref invocation) is { } refusal)
+        var admitted = await AdmitAsync(invocation, ct).ConfigureAwait(false);
+
+        if (admitted.Refusal is { } refusal)
         {
             return FlowExecutionResult.Rejected(refusal);
         }
 
+        invocation = admitted.Invocation;
+
         if (!TryEnter())
         {
+            admitted.Permit.Release();
+
             return FlowExecutionResult.Rejected(Draining);
         }
 
@@ -316,6 +345,7 @@ public sealed class FlowHost
         finally
         {
             Exit();
+            admitted.Permit.Release();
         }
     }
 
@@ -338,13 +368,19 @@ public sealed class FlowHost
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(dispatcher);
 
-        if (Admit(ref invocation) is { } refusal)
+        var admitted = await AdmitAsync(invocation, ct).ConfigureAwait(false);
+
+        if (admitted.Refusal is { } refusal)
         {
             return FlowExecutionResult.Rejected<TOut>(refusal);
         }
 
+        invocation = admitted.Invocation;
+
         if (!TryEnter())
         {
+            admitted.Permit.Release();
+
             return FlowExecutionResult.Rejected<TOut>(Draining);
         }
 
@@ -407,6 +443,7 @@ public sealed class FlowHost
         finally
         {
             Exit();
+            admitted.Permit.Release();
         }
     }
 
@@ -566,13 +603,19 @@ public sealed class FlowHost
             Principal: principal,
             IsContinuation: signal is null && principal is null);
 
-        if (Admit(ref admission) is { } refusal)
+        var accepted = await AdmitAsync(admission, ct).ConfigureAwait(false);
+
+        if (accepted.Refusal is { } refusal)
         {
             return FlowExecutionResult.Rejected(refusal);
         }
 
+        admission = accepted.Invocation;
+
         if (!TryEnter())
         {
+            accepted.Permit.Release();
+
             return FlowExecutionResult.Rejected(Draining);
         }
 
@@ -656,6 +699,7 @@ public sealed class FlowHost
         finally
         {
             Exit();
+            accepted.Permit.Release();
         }
     }
 
@@ -753,6 +797,7 @@ public sealed class FlowHost
     /// the scoped connection, the span's tenant tag — reads the value the claims supported and
     /// not the value the caller sent.
     /// </param>
+    /// <param name="ct">Cancels the store calls a per-tenant budget makes.</param>
     /// <returns>The refusal, or <c>null</c> when the call is admitted.</returns>
     /// <remarks>
     /// <para>
@@ -773,7 +818,50 @@ public sealed class FlowHost
     /// ADR-0027's own "revisit when" anticipated this case by name. See ADR-0043.
     /// </para>
     /// </remarks>
-    private Error? Admit(ref FlowInvocation invocation)
+    private async ValueTask<Admission> AdmitAsync(FlowInvocation invocation, CancellationToken ct)
+    {
+        if (Resolve(ref invocation) is { } refusal)
+        {
+            return new Admission(refusal, invocation, default);
+        }
+
+        // One boolean on a deployment that isolates and bounds nothing, and not even that on one
+        // that does not isolate: the field is null and this is a null check. docs/16 §4 requires
+        // the bounds at stage 1 — before authentication, before any allocation, before any
+        // journal write — and this is the only point every activation passes through.
+        // A continuation is exempt, and it is not a bypass — the same distinction, for the same
+        // reason, that ClaimTenantResolver already draws. A sweep resuming an instance is
+        // finishing work this platform admitted and spent budget on once; refusing it now is not
+        // backpressure, it is abandoning a saga halfway with its compensations unrun. What
+        // bounds a continuation is the sweep that issues it: a bounded page, a bounded number of
+        // slots, and TenantFairShare deciding whose work fills them.
+        if (_fairness is null
+            || invocation.IsContinuation
+            || invocation.TenantId is not { Length: > 0 } tenant)
+        {
+            return new Admission(null, invocation, default);
+        }
+
+        var acquired = await _fairness.AcquireAsync(tenant, ct).ConfigureAwait(false);
+
+        return acquired.IsFailure
+            ? new Admission(acquired.Error, invocation, default)
+            : new Admission(null, invocation, acquired.Value);
+    }
+
+    /// <summary>What admission decided: a refusal, the resolved invocation, and the permit.</summary>
+    /// <remarks>
+    /// A struct rather than the <c>ref</c> parameter this used to take, because the bounds are
+    /// spent against a shared store and a store call is asynchronous. The permit travels with the
+    /// answer so that no call site can spend a bulkhead slot and forget which one to release.
+    /// </remarks>
+    private readonly record struct Admission(
+        Error? Refusal,
+        FlowInvocation Invocation,
+        TenantPermit Permit);
+
+    /// <inheritdoc cref="AdmitAsync" />
+    private Error? Resolve(ref FlowInvocation invocation)
     {
         var resolved = _tenants.Resolve(in invocation);
 

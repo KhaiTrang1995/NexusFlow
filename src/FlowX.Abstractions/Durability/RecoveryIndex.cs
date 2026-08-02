@@ -81,6 +81,17 @@ public sealed record AbandonedInstanceQuery
 
     /// <summary>Restrict the scan to one tenant, or null for every tenant this node serves.</summary>
     public string? TenantId { get; init; }
+
+    /// <summary>
+    /// How many of <see cref="Limit"/> one tenant may occupy, or zero for no cap.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DueInstanceQuery.PerTenantLimit"/>'s reason, applied to the other sweep: a
+    /// page ordered by staleness and bounded by <see cref="Limit"/> is owned by whichever tenant
+    /// has the longest backlog, and a candidate that is not in the page cannot be scheduled
+    /// fairly out of it. Zero — the default — is the page this contract always returned.
+    /// </remarks>
+    public int PerTenantLimit { get; init; }
 }
 
 /// <summary>An unfinished instance a scan found, and the little a scan needs to decide.</summary>

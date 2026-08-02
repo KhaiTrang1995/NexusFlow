@@ -428,15 +428,91 @@ public abstract class RecoveryIndexConformance
             "null is 'every tenant this node serves', not a tenant whose id is null.");
     }
 
+    /// <summary>
+    /// A per-tenant cap keeps a tenant with a long backlog from owning the whole page.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the assertion that makes fair queueing possible at all.</strong> Without
+    /// the cap the page is the stalest rows in the table, so a tenant with more abandoned
+    /// instances than the page holds occupies every row of every page — and no scheduling
+    /// applied afterwards can reach a candidate that was never fetched. The quiet tenant here is
+    /// the stalest-but-one row of its own and the newest of the six overall, which is exactly the
+    /// position a first-in-first-out page never reaches.
+    /// </para>
+    /// <para>
+    /// <strong>A store that ignores the property fails here rather than in production.</strong>
+    /// That is the whole reason this is a conformance assertion: an index that quietly dropped
+    /// the cap would leave a deployment believing it had bought fairness, with every other test
+    /// in this file still green.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task APerTenantCapStopsOneTenantOwningThePage()
+    {
+        var store = await CreateStoreAsync();
+
+        for (var i = 0; i < 5; i++)
+        {
+            await AbandonAsync(
+                store, FlowInstanceState.Running, TimeSpan.FromMinutes(200 - i), "acme");
+        }
+
+        var quiet = await AbandonAsync(
+            store, FlowInstanceState.Running, TimeSpan.FromMinutes(90), "globex");
+
+        var unfair = await ListAsync(store, Query(limit: 3));
+
+        unfair.ShouldAllBe(
+            candidate => candidate.TenantId == "acme",
+            "the arrangement is the starvation: three slots, and the three stalest rows in the " +
+            "table all belong to one tenant.");
+
+        var fair = await ListAsync(store, Query(limit: 3, perTenantLimit: 2));
+
+        fair.Count.ShouldBe(3);
+        fair.Select(static candidate => candidate.TenantId).Distinct().Count().ShouldBe(
+            2, "the cap is what puts the quiet tenant into a page it could not otherwise enter");
+
+        fair.ShouldContain(candidate => candidate.InstanceId == quiet);
+
+        fair.Count(static candidate => candidate.TenantId == "acme").ShouldBe(
+            2, "and no more than the cap of the tenant that filled it");
+    }
+
+    /// <summary>A cap of zero is the page this contract always returned.</summary>
+    /// <remarks>
+    /// The default, and the only value a single-tenant deployment ever sets. A store that read
+    /// zero as "no tenant may have any" would return an empty page and a deployment that had
+    /// configured nothing would recover nothing.
+    /// </remarks>
+    [Fact]
+    public async Task ACapOfZeroLeavesThePageUncapped()
+    {
+        var store = await CreateStoreAsync();
+
+        await AbandonAsync(store, FlowInstanceState.Running, LongIdle, "acme");
+        await AbandonAsync(store, FlowInstanceState.Running, LongIdle, "acme");
+
+        var listed = await ListAsync(store, Query(perTenantLimit: 0));
+
+        listed.Count.ShouldBe(2, "zero means no cap, and it is what every existing caller passes");
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /// <summary>The query a sweep would issue, with a lease TTL's worth of idleness.</summary>
-    private static AbandonedInstanceQuery Query(int limit = 64, string? tenantId = null) => new()
-    {
-        IdleBefore = DateTimeOffset.UtcNow - IdleThreshold,
-        Limit = limit,
-        TenantId = tenantId,
-    };
+    private static AbandonedInstanceQuery Query(
+        int limit = 64,
+        string? tenantId = null,
+        int perTenantLimit = 0) =>
+        new()
+        {
+            IdleBefore = DateTimeOffset.UtcNow - IdleThreshold,
+            Limit = limit,
+            TenantId = tenantId,
+            PerTenantLimit = perTenantLimit,
+        };
 
     /// <summary>
     /// Puts one instance into the store, in a state, as cold as a dead node would have left it.

@@ -123,6 +123,8 @@ public sealed class FlowEngine
     private readonly ConcurrentDictionary<string, BulkheadGate> _bulkheads =
         new(StringComparer.Ordinal);
 
+    private readonly bool _breakersPerTenant;
+
     private TaskCompletionSource? _detachedIdle;
     private int _detachedInFlight;
 
@@ -179,6 +181,15 @@ public sealed class FlowEngine
     /// deduplicates only the callers that happened to land on the same replica.
     /// </para>
     /// </remarks>
+    /// <param name="breakersPerTenant">
+    /// Whether a circuit breaker is keyed by capability and tenant rather than by capability
+    /// alone. <c>docs/16 §4</c>'s fifth mechanism: with one breaker per capability, the tenant
+    /// whose own downstream is failing trips the breaker for everybody, and the other tenants
+    /// see an outage they are not having. Off by default and it has to be — a shared breaker is
+    /// <em>faster</em> to protect a shared dependency, and a deployment where every tenant calls
+    /// the same downstream wants that. It is turned on where the dependency is per tenant, which
+    /// is the deployment that also sets the rest of <c>FlowXOptions.Fairness</c>.
+    /// </param>
     public FlowEngine(
         IClock clock,
         int maxPooledContexts = DefaultMaxPooledContexts,
@@ -186,11 +197,13 @@ public sealed class FlowEngine
         IRateLimiterStore? rateLimiter = null,
         IIdempotencyStore? idempotency = null,
         IResultCache? cache = null,
-        IAuditSink? audit = null)
+        IAuditSink? audit = null,
+        bool breakersPerTenant = false)
     {
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxPooledContexts);
 
+        _breakersPerTenant = breakersPerTenant;
         _clock = clock;
         _contexts = new ContextPool(maxPooledContexts);
         _alerts = alerts;
@@ -1707,7 +1720,7 @@ public sealed class FlowEngine
 
         if (policy.HasBreaker)
         {
-            if (!Breaker(capabilityId).TryEnter(policy, _clock.UtcNow, out var until))
+            if (!Breaker(capabilityId, context.TenantId).TryEnter(policy, _clock.UtcNow, out var until))
             {
                 PolicyApplied(StepPolicy.CircuitBreakerKind, capabilityId, PolicyMetrics.OpenOutcome);
 
@@ -1809,7 +1822,7 @@ public sealed class FlowEngine
                 // draining a node must not open every breaker on its way out.
                 if (policy.HasBreaker && !ct.IsCancellationRequested)
                 {
-                    Breaker(capabilityId).Record(policy, _clock.UtcNow, succeeded);
+                    Breaker(capabilityId, context.TenantId).Record(policy, _clock.UtcNow, succeeded);
                 }
 
                 timeout?.Dispose();
@@ -2293,8 +2306,22 @@ public sealed class FlowEngine
     private const char KeySeparator = '\u001f';
 
     /// <summary>This engine's breaker for one capability, created on first use.</summary>
-    private CircuitBreakerState Breaker(string capabilityId) =>
-        _breakers.GetOrAdd(capabilityId, static key => new CircuitBreakerState(key));
+    /// <remarks>
+    /// <strong>Keyed by capability alone, or by capability and tenant.</strong> <c>docs/10 §6</c>
+    /// describes a composite key — <c>Capability | Downstream | Tenant | Partition</c> — of
+    /// which the tenant is the component <c>docs/16 §4</c> asks for by name: "one tenant's bad
+    /// downstream does not trip everyone". The widening is opt-in because it trades protection
+    /// for isolation. One breaker per capability opens on the first tenant's failures and
+    /// spares every other tenant the calls; one per tenant makes each tenant discover the
+    /// outage for itself, which is right when the dependency is per tenant and wrong when it is
+    /// shared. Off, the key is the capability id and nothing allocates.
+    /// </remarks>
+    private CircuitBreakerState Breaker(string capabilityId, string? tenantId) =>
+        _breakersPerTenant && tenantId is { Length: > 0 } tenant
+            ? _breakers.GetOrAdd(
+                PolicyKeys.Breaker(capabilityId, tenant),
+                static key => new CircuitBreakerState(key))
+            : _breakers.GetOrAdd(capabilityId, static key => new CircuitBreakerState(key));
 
     /// <summary>This engine's bulkhead for one capability, created on first use.</summary>
     /// <remarks>

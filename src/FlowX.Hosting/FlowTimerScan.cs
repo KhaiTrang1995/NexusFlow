@@ -119,6 +119,11 @@ public sealed class FlowTimerScan
             // there is nothing here for the lease-TTL allowance a recovery scan needs.
             DueBefore = _clock.UtcNow,
             Limit = _options.TimerScanBatchSize,
+
+            // Zero unless a deployment declared a share, and zero is the page this sweep always
+            // asked for. See FlowRecoveryScan.RunOnceAsync for why the cap has to be on the
+            // query rather than on what is done with its answer.
+            PerTenantLimit = _options.Fairness.PerTenantScanShare,
         };
 
         var listed = await index.ListDueAsync(query, ct).ConfigureAwait(false);
@@ -137,6 +142,7 @@ public sealed class FlowTimerScan
 
         var offset = Random.Shared.Next(candidates.Count);
         var capacity = _options.MaxConcurrentRecoveries;
+        var order = Order(candidates, offset);
 
         List<Task<Attempt>>? wakes = null;
         var examined = 0;
@@ -144,7 +150,7 @@ public sealed class FlowTimerScan
 
         for (var i = 0; i < candidates.Count && (wakes?.Count ?? 0) < capacity; i++)
         {
-            var candidate = candidates[(i + offset) % candidates.Count];
+            var candidate = candidates[order[i]];
 
             examined++;
 
@@ -194,6 +200,29 @@ public sealed class FlowTimerScan
             NotRunnable = notRunnable,
             Failed = failed,
         });
+    }
+
+    /// <summary>Which order to spend this sweep's slots in. See <c>FlowRecoveryScan.Order</c>.</summary>
+    private int[] Order(IReadOnlyList<DueInstance> candidates, int offset) =>
+        _options.Fairness.IsEnabled
+            ? TenantFairShare.Order(
+                candidates,
+                static candidate => candidate.TenantId,
+                _options.Fairness.WeightOf,
+                offset)
+            : Rotated(candidates.Count, offset);
+
+    /// <summary>The order this sweep always walked: the page, from a random row.</summary>
+    private static int[] Rotated(int count, int offset)
+    {
+        var order = new int[count];
+
+        for (var i = 0; i < count; i++)
+        {
+            order[i] = (i + offset) % count;
+        }
+
+        return order;
     }
 
     /// <summary>Puts what a sweep did onto its span, and hands the report back unchanged.</summary>

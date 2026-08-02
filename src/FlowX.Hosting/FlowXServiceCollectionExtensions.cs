@@ -91,7 +91,12 @@ public static class FlowXServiceCollectionExtensions
                 provider.GetService<IRateLimiterStore>(),
                 provider.GetService<IIdempotencyStore>(),
                 provider.GetService<IResultCache>(),
-                provider.GetService<IAuditSink>());
+                provider.GetService<IAuditSink>(),
+
+                // A breaker per tenant only where the deployment already bounds tenants against
+                // each other. A shared breaker protects a shared downstream faster; this is the
+                // deployment that said its downstreams are not shared.
+                options.TenantIsolation != TenantIsolation.None && options.Fairness.IsEnabled);
         });
 
         // The catalogue is registered whether or not anything is put in it. It is only read
@@ -102,7 +107,15 @@ public static class FlowXServiceCollectionExtensions
         services.TryAddSingleton(provider => new FlowHost(
             provider.GetRequiredService<FlowEngine>(),
             provider.GetRequiredService<IOptions<FlowXOptions>>().Value,
-            ResolveDurability(provider)));
+            ResolveDurability(provider),
+            tenants: null,
+
+            // The same store a step's RateLimit spends against, under a different key. A second
+            // limiter would be a second budget for the same server to keep, and ADR-0040's
+            // argument against a process-local limiter applies with more force to a per-tenant
+            // bound than to a per-capability one: the multiplier is the replica count and the
+            // promise it breaks is contractual.
+            provider.GetService<IRateLimiterStore>()));
 
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowRecoveryService>(
             static provider => new FlowRecoveryService(
@@ -582,15 +595,36 @@ internal sealed class FlowXHealthCheckRegistration : IConfigureOptions<HealthChe
 internal sealed class FlowXLifecycleService : IHostedService
 {
     private readonly FlowHost _host;
+    private readonly FlowXOptions _options;
+    private readonly IRateLimiterStore? _limiter;
 
-    public FlowXLifecycleService(FlowHost host)
+    public FlowXLifecycleService(FlowHost host, IOptions<FlowXOptions> options, IRateLimiterStore? limiter = null)
     {
         ArgumentNullException.ThrowIfNull(host);
+        ArgumentNullException.ThrowIfNull(options);
+
         _host = host;
+        _options = options.Value;
+        _limiter = limiter;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        // A registration this options validator cannot see, checked at the first moment
+        // anything can: a per-tenant rate limit or quota declared with no store to spend it
+        // against would refuse every call at run time, and a pod that never becomes ready is
+        // the cheaper failure. The bulkhead is exempt because it is per node and needs no store.
+        var fairness = _options.Fairness;
+
+        if ((fairness.PermitsPerWindow > 0 || fairness.QuotaPerWindow > 0) && _limiter is null)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(FlowXOptions.Fairness)} declares a per-tenant rate limit or quota and " +
+                "no IRateLimiterStore is registered, so no budget could be consulted. A " +
+                "per-tenant budget each node kept for itself would be the declared limit times " +
+                "the replica count (ADR-0040): register a shared limiter, or remove the bound.");
+        }
+
         _host.MarkReady();
         return Task.CompletedTask;
     }

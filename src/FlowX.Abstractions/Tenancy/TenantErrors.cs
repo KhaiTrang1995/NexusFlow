@@ -88,6 +88,121 @@ public static class TenantErrors
             ErrorCategory.Forbidden)
             .With("claimedTenantId", claimed);
 
+    /// <summary>The code <see cref="RateLimited"/> raises.</summary>
+    public const string RateLimitedCode = "tenant.rate_limited";
+
+    /// <summary>
+    /// The tenant has spent its permits for this window, so the call was refused at admission.
+    /// </summary>
+    /// <param name="tenantId">Whose budget is spent.</param>
+    /// <param name="retryAfter">How long until a permit accrues, as the store reported it.</param>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ErrorCategory.Unavailable"/> rather than <see cref="ErrorCategory.Forbidden"/>,
+    /// which is what separates this from every other refusal in this class. The other three are
+    /// terminal — asking again reaches the same absent claim — and this one is the opposite: the
+    /// caller is entitled to the call and is simply not getting it right now, so waiting is the
+    /// correct response and the category is the half of the error that says so. It is
+    /// <c>docs/16 §4</c>'s "429 + Retry-After", and it shares
+    /// <c>FlowErrors.RateLimited</c>'s category for exactly the same reason.
+    /// </para>
+    /// <para>
+    /// <strong>Refused before anything was allocated.</strong> §4 requires every limit at stage 1
+    /// — "<em>before authentication, before any allocation, before any journal write</em>" — on
+    /// the grounds that "<em>rejecting expensively is how rate limiting becomes the DoS</em>". A
+    /// tenant refused here has cost the platform one store round trip and no lease, no instance
+    /// row and no step.
+    /// </para>
+    /// </remarks>
+    public static Error RateLimited(string tenantId, TimeSpan retryAfter) =>
+        new Error(
+            RateLimitedCode,
+            $"Tenant '{tenantId}' has no rate-limit permit left. Retry after {retryAfter}. The " +
+            "call was refused at admission, before a flow instance existed.",
+            ErrorCategory.Unavailable)
+            .With("tenantId", tenantId)
+            .With("retryAfter", retryAfter);
+
+    /// <summary>The code <see cref="QuotaExhausted"/> raises.</summary>
+    public const string QuotaExhaustedCode = "tenant.quota_exhausted";
+
+    /// <summary>
+    /// The tenant has spent its budget for the long window, so the call was refused at admission.
+    /// </summary>
+    /// <param name="tenantId">Whose budget is spent.</param>
+    /// <param name="retryAfter">How long until budget accrues, as the store reported it.</param>
+    /// <remarks>
+    /// <strong>A separate code from <see cref="RateLimited"/>, and the separation is the point of
+    /// having both.</strong> The two are the same token bucket over the same store under
+    /// different keys, so an implementation could reasonably have folded them into one refusal —
+    /// but the repairs are not the same and never will be. A rate limit says "you are sending
+    /// faster than your plan smooths"; a quota says "you have used the plan". The first is fixed
+    /// by backing off and the second by buying more, and an operator reading one code for both
+    /// has to guess which.
+    /// </remarks>
+    public static Error QuotaExhausted(string tenantId, TimeSpan retryAfter) =>
+        new Error(
+            QuotaExhaustedCode,
+            $"Tenant '{tenantId}' has exhausted its quota for the current window. Budget " +
+            $"accrues again in {retryAfter}. This is a plan limit rather than a burst: backing " +
+            "off reaches the same answer until the window turns over.",
+            ErrorCategory.Unavailable)
+            .With("tenantId", tenantId)
+            .With("retryAfter", retryAfter);
+
+    /// <summary>The code <see cref="Saturated"/> raises.</summary>
+    public const string SaturatedCode = "tenant.saturated";
+
+    /// <summary>
+    /// The tenant already has as many flows executing on this node as its bulkhead allows.
+    /// </summary>
+    /// <param name="tenantId">Whose pool is full.</param>
+    /// <param name="maxConcurrency">The bound, per node.</param>
+    /// <remarks>
+    /// <strong>Shed, not queued</strong> — <c>docs/16 §4</c>'s "429 · shed early, do not queue".
+    /// A caller waiting for a bulkhead slot at admission is a thread and a socket held open for
+    /// work the platform has already decided it is not going to do, and a queue in front of a
+    /// full pool is how a saturated node becomes an unresponsive one.
+    /// </remarks>
+    public static Error Saturated(string tenantId, int maxConcurrency) =>
+        new Error(
+            SaturatedCode,
+            $"Tenant '{tenantId}' already has {maxConcurrency} flow(s) executing on this node, " +
+            "which is its bulkhead. The call was shed rather than queued.",
+            ErrorCategory.Unavailable)
+            .With("tenantId", tenantId)
+            .With("maxConcurrency", maxConcurrency);
+
+    /// <summary>The code <see cref="FairnessUnavailable"/> raises.</summary>
+    public const string FairnessUnavailableCode = "tenant.fairness_unavailable";
+
+    /// <summary>
+    /// A per-tenant budget is declared and the limiter could not decide.
+    /// </summary>
+    /// <param name="tenantId">The tenant whose budget could not be consulted.</param>
+    /// <param name="cause">What the store reported.</param>
+    /// <remarks>
+    /// A refusal, for
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>'s
+    /// reason and <c>FlowErrors.RateLimiterUnavailable</c>'s: a limiter that cannot reach its
+    /// server does not know whether this tenant is inside its budget, and admitting on doubt
+    /// turns an outage of the limiter into the unbounded flood it was bounding. The startup
+    /// validator refuses the missing-store case outright, so what reaches here is the store that
+    /// was registered and then stopped answering.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="cause"/> is null.</exception>
+    public static Error FairnessUnavailable(string tenantId, Error cause)
+    {
+        ArgumentNullException.ThrowIfNull(cause);
+
+        return new Error(
+            FairnessUnavailableCode,
+            $"Tenant '{tenantId}' declares a per-tenant budget and its limiter did not answer: " +
+            $"{cause.Message} The call was refused rather than admitted.",
+            ErrorCategory.Unavailable)
+            .With("tenantId", tenantId);
+    }
+
     /// <summary>The code <see cref="IsolationNotSupported"/> raises.</summary>
     public const string IsolationNotSupportedCode = "tenant.isolation_not_supported";
 
