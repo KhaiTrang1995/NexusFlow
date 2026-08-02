@@ -81,6 +81,13 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     private const string BusRegistrationName = "FlowX.Hosting.FlowBusSubscriptionRegistration";
 
     /// <summary>
+    /// The host type a change-subscription registration calls, looked up by name for
+    /// <see cref="BusRegistrationName"/>'s reason: a flow library that references no host emits
+    /// no registration and no IL.
+    /// </summary>
+    private const string ChangeRegistrationName = "FlowX.Hosting.FlowChangeSubscriptionRegistration";
+
+    /// <summary>
     /// The one thing this generator knows about the agent surface: a name to look for.
     /// </summary>
     /// <remarks>
@@ -232,6 +239,22 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
             {
                 var (((analysed, declared), available), assembly) = data;
                 ProduceSubscriptions(production, analysed, declared, available, assembly);
+            });
+
+        // Whether this compilation can register a change subscription at all, expressed as one
+        // bool for the reason httpAvailable is.
+        var changeAvailable = context.CompilationProvider.Select(
+            static (compilation, _) => compilation.GetTypeByMetadataName(ChangeRegistrationName) is not null);
+
+        context.RegisterSourceOutput(
+            flows.Collect()
+                .Combine(triggers.Collect())
+                .Combine(changeAvailable)
+                .Combine(application),
+            static (production, data) =>
+            {
+                var (((analysed, declared), available), assembly) = data;
+                ProduceChangeSubscriptions(production, analysed, declared, available, assembly);
             });
 
         // Whether this compilation can bind an agent tool at all, expressed as one bool for the
@@ -430,11 +453,122 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
         }
     }
 
-    /// <summary>Whether a delivery to this flow could be started, and started once.</summary>
+    /// <summary>
+    /// Emits one registration per <c>[ChangeTrigger]</c> the host can actually observe, or
+    /// nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ProduceSubscriptions"/>'s shape and its reasons, one transport over. Nothing at
+    /// all is the common case: a project with no change-triggered flow, or a flow library with no
+    /// host to register into, gets no file — zero types, zero IL.
+    /// </para>
+    /// <para>
+    /// <strong>The two conditions are reported by <c>TriggerDeclarationAnalyzer</c>, not by
+    /// both</strong>, for <see cref="ProduceSubscriptions"/>'s reason: they are the same two
+    /// <c>FLOWX1041</c> names, and the analyzer has the attribute's own span where this has a
+    /// collected model and nothing to point at. They are also, exactly,
+    /// <see cref="CanBeConsumed"/> — a change and a delivery hand the flow the same
+    /// <c>BusMessage</c> and need the same journal — which is why one predicate serves both.
+    /// </para>
+    /// <para>
+    /// <strong>The third condition — a flow that observes a type it emits — is not checked
+    /// here.</strong> It is refused at registration by <c>FlowChangeCatalog.Add</c>, which reads
+    /// the emitted types off the <c>ExecutionPlan</c> that will actually run (ADR-0047).
+    /// </para>
+    /// </remarks>
+    private static void ProduceChangeSubscriptions(
+        SourceProductionContext production,
+        ImmutableArray<AnalysisResult?> results,
+        ImmutableArray<FlowTriggersModel?> triggers,
+        bool changeAvailable,
+        string assemblyName)
+    {
+        if (!changeAvailable)
+        {
+            return;
+        }
+
+        var declared = triggers
+            .Where(static t => t is not null)
+            .GroupBy(static t => t!.FlowId, StringComparer.Ordinal)
+            .ToDictionary(static g => g.Key, static g => g.First()!, StringComparer.Ordinal);
+
+        var models = results
+            .Where(static r => r is { IsSuccess: true, Model: not null })
+            .Select(static r => r!.Model!)
+            .OrderBy(static m => m.FlowId, StringComparer.Ordinal)
+            .ToList();
+
+        var subscriptions = new List<ChangeSubscriptionModel>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var flow in models)
+        {
+            if (!declared.TryGetValue(flow.FlowId, out var flowTriggers) || !CanBeConsumed(flow))
+            {
+                continue;
+            }
+
+            foreach (var trigger in flowTriggers.Triggers.Where(IsChangeAddress))
+            {
+                subscriptions.Add(new ChangeSubscriptionModel(
+                    flow.FlowId,
+                    flow.FullTypeName,
+                    ChangeSubscriptionMethodName(flow.TypeName, names),
+                    trigger.Topic!,
+                    trigger.Group!));
+            }
+        }
+
+        if (subscriptions.Count > 0)
+        {
+            production.AddSource(
+                ChangeEmitter.FileName,
+                SourceText.From(ChangeEmitter.Emit(assemblyName, subscriptions), Encoding.UTF8));
+        }
+    }
+
+    /// <summary>A change trigger this build could read an address off.</summary>
+    /// <remarks>
+    /// Matched on kind and shape rather than on which attribute was written, for
+    /// <see cref="IsBusAddress"/>'s reason. A trigger whose kind is <c>Change</c> but whose
+    /// arguments this compiler could not interpret reaches the manifest as a bare kind and must
+    /// produce no registration: a source nobody read is not a source to observe.
+    /// </remarks>
+    private static bool IsChangeAddress(TriggerModel trigger) =>
+        string.Equals(trigger.Kind, "Change", StringComparison.Ordinal) &&
+        !string.IsNullOrEmpty(trigger.Topic) &&
+        !string.IsNullOrEmpty(trigger.Group);
+
+    /// <summary>The extension method one change subscription is registered by.</summary>
+    /// <remarks>
+    /// Named from the flow's type for <see cref="SubscriptionMethodName"/>'s reason, and counted
+    /// in a name set of its own because the two files are separate classes: a flow declaring both
+    /// a bus trigger and a change trigger gets one method in each without either taking a suffix.
+    /// </remarks>
+    private static string ChangeSubscriptionMethodName(string typeName, HashSet<string> taken)
+    {
+        var candidate = "Add" + typeName + "ChangeSubscription";
+        var suffix = 2;
+
+        while (!taken.Add(candidate))
+        {
+            candidate = "Add" + typeName + "ChangeSubscription" +
+                        suffix.ToString(CultureInfo.InvariantCulture);
+            suffix++;
+        }
+
+        return candidate;
+    }
+
+    /// <summary>Whether a delivery or a change to this flow could be started, and started once.</summary>
     /// <remarks>
     /// The two conditions <c>FLOWX1039</c> reports, restated as a predicate: a delivery has only
     /// the message to hand over, and an ephemeral flow journals no instance, so nothing would
-    /// refuse a redelivery of the same message.
+    /// refuse a redelivery of the same message. <c>FLOWX1041</c> names the same two conditions
+    /// for a change, which is why <see cref="ProduceChangeSubscriptions"/> reads this one rather
+    /// than a copy of it.
     /// </remarks>
     private static bool CanBeConsumed(FlowModel flow) =>
         string.Equals(flow.InputTypeName, "FlowX.BusMessage", StringComparison.Ordinal) &&

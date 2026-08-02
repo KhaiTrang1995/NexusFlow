@@ -275,3 +275,64 @@ public sealed class AgentTriggerAttribute : TriggerAttribute
     /// <summary>Human confirmation requirement.</summary>
     public ConfirmationMode Confirmation { get; init; } = ConfirmationMode.RequiredForSideEffects;
 }
+
+/// <summary>
+/// Observes a change feed — the outbox this platform writes — and starts a flow per change.
+/// </summary>
+/// <param name="source">
+/// The event type observed, e.g. <c>order.placed</c> — the same identity <c>.Emit&lt;T&gt;()</c>
+/// stages, the same string a <see cref="BusTriggerAttribute"/> names as its topic, and the value
+/// the manifest publishes as <c>topic</c>.
+/// </param>
+/// <remarks>
+/// <para>
+/// <strong>The same declaration as <see cref="BusTriggerAttribute"/> over a transport with no
+/// broker in it.</strong> A <c>Durable</c> flow's <c>.Emit&lt;T&gt;()</c> stages its event in the
+/// same transaction as the step row; <c>PostgresOutboxPublisher</c> drains that table to a
+/// broker, and this reads the same table directly. So swapping one attribute for the other is a
+/// one-line edit with no change to the flow's body, its input or its capabilities — which is
+/// quality goal Q4 stated about two files rather than about a design
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0047-a-change-trigger-observes-the-outbox.md">ADR-0047</a>).
+/// </para>
+/// <para>
+/// <strong>A flow declaring this must take <see cref="BusMessage"/> as its input and declare
+/// <c>ExecutionProfile.Durable</c></strong>, and <c>FLOWX1041</c> refuses one that does not. A
+/// change is an outbox row and has nothing else to give; and the profile is not a preference,
+/// because a change derives the instance id it starts
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0049-a-change-names-the-instance-it-starts.md">ADR-0049</a>)
+/// and on an <c>Ephemeral</c> flow that id is inert.
+/// </para>
+/// <para>
+/// <strong>A flow may not observe a type it emits.</strong> The staged event would start the
+/// flow, the flow would stage another under a fresh identity, and the feed would offer that one —
+/// for ever, with the outbox growing. <c>FlowChangeCatalog.Add</c> refuses the registration,
+/// because the emitted types are in the <c>ExecutionPlan</c> it is handed. An <em>indirect</em>
+/// cycle across two flows is not refused and nothing bounds it.
+/// </para>
+/// <para>
+/// <strong>Nothing is acknowledged.</strong> A feed is a log with a cursor rather than a queue
+/// with deliveries: the cursor advances past the longest prefix of changes that reached a
+/// recorded outcome, and a change that did not is read again next pass
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0048-a-change-feed-advances-a-cursor.md">ADR-0048</a>).
+/// How often a subscription is swept and how many changes a pass takes are <c>FlowXOptions</c>
+/// values, for <see cref="BusTriggerAttribute"/>'s reason.
+/// </para>
+/// </remarks>
+[TriggerKind(TriggerKind.Change)]
+[AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
+public sealed class ChangeTriggerAttribute(string source) : TriggerAttribute
+{
+    /// <inheritdoc />
+    public override TriggerKind Kind => TriggerKind.Change;
+
+    /// <summary>The event type observed.</summary>
+    public string Source { get; } = source;
+
+    /// <summary>
+    /// The subscription group. Required, for <see cref="BusTriggerAttribute.Group"/>'s reasons:
+    /// it is one of the terms the instance id is derived from, so two flows observing one type
+    /// must be able to say they are two subscribers, and it is the identity the cursor is stored
+    /// under.
+    /// </summary>
+    public required string Group { get; init; }
+}
