@@ -1,25 +1,25 @@
 # FlowX Samples
 
 Nine directories, each named for a claim in the specification it is meant to prove
-— not to demonstrate syntax. **Three of them contain an application.**
+— not to demonstrate syntax. **All nine contain an application.**
 
-> [!WARNING]
-> **Three of the nine have code.** This page used to open by saying *"every sample
-> ships with tests, a benchmark where a budget applies, and a generated
-> architecture diagram"*, and to list nine applications as though they existed.
-> Eight of the nine directories were a `README.md` and nothing else, which
-> [PLAN §6a](../PLAN.md#6a-p4p9--what-this-plan-does-not-yet-contain) has recorded
-> as a finding since P1 closed. **`ecommerce` is the only one you can run today**,
-> and `banking` and `workflow` joined it on 2026-07-31. The
-> remaining six are specifications for samples, and each now says so in its own
-> first screenful — with the code blocks that would not compile marked as such,
-> rather than left for a reader to discover from the compiler.
+> [!NOTE]
+> **All nine have code, and every one of them runs.** This page opened by saying
+> *"three of the nine have code"* until 2026-08-02, and before that listed nine
+> applications as though they existed while eight directories held a `README.md`
+> and nothing else. `ecommerce` was the first, `banking` and `workflow` joined it
+> on 2026-07-31, and the remaining six were built on 2026-08-02.
 >
-> They are not deleted, because several of them are good specifications and one of
-> them — [event-driven](event-driven/) — is the acceptance criterion for a whole
-> phase. A README that documents features its sample does not have is worse than
-> no sample; a README that says which parts are design is a design document, and
-> those are worth keeping.
+> Each of those six was a specification before it was a sample, and building it
+> found claims the platform refuses rather than lacks — a leader election
+> ([ADR-0031](../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md)), a
+> database per tenant
+> ([ADR-0051](../docs/adr/ADR-0051-database-isolation-is-a-topology-not-a-runtime-level.md)),
+> a fork over two suspending branches
+> ([ADR-0058](../docs/adr/ADR-0058-a-poll-is-one-wait-not-a-race-between-two.md)). Those are named
+> in the row and argued on the page, not quietly built around. The one number still
+> unmeasured is `realtime-stream`'s throughput, which is deferred with the rest of
+> the performance work.
 
 ## The nine
 
@@ -28,18 +28,18 @@ Nine directories, each named for a claim in the specification it is meant to pro
 | [ecommerce](ecommerce/) | A three-step ephemeral saga with compensation, served over HTTP *and* to an agent, plus the bus and change triggers on three durable flows beside it | **Yes** | Nothing. `dotnet run --project samples/ecommerce` serves an order and answers `POST /mcp` with no infrastructure at all. It is also the only NativeAOT-published assembly, which is what proves `FlowX.Http` and `FlowX.Mcp` publish that way |
 | [banking](banking/) | A durable transfer saga: compensation in strict reverse order, `[Sensitive]` redaction reaching a real outbox row, every policy stage executing, and multi-tenancy at both shipped levels | **Yes** | Nothing. Needs PostgreSQL. *This cell used to read "no declared policy runs, the journal holds no principal or input"; every one of those is now false and its README retracts each in place* |
 | [workflow](workflow/) | Multi-step orchestration exercising the whole shipped DSL: `Switch`, `Parallel`, `ForEach` containing `When`, `SubFlow`, `Fail`, compensation at six sites — plus a human wait, a timer and a cron schedule | **Yes** | Nothing. Needs PostgreSQL. *This cell used to say `OnTimeout`, `Delay` and `AwaitSignal` do not work.* All three do, and `offer.accept` and `offer.window.close` are where |
-| [event-driven](event-driven/) | Transport portability: HTTP → broker → cron, zero logic changes (Q4, V2) | No | **No Kafka.** *This cell used to say `FlowX.Http` is the only transport plugin.* There are four, and `plugins/FlowX.Redis` serves a bus — `samples/ecommerce` declares both halves of one event chain over it. What is unbuilt is Kafka specifically, and the CI assertion this sample *is*. WP-72, P3 |
-| [scheduler](scheduler/) | Cron with leader election, overlap and missed-fire policies | No | **The scheduler exists.** *This cell used to say it did not.* `[CronTrigger]` is served — `samples/workflow`'s `offer.window.close` fires once across three nodes over one PostgreSQL, and a missed firing happens late. What is left is this sample's own overlap and per-tenant options, and its README's larger claim |
-| [polling](polling/) | Waiting costs one database row: 100 000 documents in flight, zero compute | No | **Durable suspension exists** — *this cell used to say it did not*, and `samples/workflow`'s parked instance is one row holding no thread and no lease. What does not exist is this sample's own DSL: `PollUntil`, `RaceUntil` and `Backoff.Exponential(from:, to:)` appear nowhere but on its page |
-| [healthcare](healthcare/) | The same code at isolation L1 and L4, plus consent, PII redaction and erasure | No | **Isolation exists at L1 and L2.** *This cell used to read "no tenant isolation of any kind ... consumed by nothing".* A tenant is resolved at admission from validated claims, enforced by PostgreSQL row-level security or a schema per tenant, and bounded by five fairness mechanisms — `samples/banking` is the demonstration. L3 and L4, residency and erasure are what is left |
-| [realtime-stream](realtime-stream/) | 250 000 rec/s/node with bounded memory under a slow sink (budget B13, principle P9) | No | **The stream engine exists.** *This cell used to say it did not, and that `Profile = Streaming` raised [FLOWX1028](../docs/diagnostics/FLOWX1028.md) whatever else the flow declared.* The rule narrowed: it fires on `Streaming` with no `[StreamTrigger]`, and a flow declaring both builds. What is left is the **number** — B13 is measured by no sample, benchmark or CI job |
-| [ai-agent](ai-agent/) | Capabilities as agent tools with real authorisation and no parallel permission system | No | **The MCP surface exists.** *This cell used to read "nothing serves it — no agent can invoke anything".* `plugins/FlowX.Mcp` serves `initialize`, `tools/list` and `tools/call`, `samples/ecommerce` and `dotnet new flowx` both publish a tool, and the stance that refuses an agent is the one that refuses a request — there is no second permission system, which was this sample's whole claim. Its *other* claims — sampling, elicitation, a resource surface — are what is left |
+| [event-driven](event-driven/) | Transport portability: HTTP → broker → change → cron, zero logic changes (Q4, V2) | **Yes** | Nothing. Needs PostgreSQL and Redis. One capability chain, four transports, each costing exactly one adapter step. **No Kafka**: no broker is reachable here and a plugin whose suite skips its own subject is a failing gate, so `[BusTrigger]` over Redis Streams is what ships and a Kafka plugin is an `IBusConsumer` that changes no flow ([ADR-0062](../docs/adr/ADR-0062-transport-portability-is-a-property-of-the-capability-chain.md)) |
+| [scheduler](scheduler/) | Cron at fleet scale: overlap, jitter and missed-fire policies | **Yes** | Nothing. Needs PostgreSQL. `Overlap` and `Jitter` reached nothing before this sample and now execute; overlap is decided against the **journal**, because a lease is not held between a node dying and recovery taking its instance over. **There is no leader election** — [ADR-0031](../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md) refuses it, and jitter is derived from the instance id rather than drawn at random, because *n* nodes drawing independently fire at min(*n*) ([ADR-0059](../docs/adr/ADR-0059-schedule-jitter-is-derived-from-the-firing.md)) |
+| [polling](polling/) | Waiting costs one database row: no thread, no lease, no compute | **Yes** | Nothing. Needs PostgreSQL. `PollUntil` is one suspension point re-entered once per attempt — the attempt number is the step scope and the wake instant is the existing timer triple, so a parked document holds **no lease and no thread**. `RaceUntil` was refused as specified: a fork's branches share one context and one `wake_at` ([ADR-0058](../docs/adr/ADR-0058-a-poll-is-one-wait-not-a-race-between-two.md)) |
+| [healthcare](healthcare/) | Consent, PII redaction and erasure by subject, at the isolation levels that exist | **Yes** | Nothing. Needs PostgreSQL. A `[Subject]` member is digested **inside** `JournalPayload` before the redaction pass, so a member can be both `[Sensitive]` and the erasure key without an accessor. **L3/L4 are refused, not missing** — [ADR-0051](../docs/adr/ADR-0051-database-isolation-is-a-topology-not-a-runtime-level.md) holds a database per tenant is a deployment topology; this runs at L1 and L2. A signed completion certificate and `flowx purge --subject` were both refused, with reasons on the page |
+| [realtime-stream](realtime-stream/) | Bounded memory under a slow sink, over tumbling event-time windows | **Yes** | Nothing. Needs PostgreSQL and Redis. Peak resident records follow the declared channel capacity — asserted as correctness, and the assertion fails when backpressure stops consulting the channel. **The 250 000 rec/s number is not measured**: B13 is deferred with the rest of the performance work, so no benchmark claims it. `.Window(…)`/`.Aggregate(…)` are still not builder members; the window is declared on the trigger and the fold is a capability |
+| [ai-agent](ai-agent/) | Capabilities as agent tools with real authorisation and no parallel permission system | **Yes** | Nothing. Serves real MCP JSON-RPC. Elicitation holds the flow until a human answers — **a decline never enters the flow**, which is a test that fails when the refusal is returned after the capability runs. Sampling borrows the caller's model; `resources/list` serves the manifest. Refused: naming a *magnitude* in a confirmation prompt, since computing it means running the flow the prompt gates |
 
-**Read the "What blocks it" column as the sample's real content.** Six of these
-nine still are, today, a statement of what the platform would need before the claim
-in column two could be made — but for four of them the blocker named there is gone
-and what is left is narrower than the sample. That is a useful thing for a
-specification repository to hold, and a dishonest thing to present as a working
+**Read the "What blocks it" column as what the sample costs.** It held, for most of
+this repository's life, a statement of what the platform would need before the claim
+in column two could be made. Every one of those blockers is now gone or refused by a
+recorded decision, so the column says what each sample needs to run and what its
+page argues rather than what stops it. What it must never become is a working
 example.
 
 ## Key documents, per sample

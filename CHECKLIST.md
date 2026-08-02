@@ -1637,6 +1637,7 @@ executes it, not when something publishes it.*
 | **Stream engine** | **runs** | tumbling event-time windows, an observed watermark and a checkpointed source position; window state is not journaled because a closed window derives the instance id it starts ([ADR-0055](docs/adr/ADR-0055-a-window-names-the-instance-it-starts.md)). Sliding, session and global windows are refused by `FLOWX1042` |
 | **AI surface / MCP** | **runs** | `plugins/FlowX.Mcp`; `tools/list` is a projection of the manifest and `tools/call` meets the same authorisation stance HTTP does |
 | **Studio** | **absent** | sixteen one-line mentions and no design |
+| **Samples** | **nine of nine run** | every specification sample was built on 2026-08-02; each names the claims the platform refuses rather than lacks |
 
 **What is planned next.** Every subsystem above runs but Studio, which the roadmap cannot yet
 specify. What is left is narrower than a phase:
