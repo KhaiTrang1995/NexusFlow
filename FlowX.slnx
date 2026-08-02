@@ -15,6 +15,7 @@
     <Project Path="plugins/FlowX.Http/FlowX.Http.csproj" />
     <Project Path="plugins/FlowX.Mcp/FlowX.Mcp.csproj" />
     <Project Path="plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+    <Project Path="plugins/FlowX.RabbitMq/FlowX.RabbitMq.csproj" />
     <Project Path="plugins/FlowX.Redis/FlowX.Redis.csproj" />
   </Folder>
   <Folder Name="/samples/">
@@ -49,6 +50,7 @@
     <Project Path="tests/FlowX.Logging.Tests/FlowX.Logging.Tests.csproj" />
     <Project Path="tests/FlowX.Postgres.Tests/FlowX.Postgres.Tests.csproj" />
     <Project Path="tests/Polling.Tests/Polling.Tests.csproj" />
+    <Project Path="tests/FlowX.RabbitMq.Tests/FlowX.RabbitMq.Tests.csproj" />
     <Project Path="tests/FlowX.Redis.Tests/FlowX.Redis.Tests.csproj" />
     <Project Path="tests/FlowX.Runtime.Tests/FlowX.Runtime.Tests.csproj" />
     <Project Path="tests/RealtimeStream.Tests/RealtimeStream.Tests.csproj" />

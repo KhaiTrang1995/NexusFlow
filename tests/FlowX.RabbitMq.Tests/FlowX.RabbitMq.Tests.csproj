@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>FlowX.RabbitMq.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit.v3" Version="2.0.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.3" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <!--
+      The container implementation, not just its abstractions: the registration test builds a
+      provider and asks which service types AddFlowXRabbitMq actually produced. Asserting on the
+      ServiceDescriptor list instead would assert on what was written down rather than on what a
+      host resolves. The same reasoning, and the same pin, as FlowX.Redis.Tests.
+    -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../plugins/FlowX.RabbitMq/FlowX.RabbitMq.csproj" />
+
+    <!--
+      The host, because the bus trigger is the one thing in this package that only means something
+      in a host: a consumer that reads a message and does not start a flow has proved nothing about
+      redelivery, acknowledgement or ordering. RabbitMqBusConsumerTests drives FlowBusScan over a
+      real broker, which is the only place the two halves meet. The dependency is one-way and stays
+      inside tests/ — no plugin references a host.
+    -->
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+
+    <!--
+      The conformance suite is referenced, not copied, and this project is the reason the reference
+      is worth having a third time. FlowX.Redis.Tests was the second derivation and showed the
+      suite is store-independent; this is the second *transport*, and PublisherConformance passes
+      unchanged against a broker whose ordering mechanism has nothing in common with a Redis
+      stream. Nothing in tests/FlowX.Conformance.Tests changed to make it work, which is the
+      finding this package was commissioned to produce.
+    -->
+    <ProjectReference Include="../FlowX.Conformance.Tests/FlowX.Conformance.Tests.csproj" />
+  </ItemGroup>
+
+</Project>

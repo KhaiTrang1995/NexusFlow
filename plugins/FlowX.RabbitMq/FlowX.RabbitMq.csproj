@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>
+      FlowX RabbitMQ adapters: an event publisher that drains the transactional outbox to a
+      topic exchange with the event type as the routing key and publisher confirms on, and a
+      bus consumer serving one quorum queue per subscription with manual acknowledgement and a
+      dead-letter exchange.
+    </Description>
+    <PackageTags>flowx;rabbitmq;amqp;outbox;bus;durable-execution;dead-letter</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Pinned exactly, like every other dependency in this repository. The client is the only
+      thing this package needs beyond the contracts: ADR-0009 says a plugin depends on
+      FlowX.Abstractions and on whatever it talks to, and nothing else.
+
+      7.2.1 rather than 6.x because 6.x has no asynchronous publish at all — BasicPublish is
+      void and a confirm is awaited through a separate WaitForConfirms call — and ADR-0072
+      turns the confirm into the thing PublishAsync's return value means. The surface used
+      here is the static half of the library: IChannel, BasicProperties, byte arrays and a
+      Dictionary<string, object?> of headers. Nothing is reflective and nothing is serialised
+      by the client, which is what keeps constraint C2 satisfied without a suppression.
+
+      Its licence is 'Apache-2.0 OR MPL-2.0', a disjunction: this repository takes the
+      Apache-2.0 half, which is the whole of why it is permissible here. docs/DEPENDENCIES.md
+      §1.1 carries that argument and the gate reads it.
+    -->
+    <PackageReference Include="RabbitMQ.Client" Version="7.2.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      A plugin depends on the runtime; the runtime never depends on a plugin
+      (RuntimeDoesNotReferenceAnyPlugin). This one depends on less than that: IEventPublisher,
+      IBusConsumer, OutboxRecord, BusMessage, Result and Error all live in FlowX.Abstractions,
+      so a broker adapter needs nothing from Core, Runtime or Hosting — and nothing at all
+      from plugins/FlowX.Redis, which is the point of the package: two transports that share
+      a conformance suite and no source.
+    -->
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>
