@@ -316,11 +316,14 @@ public static class FlowXDiagnostics
     /// a row per step boundary; an instance whose node dies is found by the recovery scan and
     /// re-entered on the same step loop; the loop replays the committed rows, and a completed
     /// step that declared a compensation goes back onto the unwind stack as it is skipped. So
-    /// a compensation pending across a crash survives, which is the whole claim. Two things
-    /// are still true under <c>Durable</c> and are named in the description rather than
-    /// discovered later: the unwind itself is not journaled, so a crash <em>during</em>
-    /// compensation still loses it (<c>06 §7</c> rule 4), and a resumed parent does not
-    /// rebuild a skipped sub-flow's compensations (WP-57).
+    /// a compensation pending across a crash survives, which is the whole claim. The unwind is
+    /// journaled too since WP-57 — <c>CompensateAsync</c> commits a row per undo attempt and a
+    /// resumed instance does not repeat an undo whose row committed (<c>06 §7</c> rule 5) — but
+    /// at least once rather than exactly once, and the description names the residue rather
+    /// than leaving it to be discovered: an undo that ran without its row landing runs again,
+    /// a deferred undo of an already-succeeded composed child writes nothing because that
+    /// child's instance is sealed <c>Completed</c>, and a resumed parent does not rebuild a
+    /// skipped sub-flow's compensation stack at all.
     /// </para>
     /// <para>
     /// <strong>A warning, and not by inheritance from the determinism set.</strong> That set
@@ -351,10 +354,13 @@ public static class FlowXDiagnostics
         "a lease store on the host: a durable flow started without them is refused with " +
         "flow.durability_not_configured rather than run ephemerally. That costs a store round " +
         "trip per step, so it is a decision and not a formality — if the effect is cheap to " +
-        "leak, or something already sweeps it, keep the profile and record the choice. Two " +
-        "limits remain under Durable and are not fixed by this change: the unwind is not " +
-        "itself journaled, so a crash during compensation still loses it, and a resumed " +
-        "parent does not rebuild a skipped sub-flow's compensations.",
+        "leak, or something already sweeps it, keep the profile and record the choice. The " +
+        "unwind is journaled as well — one row per undo attempt, and a resumed instance does " +
+        "not repeat an undo whose row committed — but at least once rather than exactly once, " +
+        "and two limits remain under Durable: an undo that ran without its row landing runs " +
+        "again on resume, along with a deferred undo of an already-succeeded composed child, " +
+        "whose sealed instance takes no further rows; and a resumed parent does not rebuild a " +
+        "skipped sub-flow's compensations at all.",
         DiagnosticSeverity.Warning);
 
     /// <summary>FLOWX1013 — two branches of a <c>Parallel</c> write the same context slot.</summary>

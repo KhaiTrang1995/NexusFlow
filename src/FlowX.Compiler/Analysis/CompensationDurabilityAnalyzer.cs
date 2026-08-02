@@ -35,11 +35,16 @@ namespace FlowX.Compiler.Analysis;
 /// skips each step the journal shows completed — and, as it skips one that declared a
 /// compensation, <em>puts it back on the unwind stack</em>, because a resumed flow that
 /// later fails must undo what the node before it did. That single behaviour is the whole of
-/// what this diagnostic promises. It is deliberately not promised for two cases that are
-/// still open: the unwind is not itself journaled, so a crash during compensation still
-/// loses it (<c>06 §7</c> rule 4), and a resumed parent does not rebuild a skipped
-/// sub-flow's compensation stack, which is WP-57. The message and the page say both, because
-/// a rule that oversells its fix earns the silence the reserved id already had.
+/// what this diagnostic promises. The unwind is journaled too and has been since WP-57 —
+/// <c>FlowEngine.CompensateAsync</c> commits one row per undo attempt, and the step loop
+/// leaves a step whose undo already committed off the rebuilt stack rather than refunding the
+/// same payment twice (<c>06 §7</c> rule 5) — but at least once rather than exactly once, and
+/// the residue is deliberately not promised: an undo that ran without its row landing runs
+/// again on resume, a deferred undo of an already-succeeded composed child records nothing
+/// because that child's instance was sealed <c>Completed</c> and a journal refuses a write to
+/// a finished one, and a resumed parent does not rebuild a skipped sub-flow's compensation
+/// stack at all. The message and the page say all three, because a rule that oversells its
+/// fix earns the silence the reserved id already had.
 /// </para>
 /// <para>
 /// <strong>Severity: <c>Warning</c>, uniformly, and it is not inherited from the determinism
