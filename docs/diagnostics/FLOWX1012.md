@@ -163,18 +163,34 @@ step it puts that step back on the unwind stack**. A failure after the resume un
 everything the flow has done, including the parts a previous node did. That is the
 guarantee this diagnostic is asking you to buy.
 
+### The unwind is journaled too, at least once rather than exactly once
+
+Since WP-57, `CompensateAsync` commits one row per undo attempt — keyed past the forward row
+it reverses, carrying the *compensating* capability's id, `JournalOutcome.Compensated` when
+the undo worked and `Failure` when it did not, and moving the instance to `Compensating`. A
+resumed instance reads those rows and leaves a step whose undo already committed off the
+rebuilt stack, so a crash halfway through an unwind resumes the unwind instead of refunding
+the same payment twice (`06 §7` rule 5).
+
 ### What it does not buy — two limits that are still real
 
-1. **The unwind is not itself journaled.** `06 §7` rule 4 says a crash *during* compensation
-   resumes compensation; it does not, yet. `CompensateAsync` writes no journal row, so a
-   process that dies halfway through an unwind still loses the rest of it. `Durable` moves
-   the exposure window from "the whole flow" to "the unwind itself", which is much smaller
-   and is not zero.
+1. **An undo whose row never landed runs again.** The row is committed *after* the undo has
+   run, so a process that dies in between leaves no record and the resumed instance puts the
+   step back on the stack. That is the same limit
+   [ADR-0006](../adr/ADR-0006-journal-and-leases.md) states for a forward effect that landed
+   before its commit, and it is why `FLOWX1014`'s idempotency rule is checked against the
+   compensating capability. A **composed child that already succeeded** records nothing at
+   all: the parent seals the child's instance `Completed` when the composition returns, a
+   journal correctly refuses a write to a finished instance, so when the parent later unwinds
+   that child the undos run and nothing writes down that they did.
 2. **A resumed parent does not rebuild a composed sub-flow's compensations.** The parent
    records a `SubFlow` step as one entry bound to the *child's* context, and that context
    died with the node. The engine skips the entry and deliberately does not approximate the
    child's stack, because a compensation stack that is silently short is the exact failure a
-   saga exists to prevent. Rebuilding it from the child's own rows is WP-57.
+   saga exists to prevent. Rebuilding it from the child's own rows needs a "which instances
+   are under this parent" query `IFlowJournal` deliberately does not answer — it is a recovery
+   scan's — so WP-57 left this one standing rather than widen a contract every store
+   implements.
 
 Neither is a reason to stay ephemeral. Both are reasons not to read `Durable` as "solved".
 
@@ -279,8 +295,8 @@ flow as a sub-flow, by the same transitive reasoning the determinism set uses fo
 capabilities. It is refused, and not for tidiness. A sub-flow's steps do run inside the
 parent's instance — but the parent journals the composition as a single entry bound to the
 child's context, and a resumed parent skips that entry **without rebuilding the child's
-compensation stack** (see the second limit above; it is WP-57). Escalating on the parent's
-profile would stop somebody's build on a guarantee the engine does not currently deliver.
+compensation stack** (the second limit above, which WP-57 left standing). Escalating on the
+parent's profile would stop somebody's build on a guarantee the engine does not deliver.
 `ADurableParentComposingThisFlowDoesNotEscalateIt` pins it.
 
 ### `Warning` is not the lenient reading

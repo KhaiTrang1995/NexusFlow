@@ -674,9 +674,11 @@ back on the unwind stack**. A failure after the resume unwinds work a previous n
 
 Two limits that are real today:
 
-1. **The unwind is not itself journaled.** A process that dies halfway through a
-   compensation still loses the rest of it. `Durable` shrinks the exposure window from "the
-   whole flow" to "the unwind"; it does not close it.
+1. **The unwind is journaled at least once, not exactly once.** `CompensateAsync` commits a
+   row per undo attempt and a resumed instance does not repeat an undo whose row committed —
+   but the row lands *after* the undo has run, so one that died in between runs again; and a
+   composed child that already succeeded records nothing, its instance having been sealed
+   `Completed` when the composition returned.
 2. **A resumed parent does not rebuild a composed sub-flow's compensations.** The engine
    skips the entry rather than approximating the child's stack, because a compensation stack
    that is silently short is the failure a saga exists to prevent.
