@@ -29,6 +29,7 @@ PROJECTS=(
   src/FlowX.Compiler
   src/FlowX.Compiler.CodeFixes
   plugins/FlowX.Http
+  plugins/FlowX.Mcp
 )
 
 if [[ "${1:-}" == "--remove" ]]; then

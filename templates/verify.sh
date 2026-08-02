@@ -252,6 +252,52 @@ else
   pass "the [Sensitive] member is not in the log"
 fi
 
+# ---- the second transport, over the same flow and the same stances ----
+#
+# The [AgentTrigger] on OpenTicketFlow is a one-line declaration whose whole claim is that
+# a transport is not an authorisation boundary. Checking tools/list alone would prove the
+# projection and nothing about that claim, so the under-privileged agent is asserted too —
+# against the same token that is refused over HTTP eight checks above.
+
+rpc() {
+  local token="$1" payload="$2"
+  curl -sS -o "$WORK/rpc" -w '%{http_code}' \
+    -X POST "http://127.0.0.1:$PORT/mcp" \
+    -H 'Content-Type: application/json' \
+    ${token:+-H "Authorization: Bearer $token"} \
+    -d "$payload"
+}
+
+status="$(rpc '' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')"
+if [[ "$status" == "200" ]] && grep -q '"name":"ticket_open"' "$WORK/rpc"; then
+  pass "tools/list publishes the flow's [AgentTrigger]"
+else
+  fail "tools/list did not publish ticket_open, got $status $(cat "$WORK/rpc")"
+fi
+
+# The description and the permission are the manifest's, never this file's or the tool
+# binding's: a hand-written tool definition would satisfy the check above and not this one.
+grep -q '"requiredPermissions":\["ticket.write"\]' "$WORK/rpc" \
+  && pass "the tool carries the permission the capability declares" \
+  || fail "the tool did not publish ticket.write as a required permission"
+
+call='{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ticket_open",
+      "arguments":{"subject":"Printer on fire","reporter":"ops","contactPhone":"+44 7700 900000"}}}'
+
+status="$(rpc reader-token "$call")"
+if [[ "$status" == "200" ]] && grep -q '"code":"authorization.permission_denied"' "$WORK/rpc"; then
+  pass "an under-privileged agent is refused by the same stance HTTP enforces"
+else
+  fail "expected a permission_denied tool result, got $status $(cat "$WORK/rpc")"
+fi
+
+status="$(rpc support-token "$call")"
+if [[ "$status" == "200" ]] && grep -q '"isError":false' "$WORK/rpc"; then
+  pass "an authorised agent opens a ticket"
+else
+  fail "tools/call did not run the flow, got $status $(cat "$WORK/rpc")"
+fi
+
 # ---------------------------------------------------------------------------
 printf '\n'
 if [[ "$FAILURES" -eq 0 ]]; then

@@ -1,8 +1,8 @@
 # `dotnet new flowx`
 
 The template a new user runs first. It generates one working vertical slice — a flow, two
-capabilities, their contracts, the composition root and one HTTP endpoint — not an empty
-folder tree.
+capabilities, their contracts, an authentication scheme, the composition root, and the same
+flow served over two transports — not an empty folder tree.
 
 ```bash
 templates/local-feed.sh                              # pre-release only; see below
@@ -15,8 +15,27 @@ cd Ordering && dotnet run
 curl -X POST http://localhost:5000/api/v1/tickets \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: ticket-1' \
+  -H 'Authorization: Bearer support-token' \
   -d '{"subject":"Printer on fire","reporter":"ops","contactPhone":"+44 7700 900000"}'
 ```
+
+The token is required. `ticket.validate` admits any authenticated caller and `ticket.record`
+requires `ticket.write`, and the engine decides both before the step runs — so
+`reader-token` reaches the second step and is refused there, which is the difference between
+a door and a permission model. `Authentication.cs` is a stand-in for an OIDC handler.
+
+And the same flow is an agent tool, because it declares an `[AgentTrigger]` as well:
+
+```bash
+curl -X POST http://localhost:5000/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer support-token' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+The tool's name, description and required permissions come out of `flowx.manifest.json`, and
+`tools/call` is decided by the same stances the endpoint is. Two transports, one
+authorisation decision, and nothing in `Program.cs` naming either flow.
 
 ## What is here
 
@@ -34,12 +53,12 @@ ship — plain `PackageReference`s, with the compiler as an analyzer asset — b
 alternative, project references pointing back into a clone of this repository, is a
 different project shape that would have to be rewritten the day packages exist.
 
-So the pre-release cost is one command, `templates/local-feed.sh`, which packs the seven
+So the pre-release cost is one command, `templates/local-feed.sh`, which packs the eight
 packages into `.artifacts/local-feed` and registers it as a NuGet source. When the
 packages publish, that script and this section are deleted and **the template does not
 change**.
 
-It also evicts those seven ids from the global NuGet cache before packing. The version
+It also evicts those eight ids from the global NuGet cache before packing. The version
 never changes between runs, and NuGet caches by id and version — so without the eviction a
 second `verify.sh` restores the *first* run's assemblies and reports green against a
 generator from an earlier commit. Only the FlowX ids are removed.
@@ -55,10 +74,12 @@ temporary directory, asserts the name substitution took, builds with
 including that the generated endpoint carries the route and the idempotency rule the flow
 declared, that `Program.cs` restates neither, and that the manifest's source pointers are
 relative rather than the build agent's directory layout — then runs the application and
-drives the endpoint: the happy path, a
-repeat with the same idempotency key, a business failure arriving as RFC 7807 problem
-details, and a request with no `Idempotency-Key`. It exits with the number of failed
-checks.
+drives both transports: over HTTP, an anonymous refusal, an under-privileged refusal, the
+happy path, a repeat with the same idempotency key, a business failure arriving as RFC 7807
+problem details, and a request with no `Idempotency-Key`; over `/mcp`, that `tools/list`
+publishes the flow's tool with the permission its capability declares, and that
+`tools/call` refuses the *same* under-privileged token the endpoint refuses. It exits with
+the number of failed checks.
 
 It is a shell script rather than an xunit project on purpose. The thing under test is
 `dotnet new`, `dotnet build` and a process listening on a socket, and a test that shells
@@ -86,7 +107,18 @@ running PostgreSQL into the one command whose whole value is that `dotnet run` w
 scaffold the attribute alone and hand a new user a project that compiles and cannot serve a
 request. Neither is a template.
 
-`--transport` has one value. `plugins/` contains `FlowX.Http` and nothing else.
+*This section used to end "`--transport` has one value. `plugins/` contains `FlowX.Http` and
+nothing else."* `plugins/` now contains four — `FlowX.Http`, `FlowX.Mcp`, `FlowX.Postgres`
+and `FlowX.Redis` — and the template takes two of them, because a transport that needs no
+infrastructure is a package reference and an attribute. There is still no `--transport`
+option, and the reason is the same one durability has: the two that are left need a broker
+or a database running, which is the one thing the command whose value is `dotnet run` cannot
+scaffold. The samples are where those are wired — `samples/ecommerce` for the bus and the
+change feed, `samples/banking` for the journal and multi-tenancy.
+
+There is no `--tenancy` either. `TenantIsolation.Row` makes a tenant mandatory and enforces
+it in PostgreSQL, so a generated project declaring it would refuse every request until a
+database existed and a token carried a claim — the same trap `--profile durable` is.
 
 The remaining knobs the .NET template engine gives for free — `-n`, `-o`, and the
 directory-name default — are the ones that were verified.

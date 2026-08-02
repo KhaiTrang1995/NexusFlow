@@ -22,10 +22,21 @@ namespace FlowXStarter;
 /// publishes and the address it answers on are the same string by construction. Change
 /// the route here and nothing else has to change.
 /// </para>
+/// <para>
+/// <strong>The <c>[AgentTrigger]</c> is the same idea a second time.</strong> It makes this
+/// flow the MCP tool <c>ticket_open</c>, served at <c>POST /mcp</c>, and it changes nothing
+/// below it. The tool's name, description, required permissions and confirmation requirement
+/// are projected out of <c>flowx.manifest.json</c> at run time, so a model is told what the
+/// build published rather than what a second hand-written definition says — and the
+/// <c>ticket.write</c> stance on <c>RecordTicket</c> refuses an under-privileged agent at the
+/// same step it refuses an under-privileged HTTP caller. Two transports, one authorisation
+/// decision, and no line anywhere naming both.
+/// </para>
 /// </remarks>
 [Flow("ticket.open", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral, Owner = "support")]
 [FlowDeadline("PT10S")]
 [HttpTrigger("POST", "/api/v1/tickets", Idempotent = true)]
+[AgentTrigger(Description = "Open a support ticket for a reporter, with a subject describing the problem.")]
 public sealed partial class OpenTicketFlow : Flow<OpenTicket, TicketOpened>
 {
     /// <inheritdoc />

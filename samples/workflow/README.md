@@ -35,6 +35,21 @@ FLOWX_POSTGRES_CONNECTION="Host=localhost;Port=5432;Database=postgres;Username=p
 
 It needs a database. That is not incidental — see [§4](#4-why-this-application-needs-a-database).
 
+**And every request below carries a token, which they did not used to.** Authorisation is
+decided in the step loop against `HttpContext.User`, so this application registers a scheme
+(`Authentication.cs`) and two demonstration callers: `people-ops-token` holds the six write
+permissions `employee.onboard` names, and `recruiter-token` holds none of them — enough to
+send an offer, which declares `Authorization.Authenticated`, and not enough to onboard
+anybody. Until the scheme existed the transcripts here described a sample that answered
+`403` at its first step. `AuthenticationTests` reads the required grants out of the manifest
+rather than listing them, so a capability added with a seventh fails naming it.
+
+**`offer.window.close` needs none of it**, and that is the part worth noticing. An
+occurrence has no caller, so its capability declares `Authorization.Internal` and the
+schedule fires and settles with no principal anywhere in the path. A permission on that
+capability would have made a cron flow undeployable — the discovery nobody wants at 02:00,
+and what `TheScheduledFlowAsksForNoPrincipal` prevents.
+
 ---
 
 ## 1. The flow
@@ -208,7 +223,8 @@ the transcripts below happen on the sweep's schedule rather than on a seven-day 
 Run it against a real PostgreSQL and the two requests look like this:
 
 ```
-$ curl -i -X POST :5199/api/v1/offers -d '{"candidateId":"c-42","role":"staff-engineer","site":"london"}'
+$ curl -i -X POST :5199/api/v1/offers -H 'Authorization: Bearer recruiter-token' \
+       -d '{"candidateId":"c-42","role":"staff-engineer","site":"london"}'
 HTTP/1.1 202 Accepted
 Location: /api/v1/offers/019fbd86-b1be-7398-a9bb-b90a96c6774c/signals/offer.countersigned
 
@@ -229,6 +245,7 @@ One row, no lease. Then, on a different request:
 
 ```
 $ curl -i -X POST :5311/api/v1/offers/019fbd8d-…/signals/offer.countersigned \
+       -H 'Authorization: Bearer recruiter-token' \
        -d '{"envelopeId":"env-ada","signedBy":"ada.lovelace","signedAt":"2026-08-01T13:40:15Z"}'
 HTTP/1.1 202 Accepted
 {"instanceId":"019fbd8d-b228-7aad-9a0b-a62b9d45636b","awaitingSignal":"offer.countersigned"}
@@ -562,6 +579,7 @@ deleted the day that seam lands, and the test above goes red to say so.
 
 ```
 $ curl -s -X POST localhost:5199/api/v1/onboarding -H 'Idempotency-Key: run-001' \
+    -H 'Authorization: Bearer people-ops-token' \
     -d '{"candidateId":"c-1001","employment":0,"site":"london",
          "equipment":[{"item":"laptop-bag","needsApproval":false},
                       {"item":"phone","needsApproval":true}],

@@ -1,5 +1,6 @@
 using FlowX.Generated;
 using FlowX.Hosting;
+using FlowX.Mcp;
 using FlowXStarter;
 using Microsoft.AspNetCore.Authentication;
 
@@ -43,6 +44,13 @@ builder.Services.AddSingleton<ValidateTicket>();
 builder.Services.AddSingleton<RecordTicket>();
 builder.Services.AddSingleton<OpenTicketFlow.Dispatcher>();
 
+// Every flow carrying an [AgentTrigger], bound to the tool the manifest publishes for it.
+// Generated, like the endpoint below — and like it, nothing here names the flow, its
+// description or the permissions it needs. All of them are read out of the compiled-in
+// manifest at run time, so what an agent is told and what your build published are one
+// document rather than two that agree today.
+builder.Services.AddFlowXAgentTools();
+
 var app = builder.Build();
 
 // Runs the scheme above, so HttpContext.User carries the token's claims by the time the
@@ -60,5 +68,12 @@ app.MapHealthChecks("/health");
 // the route on the flow and this line still serves it. There is nothing here to keep in
 // step, because there is nothing here that restates the flow.
 app.MapFlowX();
+
+// The agent surface: one route, JSON-RPC in, JSON-RPC out. It serves `initialize`,
+// `tools/list` and `tools/call`, and it makes no authorisation decision of its own — a call
+// builds its invocation with the same reader the HTTP route uses, so the capability stances
+// decide an agent's call exactly as they decide a request's. Delete this line and the
+// [AgentTrigger] on the flow and nothing else in the project moves.
+app.MapFlowXMcp();
 
 await app.RunAsync().ConfigureAwait(false);
