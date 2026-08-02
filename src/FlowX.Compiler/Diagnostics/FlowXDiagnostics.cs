@@ -1595,6 +1595,42 @@ public static class FlowXDiagnostics
         "retry. Declare it on the capability if reading twice is harmless, and otherwise poll " +
         "a capability that reads the state rather than one that changes it.");
 
+    /// <summary>FLOWX1050 — a step binds a contract only a poll's signal ending produces.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><c>FLOWX1020</c>'s argument, applied to the one construct with two endings.</strong>
+    /// A <c>.PollUntil&lt;T&gt;(…).OrSignal&lt;TSignal&gt;()</c> leaves the wait two ways: the
+    /// predicate holds over what an attempt produced, or a delivery arrives and seeds
+    /// <c>TSignal</c> into the state bag. Both continue at the same index, so the steps after the
+    /// poll run on either — and a step binding <c>TSignal</c> runs on only one of them. On the
+    /// other, the bag has no such value and <c>ctx.Get&lt;TSignal&gt;()</c> throws.
+    /// </para>
+    /// <para>
+    /// <strong>An error, where <c>FLOWX1043</c> is a warning.</strong> There is nothing
+    /// probabilistic here: the predicate path is the path a poll exists for, so the flow this
+    /// reports is one that works when the webhook fires and fails when the polling does its job.
+    /// It is <c>FLOWX1020</c>'s severity for <c>FLOWX1020</c>'s reason.
+    /// </para>
+    /// <para>
+    /// <strong>The repair is a step that binds what both endings leave.</strong> A poll only
+    /// parks after an attempt has committed, so a delivery to a parked instance arrives with
+    /// the polled capability's own output already in the bag — on both paths. Binding that, or
+    /// mapping explicitly with <c>.Step&lt;TCapability, TStepIn&gt;(ctx =&gt; …)</c>, is what
+    /// makes the step honest about which of the two it is reading.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor StepBindsOnlyThePollsSignal = Create(
+        "FLOWX1050",
+        "Step binds a contract only one of a poll's two endings produces",
+        "Step '{0}' consumes '{1}', which flow '{2}' produces only when a delivered signal " +
+        "ends the poll — not when its own predicate does",
+        "A poll declaring .OrSignal<TSignal>() is one wait with two endings, and both continue " +
+        "at the same step. The signal's payload is in the state bag only on the ending a " +
+        "delivery caused; when the predicate ends the wait instead, nothing has produced it and " +
+        "the step's input cannot be bound. Bind what both endings leave — the polled " +
+        "capability's own output — or supply the input explicitly with " +
+        ".Step<TCapability, TStepIn>(ctx => ...).");
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1639,7 +1675,8 @@ public static class FlowXDiagnostics
         SubjectCannotBeRecorded,
         ScheduleJitterCannotBeRead,
         PollIntervalOutlastsItsTimeout,
-        PollRequiresIdempotency);
+        PollRequiresIdempotency,
+        StepBindsOnlyThePollsSignal);
 
     private static DiagnosticDescriptor Create(
         string id,
