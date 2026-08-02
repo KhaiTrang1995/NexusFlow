@@ -129,11 +129,19 @@ Stated here rather than left to be discovered, on the same principle as
 3. **The transitive closure of a project that has not been restored.** The gate reads the
    real graph out of `obj/project.assets.json`; a project with no assets file has only its
    *declared* references checked. See §5.
-4. **Anything that is not a NuGet `PackageReference`.** The .NET shared framework itself
-   (MIT); the npm, pip and `dotnet tool` packages CI installs — `@mermaid-js/mermaid-cli`,
-   `checkov`, `dotnet-stryker`, `reportgenerator`, `dotnet-sonarscanner`; GitHub Actions
-   pulled by tag. None of them reaches a published FlowX package, and none of them is
-   scanned.
+4. **Anything NuGet does not restore.** The .NET shared framework itself (MIT); the npm,
+   pip and `dotnet tool` packages CI installs — `@mermaid-js/mermaid-cli`, `checkov`,
+   `dotnet-stryker`, `reportgenerator`, `dotnet-sonarscanner`; GitHub Actions pulled by
+   tag. None of them reaches a published FlowX package, and none of them is scanned.
+
+   A `PackageDownload` **is** read, and was not always. It is not a `PackageReference` —
+   it is how the SDK fetches a build-time pack, and it lands in the assets file's
+   `downloadDependencies` rather than in `libraries`. One is live here:
+   `runtime.linux-x64.Microsoft.DotNet.ILCompiler`, which the ecommerce sample's NativeAOT
+   publish links *into the executable*. Which of the two places the SDK records a pack in
+   is a decision that has changed between SDK feature bands, and nothing in this repository
+   pins one — there is no `global.json`, and CI asks for `10.0.x`. Reading both is what
+   stops the answer depending on whose machine asked.
 5. **Dual-licensed packages.** Every row here is a single licence id. A package offering a
    choice, or an `A OR B` / `A AND B` expression, has no representation in this table yet
    and would fail as unclassified — which is the safe direction, but it is a gap, not a
@@ -238,6 +246,7 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `Npgsql` | `PostgreSQL` | nuspec | — |
 | `Perfolizer` | `MIT` | nuspec | — |
 | `RESPite` | `MIT` | nuspec | — |
+| `runtime.linux-x64.Microsoft.DotNet.ILCompiler` | `MIT` | nuspec | — |
 | `Shouldly` | `BSD-3-Clause` | nuspec | — |
 | `StackExchange.Redis` | `MIT` | nuspec | — |
 | `SonarAnalyzer.CSharp` | `SONAR-SOURCE-AVAILABLE-1.0` | read | `licenses/LICENSE.txt` |
