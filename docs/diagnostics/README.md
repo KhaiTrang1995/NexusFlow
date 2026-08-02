@@ -338,6 +338,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1038](FLOWX1038.md) | Scheduled flow cannot be fired | **A published `cron` with no schedule registered behind it: a flow that cannot bind the occurrence and is never started, or an ephemeral one started by every node in the fleet on every occurrence — with no error, no duplicate row and nothing anywhere to count** |
 | [FLOWX1039](FLOWX1039.md) | Bus-triggered flow cannot be consumed | **A published `topic` with no subscription registered behind it: a flow that cannot bind the message and is never started, or an ephemeral one started again on every redelivery — with no error, no duplicate row and nothing anywhere to count** |
 | [FLOWX1040](FLOWX1040.md) | `Idempotency` is declared on a flow whose result cannot be recorded without redaction | **A replayed transfer answering with an IBAN of `[redacted]` and a `200`: the second caller's money moves to a placeholder, every step reports success, and nothing anywhere says a value was fabricated** |
+| [FLOWX1041](FLOWX1041.md) | Change-triggered flow cannot be observed | **A published change subscription with nothing registered behind it: a flow that cannot bind the change and is never started, or an ephemeral one started again every time the cursor is re-read from an uncommitted position — with no error, no duplicate row and nothing anywhere to count** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -544,7 +545,19 @@ tolerates being called twice, and this asks whether the platform can record what
 decision, and it is an **error** for [ADR-0030](../adr/ADR-0030-policy-stance-is-refused-at-build-time.md)'s
 reason: the alternative to the rule is not a policy that does less, it is a step that fails at run
 time on its first execution.
-The next is `FLOWX1041`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1041` is claimed** — *change-triggered flow cannot be observed*: a `[ChangeTrigger]` the
+generator cannot turn into a change-subscription registration, because the flow's input contract
+is not `BusMessage` — a change is an outbox row and has nothing else to give — or because the
+flow is not `Durable`, whose consequence is not that nothing runs but that the flow runs again
+every time the cursor is re-read from an uncommitted position, with nothing journalled to refuse
+the second. It is none of the reservations, and it is `FLOWX1039`'s rule one transport over,
+deliberately a separate id rather than a widened one: a flow may declare both a bus trigger and a
+change trigger, and a suppression of one must not silence the other.
+[ADR-0047](../adr/ADR-0047-a-change-trigger-observes-the-outbox.md) is the decision. It is
+**not** the rule that refuses a flow whose change source is a type it emits — that is a
+registration-time refusal in `FlowChangeCatalog.Add`, because the emitted types are in the
+`ExecutionPlan` and reading them there reads the artifact that will run.
+The next is `FLOWX1042`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 
