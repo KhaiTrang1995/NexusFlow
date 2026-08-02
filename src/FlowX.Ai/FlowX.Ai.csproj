@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>FlowX.Ai</RootNamespace>
+    <Description>
+      Reviews a FlowX manifest and reports what the document itself can prove. Reads
+      flowx.manifest.json and nothing else — no repository, no telemetry, no database.
+    </Description>
+  </PropertyGroup>
+
+  <!--
+    No PackageReference and no ProjectReference, and both are the point rather than a
+    coincidence of the current rule set.
+
+    docs/13-AI-Native.md §5 promises the AI layer is removable: "uninstall FlowX.Ai and
+    everything else works identically". A project that linked FlowX.Core would make that
+    a claim about the uninstall order instead of a fact. And ADR-0005 says the manifest
+    is self-describing; FlowX.Cli is the standing evidence, because CliLinksNoFlowXAssembly
+    forbids it a project reference. This is the second consumer to take that shape, and it
+    is the one that matters most: if reasoning about the architecture needed a FlowX type,
+    no third-party reviewer could ever be written.
+
+    System.Text.Json is in the shared framework, so reading the document costs no row in
+    docs/DEPENDENCIES.md — the same argument samples/ecommerce makes for hand-writing its
+    telemetry rather than referencing an SDK.
+  -->
+
+</Project>

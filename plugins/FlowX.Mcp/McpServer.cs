@@ -44,6 +44,7 @@ public sealed class McpServer
         ArgumentNullException.ThrowIfNull(tools);
 
         Catalog = McpToolCatalog.From(manifest.Json);
+        Resources = McpResourceCatalog.From(manifest.Json);
 
         var byFlow = new Dictionary<string, IFlowAgentTool>(StringComparer.Ordinal);
 
@@ -58,9 +59,26 @@ public sealed class McpServer
     /// <summary>The published tools, projected from the manifest.</summary>
     public McpToolCatalog Catalog { get; }
 
+    /// <summary>
+    /// The readable resources, projected from the same manifest.
+    /// </summary>
+    /// <remarks>
+    /// Two projections of one document rather than one projection with two shapes, because they
+    /// answer different questions and are read at different moments: a tool descriptor says what
+    /// may be called and is read when a model chooses, and a resource is the graph itself and is
+    /// read when a model is deciding whether calling anything is the right move. Both are pure
+    /// functions of <see cref="McpManifest.Json"/>, so neither can drift from the other or from
+    /// the artifact.
+    /// </remarks>
+    public McpResourceCatalog Resources { get; }
+
     /// <summary>The <c>tools/list</c> result, written straight to the response.</summary>
     /// <param name="writer">The response writer.</param>
     public void WriteToolList(Utf8JsonWriter writer) => McpToolJson.WriteToolList(writer, Catalog);
+
+    /// <summary>The <c>resources/list</c> result, written straight to the response.</summary>
+    /// <param name="writer">The response writer.</param>
+    public void WriteResourceList(Utf8JsonWriter writer) => Resources.WriteList(writer);
 
     /// <summary>Runs the tool an agent named.</summary>
     /// <param name="name">The tool name from <c>params.name</c>.</param>

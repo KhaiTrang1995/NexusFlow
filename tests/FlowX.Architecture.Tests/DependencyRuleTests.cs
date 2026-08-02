@@ -79,6 +79,14 @@ public sealed class DependencyRuleTests
     // is referenced by the one assembly that needs it rather than inherited by every plugin and
     // all user code, which is what AbstractionsHasNoDependencies forbids.
     [InlineData("FlowX.Logging", new[] { "FlowX.Abstractions" })]
+    // FlowX.Ai references nothing at all, which is narrower than every other row here and is the
+    // project's argument rather than an accident of what it happens to need today. ADR-0005 says
+    // the manifest is self-describing and CliLinksNoFlowXAssembly is the standing evidence; this
+    // is the second consumer to take that shape, and the one that matters most — if reasoning
+    // about the architecture needed a FlowX type, no third-party reviewer could be written. It is
+    // also what makes docs/13 §5's "uninstall FlowX.Ai and everything else works identically" a
+    // fact rather than a claim about the uninstall order.
+    [InlineData("FlowX.Ai", new string[0])]
     // FlowX.Testing gained Core and Runtime with FlowTestHost (WP-49), which runs the
     // real engine over the real compiled plan inside the test process. Still points
     // inward, and still narrower than Hosting: no transport, no journal, no container.

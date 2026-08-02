@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <Project Path="src/FlowX.Ai/FlowX.Ai.csproj" />
     <Project Path="src/FlowX.Compiler/FlowX.Compiler.csproj" />
     <Project Path="src/FlowX.Compiler.CodeFixes/FlowX.Compiler.CodeFixes.csproj" />
     <Project Path="src/FlowX.Cli/FlowX.Cli.csproj" />
@@ -17,6 +18,7 @@
     <Project Path="plugins/FlowX.Redis/FlowX.Redis.csproj" />
   </Folder>
   <Folder Name="/samples/">
+    <Project Path="samples/ai-agent/AiAgent.csproj" />
     <Project Path="samples/banking/Banking.csproj" />
     <Project Path="samples/ecommerce/Ecommerce.csproj" />
     <Project Path="samples/event-driven/EventDriven.csproj" />
@@ -24,6 +26,7 @@
     <Project Path="samples/workflow/Workflow.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/AiAgent.Tests/AiAgent.Tests.csproj" />
     <Project Path="tests/Banking.Tests/Banking.Tests.csproj" />
     <Project Path="tests/Ecommerce.Tests/Ecommerce.Tests.csproj" />
     <Project Path="tests/EventDriven.Tests/EventDriven.Tests.csproj" />

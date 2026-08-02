@@ -183,6 +183,16 @@ public static class McpJsonRpc
         // promise. Declaring one would be a capability nothing can ever exercise.
         writer.WriteBoolean("listChanged", false);
         writer.WriteEndObject();
+
+        // The same argument, twice more. The resource set is the flow list, which is fixed at
+        // build time; and a resource is a slice of an immutable document, so nothing can change
+        // under a client that has read it and there is nothing to subscribe to.
+        writer.WritePropertyName("resources");
+        writer.WriteStartObject();
+        writer.WriteBoolean("listChanged", false);
+        writer.WriteBoolean("subscribe", false);
+        writer.WriteEndObject();
+
         writer.WriteEndObject();
 
         writer.WritePropertyName("serverInfo");
@@ -190,6 +200,33 @@ public static class McpJsonRpc
         writer.WriteString("name", applicationName);
         writer.WriteEndObject();
 
+        writer.WriteEndObject();
+    }
+
+    /// <summary>Writes a request from the server to the client.</summary>
+    /// <param name="writer">The stream writer.</param>
+    /// <param name="id">The id this process minted, which the client echoes on its answer.</param>
+    /// <param name="method">The JSON-RPC method, e.g. <c>elicitation/create</c>.</param>
+    /// <param name="parameters">Writes the <c>params</c> member's value.</param>
+    /// <remarks>
+    /// The same envelope as a client's request, because it is one: JSON-RPC is symmetric and MCP
+    /// uses that symmetry for the two methods where the useful answer is on the other side of the
+    /// connection. What differs is the transport — this goes out on the response stream of a POST
+    /// still being served, and the answer comes back as a separate POST — which is
+    /// <see cref="McpPendingClientRequests"/>'s reason for existing.
+    /// </remarks>
+    public static void WriteRequest(
+        Utf8JsonWriter writer, string id, string method, Action<Utf8JsonWriter> parameters)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(parameters);
+
+        writer.WriteStartObject();
+        writer.WriteString("jsonrpc", Version);
+        writer.WriteString("id", id);
+        writer.WriteString("method", method);
+        writer.WritePropertyName("params");
+        parameters(writer);
         writer.WriteEndObject();
     }
 

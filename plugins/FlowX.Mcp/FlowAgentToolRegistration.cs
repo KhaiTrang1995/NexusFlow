@@ -132,12 +132,24 @@ public static class FlowAgentToolRegistration
     }
 
     /// <summary>
-    /// Registers <see cref="McpServer"/> once, whichever registration runs first.
+    /// Registers <see cref="McpServer"/> and what serving it needs, once, whichever
+    /// registration runs first.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Both entry points call this rather than one of them owning it, because the order the
     /// generated file writes them in is the generator's business and should not be a
     /// correctness condition here.
+    /// </para>
+    /// <para>
+    /// <strong>The two additions are per-process and per-request, and neither is optional.</strong>
+    /// <see cref="McpPendingClientRequests"/> joins a server-initiated request to the separate
+    /// POST that answers it, so it is a singleton — the two halves are two HTTP requests.
+    /// <see cref="McpCallScope"/> is the request's own channel back to its client and is the
+    /// service an <see cref="IAgentSampler"/> resolves to, so it is scoped. Registering them here
+    /// rather than in <c>MapFlowXMcp</c> keeps the container's contents a property of what the
+    /// application declared, not of which routes it happened to map.
+    /// </para>
     /// </remarks>
     private static void TryAddSingletonServer(this IServiceCollection services)
     {
@@ -147,5 +159,8 @@ public static class FlowAgentToolRegistration
         }
 
         services.AddSingleton<McpServer>();
+        services.AddSingleton<McpPendingClientRequests>();
+        services.AddScoped<McpCallScope>();
+        services.AddScoped<IAgentSampler>(static provider => provider.GetRequiredService<McpCallScope>());
     }
 }
