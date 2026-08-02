@@ -151,8 +151,9 @@ public static class ServiceCollectionExtensions
     /// <remarks>
     /// <para>
     /// <strong>Separate from <see cref="AddFlowXPostgres"/> on purpose, and not defaulted
-    /// on.</strong> The publisher needs an <see cref="IEventPublisher"/>, and this repository
-    /// ships none — there is no broker plugin (<c>docs/17-Plugin-System.md §2</c>). Folding
+    /// on.</strong> The publisher needs an <see cref="IEventPublisher"/>, which a host chooses
+    /// and wires — <c>FlowX.Redis</c>'s <c>RedisStreamEventPublisher</c> is one, and a
+    /// deployment on another broker supplies its own. Folding
     /// the registration into the journal's would make a host that wires PostgreSQL fail to
     /// resolve a service it never asked for, or — worse, and the mistake
     /// <see cref="PostgresJournalOptions.RegisterRecoveryIndex"/> exists because of — leave a
