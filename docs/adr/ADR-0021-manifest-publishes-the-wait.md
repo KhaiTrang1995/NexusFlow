@@ -303,7 +303,8 @@ sentence this record was written to be able to say.
   cancels work that a lengthened one would have completed. That is a Breaking-shaped change
   and this record classifies it as Neutral today on the explicit ground that nothing arms it;
 - **a second construct suspends.** `.Delay(duration)` produces no step today
-  ([`FLOWX1031`](../diagnostics/FLOWX1031.md)); when it produces one, that step needs the same
+  (`FLOWX1031`, since [deleted](../diagnostics/README.md) along with the gap it described);
+  when it produces one, that step needs the same
   question asked of it and the answer may not be the same, because a delay has no identity for
   anyone outside to address;
 - **the folding set proves too small in practice** — a real application declares waits the
