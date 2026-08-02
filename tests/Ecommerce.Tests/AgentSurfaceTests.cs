@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -95,7 +96,9 @@ public sealed class AgentSurfaceTests
         var tool = tools[0];
 
         tool.GetProperty("name").GetString().ShouldBe(ToolName);
-        tool.GetProperty("description").GetString().ShouldContain("Reserves inventory before charging");
+        tool.GetProperty("description").GetString()
+            .ShouldNotBeNull()
+            .ShouldContain("Reserves inventory before charging");
 
         var annotations = tool.GetProperty("annotations");
 
@@ -238,11 +241,19 @@ public sealed class AgentSurfaceTests
             .GetString().ShouldBe("mcp.unknown_tool");
     }
 
-    private static string Call(string sku, int quantity) =>
-        $$"""
-        {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"{{ToolName}}",
-         "arguments":{"sku":"{{sku}}","quantity":{{quantity}},"paymentToken":"tok"}}}
-        """;
+    /// <summary>One <c>tools/call</c> message for <c>order_place</c>.</summary>
+    /// <remarks>
+    /// The arguments are the flow's own input contract, camelCased by the same serialiser
+    /// context the HTTP endpoint uses — there is no agent-shaped DTO in this application.
+    /// </remarks>
+    private static string Call(string sku, int quantity) => string.Format(
+        CultureInfo.InvariantCulture,
+        "{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":" +
+        "{{\"name\":\"{0}\",\"arguments\":" +
+        "{{\"sku\":\"{1}\",\"quantity\":{2},\"paymentToken\":\"tok\"}}}}}}",
+        ToolName,
+        sku,
+        quantity);
 
     private static async Task<JsonDocument> RpcAsync(HttpClient client, string body, string? token)
     {
@@ -286,6 +297,7 @@ public sealed class AgentSurfaceTests
                             DemoTokenHandler.SchemeName, null);
 
                     services.AddSingleton(inventory ?? new CountingInventory(available: 10));
+
                     services.AddSingleton<IPaymentGateway>(new ApprovingGateway());
 
                     services.AddSingleton<ValidateOrder>();
@@ -316,4 +328,52 @@ public sealed class AgentSurfaceTests
                     app.ApplicationServices.AddFlowXChangeSubscriptions();
                 }))
             .StartAsync(Cancellation);
+
+    /// <summary>
+    /// Stock, counting what was taken and what came back.
+    /// </summary>
+    /// <remarks>
+    /// Its own rather than the sample's <c>InMemoryInventoryStore</c>, because what these tests
+    /// assert about a refusal is that the <em>compensation ran</em>, and a store that only
+    /// reports a balance cannot distinguish "released" from "never reserved".
+    /// </remarks>
+    private sealed class CountingInventory(int available) : IInventoryStore
+    {
+        private readonly Lock _sync = new();
+
+        public int Reserved { get; private set; }
+
+        public int Released { get; private set; }
+
+        public ValueTask<int> AvailableAsync(string sku, CancellationToken ct) =>
+            ValueTask.FromResult(available);
+
+        public ValueTask ReserveAsync(string sku, int quantity, string idempotencyKey, CancellationToken ct)
+        {
+            lock (_sync)
+            {
+                Reserved += quantity;
+            }
+
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask ReleaseAsync(string idempotencyKey, CancellationToken ct)
+        {
+            lock (_sync)
+            {
+                Released += 1;
+            }
+
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    /// <summary>A gateway that always approves, so a refusal here is never the payment's.</summary>
+    private sealed class ApprovingGateway : IPaymentGateway
+    {
+        public ValueTask<string?> CaptureAsync(
+            string reservationId, string idempotencyKey, CancellationToken ct) =>
+            ValueTask.FromResult<string?>("receipt-" + idempotencyKey);
+    }
 }
