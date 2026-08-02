@@ -455,3 +455,50 @@ jobs:
             exit 1
           fi
           echo "History is clean."
+
+  red:
+    name: A red run reaches a person
+    # WHY THIS EXISTS. Five of the six jobs above were red on `dev` for days and nothing
+    # happened, because nothing could: `dev` is not a protected branch, so a failing check
+    # blocks no merge and no push, and no workflow here triggered on a failed run. The
+    # whole consequence of a red build was a red icon on a page somebody had to think to
+    # open. The suite passes locally, so the people best placed to notice were the least
+    # likely to be shown.
+    #
+    # This repository has already written that finding down twice — CHECKLIST.md blocker
+    # B-4 and the unnumbered package above WP-31 in PLAN.md — both about the `Benchmark
+    # budgets` job, both concluding "blocking, and blocking nothing: no branch protection,
+    # no notification". This is the same defect in a worse place: the job that builds the
+    # product and runs the suite.
+    #
+    # chaos.yml already fixed this for the nightly QR2 run and its `issues: write` comment
+    # names B-4 by number. This is that mechanism, for this workflow, deliberately the same
+    # so there is one idea in the repository rather than two.
+    needs: [build, template, aot, manifest, docs, attribution]
+
+    # always(), or it would be skipped by exactly the failures it exists to report. Pushes
+    # only: a red pull request is already in front of the person who opened it, and filing
+    # an issue for one would be noise.
+    if: always() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The whole point. Without this the run can only be a red icon; with it, a failure
+      # reaches a named person's notifications.
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Through the environment, not interpolated into the shell line: a `${{ }}`
+          # expansion inside a script is a script-injection shape whatever it holds today.
+          FLOWX_NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 scripts/report-red-run.py \
+            --branch "${{ github.ref_name }}" \
+            --commit "${{ github.sha }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --owner "${{ github.repository_owner }}" \
+            --notify
