@@ -139,8 +139,8 @@ flowchart LR
 ```
 
 Drawn by hand, for now. `flowx graph` renders one manifest as a flowchart and has
-no `--events` switch; the CLI has four verbs — `graph`, `manifest`, `diff`,
-`verify` ([22-CLI](../../docs/22-CLI.md)). The estate-wide topology above is what
+no `--events` switch; the CLI has five verbs — `graph`, `manifest`, `diff`,
+`verify` and `replay` ([22-CLI](../../docs/22-CLI.md)). The estate-wide topology above is what
 those manifests make *possible*, not something any command assembles today, so
 this diagram can and does drift.
 

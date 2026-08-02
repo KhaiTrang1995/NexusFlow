@@ -69,6 +69,46 @@ public sealed class AgentSurfaceTests
     }
 
     /// <summary>
+    /// Every flow this assembly declares has its dispatcher registered by the composition root.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The generic form of the defect above, and the one that catches the *next* flow rather than
+    /// this one. A flow whose dispatcher nobody registers fails differently depending on its
+    /// triggers — an HTTP route throws on the first request, a subscription throws during
+    /// start-up, and a flow with neither fails nowhere at all — so the check is "resolves", not
+    /// "the host started".
+    /// </para>
+    /// <para>
+    /// Reflection, which this project may use and the sample may not: <c>Directory.Build.props</c>
+    /// sets <c>IsAotCompatible=false</c> on test projects precisely so a fitness function can read
+    /// the assembly. Enumerating the types is what makes this hold for a flow that does not exist
+    /// yet, which a list of four <c>GetRequiredService</c> calls would not.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task EveryDeclaredFlowsDispatcherIsRegistered()
+    {
+        using var host = await StartAsync();
+
+        var dispatchers = typeof(PlaceOrderFlow).Assembly.GetTypes()
+            .Where(type => type.IsNested && type.Name == "Dispatcher")
+            .ToList();
+
+        // Four flows today. Pinned so that a generator change which stopped emitting the nested
+        // type turns this into a failure rather than a vacuous pass over an empty sequence.
+        dispatchers.Count.ShouldBe(4);
+
+        foreach (var dispatcher in dispatchers)
+        {
+            host.Services.GetService(dispatcher)
+                .ShouldNotBeNull(
+                    $"{dispatcher.DeclaringType!.Name}'s dispatcher is not registered, so the " +
+                    "flow it belongs to cannot run. Add it to Program.cs.");
+        }
+    }
+
+    /// <summary>
     /// <c>tools/list</c> publishes the flow's <c>[AgentTrigger]</c>, projected from the manifest.
     /// </summary>
     /// <remarks>

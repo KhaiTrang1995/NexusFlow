@@ -1131,7 +1131,8 @@ sweeps for the same occurrence and derives the same instance id from it, so the 
 once across a cluster and the replicas that lost are refused by the lease store and then by
 the journal's primary key. A firing that fell due while every node was down happens late.
 `samples/workflow`'s `offer.window.close` is the whole of it, and no line of its `Program.cs`
-names a time. What is not read into a plan is `Overlap`, `MissedFire` and `Jitter`.
+names a time. `MissedFire` and `PerTenant` are read into the schedule; `Overlap` and `Jitter`
+are declared on the attribute and reach nothing.
 
 **Multi-tenancy at two of four levels.** *This paragraph read "No multi-tenancy. Nothing
 consumes it … every isolation level is the same level, and it is 'none enforced by the

@@ -19,7 +19,7 @@ platform services, not job-framework glue.
 > is where three replicas over one PostgreSQL are held to six firings rather than
 > eighteen. `PerTenant` fan-out is served too, over the tenant registry at L2.
 >
-> **What is left is this page's larger claim**: `Overlap`, `MissedFire` and `Jitter`
+> **What is left is this page's larger claim**: `Overlap` and `Jitter`
 > as declared options, and DST correctness stated rather than assumed.
 
 > [!WARNING]
@@ -169,8 +169,12 @@ public async Task Skips_overlapping_runs_and_records_why()
 
 ## Things to try
 
-*None of these can be tried yet — there is no project and no scheduler. Kept as
-the acceptance list WP-75 is written to.*
+*None of these can be tried here — there is no project. Item 1 is still the
+acceptance list it always was: `Overlap` and `Jitter` are declared on the attribute
+and reach nothing. **Item 2 can be tried elsewhere**, because `MissedFire` is read
+into the schedule and narrows what a sweep fires — `samples/workflow` is where a
+schedule fires once across three nodes and a firing that fell due while every node
+was down happens late.*
 
 1. Set `Overlap = OverlapPolicy.Concurrent` and simulate a 25-hour run — watch
    instances stack, and see why `Skip` is the default.
