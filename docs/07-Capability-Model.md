@@ -284,7 +284,7 @@ public enum Authorization
     Authenticated,  // any valid principal
     Permission,     // named permission, e.g. "payment:capture"
     Policy,         // named ASP.NET Core authorization policy
-    Internal        // callable only from another flow, never from an external trigger
+    Internal        // composed into flows, never addressed on its own
 }
 ```
 
@@ -294,9 +294,13 @@ public enum Authorization
   required, and without the name the manifest publishes a stance nothing can be checked
   against — which also left `flowx diff`'s `FLOWX-DIFF-015` with no value to compare when
   the grant moved.
-- `Internal` capabilities are unreachable from any trigger — the Trigger Engine
-  rejects them at admission and the compiler removes them from the agent tool
-  surface.
+- `Internal` admits every caller at the step, because a trigger addresses a **flow**
+  and never a capability ([ADR-0004](adr/ADR-0004-universal-trigger-model.md)), so there
+  is no external caller there to refuse. Nothing rejects it at admission and nothing
+  strips it from the agent tool surface — there is no capability on that surface to
+  strip, because tools are flows. It is **not** a way to hide a capability from a
+  caller: an `Internal` step runs whoever triggered the flow that composes it.
+  `NoTriggerAttributeAddressesACapability` is what keeps the premise true.
 - The manifest lists every capability's stance **and the permission or policy it names**
   (`authorization.mode` and `authorization.value`), so "who can capture a payment?"
   is a query, not an investigation (QR9).

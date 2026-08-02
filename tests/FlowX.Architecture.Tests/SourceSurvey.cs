@@ -122,7 +122,8 @@ internal static class SourceSurvey
             Authorization: capability is null ? null : EnumMember(NamedArgument(capability, "Authorization")),
             HasCapabilityAttribute: capability is not null,
             Reviewer: approvedBy is null ? null : PositionalArgument(approvedBy, 0),
-            ReviewDate: approvedBy is null ? null : PositionalArgument(approvedBy, 1));
+            ReviewDate: approvedBy is null ? null : PositionalArgument(approvedBy, 1),
+            AttributeNames: [.. attributes.Select(static a => SimpleName(a.Name))]);
     }
 
     /// <summary>Matches <c>[Capability]</c> and <c>[CapabilityAttribute]</c>, qualified or not.</summary>
@@ -189,6 +190,13 @@ internal static class SourceSurvey
 /// <param name="HasCapabilityAttribute">Whether <c>[Capability]</c> is present at all.</param>
 /// <param name="Reviewer">The reviewer from <c>[ApprovedBy]</c>, when present.</param>
 /// <param name="ReviewDate">The review date from <c>[ApprovedBy]</c>, when present.</param>
+/// <param name="AttributeNames">
+/// Every attribute on the type, by its right-most identifier and as written — so
+/// <c>[HttpTrigger]</c> reads as <c>HttpTrigger</c> and <c>[FlowX.HttpTriggerAttribute]</c>
+/// as <c>HttpTriggerAttribute</c>. Carried whole rather than as a set of booleans because
+/// the question a gate asks of it is "is anything here of a shape we forbid", which a
+/// fixed list of named flags cannot be asked.
+/// </param>
 internal sealed record CapabilityDeclaration(
     string TypeName,
     string File,
@@ -197,7 +205,8 @@ internal sealed record CapabilityDeclaration(
     string? Authorization,
     bool HasCapabilityAttribute,
     string? Reviewer,
-    string? ReviewDate)
+    string? ReviewDate,
+    IReadOnlyList<string> AttributeNames)
 {
     /// <summary>Where this declaration is, in a form a failure message can print.</summary>
     public string Where => $"{File}:{Line} ({TypeName})";
