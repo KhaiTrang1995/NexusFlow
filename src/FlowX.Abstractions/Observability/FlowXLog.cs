@@ -356,6 +356,12 @@ public static class FlowXLog
     /// <param name="instanceId">The instance the call was about, where the call names one.</param>
     /// <param name="errorCode">The store's refusal code, or <c>null</c> when it answered.</param>
     /// <param name="errorCategory">The refusal's <c>ErrorCategory</c>, on refusal only.</param>
+    /// <param name="tenantId">
+    /// Whose schema the call was made against, where the store keeps one per tenant. Optional
+    /// because the call that names an instance does not need it — the instance is in one
+    /// tenant's schema by construction — and necessary for the node-wide sweeps, whose refusal
+    /// is <em>about</em> a tenant and is otherwise a code with nothing to act on.
+    /// </param>
     /// <remarks>
     /// <strong>Two events rather than one with an outcome field</strong>, because a subscriber
     /// filters by name: a host that wants only the refusals — the fenced-out writes that say a
@@ -363,7 +369,11 @@ public static class FlowXLog
     /// every commit in a healthy process.
     /// </remarks>
     public static void WriteJournalCall(
-        string operation, Guid? instanceId, string? errorCode, string? errorCategory)
+        string operation,
+        Guid? instanceId,
+        string? errorCode,
+        string? errorCategory,
+        string? tenantId = null)
     {
         var refused = errorCode is not null;
         var name = refused ? JournalRefused : JournalCalled;
@@ -381,6 +391,7 @@ public static class FlowXLog
             {
                 Operation = operation,
                 InstanceId = instanceId?.ToString(),
+                TenantId = tenantId,
                 ErrorCode = errorCode,
                 ErrorCategory = errorCategory,
             }

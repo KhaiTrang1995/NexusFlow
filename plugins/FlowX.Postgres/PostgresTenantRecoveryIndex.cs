@@ -29,6 +29,10 @@ namespace FlowX.Postgres;
 /// <see cref="PostgresRecoveryIndex"/> uses to express it cannot see across schemas, and asking
 /// each tenant for at most its share is the same cap arrived at from the other side.
 /// </para>
+/// <para>
+/// <strong>One tenant's schema failing does not end the scan</strong>, and
+/// <see cref="TenantSweepFanOut"/> carries that argument.
+/// </para>
 /// </remarks>
 public sealed class PostgresTenantRecoveryIndex : IRecoveryIndex
 {
@@ -51,41 +55,18 @@ public sealed class PostgresTenantRecoveryIndex : IRecoveryIndex
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        // A scan that already names a tenant is not a fan-out: it visits one schema, which is
-        // the shape FlowRecoveryScan uses when it is asked about one tenant and the shape the
-        // isolation tests assert in both directions.
-        var tenants = query.TenantId is { Length: > 0 } only
-            ? [only]
-            : await _stores.KnownTenantsAsync(cancellationToken).ConfigureAwait(false);
+        var perTenant = TenantSweepFanOut.PerTenant(query.PerTenantLimit, query.Limit);
 
-        var perTenant = query.PerTenantLimit > 0
-            ? Math.Min(query.PerTenantLimit, query.Limit)
-            : query.Limit;
-
-        var merged = new List<AbandonedInstance>();
-
-        foreach (var tenant in tenants)
-        {
-            var store = await _stores.ForAsync(tenant, cancellationToken).ConfigureAwait(false);
-
-            var listed = await new PostgresRecoveryIndex(store)
-                .ListAbandonedAsync(
-                    query with { TenantId = tenant, Limit = perTenant, PerTenantLimit = 0 },
-                    cancellationToken)
-                .ConfigureAwait(false);
-
-            if (listed.IsFailure)
-            {
-                return listed;
-            }
-
-            merged.AddRange(listed.Value);
-        }
-
-        merged.Sort(static (left, right) => left.UpdatedAt.CompareTo(right.UpdatedAt));
-
-        return merged.Count <= query.Limit
-            ? merged
-            : merged.GetRange(0, query.Limit);
+        return await TenantSweepFanOut.SweepAsync(
+            _stores,
+            query.TenantId,
+            nameof(ListAbandonedAsync),
+            (store, tenant) => new PostgresRecoveryIndex(store).ListAbandonedAsync(
+                query with { TenantId = tenant, Limit = perTenant, PerTenantLimit = 0 },
+                cancellationToken),
+            static (left, right) => left.UpdatedAt.CompareTo(right.UpdatedAt),
+            query.Limit,
+            cancellationToken)
+            .ConfigureAwait(false);
     }
 }
