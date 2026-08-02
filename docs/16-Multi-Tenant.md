@@ -15,7 +15,7 @@
 > the runtime somehow did not (§5, migration `0006`). Tenant *A* cannot read, resume or
 > recover tenant *B*'s instance — asserted in both directions against a real database, and
 > through the recovery scan and the timer sweep as well as the ordinary path.
-> [ADR-0043](adr/ADR-0046-a-tenant-is-resolved-at-admission.md) records the decisions,
+> [ADR-0046](adr/ADR-0046-a-tenant-is-resolved-at-admission.md) records the decisions,
 > **including three places where §5's DDL does not isolate as written**.
 >
 > *This box previously said the platform "guarantees nothing about tenant isolation", that

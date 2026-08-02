@@ -13,33 +13,16 @@ type", but "does anything read it at run time".
 
 ## Priority
 
-| # | Feature | State | Why here |
+| # | Feature | State | Note |
 |---|---|---|---|
-| 1 | **Multi-tenancy** | plumbed, unenforced | The only *correctness* gap left: nothing stops one tenant's flow reading another's rows. A data-isolation bug is not a missing feature |
-| 2 | **Logs** | absent | Third leg of observability; traces and metrics run. Blocked on one decision, not effort |
-| 3 | ~~**AI surface (MCP)**~~ | **built** — `plugins/FlowX.Mcp`, 2026-08-02 | *This row said `AgentTrigger` existed and nothing served it.* `tools/list` is a projection of the manifest and `tools/call` enters the one `FlowEngine.ExecuteAsync` with the agent's principal. See §3 |
-| 4 | **`Stream` and `Change` triggers** | declared, unbound | Two of eight kinds. `Change` is CDC over the outbox, which already exists |
+| — | Four policy kinds · multi-tenancy · logs · AI surface | **built 2026-08-02** | `FLOWX1032` deleted with the gap it reported. Sections 1–3 below are kept as the design, each with a note where the implementation corrected it |
+| 1 | **`Authorization.Internal` is enforced nowhere** | **defect** | `StepAuthorization` permits it unconditionally while its own summary claims the trigger engine rejects it at admission. A flow stepping through an `Internal` capability runs for an anonymous caller down any transport — and the agent surface made that reachable |
+| 2 | **`Change` trigger** | declared, unbound | Cheapest transport left: the outbox already stages every event in the step's transaction, so CDC is a second consumer of a table that exists |
+| 3 | **Tenant fairness, `Schema`/`Database` isolation** | unbuilt | `Row` isolation landed; [16 §4](16-Multi-Tenant.md)'s six fairness mechanisms did not, and the two higher levels are refused at startup rather than implemented |
+| 4 | **`Stream` trigger** | blocked | Needs the stream engine below |
 | 5 | **Stream engine** | absent | **Not next.** Nothing defines the checkpoint format, watermark generation or how window state is journaled — implementing it means inventing it |
 | 6 | **Studio** | absent | **Not next.** Sixteen one-line mentions and no design |
 
-**The four policy kinds left this table.** `RateLimit`, `Idempotency`, `Cache` and `Audit`
-were priority 1 because theirs was the only item that **deleted a diagnostic**: `FLOWX1032`
-existed to tell a user their declaration did nothing, and every release shipping it shipped
-an admission. All four execute, and the rule is deleted with the gap.
-
-**The AI surface left it too**, and row 3 is kept rather than removed because the recurring
-shape named at the top of this document — *a contract declared, published and diffed, with
-the wire cut at the last inch* — is what it was an instance of, and what its §3 now records
-having closed.
-| 1 | **Four policy kinds** — `RateLimit`, `Idempotency`, `Cache`, `Audit` | declared, inert | The only item that **deletes a diagnostic**. `FLOWX1032` exists to tell a user their declaration does nothing; every release shipping it ships an admission |
-| 2 | **Multi-tenancy** | plumbed, unenforced | The only *correctness* gap left: nothing stops one tenant's flow reading another's rows. A data-isolation bug is not a missing feature |
-| 3 | ~~**Logs**~~ | **built** | Was "absent, blocked on one decision, not effort". The decision was taken as designed in [§2](#2-logs--the-design): `FlowXLog` emits through `DiagnosticSource` and `src/FlowX.Logging` bridges to `ILogger` |
-| 2 | **Multi-tenancy** | ~~plumbed, unenforced~~ · **`Row` isolation built** | *Was: "the only correctness gap left — nothing stops one tenant's flow reading another's rows."* Resolution, refusal and row isolation landed on 2026-08-02 ([ADR-0043](adr/ADR-0046-a-tenant-is-resolved-at-admission.md)), which corrects the design below in three places. Fairness (§4 of [16](16-Multi-Tenant.md)) and the `Schema`/`Database` levels remain unbuilt |
-| 3 | **Logs** | absent | Third leg of observability; traces and metrics run. Blocked on one decision, not effort |
-| 4 | **AI surface (MCP)** | declared, unbound | `AgentTrigger` exists and nothing serves it. [13](13-AI-Native.md) specifies the descriptor and the `tools/call` sequence in full |
-| 5 | **`Stream` and `Change` triggers** | declared, unbound | Two of eight kinds. `Change` is CDC over the outbox, which already exists |
-| 6 | **Stream engine** | absent | **Not next.** Nothing defines the checkpoint format, watermark generation or how window state is journaled — implementing it means inventing it |
-| 7 | **Studio** | absent | **Not next.** Sixteen one-line mentions and no design |
 
 ## 1. Multi-tenancy — the design
 
@@ -70,7 +53,7 @@ there since migration `0001`, and `FlowTelemetry` already tags spans with it.
 
 > [!NOTE]
 > **Built on 2026-08-02, and the design below is corrected in three places** by
-> [ADR-0043](adr/ADR-0046-a-tenant-is-resolved-at-admission.md), which should be read with it.
+> [ADR-0046](adr/ADR-0046-a-tenant-is-resolved-at-admission.md), which should be read with it.
 > The class view's `Resolve(TriggerEnvelope)` became `Resolve(in FlowInvocation)`, because
 > `FlowHost` — the point both sequence diagrams place the resolver at — never sees a
 > `TriggerEnvelope`. The resolver **derives** the tenant from claims and treats what arrived on
