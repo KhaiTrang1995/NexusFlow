@@ -23,12 +23,19 @@ jobs:
         with:
           global-json-file: global.json
 
+      - name: Build
+        # Separately, and before the tests. The architecture gates scan the Release
+        # output of projects they deliberately do not reference, so under a bare
+        # `dotnet test` they ran while Ecommerce.dll and Banking.dll were still being
+        # compiled and failed on a tree that was merely incomplete.
+        run: dotnet build FlowX.slnx --configuration Release
+
       - name: Test with coverage
         # coverlet.runsettings excludes source-generated code. Without it the regex
         # generator's output is measured, which reports the generator's branches
         # rather than ours and drags the number down for no signal.
         run: >
-          dotnet test FlowX.slnx --configuration Release
+          dotnet test FlowX.slnx --configuration Release --no-build
           --settings coverlet.runsettings
           --collect:"XPlat Code Coverage"
           --results-directory ./TestResults
@@ -142,8 +149,10 @@ jobs:
             echo "FlowX.Core does not exist yet (WP-2). Nothing to mutate."
             exit 0
           fi
-          dotnet tool install --global dotnet-stryker
-          dotnet stryker --project FlowX.Core.csproj --threshold-break 70 --reporter progress --reporter html
+          # Pinned: the flag below was renamed once already, and an unpinned tool
+          # turns that into a red job on a morning nobody changed anything.
+          dotnet tool install --global dotnet-stryker --version 4.16.0
+          dotnet stryker --project FlowX.Core.csproj --break-at 70 --reporter progress --reporter html
 
       - uses: actions/upload-artifact@v4
         if: always()
