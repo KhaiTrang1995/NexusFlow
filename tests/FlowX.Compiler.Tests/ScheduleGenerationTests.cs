@@ -170,9 +170,63 @@ public sealed class ScheduleGenerationTests
             .Split('\n')
             .Select(static line => line.Trim())
             .ShouldContain(
-                expected + ");",
-                "the flag is the registration's last argument, so its line is the one that " +
-                "decides whether the occurrence fans out.");
+                expected + ",",
+                "the flag is the argument after the missed-fire policy, so its line is the one " +
+                "that decides whether the occurrence fans out.");
+    }
+
+    /// <summary><c>Overlap</c> reaches the registration, and its default reaches it too.</summary>
+    /// <remarks>
+    /// <strong>It was declared and inert</strong>, in <c>PerTenant</c>'s way and for longer: the
+    /// attribute has carried <c>Overlap</c> since the trigger model shipped, its default reads as
+    /// though it stops a long run stacking on itself, and until the sweep learned to ask the
+    /// journal what the last firing was doing it stopped nothing. A registration that dropped it
+    /// would put every schedule back on <c>Concurrent</c> with nothing failing.
+    /// </remarks>
+    [Theory]
+    [InlineData("[CronTrigger(\"0 2 * * *\", Overlap = OverlapPolicy.Concurrent)]", "Concurrent")]
+    [InlineData("[CronTrigger(\"0 2 * * *\", Overlap = OverlapPolicy.Queue)]", "Queue")]
+    [InlineData("[CronTrigger(\"0 2 * * *\")]", "Skip")]
+    public void TheDeclaredOverlapPolicyReachesTheRegistration(string declaration, string expected)
+    {
+        var source = Scheduled.Replace(
+            "[CronTrigger(\"0 2 * * *\", TimeZone = \"Europe/Berlin\")]",
+            declaration,
+            StringComparison.Ordinal);
+
+        SchedulesIn(RunOn(source, HostingStub))
+            .ShouldNotBeNull()
+            .ShouldContain("global::FlowX.OverlapPolicy." + expected + ",");
+    }
+
+    /// <summary>
+    /// <c>Jitter</c> reaches the registration verbatim, and an omitted one reaches it as null.
+    /// </summary>
+    /// <remarks>
+    /// The two are different registrations rather than two spellings of one: null is a schedule
+    /// that fires on its occurrence, and the empty string would be a declared spread with nothing
+    /// in it — which <c>FLOWX1045</c> reports rather than the emitter normalising away. Passed
+    /// verbatim for <c>Cron</c>'s reason, one property over: the host parses it where a failure
+    /// can be a pod that never becomes ready.
+    /// </remarks>
+    [Theory]
+    [InlineData("[CronTrigger(\"0 2 * * *\", Jitter = \"PT120S\")]", "\"PT120S\");")]
+    [InlineData("[CronTrigger(\"0 2 * * *\")]", "null);")]
+    public void TheDeclaredJitterReachesTheRegistration(string declaration, string expected)
+    {
+        var source = Scheduled.Replace(
+            "[CronTrigger(\"0 2 * * *\", TimeZone = \"Europe/Berlin\")]",
+            declaration,
+            StringComparison.Ordinal);
+
+        SchedulesIn(RunOn(source, HostingStub))
+            .ShouldNotBeNull()
+            .Split('\n')
+            .Select(static line => line.Trim())
+            .ShouldContain(
+                expected,
+                "the spread is the registration's last argument, so its line is the one that " +
+                "decides when in the window a firing is released.");
     }
 
     /// <summary>

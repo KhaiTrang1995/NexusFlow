@@ -107,7 +107,8 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
             FlowXDiagnostics.ScheduledFlowCannotBeFired,
             FlowXDiagnostics.BusFlowCannotBeConsumed,
             FlowXDiagnostics.ChangeFlowCannotBeObserved,
-            FlowXDiagnostics.StreamFlowCannotBeWindowed);
+            FlowXDiagnostics.StreamFlowCannotBeWindowed,
+            FlowXDiagnostics.ScheduleJitterCannotBeRead);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -160,9 +161,105 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
         }
 
         ReportUnfireableSchedules(context, type, attributes);
+        ReportUnreadableJitter(context, type, attributes);
         ReportUnconsumableSubscriptions(context, type, attributes);
         ReportUnobservableChangeSubscriptions(context, type, attributes);
         ReportUnwindowableStreams(context, type, attributes);
+    }
+
+    /// <summary>
+    /// Reports FLOWX1045 on each <c>[CronTrigger]</c> whose <c>Jitter</c> the host would refuse.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Per attribute rather than per flow</strong>, unlike
+    /// <see cref="ReportUnfireableSchedules"/>: the spread is a property of one declaration, so a
+    /// flow with two schedules gets a report on the one whose window is unreadable and silence on
+    /// the other. That is <see cref="ReportUnwindowableStreams"/>'s arrangement, and it is here
+    /// for the same reason.
+    /// </para>
+    /// <para>
+    /// Reported whether or not the flow is fireable at all. The two are independent defects with
+    /// independent fixes, and suppressing one because the other is also present would mean an
+    /// author repairs the profile, rebuilds, and discovers a second error they could have seen
+    /// the first time.
+    /// </para>
+    /// </remarks>
+    private static void ReportUnreadableJitter(
+        SymbolAnalysisContext context, INamedTypeSymbol type, ImmutableArray<AttributeData> attributes)
+    {
+        foreach (var attribute in attributes)
+        {
+            if (attribute.AttributeClass?.ToDisplayString() != CronTriggerAttributeName)
+            {
+                continue;
+            }
+
+            var jitter = attribute.NamedArguments
+                .Where(static pair => pair.Key == "Jitter")
+                .Select(static pair => pair.Value.Value as string)
+                .FirstOrDefault();
+
+            if (jitter is null || UnreadableJitterReason(jitter) is not { } reason)
+            {
+                continue;
+            }
+
+            context.ReportDiagnostic(Diagnostic.Create(
+                FlowXDiagnostics.ScheduleJitterCannotBeRead,
+                LocationOf(attribute, type, context.CancellationToken),
+                FlowIdOf(type, attributes),
+                jitter,
+                reason));
+        }
+    }
+
+    /// <summary>
+    /// Why this spread is not one the host can register, or <c>null</c> when it is.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Parsed here rather than by calling the runtime's reader, which this assembly
+    /// cannot reference.</strong> <see cref="System.Xml.XmlConvert.ToTimeSpan"/> is what
+    /// <c>ScheduleJitter.Read</c> calls and it is available on netstandard2.0, so the two are the
+    /// same function rather than two parsers to keep in step —
+    /// <c>DeadlineCoherenceAnalyzer.Iso8601Duration</c> takes the same route for the same reason.
+    /// </para>
+    /// <para>
+    /// The one thing not judged is whether the spread is wider than the gap between two
+    /// occurrences. That is a property of the expression as well as the window, this rule has the
+    /// expression as a string and no cron evaluator, and the answer is a design question rather
+    /// than a defect: an author who spreads an hourly schedule over ninety minutes has asked for
+    /// firings that overtake each other, and <c>OverlapPolicy</c> is what decides what happens
+    /// then.
+    /// </para>
+    /// </remarks>
+    private static string? UnreadableJitterReason(string jitter)
+    {
+        if (jitter.Trim().Length == 0)
+        {
+            return "it is empty. Omit the property for a schedule that fires on its occurrence";
+        }
+
+        System.TimeSpan window;
+
+        try
+        {
+            window = System.Xml.XmlConvert.ToTimeSpan(jitter);
+        }
+        catch (System.FormatException)
+        {
+            return "it is not an ISO-8601 duration — write PT30S, PT2M or PT1H";
+        }
+        catch (System.OverflowException)
+        {
+            return "it does not fit in a TimeSpan";
+        }
+
+        return window > System.TimeSpan.Zero
+            ? null
+            : "a spread has to be positive, and this one is not — omit the property rather than " +
+              "declaring a window nothing is spread over";
     }
 
     /// <summary>

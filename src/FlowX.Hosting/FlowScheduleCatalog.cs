@@ -12,25 +12,33 @@ namespace FlowX.Hosting;
 /// What to do about occurrences that fell due while nothing was there to take them
 /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0032-a-missed-schedule-fires-late.md">ADR-0027</a>).
 /// </param>
+/// <param name="PerTenant">
+/// Whether one occurrence is one firing per tenant, from <c>CronTriggerAttribute.PerTenant</c>.
+/// </param>
+/// <param name="Overlap">
+/// What happens to an occurrence that falls due while an earlier firing of the same schedule is
+/// still running, from <c>CronTriggerAttribute.Overlap</c>.
+/// </param>
+/// <param name="Jitter">
+/// How wide a window one firing may be released within, from
+/// <c>CronTriggerAttribute.Jitter</c>. <see cref="TimeSpan.Zero"/> is a schedule that fires on
+/// its occurrence.
+/// </param>
 /// <remarks>
 /// <para>
-/// <strong>Four values, and three of them are in the instance id.</strong> The flow id, the
+/// <strong>Seven values, and four of them are in the instance id.</strong> The flow id, the
 /// version, the expression and the zone are exactly what
 /// <see cref="ScheduleOccurrence.InstanceIdFor"/> derives from, which is why they are carried
 /// here as a unit rather than reassembled at each firing: a schedule that lost its version
 /// between registration and derivation would fold a canary onto the version it was replacing.
 /// </para>
-/// <param name="PerTenant">
-/// Whether one occurrence is one firing per tenant, from <c>CronTriggerAttribute.PerTenant</c>.
-/// </param>
 /// <para>
-/// <strong>What is deliberately absent.</strong> <c>Overlap</c> and <c>Jitter</c> are declared
-/// on <c>CronTriggerAttribute</c> and are not here, because nothing reads them: this release
-/// binds <c>Schedule</c> and does not bind those two (<c>docs/09-Trigger-Model.md §8</c>).
-/// Carrying them would put a value on this record that no code branches on, which is the shape
-/// of debt the deleted <c>FLOWX1032</c> existed to report. <c>PerTenant</c> was in that list
-/// until <see cref="FlowScheduleScan"/> learned to fan out, and is now the term that decides
-/// whether an occurrence produces one instance or one per tenant.
+/// <strong>Every value <c>[CronTrigger]</c> declares is now here.</strong> This record carried
+/// five until <see cref="FlowScheduleScan"/> learned to hold a firing back and to look at what
+/// the last one is doing; <c>Overlap</c> and <c>Jitter</c> reached nothing at all before that,
+/// which <c>docs/09-Trigger-Model.md §8</c> recorded rather than hid. Neither is in the derived
+/// id, and neither may be: the id is the occurrence's address, and an address that moved when a
+/// deployment widened its jitter would fire every occurrence a second time.
 /// </para>
 /// </remarks>
 public sealed record FlowSchedule(
@@ -38,22 +46,28 @@ public sealed record FlowSchedule(
     string FlowVersion,
     CronSchedule Cron,
     MissedFirePolicy MissedFire,
-    bool PerTenant = false)
+    bool PerTenant = false,
+    OverlapPolicy Overlap = OverlapPolicy.Skip,
+    TimeSpan Jitter = default)
 {
-    /// <summary>Reads a declared schedule, throwing on an expression or zone it cannot read.</summary>
+    /// <summary>Reads a declared schedule, throwing on an expression, zone or jitter it cannot read.</summary>
     /// <param name="flowId">The flow's business identity.</param>
     /// <param name="flowVersion">The version this node carries.</param>
     /// <param name="cron">A five-field cron expression.</param>
     /// <param name="timeZone">An IANA time zone id.</param>
     /// <param name="missedFire">Behaviour after downtime.</param>
     /// <param name="perTenant">Whether one occurrence fires once per tenant.</param>
+    /// <param name="overlap">What happens when the previous firing is still running.</param>
+    /// <param name="jitter">
+    /// An ISO-8601 duration, or null for a schedule that fires on its occurrence.
+    /// </param>
     /// <returns>The schedule.</returns>
     /// <exception cref="ArgumentException">
-    /// The expression or the zone could not be read. Thrown rather than returned because this
-    /// runs at composition time from generated code that read a compile-time constant: a
-    /// deployment whose cron expression is unreadable should be a pod that never becomes ready,
-    /// which is the same stance <c>FlowXOptionsValidator</c> takes and for the same reason
-    /// (OWASP A05). A job that silently never runs is the alternative.
+    /// The expression, the zone or the jitter could not be read. Thrown rather than returned
+    /// because this runs at composition time from generated code that read a compile-time
+    /// constant: a deployment whose cron expression is unreadable should be a pod that never
+    /// becomes ready, which is the same stance <c>FlowXOptionsValidator</c> takes and for the
+    /// same reason (OWASP A05). A job that silently never runs is the alternative.
     /// </exception>
     public static FlowSchedule Create(
         string flowId,
@@ -61,7 +75,9 @@ public sealed record FlowSchedule(
         string cron,
         string timeZone,
         MissedFirePolicy missedFire,
-        bool perTenant = false)
+        bool perTenant = false,
+        OverlapPolicy overlap = OverlapPolicy.Skip,
+        string? jitter = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(flowId);
         ArgumentException.ThrowIfNullOrWhiteSpace(flowVersion);
@@ -75,8 +91,32 @@ public sealed record FlowSchedule(
                 nameof(cron));
         }
 
-        return new FlowSchedule(flowId, flowVersion, parsed.Value, missedFire, perTenant);
+        var spread = ScheduleJitter.Read(jitter);
+
+        if (spread.IsFailure)
+        {
+            throw new ArgumentException(
+                $"Flow '{flowId}' declares a schedule this host cannot read. {spread.Error.Message}",
+                nameof(jitter));
+        }
+
+        return new FlowSchedule(
+            flowId, flowVersion, parsed.Value, missedFire, perTenant, overlap, spread.Value);
     }
+
+    /// <summary>The instant one firing is released, which is its occurrence plus its own offset.</summary>
+    /// <param name="occurrence">The instant the expression named.</param>
+    /// <param name="tenantId">Whose firing, or null for a schedule that fires once.</param>
+    /// <returns>The occurrence itself on a schedule with no jitter.</returns>
+    /// <remarks>
+    /// Derived from the instance id, so every node in the fleet releases this firing at the same
+    /// instant and the spread survives a fleet of any size
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0059-schedule-jitter-is-derived-from-the-firing.md">ADR-0059</a>).
+    /// </remarks>
+    public DateTimeOffset ReleaseFor(DateTimeOffset occurrence, string? tenantId = null) =>
+        Jitter <= TimeSpan.Zero
+            ? occurrence
+            : occurrence + ScheduleJitter.OffsetFor(InstanceIdFor(occurrence, tenantId), Jitter);
 
     /// <summary>The id the instance for one firing of this schedule is started under.</summary>
     /// <param name="occurrence">The instant the expression named.</param>

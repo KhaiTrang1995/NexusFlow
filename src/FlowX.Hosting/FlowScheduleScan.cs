@@ -54,7 +54,7 @@ public sealed class FlowScheduleScan
     private readonly ITenantDirectory? _tenants;
     private readonly DateTimeOffset _startedAt;
     private readonly Lock _gate = new();
-    private readonly Dictionary<string, DateTimeOffset> _accounted = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Accounted> _accounted = new(StringComparer.Ordinal);
 
     /// <summary>Builds a sweep over one node's registered schedules.</summary>
     /// <param name="host">Where a firing is started, so it is counted and drained.</param>
@@ -128,6 +128,8 @@ public sealed class FlowScheduleScan
         var now = _clock.UtcNow;
         var due = new List<Firing>();
         var unresolved = 0;
+        var skipped = 0;
+        var held = 0;
 
         foreach (var registration in _schedules.Registrations)
         {
@@ -145,16 +147,23 @@ public sealed class FlowScheduleScan
 
             foreach (var tenant in audience.Value)
             {
-                var occurrences = await DueForAsync(registration, tenant, now, ct)
-                    .ConfigureAwait(false);
+                var pass = await DueForAsync(registration, tenant, now, ct).ConfigureAwait(false);
 
-                due.AddRange(occurrences.Select(o => new Firing(registration, o, tenant)));
+                skipped += pass.Skipped;
+                held += pass.Held;
+
+                due.AddRange(pass.Occurrences.Select(o => new Firing(registration, o, tenant)));
             }
         }
 
         if (due.Count == 0)
         {
-            return Tagged(span, ScheduleScanReport.Nothing with { Failed = unresolved });
+            return Tagged(span, ScheduleScanReport.Nothing with
+            {
+                Failed = unresolved,
+                Skipped = skipped,
+                Held = held,
+            });
         }
 
         var capacity = _options.MaxConcurrentRecoveries;
@@ -173,6 +182,8 @@ public sealed class FlowScheduleScan
             Fired = attempts.Count(static a => a == Attempt.Fired),
             Contended = attempts.Count(static a => a == Attempt.Contended),
             Failed = attempts.Count(static a => a == Attempt.Failed) + unresolved,
+            Skipped = skipped,
+            Held = held,
         });
     }
 
@@ -274,8 +285,18 @@ public sealed class FlowScheduleScan
     /// and twenty; and <see cref="MissedFirePolicy.RunAll"/> takes every one, which is what an
     /// author asks for when each firing does a different piece of work.
     /// </para>
+    /// <para>
+    /// <strong>Two gates then sit outside all of that, and neither of them is allowed to change
+    /// what an occurrence <em>is</em>.</strong> Jitter holds a firing back until its own released
+    /// instant has passed, and <see cref="OverlapPolicy"/> asks the journal what the last firing
+    /// of this schedule is doing. Both decide <em>when</em> and <em>whether</em> this node acts;
+    /// the occurrence, the derived instance id and the <c>ScheduledFire</c> the flow binds are
+    /// untouched by either, which is what keeps a jittered fleet from splitting one firing into
+    /// two
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0059-schedule-jitter-is-derived-from-the-firing.md">ADR-0059</a>).
+    /// </para>
     /// </remarks>
-    private async ValueTask<List<DateTimeOffset>> DueForAsync(
+    private async ValueTask<Pass> DueForAsync(
         ScheduleRegistration registration,
         string? tenantId,
         DateTimeOffset now,
@@ -291,27 +312,46 @@ public sealed class FlowScheduleScan
 
         var horizon = now - _options.ScheduleCatchUp;
 
-        DateTimeOffset? known;
+        Accounted? known;
 
         lock (_gate)
         {
             known = _accounted.TryGetValue(key, out var last) ? last : null;
         }
 
-        var floor = known is { } accounted && accounted > horizon
+        var floor = known is { Floor: var accounted } && accounted > horizon
             ? accounted
             : await FirstFloorAsync(schedule, tenantId, now, horizon, ct).ConfigureAwait(false);
 
-        var occurrences = schedule.Cron.Between(floor, now).ToList();
+        // Every occurrence whose released instant has passed, in order, stopping at the first one
+        // still inside its jitter window. Stopping rather than filtering is what keeps the floor
+        // honest: a held-back occurrence is still owed, so nothing after it may advance past it.
+        var occurrences = new List<DateTimeOffset>();
+        var holding = false;
+
+        foreach (var occurrence in schedule.Cron.Between(floor, now))
+        {
+            if (schedule.ReleaseFor(occurrence, tenantId) > now)
+            {
+                holding = true;
+
+                break;
+            }
+
+            occurrences.Add(occurrence);
+        }
+
+        var held = holding ? 1 : 0;
 
         if (occurrences.Count == 0)
         {
-            Account(key, floor);
+            Account(key, floor, known?.LastFiring);
 
-            return [];
+            return new Pass([], Skipped: 0, held);
         }
 
         List<DateTimeOffset> firing;
+        DateTimeOffset accountTo;
 
         switch (schedule.MissedFire)
         {
@@ -321,7 +361,7 @@ public sealed class FlowScheduleScan
                 firing = occurrences[^1] >= now - (_options.ScheduleScanInterval * 2)
                     ? [occurrences[^1]]
                     : [];
-                Account(key, occurrences[^1]);
+                accountTo = occurrences[^1];
                 break;
 
             case MissedFirePolicy.RunAll:
@@ -329,17 +369,98 @@ public sealed class FlowScheduleScan
 
                 // What the batch did not reach is not forgotten: the floor advances only as far
                 // as this sweep actually fired, so the next one continues from there.
-                Account(key, firing.Count == 0 ? floor : firing[^1]);
+                accountTo = firing.Count == 0 ? floor : firing[^1];
                 break;
 
             // RunOnce, and anything a later release adds: one firing, however many were missed.
             default:
                 firing = [occurrences[^1]];
-                Account(key, occurrences[^1]);
+                accountTo = occurrences[^1];
                 break;
         }
 
-        return firing;
+        if (firing.Count == 0 || schedule.Overlap == OverlapPolicy.Concurrent)
+        {
+            Account(key, accountTo, firing.Count == 0 ? known?.LastFiring : firing[^1]);
+
+            return new Pass(firing, Skipped: 0, held);
+        }
+
+        var previous = known?.LastFiring ?? floor;
+        var running = await IsStillRunningAsync(schedule, tenantId, previous, ct)
+            .ConfigureAwait(false);
+
+        if (!running)
+        {
+            Account(key, accountTo, firing[^1]);
+
+            return new Pass(firing, Skipped: 0, held);
+        }
+
+        if (schedule.Overlap == OverlapPolicy.Queue)
+        {
+            // Nothing is accounted at all, so the same occurrences are reconsidered next sweep
+            // and fire the moment the run in front of them finishes. Queue is the policy that
+            // costs a journal read per sweep while it is waiting, and that is what it buys.
+            return new Pass([], Skipped: 0, Held: 1);
+        }
+
+        // Skip, and the occurrence is gone rather than deferred: the floor advances past it, and
+        // LastFiring stays on the run that is still going, so the next occurrence is measured
+        // against the same run rather than against a firing that never happened.
+        Account(key, accountTo, previous);
+
+        return new Pass([], firing.Count, held);
+    }
+
+    /// <summary>What one schedule's pass produced, for one tenant or for none.</summary>
+    /// <param name="Occurrences">The firings this node will attempt.</param>
+    /// <param name="Skipped">How many were dropped because an earlier firing is still running.</param>
+    /// <param name="Held">Whether an occurrence is inside its jitter window and not yet released.</param>
+    private readonly record struct Pass(
+        List<DateTimeOffset> Occurrences, int Skipped, int Held);
+
+    /// <summary>
+    /// Whether the firing this schedule most recently started has not yet reached a terminal
+    /// state.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>One read, against the journal rather than the lease store.</strong> A lease
+    /// answers "is a node holding this right now", which is false for the whole window between a
+    /// node dying and the recovery sweep taking its instance over — and an overlap policy that
+    /// treated an abandoned run as finished would start a second one beside the resumed first,
+    /// which is the exact stacking it exists to prevent. The instance row is the state that
+    /// survives the node.
+    /// </para>
+    /// <para>
+    /// <strong>An instance that is not there has finished, as far as this decides.</strong> It is
+    /// either an occurrence nothing ever fired or one whose row retention has removed, and in
+    /// both cases refusing to fire on the strength of it would stop the schedule for ever.
+    /// </para>
+    /// <para>
+    /// The consequence worth stating: a <see cref="OverlapPolicy.Skip"/> schedule whose last
+    /// firing is <c>Suspended</c> — parked on a signal or a timer — is overlapping and stays
+    /// overlapping until that instance resolves. That is the honest reading of "the previous run
+    /// is still going", and it is why a schedule that waits for a human should declare
+    /// <see cref="OverlapPolicy.Concurrent"/>.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<bool> IsStillRunningAsync(
+        FlowSchedule schedule,
+        string? tenantId,
+        DateTimeOffset occurrence,
+        CancellationToken ct)
+    {
+        var read = await _durability
+            .JournalFor(tenantId)
+            .ReadInstanceAsync(schedule.InstanceIdFor(occurrence, tenantId), ct)
+            .ConfigureAwait(false);
+
+        return read.IsSuccess && read.Value.State is FlowInstanceState.Pending
+            or FlowInstanceState.Running
+            or FlowInstanceState.Suspended
+            or FlowInstanceState.Compensating;
     }
 
     /// <summary>
@@ -377,11 +498,26 @@ public sealed class FlowScheduleScan
         return _startedAt > horizon ? _startedAt : horizon;
     }
 
-    private void Account(string key, DateTimeOffset floor)
+    /// <summary>
+    /// What this process has decided about one schedule, for one tenant or for none.
+    /// </summary>
+    /// <param name="Floor">
+    /// The newest occurrence this node has accounted for, fired or not. Everything after it is
+    /// still due.
+    /// </param>
+    /// <param name="LastFiring">
+    /// The newest occurrence this node has evidence of an instance for, or null when it has
+    /// none. Separate from <see cref="Floor"/> because a <see cref="OverlapPolicy.Skip"/> pass
+    /// advances the floor past occurrences it deliberately did not fire, and the next overlap
+    /// question must still be asked about the run that is actually going.
+    /// </param>
+    private readonly record struct Accounted(DateTimeOffset Floor, DateTimeOffset? LastFiring);
+
+    private void Account(string key, DateTimeOffset floor, DateTimeOffset? lastFiring)
     {
         lock (_gate)
         {
-            _accounted[key] = floor;
+            _accounted[key] = new Accounted(floor, lastFiring);
         }
     }
 
@@ -394,6 +530,8 @@ public sealed class FlowScheduleScan
             span.SetTag("flowx.scan.fired", report.Fired);
             span.SetTag("flowx.scan.contended", report.Contended);
             span.SetTag("flowx.scan.failed", report.Failed);
+            span.SetTag("flowx.scan.skipped", report.Skipped);
+            span.SetTag("flowx.scan.held", report.Held);
         }
 
         return report;
@@ -523,6 +661,32 @@ public sealed record ScheduleScanReport
 
     /// <summary>How many the stores refused for a reason worth looking at.</summary>
     public int Failed { get; init; }
+
+    /// <summary>
+    /// How many occurrences were dropped because an earlier firing of the same schedule had not
+    /// finished.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The number that says a schedule is slower than its own expression.</strong>
+    /// <see cref="OverlapPolicy.Skip"/> is the default precisely because the alternative is a
+    /// long run stacking on itself until the fleet dies, so an occasional one of these is the
+    /// policy working; a schedule producing one on every sweep is a schedule whose work no
+    /// longer fits between its firings, and no amount of capacity fixes that. A
+    /// <see cref="OverlapPolicy.Queue"/> schedule never reports one — it defers rather than
+    /// drops, and reports <see cref="Held"/> instead.
+    /// </remarks>
+    public int Skipped { get; init; }
+
+    /// <summary>
+    /// How many schedules had an occurrence this node deliberately did not act on yet.
+    /// </summary>
+    /// <remarks>
+    /// Either it is inside its jitter window and has not reached its released instant, or it is
+    /// queued behind a firing that is still running. Counted per schedule and tenant rather than
+    /// per occurrence, because "this schedule is waiting" is one fact however many occurrences
+    /// are behind it.
+    /// </remarks>
+    public int Held { get; init; }
 
     /// <summary>Why the sweep itself failed, when it did.</summary>
     public Error? Error { get; init; }

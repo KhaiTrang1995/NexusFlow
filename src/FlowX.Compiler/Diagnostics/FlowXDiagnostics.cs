@@ -1317,6 +1317,51 @@ public static class FlowXDiagnostics
         "is a manifest publishing a stream subscription and a host that reads nothing.",
         DiagnosticSeverity.Error);
 
+    /// <summary>
+    /// FLOWX1045: a <c>[CronTrigger]</c> declares a <c>Jitter</c> that spreads nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A property of the declaration alone, which is why it is not folded into
+    /// <see cref="ScheduledFlowCannotBeFired"/>.</strong> That rule asks whether the <em>flow</em>
+    /// could be fired at all — its input contract and its profile — and every schedule on such a
+    /// flow is unfireable together. This one is per attribute: a flow may declare two schedules
+    /// and have a readable spread on one and rubble on the other, and a suppression written
+    /// against the second must not silence the first.
+    /// </para>
+    /// <para>
+    /// <strong>The consequence is a deployment that will not start, and reporting it here is the
+    /// difference between a build that stops and a pod that never becomes ready.</strong>
+    /// <c>FlowSchedule.Create</c> throws on a spread it cannot read, for the reason it throws on
+    /// an expression it cannot read: a job that silently never runs is the alternative. But it
+    /// throws at composition time, in the deployment, on a value that was a compile-time constant
+    /// the whole way — so the failure is discoverable at the keystroke that wrote it.
+    /// </para>
+    /// <para>
+    /// <strong>Zero is refused, and an omitted property is not.</strong> A declared
+    /// <c>Jitter = "PT0S"</c> asks for a spread and gets none, which reads as working and is
+    /// not; omitting the property is the ordinary way to say a schedule fires on its occurrence
+    /// and is silent
+    /// (<a href="../adr/ADR-0059-schedule-jitter-is-derived-from-the-firing.md">ADR-0059</a>).
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor ScheduleJitterCannotBeRead = Create(
+        "FLOWX1045",
+        "Schedule jitter cannot be read",
+        "Flow '{0}' declares Jitter = \"{1}\" on a [CronTrigger] and this host would refuse the " +
+        "registration: {2}",
+        "Jitter is an ISO-8601 duration — PT30S, PT2M, PT1H — and it is the window one firing " +
+        "of the schedule is released within, derived from the firing so that every node in the " +
+        "fleet releases it at the same instant. A value that is not a duration, or that is not " +
+        "positive, reaches FlowSchedule.Create at composition time and is thrown on there, " +
+        "because a schedule this host cannot read in full should be a pod that never becomes " +
+        "ready rather than a job that never runs. Both halves of that failure are avoidable " +
+        "here: the value is a compile-time constant. Write a positive ISO-8601 duration, or " +
+        "omit the property — a schedule with no Jitter fires on its occurrence, which is the " +
+        "ordinary declaration and is not reported. A suppression buys nothing: the registration " +
+        "throws either way.",
+        DiagnosticSeverity.Error);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1355,7 +1400,8 @@ public static class FlowXDiagnostics
         ScheduledFlowCannotBeFired,
         BusFlowCannotBeConsumed,
         ChangeFlowCannotBeObserved,
-        StreamFlowCannotBeWindowed);
+        StreamFlowCannotBeWindowed,
+        ScheduleJitterCannotBeRead);
 
     private static DiagnosticDescriptor Create(
         string id,

@@ -170,7 +170,14 @@ public static class ScheduleEmitter
         writer.Line("        " + Quote(schedule.Cron) + ",");
         writer.Line("        " + Quote(schedule.TimeZone) + ",");
         writer.Line("        global::FlowX.MissedFirePolicy." + schedule.MissedFire + ",");
-        writer.Line("        " + (schedule.PerTenant ? "true" : "false") + ");");
+        writer.Line("        " + (schedule.PerTenant ? "true" : "false") + ",");
+        writer.Line("        global::FlowX.OverlapPolicy." + schedule.Overlap + ",");
+
+        // Null rather than "" for an undeclared spread, because the two mean different things at
+        // the registration: null is a schedule that fires on its occurrence, and an empty string
+        // would be a declared jitter with nothing in it — which FLOWX1045 reports rather than
+        // this emitter quietly normalising away.
+        writer.Line("        " + (schedule.Jitter is null ? "null" : Quote(schedule.Jitter)) + ");");
     }
 
     private static string Quote(string value) =>

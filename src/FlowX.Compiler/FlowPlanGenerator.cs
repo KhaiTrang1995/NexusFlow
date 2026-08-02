@@ -822,7 +822,9 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                     trigger.Cron!,
                     trigger.TimeZone ?? "UTC",
                     MissedFireFor(flowTriggers, trigger.Cron!),
-                    PerTenantFor(flowTriggers, trigger.Cron!)));
+                    PerTenantFor(flowTriggers, trigger.Cron!),
+                    OverlapFor(flowTriggers, trigger.Cron!),
+                    JitterFor(flowTriggers, trigger.Cron!)));
             }
         }
 
@@ -874,6 +876,20 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     private static bool PerTenantFor(FlowTriggersModel triggers, string cron) => triggers.Schedules
         .Where(schedule => string.Equals(schedule.Cron, cron, StringComparison.Ordinal))
         .Select(static schedule => schedule.PerTenant)
+        .FirstOrDefault();
+
+    /// <summary>The overlap policy declared beside this expression, or the attribute's default.</summary>
+    /// <remarks><see cref="MissedFireFor"/>'s join, for the third property read off the attribute.</remarks>
+    private static string OverlapFor(FlowTriggersModel triggers, string cron) => triggers.Schedules
+        .Where(schedule => string.Equals(schedule.Cron, cron, StringComparison.Ordinal))
+        .Select(static schedule => schedule.Overlap)
+        .FirstOrDefault() ?? "Skip";
+
+    /// <summary>The spread declared beside this expression, verbatim, or null.</summary>
+    /// <remarks><see cref="MissedFireFor"/>'s join, for the fourth property read off the attribute.</remarks>
+    private static string? JitterFor(FlowTriggersModel triggers, string cron) => triggers.Schedules
+        .Where(schedule => string.Equals(schedule.Cron, cron, StringComparison.Ordinal))
+        .Select(static schedule => schedule.Jitter)
         .FirstOrDefault();
 
     /// <summary>The extension method one schedule is registered by.</summary>

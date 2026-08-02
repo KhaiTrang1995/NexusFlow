@@ -340,6 +340,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1040](FLOWX1040.md) | `Idempotency` is declared on a flow whose result cannot be recorded without redaction | **A replayed transfer answering with an IBAN of `[redacted]` and a `200`: the second caller's money moves to a placeholder, every step reports success, and nothing anywhere says a value was fabricated** |
 | [FLOWX1041](FLOWX1041.md) | Change-triggered flow cannot be observed | **A published change subscription with nothing registered behind it: a flow that cannot bind the change and is never started, or an ephemeral one started again every time the cursor is re-read from an uncommitted position — with no error, no duplicate row and nothing anywhere to count** |
 | [FLOWX1042](FLOWX1042.md) | Stream-triggered flow cannot be windowed | **A published stream subscription with nothing registered behind it: a flow that cannot bind a window, a non-`Streaming` one whose rebuilt window aggregates a second time after every crash, or a window shape the engine does not implement — a stream nobody reads, and nothing anywhere saying why** |
+| [FLOWX1045](FLOWX1045.md) | Schedule jitter cannot be read | **Every replica of a deployment failing to become ready over a compile-time constant — `FlowSchedule.Create` throws on a `Jitter` it cannot read, and the value was a literal on the attribute the whole way; or a declared `PT0S` that reads as a spread and is not one** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -568,7 +569,19 @@ shape the engine does not implement, which is a property of the attribute rather
 why only tumbling windows survive. It is an **error** where `FLOWX1028` is a warning, and the
 difference is that every one of these three has a fix that produces a flow the engine runs today.
 
-The next is `FLOWX1043`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1045` is claimed** — *schedule jitter cannot be read*: a `[CronTrigger]` whose `Jitter`
+is not a positive ISO-8601 duration. Unlike `FLOWX1038` this is a property of the **declaration**
+rather than of the flow, so it is reported per attribute: a flow with two schedules can have a
+readable spread on one and rubble on the other, and a suppression written against the second must
+not silence the first. The consequence is that every replica of the deployment fails to become
+ready — `FlowSchedule.Create` throws on a spread it cannot read, for the reason it throws on an
+expression it cannot read — over a value that was a compile-time constant the whole way. A
+declared `PT0S` is refused with the rest, because asking for a spread and getting none reads as
+working; an **omitted** property is the ordinary declaration and is silent.
+[ADR-0059](../adr/ADR-0059-schedule-jitter-is-derived-from-the-firing.md) is the decision the
+value belongs to. It is none of the reservations.
+
+The next is `FLOWX1046`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 
