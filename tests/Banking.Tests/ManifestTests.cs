@@ -243,13 +243,12 @@ public sealed class ManifestTests
     {
         var source = Flow.GetProperty("source").GetString().ShouldNotBeNull();
 
-        // Moves whenever the file's header does — most recently when stage 1 and stage 3
-        // landed, and the remarks stopped saying four kinds are inert and started saying one
-        // is, because the Idempotency window beside the rate limit was deleted rather than
-        // executed (FLOWX1040). The number is the assertion, not an incidental: a source
-        // pointer that drifts from the declaration it names is a pointer a reader follows to
-        // the wrong line.
-        source.ShouldBe("ExecuteTransferFlow.cs:55");
+        // Moves whenever the file's header does — most recently when the last inert
+        // declaration became an executed one and the remarks stopped counting them, taking
+        // the flow's last `#pragma warning disable` with them. The number is the assertion,
+        // not an incidental: a source pointer that drifts from the declaration it names is a
+        // pointer a reader follows to the wrong line.
+        source.ShouldBe("ExecuteTransferFlow.cs:65");
         source.ShouldNotStartWith("/");
         source.ShouldNotContain(":\\");
     }

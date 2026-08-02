@@ -317,6 +317,17 @@ public sealed class TransferEndpointTests
                     services.AddSingleton<ICorrespondentDirectory, InMemoryCorrespondentDirectory>();
                     services.AddSingleton<ISettlementRegister, InMemorySettlementRegister>();
 
+                    // The sample's own sink, registered here for the reason Program.cs
+                    // registers it there: three of this flow's steps declare an Audit, and the
+                    // engine refuses an audited step it cannot record. Omit this line and every
+                    // transfer over this endpoint answers 500 with
+                    // policy.audit_sink_not_configured — which is the behaviour, and is what
+                    // the sample means by "a regulated write whose record is the reason it is
+                    // allowed to happen".
+                    services.AddSingleton<InMemoryAuditTrail>();
+                    services.AddSingleton<IAuditSink>(
+                        sp => sp.GetRequiredService<InMemoryAuditTrail>());
+
                     services.AddSingleton<ValidateTransfer>();
                     services.AddSingleton<ScreenSanctions>();
                     services.AddSingleton<ResolveCorrespondent>();

@@ -1,4 +1,7 @@
 using System.Collections.Concurrent;
+using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using FlowX.Observability;
 
 namespace FlowX.Runtime;
@@ -94,6 +97,8 @@ public sealed class FlowEngine
     private readonly ICompensationAlertSink? _alerts;
     private readonly IRateLimiterStore? _rateLimiter;
     private readonly IIdempotencyStore? _idempotency;
+    private readonly IResultCache? _cache;
+    private readonly IAuditSink? _audit;
     private readonly object _detachedSync = new();
 
     /// <summary>
@@ -140,20 +145,36 @@ public sealed class FlowEngine
     /// Where a declared <c>Idempotency</c> window's records live, or <c>null</c> when none was
     /// registered.
     /// </param>
+    /// <param name="cache">
+    /// The store behind a declared <c>Cache</c>, or <c>null</c> for none.
+    /// </param>
+    /// <param name="audit">
+    /// The sink behind a declared <c>Audit</c>, or <c>null</c> for none.
+    /// </param>
     /// <remarks>
     /// <para>
-    /// <strong>The two stores are optional to construct and mandatory to declare against.</strong>
-    /// A step whose resolved <c>StepPolicy</c> names a policy whose store is absent is
-    /// <em>refused</em>, never dispatched — which is the whole of what makes stage 1 and stage 3
-    /// honest, and is the opposite of <see cref="ICompensationAlertSink"/>'s bargain above.
-    /// A missing alert sink leaves a deployment blind about a state the instance row still
-    /// records; a missing limiter would leave one admitting every caller behind a declaration
-    /// that reads as a deployment-wide bound. Degraded and wrong are not the same absence. See
+    /// <strong>The four seams are optional to construct, and three of them are mandatory to
+    /// declare against.</strong> A step whose resolved policy names a <c>RateLimit</c>, an
+    /// <c>Idempotency</c> window or an <c>Audit</c> whose store is absent is <em>refused</em>,
+    /// never dispatched — which is the whole of what makes stages 1, 3 and 7 honest, and is the
+    /// opposite of <see cref="ICompensationAlertSink"/>'s bargain above. A missing alert sink
+    /// leaves a deployment blind about a state the instance row still records; a missing limiter
+    /// would leave one admitting every caller behind a declaration that reads as a
+    /// deployment-wide bound, and a missing audit sink would let a regulated write whose record
+    /// is the reason it is allowed to happen proceed with no record. Degraded and wrong are not
+    /// the same absence. See
     /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>
-    /// §2.2.
+    /// §2.2 and ADR-0025 §2.4.
     /// </para>
     /// <para>
-    /// There is deliberately no in-memory default for either. A process-local rate limiter
+    /// <strong>The cache is the one seam that forgives its own absence.</strong> A plan
+    /// declaring a <c>Cache</c> with no <see cref="IResultCache"/> configured dispatches every
+    /// time, which is the behaviour it had before stage 5 existed — an unconsulted cache is
+    /// slower and never wrong (ADR-0025 §2.3). The asymmetry is the point: a cache's absence
+    /// costs latency, and the other three's absence costs correctness.
+    /// </para>
+    /// <para>
+    /// There is deliberately no in-memory default for any of them. A process-local rate limiter
     /// admits n × the declared rate across n nodes, and a process-local idempotency store
     /// deduplicates only the callers that happened to land on the same replica.
     /// </para>
@@ -163,7 +184,9 @@ public sealed class FlowEngine
         int maxPooledContexts = DefaultMaxPooledContexts,
         ICompensationAlertSink? alerts = null,
         IRateLimiterStore? rateLimiter = null,
-        IIdempotencyStore? idempotency = null)
+        IIdempotencyStore? idempotency = null,
+        IResultCache? cache = null,
+        IAuditSink? audit = null)
     {
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxPooledContexts);
@@ -173,6 +196,8 @@ public sealed class FlowEngine
         _alerts = alerts;
         _rateLimiter = rateLimiter;
         _idempotency = idempotency;
+        _cache = cache;
+        _audit = audit;
     }
 
     /// <summary>Executes a plan to completion, to first failure, or to its deadline.</summary>
@@ -1110,12 +1135,13 @@ public sealed class FlowEngine
             // byte-for-byte the one it always was — which is what keeps budget B2 a hard zero
             // for the shapes that have always had it.
             //
-            // Six kinds are counted now rather than four, and no second flag went with them.
+            // Seven kinds are counted now rather than four, and no second flag went with them.
             // That is ADR-0023's own "widening is mechanical" taken literally, so its "a third
-            // flag of this shape is proposed" revisit condition did not fire: stage 1 and stage 3
+            // flag of this shape is proposed" revisit condition did not fire: stages 1, 3 and 5
             // arrive on the same PolicyChain that StepPolicy.From already walks, unlike a stance,
             // which is resolved from a capability attribute and therefore needed
-            // HasAuthorizedSteps of its own.
+            // HasAuthorizedSteps of its own. Stage 7 is the one that did need a flag, and earns
+            // it by running outside the wrapping the other stages share.
             var policy = plan.HasStepPolicies ? step.StepPolicy : StepPolicy.None;
 
             // Stage 1 · Admission. Before the authorisation below, which is ADR-0011's order and
@@ -1378,6 +1404,31 @@ public sealed class FlowEngine
                 // the element it undid rather than colliding with the first one's.
                 context.RecordCompleted(
                     step, ReferenceEquals(scope, context) ? null : scope, cursor.Scope);
+            }
+
+            // Stage 7, and the last thing that happens to a step. ADR-0023's shape struck a
+            // fourth time: one comparison against a field the plan already holds, and a flow
+            // that audits nothing reads no principal, asks the dispatcher for no payload and
+            // touches no sink.
+            //
+            // After the commit, because a record of a step the journal does not have is a
+            // record of something that may yet be re-run. After RecordCompleted, because a
+            // record that cannot be written has to unwind the step it was going to describe —
+            // the money moved and nothing can say who moved it, which is the one outcome an
+            // audited step exists to make impossible. A failure here therefore joins the
+            // ordinary failure path and the compensable steps behind it, this one included,
+            // are undone.
+            if (plan.HasAuditedSteps && step.StepAudit.IsAudited)
+            {
+                var refusal = await RecordAuditAsync(
+                    plan, dispatcher, context, cursor, step, scope, capabilityId, ct)
+                    .ConfigureAwait(false);
+
+                if (refusal is not null)
+                {
+                    failure = refusal;
+                    break;
+                }
             }
 
             i = SignalTargetOf(step) ?? i + 1;
@@ -1717,7 +1768,16 @@ public sealed class FlowEngine
                     token = timeout.Token;
                 }
 
-                var outcome = await dispatcher.ExecuteAsync(index, scope, token).ConfigureAwait(false);
+                // Stage 5, and the whole of where it goes: outside the dispatch and inside
+                // stage 4, which is the insertion point ADR-0025 §2.5 named before there was
+                // anything to insert. Inside the timeout on purpose — a store round trip is
+                // part of what the author's budget for this step has to cover — and inside the
+                // breaker and the bulkhead, so a cache hit still counts as a call that
+                // succeeded and a refused caller never reaches the store at all.
+                var outcome = policy.HasCache && _cache is not null
+                    ? await DispatchCachedAsync(dispatcher, context, step, policy, index, scope, token)
+                        .ConfigureAwait(false)
+                    : await dispatcher.ExecuteAsync(index, scope, token).ConfigureAwait(false);
 
                 succeeded = outcome.Error is null;
 
@@ -1762,6 +1822,419 @@ public sealed class FlowEngine
     }
 
     /// <summary>
+    /// Writes the audit record for a step that succeeded, or reports why the flow must stop.
+    /// </summary>
+    /// <param name="plan">The compiled flow, for the identity and version the record carries.</param>
+    /// <param name="dispatcher">The only thing that can describe the step's payload.</param>
+    /// <param name="context">The execution's context: the principal, the tenant, the keys.</param>
+    /// <param name="cursor">The journal, whose frontier says whether this execution resumed.</param>
+    /// <param name="step">The node that just succeeded.</param>
+    /// <param name="scope">The context the step ran under — an iteration's, inside a loop.</param>
+    /// <param name="capabilityId">What was invoked, for the record and for the metric.</param>
+    /// <param name="ct">The caller's token.</param>
+    /// <returns>The error that must fail the flow, or <c>null</c> when the record was written.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>A failure here is the flow's failure, and that is the one place this engine
+    /// refuses to degrade.</strong> Every other plugin seam on this path falls back to the
+    /// behaviour that existed before it — an unreachable cache dispatches, an unset alert sink
+    /// reports nowhere — because in each case the fallback is the honest older behaviour. Here
+    /// the fallback would be a step that happened with no record that it happened, and
+    /// the deleted <c>FLOWX1032</c>'s third remedy was explicit that such a flow should
+    /// not ship: "a regulated write whose audit record is the reason it is allowed to happen".
+    /// So a missing sink and a sink that threw both fail the step, and the compensable work
+    /// behind them unwinds.
+    /// </para>
+    /// <para>
+    /// <strong>The payload is the journal's payload, redacted twice.</strong> The dispatcher
+    /// composes it out of the step's input and its result and hands it the flow's
+    /// <c>SensitiveMembers</c> together with the policy's <c>redact</c> list, so the record
+    /// goes through the one redaction pass with a longer list of names and can only ever be
+    /// less revealing than the row beside it. There is no second exit from a value: the record
+    /// carries a <see cref="JournalPayload"/> and a sink reads it through
+    /// <see cref="JournalPayload.ToJson"/> like everything else.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<Error?> RecordAuditAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        JournalCursor cursor,
+        StepNode step,
+        FlowContext scope,
+        string capabilityId,
+        CancellationToken ct)
+    {
+        var audit = step.StepAudit;
+
+        if (_audit is null)
+        {
+            return FlowErrors.AuditSinkNotConfigured(plan.Flow.Id, capabilityId, audit.Category!);
+        }
+
+        JournalPayload payload;
+
+        try
+        {
+            payload = dispatcher.DescribeAudit(step.Index, scope, audit.Redact);
+        }
+#pragma warning disable CA1031 // Unlike the cache's version of this catch, the failure is not
+        catch (Exception exception) //   absorbed: a payload that cannot be described is a
+        {                           //   record that cannot be written, and this is the seam
+            return FlowErrors       //   that does not degrade.
+                .AuditNotRecorded(capabilityId, audit.Category!, exception);
+        }
+#pragma warning restore CA1031
+
+        var record = new AuditRecord
+        {
+            Category = audit.Category!,
+            FlowId = plan.Flow.Id,
+            FlowVersion = plan.Flow.Version,
+            InstanceId = cursor.Run?.InstanceId.ToString(),
+            CorrelationId = context.CorrelationId,
+            IdempotencyKey = context.IdempotencyKey,
+            TenantId = context.TenantId,
+            StepIndex = step.Index,
+            CapabilityId = capabilityId,
+            CapabilityVersion = step.Capability?.Version,
+            RecordedAt = _clock.UtcNow,
+            Authority = AuthorityOf(context, cursor),
+            Principal = context.Principal?.Identity?.IsAuthenticated == true
+                ? context.Principal.Identity.Name
+                : null,
+            Stance = step.StepAuthorization.Stance,
+            Permission = step.StepAuthorization.Value,
+            Payload = payload,
+        };
+
+        try
+        {
+            await _audit.WriteAsync(record, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // The caller went away, not the sink. Propagated so the step loop's own handler
+            // reports it as a cancellation rather than as an audit that could not be written.
+            throw;
+        }
+#pragma warning disable CA1031 // A sink is somebody else's code and may throw anything; what
+        catch (Exception exception) //   it must not do is let the flow continue as though the
+        {                           //   record existed.
+            return FlowErrors.AuditNotRecorded(capabilityId, audit.Category!, exception);
+        }
+#pragma warning restore CA1031
+
+        PolicyApplied(
+            StepAudit.AuditKind, ConsistencyStage, capabilityId, PolicyMetrics.RecordedOutcome);
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whose authority a step ran under, from what the invocation already carries.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is ADR-0028 §3's first negative, answered.</strong> That record accepted
+    /// that "a durable flow's authorisation is discontinuous across a wait … an auditor
+    /// reconstructing 'who authorised this transfer' must read two events. Nothing yet writes
+    /// those events." These are the events, and this is the field that makes the two readings
+    /// distinguishable without the reader having to know where the flow's waits are.
+    /// </para>
+    /// <para>
+    /// <strong>The frontier is what separates a starter from a deliverer.</strong> An execution
+    /// that rehydrated a committed history is a resumption, and ADR-0028 §2.2 says a resumption
+    /// carrying a principal can only have got it from <c>FlowHost.SignalAsync</c> — the journal
+    /// row deliberately keeps no claims, so there is nowhere else for one to have come from.
+    /// An execution with no frontier is the one that started the instance.
+    /// </para>
+    /// <para>
+    /// <strong><c>IsContinuation</c> is asked first, and that ordering is the control.</strong>
+    /// A timer sweep and a recovery scan are the platform continuing an instance it already
+    /// admitted; they carry no principal by construction (§2.3 — it is set in one place and
+    /// only where there is neither a signal nor a principal). Asking about the principal first
+    /// would file them under <see cref="AuditAuthority.Anonymous"/> and make "a step ran for
+    /// nobody" ambiguous between a public step and a sweep.
+    /// </para>
+    /// </remarks>
+    private static AuditAuthority AuthorityOf(FlowExecutionContext context, JournalCursor cursor)
+    {
+        if (context.IsContinuation)
+        {
+            return AuditAuthority.Platform;
+        }
+
+        if (context.Principal?.Identity?.IsAuthenticated != true)
+        {
+            return AuditAuthority.Anonymous;
+        }
+
+        return cursor.Run?.Frontier is null ? AuditAuthority.Starter : AuditAuthority.Deliverer;
+    }
+
+    /// <summary>
+    /// Runs one attempt at a step through its declared <c>Cache</c>: consult, dispatch on a
+    /// miss, and hold what the step produced.
+    /// </summary>
+    /// <param name="dispatcher">Invokes the capability, and is the only thing that knows its types.</param>
+    /// <param name="context">The execution's context, for the tenant and the principal a key is scoped by.</param>
+    /// <param name="step">The node being run, for the capability the entry is keyed by.</param>
+    /// <param name="policy">The resolved policy. <see cref="StepPolicy.HasCache"/> is true.</param>
+    /// <param name="index">Position in the plan's step graph.</param>
+    /// <param name="scope">The context the capability sees — an iteration's, inside a loop.</param>
+    /// <param name="ct">The attempt's token: the caller's, narrowed by any armed timeout.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Every failure here degrades to a dispatch.</strong> A store that is down, a key
+    /// that cannot be built, an entry that cannot be read back — each means the capability is
+    /// called, which is what the step did before anything cached it. ADR-0025 §2.3's argument
+    /// for skipping stage 5 entirely was that "an unconsulted cache means the call happens.
+    /// Slower, never wrong"; that is now this method's failure mode rather than its behaviour.
+    /// </para>
+    /// <para>
+    /// <strong>A hit is put back through <c>RestoreState</c>, which is not a convenience.</strong>
+    /// The entry is composed as a one-member state-bag document, so the code that reads it back
+    /// is the code a resumed instance already uses. There is one deserialiser for a stored
+    /// contract value in this runtime, and a cache that had its own would be a second thing to
+    /// keep in step with the generated context.
+    /// </para>
+    /// <para>
+    /// <strong>Only a success is stored.</strong> Caching a failure is <c>docs/10 §8</c>'s
+    /// "negative caching: off — stale failures are worse than a retry", and it is also what
+    /// would make a cache and a circuit breaker disagree: the breaker is there to stop calling
+    /// a dependency that is failing, and a cached failure would keep answering for it long
+    /// after it recovered.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<StepOutcome> DispatchCachedAsync(
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        StepNode step,
+        StepPolicy policy,
+        int index,
+        FlowContext scope,
+        CancellationToken ct)
+    {
+        var capabilityId = step.Identity;
+        var scopeLabel = CacheScopeLabel(policy.CacheScope);
+        var key = CacheKey(dispatcher, context, step, policy, index, scope);
+
+        if (key is null)
+        {
+            // Nothing keyable. Either the dispatcher describes no input for this step, or the
+            // document that would key it came out redacted — see CacheKey. Not a miss: a miss
+            // is a cache that was asked, and this one was not.
+            return await dispatcher.ExecuteAsync(index, scope, ct).ConfigureAwait(false);
+        }
+
+        if (await ReadCacheAsync(key, ct).ConfigureAwait(false) is { } entry &&
+            TryRestore(dispatcher, scope, entry))
+        {
+            PolicyMetrics.CacheHit(capabilityId, scopeLabel);
+            PolicyApplied(StepPolicy.CacheKind, EfficiencyStage, capabilityId, PolicyMetrics.OkOutcome);
+
+            return StepOutcome.Success;
+        }
+
+        PolicyMetrics.CacheMiss(capabilityId, scopeLabel);
+        PolicyApplied(StepPolicy.CacheKind, EfficiencyStage, capabilityId, PolicyMetrics.MissedOutcome);
+
+        var outcome = await dispatcher.ExecuteAsync(index, scope, ct).ConfigureAwait(false);
+
+        if (outcome.IsSuccess)
+        {
+            await WriteCacheAsync(dispatcher, key, policy, index, scope, ct).ConfigureAwait(false);
+        }
+
+        return outcome;
+    }
+
+    /// <summary>
+    /// What this step's result is held under, or <c>null</c> when it must not be held at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>docs/10 §8</c>'s key, with the one component it names that this runtime can build for
+    /// each scope: <em>capability id + capability version + input document + tenant + principal
+    /// permission set</em>. The version is in it because a capability that changed its answer
+    /// for the same input is a different capability from the cache's point of view, and serving
+    /// the old one across a deployment is the failure a TTL cannot bound.
+    /// </para>
+    /// <para>
+    /// <strong>The input arrives already redacted, and that is what decides the null.</strong>
+    /// The dispatcher answers with a <see cref="JournalPayload"/> whose only exit replaces every
+    /// <c>[Sensitive]</c> member with <see cref="JournalPayload.Redacted"/>. Two transfers from
+    /// two different accounts would therefore key identically, and the second caller would be
+    /// served the first one's result — a cross-principal leak of exactly the shape
+    /// <c>docs/10 §2</c>'s "cache before authorisation" row describes, arriving through the key
+    /// instead of through the ordering. So a key document carrying the placeholder is refused,
+    /// and the step is dispatched. There is no arrangement in which a marked member is read
+    /// unredacted to key with: that would be the second exit from <c>JournalPayload</c> that
+    /// WP-59 was careful not to open.
+    /// </para>
+    /// <para>
+    /// <strong>Hashed, and the hash is of the whole document.</strong> An input contract can be
+    /// arbitrarily large and a store's key length is not FlowX's to assume, so the components
+    /// are hashed rather than concatenated. SHA-256 because a cache key that collides serves one
+    /// caller another's data, which puts this in the same class as the redaction above rather
+    /// than in the class of a hash table's bucket function.
+    /// </para>
+    /// </remarks>
+    private static string? CacheKey(
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        StepNode step,
+        StepPolicy policy,
+        int index,
+        FlowContext scope)
+    {
+        string? input;
+
+        try
+        {
+            input = dispatcher.DescribeCacheKey(index, scope).ToJson();
+        }
+#pragma warning disable CA1031 // Generated code, and the same stance every other call into it
+        catch (Exception)      //   takes: a dispatcher that cannot describe an input is a
+        {                      //   defect, and it must not turn a working step into a failed
+            return null;       //   one. It turns a cached step into an uncached one.
+        }
+#pragma warning restore CA1031
+
+        if (input is null || input.Contains(JournalPayload.Redacted, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var material = new StringBuilder()
+            .Append(step.Identity).Append(KeySeparator)
+            .Append(step.Capability?.Version).Append(KeySeparator)
+            .Append(policy.CacheScope == CacheScope.Global ? null : context.TenantId).Append(KeySeparator)
+            .Append(policy.CacheScope == CacheScope.Principal ? PermissionSet(context.Principal) : null)
+            .Append(KeySeparator)
+            .Append(input)
+            .ToString();
+
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
+    }
+
+    /// <summary>
+    /// The principal's permission-bearing claims, ordered, as a key component.
+    /// </summary>
+    /// <remarks>
+    /// <c>docs/10 §8</c>'s "principal permission set", and read from exactly the claim types
+    /// <see cref="StepAuthorization.PermissionClaimTypes"/> names — so what a cache key is
+    /// scoped by and what an authorisation stance is decided from are the same set of claims,
+    /// read the same way. A cache scoped by a permission set the engine derived differently
+    /// from the one that authorised the step would be a cache keyed on a fiction.
+    /// <para>
+    /// Sorted, because a token's claim order is the issuer's business and two requests from one
+    /// caller must not key differently for it.
+    /// </para>
+    /// </remarks>
+    private static string PermissionSet(ClaimsPrincipal? principal)
+    {
+        if (principal is null)
+        {
+            return string.Empty;
+        }
+
+        var granted = new SortedSet<string>(StringComparer.Ordinal);
+
+        foreach (var claim in principal.Claims)
+        {
+            if (Array.IndexOf(StepAuthorization.PermissionClaimTypes, claim.Type) < 0)
+            {
+                continue;
+            }
+
+            foreach (var permission in claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                granted.Add(permission);
+            }
+        }
+
+        return string.Join(' ', granted);
+    }
+
+    /// <summary>Asks the cache, and treats every refusal as a miss.</summary>
+    private async ValueTask<string?> ReadCacheAsync(string key, CancellationToken ct)
+    {
+        var read = await _cache!.GetAsync(key, ct).ConfigureAwait(false);
+
+        return read.IsSuccess ? read.Value.Value : null;
+    }
+
+    /// <summary>Puts a cached document back into the bag, or reports that it could not.</summary>
+    /// <remarks>
+    /// The one place a hit can still become a miss. A document written by an older build of the
+    /// flow may name a contract this build no longer has — <c>RestoreState</c> ignores an
+    /// unknown member, so the bag would be left without the value the next step binds to.
+    /// Dispatching is the only safe answer, and it is the answer to a failed read too.
+    /// </remarks>
+    private static bool TryRestore(IStepDispatcher dispatcher, FlowContext scope, string entry)
+    {
+        try
+        {
+            dispatcher.RestoreState(scope, entry);
+            return true;
+        }
+#pragma warning disable CA1031 // A dispatcher that cannot read back what it wrote is a defect,
+        catch (Exception)      //   and the flow must not fail for it: the capability is still
+        {                      //   there to be called, which is what an unusable cache means.
+            return false;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>Holds what the step produced, and never holds a document that was redacted.</summary>
+    /// <remarks>
+    /// The write half of <see cref="CacheKey"/>'s argument, and the reason it is enforced twice
+    /// rather than once. A key is refused when it was redacted because it would collide; an
+    /// entry is refused when it was redacted because a hit would hand the flow
+    /// <see cref="JournalPayload.Redacted"/> where a capability's answer should be, and the
+    /// steps after it would bind to a value nothing produced. Between the two, a
+    /// <c>[Sensitive]</c> member cannot reach a cache and cannot come back out of one.
+    /// </remarks>
+    private async ValueTask WriteCacheAsync(
+        IStepDispatcher dispatcher,
+        string key,
+        StepPolicy policy,
+        int index,
+        FlowContext scope,
+        CancellationToken ct)
+    {
+        string? entry;
+
+        try
+        {
+            entry = dispatcher.DescribeCacheEntry(index, scope).ToJson();
+        }
+#pragma warning disable CA1031 // As above: a dispatcher that cannot describe a result leaves
+        catch (Exception)      //   the step uncached rather than failing it. The step has
+        {                      //   already succeeded by this point, so the alternative would be
+            return;            //   failing a flow over the bookkeeping that follows it.
+        }
+#pragma warning restore CA1031
+
+        if (entry is null || entry.Contains(JournalPayload.Redacted, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await _cache!.SetAsync(key, entry, policy.CacheTtl!.Value, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>The declared cache scope as a metric label, without allocating one.</summary>
+    private static string CacheScopeLabel(CacheScope scope) => scope switch
+    {
+        CacheScope.Principal => nameof(CacheScope.Principal),
+        CacheScope.Global => nameof(CacheScope.Global),
+        _ => nameof(CacheScope.Tenant),
+    };
+
+    /// <summary>
     /// Counts one application of a stage-4 policy, for <c>docs/10 §9</c>'s
     /// <c>flowx_policy_invocations_total</c>.
     /// </summary>
@@ -1778,8 +2251,20 @@ public sealed class FlowEngine
     private static void PolicyApplied(string kind, string capabilityId, string outcome) =>
         PolicyMetrics.Applied(kind, ResilienceStage, capabilityId, outcome);
 
-    /// <summary>Counts one application of a policy in a named stage.</summary>
-    private static void PolicyApplied(string kind, string stage, string capabilityId, string outcome) =>
+    /// <summary>Counts one application of a policy outside stage 4.</summary>
+    /// <param name="kind">The descriptor kind, which is also the metric's <c>policy</c> label.</param>
+    /// <param name="stage">The stage it belongs to, by name.</param>
+    /// <param name="capabilityId">The dependency the step invokes.</param>
+    /// <param name="outcome">What the policy decided.</param>
+    /// <remarks>
+    /// The overload above kept its literal stage rather than calling this one with
+    /// <see cref="ResilienceStage"/>, because the four resilience call sites are the hot ones
+    /// and each already knows its stage at the point it is written. This one exists because
+    /// stages 1, 3, 5 and 7 now reach the same counter, which is the whole point of §9's
+    /// <c>stage</c> label — a label that distinguished nothing while one stage executed.
+    /// </remarks>
+    private static void PolicyApplied(
+        string kind, string stage, string capabilityId, string outcome) =>
         PolicyMetrics.Applied(kind, stage, capabilityId, outcome);
 
     /// <summary>Stage 4, as a metric label.</summary>
@@ -1790,6 +2275,22 @@ public sealed class FlowEngine
 
     /// <summary>Stage 3, as a metric label.</summary>
     private static readonly string IntegrityStage = nameof(PolicyStage.Integrity);
+
+    /// <summary>Stage 5, as a metric label.</summary>
+    private static readonly string EfficiencyStage = nameof(PolicyStage.Efficiency);
+
+    /// <summary>Stage 7, as a metric label.</summary>
+    private static readonly string ConsistencyStage = nameof(PolicyStage.Consistency);
+
+    /// <summary>The separator between a cache key's components.</summary>
+    /// <remarks>
+    /// A unit separator rather than a colon or a slash, so no component can forge a boundary: a
+    /// capability id containing the delimiter would otherwise let two different keys render
+    /// identically, and a cache key that collides serves one caller another's data. U+001F
+    /// cannot appear in an id (<c>Identifiers</c> refuses it), in a JSON document (it is escaped
+    /// on the way in) or in a permission claim that any issuer emits.
+    /// </remarks>
+    private const char KeySeparator = '\u001f';
 
     /// <summary>This engine's breaker for one capability, created on first use.</summary>
     private CircuitBreakerState Breaker(string capabilityId) =>

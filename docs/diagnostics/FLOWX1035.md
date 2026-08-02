@@ -96,7 +96,7 @@ compensation retry deliberately more aggressive than forward retry, at five atte
 // CompensationPolicy.None is one attempt, and the manifest stops promising a retry.
 ```
 
-**Not by suppressing it and keeping the line.** Unlike [FLOWX1032](FLOWX1032.md) there is no
+**Not by suppressing it and keeping the line.** Unlike the deleted `FLOWX1032` there is no
 inventory to preserve: the declaration is not a record of a control a later release will
 apply, because P4 will read the same `1` and dispatch once.
 
@@ -108,5 +108,5 @@ becomes a retry, and both repairs are one token in the file the diagnostic point
 ## Related
 
 - [FLOWX1033](FLOWX1033.md) — `CompensationRetry` on a step with no compensation.
-- [FLOWX1032](FLOWX1032.md) — declared policy is not executed by the runtime.
+- `FLOWX1032` (deleted) — declared policy is not executed by the runtime.
 - `docs/06-Execution-Engine.md` §7 rule 2 — the five-attempt default and why it is five.

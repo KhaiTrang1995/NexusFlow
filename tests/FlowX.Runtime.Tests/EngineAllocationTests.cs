@@ -192,13 +192,13 @@ public sealed class EngineAllocationTests
     }
 
     /// <summary>
-    /// A plan whose only declared kinds are the two still inert costs the step loop nothing.
+    /// A plan whose declarations all resolve to nothing armed costs the step loop nothing.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>The one way widening <c>StepPolicy.IsActive</c> could have lost B2.</strong> Stage
-    /// 1 and stage 3 landed by adding fields to <c>StepPolicy</c> and counting two more kinds in
-    /// <c>IsActive</c> — which is
+    /// <strong>The one way widening <c>StepPolicy.IsActive</c> could have lost B2.</strong>
+    /// Stages 1, 3 and 5 landed by adding fields to <c>StepPolicy</c> and counting three more
+    /// kinds in <c>IsActive</c> — which is
     /// <a href="../../docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>'s
     /// "widening is mechanical" taken literally, and is why no plan flag went with them.
     /// The failure mode that widening invites is an <c>IsActive</c> that has drifted into
@@ -206,30 +206,42 @@ public sealed class EngineAllocationTests
     /// every flow in <c>samples/banking</c> and gates nothing.
     /// </para>
     /// <para>
-    /// A <c>Cache</c> and an <c>Audit</c> are what is left of the kinds nothing applies, so this
-    /// is the plan that would go non-zero on that drift and no other would.
+    /// <strong>The saga used to declare the kinds nothing applied; there are none.</strong> It
+    /// held a <c>Cache</c> and an <c>Audit</c>, which were free because no code read them. Both
+    /// are read now, so the plan that would go non-zero on that drift is the one whose four
+    /// declarations are each <em>degenerate</em>: a cache held for no time, a budget of zero
+    /// permits, a window that has already closed and an audit category no query could select.
+    /// Every one of them reaches <c>StepPolicy.From</c> and <c>StepAudit.From</c> and resolves
+    /// to <c>None</c>, which is exactly the distinction between "declared something" and "will
+    /// be wrapped" — and is a sharper fixture than the old one, because it stays valid however
+    /// many stages execute.
     /// </para>
     /// </remarks>
     [Fact]
-    public void APlanDeclaringOnlyTheKindsNothingAppliesCostsTheSuccessPathNothing()
+    public void APlanWhoseDeclarationsArmNothingCostsTheSuccessPathNothing()
     {
         RequireOptimisedBuild();
 
         var plan = DeferredPolicySaga();
 
         plan.HasStepPolicies.ShouldBeFalse(
-            "a Cache and an Audit are declared and neither is executed, so the flag that gates " +
+            "Four kinds are declared and not one of them arms anything, so the flag that gates " +
             "the whole policy path must stay false.");
+
+        plan.HasAuditedSteps.ShouldBeFalse(
+            "And the audit's own flag counts what will be written rather than what was " +
+            "declared, on the same bargain.");
 
         var allocated = MeasureSteadyState(new FlowEngine(new FakeClock(T0)), plan, new NullDispatcher());
 
         allocated.ShouldBe(0,
-            $"Measured {allocated} B for a four-step saga whose first step declares a Cache and " +
-            "an Audit. Six kinds are counted by StepPolicy.IsActive now rather than four, and " +
-            "a declaration whose stage is not implemented must still cost the flow nothing.");
+            $"Measured {allocated} B for a four-step saga whose first step declares four " +
+            "policies that arm nothing. Seven kinds are counted by StepPolicy.IsActive now " +
+            "rather than four, and a declaration that resolves to None must still cost the " +
+            "flow nothing.");
     }
 
-    /// <summary>The four-step saga, with the two inert kinds declared on step 0.</summary>
+    /// <summary>The four-step saga, with four degenerate declarations on step 0.</summary>
     private static ExecutionPlan DeferredPolicySaga() => ExecutionPlan.Create(
         FlowDescriptor.Create("order.place", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
         StepGraph.Create([
@@ -237,7 +249,11 @@ public sealed class EngineAllocationTests
                 0,
                 Plans.Validate,
                 policies: PolicyChain.ForStep(
-                    PolicySet.Named("deferred").Cache(TimeSpan.FromHours(1)).Audit("financial"),
+                    PolicySet.Named("deferred")
+                        .RateLimit(permits: 0, TimeSpan.FromSeconds(1))
+                        .Idempotency(TimeSpan.Zero)
+                        .Cache(TimeSpan.Zero)
+                        .Audit("   "),
                     Plans.Validate)),
             StepNode.ForCapability(1, Plans.Reserve, Plans.Release),
             StepNode.ForCapability(2, Plans.Capture, Plans.Refund),

@@ -7,7 +7,7 @@
 > **The other two calls in the family report a policy that is carried and not run.** This one
 > reports a policy that is not carried at all: the second `.WithPolicy(...)` on a step
 > *replaces* the first, and the first vanishes from the compiled plan and from
-> `flowx.manifest.json` with no message. [FLOWX1032](FLOWX1032.md) at least leaves the
+> `flowx.manifest.json` with no message. The deleted `FLOWX1032` at least left the
 > declaration somewhere a reviewer can read it. Here there is nothing left to read.
 
 ## What it means
@@ -89,7 +89,7 @@ merging is not a workaround; it is the only thing the compiler can represent.
 
 ## Related
 
-- [FLOWX1032](FLOWX1032.md) — declared policy is not executed by the runtime.
+- `FLOWX1032` (deleted) — declared policy is not executed by the runtime.
 - [FLOWX1033](FLOWX1033.md) — `CompensationRetry` on a step with no compensation.
 - [FLOWX1019](FLOWX1019.md) — flow deadline shorter than the step timeouts it must contain;
   its stated limits are where this gap was first written down.

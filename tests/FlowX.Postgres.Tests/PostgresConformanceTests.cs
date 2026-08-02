@@ -165,3 +165,63 @@ public sealed class PostgresLeaseStoreConformanceTests : LeaseStoreConformance, 
         _schemas.Clear();
     }
 }
+
+/// <summary>
+/// Runs the whole result-cache suite against PostgreSQL.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The second of the two implementations <c>ResultCacheConformance</c> is held to, and the
+/// suite is inherited unmodified — the deliverable of a plugin package as much as the adapter
+/// is, and the same claim <c>PostgresLeaseStoreConformanceTests</c> makes about
+/// <c>ILeaseStore</c>. This one and <c>RedisResultCacheConformanceTests</c> disagree about
+/// almost everything internally: Redis expires a key and this compares an instant against
+/// <c>now()</c>. Passing the same assertions is what makes stage 5's seam a contract rather
+/// than a description of whichever store was written first.
+/// </para>
+/// <para>
+/// Each test gets its own schema, and each schema is dropped when the class finishes — so
+/// "a fresh, empty cache, called once per test" is satisfied without a <c>TRUNCATE</c>
+/// anywhere.
+/// </para>
+/// </remarks>
+public sealed class PostgresResultCacheConformanceTests : ResultCacheConformance, IAsyncLifetime
+{
+    private readonly List<PostgresTestSchema> _schemas = [];
+
+    /// <summary>
+    /// A longer TTL than the suite's default, for <c>PostgresLeaseStoreConformanceTests</c>'s
+    /// reason.
+    /// </summary>
+    /// <remarks>
+    /// Expiry here is <c>now()</c> on another process reached over a connection this test has
+    /// to open, so a 300 ms window competes with the round trip that precedes it. 750 ms does
+    /// not. Nothing about the assertions changes: the suite still waits the TTL out and still
+    /// refuses a store whose entries never lapse.
+    /// </remarks>
+    protected override TimeSpan ShortTtl => TimeSpan.FromMilliseconds(750);
+
+    /// <inheritdoc />
+    protected override async ValueTask<IResultCache> CreateCacheAsync()
+    {
+        var schema = await PostgresTestSchema.CreateAsync(Cancellation);
+
+        _schemas.Add(schema);
+
+        return new PostgresResultCache(schema.DataSource);
+    }
+
+    /// <inheritdoc />
+    public ValueTask InitializeAsync() => ValueTask.CompletedTask;
+
+    /// <inheritdoc />
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var schema in _schemas)
+        {
+            await schema.DisposeAsync();
+        }
+
+        _schemas.Clear();
+    }
+}

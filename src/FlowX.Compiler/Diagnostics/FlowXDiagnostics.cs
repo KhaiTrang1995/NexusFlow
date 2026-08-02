@@ -228,11 +228,11 @@ public static class FlowXDiagnostics
     /// flow behaves identically whichever transport activated it (ADR-0004).
     /// </para>
     /// <para>
-    /// <strong>An error, and not <c>FLOWX1032</c>'s warning.</strong> That rule's argument is
-    /// that an error would delete the inventory the fixing phase needs, and that a rate limit
-    /// enforced at the gateway is a correct program. Neither transfers: the declaration is a
-    /// choice among five of which four work, and an authorisation stance that checks nothing
-    /// is the control failing open. ADR-0030 carries it in full.
+    /// <strong>An error, and not the warning the deleted <c>FLOWX1032</c> was.</strong> That
+    /// rule's argument was that an error would delete the inventory the fixing phase needs, and
+    /// that a rate limit enforced at the gateway is a correct program. Neither transfers: the
+    /// declaration is a choice among five of which four work, and an authorisation stance that
+    /// checks nothing is the control failing open. ADR-0030 carries it in full.
     /// </para>
     /// </remarks>
     public static readonly DiagnosticDescriptor AuthorizationStanceNotEnforceable = Create(
@@ -852,84 +852,19 @@ public static class FlowXDiagnostics
         "remaining profile.",
         DiagnosticSeverity.Warning);
 
-    /// <summary>FLOWX1032 — a declared policy the runtime applies to nothing.</summary>
-    /// <remarks>
-    /// <para>
-    /// <strong>Four of the nine kinds <c>PolicySet</c> offers are executed by no code:</strong>
-    /// <c>RateLimit</c>, <c>Idempotency</c>, <c>Cache</c> and <c>Audit</c>. The rule was
-    /// written over eight of the nine and narrowed when the policy engine landed
-    /// <c>PolicyStage.Resilience</c> — <c>Timeout</c>, <c>Retry</c>, <c>CircuitBreaker</c> and
-    /// <c>Bulkhead</c> are now applied around every step that declares them, and
-    /// <c>CompensationRetry</c> has been applied to the unwind since WP-57.
-    /// </para>
-    /// <para>
-    /// <strong>The cut is by stage now, and it was not before.</strong> The four that remain
-    /// are stage 1, stage 3, stage 5 and half of stage 7 — but the half of stage 7 is the
-    /// reason the rule cannot be written as a stage range. <c>Audit</c> shares
-    /// <c>PolicyStage.Consistency</c> with <c>CompensationRetry</c>, which executes, so
-    /// "stages 1, 3, 5 and 7 do not run" would be silent on nothing and wrong about the undo.
-    /// The list is a list, pinned against the runtime by
-    /// <c>PolicyStageFitnessTests</c>.
-    /// </para>
-    /// <para>
-    /// <strong>A warning, on <see cref="ProfileIsNotHonouredByTheRuntime"/>'s argument one
-    /// level down.</strong> Both of that rule's halves transfer, and unlike the deleted rule
-    /// over the suspension constructs, this one may use the second as well as the first. An error's only repair is deleting the <c>.WithPolicy(...)</c> call, which
-    /// erases the inventory P4 needs to find; and the source is not wrong — a great many
-    /// flows are correct with a <c>RateLimit</c> enforced by the gateway in front of the
-    /// process or a <c>Timeout</c> subsumed by a shorter <c>[FlowDeadline]</c>, so "confirm
-    /// the flow is correct as it is, and record that" is a real remedy here where it was
-    /// not for a seven-day wait compiled to no wait. Nothing is falsified either: the plan
-    /// carries exactly the declared set, in exactly ADR-0011's stage order.
-    /// </para>
-    /// <para>
-    /// Info was the other candidate and is rejected for the reason the rest of this
-    /// catalogue rejects it: it never reaches a build log, so the rule would ship doing
-    /// nothing — which is the state it exists to end.
-    /// </para>
-    /// <para>
-    /// <strong>Deleted, not fixed, when P4 lands the policy engine</strong> — or narrowed to
-    /// the kinds that still do not execute, exactly as WP-52 narrowed
-    /// <see cref="ProfileIsNotHonouredByTheRuntime"/> rather than deleting it. The deletion
-    /// table is on <c>docs/diagnostics/FLOWX1032.md</c>.
-    /// </para>
-    /// </remarks>
-    public static readonly DiagnosticDescriptor PolicyIsNotExecutedByTheRuntime = Create(
-        "FLOWX1032",
-        "Declared policy is not executed by the runtime",
-        "'{0}' declares policies this release does not execute: {1}. The compiled plan and " +
-        "flowx.manifest.json carry them; no code applies them.",
-        "Two of the nine kinds PolicySet offers are executed by nothing: Cache and Audit. So a " +
-        "declared Cache is never consulted and a declared Audit writes no record. The other " +
-        "seven do run — Timeout, Retry, CircuitBreaker and Bulkhead are applied around the " +
-        "step, RateLimit admits or refuses the caller before it, an Idempotency window records " +
-        "and replays the step's result, and CompensationRetry wraps the undo — so this rule " +
-        "names only what is left. Keep the declaration: it is the published statement of what " +
-        "this step needs, it reaches flowx.manifest.json where a reviewer and a 'flowx diff' " +
-        "can read it, it is what the stage that implements it will execute, and deleting it to " +
-        "silence this warning would remove the record while changing nothing about how the " +
-        "step runs. Instead, confirm the step is survivable with the policy unenforced — a " +
-        "cache the capability can hold itself, an audit record the capability writes — and " +
-        "if it is, downgrade this rule in .editorconfig with a FLOWX-DEBT marker; if it is " +
-        "not, move the control into the capability, where it is real. FLOWX1014 and FLOWX1018 " +
-        "are unaffected and still errors: whether a declared policy is safe is a different " +
-        "question from whether it is applied. This rule is deleted, not fixed, and only when " +
-        "the last two kinds execute.",
-        DiagnosticSeverity.Warning);
-
     /// <summary>
     /// FLOWX1040 — an <c>Idempotency</c> window on a flow whose result cannot be recorded
     /// without redaction.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>An error, where <see cref="PolicyIsNotExecutedByTheRuntime"/> is a
-    /// warning</strong>, and every argument that makes that rule a warning fails here. That
-    /// rule's central claim is "the source is not wrong; it is written correctly for a platform
-    /// that has the feature" — a rate limit the gateway applies is a correct program. Here the
-    /// platform *has* the feature and cannot serve this flow with it, and no release changes
-    /// that except one giving <c>[Sensitive]</c> a read path, at which point the rule is deleted
-    /// rather than downgraded.
+    /// <strong>An error, where the deleted <c>FLOWX1032</c> was a warning</strong>, and every
+    /// argument that made that rule a warning fails here. That rule's central claim was "the
+    /// source is not wrong; it is written correctly for a platform that has the feature" — a
+    /// rate limit the gateway applies is a correct program. Here the platform *has* the feature
+    /// and cannot serve this flow with it, and no release changes that except one giving
+    /// <c>[Sensitive]</c> a read path, at which point the rule is deleted rather than
+    /// downgraded.
     /// </para>
     /// <para>
     /// <strong>Flow-wide, because the redaction is.</strong> <c>SensitiveMembers</c> is read off
@@ -982,7 +917,7 @@ public static class FlowXDiagnostics
     /// step has no undo.
     /// </para>
     /// <para>
-    /// <strong>An error, where <see cref="PolicyIsNotExecutedByTheRuntime"/> is a
+    /// <strong>An error, where the deleted <c>FLOWX1032</c> was a
     /// warning.</strong> Every argument that makes that rule a warning fails here. There is
     /// no fixing phase — P4 implements the eight inert kinds; it does not give a
     /// non-compensable step an undo. There is no legitimate program — a retry over an undo
@@ -1040,7 +975,7 @@ public static class FlowXDiagnostics
     /// publishes a contract with no timeout in it.
     /// </para>
     /// <para>
-    /// <strong>An error, where <see cref="PolicyIsNotExecutedByTheRuntime"/> is a
+    /// <strong>An error, where the deleted <c>FLOWX1032</c> was a
     /// warning</strong>, on <see cref="CompensationRetryHasNoCompensation"/>'s line exactly.
     /// That rule's warning neighbour keeps the declaration somewhere P4 can find it; here
     /// there is nothing to keep. No release makes a discarded set apply, no author means to
@@ -1092,7 +1027,7 @@ public static class FlowXDiagnostics
     /// manifest publishes it. Here they agree: the chain is built, the descriptor is in it at
     /// stage <c>Consistency</c>, and <c>PolicyChain.ForCompensation</c> has already checked
     /// the compensating capability's idempotency. What is false is the inference a reader
-    /// draws from the kind's name, which is <see cref="PolicyIsNotExecutedByTheRuntime"/>'s
+    /// draws from the kind's name, which is the deleted <c>FLOWX1032</c>&apos;s
     /// category and its severity.
     /// </para>
     /// <para>
@@ -1129,7 +1064,7 @@ public static class FlowXDiagnostics
     /// symbol from a referenced assembly has no <c>DeclaringSyntaxReferences</c> — the
     /// initialiser was compiled to IL in another build. So <c>FlowEmitter</c> emits no chain,
     /// <c>ManifestWriter</c> writes no <c>policies</c> array, and FLOWX1014, FLOWX1018,
-    /// FLOWX1019, <see cref="PolicyIsNotExecutedByTheRuntime"/> and
+    /// FLOWX1019, <see cref="IdempotencyCannotRecordARedactedResult"/> and
     /// <see cref="CompensationRetryHasNoCompensation"/> all decline to speak. That is not an
     /// unchecked policy; it is an absent one, and a <c>CompensationRetry</c> inside such a set
     /// — the one policy an undo can carry — does not run.
@@ -1142,7 +1077,7 @@ public static class FlowXDiagnostics
     /// a claim about the contents at all.
     /// </para>
     /// <para>
-    /// <strong>A warning, on <see cref="PolicyIsNotExecutedByTheRuntime"/>'s argument.</strong>
+    /// <strong>A warning, on the deleted <c>FLOWX1032</c>&apos;s argument.</strong>
     /// The source is not wrong: a shared policy library is a reasonable design that this
     /// compiler cannot see into, and the repairs are structural rather than a token. An error
     /// would fail builds over a program that needs no change to be correct on the day the
@@ -1197,7 +1132,7 @@ public static class FlowXDiagnostics
     /// or later release under which it becomes correct, and both present as work that silently
     /// does not happen or silently happens <em>n</em> times. That is
     /// <see cref="CompensationRetryHasNoCompensation"/>'s bar rather than
-    /// <see cref="PolicyIsNotExecutedByTheRuntime"/>'s: the source is wrong, not merely ahead of
+    /// the deleted <c>FLOWX1032</c>&apos;s: the source is wrong, not merely ahead of
     /// the runtime.
     /// </para>
     /// </remarks>
@@ -1308,7 +1243,6 @@ public static class FlowXDiagnostics
         StepIsUnreachableAfterFail,
         StepInputMappingHasWrongType,
         ProfileIsNotHonouredByTheRuntime,
-        PolicyIsNotExecutedByTheRuntime,
         CompensationRetryHasNoCompensation,
         StepDeclaresMoreThanOnePolicySet,
         CompensationRetryRetriesNothing,

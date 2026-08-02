@@ -250,6 +250,17 @@ public sealed record StepNode
     /// </remarks>
     public StepAuthorization StepAuthorization { get; private init; } = StepAuthorization.None;
 
+    /// <summary>
+    /// The step's <c>Audit</c>, resolved from its declared chain when the plan was built.
+    /// </summary>
+    /// <remarks>
+    /// Resolved here for <see cref="StepPolicy"/>'s reason and read the same way, and gated by
+    /// <see cref="ExecutionPlan.HasAuditedSteps"/> — so a flow that audits nothing reads no
+    /// principal, asks the dispatcher for no payload and touches no sink. It is read on the
+    /// success path after the step's commit, which is where stage 7 is.
+    /// </remarks>
+    public StepAudit StepAudit { get; private init; } = StepAudit.None;
+
     /// <summary>The event published by an <see cref="StepKind.Emit"/> step.</summary>
     public string? EventType { get; private init; }
 
@@ -518,6 +529,11 @@ public sealed record StepNode
             CompensationPolicies = undoChain,
             CompensationRetry = CompensationPolicy.From(undoChain),
             StepPolicy = StepPolicy.From(stepChain),
+
+            // Stage 7's other half, off the step's own chain rather than the undo's. An audit
+            // wraps the step, so an applied set is where it lives — only the compensation
+            // retry is moved across onto the undo's chain.
+            StepAudit = StepAudit.From(stepChain),
 
             // The forward capability's stance, and deliberately not the compensation's. An
             // undo runs on the failure path to reverse work this principal has already

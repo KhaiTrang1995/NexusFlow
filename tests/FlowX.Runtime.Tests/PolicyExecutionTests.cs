@@ -4,28 +4,35 @@ using Xunit;
 namespace FlowX.Runtime.Tests;
 
 /// <summary>
-/// What the engine does with a declared policy chain: stage 4 executes, and three kinds
-/// outside it still do not.
+/// What the engine does with a declared stage-4 policy chain, and the one kind that reaches
+/// the step through a different flag.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <strong>This file used to assert the opposite of every test above the fold.</strong> It
-/// was the executable half of <c>docs/diagnostics/FLOWX1032.md</c> while that rule covered
-/// eight kinds, and each of its assertions was of the form "this did not happen" — a
+/// was the executable half of the deleted <c>FLOWX1032</c> while that rule covered eight
+/// kinds, and each of its assertions was of the form "this did not happen" — a
 /// zero-length <c>Timeout</c> that stopped nothing, a <c>Retry(3)</c> that dispatched once,
 /// a <c>Bulkhead(1)</c> that counted nobody. Its own remarks said it was "written to go red
 /// on the day P4 lands". It did, and the inversions are recorded on each test.
 /// </para>
 /// <para>
-/// <strong>What runs now is <see cref="PolicyStage.Resilience"/>, whole.</strong>
-/// <c>Timeout</c>, <c>Retry</c>, <c>CircuitBreaker</c> and <c>Bulkhead</c> are executed by
-/// <c>FlowEngine</c> over <c>StepNode.StepPolicy</c>, in the fixed nesting
+/// <strong>What runs now is <see cref="PolicyStage.Resilience"/>, whole — and so does
+/// everything else.</strong> <c>Timeout</c>, <c>Retry</c>, <c>CircuitBreaker</c> and
+/// <c>Bulkhead</c> are executed by <c>FlowEngine</c> over <c>StepNode.StepPolicy</c>, in the
+/// fixed nesting
 /// <a href="../../docs/adr/ADR-0024-stage-four-is-a-fixed-nesting.md">ADR-0024</a> settles.
-/// <c>Cache</c> (stage 5) and <c>Audit</c> (stage 7) are not, and the tests that say so are
-/// kept rather than deleted — they are what FLOWX1032 now reports, narrowed to two.
-/// <c>RateLimit</c> (stage 1) and <c>Idempotency</c> (stage 3) were in that list and left it;
-/// <c>AdmissionAndIntegrityTests</c> is where they are asserted, and it is written to the same
-/// rule as this file — every "did not happen" beside a "did".
+/// The four kinds outside it have left this file for the suites that assert them:
+/// <c>RateLimit</c> and <c>Idempotency</c> to <c>AdmissionAndIntegrityTests</c>,
+/// <c>Cache</c> to <c>CachePolicyTests</c>, <c>Audit</c> to <c>AuditPolicyTests</c>. All four
+/// are written to the same rule as this file — every "did not happen" beside a "did".
+/// </para>
+/// <para>
+/// <strong>What is left here about a non-stage-4 kind is the flag, not the behaviour.</strong>
+/// An <c>Audit</c> is resolved onto <c>StepNode.StepAudit</c> and counted by
+/// <c>ExecutionPlan.HasAuditedSteps</c>, so an audit-only chain must leave
+/// <c>HasStepPolicies</c> false — which is the budget-B2 property this file has asserted since
+/// there was anything to assert it about, and the one that survives every kind executing.
 /// </para>
 /// <para>
 /// <strong>The positive control is still at the bottom and still not optional.</strong> A
@@ -76,33 +83,49 @@ public sealed class PolicyExecutionTests
             .Audit("financial"),
         Plans.Validate);
 
-    /// <summary>The kinds that are still executed by nothing, and nothing that executes.</summary>
+    /// <summary>The one kind that leaves <c>HasStepPolicies</c> false.</summary>
     /// <remarks>
-    /// <strong>Narrowed from three kinds to two.</strong> It held a <c>RateLimit</c> and an
-    /// <c>Idempotency</c> window as well, and both left when stage 1 and stage 3 landed —
-    /// `AdmissionAndIntegrityTests` is where they are asserted now. What is left is
-    /// <c>Cache</c> (stage 5) and <c>Audit</c> (stage 7), which is exactly what FLOWX1032
-    /// reports.
+    /// <para>
+    /// <strong>Narrowed from four kinds to one, and it is no longer inert.</strong> It held a
+    /// <c>RateLimit</c>, an <c>Idempotency</c> window and a <c>Cache</c> as well.
+    /// <c>RateLimit</c> and <c>Idempotency</c> left when stages 1 and 3 landed —
+    /// <c>AdmissionAndIntegrityTests</c> is where they are asserted — and <c>Cache</c> left
+    /// when stage 5 did, to <c>CachePolicyTests</c>.
+    /// </para>
+    /// <para>
+    /// What is left is the <c>Audit</c>, and the property this chain now stands for is not
+    /// "nothing executes" but "nothing executes <em>on the step-policy path</em>": stage 7
+    /// runs after the commit, off <c>ExecutionPlan.HasAuditedSteps</c> and
+    /// <c>StepNode.StepAudit</c>, so a chain carrying only an audit must still leave
+    /// <c>HasStepPolicies</c> false. That is the budget-B2 assertion this property was always
+    /// feeding, and it is the one that survives every kind becoming executable.
+    /// </para>
     /// </remarks>
-    private static PolicyChain Inert { get; } = PolicyChain.ForStep(
-        PolicySet.Named("inert")
-            .Cache(TimeSpan.FromHours(1))
-            .Audit("financial"),
+    private static PolicyChain AuditOnly { get; } = PolicyChain.ForStep(
+        PolicySet.Named("audit-only").Audit("financial"),
         Plans.Validate);
 
     /// <summary>
     /// <c>0 validate (the forward chain) · 1 reserve (undo: release) · 2 capture</c>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Three steps rather than two, because a step that fails is not on its own unwind stack:
     /// the positive control at the bottom needs a <em>later</em> step to fail so that the
     /// reserve it follows is the thing being undone.
+    /// </para>
+    /// <para>
+    /// <strong>Step 0's default chain is empty rather than <see cref="AuditOnly"/>.</strong> It
+    /// used to default to the inert set, which was free because nothing read it. An audit is
+    /// read now, and an audited step with no <c>IAuditSink</c> is refused — so defaulting to
+    /// one would make every test below fail at step 0 for a reason none of them is about.
+    /// </para>
     /// </remarks>
     private static ExecutionPlan Plan(PolicyChain? forward = null, PolicyChain? undo = null) =>
         ExecutionPlan.Create(
             FlowDescriptor.Create("order.policy", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
             StepGraph.Create([
-                StepNode.ForCapability(0, Plans.Validate, policies: forward ?? Inert),
+                StepNode.ForCapability(0, Plans.Validate, policies: forward),
                 StepNode.ForCapability(1, Plans.Reserve, Plans.Release, compensationPolicies: undo),
                 StepNode.ForCapability(2, Plans.Capture),
             ]));
@@ -119,7 +142,7 @@ public sealed class PolicyExecutionTests
     /// <strong>Inverted.</strong> This test was <c>OnlyCompensationRetryIsExecutedAtRunTime</c>,
     /// and it asserted <c>result.IsSuccess</c> with the message "a zero-length Timeout on step
     /// 0 stops nothing, because nothing arms it", and <c>dispatcher.Executed == [0, 1, 2]</c>
-    /// — one dispatch per step, the whole flow through. It was named on FLOWX1032's page as
+    /// — one dispatch per step, the whole flow through. It was named on the deleted FLOWX1032's page as
     /// that rule's take-down trigger.
     /// </para>
     /// <para>
@@ -425,31 +448,36 @@ public sealed class PolicyExecutionTests
             "than queued — a bulkhead with no queue depth fails fast on purpose.");
     }
 
-    // --------------------------------------------------------- the two kinds still inert
+    // ------------------------------------------------- the kind that runs off another flag
 
     /// <summary>
-    /// A <c>Cache</c> survives a second run of the same flow unchanged.
+    /// A declared <c>Cache</c> with no store configured dispatches on every run.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>Kept, and narrowed.</strong> It was
-    /// <c>ACacheIsNotConsultedAndARateLimitCountsNothing</c>, and its second assertion read
-    /// "one permit an hour was declared and two runs went through". The rate limit left when
-    /// stage 1 landed — a two-permit version of exactly this shape is
+    /// <strong>Kept, and re-aimed twice.</strong> It was
+    /// <c>ACacheIsNotConsultedAndARateLimitCountsNothing</c>: two claims, both of the form "a
+    /// declaration bought nothing". The rate-limit half left when stage 1 landed — a two-permit
+    /// version of exactly this shape is
     /// <c>AdmissionAndIntegrityTests.ARateLimitRefusesPastItsPermitsWithoutDispatchingTheStep</c>,
-    /// and it refuses.
+    /// and it refuses. The cache half left when stage 5 did:
+    /// <c>CachePolicyTests.TheSecondExecutionIsServedFromTheCache</c> asserts the opposite on
+    /// this same two-run shape, given an <c>IResultCache</c>.
     /// </para>
     /// <para>
-    /// Stage 5 is still not implemented, and this is what FLOWX1032 still reports alongside the
-    /// <c>Audit</c>. Two executions of one plan is the only shape that can tell a consulted
+    /// What this shape still asserts is the one behaviour a configured cache cannot show: an
+    /// engine constructed with <em>no</em> <c>IResultCache</c> dispatches every time, which is
+    /// what stage 5 did before it existed. ADR-0025 §2.3 is the decision — an unconsulted cache
+    /// is slower and never wrong — and it is the only seam of the four whose absence does not
+    /// refuse the step. Two executions of one plan is the only shape that can tell a consulted
     /// cache from an unconsulted one: a hit would skip the second dispatch.
     /// </para>
     /// </remarks>
     [Fact]
-    public async Task ACacheIsNotConsulted()
+    public async Task ACacheWithNoStoreConfiguredDispatchesEveryTime()
     {
         var engine = new FlowEngine(new FakeClock(T0));
-        var plan = Plan();
+        var plan = Plan(Forward(PolicySet.Named("cached").Cache(TimeSpan.FromHours(1))));
 
         var first = new RecordingDispatcher();
         var second = new RecordingDispatcher();
@@ -461,63 +489,100 @@ public sealed class PolicyExecutionTests
 
         second.Executed.ShouldBe(
             [0, 1, 2],
-            "A one-hour cache was declared on step 0 and the second run dispatched it anyway.");
+            "A one-hour cache was declared on step 0 and no IResultCache was registered, so " +
+            "the second run must dispatch it rather than fail or invent a hit.");
     }
 
     /// <summary>
-    /// A stage-7 <c>Audit</c> on a step's own chain is not a compensation policy, and is not
-    /// a step policy either.
+    /// A stage-7 <c>Audit</c> is not a compensation policy and is not a step policy either —
+    /// it is a third thing, with a flag of its own.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>Kept, and it is why the plan carries two flags rather than one.</strong>
-    /// <c>Audit</c> and <c>CompensationRetry</c> share <see cref="PolicyStage.Consistency"/>,
-    /// so a reader who cuts the gap by stage would expect stage 7 to be "the one that runs".
-    /// It is not: <c>PolicyChain.ForStep</c> moves only the compensation retry onto the undo's
-    /// chain, and <c>CompensationPolicy.From</c> reads only that kind.
+    /// <strong>Inverted in one assertion and kept in the rest.</strong> This test was
+    /// <c>AnAuditIsAStageSevenPolicyAndStillExecutesNowhere</c>, and the deleted FLOWX1032's page named it
+    /// as the assertion that would go red on the day stage 7's audit ran. What went red is the
+    /// claim that no flag counted it; what is unchanged is the reason there had to be a third
+    /// flag rather than a wider reading of the two that existed.
     /// </para>
     /// <para>
-    /// It is not stage 4 either, so <c>StepPolicy.From</c> reads past it and the plan reports
-    /// <c>HasStepPolicies == false</c> — an audit is executed by nothing, and the step pays
-    /// nothing for declaring it.
+    /// <c>Audit</c> and <c>CompensationRetry</c> share <see cref="PolicyStage.Consistency"/>,
+    /// so a reader who cut the gap by stage would have expected one flag to cover both. Neither
+    /// covers the other: <c>PolicyChain.ForStep</c> moves only the compensation retry onto the
+    /// undo's chain, and an audit is not stage 4, so <c>StepPolicy.From</c> still reads past it
+    /// and <c>HasStepPolicies</c> is still false for an audit-only chain.
     /// </para>
     /// </remarks>
     [Fact]
-    public void AnAuditIsAStageSevenPolicyAndStillExecutesNowhere()
+    public void AnAuditIsAStageSevenPolicyWithAFlagOfItsOwn()
     {
         var plan = Plan(Forward(PolicySet.Named("a").Audit("financial")));
 
         plan.Graph.Steps[0].Policies.Ordered
             .Select(static p => p.Stage)
-            .ShouldBe([PolicyStage.Consistency], "Audit is stage 7, the same stage as the retry that runs.");
+            .ShouldBe([PolicyStage.Consistency], "Audit is stage 7, the same stage as the retry.");
 
         plan.HasCompensationPolicies.ShouldBeFalse(
             "Stage is not the cut. The cut is what a policy wraps, and an Audit wraps the " +
-            "step — which nothing reads.");
+            "step rather than its undo.");
 
         plan.HasStepPolicies.ShouldBeFalse(
-            "Nor is it stage 4, so the engine's forward policy path is not entered for it.");
+            "Nor is it stage 4, so the engine's forward policy path is not entered for it — " +
+            "which is why folding it into StepPolicy.IsActive would have made that flag mean " +
+            "two different things.");
 
+        plan.HasAuditedSteps.ShouldBeTrue(
+            "It has its own flag, and that flag is what the step loop reads after the commit.");
+
+        plan.Graph.Steps[0].StepAudit.Category.ShouldBe("financial");
         plan.Graph.Steps[0].CompensationRetry.IsRetrying.ShouldBeFalse();
     }
 
-    /// <summary>
-    /// A plan whose only declared kinds are the three inert ones costs the step loop nothing.
-    /// </summary>
+    /// <summary>An <c>Audit</c> with a blank category reaches no flag and writes nothing.</summary>
     /// <remarks>
-    /// The flag is what keeps budget B2 a hard zero for a flow that declares no stage-4
-    /// policy, and a flag that were true for every declaration would defeat its own purpose —
-    /// see <a href="../../docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>.
+    /// <c>PolicySet.Audit</c> validates no argument — no builder method does — so a record whose
+    /// category is the empty string is expressible, and it is one no compliance query can
+    /// select. Writing it would be worse than not auditing while looking like auditing, so
+    /// <c>StepAudit.From</c> resolves it to <c>None</c> and the plan-level flag stays false:
+    /// the bargain every other flag of this shape strikes, which is that it counts what the
+    /// engine will do rather than what was declared.
     /// </remarks>
     [Fact]
-    public void APlanDeclaringOnlyInertKindsReportsNoStepPolicies()
+    public void AnAuditWithNoCategoryCountsAsNoAudit()
     {
-        Plan().HasStepPolicies.ShouldBeFalse(
-            "A Cache and an Audit are declared and neither is executed, so the step loop must " +
-            "not take the policy path for them. The flag counts what runs, and widening " +
-            "StepPolicy.IsActive for stage 1 and stage 3 must not have quietly made it count " +
-            "declarations instead — which is the one way widening IsActive for two more kinds " +
-            "could have cost budget B2.");
+        Plan(Forward(PolicySet.Named("a").Audit("   "))).HasAuditedSteps.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A plan whose only declared kind runs off another flag costs the step loop nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The flag is what keeps budget B2 a hard zero for a flow that declares no in-line
+    /// policy, and a flag that were true for every declaration would defeat its own purpose —
+    /// see <a href="../../docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>.
+    /// </para>
+    /// <para>
+    /// <strong>This test read "the three inert kinds", then "Cache and Audit", then
+    /// "RateLimit and Idempotency", and is now about the <c>Audit</c> alone.</strong> Every
+    /// widening of <c>StepPolicy.IsActive</c> was an opportunity to make the flag count
+    /// declarations rather than what runs, which is the one way widening it could have cost
+    /// budget B2 — and stage 7 is the one stage that must still leave it false, because it
+    /// runs after the commit off a flag of its own.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void APlanDeclaringOnlyAnAuditReportsNoStepPolicies()
+    {
+        Plan(AuditOnly).HasStepPolicies.ShouldBeFalse(
+            "An Audit is declared and it executes — after the commit, off HasAuditedSteps — " +
+            "so the step loop must not take the in-line policy path for it. The flag counts " +
+            "what the step-policy path will do, and three widenings of StepPolicy.IsActive " +
+            "must not have quietly made it count declarations instead.");
+
+        Plan(AuditOnly).HasAuditedSteps.ShouldBeTrue(
+            "And the flag that does count it is true, so the assertion above is about which " +
+            "path runs rather than about a declaration nothing reads.");
 
         Plan(Everything).HasStepPolicies.ShouldBeTrue(
             "The same chain plus stage 4 does take it.");

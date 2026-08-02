@@ -15,13 +15,17 @@ type", but "does anything read it at run time".
 
 | # | Feature | State | Why here |
 |---|---|---|---|
-| 1 | **Four policy kinds** — `RateLimit`, `Idempotency`, `Cache`, `Audit` | declared, inert | The only item that **deletes a diagnostic**. `FLOWX1032` exists to tell a user their declaration does nothing; every release shipping it ships an admission |
-| 2 | **Multi-tenancy** | plumbed, unenforced | The only *correctness* gap left: nothing stops one tenant's flow reading another's rows. A data-isolation bug is not a missing feature |
-| 3 | **Logs** | absent | Third leg of observability; traces and metrics run. Blocked on one decision, not effort |
-| 4 | **AI surface (MCP)** | declared, unbound | `AgentTrigger` exists and nothing serves it. [13](13-AI-Native.md) specifies the descriptor and the `tools/call` sequence in full |
-| 5 | **`Stream` and `Change` triggers** | declared, unbound | Two of eight kinds. `Change` is CDC over the outbox, which already exists |
-| 6 | **Stream engine** | absent | **Not next.** Nothing defines the checkpoint format, watermark generation or how window state is journaled — implementing it means inventing it |
-| 7 | **Studio** | absent | **Not next.** Sixteen one-line mentions and no design |
+| 1 | **Multi-tenancy** | plumbed, unenforced | The only *correctness* gap left: nothing stops one tenant's flow reading another's rows. A data-isolation bug is not a missing feature |
+| 2 | **Logs** | absent | Third leg of observability; traces and metrics run. Blocked on one decision, not effort |
+| 3 | **AI surface (MCP)** | declared, unbound | `AgentTrigger` exists and nothing serves it. [13](13-AI-Native.md) specifies the descriptor and the `tools/call` sequence in full |
+| 4 | **`Stream` and `Change` triggers** | declared, unbound | Two of eight kinds. `Change` is CDC over the outbox, which already exists |
+| 5 | **Stream engine** | absent | **Not next.** Nothing defines the checkpoint format, watermark generation or how window state is journaled — implementing it means inventing it |
+| 6 | **Studio** | absent | **Not next.** Sixteen one-line mentions and no design |
+
+**The four policy kinds left this table.** `RateLimit`, `Idempotency`, `Cache` and `Audit`
+were priority 1 because theirs was the only item that **deleted a diagnostic**: `FLOWX1032`
+existed to tell a user their declaration did nothing, and every release shipping it shipped
+an admission. All four execute, and the rule is deleted with the gap.
 
 ## 1. Multi-tenancy — the design
 

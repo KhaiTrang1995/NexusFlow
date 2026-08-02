@@ -742,11 +742,13 @@ generator emits no `policies` section", and **both halves of that are now false.
 *What used to be true here was that no policy executed at all, so a completeness check over
 `policies` would pass vacuously.* **Both halves have expired.** `samples/banking` declares
 seven policy sets, so the emission path runs against a shipped assembly on every build; and
-`FlowX.Runtime` executes `PolicyStage.Resilience` — a declared `Timeout` is armed, a declared
-`Retry` makes its attempts, a `CircuitBreaker` opens and a `Bulkhead` counts. What is left is
-narrower: four declarable kinds are still applied by nothing — `RateLimit`, `Idempotency`,
-`Cache` and `Audit` — which [`FLOWX1032`](diagnostics/FLOWX1032.md) reports and
-[ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) argues.
+`FlowX.Runtime` executes every stage a `PolicySet` can declare into. `Timeout`, `Retry`,
+`CircuitBreaker` and `Bulkhead` were the first (`PolicyStage.Resilience`); `RateLimit`
+admits or refuses the caller at stage 1, an `Idempotency` window claims and replays at
+stage 3, a `Cache` is consulted at stage 5 and an `Audit` record is written after the step's
+commit at stage 7. Nothing is declared-and-inert, which is why `FLOWX1032` — the rule that
+reported exactly that — is deleted rather than narrowed a third time. The staging argument is
+[ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md).
 
 **`events` is no longer the same case, and that is the change worth stating.** `.Emit<T>()`
 reaches the plan, the manifest *and* the outbox: a `Durable` flow's emitted event is staged

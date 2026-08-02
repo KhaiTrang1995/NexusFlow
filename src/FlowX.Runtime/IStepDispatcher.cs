@@ -368,6 +368,102 @@ public interface IStepDispatcher
     JournalPayload DescribeInput(object? input) => JournalPayload.Empty;
 
     /// <summary>
+    /// Names what this step's result depends on, for a <c>Cache</c> key.
+    /// </summary>
+    /// <param name="stepIndex">Position in the plan's step graph.</param>
+    /// <param name="ctx">The scope the step is about to run under.</param>
+    /// <returns>
+    /// The step's input, or <see cref="JournalPayload.Empty"/> when this dispatcher cannot key
+    /// the step — which the engine reads as "not cacheable" and dispatches.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Here rather than on the engine, for <see cref="DescribeStep"/>'s reason.</strong>
+    /// <c>docs/10 §8</c> keys a cache entry on "capability id + input hash + tenant + principal
+    /// permission set". The engine holds three of those four; the input is a contract value in a
+    /// <c>Dictionary&lt;Type, object&gt;</c>, so only generated code can name the
+    /// <c>JsonTypeInfo&lt;T&gt;</c> that writes it.
+    /// </para>
+    /// <para>
+    /// <strong>A <see cref="JournalPayload"/>, not a string, and the difference is the whole
+    /// design.</strong> The engine hashes what <see cref="JournalPayload.ToJson"/> produced —
+    /// the one exit, which redacts. A step whose input carries a <c>[Sensitive]</c> member
+    /// therefore keys on a document containing <see cref="JournalPayload.Redacted"/> where the
+    /// distinguishing value should be, and two different inputs would collide on one key. The
+    /// engine refuses such a key outright rather than serving one caller another's result;
+    /// see <c>FlowEngine</c>'s cache path and
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0044-a-cache-is-a-plugin-store-keyed-by-the-redacted-input.md">ADR-0044</a>.
+    /// </para>
+    /// <para>
+    /// Called before the dispatch, and only for a step whose resolved <c>StepPolicy.HasCache</c>
+    /// is true. Defaulted to <see cref="JournalPayload.Empty"/> so a hand-written dispatcher
+    /// caches nothing rather than caching wrongly.
+    /// </para>
+    /// </remarks>
+    JournalPayload DescribeCacheKey(int stepIndex, FlowContext ctx) => JournalPayload.Empty;
+
+    /// <summary>
+    /// Describes what a finished step produced, as the cache should hold it.
+    /// </summary>
+    /// <param name="stepIndex">Position in the plan's step graph.</param>
+    /// <param name="ctx">The scope the step ran under.</param>
+    /// <returns>
+    /// A one-member document naming the result by its contract's simple name, or
+    /// <see cref="JournalPayload.Empty"/> when there is nothing to hold.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Composed the way the state bag is, so it comes back the way the state bag
+    /// does.</strong> The document is built by <c>JournalPayload.OfState</c> under the
+    /// contract's simple name, which is exactly the shape <see cref="RestoreState"/> reads — so
+    /// a cache hit is put back into the bag by the method that already exists, and there is no
+    /// second deserialiser to keep in step with the first. A dispatcher that can write a state
+    /// bag can read this back by construction.
+    /// </para>
+    /// <para>
+    /// The payload carries the flow's <c>SensitiveMembers</c>, like every other payload, so a
+    /// marked member reaches the store as <see cref="JournalPayload.Redacted"/>. That makes it
+    /// unusable as a cached result, which is why the engine declines to store a document
+    /// containing the placeholder: a hit that returned <c>[redacted]</c> would hand the flow a
+    /// value no capability produced.
+    /// </para>
+    /// </remarks>
+    JournalPayload DescribeCacheEntry(int stepIndex, FlowContext ctx) => JournalPayload.Empty;
+
+    /// <summary>
+    /// Describes what an audited step carried, for the record's payload.
+    /// </summary>
+    /// <param name="stepIndex">Position in the plan's step graph.</param>
+    /// <param name="ctx">The scope the step ran under.</param>
+    /// <param name="redact">
+    /// The member names the <c>Audit</c> policy declared. Passed to
+    /// <c>JournalPayload.OfState</c> alongside the flow's <c>SensitiveMembers</c>, so the
+    /// record's redaction is the same pass with a longer list.
+    /// </param>
+    /// <returns>
+    /// A composed <c>request</c> / <c>result</c> document, or <see cref="JournalPayload.Empty"/>
+    /// when this dispatcher has nothing to describe.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is what makes <c>redact</c> mean something.</strong> An audit record the
+    /// engine could write alone would carry no contract value at all, and a redact list over an
+    /// empty record names nothing — the objection that had stage 7 declined twice. The list
+    /// reaches the one redaction pass FlowX has, on the one type a value can leave through, so
+    /// a record is never more revealing than the journal row beside it and can be made less so.
+    /// </para>
+    /// <para>
+    /// Called after the step succeeded and after its commit, and only for a step whose resolved
+    /// <c>StepAudit.IsAudited</c> is true. Defaulted to <see cref="JournalPayload.Empty"/>: a
+    /// record with no payload is still a record of what ran and on whose authority, which is the
+    /// half <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0028-identity-arrives-on-the-invocation.md">ADR-0028</a>
+    /// asked for.
+    /// </para>
+    /// </remarks>
+    JournalPayload DescribeAudit(int stepIndex, FlowContext ctx, IReadOnlyList<string> redact) =>
+        JournalPayload.Empty;
+
+    /// <summary>
     /// Rehydrates a resumed flow's state bag from the snapshot the journal committed.
     /// </summary>
     /// <param name="ctx">The freshly rented context the resumed loop will run under.</param>

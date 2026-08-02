@@ -120,7 +120,7 @@ steps unwinding behind it. The rule is the early warning; the refusal is the gua
 
 ## Why this is an error and not a warning
 
-[FLOWX1032](FLOWX1032.md) is a warning because *"the source is not wrong; it is written
+The deleted `FLOWX1032` was a warning because *"the source is not wrong; it is written
 correctly for a platform that has the feature"* — a `RateLimit` enforced at the gateway is a
 correct program. That argument does not transfer, and the reason is
 [ADR-0030](../adr/ADR-0030-policy-stance-is-refused-at-build-time.md)'s:
@@ -130,14 +130,14 @@ correct program. That argument does not transfer, and the reason is
   gives `[Sensitive]` a read path — at which point the rule is deleted rather than downgraded.
 - **The alternative is not a policy that does less.** It is a step that fails at run time on its
   first execution. A build error is the earliest honest moment to say the same thing.
-- **There is a fix.** Unlike FLOWX1032, whose only silencing edit is the deletion its own page
+- **There is a fix.** Unlike FLOWX1032, whose only silencing edit was the deletion its own page
   refuses, every remedy above leaves the program working.
 
-## Why this is not FLOWX1032, FLOWX1014 or FLOWX1018
+## Why this is not FLOWX1014, FLOWX1018 or the retired FLOWX1032
 
 | Rule | Asks |
 |---|---|
-| [FLOWX1032](FLOWX1032.md) | Is the **stage** this policy runs in implemented? |
+| `FLOWX1032` (deleted) | Was the **stage** this policy runs in implemented? |
 | [FLOWX1014](FLOWX1014.md) | Does the **capability** tolerate being called twice? |
 | [FLOWX1018](FLOWX1018.md) | Does the **capability** have side effects a cache would corrupt? |
 | **FLOWX1040** | Can the **platform record** what this flow produced, without changing it? |
@@ -146,7 +146,7 @@ The three neighbours are all questions about the declaration's subject. This one
 about the platform's ability to serve it, and it is the only one of the four whose answer
 depends on a contract the policy does not mention.
 
-A step can be FLOWX1040 and FLOWX1032 at once — an `Idempotency` and a `Cache` in one set — and
+A step could be FLOWX1040 and FLOWX1032 at once — an `Idempotency` and a `Cache` in one set — and
 the two report separately, because they are different facts and have different expiry dates.
 
 ## When this rule is deleted
@@ -163,7 +163,7 @@ on the day the guard is removed, whether or not this rule is still raised.
 
 ---
 
-**Back to:** [diagnostics index](README.md) · [FLOWX1032](FLOWX1032.md) ·
+**Back to:** [diagnostics index](README.md) ·
 [FLOWX1014](FLOWX1014.md) · [FLOWX1036](FLOWX1036.md) ·
 [Policy framework](../10-Policy-Framework.md) ·
 [ADR-0042](../adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md)

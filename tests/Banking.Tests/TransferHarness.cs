@@ -187,8 +187,17 @@ internal sealed class TransferHarness
         return outbox.Value;
     }
 
+    /// <summary>Every audit record this harness's transfers produced, in order.</summary>
+    /// <remarks>
+    /// The sample's own sink, not a double. Three of this flow's steps declare an
+    /// <c>Audit</c> and the engine refuses an audited step it cannot record, so a harness that
+    /// omitted this would fail every transfer at the debit — which is the behaviour, and is
+    /// asserted separately in <c>TransferAuditTests</c>.
+    /// </remarks>
+    public InMemoryAuditTrail Audit { get; } = new();
+
     private FlowHost Host() => new(
-        new FlowEngine(SystemClock.Instance, rateLimiter: Limiter),
+        new FlowEngine(SystemClock.Instance, rateLimiter: Limiter, audit: Audit),
         new FlowXOptions { ApplicationName = "Banking", NodeName = "test-node" },
         new FlowDurability(Journal, Leases));
 
@@ -290,6 +299,16 @@ internal sealed class TransferHarness
 
         public void RestoreState(FlowContext ctx, string stateBagJson) =>
             _inner.RestoreState(ctx, stateBagJson);
+
+        // Forwarded for DescribeInput's reason, one policy later. The generated DescribeAudit
+        // is what composes the request/result document and applies the flow's SensitiveMembers
+        // together with the policy's redact list; a decorator that stopped here would inherit
+        // the interface's default — JournalPayload.Empty — and every audit record in this bank
+        // would carry nothing while still being written, which is the shape of failure the
+        // whole policy was declined twice to avoid.
+        public JournalPayload DescribeAudit(
+            int stepIndex, FlowContext ctx, IReadOnlyList<string> redact) =>
+            _inner.DescribeAudit(stepIndex, ctx, redact);
 
         /// <summary>
         /// The same name <c>FlowTestTrace</c> uses: the capability id verbatim, and a

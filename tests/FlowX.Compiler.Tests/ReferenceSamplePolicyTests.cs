@@ -34,12 +34,14 @@ namespace FlowX.Compiler.Tests;
 /// fires from proof that it can be made to fire.
 /// </para>
 /// <para>
-/// <strong>The sample's own suppression is removed first, deliberately.</strong>
-/// <c>ExecuteTransferFlow</c> carries an argued <c>#pragma warning disable FLOWX1032</c>, and
-/// Roslyn filters a suppressed diagnostic out of an analyzer run — so reading the file
-/// verbatim would assert that nothing is reported, which is true and says nothing. Stripping
-/// the pragma is what turns the file back into the input the rule was written against, and it
-/// fails loudly if the sample ever stops carrying one.
+/// <strong>The sample carries no suppression at all, and that is asserted rather than
+/// assumed.</strong> <c>ExecuteTransferFlow</c> used to carry an argued
+/// <c>#pragma warning disable FLOWX1032</c>, which this file stripped before analysing —
+/// Roslyn filters a suppressed diagnostic out of an analyzer run, so reading the file verbatim
+/// would have asserted that nothing is reported, which was true and said nothing. FLOWX1032 is
+/// deleted and every pragma that pointed at it went with it, so the file is read verbatim now
+/// and <see cref="TheSampleSuppressesNothing"/> is what fails if a suppression ever comes
+/// back — which is the same guard, aimed at the state the sample is supposed to be in.
 /// </para>
 /// <para>
 /// <strong>Compile errors are not asserted away here, unlike everywhere else in this
@@ -54,39 +56,22 @@ namespace FlowX.Compiler.Tests;
 /// </remarks>
 public sealed class ReferenceSamplePolicyTests
 {
-    private const string Pragma = "#pragma warning disable FLOWX1032";
-    private const string Restore = "#pragma warning restore FLOWX1032";
-
-    /// <summary>The four sample files the policy rules read, with the suppression removed.</summary>
+    /// <summary>The four sample files the policy rules read, verbatim.</summary>
     private static (string Path, string Source)[] Sample(
         Func<string, string>? editPolicies = null,
         Func<string, string>? editFlow = null)
     {
         var flow = Read("ExecuteTransferFlow.cs");
-
-        flow.ShouldContain(
-            Pragma,
-            Case.Sensitive,
-            "samples/banking argues its FLOWX1032 suppression at the call site. If the pragma " +
-            "is gone the sample has taken a different answer, and this test is no longer " +
-            "removing what it thinks it is.");
-
         var policies = Read("Policies.cs");
-
-        var unsuppressed = Unsuppressed(flow);
 
         return
         [
-            ("/samples/banking/ExecuteTransferFlow.cs", editFlow is null ? unsuppressed : editFlow(unsuppressed)),
+            ("/samples/banking/ExecuteTransferFlow.cs", editFlow is null ? flow : editFlow(flow)),
             ("/samples/banking/Policies.cs", editPolicies is null ? policies : editPolicies(policies)),
             ("/samples/banking/Capabilities.cs", Read("Capabilities.cs")),
             ("/samples/banking/Contracts.cs", Read("Contracts.cs")),
         ];
     }
-
-    private static string Unsuppressed(string source) => source
-        .Replace(Pragma, string.Empty, StringComparison.Ordinal)
-        .Replace(Restore, string.Empty, StringComparison.Ordinal);
 
     private static Diagnostic[] Report(
         Func<string, string>? editPolicies = null,
@@ -98,99 +83,96 @@ public sealed class ReferenceSamplePolicyTests
     // ------------------------------------------------------------------ it fires
 
     /// <summary>
-    /// The rule reports three of the reference saga's seven <c>.WithPolicy(...)</c> calls.
+    /// None of the reference saga's seven <c>.WithPolicy(...)</c> calls is reported.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>This asserted seven, then four, and is now three.</strong> Seven to four was the
-    /// policy engine landing: the three calls naming <c>Policies.ExternalRead</c> — two of them
-    /// inside <c>Case</c> blocks — went quiet when their <c>Timeout</c>, <c>Retry</c> and
-    /// <c>CircuitBreaker</c> started running.
+    /// <strong>This asserted seven, then four, then three, and is now none.</strong> Seven was
+    /// the state before any policy executed. Seven to four was the policy engine landing: the
+    /// three calls naming <c>Policies.ExternalRead</c> — two of them inside <c>Case</c> blocks
+    /// — went quiet when their <c>Timeout</c>, <c>Retry</c> and <c>CircuitBreaker</c> started
+    /// running.
     /// </para>
     /// <para>
-    /// Four to three is stage 1 and stage 3 landing, and it happened in two ways at once on one
-    /// call. <c>Policies.Admission</c> declared a <c>RateLimit</c> and an <c>Idempotency</c>
-    /// window; the limit is executed now, and the window was <em>deleted</em> rather than
-    /// executed, because <c>ExecuteTransfer</c> marks two IBANs <c>[Sensitive]</c> and
-    /// <c>FLOWX1040</c> refuses a window whose recorded result would carry <c>[redacted]</c>
-    /// where an account number was.
+    /// Four to three was stage 1 and stage 3 landing, and it happened in two ways at once on
+    /// one call. <c>Policies.Admission</c> declared a <c>RateLimit</c> and an
+    /// <c>Idempotency</c> window; the limit is executed now, and the window was
+    /// <em>deleted</em> rather than executed, because <c>ExecuteTransfer</c> marks two IBANs
+    /// <c>[Sensitive]</c> and <c>FLOWX1040</c> refuses a window whose recorded result would
+    /// carry <c>[redacted]</c> where an account number was.
     /// </para>
     /// <para>
-    /// What is left is the <c>Audit</c>: <c>LedgerPost</c> twice and
-    /// <c>SettlementRegister</c> once. The count is the assertion, not merely the presence —
-    /// two would mean one of the remaining calls was missed, and four would mean a set whose
-    /// every kind now runs is still reported, which is how a narrowed rule teaches an author to
-    /// suppress it anyway.
+    /// Three to none was stage 5 and stage 7's audit landing: <c>LedgerPost</c> twice and
+    /// <c>SettlementRegister</c> once went quiet, because an <c>Audit</c> was the only thing
+    /// any of the three still declared that nothing applied. There is no fourth number, which
+    /// is why FLOWX1032 is deleted rather than narrowed again — and this assertion is what
+    /// would fail if a rule of its shape came back.
     /// </para>
     /// </remarks>
     [Fact]
-    public void OnlyThePolicyCallsWhoseKindsAreStillInertAreReported()
+    public void NoPolicyCallInTheReferenceSagaIsReported()
     {
-        var reported = Report().Where(static d => d.Id == "FLOWX1032").ToList();
+        var reports = Report();
 
-        reported.Count.ShouldBe(
-            3,
-            "samples/banking declares seven .WithPolicy(...) calls; the three naming " +
-            "Policies.ExternalRead are wholly executed, and Policies.Admission's RateLimit is " +
-            "too. Reported:\n" + Describe(reported));
-
-        reported.ShouldAllBe(static d => d.Severity == DiagnosticSeverity.Warning);
-
-        reported
-            .Select(static d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture))
-            .ShouldAllBe(static m => !m.Contains("Policies.ExternalRead", StringComparison.Ordinal));
+        reports.ShouldBeEmpty(
+            "samples/banking declares seven .WithPolicy(...) calls across four named sets, " +
+            "and every kind any of them declares is applied. Reported:\n" + Describe(reports));
     }
 
     /// <summary>
-    /// The ledger legs are told about <c>Audit</c> and about nothing else.
+    /// The ledger legs are told about nothing at all.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The one report in this sample where getting it wrong would be actively harmful:
-    /// <c>Policies.LedgerPost</c> carries the <c>CompensationRetry</c> that unwinds a failed
-    /// transfer and the <c>Timeout</c> that now bounds the ledger write, and naming either
-    /// here would tell a payments team a control is off when it is on.
+    /// <strong>Inverted, and it is the sample assertion the audit work exists for.</strong>
+    /// This test read "the ledger legs are told about <c>Audit</c> and about nothing else",
+    /// and it was the one report in this sample where getting it wrong would have been
+    /// actively harmful: <c>Policies.LedgerPost</c> carries the <c>CompensationRetry</c> that
+    /// unwinds a failed transfer and the <c>Timeout</c> that bounds the ledger write, and
+    /// naming either would tell a payments team a control is off when it is on.
     /// </para>
     /// <para>
-    /// <strong><c>Timeout</c> moved from the first assertion to the second.</strong> It was
-    /// one of the two kinds this report had to name; it is now one of the two it must not.
+    /// <c>Audit</c> has now made the same journey <c>Timeout</c> made: it was the kind this
+    /// report had to name, and it is now a kind nothing may name. Every kind
+    /// <c>Policies.LedgerPost</c> declares is applied, so the correct number of reports on
+    /// both ledger legs is none — and the sample's two <c>#pragma warning disable
+    /// FLOWX1032</c> lines about the audit went with the rule.
     /// </para>
     /// </remarks>
     [Fact]
-    public void TheLedgerLegsAreToldAboutTheAuditAndNothingElse()
-    {
-        var ledger = Report()
-            .Where(static d => d.Id == "FLOWX1032")
+    public void TheLedgerLegsAreToldNothing() =>
+        Report()
             .Select(static d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture))
             .Where(static message => message.Contains("Policies.LedgerPost", StringComparison.Ordinal))
-            .ToList();
-
-        ledger.Count.ShouldBe(2, "Both ledger legs declare Policies.LedgerPost.");
-
-        foreach (var message in ledger)
-        {
-            message.ShouldContain("Audit");
-            message.ShouldNotContain("Timeout");
-            message.ShouldNotContain("CompensationRetry");
-        }
-    }
+            .ShouldBeEmpty(
+                "Timeout, Audit and CompensationRetry are all applied. A report here would " +
+                "tell a payments team three controls are off when all three are on.");
 
     /// <summary>
-    /// <c>Audit</c> is reported although it runs at <c>CompensationRetry</c>'s own stage.
+    /// No declared <c>Audit</c> is reported, although it shares a stage with a kind that a
+    /// rule here does report.
     /// </summary>
     /// <remarks>
-    /// Asserted against the sample rather than only against a fixture, because this is the
-    /// claim the sample's README made wrongly for two work packages — "no <em>forward</em>
-    /// policy runs", which is a summary by stage, and <c>Audit</c> is stage 7. A rule that
-    /// cut by stage would be silent on every audit this bank declares.
+    /// <para>
+    /// <strong>Inverted, and the fact it pins is untouched.</strong> This asserted that the
+    /// sample's three audits <em>were</em> reported although they were stage 7 — the evidence
+    /// that the deleted rule's cut was never a range of stages, because
+    /// <c>CompensationRetry</c> shares that stage and runs.
+    /// </para>
+    /// <para>
+    /// Nothing here is decided by stage number, and the sample still demonstrates it:
+    /// <c>Audit</c> and <c>CompensationRetry</c> are both stage 7, and the one edit that makes
+    /// this sample report at all — moving <c>CompensationRetry</c> onto a step with no undo —
+    /// touches one of them and not the other.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void TheDeclaredAuditsAreReportedAlthoughTheyAreStageSevenPolicies() =>
+    public void NoDeclaredAuditIsReported() =>
         Report()
-            .Where(static d => d.Id == "FLOWX1032")
             .Count(static d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture)
                 .Contains("Audit", StringComparison.Ordinal))
-            .ShouldBe(3, "LedgerPost twice and SettlementRegister once declare an Audit.");
+            .ShouldBe(0, "LedgerPost twice and SettlementRegister once declare an Audit, and " +
+                         "all three are now written.");
 
     /// <summary>
     /// Reusing the ledger set on the settlement step — the tempting edit — is FLOWX1033.
@@ -243,18 +225,48 @@ public sealed class ReferenceSamplePolicyTests
     /// </para>
     /// <para>
     /// Written as an assertion about the whole run rather than about FLOWX1033 alone: if the
-    /// analyzer starts reporting a third id here, this test is the one that says so.
+    /// analyzer starts reporting any id here, this test is the one that says so. It asserted
+    /// <c>["FLOWX1032"]</c> while that rule had something left to name; the list is empty now,
+    /// which is a strictly stronger statement about the same run.
     /// </para>
     /// </remarks>
     [Fact]
-    public void NothingButFLOWX1032IsReportedOnTheSampleAsWritten()
+    public void NothingIsReportedOnTheSampleAsWritten()
     {
         var reports = Report();
 
         reports
             .Select(static d => d.Id)
             .Distinct()
-            .ShouldBe(["FLOWX1032"], "Reported:\n" + Describe(reports));
+            .ShouldBeEmpty("Reported:\n" + Describe(reports));
+    }
+
+    /// <summary>The sample suppresses no FlowX diagnostic anywhere.</summary>
+    /// <remarks>
+    /// <strong>This replaces the guard that used to sit inside <c>Sample</c>.</strong> That
+    /// helper asserted the flow still carried its <c>#pragma warning disable FLOWX1032</c>
+    /// before stripping it, so that a sample which quietly stopped carrying one could not turn
+    /// every assertion in this file into a vacuous pass. There is no pragma to strip and none
+    /// to argue for: every kind the sample declares is applied. The guard is kept, pointed the
+    /// other way — a suppression appearing here would mean the reference application had gone
+    /// back to silencing a rule rather than satisfying it, and every other test in this file
+    /// would start passing for the wrong reason.
+    /// </remarks>
+    [Fact]
+    public void TheSampleSuppressesNothing()
+    {
+        foreach (var file in new[]
+                 {
+                     "ExecuteTransferFlow.cs", "Policies.cs", "Capabilities.cs", "Contracts.cs",
+                 })
+        {
+            Read(file).ShouldNotContain(
+                "#pragma warning disable FLOWX",
+                Case.Sensitive,
+                $"samples/banking/{file} silences a FlowX rule. Every policy kind it declares " +
+                "is applied, so a suppression here hides a real finding — and it makes every " +
+                "assertion in this file pass against a filtered analyzer run.");
+        }
     }
 
     // ------------------------------------- the three later rules, against the sample
@@ -334,9 +346,10 @@ public sealed class ReferenceSamplePolicyTests
     /// <c>CompensationRetry</c> that is "the one line in the file that runs" stops running.
     /// </para>
     /// <para>
-    /// FLOWX1032 goes quiet in the same breath, which is the point of reporting this
-    /// separately: the compiler cannot name a kind it could not read, so the seven warnings
-    /// that describe this bank's unenforced controls would disappear along with the controls.
+    /// FLOWX1033, FLOWX1035 and FLOWX1040 go quiet in the same breath, which is the point of
+    /// reporting this separately: the compiler cannot say anything about a set it could not
+    /// read, so every rule that describes this bank's controls would disappear along with the
+    /// controls, and only the one report that is about the *reading* is honest here.
     /// </para>
     /// </remarks>
     [Fact]
@@ -347,7 +360,7 @@ public sealed class ReferenceSamplePolicyTests
         var compilation = GeneratorHarness.CompilationOf(
             "Banking",
             [library],
-            ("/samples/banking/ExecuteTransferFlow.cs", Unsuppressed(Read("ExecuteTransferFlow.cs"))),
+            ("/samples/banking/ExecuteTransferFlow.cs", Read("ExecuteTransferFlow.cs")),
             ("/samples/banking/Capabilities.cs", Read("Capabilities.cs")),
             ("/samples/banking/Contracts.cs", Read("Contracts.cs")));
 
@@ -377,22 +390,24 @@ public sealed class ReferenceSamplePolicyTests
     [InlineData("RecordSettlement", new[] { "FLOWX1033" })]
     public void TheDocumentedDefaultIsUnderstoodOnTheRealSaga(string step, string[] expected) =>
         Report(editFlow: flow => WithDocumentedDefaultOn(flow, step))
-            .Where(d => d.Id != "FLOWX1032" && d.Id != "FLOWX1034")
+            .Where(d => d.Id != "FLOWX1034")
             .Select(d => d.Id)
             .Distinct()
             .ShouldBe(expected);
 
     /// <summary>
-    /// And with its own suppression in place the sample reports nothing at all.
+    /// The sample as it is on disk reports nothing at all.
     /// </summary>
     /// <remarks>
-    /// The pragma is a decision, so it is worth one assertion that the decision takes effect
-    /// — a suppression that does not suppress is an argument written in a file for nobody.
-    /// This is also what keeps <c>dotnet build -c Release</c> at zero warnings honest from
-    /// inside the test suite rather than only from CI.
+    /// <strong>This was <c>TheSamplesOwnSuppressionSilencesIt</c></strong>, which asserted that
+    /// the sample's <c>#pragma warning disable FLOWX1032</c> took effect — a suppression that
+    /// does not suppress is an argument written in a file for nobody. There is no pragma; the
+    /// same run is empty because there is nothing to report, which is the state the pragma was
+    /// an apology for. Kept because it is what keeps <c>dotnet build -c Release</c> at zero
+    /// warnings honest from inside the test suite rather than only from CI.
     /// </remarks>
     [Fact]
-    public void TheSamplesOwnSuppressionSilencesIt() =>
+    public void TheSampleOnDiskReportsNothing() =>
         GeneratorHarness.Report(
             GeneratorHarness.CompilationOf(
                 ("/samples/banking/ExecuteTransferFlow.cs", Read("ExecuteTransferFlow.cs")),
@@ -411,7 +426,7 @@ public sealed class ReferenceSamplePolicyTests
             """
             PolicySet.Named("settlement-register")
                     .Timeout(TimeSpan.FromSeconds(5))
-                    .Audit("financial")
+                    .Audit("financial", "DebitEntryId", "CreditEntryId")
             """;
 
         policies.ShouldContain(

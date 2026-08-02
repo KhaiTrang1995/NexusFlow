@@ -142,28 +142,38 @@ public sealed class PolicyStageFitnessTests
     }
 
     /// <summary>
-    /// FLOWX1032 must report exactly the kinds no code path applies, in both directions.
+    /// Every kind <c>PolicySet</c> offers is applied by the runtime, and the compiler's copy
+    /// of that list says so — in both directions.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <c>DeclaredPolicyAnalyzer.ExecutedKinds</c> is the list the rule is the complement of,
+    /// <c>DeclaredPolicyAnalyzer.ExecutedKinds</c> was the list <c>FLOWX1032</c> was the
+    /// complement of. That rule is deleted, because the complement is empty; the list is not,
     /// and it is a hand-written copy for <c>ManifestWriter.KnownPolicyStages</c>'s reason: the
-    /// compiler targets netstandard2.0 and can reference neither <c>StepPolicy</c> nor
-    /// <c>CompensationPolicy</c>. An unpinned copy of "what runs" drifts in both directions and
-    /// each is bad in its own way — a kind the engine gained and the rule kept reporting
-    /// teaches an author to suppress a catalogue, and a kind the rule dropped without the
-    /// engine gaining it goes silent on a policy that is still inert.
+    /// compiler targets netstandard2.0 and can reference none of <c>StepPolicy</c>,
+    /// <c>StepAudit</c> or <c>CompensationPolicy</c>. An unpinned copy of "what runs" drifts in
+    /// both directions and each is bad in its own way — a kind the list claims and no resolver
+    /// reads is a declaration the runtime silently drops, and a kind a resolver gained and the
+    /// list did not is a copy that has stopped describing the engine.
     /// </para>
     /// <para>
-    /// The real list is read off the two resolvers rather than typed out again: <c>StepPolicy</c>
-    /// publishes the six descriptor kinds it reads as constants — the four stage-4 ones plus the
-    /// stage-1 <c>RateLimit</c> and the stage-3 <c>Idempotency</c> — and <c>CompensationPolicy</c>
-    /// publishes the one it reads. A seventh kind implemented without a constant would slip past
-    /// this, which is why they are constants.
+    /// The real list is read off the three resolvers rather than typed out again:
+    /// <c>StepPolicy</c> publishes the seven descriptor kinds it reads as constants — the four
+    /// stage-4 ones, the stage-1 <c>RateLimit</c>, the stage-3 <c>Idempotency</c> and the
+    /// stage-5 <c>Cache</c> — <c>CompensationPolicy</c> publishes the one it reads, and
+    /// <c>StepAudit</c> publishes the stage-7 one. A kind implemented without a constant would
+    /// slip past this — which is why they are constants, and why each new resolver publishes
+    /// one on the day it starts reading a kind.
+    /// </para>
+    /// <para>
+    /// <strong>The reverse direction is what replaced the rule.</strong> While a kind could be
+    /// inert, "every kind <c>PolicySet</c> offers is executed" was false by design and could
+    /// not be asserted. It is true now, so it is asserted here — which is the gate that will
+    /// notice the next builder method added without a resolver behind it.
     /// </para>
     /// </remarks>
     [Fact]
-    public void FLOWX1032ReportsExactlyTheKindsNothingApplies()
+    public void EveryKindPolicySetOffersIsAppliedByTheRuntime()
     {
         string[] executed =
         [
@@ -173,23 +183,37 @@ public sealed class PolicyStageFitnessTests
             StepPolicy.RetryKind,
             StepPolicy.CircuitBreakerKind,
             StepPolicy.BulkheadKind,
+            StepPolicy.CacheKind,
+            StepAudit.AuditKind,
             CompensationPolicy.CompensationRetryKind,
         ];
 
         DeclaredPolicyAnalyzer.ExecutedKinds.OrderBy(k => k, StringComparer.Ordinal).ShouldBe(
             executed.OrderBy(k => k, StringComparer.Ordinal),
-            "FLOWX1032 reports every declared kind that is not in this set. If it disagrees " +
-            "with what StepPolicy and CompensationPolicy actually read, the rule either warns " +
-            "about a policy that now runs or goes silent about one that does not.");
+            "ExecutedKinds is the compiler's copy of what the runtime applies. If it disagrees " +
+            "with what StepPolicy, StepAudit and CompensationPolicy actually read, the copy " +
+            "has stopped describing the engine it was written to describe.");
+
+        var declarable = ReadRealMapping();
 
         // And every one of them is a kind PolicySet can actually produce. A constant naming a
-        // descriptor kind nothing emits would make the rule silent about a policy that does
-        // not exist, which reads as correctness and is not.
+        // descriptor kind nothing emits would claim a policy that does not exist, which reads
+        // as correctness and is not.
         foreach (var kind in executed)
         {
-            ReadRealMapping().ShouldContainKey(kind,
+            declarable.ShouldContainKey(kind,
                 $"'{kind}' is treated as executed, and no PolicySet builder emits it.");
         }
+
+        // The other direction, and the one that replaced FLOWX1032. Every kind an author can
+        // declare is applied by one of the three resolvers — so there is no inert declaration
+        // left for a rule to report, which is why the rule is deleted rather than narrowed.
+        declarable.Keys.OrderBy(k => k, StringComparer.Ordinal).ShouldBe(
+            executed.OrderBy(k => k, StringComparer.Ordinal),
+            "PolicySet offers a builder whose kind no resolver reads, so a step declaring it " +
+            "reaches the plan and the manifest and nothing applies it. That is the state " +
+            "FLOWX1032 existed to report; the rule is deleted, so this gate is what is left " +
+            "to notice it.");
     }
 
     /// <summary>

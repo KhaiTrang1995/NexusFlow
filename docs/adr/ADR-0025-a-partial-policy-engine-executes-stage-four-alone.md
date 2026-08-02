@@ -55,7 +55,7 @@ territory, decided per contract rather than in passing. `Audit` needs a record s
 sink.
 
 It is also the stage the complaint is about. Every published example of the gap —
-[FLOWX1032](../diagnostics/FLOWX1032.md)'s, [10 §4](../10-Policy-Framework.md#4-declaring-policies)'s
+`FLOWX1032`'s, [10 §4](../10-Policy-Framework.md#4-declaring-policies)'s
 `ExternalRead`, `samples/banking`'s — is a timeout, a retry and a breaker.
 
 ### 1.3 Rejected options
@@ -185,5 +185,5 @@ mechanisms and re-open ADR-0011's duplicate-charge row for real.
 **See also:** [ADR-0011](ADR-0011-fixed-policy-stage-order.md) ·
 [ADR-0023](ADR-0023-policy-stages-hook-through-the-plan.md) ·
 [ADR-0024](ADR-0024-stage-four-is-a-fixed-nesting.md) ·
-[FLOWX1032](../diagnostics/FLOWX1032.md) · [FLOWX1014](../diagnostics/FLOWX1014.md) ·
+`FLOWX1032` · [FLOWX1014](../diagnostics/FLOWX1014.md) ·
 [10 — Policy Framework](../10-Policy-Framework.md)

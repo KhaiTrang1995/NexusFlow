@@ -8,8 +8,8 @@ using Xunit;
 namespace FlowX.Compiler.Tests;
 
 /// <summary>
-/// FLOWX1032 and FLOWX1033 — the policies a <c>.WithPolicy(...)</c> declares and the
-/// runtime does not apply.
+/// FLOWX1033 through FLOWX1036 and FLOWX1040 — what a <c>.WithPolicy(...)</c> declares, and
+/// the ways it can reach less than it looks like it does.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,17 +21,25 @@ namespace FlowX.Compiler.Tests;
 /// are asserted at least as heavily as the cases that must fire.
 /// </para>
 /// <para>
-/// <strong><c>Audit</c> is the test that pins the correction, and the correction now has two
-/// halves.</strong> <c>Audit</c> is a <c>PolicyStage.Consistency</c> policy — stage 7, the
-/// same stage as the <c>CompensationRetry</c> that runs — and it is inert; <c>RateLimit</c>
-/// is stage 1 and inert while <c>Timeout</c> is stage 4 and applied. So no line drawn by
-/// stage number separates what this rule reports from what it must not, in either direction,
-/// and this file is where that is checked rather than asserted in prose.
+/// <strong>The whole of the silence used to be FLOWX1032's subject, and this file is where
+/// its deletion is checked.</strong> That rule reported a declared kind nothing applied; it
+/// was narrowed twice and then deleted, because every kind <c>PolicySet</c> offers is now
+/// read by <c>StepPolicy.From</c>, <c>StepAudit.From</c> or <c>CompensationPolicy.From</c>.
+/// Each of its firing tests has been kept and inverted rather than dropped, so the sets that
+/// once stood for "a declaration nothing applies" are now the sets that must produce nothing —
+/// which is the assertion that would fail if a rule of that shape came back.
 /// </para>
 /// <para>
-/// The two severities are pinned by tests of their own, because the split is the decision
-/// these rules turn on and the one a later reader is most likely to tidy into agreement.
-/// The reasoning is on the descriptors and on the two pages.
+/// <strong>No line drawn by stage number ever separated anything here, and that stays
+/// checked.</strong> <c>Audit</c> and <c>CompensationRetry</c> are both
+/// <c>PolicyStage.Consistency</c> and reach the engine through two different resolvers, one of
+/// which needs a compensation to wrap and one of which does not; FLOWX1033 is about exactly
+/// that difference and about no stage at all.
+/// </para>
+/// <para>
+/// The severities are pinned by tests of their own, because the split is the decision these
+/// rules turn on and the one a later reader is most likely to tidy into agreement. The
+/// reasoning is on the descriptors and on the pages.
 /// </para>
 /// </remarks>
 public sealed class DeclaredPolicyAnalyzerTests
@@ -94,20 +102,22 @@ public sealed class DeclaredPolicyAnalyzerTests
         return GeneratorHarness.AnalyzeWithMessages(source, new DeclaredPolicyAnalyzer());
     }
 
-    // ------------------------------------------------------- FLOWX1032 must fire
+    // --------------------------------------------------- no declared kind is inert
 
     /// <summary>
-    /// The ordinary admission stance: two kinds, neither of them executed by anything.
+    /// The set that was this file's example of a declaration nothing applied.
     /// </summary>
     /// <remarks>
-    /// <strong>This was <c>AForwardPolicySetIsReported</c> and its set was
-    /// <c>Timeout · Retry · CircuitBreaker</c>.</strong> All three of those are applied now,
-    /// so the set that once stood for "the ordinary case this rule is about" is exactly the
-    /// set the rule must be silent on — asserted below. What is left of FLOWX1032 is stage 1,
-    /// stage 3, stage 5 and the audit.
+    /// <strong>This was <c>AnInertPolicySetIsReported</c>, and before that
+    /// <c>AForwardPolicySetIsReported</c> over <c>Timeout · Retry · CircuitBreaker</c>.</strong>
+    /// Each time a stage landed, the set that stood for "the ordinary case this rule is about"
+    /// became a set the rule had to be silent on, and a new one was written. There is no new
+    /// one: stage 5 consults the cache and stage 7 writes the record, so the assertion is
+    /// inverted rather than re-aimed, and <c>FLOWX1032</c> is deleted rather than narrowed a
+    /// third time.
     /// </remarks>
     [Fact]
-    public void AnInertPolicySetIsReported() =>
+    public void TheLastInertPolicySetIsSilent() =>
         Analyze(FlowWith(
             ".WithPolicy(Policies.Deferred)",
             """
@@ -115,47 +125,40 @@ public sealed class DeclaredPolicyAnalyzerTests
                 .Cache(TimeSpan.FromSeconds(10))
                 .Audit("financial");
             """))
-            .ShouldBe(["FLOWX1032"]);
+            .ShouldBeEmpty();
 
-    /// <summary>The message names the set the author wrote and every kind it drops.</summary>
+    /// <summary>A set spanning every executed stage reports nothing at all.</summary>
     /// <remarks>
-    /// Naming the kinds is what stops the message being generically true of every policy
-    /// set: an author who declared four policies and is told three of them are inert can see
-    /// which one is not.
+    /// <strong>This was <c>TheMessageNamesTheSetAndEveryInertKind</c></strong>, which asserted
+    /// that a mixed set's message named the inert kinds and not the executed ones. There is no
+    /// message, because there are no inert kinds; what is worth keeping from it is the fixture
+    /// — a set reaching stages 1, 3, 4, 5 and 7 at once — and the assertion that nothing in it
+    /// is reported. A rule that came back for any one of these would be telling an author an
+    /// enforced control is decorative, which is the failure the whole deletion is about.
     /// </remarks>
     [Fact]
-    public void TheMessageNamesTheSetAndEveryInertKind()
-    {
-        var messages = Messages(FlowWith(
+    public void ASetSpanningEveryExecutedStageIsSilent() =>
+        Analyze(FlowWith(
             ".WithPolicy(Policies.Deferred)",
             """
             public static readonly PolicySet Deferred = PolicySet.Named("deferred")
+                .RateLimit(permits: 5, TimeSpan.FromSeconds(1))
+                .Idempotency(TimeSpan.FromHours(1))
                 .Timeout(TimeSpan.FromSeconds(1))
                 .Cache(TimeSpan.FromSeconds(10))
                 .Audit("financial");
-            """));
-
-        messages.ShouldHaveSingleItem();
-        messages[0].ShouldContain("Policies.Deferred");
-        messages[0].ShouldContain("Cache");
-        messages[0].ShouldContain("Audit");
-
-        messages[0].ShouldNotContain(
-            "Timeout",
-            Case.Sensitive,
-            "the Timeout beside them is applied, and a message that named it would tell the " +
-            "author their armed timeout is decorative.");
-    }
+            """))
+            .ShouldBeEmpty();
 
     /// <summary>
-    /// A set whose every kind is stage 4 is silent, which is what the rule narrowing means.
+    /// A set whose every kind is stage 4 is silent, which is what the first narrowing meant.
     /// </summary>
     /// <remarks>
-    /// The set <c>docs/10 §4</c>, <c>FLOWX1032</c>'s own page and <c>samples/banking</c> all
-    /// use as the example of a declaration nothing applies. It is applied: the timeout is
-    /// armed, the three attempts are made and the breaker opens. A rule that still reported
-    /// here would be telling a payments team their resilience stance is decorative when it is
-    /// not, which is worse than the rule not existing.
+    /// The set <c>docs/10 §4</c>, the deleted <c>FLOWX1032</c>'s own page and
+    /// <c>samples/banking</c> all used as the example of a declaration nothing applies. It is
+    /// applied: the timeout is armed, the three attempts are made and the breaker opens. A rule
+    /// that still reported here would be telling a payments team their resilience stance is
+    /// decorative when it is not, which is worse than the rule not existing.
     /// </remarks>
     [Fact]
     public void AWhollyExecutedResilienceSetIsSilent() =>
@@ -171,74 +174,50 @@ public sealed class DeclaredPolicyAnalyzerTests
             .ShouldBeEmpty();
 
     /// <summary>
-    /// <c>Audit</c> is reported, and it is a stage-7 <c>Consistency</c> policy.
+    /// <c>Audit</c> is silent, and it is still a stage-7 <c>Consistency</c> policy.
     /// </summary>
     /// <remarks>
-    /// The test that pins the correction. The cut is by <em>what a policy wraps</em>, not by
-    /// which stage it runs in: <c>PolicyChain.ForStep</c> moves only <c>CompensationRetry</c>
-    /// onto the compensation's chain, so <c>Audit</c> stays on the step's chain — which
-    /// nothing reads. A rule written against "stages 1–6" would be silent here and would
-    /// leave the sample's audit declarations claiming an immutable financial record nothing
-    /// writes.
+    /// <para>
+    /// <strong>Inverted, and the correction it was written to pin is unaffected.</strong> This
+    /// test asserted that <c>Audit</c> <em>was</em> reported although it shared a stage with
+    /// <c>CompensationRetry</c>, which runs — the evidence that the cut was never a range of
+    /// stages. Stage 7's audit now runs too, so the assertion flips; the fact it was pinning
+    /// does not, because the two stage-7 kinds still reach the engine through two different
+    /// resolvers — <c>StepAudit</c> and <c>CompensationPolicy</c> — and one of them still needs
+    /// a compensation to wrap while the other does not. No line drawn by stage number ever
+    /// separated anything here.
+    /// </para>
+    /// <para>
+    /// The redact list is kept in the declaration deliberately: it is the argument that used to
+    /// name nothing, and a set carrying one must be as silent as one without.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void AuditIsReportedAlthoughItRunsAtTheSameStageAsCompensationRetry()
-    {
-        var messages = Messages(FlowWith(
+    public void AuditIsSilentAlthoughItRunsAtTheSameStageAsCompensationRetry() =>
+        Analyze(FlowWith(
             ".WithPolicy(Policies.Audited)",
             """
             public static readonly PolicySet Audited = PolicySet.Named("audited")
                 .Audit("financial", "Iban");
-            """));
+            """))
+            .ShouldBeEmpty();
 
-        messages.ShouldHaveSingleItem();
-        messages[0].ShouldContain("Audit");
-    }
-
-    /// <summary>Each of the two kinds nothing applies, on its own.</summary>
+    /// <summary>Each of the eight kinds the engine applies to a forward step, on its own.</summary>
     /// <remarks>
     /// <para>
-    /// A theory rather than one set with both in it, so that a rule which happened to
-    /// recognise one of them and miss the other fails on the row that names it. The kinds
-    /// that are applied get the same treatment in the theory below, which is the half
-    /// that goes wrong silently: a rule reporting a policy that runs looks like a rule
-    /// working.
+    /// <strong>Every row of this theory was once a row of a theory that asserted the
+    /// opposite.</strong> The four stage-4 kinds moved when the policy engine landed;
+    /// <c>RateLimit</c> and <c>Idempotency</c> when stages 1 and 3 did; <c>Cache</c> and
+    /// <c>Audit</c> when stages 5 and 7 did. The theory they moved out of is empty and is
+    /// gone with the rule it belonged to. The compensation retry has its own silence test
+    /// further down, because it is silent for a different reason — it needs a compensation to
+    /// wrap, and FLOWX1033 reports when it has none.
     /// </para>
     /// <para>
-    /// <strong>Narrowed from four rows to two.</strong> <c>RateLimit</c> and
-    /// <c>Idempotency</c> moved to the theory below when stage 1 and stage 3 landed — which is
-    /// the same edit, made in the opposite direction, and is why both theories exist rather
-    /// than one.
-    /// </para>
-    /// </remarks>
-    [Theory]
-    [InlineData("Cache(TimeSpan.FromSeconds(1))", "Cache")]
-    [InlineData("Audit(\"category\")", "Audit")]
-    public void EveryKindNothingAppliesIsReported(string declaration, string kind)
-    {
-        var messages = Messages(FlowWith(
-            ".WithPolicy(Policies.OneKind)",
-            $"""
-            public static readonly PolicySet OneKind = PolicySet.Named("one-kind").{declaration};
-            """));
-
-        messages.ShouldHaveSingleItem();
-        messages[0].ShouldContain(kind);
-    }
-
-    /// <summary>Each of the six kinds the engine now applies, on its own.</summary>
-    /// <remarks>
-    /// <para>
-    /// <strong>Every row of this theory used to be a row of the one above.</strong> The four
-    /// stage-4 kinds moved when the policy engine landed; <c>RateLimit</c> and
-    /// <c>Idempotency</c> moved when stage 1 and stage 3 did. The compensation retry has its
-    /// own silence test further down, because it is silent for a different reason — it needs a
-    /// compensation to wrap, and FLOWX1033 reports when it has none.
-    /// </para>
-    /// <para>
-    /// This is the half that goes wrong quietly. A rule still reporting a kind the engine
-    /// applies tells an author their enforced limit is decorative, and the first thing they do
-    /// about it is suppress the catalogue.
+    /// A theory rather than one set with all eight in it, so an analyzer that regressed on a
+    /// single kind fails on the row that names it. This is the half that goes wrong quietly:
+    /// a rule reporting a policy that runs tells an author their enforced control is
+    /// decorative, and the first thing they do about it is suppress the catalogue.
     /// </para>
     /// </remarks>
     [Theory]
@@ -248,6 +227,8 @@ public sealed class DeclaredPolicyAnalyzerTests
     [InlineData("Bulkhead(maxConcurrency: 4)")]
     [InlineData("RateLimit(permits: 5, TimeSpan.FromSeconds(1))")]
     [InlineData("Idempotency(TimeSpan.FromHours(1))")]
+    [InlineData("Cache(TimeSpan.FromSeconds(1))")]
+    [InlineData("Audit(\"category\")")]
     public void EveryExecutedKindIsSilent(string declaration) =>
         Analyze(FlowWith(
             ".WithPolicy(Policies.OneKind)",
@@ -256,42 +237,41 @@ public sealed class DeclaredPolicyAnalyzerTests
             """))
             .ShouldBeEmpty();
 
-    /// <summary>A mixed set names the inert half and not the half that executes.</summary>
+    /// <summary>The mixed set <c>samples/banking</c>'s ledger steps carry is wholly silent.</summary>
     /// <remarks>
-    /// The shape <c>samples/banking</c>'s ledger steps have: an <c>Audit</c> that writes
-    /// nothing, beside a <c>Timeout</c> that is armed and a <c>CompensationRetry</c> that
-    /// runs. Naming either of the two that work would tell the author a control is off when
-    /// it is on.
+    /// <strong>This was <c>AMixedSetNamesTheInertKindsOnly</c></strong>, which asserted that a
+    /// message named the <c>RateLimit</c> and not the <c>Timeout</c>, <c>Audit</c> and
+    /// <c>CompensationRetry</c> beside it. The set is unchanged and the assertion is now that
+    /// there is no message at all: four kinds, four stages, and every one of them applied.
+    /// Naming any of them would tell the author a control is off when it is on.
     /// </remarks>
     [Fact]
-    public void AMixedSetNamesTheInertKindsOnly()
-    {
-        var messages = Messages(FlowWith(
+    public void TheBankingLedgerSetIsWhollySilent() =>
+        Messages(FlowWith(
             ".CompensateWith<ReleaseInventory>().WithPolicy(Policies.Ledger)",
             """
             public static readonly PolicySet Ledger = PolicySet.Named("ledger")
                 .Timeout(TimeSpan.FromSeconds(5))
+                .RateLimit(permits: 5, TimeSpan.FromSeconds(1))
                 .Audit("financial")
                 .CompensationRetry(attempts: 5);
-            """));
+            """))
+            .ShouldBeEmpty();
 
-        messages.ShouldHaveSingleItem();
-        messages[0].ShouldContain("Audit");
-        messages[0].ShouldNotContain("Timeout");
-        messages[0].ShouldNotContain("CompensationRetry");
-    }
-
-    /// <summary>One report per <c>.WithPolicy(...)</c>, whatever the set's size.</summary>
+    /// <summary>A set declaring every kind at once reports nothing.</summary>
     /// <remarks>
-    /// A set of eight reported eight times on one line is how a catalogue gets suppressed
-    /// wholesale — the argument <c>ExecutionProfileAnalyzer</c> already makes for reporting
-    /// once at the declaration. Asserted through the message list, because the id list is
-    /// de-duplicated and would pass against an analyzer reporting eight times.
+    /// <strong>This was <c>ReportedOncePerCallRatherThanOncePerPolicy</c></strong>, which
+    /// pinned that a set of eight produced one report rather than eight — the argument
+    /// <c>ExecutionProfileAnalyzer</c> makes for reporting once at the declaration. The
+    /// property survives on the rules that still fire: <c>EverySupersededCallIsReported</c>
+    /// pins it for FLOWX1034. What is left to assert about this fixture is that the largest
+    /// declarable set in the DSL is entirely quiet, which is the whole of what deleting
+    /// FLOWX1032 means.
     /// </remarks>
     [Fact]
-    public void ReportedOncePerCallRatherThanOncePerPolicy() =>
+    public void ASetDeclaringEveryKindReportsNothing() =>
         Messages(FlowWith(
-            ".WithPolicy(Policies.Everything)",
+            ".CompensateWith<ReleaseInventory>().WithPolicy(Policies.Everything)",
             """
             public static readonly PolicySet Everything = PolicySet.Named("everything")
                 .RateLimit(permits: 5, TimeSpan.FromSeconds(1))
@@ -301,15 +281,19 @@ public sealed class DeclaredPolicyAnalyzerTests
                 .CircuitBreaker(failureRatio: 0.5, breakDuration: TimeSpan.FromSeconds(30))
                 .Bulkhead(maxConcurrency: 4)
                 .Cache(TimeSpan.FromSeconds(10))
-                .Audit("category");
+                .Audit("category")
+                .CompensationRetry(attempts: 5);
             """))
-            .ShouldHaveSingleItem();
+            .ShouldBeEmpty();
 
     /// <summary>Reported inside a conditional block, which is where half a real flow lives.</summary>
     /// <remarks>
-    /// A rule that only walked the top-level chain would be silent on every step inside a
-    /// <c>When</c>, a <c>Case</c> or a <c>Parallel</c> branch — and <c>samples/banking</c>
-    /// declares its most expensive policy set inside two <c>Case</c> blocks.
+    /// <strong>Re-aimed from FLOWX1032 to FLOWX1033, and the property it pins is
+    /// unchanged.</strong> A rule that only walked the top-level chain would be silent on every
+    /// step inside a <c>When</c>, a <c>Case</c> or a <c>Parallel</c> branch — and
+    /// <c>samples/banking</c> declares its most expensive policy set inside two <c>Case</c>
+    /// blocks. FLOWX1032 was the rule that used to demonstrate the reach; it is deleted, so the
+    /// demonstration moves to a rule that still fires on a set rather than being lost with it.
     /// </remarks>
     [Fact]
     public void ReportedInsideAConditionalBlock() =>
@@ -317,15 +301,16 @@ public sealed class DeclaredPolicyAnalyzerTests
             """
             .When(
                 ctx => ctx.Input.Quantity > 1,
-                bulk => bulk.Step<ReserveInventory>().WithPolicy(Policies.Cached))
+                bulk => bulk.Step<ReserveInventory>().WithPolicy(Policies.Admitted))
             """,
             """
-            public static readonly PolicySet Cached = PolicySet.Named("cached")
-                .Cache(TimeSpan.FromSeconds(30));
+            public static readonly PolicySet Admitted = PolicySet.Named("admitted")
+                .RateLimit(permits: 5, TimeSpan.FromSeconds(30))
+                .CompensationRetry(attempts: 3);
             """))
-            .ShouldBe(["FLOWX1032"]);
+            .ShouldBe(["FLOWX1033"]);
 
-    // ------------------------------------------------------ FLOWX1032 must not fire
+    // ------------------------------------------- no rule fires on a well-formed set
 
     /// <summary>A compensation-only set is silent — it is the one set that does what it says.</summary>
     /// <remarks>
@@ -356,7 +341,7 @@ public sealed class DeclaredPolicyAnalyzerTests
     /// <para>
     /// <c>PolicySetReader</c> returns nothing rather than guessing, which is the restriction
     /// FLOWX1014 and FLOWX1019 already work under and the one <c>FlowEmitter</c> works under:
-    /// it emits no chain for a set whose kinds it could not read. FLOWX1032 naming a kind here
+    /// it emits no chain for a set whose kinds it could not read. A rule naming a kind here
     /// would name a policy the author cannot find, and could name a set that in fact holds
     /// nothing but a compensation retry.
     /// </para>
@@ -431,22 +416,27 @@ public sealed class DeclaredPolicyAnalyzerTests
         messages[0].ShouldContain("Policies.Undo");
     }
 
-    /// <summary>Both rules fire on a mixed set attached to a step with no compensation.</summary>
+    /// <summary>
+    /// The compensation half is reported on a mixed set, and the executed half is not.
+    /// </summary>
     /// <remarks>
-    /// The two findings are independent and both are true: the forward half is carried and
-    /// unapplied, and the compensation half is not carried at all. Collapsing them into one
-    /// report would leave whichever id was dropped un-suppressible on its own.
+    /// <strong>This was <c>AMixedSetOnANonCompensableStepReportsBoth</c></strong>, and it
+    /// asserted that FLOWX1032 and FLOWX1033 fired together and independently. Only one of the
+    /// two findings is available now: the <c>RateLimit</c> beside the retry is carried
+    /// <em>and applied</em>, so the report is FLOWX1033's alone. The fixture is kept because
+    /// the risk it covers is unchanged — a rule that reported on the whole set rather than on
+    /// the one kind it is about would fail here.
     /// </remarks>
     [Fact]
-    public void AMixedSetOnANonCompensableStepReportsBoth() =>
+    public void AMixedSetOnANonCompensableStepReportsTheDropOnly() =>
         Analyze(FlowWith(
             ".WithPolicy(Policies.Ledger)",
             """
             public static readonly PolicySet Ledger = PolicySet.Named("ledger")
-                .Audit("financial")
+                .RateLimit(permits: 5, TimeSpan.FromSeconds(1))
                 .CompensationRetry(attempts: 5);
             """))
-            .ShouldBe(["FLOWX1032", "FLOWX1033"]);
+            .ShouldBe(["FLOWX1033"]);
 
     // ------------------------------------------------------ FLOWX1033 must not fire
 
@@ -472,27 +462,29 @@ public sealed class DeclaredPolicyAnalyzerTests
 
     /// <summary>A set with no compensation retry never reports this rule.</summary>
     /// <remarks>
-    /// The set is an <c>Audit</c> rather than the <c>Timeout</c> it used to be, so that
-    /// FLOWX1032 still speaks and the assertion stays a statement about FLOWX1033's silence
-    /// rather than about an empty report — which would pass against an analyzer that had
-    /// stopped running.
+    /// <strong>The set carried a kind FLOWX1032 would report, so that the assertion was a
+    /// statement about FLOWX1033's silence rather than about an empty report</strong> — which
+    /// would pass against an analyzer that had stopped running. No such kind exists any more,
+    /// so the second <c>.WithPolicy</c> below supplies the same guard: the analyzer is proved
+    /// alive by FLOWX1034 on the same source, and FLOWX1033's absence is a real absence.
     /// </remarks>
     [Fact]
     public void ASetWithoutACompensationRetryDoesNotReportTheDrop() =>
         Analyze(FlowWith(
-            ".WithPolicy(Policies.Forward)",
+            ".WithPolicy(Policies.Forward).WithPolicy(Policies.Forward)",
             """
             public static readonly PolicySet Forward = PolicySet.Named("forward")
-                .Audit("financial");
+                .RateLimit(permits: 5, TimeSpan.FromSeconds(1));
             """))
-            .ShouldBe(["FLOWX1032"]);
+            .ShouldBe(["FLOWX1034"]);
 
-    /// <summary>An unresolvable set reports neither FLOWX1032 nor FLOWX1033.</summary>
+    /// <summary>An unresolvable set reports neither of the rules that read its contents.</summary>
     /// <remarks>
     /// Silent exactly where the emitter is silent, on both of the rules that name what is in
     /// a set: the compiler cannot see the <c>CompensationRetry</c>, so it cannot say the drop
-    /// happened, and it cannot list a carried kind either. What it can say — that the whole
-    /// set reaches nothing — is FLOWX1036 and is one report rather than two guesses.
+    /// happened, and FLOWX1040 cannot ask about an <c>Idempotency</c> it cannot see either.
+    /// What it can say — that the whole set reaches nothing — is FLOWX1036 and is one report
+    /// rather than two guesses.
     /// </remarks>
     [Fact]
     public void AnUnresolvableSetReportsNeitherContentRule() =>
@@ -506,36 +498,50 @@ public sealed class DeclaredPolicyAnalyzerTests
     // ------------------------------------------------------------------ severity
 
     /// <summary>
-    /// FLOWX1032 is a warning and FLOWX1033 is an error, and the split is the decision.
+    /// FLOWX1033 is an error and FLOWX1035 is a warning, and the split is the decision.
     /// </summary>
     /// <remarks>
-    /// FLOWX1032 describes a platform gap P4 closes, so an error's only repair would delete
-    /// the declaration P4 needs to find. FLOWX1033 describes a policy attached to nothing,
-    /// which no release executes — and <c>StepNode.ForCapability</c> already refuses the
-    /// shape with an <c>InvalidFlowPlanException</c>, exactly as <c>PolicyChain</c> refuses
-    /// FLOWX1014's and FLOWX1018's, both of which are errors.
+    /// <strong>This pinned FLOWX1032's warning against FLOWX1033's error while both
+    /// existed.</strong> FLOWX1032 described a platform gap a later release would close, so an
+    /// error's only repair would have deleted the declaration that release needed to find; it
+    /// is deleted with the gap, and the remaining pair on the same DSL call carries the same
+    /// shape of split. FLOWX1033 describes a policy attached to nothing, which no release
+    /// executes — and <c>StepNode.ForCapability</c> already refuses the shape with an
+    /// <c>InvalidFlowPlanException</c>, exactly as <c>PolicyChain</c> refuses FLOWX1014's and
+    /// FLOWX1018's, both of which are errors. FLOWX1035 describes a count the author can
+    /// change without deleting anything.
     /// </remarks>
     [Fact]
     public void TheTwoSeveritiesDiffer()
     {
-        var reports = GeneratorHarness.Report(
+        var dropped = GeneratorHarness.Report(
             FlowWith(
                 ".WithPolicy(Policies.Ledger)",
                 """
                 public static readonly PolicySet Ledger = PolicySet.Named("ledger")
-                    .Audit("financial")
+                    .RateLimit(permits: 5, TimeSpan.FromSeconds(1))
                     .CompensationRetry(attempts: 5);
                 """),
             new DeclaredPolicyAnalyzer());
 
-        reports.Single(d => d.Id == "FLOWX1032").Severity.ShouldBe(
-            DiagnosticSeverity.Warning,
-            "An error's only repair is deleting the declaration P4 will need to find.");
-
-        reports.Single(d => d.Id == "FLOWX1033").Severity.ShouldBe(
+        dropped.Single(d => d.Id == "FLOWX1033").Severity.ShouldBe(
             DiagnosticSeverity.Error,
             "No release executes a compensation retry that has no compensation, and " +
             "StepNode.ForCapability already refuses the shape.");
+
+        var single = GeneratorHarness.Report(
+            FlowWith(
+                ".CompensateWith<ReleaseInventory>().WithPolicy(Policies.Undo)",
+                """
+                public static readonly PolicySet Undo = PolicySet.Named("undo")
+                    .CompensationRetry(attempts: 1);
+                """),
+            new DeclaredPolicyAnalyzer());
+
+        single.Single(d => d.Id == "FLOWX1035").Severity.ShouldBe(
+            DiagnosticSeverity.Warning,
+            "The repair is one token, and the declaration is not something the author has to " +
+            "delete to silence the rule.");
     }
 
     // -------------------------------------------------------- FLOWX1034 must fire
@@ -548,10 +554,11 @@ public sealed class DeclaredPolicyAnalyzerTests
     /// the emitted artifacts; this asserts that the build says so.
     /// </para>
     /// <para>
-    /// <strong>And FLOWX1032 speaks once, about the surviving set only.</strong> Both sets
-    /// declare an <c>Audit</c>, so a rule that reported the discarded one too would report
-    /// twice here. It must not: FLOWX1032's message says the plan and the manifest carry the
-    /// kinds it names, and neither carries anything from a set the compiler threw away.
+    /// <strong>And the discarded set is not read by any other rule.</strong> Both sets below
+    /// declare something a content rule could speak about, so an analyzer that inspected the
+    /// superseded one too would report twice here. It must not: every other rule in this file
+    /// says something about what the plan and the manifest carry, and neither carries anything
+    /// from a set the compiler threw away.
     /// </para>
     /// </remarks>
     [Fact]
@@ -562,18 +569,18 @@ public sealed class DeclaredPolicyAnalyzerTests
 
         const string policies = """
             public static readonly PolicySet Ledger = PolicySet.Named("ledger")
-                .Audit("financial");
+                .RateLimit(permits: 5, TimeSpan.FromSeconds(1));
 
             public static readonly PolicySet Undo = PolicySet.Named("undo")
-                .Audit("operational")
+                .Idempotency(TimeSpan.FromHours(1))
                 .CompensationRetry(attempts: 5);
             """;
 
-        Analyze(FlowWith(step, policies)).ShouldBe(["FLOWX1032", "FLOWX1034"]);
+        Analyze(FlowWith(step, policies)).ShouldBe(["FLOWX1034"]);
 
         Messages(FlowWith(step, policies))
-            .Count(m => m.StartsWith("FLOWX1032", StringComparison.Ordinal))
-            .ShouldBe(1, "The discarded set is carried by nothing, so nothing carries it unapplied.");
+            .Count(m => m.StartsWith("FLOWX1034", StringComparison.Ordinal))
+            .ShouldBe(1, "One superseded call, one report.");
     }
 
     /// <summary>The message names the set that is dropped and the one that replaces it.</summary>
@@ -847,7 +854,8 @@ public sealed class DeclaredPolicyAnalyzerTests
     /// FLOWX1034 deletes a declared control from both published artifacts and has no
     /// legitimate program, which is FLOWX1033's argument. The other two leave the source
     /// correct — a shared policy library is a reasonable design, and an attempt count is a
-    /// value the author owns — which is FLOWX1032's.
+    /// value the author owns — which is the argument the deleted FLOWX1032 made for its own
+    /// warning.
     /// </remarks>
     [Fact]
     public void TheNewSeveritiesFollowTheirNeighbours()

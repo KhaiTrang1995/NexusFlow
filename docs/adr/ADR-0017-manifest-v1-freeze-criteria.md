@@ -230,7 +230,7 @@ nothing in the repository produces:
   and `Bulkhead` now describe run-time structure something produces. **The criterion is not
   met, and what is left of it is narrower and specific.** Four declarable kinds —
   `RateLimit`, `Idempotency`, `Cache` and `Audit` — still reach the array and are applied by
-  nothing ([`FLOWX1032`](../diagnostics/FLOWX1032.md),
+  nothing (`FLOWX1032`,
   [ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)), so freezing the
   array would freeze a vocabulary the runtime honours five of the nine declarable kinds of.
   The schema's

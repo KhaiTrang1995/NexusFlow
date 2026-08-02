@@ -63,7 +63,7 @@ being real by a different, quieter amount.
   shipping made the gap wider, not narrower.
 * **Put the limit in the HTTP endpoint.** Rejected as the *whole* answer, and kept as advice:
   a limiter at the transport is real and is what
-  [FLOWX1032](../diagnostics/FLOWX1032.md)'s remedy 2 recommends, but it bounds an address
+  `FLOWX1032`'s remedy 2 recommends, but it bounds an address
   rather than a step, and `PolicySet.RateLimit` attaches to a step. One transport's admission
   control cannot bound a capability three flows and two transports reach.
 * **A limiter interface with an in-memory default registered by the host.** Rejected for
@@ -186,5 +186,5 @@ record decided the shape of only one of them.
 [ADR-0011](ADR-0011-fixed-policy-stage-order.md) ·
 [ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) ·
 [ADR-0026](ADR-0026-policy-metrics-name-only-what-executes.md) ·
-[FLOWX1032](../diagnostics/FLOWX1032.md) ·
+`FLOWX1032` ·
 [10 — Policy Framework](../10-Policy-Framework.md)

@@ -8,21 +8,22 @@ namespace FlowX;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Six kinds across three stages.</strong> <c>RateLimit</c> (stage 1),
-/// <c>Idempotency</c> (stage 3), and <c>Timeout</c>, <c>Retry</c>, <c>CircuitBreaker</c> and
-/// <c>Bulkhead</c> (stage 4) are the kinds this reads. <c>Cache</c> (stage 5) and <c>Audit</c>
-/// (stage 7) are read past, exactly as <see cref="CompensationPolicy.From"/> reads past
-/// everything that is not a compensation retry. Which stages a partial engine may skip, and why
-/// skipping the remaining two is safe, is
+/// <strong>Seven kinds across four stages.</strong> <c>RateLimit</c> (stage 1),
+/// <c>Idempotency</c> (stage 3), <c>Timeout</c>, <c>Retry</c>, <c>CircuitBreaker</c> and
+/// <c>Bulkhead</c> (stage 4), and <c>Cache</c> (stage 5) are the kinds this reads. <c>Audit</c>
+/// (stage 7) is read past, exactly as <see cref="CompensationPolicy.From"/> reads past
+/// everything that is not a compensation retry — it runs after the step's commit and is
+/// resolved onto <see cref="StepAudit"/> instead. Which stages a partial engine may skip is
 /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>.
 /// </para>
 /// <para>
-/// <strong>Three stages on one object, and deliberately no second object.</strong> Stage 1,
-/// stage 3 and stage 4 all arrive on one <see cref="PolicyChain"/>, so a second resolved field
+/// <strong>Four stages on one object, and deliberately no second object.</strong> Stages 1, 3,
+/// 4 and 5 all arrive on one <see cref="PolicyChain"/>, so a second resolved field
 /// on the node would be a second walk of the array this one already walks, and
 /// <see cref="IsActive"/> would then have to consult two objects to answer one question. It is
 /// also why no plan flag was added beside <see cref="ExecutionPlan.HasStepPolicies"/> — see
-/// <see cref="IsActive"/>.
+/// <see cref="IsActive"/>. Stage 7 is the exception, and earns it by running outside the
+/// wrapping the other four share.
 /// </para>
 /// <para>
 /// <strong>Resolved once, when the plan is built.</strong> It hangs off
@@ -58,7 +59,9 @@ public sealed class StepPolicy
         TimeSpan rateWindow,
         RateLimitScope rateScope,
         TimeSpan? idempotencyWindow,
-        IdempotencyScope idempotencyScope)
+        IdempotencyScope idempotencyScope,
+        TimeSpan? cacheTtl,
+        CacheScope cacheScope)
     {
         Timeout = timeout;
         Attempts = attempts;
@@ -74,6 +77,8 @@ public sealed class StepPolicy
         RateScope = rateScope;
         IdempotencyWindow = idempotencyWindow;
         IdempotencyScope = idempotencyScope;
+        CacheTtl = cacheTtl;
+        CacheScope = cacheScope;
     }
 
     /// <summary>
@@ -83,7 +88,8 @@ public sealed class StepPolicy
     public static StepPolicy None { get; } = new(
         null, 1, Backoff.ExponentialJitter(), ImmutableArray<ErrorCategory>.Empty,
         0d, TimeSpan.Zero, TimeSpan.Zero, 0, 0,
-        0, TimeSpan.Zero, RateLimitScope.Tenant, null, IdempotencyScope.Tenant);
+        0, TimeSpan.Zero, RateLimitScope.Tenant, null, IdempotencyScope.Tenant,
+        null, CacheScope.Tenant);
 
     /// <summary>
     /// How many calls a breaker's sampling window must hold before its ratio is evidence.
@@ -161,6 +167,20 @@ public sealed class StepPolicy
     /// <summary>What a recorded result's key is namespaced by.</summary>
     public IdempotencyScope IdempotencyScope { get; }
 
+    /// <summary>
+    /// How long a cached result stays readable, or <c>null</c> when no cache was declared.
+    /// </summary>
+    /// <remarks>
+    /// Nullable rather than <see cref="TimeSpan.Zero"/> for "none", for <see cref="Timeout"/>'s
+    /// reason: zero is a value an author can write and it means "hold this for no time", which
+    /// <see cref="HasCache"/> deliberately reads as no cache at all rather than as a cache that
+    /// is written on every call and never read.
+    /// </remarks>
+    public TimeSpan? CacheTtl { get; }
+
+    /// <summary>What a cache entry is keyed within. <c>docs/10 §8</c>'s conservative default.</summary>
+    public CacheScope CacheScope { get; }
+
     /// <summary>True when this policy can ask for the step a second time.</summary>
     public bool IsRetrying => Attempts > 1;
 
@@ -182,39 +202,48 @@ public sealed class StepPolicy
     /// <summary>True when an idempotency window was declared.</summary>
     public bool HasIdempotency => IdempotencyWindow is { Ticks: > 0 };
 
+    /// <summary>True when a cache with a usable lifetime was declared.</summary>
+    public bool HasCache => CacheTtl > TimeSpan.Zero;
+
     /// <summary>
     /// True when this step has anything for the engine to apply.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The single question the step loop asks. A step whose chain declares only a
-    /// <c>Cache</c> and an <c>Audit</c> answers <c>false</c> and takes the path it always
-    /// took — which is what stops a declaration that is still inert from costing the flow
-    /// anything, and what makes <see cref="ExecutionPlan.HasStepPolicies"/> mean "some step
-    /// will actually be wrapped" rather than "some step declared something".
+    /// The single question the step loop asks. A step whose chain declares only an
+    /// <c>Audit</c> answers <c>false</c> and takes the path it always took — stage 7 runs
+    /// after the step and its commit, so it has its own resolved value and its own flag
+    /// (<see cref="StepAudit"/>, <see cref="ExecutionPlan.HasAuditedSteps"/>) rather than a
+    /// term here. That is what keeps <see cref="ExecutionPlan.HasStepPolicies"/> meaning
+    /// "some step will actually be wrapped" rather than "some step declared something".
     /// </para>
     /// <para>
-    /// <strong>Six kinds rather than four since stage 1 and stage 3 landed</strong>, and no new
+    /// <strong>Seven kinds rather than four since stages 1, 3 and 5 landed</strong>, and no new
     /// plan flag went with them — which is
     /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>'s
     /// "widening is mechanical" being taken up literally, and is why that record's "a third flag
-    /// of this shape is proposed" trigger did not fire. A stance needed
-    /// <c>ExecutionPlan.HasAuthorizedSteps</c> of its own because it is resolved from a
-    /// capability attribute and has no chain to be read out of; a policy always has one.
+    /// of this shape is proposed" trigger did not fire. ADR-0023 predicted it in those words —
+    /// *"implementing stage 5 means adding fields to <c>StepPolicy</c>, widening
+    /// <c>IsActive</c>, and nothing else: no new flag, no new read site, no change to the step
+    /// loop's shape"* — and the read site is indeed the same one, because stage 5 runs inside
+    /// stage 4's nesting. A stance needed <c>ExecutionPlan.HasAuthorizedSteps</c> of its own
+    /// because it is resolved from a capability attribute and has no chain to be read out of;
+    /// a policy always has one.
     /// </para>
     /// </remarks>
     public bool IsActive =>
-        Timeout is not null || IsRetrying || HasBreaker || HasBulkhead || HasRateLimit || HasIdempotency;
+        Timeout is not null || IsRetrying || HasBreaker || HasBulkhead
+        || HasRateLimit || HasIdempotency || HasCache;
 
     /// <summary>
-    /// Reads the stage-4 kinds out of a chain, or <see cref="None"/> when it declares none.
+    /// Reads the in-line kinds out of a chain, or <see cref="None"/> when it declares none.
     /// </summary>
     /// <param name="policies">The step's own chain, already ordered by stage.</param>
     /// <remarks>
     /// Tolerant of a chain that carries other kinds, for
-    /// <see cref="CompensationPolicy.From"/>'s reason: a set may legitimately declare a cache
-    /// and an audit alongside a timeout, and the stages that do not execute yet are
-    /// metadata this reads past rather than rejects.
+    /// <see cref="CompensationPolicy.From"/>'s reason: a set may legitimately declare an audit
+    /// alongside a timeout, and a stage resolved elsewhere is metadata this reads past rather
+    /// than rejects.
     /// </remarks>
     public static StepPolicy From(PolicyChain policies)
     {
@@ -234,6 +263,8 @@ public sealed class StepPolicy
         var rateScope = RateLimitScope.Tenant;
         TimeSpan? idempotencyWindow = null;
         var idempotencyScope = IdempotencyScope.Tenant;
+        TimeSpan? cacheTtl = null;
+        var cacheScope = CacheScope.Tenant;
 
         foreach (var policy in policies.Ordered)
         {
@@ -271,10 +302,19 @@ public sealed class StepPolicy
                     queueDepth = Math.Max(0, Parameter(policy, "queueDepth", 0));
                     break;
 
+                case CacheKind:
+                    // Collapsed to null at zero on purpose: HasCache asks the same question,
+                    // and a cache held for no time is a write nothing could ever read.
+                    var ttl = Parameter(policy, "ttl", TimeSpan.Zero);
+
+                    cacheTtl = ttl > TimeSpan.Zero ? ttl : null;
+                    cacheScope = Parameter(policy, "scope", CacheScope.Tenant);
+                    break;
+
                 default:
-                    // Stage 5 and stage 7's Audit. Read past rather than rejected — the chain is
-                    // the author's whole declaration and this type is the executed stages' view
-                    // of it.
+                    // Stage 7's Audit, which StepAudit resolves. Read past rather than
+                    // rejected — the chain is the author's whole declaration and this type is
+                    // the in-line stages' view of it.
                     break;
             }
         }
@@ -282,7 +322,8 @@ public sealed class StepPolicy
         var resolved = new StepPolicy(
             timeout, attempts, backoff, retryOn,
             failureRatio, samplingWindow, breakDuration, maxConcurrency, queueDepth,
-            permits, rateWindow, rateScope, idempotencyWindow, idempotencyScope);
+            permits, rateWindow, rateScope, idempotencyWindow, idempotencyScope,
+            cacheTtl, cacheScope);
 
         return resolved.IsActive ? resolved : None;
     }
@@ -304,6 +345,17 @@ public sealed class StepPolicy
 
     /// <summary>The descriptor kind <see cref="PolicySet.Bulkhead"/> emits.</summary>
     public const string BulkheadKind = "Bulkhead";
+
+    /// <summary>The descriptor kind <see cref="PolicySet.Cache"/> emits.</summary>
+    /// <remarks>
+    /// Stage 5 rather than stage 4, and read here anyway. The nesting puts the cache between
+    /// the innermost resilience policy and the capability
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>
+    /// §2.5: "adding stage 5 means adding it outside the dispatch and inside stage 4"), so it
+    /// is reached from the same call and resolved onto the same value. This type carries the
+    /// parameters; it does not decide what wraps what.
+    /// </remarks>
+    public const string CacheKind = "Cache";
 
     /// <summary>
     /// Whether the step is worth dispatching again after <paramref name="attemptsMade"/>

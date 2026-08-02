@@ -24,6 +24,7 @@ namespace FlowX.Runtime.Tests;
 /// being fixed.
 /// </para>
 /// </remarks>
+[Collection(TelemetryCollection.Name)]
 public sealed class PolicyMetricsTests
 {
     private static readonly DateTimeOffset T0 = DateTimeOffset.UnixEpoch;

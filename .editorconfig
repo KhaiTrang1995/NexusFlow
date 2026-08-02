@@ -210,12 +210,16 @@ dotnet_diagnostic.S1075.severity = none   # hardcoded URI
 # samples/workflow's FLOWX-DEBT(people-ops, 2026-12-31) suppression of FLOWX1032 was
 # deleted here when the policy engine landed PolicyStage.Resilience. The debt named one
 # set — Policies.DirectoryService, a Timeout, a Retry and a CircuitBreaker — and all
-# three of those kinds are now applied, so the rule is silent on that sample for the
+# three of those kinds are now applied, so the rule was silent on that sample for the
 # ordinary reason rather than a suppressed one. Its other set, FacilitiesUndo, is
 # compensation-only and was always silent. Removed rather than left in place because a
 # debt marker for debt that has been paid is the thing that teaches people to stop
 # reading them; samples/workflow/Policies.cs still describes the old state in prose and
 # is not this package's to edit.
+#
+# FLOWX1032 itself is now deleted, with the last of the gap it described: stages 1, 3, 5
+# and 7 all execute, so there is no inert kind left for it to name. Its id is retired
+# rather than reused — docs/diagnostics/README.md carries the record.
 
 [src/FlowX.Runtime/FlowEngine.cs]
 # The comment above the step loop quotes the for-loop it is deliberately NOT

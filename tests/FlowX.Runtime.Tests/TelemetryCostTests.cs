@@ -38,6 +38,7 @@ namespace FlowX.Runtime.Tests;
 /// reports it as this code's allocation.
 /// </para>
 /// </remarks>
+[Collection(TelemetryCollection.Name)]
 public sealed class TelemetryCostTests
 {
     private static void RequireOptimisedBuild()
@@ -191,12 +192,16 @@ public sealed class TelemetryCostTests
         PolicyMetrics.BulkheadQueueDepth.Enabled.ShouldBeFalse();
         PolicyMetrics.RateLimitRejected.Enabled.ShouldBeFalse();
         PolicyMetrics.IdempotencyReplays.Enabled.ShouldBeFalse();
+        PolicyMetrics.CacheHits.Enabled.ShouldBeFalse();
+        PolicyMetrics.CacheMisses.Enabled.ShouldBeFalse();
 
         PolicyMetrics.IsEnabled.ShouldBeFalse();
 
         Measure(static () =>
         {
             PolicyMetrics.Applied("Timeout", "Resilience", "order.validate", PolicyMetrics.OkOutcome);
+            PolicyMetrics.Applied("Cache", "Efficiency", "order.validate", PolicyMetrics.MissedOutcome);
+            PolicyMetrics.Applied("Audit", "Consistency", "order.validate", PolicyMetrics.RecordedOutcome);
             PolicyMetrics.Retried("order.validate", 2, "order.validate_failed");
             PolicyMetrics.CircuitChanged("order.validate", PolicyMetrics.CircuitOpen);
             PolicyMetrics.BulkheadQueued("order.validate", 3);
@@ -208,13 +213,19 @@ public sealed class TelemetryCostTests
             // refusal while correctly reporting Enabled = false.
             PolicyMetrics.RateLimitRefused(nameof(RateLimitScope.Tenant), "acme");
             PolicyMetrics.IdempotencyReplayed("order.validate", nameof(IdempotencyScope.Global));
+
+            // And the two stage 5 added, which take the same already-a-string labels the rest
+            // take — a scope passed as a CacheScope would box on its way into a KeyValuePair,
+            // which is the whole shape of B6.
+            PolicyMetrics.CacheHit("order.validate", nameof(CacheScope.Tenant));
+            PolicyMetrics.CacheMiss("order.validate", nameof(CacheScope.Tenant));
         })
         .ShouldBe(
             0,
-            "A breaker opening, a retry attempting, a bulkhead queueing, a caller refused and " +
-            "a step replayed are the events docs/10 §9 exists to publish, and with no exporter " +
-            "attached all of them must cost exactly what they cost before anything published " +
-            "them.");
+            "A breaker opening, a retry attempting, a bulkhead queueing, a caller refused, a " +
+            "step replayed and a cache answering are the events docs/10 §9 exists to publish, " +
+            "and with no exporter attached all of them must cost exactly what they cost before " +
+            "anything published them.");
     }
 
     /// <summary>

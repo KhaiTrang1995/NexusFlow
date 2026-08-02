@@ -29,7 +29,7 @@ namespace Banking;
 /// answers on are one string rather than two kept in step.
 /// </para>
 /// <para>
-/// <strong>What the policies below do at run time: most of it.</strong> See
+/// <strong>What the policies below do at run time: nearly all of it.</strong> See
 /// <see cref="Policies"/>. The policy engine executes <c>PolicyStage.Resilience</c>, so the
 /// three-second timeout and the three attempts on <c>ScreenSanctions</c> are real, the five-
 /// second timeouts on the ledger legs and the settlement write are real, the breaker in front
@@ -38,15 +38,25 @@ namespace Banking;
 /// provider fails once, which is a transfer this sample refused a release ago.
 /// </para>
 /// <para>
-/// <strong>One declaration still does nothing, and one pragma says which.</strong>
-/// <a href="../../docs/diagnostics/FLOWX1032.md">FLOWX1032</a> reported all seven of this
-/// flow's <c>.WithPolicy(...)</c> calls when it was written, then four when stage 4 landed,
-/// and now reports the three that declare an <c>Audit</c>. The first step's suppression is
-/// gone entirely: its <c>RateLimit</c> is enforced against a shared store, and the
-/// <c>Idempotency</c> window beside it was deleted rather than left unenforced, because this
-/// flow marks two IBANs <c>[Sensitive]</c> and
+/// <strong>Nothing this flow declares is inert, and no pragma is left.</strong>
+/// <c>FLOWX1032</c> reported all seven of this flow's <c>.WithPolicy(...)</c> calls when it
+/// was written, then four when stage 4 landed, then the three that declare an <c>Audit</c>.
+/// The rule is deleted now, and so is every suppression that pointed at it. The first step's
+/// <c>RateLimit</c> is enforced against a shared store, and the <c>Idempotency</c> window
+/// beside it was deleted rather than left unenforced, because this flow marks two IBANs
+/// <c>[Sensitive]</c> and
 /// <a href="../../docs/diagnostics/FLOWX1040.md">FLOWX1040</a> refuses a window whose
 /// recorded result would carry <c>[redacted]</c> where a value was.
+/// </para>
+/// <para>
+/// <strong>The three ledger and settlement steps are audited.</strong> Each
+/// produces an immutable <c>AuditRecord</c>: what ran, on whose authority, and a redacted
+/// request/result document. The account numbers are <c>[redacted]</c> because
+/// <see cref="ExecuteTransfer"/> marks them <c>[Sensitive]</c>, and the settlement record's
+/// ledger references are <c>[redacted]</c> because <see cref="Policies.SettlementRegister"/>
+/// asked for them to be — see
+/// <a href="../../docs/adr/ADR-0043-an-audit-record-is-the-journals-payload-redacted-twice.md">ADR-0043</a>
+/// for why those are the same mechanism and not two.
 /// </para>
 /// </remarks>
 [Flow("transfer.execute", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "payments")]
@@ -59,13 +69,14 @@ public sealed partial class ExecuteTransferFlow : Flow<ExecuteTransfer, Transfer
     {
         ArgumentNullException.ThrowIfNull(flow);
 
-        // There is no suppression on this step any more, and its removal is the news.
+        // There is no suppression anywhere in this method any more, and its removal is the news.
         //
         // FLOWX1032 used to report all seven of this flow's .WithPolicy(...) calls, so one
         // pragma wrapped the whole method; then stage 4 landed and it reported four, so two
-        // narrow pragmas argued RateLimit + Idempotency here and Audit below. Stage 1 and
-        // stage 3 now execute, and the argument that suppression carried — "the flow is
-        // survivable with them unenforced" — has no subject left on this step:
+        // narrow pragmas argued RateLimit + Idempotency here and Audit below. Stages 1, 3, 5
+        // and 7 all execute now, the rule is deleted with the gap it described, and the
+        // argument each suppression carried — "the flow is survivable with them unenforced" —
+        // has no subject left anywhere. On this step:
         //
         //   * the RateLimit is enforced, in a store every replica shares, so twenty
         //     principals a second is the deployment's bound and not each node's; and
@@ -114,11 +125,14 @@ public sealed partial class ExecuteTransferFlow : Flow<ExecuteTransfer, Transfer
             // returned — it is one half of the validated transfer, and saying so here is
             // what keeps the capability's contract down to one account and one amount.
             //
-            // The Timeout on these three steps is applied now and the Audit is not, which is
-            // the whole of what the pragma covers. An unwritten financial audit record is a
-            // real loss rather than a conservative default, and ADR-0025 §2.4 says so in
-            // those words instead of filing it beside the two above.
-#pragma warning disable FLOWX1032 // Audit: stage 7's audit record is not implemented.
+            // There is no pragma over the three steps below any more, and its absence is the
+            // news. It disabled FLOWX1032 for the Audit on each of them, arguing that an
+            // unwritten financial audit record is a real loss rather than a conservative
+            // default — ADR-0025 §2.4's own words, quoted because there was nothing better to
+            // say. The record is written now: each of these three steps produces one naming the
+            // capability, the principal that authorised it, and a redacted request/result
+            // document. A suppression whose argument has expired is worse than no rule at all,
+            // so it went with the argument.
             .Step<PostDebit, DebitInstruction>(ctx => new DebitInstruction(
                 ctx.Get<ValidatedTransfer>().DebtorIban,
                 ctx.Get<ValidatedTransfer>().Amount,
@@ -143,7 +157,6 @@ public sealed partial class ExecuteTransferFlow : Flow<ExecuteTransfer, Transfer
                 ctx.Get<ValidatedTransfer>().Amount,
                 ctx.Get<ValidatedTransfer>().Currency))
                 .WithPolicy(Policies.SettlementRegister)
-#pragma warning restore FLOWX1032
 
             // Staged into the outbox by the same transaction that commits the step, so the
             // event and the state it announces are one write. The account numbers in the
