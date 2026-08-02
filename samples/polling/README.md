@@ -362,11 +362,31 @@ the two that decide it:
 same row; ending the wait early on a delivered signal is one call to
 `DurableExecution.TakeSignal` from the poll's arrival path, and the honest spelling is a modifier
 on the poll rather than a second construct — `.PollUntil<T>(…).OrSignal<TSignal>()`. That is one
-wait with two ways to end it, one row, and no loser to cancel. It needs a signal contract in the
-state bag, a route from `EndpointEmitter`, a `signal` field on a `Poll` step in the manifest and a
-`flowx diff` rule for it: a work package, not a design question. Until it lands, a deployment
-that wants both runs two flows and correlates them — which is the shape this construct exists to
-replace, and the one honest thing to say about the gap.
+wait with two ways to end it, one row, and no loser to cancel.
+
+**That modifier is now built**, and it is on `IPollBuilder`:
+
+```csharp
+.PollUntil<CheckOcrStatus>(
+    until:    ctx => ctx.Get<OcrStatus>().IsTerminal,
+    interval: Waits.OcrPolling,
+    timeout:  Waits.OcrBudget)
+    .OrSignal<OcrCompleted>()
+        .OnTimeout(f => f.Step<EscalateToManualReview>().Fail(DocumentErrors.NotReadInTime()))
+```
+
+The instance still parks on one row carrying one `wake_at`; a delivery to
+`POST {route}/{instanceId}/signals/ocr.completed` arrives at that row, and the arrival path asks
+`TakeSignal` before it asks whether the next attempt is due. **A signal arriving between two
+attempts therefore ends the wait rather than parking it again** — no attempt is made, the
+escalation is not entered, and control continues where a satisfied predicate would have taken it.
+That ending commits one row on the poll's own node, named after the signal, because the predicate
+that stops a finished poll re-polling says *not yet* when a delivery is what ended it.
+[ADR-0066](../../docs/adr/ADR-0066-a-polls-second-ending-is-a-row.md) is the record and
+[`FLOWX1050`](../../docs/diagnostics/FLOWX1050.md) the one rule it needed;
+`FlowX.Postgres.Tests.PollSignalHostTests` is the measurement, against a real database.
+
+This flow does not declare one, because the OCR provider it stands in for publishes nothing.
 
 ## 8. Things to try
 
