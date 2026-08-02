@@ -8,6 +8,11 @@ updates:
       day: monday
     open-pull-requests-limit: 5
     labels: [dependencies, security]
+    # A compromised release is usually yanked within days of being published, so a
+    # week's wait is the difference between inheriting it and reading about it. This
+    # governs version updates only; a Dependabot security update still arrives at once.
+    cooldown:
+      default-days: 7
     # Grouped so a weekly bump is one reviewable PR rather than eleven. Security
     # updates are deliberately left ungrouped so they can merge on their own.
     groups:
@@ -24,3 +29,5 @@ updates:
     labels: [dependencies, ci]
     # Actions are pinned by major tag; this catches the ones that go stale
     # silently, which is how a supply-chain issue reaches a build (OWASP A08).
+    cooldown:
+      default-days: 7
