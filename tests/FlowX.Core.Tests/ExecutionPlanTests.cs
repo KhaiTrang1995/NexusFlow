@@ -119,6 +119,30 @@ public sealed class ExecutionPlanTests
             .Message.ShouldContain("Durable");
     }
 
+    /// <summary>And on a <c>Streaming</c> flow, which journals for <c>Durable</c>'s reason.</summary>
+    /// <remarks>
+    /// The refusals above all name a journal as the thing that is missing, and a window's flow
+    /// has one: the engine reads the profile once, through
+    /// <c>ExecutionProfiles.IsJournaled</c>, and everything that parks or wakes an instance
+    /// hangs off the cursor that question opens. <c>FlowStreamScan</c> already counts a
+    /// suspended window's flow as started and checkpoints past it, so a wait here is a
+    /// parked row rather than a held pump.
+    /// </remarks>
+    [Fact]
+    public void AWaitIsAllowedOnAStreamingFlowBecauseAWindowsFlowIsJournaled()
+    {
+        var streaming = FlowDescriptor.Create(
+            "telemetry.aggregate", "1.0.0", ExecutionProfile.Streaming, TimeSpan.FromHours(1));
+
+        var plan = ExecutionPlan.Create(streaming, StepGraph.Create([
+            StepNode.ForCapability(0, Fixtures.ValidateOrder),
+            StepNode.ForDelay(1, TimeSpan.FromMinutes(5)),
+            StepNode.ForAwaitSignal(2, "payment.confirmed", TimeSpan.FromHours(1)),
+        ]));
+
+        plan.HasTimers.ShouldBeTrue();
+    }
+
     /// <summary>A poll counts towards the flag that decides whether a timer sweep matters.</summary>
     /// <remarks>
     /// The flag answers "can an instance of this flow be waiting on a clock", and a parked poll

@@ -111,7 +111,7 @@ schedule nobody can fire is not an address anyone should have been relying on.
   contract is fixed by the platform
 - [FLOWX1007](FLOWX1007.md), [FLOWX1011](FLOWX1011.md) — the rules that stop a flow reading the
   clock, and therefore make the occurrence an input
-- [FLOWX1017](FLOWX1017.md) — the other rule that requires `Durable`, for the other construct
-  that cannot work without a journal
+- [FLOWX1017](FLOWX1017.md) — the other rule that requires a journal, for the other construct
+  that cannot work without one
 - [09 §8](../09-Trigger-Model.md#8-schedule-trigger) — what a schedule declaration binds, and
   what each of its six properties binds to

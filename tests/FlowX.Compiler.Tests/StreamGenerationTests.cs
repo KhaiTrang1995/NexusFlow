@@ -224,6 +224,41 @@ public sealed class StreamGenerationTests
         GeneratorHarness.Analyze(unbound, new ExecutionProfileAnalyzer()).ShouldContain("FLOWX1028");
     }
 
+    /// <summary>A window's flow may wait, because a window's flow is journaled.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>FLOWX1017 asked "is this <c>Durable</c>?" and meant "does this journal?".</strong>
+    /// Every clause of the rule — an in-memory wait not surviving a deployment, a timer with
+    /// nowhere to record when it is due, a poll with no way to count the attempts already made —
+    /// names a journal as the thing that is missing, and <c>Streaming</c> has one. So the flow
+    /// below was refused at build time for a reason that was not true of it, and the message it
+    /// got named its own profile back at it with a fix it could not take: a stream-triggered flow
+    /// that declares <c>Durable</c> instead is <c>FLOWX1042</c>.
+    /// </para>
+    /// <para>
+    /// Nothing downstream had to change to allow it. <c>FlowStreamScan</c> already classifies a
+    /// suspended window's flow as started and moves the checkpoint past it, <c>FlowTimerScan</c>
+    /// and <c>FlowHost.SignalAsync</c> resume by instance id and read no profile, and the engine
+    /// asks <c>ExecutionProfiles.IsJournaled</c> in the single place it reads one at all.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AStreamingFlowMayDelayBecauseItsInstancesAreJournaled()
+    {
+        var source = Windowing.Replace(
+            "flow.Step<Aggregate>().Return",
+            "flow.Step<Aggregate>().Delay(System.TimeSpan.FromMinutes(5)).Return",
+            StringComparison.Ordinal);
+
+        var run = RunOn(source, HostingStub);
+
+        run.Ids.ShouldNotContain("FLOWX1017", run.Describe());
+
+        run.Plan.ShouldContainText(
+            "StepNode.ForDelay(1, System.TimeSpan.FromMinutes(5))",
+            "and the wait is laid out, so the refusal was not standing in for a gap in the plan.");
+    }
+
     /// <summary>A flow with no stream trigger produces no registration and no rule.</summary>
     [Fact]
     public void AFlowWithNoStreamTriggerIsUntouched()

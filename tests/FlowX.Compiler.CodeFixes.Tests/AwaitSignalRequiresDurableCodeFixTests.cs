@@ -36,15 +36,25 @@ public sealed class AwaitSignalRequiresDurableCodeFixTests
 
     /// <summary>Replaces the value when a different profile was declared explicitly.</summary>
     /// <remarks>
+    /// <para>
     /// Appending a second <c>Profile</c> would not compile, and replacing the whole
     /// argument would discard whatever spacing the author used around the <c>=</c>.
+    /// </para>
+    /// <para>
+    /// The declaration is <c>Ephemeral</c> written out rather than <c>Streaming</c>, which is
+    /// what it used to be: FLOWX1017 asks whether the flow journals rather than whether it is
+    /// <c>Durable</c>, so a <c>Streaming</c> flow is no longer reported and this fixture stopped
+    /// producing the diagnostic it applies. Naming <c>Ephemeral</c> out loud is the same
+    /// arrangement the case is about — a value present to replace rather than absent to append —
+    /// and it is a declaration this rule will always report.
+    /// </para>
     /// </remarks>
     [Fact]
     public void ReplacesAProfileThatWasDeclaredExplicitly()
     {
         var project = CodeFixHarness.CreateProject(Sources.Project(
             flow: Sources.Flow(
-                flowAttribute: """[Flow("order.place", Version = "1.0.0", Profile = ExecutionProfile.Streaming)]""",
+                flowAttribute: """[Flow("order.place", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral)]""",
                 steps: Suspending)));
 
         CodeFixHarness.TextOf(ApplyFix(project), "Flow.cs").ShouldBe(
