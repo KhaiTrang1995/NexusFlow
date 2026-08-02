@@ -71,12 +71,26 @@ namespace FlowX.Compiler.Analysis;
 /// is stricter here than for a route: the expression and the zone are taken off the
 /// <see cref="TriggerModel"/> this reader produced for the manifest, because they are two of
 /// the five values every node derives the instance id from
-/// (<a href="../../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>)
+/// (<a href="../../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0031</a>)
 /// — a second copy would not mislead a reader, it would split one schedule into two.
 /// <c>FLOWX1038</c> refuses the two declarations that could not be fired.
 /// </para>
 /// <para>
-/// <c>Bus</c>, <c>Stream</c>, <c>Change</c> and <c>Agent</c> are still declaration only:
+/// <strong><c>Bus</c> is the third, and it is the one the model was hardest to keep.</strong>
+/// <em>This paragraph named it first among the four that were declaration only, and said in those
+/// words that "a flow declaring one of those declares an address nothing serves". That expired on
+/// 2026-08-01.</em> <c>BusEmitter</c> turns each <c>[BusTrigger]</c> and <c>[KafkaTrigger]</c>
+/// into a registration in <c>FlowXSubscriptions.g.cs</c>, and <c>FlowBusScan</c> drives an
+/// <c>IBusConsumer</c> into the same <c>FlowEngine.ExecuteAsync</c> an HTTP request reaches. The
+/// copy rule is the schedule's: the topic and the group are taken off the
+/// <see cref="TriggerModel"/> this reader produced for the manifest, because they are two of the
+/// five values every node derives a delivery's instance id from
+/// (<a href="../../../docs/adr/ADR-0035-a-delivery-names-the-instance-it-starts.md">ADR-0035</a>)
+/// — a second copy would not mislead a reader, it would make one message start two flows.
+/// <c>FLOWX1039</c> refuses the two declarations that could not be consumed.
+/// </para>
+/// <para>
+/// <c>Stream</c>, <c>Change</c> and <c>Agent</c> are still declaration only:
 /// nothing binds them, so a flow declaring one of those declares an address nothing serves.
 /// (<c>Manual</c> needs no binding, and <c>Cli</c>'s summary names
 /// <c>flowx run</c>, which is not one of the CLI's verbs.) The manifest publishes the
@@ -107,6 +121,7 @@ public static class TriggerReader
     private static readonly string[] KnownShapes =
     [
         "FlowX.AgentTriggerAttribute",
+        "FlowX.BusTriggerAttribute",
         "FlowX.CronTriggerAttribute",
         "FlowX.HttpTriggerAttribute",
         "FlowX.KafkaTriggerAttribute",
@@ -156,7 +171,7 @@ public static class TriggerReader
     /// the registration takes its expression and its zone from that model — the arrangement
     /// <c>EndpointEmitter</c> has with a route, and the arrangement that makes a declared
     /// schedule and a fired one the same declaration
-    /// (<a href="../../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0026</a>).
+    /// (<a href="../../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0031</a>).
     /// </para>
     /// <para>
     /// <c>MissedFire</c> is the only property here because it is the only one this release's
@@ -342,6 +357,14 @@ public static class TriggerReader
                 method: Positional(attribute, 0),
                 route: Positional(attribute, 1),
                 idempotent: Flag(attribute, "Idempotent")),
+
+            // The transport-neutral bus declaration publishes no `transport`, which is the honest
+            // reading of "this flow consumes topic T as group G, on whatever bus the host wired"
+            // (ADR-0039). TriggerModel.Transport has always allowed for it.
+            "FlowX.BusTriggerAttribute" => new TriggerModel(
+                kind,
+                topic: Positional(attribute, 0),
+                group: Named(attribute, "Group")),
 
             "FlowX.KafkaTriggerAttribute" => new TriggerModel(
                 kind,

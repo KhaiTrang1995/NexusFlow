@@ -190,9 +190,101 @@ internal static class LicenceSurvey
             }
 
             packages.AddRange(ReadLibraries(root, SourceSurvey.RelativePath(project)));
+            packages.AddRange(ReadDownloadDependencies(root, SourceSurvey.RelativePath(project)));
         }
 
         return new Resolution(packages, unresolved, [.. folders]);
+    }
+
+    /// <summary>
+    /// Packages NuGet restored for a project without putting them in its library graph.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A <c>PackageDownload</c> is how the SDK fetches a build-time pack — the NativeAOT
+    /// compiler and its runtime, a crossgen2 pack, an apphost — and it lands in
+    /// <c>downloadDependencies</c> rather than in <c>libraries</c>. Reading only
+    /// <c>libraries</c> therefore missed them, and missing them is not a rounding error:
+    /// <c>runtime.linux-x64.Microsoft.DotNet.ILCompiler</c> is where the native runtime that
+    /// gets <em>statically linked into the published executable</em> comes from. Constraint
+    /// C6 says every transitive dependency is vetted, and something linked into the binary
+    /// this repository publishes is as transitive as a dependency gets.
+    /// </para>
+    /// <para>
+    /// <strong>This is also what made the gate disagree with itself.</strong> Whether a pack
+    /// is recorded as a download dependency or as an ordinary library is a decision of the
+    /// SDK writing the assets file, and it is not the same decision in every feature band.
+    /// Nothing pins one: there is no global.json, and ci.yml asks setup-dotnet for
+    /// <c>10.0.x</c>, so CI floats to whatever is newest while a developer has whatever they
+    /// installed. The result was a gate that failed in CI and passed locally on the same
+    /// commit — the single most expensive shape a gate can take, because the person who can
+    /// fix it is the person who cannot see it. Reading both places makes the verdict the
+    /// same on both machines, which is the property that actually matters.
+    /// </para>
+    /// <para>
+    /// Reported as contributing assemblies. It is the conservative reading and the same one
+    /// <c>DependencyLicencesAreCompatible</c> already applies to an unrestored project: these
+    /// packages have no <c>compile</c> or <c>runtime</c> entry to inspect, so "contributes
+    /// nothing" cannot be shown, and for the AOT pack it would be false.
+    /// </para>
+    /// </remarks>
+    private static IEnumerable<ResolvedPackage> ReadDownloadDependencies(JsonElement assets, string project)
+    {
+        if (!assets.TryGetProperty("project", out var projectSection) ||
+            !projectSection.TryGetProperty("frameworks", out var frameworks))
+        {
+            yield break;
+        }
+
+        foreach (var framework in frameworks.EnumerateObject())
+        {
+            if (!framework.Value.TryGetProperty("downloadDependencies", out var downloads))
+            {
+                continue;
+            }
+
+            foreach (var download in downloads.EnumerateArray())
+            {
+                if (download.TryGetProperty("name", out var name) &&
+                    download.TryGetProperty("version", out var version) &&
+                    name.GetString() is { Length: > 0 } id &&
+                    ExactVersion(version.GetString()) is { Length: > 0 } resolved)
+                {
+                    yield return new ResolvedPackage(id, resolved, project, ContributesAssemblies: true);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// The single version a download dependency's range pins.
+    /// </summary>
+    /// <remarks>
+    /// NuGet writes these as a degenerate inclusive range — <c>[10.0.10, 10.0.10]</c> — because
+    /// a package download is always for one exact version. The register's rows carry no
+    /// version, but <see cref="IsRestored"/> and <see cref="NuspecLicenceExpression"/> both
+    /// need one to find the <c>.nuspec</c> on disk, so the range is reduced to its lower bound.
+    /// Anything that is not that shape is returned as written and simply fails to resolve to a
+    /// file, which reports as an unreadable licence rather than as a silent pass.
+    /// </remarks>
+    private static string ExactVersion(string? range)
+    {
+        if (string.IsNullOrWhiteSpace(range))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = range.Trim();
+
+        if (trimmed.StartsWith('[') || trimmed.StartsWith('('))
+        {
+            var inner = trimmed.Trim('[', ']', '(', ')');
+            var comma = inner.IndexOf(',', StringComparison.Ordinal);
+
+            return (comma < 0 ? inner : inner[..comma]).Trim();
+        }
+
+        return trimmed;
     }
 
     private static IEnumerable<ResolvedPackage> ReadLibraries(JsonElement assets, string project)

@@ -27,6 +27,16 @@
       is not worth shipping — that is WP-12's exit criterion, checked here.
     -->
     <ProjectReference Include="../../src/FlowX.Testing/FlowX.Testing.csproj" />
+
+    <!--
+      The two adapters the sample deliberately does not reference. samples/ecommerce is the
+      repository's only NativeAOT-published assembly and CI publishes it (constraint C2), so it
+      declares the flows, the contracts and the serialiser context and takes no broker or
+      database package. EmitStartsAFlowTests supplies both and wires the chain the sample
+      describes — which is the only place one flow's .Emit is seen starting another.
+    -->
+    <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+    <ProjectReference Include="../../plugins/FlowX.Redis/FlowX.Redis.csproj" />
   </ItemGroup>
 
 </Project>

@@ -40,7 +40,10 @@ builder.Services.AddSingleton<ValidateOrder>();
 builder.Services.AddSingleton<ReserveInventory>();
 builder.Services.AddSingleton<ReleaseInventory>();
 builder.Services.AddSingleton<CapturePayment>();
+builder.Services.AddSingleton<RepriceBasket>();
 builder.Services.AddSingleton<PlaceOrderFlow.Dispatcher>();
+builder.Services.AddSingleton<ConfirmOrderFlow.Dispatcher>();
+builder.Services.AddSingleton<RepriceOrderFlow.Dispatcher>();
 
 // Spans to the console, metrics at /metrics. Hand-written rather than an OpenTelemetry SDK
 // reference because this is the repository's only NativeAOT-published assembly (constraint
@@ -78,6 +81,20 @@ app.MapGet("/metrics", (SampleTelemetry collected) =>
 // restated. Nothing in this file mentions order.place, and nothing in it can drift from
 // the flow.
 app.MapFlowX();
+
+// Every bus subscription this application declares, generated from the [BusTrigger] on the flow
+// that declares it. The topic and the group come from the same reading of that attribute which
+// produced flowx.manifest.json, so the address published and the address consumed cannot
+// disagree — and both are terms every node derives a delivery's instance id from, which is what
+// makes one message start one flow rather than one per delivery.
+//
+// This host registers no IBusConsumer and no journal, so the subscription is registered and
+// consumes nothing: `dotnet run` still serves POST /api/v1/orders against an in-memory inventory
+// and needs no infrastructure at all, which is this sample's whole value. Wiring a broker is one
+// AddFlowXRedisStreamConsumer call and one AddFlowXPostgres call — see the README, and see
+// tests/Ecommerce.Tests/EmitStartsAFlowTests, which makes both against real servers and is where
+// the journal rows in the README come from.
+app.Services.AddFlowXSubscriptions();
 
 // `await RunAsync()` rather than `Run()`. Identical behaviour — top-level statements compile
 // to an async entry point, so the process still blocks here until shutdown — and it is the

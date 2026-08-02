@@ -18,6 +18,46 @@ jobs:
   build:
     name: Build and test
     runs-on: ubuntu-latest
+
+    # WHY THESE EXIST. Until 2026-08-01 this job stood up nothing, and
+    # FLOWX_POSTGRES_CONNECTION and FLOWX_REDIS_CONNECTION were unset — so every test
+    # needing a real store skipped. Measured on the merged tree: **166 of 2180 skipped**,
+    # and they are not an edge: they are the journal, the fenced lease, the recovery scan,
+    # retention, the outbox publisher, the Redis lease store and stream publisher, the CLI's
+    # journal reader and both conformance suites. The subsystem this project exists to
+    # provide — durable execution against a real database — was verified by nobody on any
+    # pull request, while the run reported green.
+    #
+    # That is the shape of defect this repository keeps finding: not a gate that fails, a
+    # gate whose subject is absent. The suite could not go red over a broken journal,
+    # because it never opened one.
+    #
+    # Copied from chaos.yml's block, which was written to be the one the others copy:
+    # pinned major versions, a health check so the suite never races a server, and a
+    # password because the tests connect over TCP.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@v4
 
@@ -63,10 +103,51 @@ jobs:
         run: dotnet test tests/FlowX.Architecture.Tests --configuration Release --no-build --logger "console;verbosity=detailed"
 
       - name: Unit and integration tests
-        run: >
-          dotnet test FlowX.slnx --configuration Release --no-build
-          --filter "FullyQualifiedName!~Architecture"
-          --collect:"XPlat Code Coverage"
+        # Both connection strings are set, which is what makes the services above worth
+        # having. The suites' own three-way rule then does the rest of the work: unset
+        # means skip with a reason, and **set with no server reachable means FAIL, never
+        # skip** — so a service container that fails to start turns this job red instead of
+        # quietly returning it to the 166-skip state it was in before.
+        env:
+          FLOWX_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres"
+          FLOWX_REDIS_CONNECTION: "localhost:6379"
+        run: |
+          # pipefail explicitly: the default shell takes the exit status of the LAST
+          # command in a pipeline, so without it a failing test suite would be reported as
+          # a passing step because tee succeeded. performance.yml's build-overhead job
+          # carries the same line for the same reason.
+          set -o pipefail
+          dotnet test FlowX.slnx --configuration Release --no-build \
+            --filter "FullyQualifiedName!~Architecture" \
+            --collect:"XPlat Code Coverage" | tee /tmp/test-output.txt
+
+      - name: No suite silently skipped its subject
+        # The env vars above are one deletion away from being gone, and their absence is
+        # invisible: the suite still passes, just over less. This asserts the thing that
+        # would otherwise only be noticed by someone comparing test counts across runs.
+        #
+        # The threshold is deliberately loose. It is not "zero skips" — a suite is entitled
+        # to skip a case for a reason of its own — it is "not the ~166 that mean no store
+        # was reachable at all".
+        if: always()
+        run: |
+          # Reads the run that already happened rather than running the suite a second
+          # time — a guard that doubles the job's wall clock is a guard someone deletes.
+          if [ ! -s /tmp/test-output.txt ]; then
+            echo "::error::The test step produced no output to check."
+            exit 1
+          fi
+          skipped=$(grep -oE 'Skipped:[[:space:]]+[0-9]+' /tmp/test-output.txt \
+            | grep -oE '[0-9]+' | awk '{s+=$1} END {print s+0}')
+          echo "Skipped across the suite: $skipped"
+          if [ "$skipped" -gt 20 ]; then
+            echo "::error::$skipped tests skipped. Before 2026-08-01 that number was 166 and"
+            echo "::error::it meant no PostgreSQL and no Redis were reachable, so the journal,"
+            echo "::error::the lease, recovery, retention, the outbox and both conformance"
+            echo "::error::suites were never exercised on any pull request. Check the service"
+            echo "::error::containers and the two connection strings on the step above."
+            exit 1
+          fi
 
   template:
     name: dotnet new flowx
@@ -110,6 +191,10 @@ jobs:
         # IsAotCompatible. A reflection call that would break trimming surfaces
         # here as an IL2xxx/IL3xxx error at build time, not at publish time.
         run: |
+          # pipefail, for the reason the test step in `build` spells out: without it the
+          # step's exit status is tee's, so a build that FAILED reports a passing step and
+          # the grep runs over a truncated log.
+          set -o pipefail
           dotnet build FlowX.slnx --configuration Release 2>&1 | tee build.log
           if grep -qE 'IL2[0-9]{3}|IL3[0-9]{3}'  build.log; then
             echo "::error::Trim or AOT warnings found — constraint C2 forbids them."
@@ -120,14 +205,37 @@ jobs:
         # The reference sample is the executable that makes constraint C2 checkable:
         # PublishAot is a no-op on a class library, so until WP-10 this step had
         # nothing to publish and said so rather than passing vacuously.
+        #
+        # PublishAot is NOT passed with /p: here, and that is the whole point. A property
+        # given on the command line is a *global* property: MSBuild passes it down into
+        # every project this one references, including the two that are referenced as
+        # analyzers — FlowX.Compiler and FlowX.Compiler.CodeFixes, both netstandard2.0,
+        # because that is what Roslyn loads. netstandard2.0 cannot be AOT-compiled, so
+        # each answered with NETSDK1207 and the publish produced no binary at all.
+        #
+        # samples/ecommerce/Ecommerce.csproj already sets <PublishAot>true</PublishAot> in
+        # its own PropertyGroup, where it applies to that project and stops there. So this
+        # is not a relaxation of constraint C2: the sample is still published ahead of
+        # time, by the declaration that was always the right place for it. The command
+        # line asking for it a second time is what broke it.
         run: |
+          set -o pipefail
           dotnet publish samples/ecommerce/Ecommerce.csproj --configuration Release \
-            --runtime linux-x64 --self-contained /p:PublishAot=true \
+            --runtime linux-x64 --self-contained \
             /p:TrimmerSingleWarn=false 2>&1 | tee aot.log
           if grep -qE 'IL2[0-9]{3}|IL3[0-9]{3}' aot.log; then
             echo "::error::Trim or AOT warnings in the AOT publish."
             exit 1
           fi
+
+          # The publish having "succeeded" is not the same fact as a binary existing, and
+          # for days it was not the same fact here. Assert the artifact, so a publish that
+          # emits nothing fails in the step that was supposed to produce it rather than in
+          # the next one as a puzzling "did not become healthy".
+          BIN=samples/ecommerce/bin/Release/net10.0/linux-x64/publish/Ecommerce
+          test -x "$BIN" || {
+            echo "::error::The publish reported success but produced no native binary at $BIN."
+            exit 1; }
 
       - name: The native binary serves a request
         # Publishing proves it links. This proves it runs: a trim-related failure that
@@ -147,8 +255,27 @@ jobs:
           curl -sf http://127.0.0.1:5210/health >/dev/null || {
             echo "::error::The native binary did not become healthy."; exit 1; }
 
+          # A no-token request must be refused, and it is asserted FIRST because it is the
+          # cheaper half of the same fact: authorisation is decided by the engine, from
+          # validated claims, inside a natively-compiled binary. An AOT build that lost the
+          # claims plumbing would answer 200 here and this step would otherwise applaud it.
+          UNAUTH=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:5210/api/v1/orders \
+            -H 'Content-Type: application/json' \
+            -H 'Idempotency-Key: ci-smoke-anon' \
+            -d '{"sku":"SKU-1","quantity":1,"paymentToken":"tok"}')
+          [ "$UNAUTH" = "403" ] || {
+            echo "::error::An unauthenticated order got $UNAUTH, not 403. order.validate declares"
+            echo "::error::Authorization.Authenticated and the engine must enforce it in the AOT build too."
+            exit 1; }
+
+          # And the positive case needs a caller who satisfies BOTH stances the flow
+          # declares: order.validate wants any authenticated principal, payment.capture
+          # wants the payment.write permission. Tokens.Cashier in samples/ecommerce is the
+          # one demonstration token holding it; Tokens.Shopper deliberately does not, and
+          # is refused at the third step after the inventory hold is compensated.
           BODY=$(curl -sf -X POST http://127.0.0.1:5210/api/v1/orders \
             -H 'Content-Type: application/json' \
+            -H 'Authorization: Bearer cashier-token' \
             -H 'Idempotency-Key: ci-smoke' \
             -d '{"sku":"SKU-1","quantity":1,"paymentToken":"tok"}') || {
             echo "::error::The native binary refused a valid order."; exit 1; }
@@ -181,6 +308,16 @@ jobs:
         #     --output samples/ecommerce/flowx.manifest.baseline.json
         run: |
           dotnet build samples/ecommerce/Ecommerce.csproj --configuration Release
+
+          # The CLI has to be built before it can be run with --no-build, and nothing else
+          # in this job builds it: it is deliberately not referenced by anything (see the
+          # comment in FlowX.Cli.csproj — CliLinksNoFlowXAssembly asserts the absence), so
+          # building the sample cannot drag it in. Without this line `dotnet run --no-build`
+          # looked for bin/Release/net10.0/flowx, which is the right path — AssemblyName is
+          # `flowx` — for a binary nothing had produced. The docs job already builds it this
+          # way before running `flowx graph`.
+          dotnet build src/FlowX.Cli --configuration Release
+
           dotnet run --project src/FlowX.Cli --configuration Release --no-build -- manifest \
             --assembly samples/ecommerce/bin/Release/net10.0/Ecommerce.dll \
             --output "$RUNNER_TEMP/candidate.manifest.json"
@@ -202,13 +339,26 @@ jobs:
           dotnet-version: '10.0.x'   # the flow-graph step below runs the CLI
 
       - name: Mermaid diagrams parse
-        # 70+ diagrams across docs/ and samples/. A diagram that does not render is a
-        # broken document, and GitHub gives no error when one fails silently.
+        # 70+ diagrams. A diagram that does not render is a broken document, and GitHub
+        # gives no error when one fails silently.
+        #
+        # This step used to report the whole truth as one line: "mermaid diagram failed to
+        # parse". The file was passed as `file=` on the annotation, which the web UI shows
+        # against the file and which does NOT appear in the log — so anyone reading the log,
+        # which is what you get from the CLI, an API client or a notification, learned that
+        # one of seventy-odd diagrams somewhere was broken and nothing else. Finding it meant
+        # reinstalling mermaid-cli locally and bisecting by hand. The parser's own message,
+        # which says the line and the token, was being sent to /dev/null.
+        #
+        # So: name the file and the diagram's index in the log body, print the diagram, and
+        # print what mermaid actually said. The stack frames are dropped because they are
+        # puppeteer's, never the document's.
         run: |
           npm install -g @mermaid-js/mermaid-cli
           echo '{"args":["--no-sandbox"]}' > /tmp/pptr.json
           fail=0
           while IFS= read -r file; do
+            rm -f /tmp/block*.mmd
             python3 - "$file" <<'PY' > /tmp/blocks.txt
           import re, sys
           text = open(sys.argv[1]).read()
@@ -216,11 +366,24 @@ jobs:
               open(f'/tmp/block{i}.mmd', 'w').write(m.group(1))
               print(f'/tmp/block{i}.mmd')
           PY
+            n=0
             while IFS= read -r block; do
-              mmdc -i "$block" -o /tmp/out.svg -p /tmp/pptr.json >/dev/null 2>&1 \
-                || { echo "::error file=$file::mermaid diagram failed to parse"; fail=1; }
+              n=$((n + 1))
+              if ! mmdc -i "$block" -o /tmp/out.svg -p /tmp/pptr.json > /tmp/mmdc.log 2>&1; then
+                echo "::error file=$file::mermaid diagram #$n failed to parse"
+                echo "=== $file: diagram #$n does not parse ==="
+                sed 's/^/    /' "$block"
+                echo "--- mermaid said ---"
+                grep -vE '^\s+at ' /tmp/mmdc.log | sed 's/^/    /'
+                echo "==="
+                fail=1
+              fi
             done < /tmp/blocks.txt
-          done < <(find docs samples -name '*.md')
+          # Every tracked markdown file, not `find docs samples`. A diagram in PLAN.md or in
+          # a README outside those two trees renders on the same GitHub page as the rest and
+          # was checked by nothing; `git ls-files` also cannot wander into node_modules or a
+          # bin/ directory the way a bare `find` over the repository would.
+          done < <(git ls-files '*.md')
           exit $fail
 
       - name: Rendered flow graph parses
@@ -292,3 +455,50 @@ jobs:
             exit 1
           fi
           echo "History is clean."
+
+  red:
+    name: A red run reaches a person
+    # WHY THIS EXISTS. Five of the six jobs above were red on `dev` for days and nothing
+    # happened, because nothing could: `dev` is not a protected branch, so a failing check
+    # blocks no merge and no push, and no workflow here triggered on a failed run. The
+    # whole consequence of a red build was a red icon on a page somebody had to think to
+    # open. The suite passes locally, so the people best placed to notice were the least
+    # likely to be shown.
+    #
+    # This repository has already written that finding down twice — CHECKLIST.md blocker
+    # B-4 and the unnumbered package above WP-31 in PLAN.md — both about the `Benchmark
+    # budgets` job, both concluding "blocking, and blocking nothing: no branch protection,
+    # no notification". This is the same defect in a worse place: the job that builds the
+    # product and runs the suite.
+    #
+    # chaos.yml already fixed this for the nightly QR2 run and its `issues: write` comment
+    # names B-4 by number. This is that mechanism, for this workflow, deliberately the same
+    # so there is one idea in the repository rather than two.
+    needs: [build, template, aot, manifest, docs, attribution]
+
+    # always(), or it would be skipped by exactly the failures it exists to report. Pushes
+    # only: a red pull request is already in front of the person who opened it, and filing
+    # an issue for one would be noise.
+    if: always() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The whole point. Without this the run can only be a red icon; with it, a failure
+      # reaches a named person's notifications.
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Through the environment, not interpolated into the shell line: a `${{ }}`
+          # expansion inside a script is a script-injection shape whatever it holds today.
+          FLOWX_NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 scripts/report-red-run.py \
+            --branch "${{ github.ref_name }}" \
+            --commit "${{ github.sha }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --owner "${{ github.repository_owner }}" \
+            --notify

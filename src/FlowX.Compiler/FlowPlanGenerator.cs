@@ -67,6 +67,19 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     /// </remarks>
     private const string ScheduleRegistrationName = "FlowX.Hosting.FlowScheduleRegistration";
 
+    /// <summary>
+    /// The one thing this generator knows about the host that consumes a subscription: a name to
+    /// look for.
+    /// </summary>
+    /// <remarks>
+    /// The same arrangement <see cref="ScheduleRegistrationName"/> has, and for the same reason.
+    /// Note what is deliberately <em>not</em> looked up: any broker. Which bus serves a
+    /// subscription is an <c>IBusConsumer</c> the host registers at run time, so a flow library
+    /// compiled against no broker at all still emits its registrations — which is quality goal
+    /// Q4 holding at build time as well as at run time.
+    /// </remarks>
+    private const string BusRegistrationName = "FlowX.Hosting.FlowBusSubscriptionRegistration";
+
     /// <summary>The id whose reporting this class decides rather than passes through.</summary>
     private static readonly string EmitDiagnosticId = FlowXDiagnostics.EmitIsNotYetPublished.Id;
 
@@ -191,6 +204,135 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                 var (((analysed, declared), available), assembly) = data;
                 ProduceSchedules(production, analysed, declared, available, assembly);
             });
+
+        // Whether this compilation can register a subscription at all, expressed as one bool for
+        // the reason httpAvailable is.
+        var busAvailable = context.CompilationProvider.Select(
+            static (compilation, _) => compilation.GetTypeByMetadataName(BusRegistrationName) is not null);
+
+        context.RegisterSourceOutput(
+            flows.Collect()
+                .Combine(triggers.Collect())
+                .Combine(busAvailable)
+                .Combine(application),
+            static (production, data) =>
+            {
+                var (((analysed, declared), available), assembly) = data;
+                ProduceSubscriptions(production, analysed, declared, available, assembly);
+            });
+    }
+
+    /// <summary>
+    /// Emits one registration per bus trigger the host could actually consume, or nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing at all is the common case: a project with no flow that subscribes, or a flow
+    /// library with no host to register into, gets no file — zero types, zero IL.
+    /// </para>
+    /// <para>
+    /// <strong>A flow this host could not start is skipped here and reported by
+    /// <c>TriggerDeclarationAnalyzer</c>, not by both</strong>, for <see cref="ProduceSchedules"/>'s
+    /// reason: the two conditions are the same two <c>FLOWX1039</c> names, and the analyzer has the
+    /// attribute's own span where this has a collected model and nothing else.
+    /// </para>
+    /// </remarks>
+    private static void ProduceSubscriptions(
+        SourceProductionContext production,
+        ImmutableArray<AnalysisResult?> results,
+        ImmutableArray<FlowTriggersModel?> triggers,
+        bool busAvailable,
+        string assemblyName)
+    {
+        if (!busAvailable)
+        {
+            return;
+        }
+
+        var declared = triggers
+            .Where(static t => t is not null)
+            .GroupBy(static t => t!.FlowId, StringComparer.Ordinal)
+            .ToDictionary(static g => g.Key, static g => g.First()!, StringComparer.Ordinal);
+
+        var models = results
+            .Where(static r => r is { IsSuccess: true, Model: not null })
+            .Select(static r => r!.Model!)
+            .OrderBy(static m => m.FlowId, StringComparer.Ordinal)
+            .ToList();
+
+        var subscriptions = new List<BusSubscriptionModel>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var flow in models)
+        {
+            if (!declared.TryGetValue(flow.FlowId, out var flowTriggers) || !CanBeConsumed(flow))
+            {
+                continue;
+            }
+
+            foreach (var trigger in flowTriggers.Triggers.Where(IsBusAddress))
+            {
+                subscriptions.Add(new BusSubscriptionModel(
+                    flow.FlowId,
+                    flow.FullTypeName,
+                    SubscriptionMethodName(flow.TypeName, names),
+                    trigger.Topic!,
+                    trigger.Group!,
+                    trigger.Transport));
+            }
+        }
+
+        if (subscriptions.Count > 0)
+        {
+            production.AddSource(
+                BusEmitter.FileName,
+                SourceText.From(BusEmitter.Emit(assemblyName, subscriptions), Encoding.UTF8));
+        }
+    }
+
+    /// <summary>Whether a delivery to this flow could be started, and started once.</summary>
+    /// <remarks>
+    /// The two conditions <c>FLOWX1039</c> reports, restated as a predicate: a delivery has only
+    /// the message to hand over, and an ephemeral flow journals no instance, so nothing would
+    /// refuse a redelivery of the same message.
+    /// </remarks>
+    private static bool CanBeConsumed(FlowModel flow) =>
+        string.Equals(flow.InputTypeName, "FlowX.BusMessage", StringComparison.Ordinal) &&
+        string.Equals(flow.Profile, "Durable", StringComparison.Ordinal);
+
+    /// <summary>A bus trigger this build could read an address off.</summary>
+    /// <remarks>
+    /// <strong>Matched on kind and shape rather than on which attribute was written</strong>, so
+    /// <c>[BusTrigger]</c> and <c>[KafkaTrigger]</c> bind through one path — which is ADR-0004's
+    /// "one trigger abstraction for every transport" expressed as code rather than as a claim. A
+    /// trigger whose kind is <c>Bus</c> but whose arguments this compiler could not interpret
+    /// reaches the manifest as a bare kind and must produce no registration, for the reason an
+    /// unreadable schedule produces none: a topic nobody read is not a topic to consume.
+    /// </remarks>
+    private static bool IsBusAddress(TriggerModel trigger) =>
+        string.Equals(trigger.Kind, "Bus", StringComparison.Ordinal) &&
+        !string.IsNullOrEmpty(trigger.Topic) &&
+        !string.IsNullOrEmpty(trigger.Group);
+
+    /// <summary>The extension method one subscription is registered by.</summary>
+    /// <remarks>
+    /// Named from the flow's type for <see cref="MethodName"/>'s reason:
+    /// <c>services.AddRepriceOrderFlowSubscription()</c> reads as the flow it registers. A flow
+    /// declaring two subscriptions takes a numeric suffix, deterministically, in the order the
+    /// flows were sorted by id.
+    /// </remarks>
+    private static string SubscriptionMethodName(string typeName, HashSet<string> taken)
+    {
+        var candidate = "Add" + typeName + "Subscription";
+        var suffix = 2;
+
+        while (!taken.Add(candidate))
+        {
+            candidate = "Add" + typeName + "Subscription" + suffix.ToString(CultureInfo.InvariantCulture);
+            suffix++;
+        }
+
+        return candidate;
     }
 
     /// <summary>

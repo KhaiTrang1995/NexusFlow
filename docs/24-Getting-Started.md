@@ -73,6 +73,7 @@ Seven files: five of C#, the project file, and a README.
 | `OpenTicketFlow.cs` | The control flow: order, and where recovery would go. |
 | `Program.cs` | Composition. Registrations, and `MapFlowX()` for every declared endpoint. |
 | `Infrastructure.cs` | The in-memory adapter and the JSON serialiser context. |
+| `Authentication.cs` | Two demonstration tokens. A stand-in for your identity provider. |
 
 `dotnet run` it and post a ticket:
 
@@ -80,6 +81,7 @@ Seven files: five of C#, the project file, and a README.
 ```bash
 curl -X POST http://localhost:5000/api/v1/tickets \
   -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer support-token' \
   -H 'Idempotency-Key: ticket-1' \
   -d '{"subject":"Printer on fire","reporter":"ops","contactPhone":"+44 7700 900000"}'
 ```
@@ -99,6 +101,16 @@ in step because nothing restates it.
 
 **The `Idempotency-Key` header is required because the flow said so.** Omit it and you get
 `400` with `http.idempotency_key_required` before any capability runs.
+
+**The `Authorization` header is required because the *capability* said so.** `ticket.validate`
+declares `Authorization.Authenticated`, and the engine enforces that on the step — so drop the
+header and you get `403` with `authorization.not_authenticated` instead. Send
+`Bearer reader-token` and you get past that one and are refused by `ticket.record` with
+`authorization.permission_denied`, because it declares `Permission = "ticket.write"` and that
+caller does not hold it. Both tokens are constants in `Authentication.cs`, which is a stand-in
+for an identity provider and is meant to be replaced by `AddJwtBearer`; §12 says what that
+costs. The stance lives on the capability rather than the route, so it holds however the flow
+is triggered.
 
 **A business failure is not an exception.** Post a blank subject and you get RFC 7807
 problem details carrying the code the capability returned:
@@ -281,10 +293,26 @@ service lifetime. This is the template's, verbatim:
 <!-- verify: excerpt templates/FlowX.Templates/content/FlowX.Web/Program.cs -->
 ```csharp
 builder.Services.AddFlowX(options => options.ApplicationName = "Ordering");
+```
+
+Then authentication, and the in-memory store the capabilities depend on:
+
+<!-- verify: excerpt templates/FlowX.Templates/content/FlowX.Web/Program.cs -->
+```csharp
+builder.Services
+    .AddAuthentication(StarterTokenHandler.SchemeName)
+    .AddScheme<AuthenticationSchemeOptions, StarterTokenHandler>(StarterTokenHandler.SchemeName, null);
 
 // Infrastructure. In memory here; the capabilities do not know or care.
 builder.Services.AddSingleton<ITicketStore, InMemoryTicketStore>();
 ```
+
+The authentication registration is what puts a `ClaimsPrincipal` on the request, and the
+engine decides every declared stance against it — so an application whose capabilities
+declare a stance and whose host registers no authentication refuses its own first step.
+`app.UseAuthentication()` further down is the other half: without it the handler is
+registered and never runs, every request is anonymous, and the failure looks exactly like a
+broken token.
 
 <!-- verify: excerpt templates/FlowX.Templates/content/FlowX.Web/Program.cs -->
 ```csharp
@@ -969,33 +997,72 @@ Read this before you plan around FlowX rather than after you hit it. None of it 
 each item is stated where it is relevant — but a newcomer who discovers it by walking into
 it will discount everything else on this page.
 
-**One transport.** `plugins/` contains `FlowX.Http` and nothing else. `KafkaTriggerAttribute`,
-`CronTriggerAttribute`, `StreamTriggerAttribute` and `AgentTriggerAttribute` all compile and
-all reach the manifest's `triggers` block — and **nothing serves them.** Only
-`[HttpTrigger]` produces a registration for `app.MapFlowX()`. This block compiles, and this
-page's own test asserts that it raises no diagnostic at all:
+**Three trigger kinds of eight.** `[HttpTrigger]` produces a registration for
+`app.MapFlowX()`, `[CronTrigger]` one for `services.AddFlowXSchedules()`, and `[BusTrigger]` and
+`[KafkaTrigger]` one for `services.AddFlowXSubscriptions()`. `StreamTriggerAttribute`,
+`AgentTriggerAttribute` and the `Change` kind compile and reach the manifest's `triggers` block —
+and **nothing serves them.**
 
-<!-- verify: compiles -->
+*This paragraph said "one transport", and said that a Kafka trigger "will never receive a
+message" and that "no diagnostic reports a trigger that nothing serves". All three expired on
+2026-08-01.* A bus subscription is consumed by whichever `IBusConsumer` the host registers, and
+`FLOWX1039` now refuses the two bus declarations nothing could serve — which is what this block
+had to be changed to satisfy:
+
+<!-- verify: reports FLOWX1039 -->
 ```csharp
+// The step that turns the delivered body into your own contract. This is the layer with a
+// serialiser context in scope, and the layer whose failures are Results — the host hands the
+// body over undeserialised, because naming a JsonTypeInfo for your type is something only
+// generated code can do.
+[Capability("ticket.read", Version = "1.0.0",
+    Authorization = Authorization.Internal,
+    Idempotent = true)]
+public sealed class ReadRaisedTicket : ICapability<BusMessage, TicketOpened>
+{
+    public ValueTask<Result<TicketOpened>> ExecuteAsync(
+        BusMessage input,
+        CapabilityContext ctx,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(ctx);
+
+        return ValueTask.FromResult(input.Payload is { Length: > 0 } body
+            ? Result.Ok(new TicketOpened(ctx.IdempotencyKey, body))
+            : Result.Fail<TicketOpened>(TicketErrors.SubjectRequired()));
+    }
+}
+
 [Flow("ticket.import", Version = "1.0.0", Owner = "support")]
 [FlowDeadline("PT10S")]
-[KafkaTrigger("tickets.raised", Group = "ticket-import")]
-public sealed partial class ImportTicketFlow : Flow<OpenTicket, TicketOpened>
+[BusTrigger("tickets.raised", Group = "ticket-import")]
+public sealed partial class ImportTicketFlow : Flow<BusMessage, TicketOpened>
 {
-    protected override void Define(IFlowBuilder<OpenTicket, TicketOpened> flow)
+    protected override void Define(IFlowBuilder<BusMessage, TicketOpened> flow)
     {
         ArgumentNullException.ThrowIfNull(flow);
 
         flow
-            .Step<ValidateTicket>()
-            .Step<RecordTicket>()
+            .Step<ReadRaisedTicket>()
             .Return(ctx => ctx.Get<TicketOpened>());
     }
 }
 ```
 
-It publishes a Kafka trigger in its declared contract and will never receive a message. No
-plugin implements the consumer, and no diagnostic reports a trigger that nothing serves.
+**That block does not build**, and the diagnostic is the point:
+[`FLOWX1039`](diagnostics/FLOWX1039.md) refuses it because the flow is not `Durable`. A broker
+delivers at least once — that is its contract, not its defect — and the answer is that the
+delivery *derives* the instance id it starts, so the journal's primary key refuses the second
+one. Without a journal that id is inert and every redelivery would import the ticket again, with
+nothing anywhere recording that it had.
+
+Adding `Profile = ExecutionProfile.Durable` fixes it, and then a durable flow needs
+`[JsonSerializable(typeof(BusMessage))]` in one of your serialiser contexts, because it journals
+its input — [`FLOWX1006`](diagnostics/FLOWX1006.md) asks for exactly that one declaration.
+`samples/ecommerce/RepriceOrderFlow.cs` is the complete, compiled version, and
+`tests/Ecommerce.Tests/EmitStartsAFlowTests.cs` runs it against a real PostgreSQL and a real
+Redis.
 
 **No telemetry.** Not "partial", not "basic" — none. There is no `ActivitySource` and no
 `Meter` anywhere under `src/`. No spans, no metrics, no structured log scope.
@@ -1045,11 +1112,19 @@ capabilities.
 `verify --cost` ([22-CLI](22-CLI.md)). There is no visual designer, no live reload, no
 start-up banner.
 
-**And two smaller ones you will meet sooner than you expect.** The declared authorisation
-stance is *not enforced at run time* — it reaches the manifest and the generated HTTP
-endpoint does not check it, so put authentication in front of the service. And
-`FLOWX.Sdk`, the metapackage the SDK document's table promises, does not exist; a project
-references five packages by hand.
+**And one smaller one you will meet sooner than you expect.** `FLOWX.Sdk`, the metapackage
+the SDK document's table promises, does not exist; a project references five packages by
+hand.
+
+**Authentication is yours to supply.** The declared authorisation stance *is* enforced at
+run time — the engine decides it on the step, from validated claims — but the identity it
+decides against has to come from somewhere, and `Authentication.cs` in the generated project
+is a dictionary of two constant tokens with no signature, issuer, audience or expiry. It is
+a stand-in, and the first thing to replace: delete that file and register a real scheme —
+`builder.Services.AddAuthentication().AddJwtBearer(...)` with your authority and audience —
+which needs the `Microsoft.AspNetCore.Authentication.JwtBearer` package, the sixth this
+project would reference by hand. Nothing else in the project changes, because nothing else
+in it knows how the principal was obtained.
 
 ---
 

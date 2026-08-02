@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using FlowX;
 
 namespace Ecommerce;
 
@@ -21,6 +22,38 @@ namespace Ecommerce;
 [JsonSerializable(typeof(OrderPlacedResult))]
 [JsonSerializable(typeof(PlaceOrder))]
 internal sealed partial class EcommerceJsonContext : JsonSerializerContext;
+
+/// <summary>Serialisation for the durable half of the sample.</summary>
+/// <remarks>
+/// <para>
+/// <strong>Separate from <see cref="EcommerceJsonContext"/> because it is not on the wire.</strong>
+/// That context is the HTTP endpoint's and carries the camelCase policy a client expects. These
+/// three are journal payloads: <c>OrderPlaced</c> is the event <c>PlaceOrderFlow</c> emits and
+/// the outbox stages, <c>BusMessage</c> is what a delivery journals as
+/// <c>flow_instance.input</c>, and <c>RepricedOrder</c> is what the consuming flow's step
+/// commits. A durable flow cannot record any of them without a context that declares them, and
+/// <c>FLOWX1006</c> is the rule that says so rather than the journal discovering it at run time.
+/// </para>
+/// <para>
+/// Public, unlike the endpoint's, because <c>tests/Ecommerce.Tests</c> hands it to the host it
+/// builds against a real PostgreSQL — the sample declares the contracts and the test supplies
+/// the infrastructure, which is the split constraint C2 forces on the only NativeAOT-published
+/// assembly here.
+/// </para>
+/// <para>
+/// <strong>No contract appears in both contexts, and the compiler enforces it.</strong>
+/// <c>FLOWX1006</c> asks for a <em>single</em> context declaring a journalled contract, and
+/// <c>EndpointEmitter</c> emits the no-argument <c>MapFlowX()</c> only where one context declares
+/// both of a flow's wire contracts. Declaring <c>PlaceOrder</c> in both was the first draft of
+/// this file and it failed twice over — a durable flow that could not be journalled, and an
+/// endpoint registration that would not compile.
+/// </para>
+/// </remarks>
+[JsonSerializable(typeof(OrderPlaced))]
+[JsonSerializable(typeof(BusMessage))]
+[JsonSerializable(typeof(RepricedOrder))]
+[JsonSerializable(typeof(ValidatedOrder))]
+public sealed partial class EcommerceJournalJsonContext : JsonSerializerContext;
 
 /// <summary>Stock, in memory.</summary>
 /// <remarks>

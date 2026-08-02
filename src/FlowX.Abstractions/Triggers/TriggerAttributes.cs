@@ -46,12 +46,75 @@ public sealed class HttpTriggerAttribute(string method, string route) : TriggerA
     public string? Version { get; init; }
 }
 
+/// <summary>
+/// Consumes a topic on whatever bus the host wired, as one member of a consumer group.
+/// </summary>
+/// <param name="topic">
+/// The event type this subscription consumes, e.g. <c>order.placed</c> — the same identity
+/// <c>.Emit&lt;T&gt;()</c> stages and the manifest's <c>event.type</c> publishes.
+/// </param>
+/// <remarks>
+/// <para>
+/// <strong>The transport-neutral bus declaration, and the one to reach for.</strong>
+/// <see cref="KafkaTriggerAttribute"/> declares the same address and additionally names a broker
+/// family; this one names none, which is the honest reading of what a flow knows about its own
+/// transport. Which bus serves the subscription is the host's registration — an
+/// <c>IBusConsumer</c> in the container — and quality goal Q4 is exactly the claim that the flow
+/// cannot tell.
+/// </para>
+/// <para>
+/// <strong>A flow declaring this must take <see cref="BusMessage"/> as its input and declare
+/// <c>ExecutionProfile.Durable</c></strong>, and <c>FLOWX1039</c> refuses one that does not. The
+/// profile is not a preference: a delivery derives the instance id it starts
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0035-a-delivery-names-the-instance-it-starts.md">ADR-0035</a>),
+/// and on an <c>Ephemeral</c> flow that id is inert, so every redelivery runs the flow again with
+/// nothing anywhere recording that it had.
+/// </para>
+/// <para>
+/// <strong>No operational tuning is declared here</strong>, unlike
+/// <see cref="KafkaTriggerAttribute"/>'s <c>MaxInFlight</c> and <c>DeadLetter</c>. How many
+/// deliveries a message gets before it is dead-lettered, how often the consumer sweeps and how
+/// many partitions it serves at once are `FlowXOptions` values, because they configure this
+/// deployment rather than promising anything to whoever publishes the topic
+/// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0039-a-bus-subscription-publishes-no-new-manifest-field.md">ADR-0039</a>).
+/// </para>
+/// </remarks>
+[TriggerKind(TriggerKind.Bus)]
+[AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
+public sealed class BusTriggerAttribute(string topic) : TriggerAttribute
+{
+    /// <inheritdoc />
+    public override TriggerKind Kind => TriggerKind.Bus;
+
+    /// <summary>The event type this subscription consumes.</summary>
+    public string Topic { get; } = topic;
+
+    /// <summary>
+    /// The consumer group. Required, because a subscription with no group is a subscription
+    /// whose redeliveries nothing tracks — and because the group is one of the five terms the
+    /// instance id is derived from, so two flows on one topic must be able to say they are two
+    /// subscribers.
+    /// </summary>
+    public required string Group { get; init; }
+}
+
 /// <summary>Consumes a Kafka topic. Offsets are committed after flow completion.</summary>
 /// <param name="topic">Topic name.</param>
+/// <remarks>
+/// <strong>Bound by the same path as <see cref="BusTriggerAttribute"/>, on the strength of its
+/// kind and its address rather than its name.</strong> Anything declaring <c>Bus</c> with a topic
+/// and a group produces a subscription registration; what serves it is the <c>IBusConsumer</c>
+/// the host registered. The <see cref="Transport"/> this attribute publishes is checked against
+/// that consumer at registration, so a <c>[KafkaTrigger]</c> on a host wired for a different bus
+/// is a startup failure rather than a subscription quietly served by the wrong broker.
+/// </remarks>
 [TriggerKind(TriggerKind.Bus)]
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
 public sealed class KafkaTriggerAttribute(string topic) : TriggerAttribute
 {
+    /// <summary>The broker family this attribute names, as the manifest publishes it.</summary>
+    public const string Transport = "kafka";
+
     /// <inheritdoc />
     public override TriggerKind Kind => TriggerKind.Bus;
 

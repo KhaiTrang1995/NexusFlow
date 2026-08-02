@@ -23,6 +23,15 @@
     <ProjectReference Include="../../plugins/FlowX.Redis/FlowX.Redis.csproj" />
 
     <!--
+      The host, because the bus trigger is the one thing in this package that only means
+      something in a host: a consumer that reads a message and does not start a flow has
+      proved nothing about redelivery, acknowledgement or ordering. RedisStreamBusConsumerTests
+      drives FlowBusScan over a real Redis, which is the only place the two halves meet.
+      The dependency is one-way and stays inside tests/ — no plugin references a host.
+    -->
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+
+    <!--
       The conformance suite is referenced, not copied — and this project is the reason the
       reference is worth anything. ADR-0009 makes the suite the semantic contract for every
       store and docs/17-Plugin-System.md §5 says a third party claims conformance by
