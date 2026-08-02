@@ -15,8 +15,9 @@
 > stances and `[Sensitive]` members. `flowx graph` renders it. That is the
 > concrete claim in §1, and it holds.
 >
-> Of the eleven consumers in the diagram below, **two exist** — diagrams, via
-> `flowx graph`, and the MCP tool surface. There is no OpenAPI or AsyncAPI
+> Of the eleven consumers in the diagram below, **three exist** — diagrams, via
+> `flowx graph`; the MCP tool surface, which now also serves the manifest itself as a
+> readable resource; and `src/FlowX.Ai`, which reviews it. There is no OpenAPI or AsyncAPI
 > generation, no alert or dashboard generation, no test scaffolding, no impact
 > analysis and no knowledge graph. `flowx query` and `flowx ai …` are not CLI
 > verbs; the CLI has four ([22-CLI](22-CLI.md)).
@@ -214,8 +215,21 @@ place where the architecture is stated, and it is the code.**
 
 ## 5. AI-assisted engineering
 
-`flowx ai` is an optional, pluggable layer (`IAiProvider` — Anthropic, OpenAI,
-Azure OpenAI, local). It receives the manifest, not the repository.
+*This section named an `IAiProvider` with four implementations. `src/FlowX.Ai` shipped on
+2026-08-02 with none of them, and that is a decision rather than an omission:*
+[ADR-0060](adr/ADR-0060-the-server-asks-the-caller-for-what-it-does-not-have.md). A
+provider means a vendor SDK, an API key, an egress rule and a `DEPENDENCIES.md` row per
+vendor, to reach a model the caller on the other end of an MCP connection already has —
+so `IAgentSampler` borrows *that* one over `sampling/createMessage` instead. `FlowX.Ai`
+holds no key and references no assembly at all, which is what makes the last row of the
+table below a property of its `.csproj`. The findings in the table are also mostly not
+generation: an orphaned event is a lookup and a partially compensated saga is a set
+difference, and `ManifestReview` computes both without a model. The first row's example
+is the one that cannot be produced from the manifest at all — the document carries a
+policy's `kind` and `stage` and none of its parameters — and `FLOWX1019` already answers
+it at compile time, where the numbers are.
+
+It receives the manifest, not the repository.
 
 | Command | Input | Output | Human role |
 |---|---|---|---|
@@ -308,14 +322,23 @@ sequenceDiagram
     end
 ```
 
-One branch of that diagram is drawn on the wrong side of the wire, and the built
-surface does not follow it. **The server does not prompt the human.** MCP puts
-human-in-the-loop on the client, which is the side a human is attached to; a
-server-driven prompt would need a session and a second round trip that the
-protocol does not define for this. What ships is the `confirmationRequired`
-annotation above, computed from the declared mode and the declared side effects —
-which is what a client reads to decide whether to ask. The accuracy claim below is
-therefore about the annotation, and it holds.
+*This paragraph said the server does not prompt the human, and gave as the reason that
+"a server-driven prompt would need a session and a second round trip that the protocol
+does not define for this". The last clause was wrong and expired on 2026-08-02.* MCP
+revision `2025-06-18` — the one this surface answers `initialize` with — defines
+`elicitation/create`, and Streamable HTTP carries it down the response stream of the
+POST being served. A deployment that sets `ConfirmationPolicy.Elicit` gets a
+**server-side gate**: a `tools/call` whose descriptor says `confirmationRequired` is
+answered by asking, and the flow is not entered until an approval returns. Declined,
+cancelled, unanswered and "the client could not accept an event stream" are one
+`Forbidden` refusal. The default is still the annotation, because making the gate the
+default would break every client that answers with a plain body. No session is needed:
+the id a server request carries is minted by this process, so an answer arriving on a
+separate POST is matched to its request without one.
+[ADR-0060](adr/ADR-0060-the-server-asks-the-caller-for-what-it-does-not-have.md) is the
+decision, and `FLOWX1046` is what stops a flow switching the gate off silently. The
+accuracy claim below holds for both: the prompt names the *declared* effects, and names
+no amount, because the manifest carries labels and not magnitudes.
 
 Three safety properties, all inherited rather than added:
 
