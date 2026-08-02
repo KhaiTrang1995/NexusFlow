@@ -38,6 +38,7 @@ namespace FlowX.Runtime.Tests;
 /// reports it as this code's allocation.
 /// </para>
 /// </remarks>
+[Collection(TelemetryCollection.Name)]
 public sealed class TelemetryCostTests
 {
     private static void RequireOptimisedBuild()
