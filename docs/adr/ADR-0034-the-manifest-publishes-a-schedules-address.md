@@ -134,7 +134,7 @@ be ADR-0017's F1 in its purest form: three schema-declared fields nothing reads,
 the transport was bound.
 
 They get no diagnostic either, and that is a decision rather than an omission.
-[FLOWX1032](../diagnostics/FLOWX1032.md)'s argument for reporting an unapplied policy is that a
+`FLOWX1032`'s argument for reporting an unapplied policy is that a
 declared control is **deleted** — the manifest publishes it and the plan drops it, so the
 published contract promises something no code does. These three are not deleted, because they
 never reach an artifact at all: no manifest field, no plan node, nothing to disagree with. What

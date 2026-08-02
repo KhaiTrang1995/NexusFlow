@@ -580,9 +580,11 @@ template already generates.
 ### Part two — the contracts
 
 Everything in the state bag: the flow's input, which the engine puts there before the first
-step, and the output of every capability step. `samples/banking` is the shape to copy —
-`ExecuteTransfer` and `TransferResult` are on the wire, `TransferCompleted` is the event, and
-the six below are the step results the journal has to write:
+step, and the output of every capability step — plus, for a step that declares an `Audit`, the
+input the capability was handed. `samples/banking` is the shape to copy — `ExecuteTransfer` and
+`TransferResult` are on the wire, `TransferCompleted` is the event, the middle six are the step
+results the journal has to write, and the last three are the step inputs its audit records
+carry:
 
 <!-- verify: excerpt samples/banking/Infrastructure.cs -->
 ```csharp
@@ -596,6 +598,9 @@ the six below are the step results the journal has to write:
 [JsonSerializable(typeof(DebitPosted))]
 [JsonSerializable(typeof(CreditPosted))]
 [JsonSerializable(typeof(Settlement))]
+[JsonSerializable(typeof(DebitInstruction))]
+[JsonSerializable(typeof(CreditInstruction))]
+[JsonSerializable(typeof(SettlementInstruction))]
 internal sealed partial class BankingJsonContext : JsonSerializerContext;
 ```
 
@@ -1069,16 +1074,22 @@ Redis.
 [12-Observability](12-Observability.md) describes the intended design; the code emits
 nothing, so plan on your own instrumentation inside capabilities.
 
-**Four of the nine policy kinds still do nothing.** `PolicySet` has `Retry`, `Timeout`,
-`CircuitBreaker`, `Bulkhead`, `Cache`, `RateLimit`, `Idempotency`, `Audit` and
-`CompensationRetry`. **The first four execute**, and so does `CompensationRetry` on a
-compensation: `.WithPolicy(… .Retry(3))` on a forward step now makes three attempts, a
+**All nine policy kinds execute.** `PolicySet` has `Retry`, `Timeout`, `CircuitBreaker`,
+`Bulkhead`, `Cache`, `RateLimit`, `Idempotency`, `Audit` and `CompensationRetry`, and every
+one of them is applied: `.WithPolicy(… .Retry(3))` on a forward step makes three attempts, a
 `Timeout` is armed per attempt and clamped to the flow deadline, a `CircuitBreaker` opens
-per capability, and a `Bulkhead` refuses a caller past its queue depth. `RateLimit`,
-`Idempotency`, `Cache` and `Audit` are parsed, validated — `FLOWX1014` and `FLOWX1018` are
-real build errors — written into the plan and the manifest, and applied by nothing;
-[`FLOWX1032`](diagnostics/FLOWX1032.md) reports each one you declare. Declaring them is
-still worth it: they are what the stage that implements them will find.
+per capability, a `Bulkhead` refuses a caller past its queue depth, a `RateLimit` admits or
+refuses the caller before the step, an `Idempotency` window claims a key and replays what a
+previous caller recorded under it, a `Cache` is consulted before the dispatch, an `Audit`
+record is written after the step's commit, and `CompensationRetry` wraps the undo.
+`FLOWX1032` — the rule that reported a declared policy nothing applied — is deleted with
+the last of the gap it described.
+
+**Four of them need a store, and three of the four refuse without one.** `RateLimit` needs
+an `IRateLimiterStore`, `Idempotency` an `IIdempotencyStore` and `Audit` an `IAuditSink`; a
+step declaring one with nothing registered **fails** rather than running unpoliced. `Cache`
+is the exception: with no `IResultCache` registered the step simply dispatches, because an
+unconsulted cache costs latency and never correctness.
 
 **And four things you may expect around a policy are missing.** There is no `[Timeout]`,
 `[Retry]` or `[CircuitBreaker]` attribute — a policy attaches through `.WithPolicy(...)` on

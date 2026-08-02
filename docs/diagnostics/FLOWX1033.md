@@ -5,9 +5,9 @@
 > declares no `.CompensateWith<T>()`.
 
 > [!NOTE]
-> **This is the one policy that runs, dropped in silence.** [FLOWX1032](FLOWX1032.md)
-> reports the eight kinds the runtime does not execute, and is a **warning** because P4 will
-> execute them. This rule is its complement and is an **error**, because no release will ever
+> **This is the one policy that runs, dropped in silence.** The since-deleted `FLOWX1032`
+> reported the eight kinds the runtime did not execute, and was a **warning** because P4 would
+> execute them. This rule was its complement and is an **error**, because no release will ever
 > execute a compensation retry that has no compensation to retry — there is nothing for it to
 > wrap, in this version or any later one.
 
@@ -72,8 +72,8 @@ promised over an undo that does not exist. The report lands on the `WithPolicy` 
 **What stays silent:**
 
 - A compensable step carrying `CompensationRetry`, whatever else is in the set.
-- A non-compensable step carrying a set with no `CompensationRetry` — that is
-  [FLOWX1032](FLOWX1032.md)'s business and nothing else's.
+- A non-compensable step carrying a set with no `CompensationRetry` — that was
+  `FLOWX1032`'s business while any kind was inert, and is nobody's now that none is.
 - A `.WithPolicy(...)` whose argument the compiler cannot resolve to a field or property
   initialiser declared in source. `PolicySetReader` returns nothing rather than guessing, so
   the rule is silent exactly where the emitter is — the same restriction FLOWX1014 works
@@ -170,13 +170,13 @@ one fails the build.
 a suppression buys is a manifest that promises a retried undo, a plan with no undo, and no
 message saying which one is true.
 
-## Why this is an error where FLOWX1032 is a warning
+## Why this is an error where FLOWX1032 was a warning
 
-They are adjacent ids about the same DSL call, so the split needs to be justified rather
-than asserted. Every argument that makes [FLOWX1032](FLOWX1032.md) a warning fails here:
+They were adjacent ids about the same DSL call, so the split needed to be justified rather
+than asserted. Every argument that made `FLOWX1032` a warning fails here:
 
 **"An error erases the inventory the fixing phase needs."** There is no fixing phase. P4
-implements the eight kinds FLOWX1032 reports; it does not give a non-compensable step an
+implemented the eight kinds FLOWX1032 reported; it does not give a non-compensable step an
 undo. A `CompensationRetry` here is not scaffolding for a feature that is coming — it is
 attached to nothing, permanently, and preserving it preserves no information P4 wants.
 
@@ -204,18 +204,18 @@ reaches a build log.
 
 ## This rule is not deleted
 
-Unlike [FLOWX1028](FLOWX1028.md), [FLOWX1032](FLOWX1032.md) and the already-deleted
+Unlike [FLOWX1028](FLOWX1028.md), the deleted `FLOWX1032` and the deleted
 `FLOWX1031`, this one has no take-down row, because it does not describe a gap in the
-platform. **That prediction has now half happened and held.** FLOWX1032 has narrowed from
-eight kinds to four, and this rule became more load-bearing rather than less: a compensation
-retry attached to nothing is still attached to nothing, and a set that also declares a
-`Timeout` and a `Retry` now has two policies in it that visibly work — which makes it
-likelier, not less likely, that a reader assumes the third does too. When the last four
-kinds execute and FLOWX1032 is deleted, this rule stays.
+platform. **That prediction has now happened in full and held.** FLOWX1032 narrowed from
+eight kinds to four, then to two, then was deleted — and this rule became more load-bearing
+at every step: a compensation retry attached to nothing is still attached to nothing, and a
+set that also declares a `Timeout` and a `Retry` now has policies in it that visibly work —
+which makes it likelier, not less likely, that a reader assumes this one does too. Every
+kind executes and FLOWX1032 is gone; this rule stays.
 
 ---
 
-**Back to:** [diagnostics index](README.md) · [FLOWX1032](FLOWX1032.md) ·
+**Back to:** [diagnostics index](README.md) ·
 [FLOWX1014](FLOWX1014.md) · [FLOWX1012](FLOWX1012.md) ·
 [Execution engine §7](../06-Execution-Engine.md) ·
 [ADR-0011](../adr/ADR-0011-fixed-policy-stage-order.md)

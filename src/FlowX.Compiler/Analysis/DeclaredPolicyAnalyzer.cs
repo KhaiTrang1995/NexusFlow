@@ -10,32 +10,36 @@ using Microsoft.CodeAnalysis.Diagnostics;
 namespace FlowX.Compiler.Analysis;
 
 /// <summary>
-/// Reports a declared policy the runtime will not apply: FLOWX1032 through FLOWX1036.
+/// Reports what a declared policy set will and will not do: FLOWX1033 through FLOWX1036, and
+/// FLOWX1040.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <strong>What is actually executed, established from the call sites rather than from the
-/// documents.</strong> <c>FlowEngine</c> reads four policy properties:
+/// documents.</strong> <c>FlowEngine</c> reads five policy properties:
 /// <c>ExecutionPlan.HasCompensationPolicies</c> and <c>StepNode.CompensationRetry</c> on the
-/// failure path, and <c>ExecutionPlan.HasStepPolicies</c> and <c>StepNode.StepPolicy</c> in
-/// the step loop. Underneath them, <c>PolicyChain.Ordered</c> is read in exactly two places in
-/// <c>src/</c> — <c>CompensationPolicy.From</c> and <c>StepPolicy.From</c> — and between them
-/// they read five of the nine kinds <c>PolicySet</c> offers. This analyzer is the build-time
-/// statement of the other four.
+/// failure path, <c>ExecutionPlan.HasStepPolicies</c> and <c>StepNode.StepPolicy</c> in the
+/// step loop, and <c>ExecutionPlan.HasAuditedSteps</c> with <c>StepNode.StepAudit</c> after
+/// the commit. Underneath them, <c>PolicyChain.Ordered</c> is read in exactly three places in
+/// <c>src/</c> — <c>CompensationPolicy.From</c>, <c>StepPolicy.From</c> and
+/// <c>StepAudit.From</c> — and between them they read all nine kinds <c>PolicySet</c> offers.
 /// </para>
 /// <para>
-/// <strong>The remaining list is a list, not a stage range.</strong> <c>Audit</c> is a
-/// <c>PolicyStage.Consistency</c> policy — stage 7, the same stage as <c>CompensationRetry</c>,
-/// which executes — so a rule written against a range of stages would be wrong about one of
-/// them whichever way it drew the line. <see cref="ExecutedKinds"/> is therefore enumerated,
-/// and pinned against the runtime's own constants by <c>PolicyStageFitnessTests</c>.
+/// <strong>Which is why this analyzer no longer reports an inert kind.</strong> FLOWX1032 said
+/// "declared but not executed" and was narrowed twice — to four kinds when stage 4 landed,
+/// then to two — before stages 1, 3, 5 and 7 left it with nothing to report at all. It was
+/// deleted rather than narrowed a third time, and its id is retired rather than reused, on the
+/// <c>FLOWX1028</c>/<c>FLOWX1031</c> precedent: a build log or a suppression naming a retired
+/// id means what it said when it was written. <see cref="ExecutedKinds"/> outlived it as the
+/// compiler's statement of what runs, pinned against the runtime's own constants by
+/// <c>PolicyStageFitnessTests</c>.
 /// </para>
 /// <para>
-/// <strong>Two ids, because they have opposite lifetimes.</strong> FLOWX1032 reports a policy
-/// P4 will execute and is deleted when it does; FLOWX1033 reports a <c>CompensationRetry</c>
-/// on a step with no compensation, which no release executes because there is nothing for it
-/// to wrap, and it survives P4. One id would give a team one suppression for two decisions
-/// with different expiry dates.
+/// <strong>FLOWX1033 is not FLOWX1032's survivor, and never was.</strong> It reports a
+/// <c>CompensationRetry</c> on a step with no compensation, which no release executes because
+/// there is nothing for it to wrap. The two always had opposite lifetimes — one was
+/// scaffolding for a missing phase, the other is a mistake in the source — which is why they
+/// were two ids and why only one of them is gone.
 /// </para>
 /// <para>
 /// <strong>A <see cref="DiagnosticAnalyzer"/> rather than a generator diagnostic</strong>,
@@ -77,34 +81,60 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     /// </remarks>
     private const string CompensationRetryKind = "CompensationRetry";
 
-    /// <summary>Every policy kind some code path in this runtime applies.</summary>
+    /// <summary>Every policy kind some code path in this runtime applies — which is all of them.</summary>
     /// <remarks>
     /// <para>
-    /// <strong>The list FLOWX1032 is the complement of, and it is pinned rather than
-    /// asserted.</strong> <c>PolicyStageFitnessTests.FLOWX1032ReportsExactlyTheKindsNothingApplies</c>
-    /// compares it against the real ones — <c>StepPolicy</c>'s four kind constants and
-    /// <c>CompensationPolicy.CompensationRetryKind</c> — because this assembly targets
-    /// netstandard2.0 and can reference neither. A kind added to the engine and forgotten here
-    /// would leave the build warning about a policy that now runs, which teaches an author to
-    /// suppress the rule; forgotten the other way, the rule would go silent on a policy that
-    /// does not.
+    /// <strong>Complete, and pinned rather than asserted.</strong>
+    /// <c>PolicyStageFitnessTests.EveryKindPolicySetOffersIsAppliedByTheRuntime</c> compares it
+    /// against the real ones — <c>StepPolicy</c>'s seven kind constants,
+    /// <c>StepAudit.AuditKind</c> and <c>CompensationPolicy.CompensationRetryKind</c> — and
+    /// against every kind a <c>PolicySet</c> builder can emit, because this assembly targets
+    /// netstandard2.0 and can reference none of them. The gate now runs in both directions at
+    /// once: a kind <c>PolicySet</c> gains and no resolver reads is a declaration the runtime
+    /// silently drops, and a kind listed here that no builder emits is a claim about a policy
+    /// that does not exist.
     /// </para>
     /// <para>
     /// The four stage-4 names arrived with the policy engine
-    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>).
-    /// <c>RateLimit</c>, <c>Idempotency</c>, <c>Cache</c> and <c>Audit</c> are deliberately
-    /// absent: their stages are not implemented, which is what this rule now reports and the
-    /// whole of what it reports.
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>);
+    /// <c>RateLimit</c> and <c>Idempotency</c> with stages 1 and 3
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>,
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md">ADR-0041</a>);
+    /// <c>Cache</c> and <c>Audit</c> when stage 5 and stage 7's audit landed —
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0044-a-cache-is-a-plugin-store-keyed-by-the-redacted-input.md">ADR-0044</a>
+    /// and
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0043-an-audit-record-is-the-journals-payload-redacted-twice.md">ADR-0043</a>.
+    /// </para>
+    /// <para>
+    /// <strong>It stays a list rather than becoming a stage range, even now that it is
+    /// total.</strong> The set being complete is a fact about this release, not a rule: the
+    /// next kind <c>PolicySet</c> offers starts life unread, and a set written as "every stage"
+    /// would claim it executes on the day it is declared. Enumerating is what makes the gate
+    /// able to notice.
     /// </para>
     /// </remarks>
     public static readonly ImmutableHashSet<string> ExecutedKinds =
         ImmutableHashSet.Create(
             System.StringComparer.Ordinal,
+            "RateLimit",
+            "Idempotency",
             "Timeout",
             "Retry",
             "CircuitBreaker",
             "Bulkhead",
+            "Cache",
+            "Audit",
             CompensationRetryKind);
+
+    /// <summary><c>PolicySet.Idempotency</c>'s method name, which FLOWX1040 is about.</summary>
+    /// <remarks>
+    /// <see cref="CompensationRetryKind"/>'s reason: <see cref="PolicySetReader"/> returns what
+    /// the author literally called, and this assembly targets netstandard2.0 and cannot see
+    /// <c>StepPolicy.IdempotencyKind</c>. The two coincide because <c>PolicySet</c> builds its
+    /// descriptors with <c>nameof</c>, and <c>PolicyStageFitnessTests</c> is what keeps them
+    /// coinciding.
+    /// </remarks>
+    private const string IdempotencyKind = "Idempotency";
 
     /// <summary>The call this rule is about.</summary>
     private const string WithPolicyMethod = "WithPolicy";
@@ -136,11 +166,11 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     /// <inheritdoc />
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } =
         ImmutableArray.Create(
-            FlowXDiagnostics.PolicyIsNotExecutedByTheRuntime,
             FlowXDiagnostics.CompensationRetryHasNoCompensation,
             FlowXDiagnostics.StepDeclaresMoreThanOnePolicySet,
             FlowXDiagnostics.CompensationRetryRetriesNothing,
-            FlowXDiagnostics.PolicySetCannotBeRead);
+            FlowXDiagnostics.PolicySetCannotBeRead,
+            FlowXDiagnostics.IdempotencyCannotRecordARedactedResult);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -203,7 +233,7 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
             return;
         }
 
-        ReportInertPolicies(context, kinds, set, location);
+        ReportUnrecordableIdempotency(context, kinds, invocation, set, location);
 
         if (ReportDroppedCompensationRetry(context, kinds, invocation, set, location))
         {
@@ -392,43 +422,142 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     }
 
     /// <summary>
-    /// FLOWX1032 — every kind in the set that no code path applies.
+    /// FLOWX1040 — an <c>Idempotency</c> window on a flow that marks a contract member
+    /// <c>[Sensitive]</c>.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>Narrowed rather than deleted when the policy engine landed</strong>, exactly as
-    /// WP-52 narrowed <see cref="ExecutionProfileAnalyzer"/>'s rule and as FLOWX1031 was
-    /// narrowed before it was finally deleted. Stage 4 executes, so <c>Timeout</c>,
-    /// <c>Retry</c>, <c>CircuitBreaker</c> and <c>Bulkhead</c> left this report; four kinds
-    /// remain, and an author who declares one still has to be told.
+    /// <strong>Read off the flow, not off the step</strong>, because that is where the redaction
+    /// set comes from: the generator emits <c>SensitiveMembers</c> from the two type arguments
+    /// of <c>Flow&lt;TIn, TOut&gt;</c> and hands the same array to every payload the flow writes.
+    /// So the question "can this flow record a result faithfully" has one answer for the whole
+    /// flow, and asking it per step would be answering a narrower question than the mechanism
+    /// asks. ADR-0042 §1.4 rejects the narrower rule and says why.
     /// </para>
     /// <para>
-    /// One report naming every inert kind, rather than one report per kind. A set of eight
-    /// reported eight times on one line is how a catalogue gets suppressed wholesale, which
-    /// is the argument <see cref="ExecutionProfileAnalyzer"/> already makes for reporting
-    /// once at the declaration rather than once per consequence. The kinds arrive ordinally
-    /// sorted from <see cref="PolicySetReader"/>, so the message is the same on every build
-    /// of the same source.
+    /// <strong>Silent when the enclosing flow cannot be found.</strong> A <c>.WithPolicy(...)</c>
+    /// in a helper method, or on a builder passed into one, has no <c>Flow&lt;,&gt;</c> above it
+    /// in this tree — and RS1030 forbids asking the compilation for another tree's model. Silent
+    /// rather than guessing, exactly as FLOWX1033 is silent when the chain does not reach a
+    /// <c>Step</c>: the run-time guard is what makes that safe.
+    /// </para>
+    /// <para>
+    /// Names the first marked member rather than all of them. One is enough to make the flow
+    /// unrecordable, and the author's next question is "which one", not "how many".
     /// </para>
     /// </remarks>
-    private static void ReportInertPolicies(
+    private static void ReportUnrecordableIdempotency(
         SyntaxNodeAnalysisContext context,
         IReadOnlyList<string> kinds,
+        InvocationExpressionSyntax invocation,
         string set,
         Location location)
     {
-        var inert = kinds.Where(static kind => !ExecutedKinds.Contains(kind)).ToList();
+        if (!kinds.Contains(IdempotencyKind))
+        {
+            return;
+        }
 
-        if (inert.Count == 0)
+        if (EnclosingFlow(invocation, context.SemanticModel, context.CancellationToken) is not { } flow)
+        {
+            return;
+        }
+
+        if (FirstSensitiveMember(flow.Type) is not { } marked)
         {
             return;
         }
 
         context.ReportDiagnostic(Diagnostic.Create(
-            FlowXDiagnostics.PolicyIsNotExecutedByTheRuntime,
+            FlowXDiagnostics.IdempotencyCannotRecordARedactedResult,
             location,
             set,
-            string.Join(", ", inert)));
+            flow.Name,
+            marked));
+    }
+
+    /// <summary>The flow class a <c>.WithPolicy(...)</c> is written inside, and its contracts.</summary>
+    private readonly struct EnclosingFlowInfo(string name, INamedTypeSymbol contracts)
+    {
+        public string Name { get; } = name;
+
+        /// <summary>The <c>Flow&lt;TIn, TOut&gt;</c> base, whose two arguments carry the marks.</summary>
+        public INamedTypeSymbol Type { get; } = contracts;
+    }
+
+    /// <summary><c>FlowX.Flow&lt;TIn, TOut&gt;</c>, as metadata names it.</summary>
+    private const string FlowMetadataName = "Flow`2";
+
+    /// <summary><c>FlowX.SensitiveAttribute</c>, as a display string.</summary>
+    private const string SensitiveAttribute = "FlowX.SensitiveAttribute";
+
+    private static EnclosingFlowInfo? EnclosingFlow(
+        SyntaxNode node,
+        SemanticModel semanticModel,
+        System.Threading.CancellationToken cancellationToken)
+    {
+        var declaration = node.FirstAncestorOrSelf<ClassDeclarationSyntax>();
+
+        if (declaration is null ||
+            semanticModel.GetDeclaredSymbol(declaration, cancellationToken) is not { } flowType)
+        {
+            return null;
+        }
+
+        for (var current = flowType.BaseType; current is not null; current = current.BaseType)
+        {
+            if (current.MetadataName == FlowMetadataName &&
+                current.ContainingNamespace?.ToDisplayString() == AbstractionsNamespace &&
+                current.TypeArguments.Length == 2)
+            {
+                return new EnclosingFlowInfo(flowType.Name, current);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The first member of either contract carrying <c>[Sensitive]</c>, or null when neither
+    /// does.
+    /// </summary>
+    /// <remarks>
+    /// Both spellings are read, for <c>FlowAnalyzer.ReadSensitiveMembers</c>'s reason: a
+    /// positional record puts the attribute on the primary constructor parameter, written
+    /// <c>[property: Sensitive]</c>, and a user who wrote one spelling and got nothing would
+    /// reasonably conclude the attribute does not work.
+    /// </remarks>
+    private static string? FirstSensitiveMember(INamedTypeSymbol flowBase)
+    {
+        foreach (var contract in flowBase.TypeArguments)
+        {
+            foreach (var member in contract.GetMembers())
+            {
+                if (member is not IPropertySymbol and not IFieldSymbol)
+                {
+                    continue;
+                }
+
+                var onMember = member.GetAttributes()
+                    .Any(a => a.AttributeClass?.ToDisplayString() == SensitiveAttribute);
+
+                var onParameter = contract
+                    .GetMembers(".ctor")
+                    .OfType<IMethodSymbol>()
+                    .SelectMany(c => c.Parameters)
+                    .Any(parameter =>
+                        string.Equals(parameter.Name, member.Name, System.StringComparison.OrdinalIgnoreCase) &&
+                        parameter.GetAttributes()
+                            .Any(a => a.AttributeClass?.ToDisplayString() == SensitiveAttribute));
+
+                if (onMember || onParameter)
+                {
+                    return member.Name;
+                }
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -449,8 +578,8 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     /// — <c>var step = flow.Step&lt;T&gt;(); step.WithPolicy(p);</c> — hides the
     /// <c>CompensateWith</c> as effectively as it hides the <c>Step</c>, so absence of a
     /// compensation is not something this walk observed. It is silent rather than reporting on
-    /// what it could not see; FLOWX1032 is unaffected, because that rule is a statement about
-    /// the set rather than about the step.
+    /// what it could not see; FLOWX1040 is unaffected, because that rule is a statement about
+    /// the set and the flow's contracts rather than about the step.
     /// </para>
     /// </remarks>
     /// <returns>

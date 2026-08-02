@@ -195,44 +195,81 @@ sequenceDiagram
 ## What is declared and not enforced
 
 This is the section the sample exists for. Everything below is in
-`flowx.manifest.json` and is visible to a reviewer; what has changed is that some of it
-now changes how the program runs and some of it still does not, and the point of the
-section is to say which is which. Each claim has a test that goes red if it stops being
-true — in either direction.
+`flowx.manifest.json` and is visible to a reviewer; what has changed is that all of it
+now changes how the program runs, and the point of the section is to keep saying so
+against a build rather than in prose. Each claim has a test that goes red if it stops
+being true — in either direction.
 
-### Three of this bank's eight declarations are inert; five of them run
+### Every one of this bank's declarations runs, and one was deleted rather than left inert
 
 *This section used to read "the policy engine is P4, so every policy but one is
-inert".* The engine now executes `PolicyStage.Resilience`, so what is left is
-narrower and this is the exact split:
+inert", then "three of eight are inert; five of them run".* Every stage a `PolicySet`
+can declare into is executed now, so there is no split left to draw and this is the
+whole list:
 
 | Declared in `Policies.cs` | Set | Runs? |
 |---|---|---|
 | `Timeout(PT3S)` · `Retry(3)` · `CircuitBreaker(0.5, PT30S)` | `ExternalRead` | **yes** — the screening call is bounded, retried and breakered |
 | `Timeout(PT5S)` | `LedgerPost`, `SettlementRegister` | **yes** — each ledger write and the settlement write is bounded |
 | `CompensationRetry(5)` | `LedgerPost` | **yes** — since WP-57 |
-| `Audit("financial", …)` | `LedgerPost`, `SettlementRegister` | no — **this bank writes no policy-driven audit record** |
-| `RateLimit(20, PT1S)` · `Idempotency(PT24H)` | `Admission` | no — nothing is counted, nothing is replayed |
+| `RateLimit(20, PT1S, Principal)` | `Admission` | **yes** — twenty per principal per second, counted in a store every replica shares. The twenty-first is refused before `transfer.validate` is entered |
+| `Audit("financial", …)` | `LedgerPost`, `SettlementRegister` | **yes** — three steps produce an immutable record naming the step, the principal that authorised it and a redacted request/result document |
+| ~~`Idempotency(PT24H)`~~ | ~~`Admission`~~ | **deleted.** Stage 3 executes, so it would have run — but `ExecuteTransfer` marks two IBANs `[Sensitive]`, so every document this flow records carries `[redacted]` where an account number was, and a replay would answer the second caller with that placeholder and a `200`. [FLOWX1040](../../docs/diagnostics/FLOWX1040.md) refuses it at build time |
 
-**The cut is a list of kinds, not a range of stages, and this section used to get
-that wrong in two different ways.** It once said "no *forward* policy runs", which
-was wrong because `Audit` is a stage-7 `Consistency` policy — the same stage as the
-`CompensationRetry` that does run. Now the reverse trap is available too: `RateLimit`
-is stage 1 and inert while `Timeout` is stage 4 and armed. No line drawn by stage
-number separates the two halves.
+**"This bank writes no policy-driven audit record" was this file's most important
+true sentence, and it is now false.** The row above it used to say so, and this
+paragraph is what replaced it rather than a quiet edit. Three steps are recorded — the
+two ledger legs and the settlement write — through `IAuditSink`, which
+`Program.cs` registers and without which every transfer fails at the debit and
+unwinds. `TransferAuditTests` reads the trail back off the sink and asserts what is in
+it and what is not.
 
-**The compiler says all of this, and it is an error in this repository.**
-[FLOWX1032](../../docs/diagnostics/FLOWX1032.md) reports every declared policy the
-runtime does not apply. It reported all seven of this flow's `.WithPolicy(...)` calls
-when it was written; it reports four now, and the three that went quiet are the
-`ExternalRead` ones. `ExecuteTransferFlow.cs` carries two narrow argued pragmas rather
-than one over the whole method — one for the rate limit and the idempotency window,
-one for the audits — and the `Switch` in between carries none at all, which is the
-visible half of the change. Keeping the four declarations is the first of the three
-answers [the diagnostic's page](../../docs/diagnostics/FLOWX1032.md#how-to-fix-it)
-asks for: the limit belongs in front of the process, the endpoint is already
-`Idempotent = true` at the transport, and deleting the audits would delete the record
-the stage that implements them will need.
+**Nothing was ever cut by stage number, and this section got that wrong in both
+available directions before it stopped mattering.** It once said "no *forward* policy
+runs", which was wrong because `Audit` is a stage-7 `Consistency` policy — the same
+stage as the `CompensationRetry` that runs. The reverse trap then became available:
+`RateLimit` was stage 1 and inert while `Timeout` was stage 4 and armed. Both traps are
+closed by the same fact: every stage a `PolicySet` can declare into now executes.
+
+**The compiler used to say all of this, and the rule that said it is gone.**
+`FLOWX1032` reported every declared policy the runtime did not apply. It reported all
+seven of this flow's `.WithPolicy(...)` calls when it was written, then four, then
+three, and now none — so the rule is
+[deleted](../../docs/diagnostics/README.md#flowx1032-is-deleted-with-what-it-described)
+rather than narrowed again, and its id is retired. `ExecuteTransferFlow.cs` carries
+**no** `#pragma warning disable` at all, where it once carried one over the whole
+method and later two narrow argued ones. The last of them covered the three audited
+steps and argued that an unwritten financial audit record is a real loss; the record is
+written, so the argument has nothing left to make.
+
+### What an audit record carries, and what `redact` means
+
+Each record names the flow, the instance, the step, the capability and its version,
+the correlation id and the caller's idempotency key, the tenant, the capability's
+declared authorisation stance and the permission it named — and:
+
+- **`Authority`** — `Starter`, `Deliverer`, `Platform` or `Anonymous`. This flow has
+  no wait, so all three of a transfer's records read `Starter`. A flow that waited
+  would have records reading `Deliverer` after it, which is
+  [ADR-0028](../../docs/adr/ADR-0028-identity-arrives-on-the-invocation.md)'s
+  "who authorised this transfer has two answers" made answerable rather than left to
+  be reconstructed.
+- **`Payload`** — a `JournalPayload` composing the step's `request` and `result`. It
+  is the journal's own payload type, so a sink has no accessor for the value and its
+  only exit is `ToJson()`, which redacts.
+
+`redact` is the list of member names stripped from that payload, unioned with the
+flow's `[Sensitive]` members and handed to the one redaction pass. In this sample:
+
+| Removed from | By | Because |
+|---|---|---|
+| `debtorIban`, `creditorIban` | `[Sensitive]` on `ExecuteTransfer` | the same marker that redacts them from the journal row and the emitted event |
+| `debitEntryId`, `creditEntryId` on the settlement record | `Policies.SettlementRegister`'s `redact` | core-ledger references an external auditor cannot resolve, in a record retained for the statutory period. The transfer stays identifiable by the caller's own key |
+
+`Policies.LedgerPost`'s `redact` names the two IBANs and is therefore belt-and-braces:
+they are already gone. `SettlementRegister`'s is the one that removes something no
+marker does, which is what stops `redact` being decorative — delete the two names and
+`TransferAuditTests` goes red.
 
 ### And a transfer that used to fail now settles
 
@@ -266,15 +303,17 @@ ledger legs and the settlement write are counted by
 `flowx_policy_invocations_total` whether they fire or not — the second is the
 denominator without which the first is a number with no scale.
 
-**Three of the seven metrics [10 §9](../../docs/10-Policy-Framework.md#9-observing-policies--four-of-seven-metrics-emit)
-specifies are still not emitted, and they are the three belonging to the stages this
-sample suppresses below.** A rate-limit rejection counter would read zero for ever,
-which says "nothing has ever been refused" rather than "nothing refuses", so no
-instrument is created for it.
+**All seven metrics [10 §9](../../docs/10-Policy-Framework.md#9-observing-policies--six-of-seven-metrics-emit)
+specifies are emitted.** This bank's rate limit publishes
+`flowx_ratelimit_rejected_total` when it refuses a caller, labelled by the declared
+scope. *This paragraph said three were missing, then two: the cache pair left the list
+when stage 5 landed and the rate-limit counter when stage 1 did. `Audit` never had a row
+of its own — it reaches `flowx_policy_invocations_total` like every other policy that
+applies, which is what stopped that counter's `stage` label being constant.*
 
 ### The rule this sample deliberately does not trigger
 
-[FLOWX1033](../../docs/diagnostics/FLOWX1033.md) is FLOWX1032's other half and an
+[FLOWX1033](../../docs/diagnostics/FLOWX1033.md) was the deleted `FLOWX1032`'s other half and is an
 **error**: a `CompensationRetry` on a step with no compensation is dropped by the
 emitter and published by the manifest, so the contract promises a retried undo the plan
 has no undo for.
@@ -306,7 +345,7 @@ StepNode.ForCapability(8, Descriptors.Step8, Descriptors.Step8Compensation,
     compensationPolicies:  PolicyChain.ForCompensation(Policies.LedgerPost, Descriptors.Step8Compensation)),
 ```
 
-`Timeout` and `Audit` wrap `ledger.post_debit` — the timeout armed, the audit not —
+`Timeout` and `Audit` wrap `ledger.post_debit` — the timeout armed, the audit written —
 and `CompensationRetry` wraps
 `ledger.reverse_debit`, and is checked against *its* `Idempotent = true` — which is
 exactly why the reversals declare it. A reversal that fails with `Conflict`,
@@ -326,7 +365,8 @@ one-line edit of *this* file rather than against a fixture.
 |---|---|---|
 | `.WithPolicy(Policies.LedgerPost).WithPolicy(PolicySet.CompensationDefault)` on a ledger leg | The second call **replaces** the first — `StepModel.WithPolicy` assigns rather than accumulates — so the leg loses its five-second timeout and its financial audit from the plan *and* from the manifest, in exchange for a retry it already had | [FLOWX1034](../../docs/diagnostics/FLOWX1034.md), an error. *This is the edit [FLOWX1033's page](../../docs/diagnostics/FLOWX1033.md) used to recommend* |
 | `.CompensationRetry(attempts: 1)` in `Policies.LedgerPost` | `IsRetrying` is `Attempts > 1`, so `HasCompensationPolicies` stays false, the engine takes `CompensationPolicy.None`, and both reversals are dispatched once — while the manifest still publishes `{"kind":"CompensationRetry"}` with no parameters and reads exactly as it does today | [FLOWX1035](../../docs/diagnostics/FLOWX1035.md), a warning |
-| `Policies.cs` moved into a shared library and referenced as an assembly | Its symbols carry no syntax, so all seven declarations reach no plan node and no manifest entry — the timeouts, the retry, the breaker, the audits, the rate limit *and* the compensation retry — and FLOWX1032 goes quiet with them, because the compiler cannot name a kind it could not read. This edit now costs the sample real behaviour rather than only its published contract | [FLOWX1036](../../docs/diagnostics/FLOWX1036.md), a warning |
+| `Policies.cs` moved into a shared library and referenced as an assembly | Its symbols carry no syntax, so all seven declarations reach no plan node and no manifest entry — the timeouts, the retry, the breaker, the audits, the rate limit *and* the compensation retry — and no rule that reads a set's contents can speak, because the compiler cannot name a kind it could not read. Every one of those declarations is enforced, so this edit silently removes seven working controls | [FLOWX1036](../../docs/diagnostics/FLOWX1036.md), a warning |
+| `[property: Sensitive]` removed from `ExecuteTransfer` | The build does **not** stop: FLOWX1040 goes quiet, an idempotency window becomes declarable, and every journal row, emitted event and RFC 7807 body starts carrying account numbers. `TransferAdmissionTests.TheIdempotencyWindowThisFlowCannotDeclare` asserts `SensitiveMembers` directly for exactly this reason | nothing — a test, not a diagnostic |
 
 `PolicySet.CompensationDefault` — the five-attempt default
 [06 §7](../../docs/06-Execution-Engine.md) rule 2 names — is now usable as a step's whole
@@ -357,7 +397,7 @@ timestamp — immutable". Read back off a real instance row:
 
 | Claimed | Actually |
 |---|---|
-| principal | **absent** — `FlowInstanceRecord` has no member for one and `FlowInvocation` carries none |
+| principal | **absent from the journal row, and deliberately so** — `FlowInstanceRecord` has no member for one, because persisting claims would authorise Friday's payment with Monday's grant ([ADR-0028 §2.2](../../docs/adr/ADR-0028-identity-arrives-on-the-invocation.md)). *It is no longer absent from the record of the steps that matter*: an audit record names the principal and how its authority arrived, which is where "who moved this money" is now answered |
 | tenant | present, from validated claims only |
 | input hash | present as the input itself, since WP-59, with both IBANs `[redacted]`. *This row read "**absent — and so is the input**": `FlowHost.OpenAsync` passed the literal `input: null`, so `flow_instance.input` was NULL on every row ever written* |
 | outcome | present, per step and per attempt |

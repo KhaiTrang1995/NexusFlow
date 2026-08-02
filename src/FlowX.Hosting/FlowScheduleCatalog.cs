@@ -25,7 +25,7 @@ namespace FlowX.Hosting;
 /// <c>PerTenant</c> are declared on <c>CronTriggerAttribute</c> and are not here, because
 /// nothing reads them: this release binds <c>Schedule</c> and does not bind those three
 /// (<c>docs/09-Trigger-Model.md §8</c>). Carrying them would put a value on this record that
-/// no code branches on, which is the shape of debt <c>FLOWX1032</c> exists to report.
+/// no code branches on, which is the shape of debt the deleted <c>FLOWX1032</c> existed to report.
 /// </para>
 /// </remarks>
 public sealed record FlowSchedule(

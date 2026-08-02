@@ -165,16 +165,21 @@ public static class TelemetryNames
     /// Counter. Labels: <c>policy</c>, <c>stage</c>, <c>capability</c>, <c>outcome</c>.
     /// </summary>
     /// <remarks>
-    /// The four rows of <c>docs/10 §9</c> below are frozen on the same terms as §3's above, and
+    /// Every row of <c>docs/10 §9</c> is named below, frozen on the same terms as §3's above and
     /// for the same reason: an alert written against a breaker in one service must match the
-    /// breaker in every other. The three §9 rows that are <em>not</em> named here —
-    /// <c>flowx_ratelimit_rejected_total</c>, the cache hit/miss pair and
-    /// <c>flowx_idempotency_replays_total</c> — are omitted rather than named-and-unemitted,
-    /// which is the opposite of what was done for <see cref="TriggerAdmittedTotal"/> and
-    /// <see cref="StreamLagRecords"/>. The difference is that those two describe a subject that
-    /// exists and cannot be reached; a rate-limit rejection counter describes a decision no code
-    /// makes, so there is no name to freeze until <c>PolicyStage.Admission</c> is executed and
-    /// the shape of its <c>scope</c> label is a decision somebody has made.
+    /// breaker in every other.
+    /// <para>
+    /// <strong>The list of omissions is now empty, which is exactly the condition
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md">ADR-0026</a>
+    /// set.</strong> That record kept the rate-limit, idempotency and cache rows unnamed rather
+    /// than named-and-unemitted — the opposite of what was done for
+    /// <see cref="TriggerAdmittedTotal"/> and <see cref="StreamLagRecords"/>, because those two
+    /// describe a subject that exists and cannot be reached while a counter for an inert stage
+    /// describes a decision no code makes. Stages 1, 3 and 5 execute, so each row's name is
+    /// frozen here and the omission has become an addition. <c>Audit</c> gains no row of its
+    /// own — §9 never gave it one — and reaches <see cref="PolicyInvocationsTotal"/> like every
+    /// other policy that applies.
+    /// </para>
     /// </remarks>
     public const string PolicyInvocationsTotal = "flowx_policy_invocations_total";
 
@@ -186,6 +191,49 @@ public static class TelemetryNames
 
     /// <summary>Gauge. Label: <c>capability</c>.</summary>
     public const string BulkheadQueueDepth = "flowx_bulkhead_queue_depth";
+
+    /// <summary>
+    /// Counter. Labels: <c>scope</c>, <c>tenant</c>.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The <c>scope</c> label is the decision <c>ADR-0026</c> said nobody had made.</strong>
+    /// It carries the declared <c>RateLimitScope</c> by name — <c>Global</c>, <c>Tenant</c> or
+    /// <c>Principal</c> — which is the value that decides what the exhausted budget belonged to
+    /// and is therefore the one an operator needs to know which knob to turn. It is bounded by
+    /// an enum with three members, so it is a label rather than a cardinality hazard.
+    /// <c>tenant</c> is bucketed by <see cref="FlowXTelemetry.TenantLabel"/> like every other
+    /// tenant label on a metric.
+    /// </remarks>
+    public const string RateLimitRejectedTotal = "flowx_ratelimit_rejected_total";
+
+    /// <summary>Counter. Labels: <c>capability</c>, <c>scope</c>.</summary>
+    /// <remarks>
+    /// Counted on the replay only — a key presented for the first time is not a replay, and
+    /// counting it would put every policed step on a dashboard whose number is meant to be the
+    /// duplicate work that did <em>not</em> happen. An in-flight refusal is not a replay either:
+    /// nothing was returned to the caller, so it is counted by
+    /// <see cref="PolicyInvocationsTotal"/>'s <c>rejected</c> outcome instead.
+    /// </remarks>
+    public const string IdempotencyReplaysTotal = "flowx_idempotency_replays_total";
+
+    /// <summary>Counter. Labels: <c>capability</c>, <c>scope</c>.</summary>
+    /// <remarks>
+    /// The half an operator sizes a cache from. Paired with <see cref="CacheMissesTotal"/>
+    /// rather than shipped alone, for <see cref="PolicyInvocationsTotal"/>'s reason: a hit
+    /// count with no miss count cannot express a hit <em>rate</em>, and "forty thousand hits"
+    /// means something different against forty-one thousand calls than against four hundred
+    /// thousand.
+    /// </remarks>
+    public const string CacheHitsTotal = "flowx_cache_hits_total";
+
+    /// <summary>Counter. Labels: <c>capability</c>, <c>scope</c>.</summary>
+    /// <remarks>
+    /// Counts every consultation that dispatched, whichever reason it had: the key was absent,
+    /// the entry had expired, or the store could not be reached. The three are not separated,
+    /// because the decision they all produce is the same one — call the dependency — and a
+    /// store that is down already shows up as an <see cref="ErrorCode"/> nowhere else.
+    /// </remarks>
+    public const string CacheMissesTotal = "flowx_cache_misses_total";
 
     // ---- Metric label names ----
 
@@ -242,4 +290,16 @@ public static class TelemetryNames
 
     /// <summary>The composite key a circuit breaker is tracked under.</summary>
     public const string KeyLabel = "key";
+
+    /// <summary>
+    /// What a rate limit's budget, an idempotency record or a cache entry is keyed within:
+    /// <c>Tenant</c>, <c>Principal</c> or <c>Global</c>.
+    /// </summary>
+    /// <remarks>
+    /// <c>docs/10 §9</c> froze this label on the rate-limit, idempotency and cache rows alike.
+    /// It is the declared scope enum by name and never the resolved value — the tenant itself is
+    /// <see cref="TenantLabel"/>, bucketed, and putting a principal in a metric label would be
+    /// unbounded cardinality and an identity in a time series that is retained and shipped.
+    /// </remarks>
+    public const string ScopeLabel = "scope";
 }

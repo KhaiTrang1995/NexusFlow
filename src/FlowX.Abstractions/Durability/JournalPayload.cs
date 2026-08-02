@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -307,6 +308,124 @@ public sealed class JournalPayload
         }
 
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
+    /// <summary>
+    /// Serialises the payload as <see cref="ToJson"/> does, but only when the redaction pass had
+    /// nothing to replace.
+    /// </summary>
+    /// <param name="json">
+    /// The document — byte for byte what <see cref="ToJson"/> returns — or <c>null</c> when this
+    /// payload cannot be reproduced faithfully.
+    /// </param>
+    /// <returns>
+    /// <c>true</c> when the document is the whole of what the value held. <c>false</c> when a
+    /// declared sensitive member was replaced, or when there is no payload at all.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is narrower than <see cref="ToJson"/> and is not a second way out of this
+    /// type.</strong> Every byte it emits, <see cref="ToJson"/> also emits; there is still no
+    /// accessor for the value, still one redaction pass, and still one place that decides what a
+    /// marked member is replaced with. What it adds is the answer to the one question only this
+    /// type can answer: <em>did writing this lose anything?</em>
+    /// </para>
+    /// <para>
+    /// <strong>It exists because a replay is not a journal row.</strong> A journal accepts the
+    /// loss — <see cref="JournalState"/> says so, and the alternative is stranding an instance
+    /// whose effects already happened. A stage-3 idempotency replay has a strictly better option
+    /// available at the moment of the choice, which is to dispatch the capability again, so
+    /// returning <see cref="Redacted"/> to a caller as if it were the value would be choosing a
+    /// fabricated answer over a second call. See
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0042</a>.
+    /// </para>
+    /// <para>
+    /// An empty payload answers <c>false</c> rather than yielding an empty document, for the
+    /// same reason: a caller answered from a record that describes nothing has been answered
+    /// with nothing, and every step after the frontier would bind values no step produced.
+    /// </para>
+    /// </remarks>
+    public bool TryToReplayableJson([NotNullWhen(true)] out string? json)
+    {
+        json = null;
+
+        if (IsEmpty)
+        {
+            return false;
+        }
+
+        // The declared set is what the pass matches against, so an empty one cannot have
+        // replaced anything and the walk below is skipped entirely. That is the common case:
+        // most flows mark nothing.
+        var document = ToJson();
+
+        if (document is null)
+        {
+            return false;
+        }
+
+        if (_sensitiveMembers.Count > 0 && Redacts(document))
+        {
+            return false;
+        }
+
+        json = document;
+
+        return true;
+    }
+
+    /// <summary>Whether the written document carries the placeholder under a declared member.</summary>
+    /// <remarks>
+    /// Read off the written document rather than tracked during the pass, so it answers the
+    /// question that actually matters — "is the stored text different from the value" — rather
+    /// than "did the writer take the replacing branch". The two differ in one case and it is
+    /// the honest one: a contract whose marked member genuinely held the string
+    /// <see cref="Redacted"/> is reproduced exactly, and reporting it as lossy would refuse a
+    /// replay that would have been correct. That is the conservative direction anyway.
+    /// </remarks>
+    private bool Redacts(string document)
+    {
+        using var parsed = JsonDocument.Parse(document);
+
+        return CarriesPlaceholder(parsed.RootElement);
+    }
+
+    private bool CarriesPlaceholder(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (IsSensitive(property.Name) &&
+                        property.Value.ValueKind == JsonValueKind.String &&
+                        string.Equals(property.Value.GetString(), Redacted, StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+
+                    if (CarriesPlaceholder(property.Value))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (CarriesPlaceholder(item))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+
+            default:
+                return false;
+        }
     }
 
     /// <summary>
