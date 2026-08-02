@@ -1,194 +1,147 @@
 # Sample — Transport portability
 
-**Claim it is meant to prove:** quality goal **Q4** and criterion
-[**V2**](../../docs/01-Vision.md#7-measurable-success-criteria) — moving a flow from
-HTTP to Kafka to cron changes **zero lines of business logic**, asserted mechanically
-in CI.
+**Claim it proves:** quality goal **Q4** and criterion
+[**V2**](../../docs/01-Vision.md#7-measurable-success-criteria) — moving a flow between
+transports changes **zero lines of business logic**, asserted mechanically rather than
+described.
 
-> [!NOTE]
-> **Two of the three transports have since been built, and the warning box after
-> this one is kept as written rather than edited.** *"`plugins/` holds three plugins
-> and `FlowX.Http` is the only transport among them"* is false: there are four, and
-> `plugins/FlowX.Redis` serves a bus — `RedisStreamEventPublisher` drains the outbox
-> onto a stream and `RedisStreamBusConsumer` starts a flow per delivery, deriving the
-> instance id so a redelivery starts nothing new
-> ([ADR-0035](../../docs/adr/ADR-0035-a-delivery-names-the-instance-it-starts.md)).
-> Cron is served too — see [scheduler](../scheduler/).
->
-> **And the zero-lines claim is demonstrated one attribute at a time.**
-> `samples/ecommerce` runs the same event chain over a broker and over the outbox
-> itself: `RepriceOrderFlow` and `ProjectOrderFlow` take the same input, the same
-> capability shape and the same profile, and differ by `[BusTrigger]` against
-> `[ChangeTrigger]` and by nothing else. Both are consumers of one
-> `.Emit<OrderPlaced>` that names neither of them.
->
-> **What is left is Kafka specifically, and WP-71** — the mechanical CI assertion
-> this page is built around, which is still unwritten and is the reason the claim
-> above is demonstrated rather than *asserted*.
+**Infrastructure:** PostgreSQL and Redis. Every flow here declares `Durable`, and three of
+the four transports are refused without a journal.
 
-> [!WARNING]
-> **This sample has no code.** `samples/event-driven/` is this file and nothing
-> else: no project, no flow, no capability, no test, and no CI assertion. The
-> mechanical check the whole page is built around is **WP-71**, unwritten.
->
-> **This is the most misleading of the code-less samples, and the reason is worth
-> stating precisely: the attribute is real.** `KafkaTriggerAttribute` ships
-> in `src/FlowX.Abstractions/Triggers/TriggerAttributes.cs`. A flow that applies
-> `[KafkaTrigger("billing.invoice_requested", Group = "invoicing")]` **compiles**,
-> and `EveryTriggerKindTheAbstractionShipsIsRecognised` asserts it reaches
-> `flowx.manifest.json` as `"kind": "Bus"` carrying `transport: kafka`, its topic
-> and its consumer group, where `flowx diff` will report a breaking change to it.
->
-> **Nothing serves it.** `plugins/` holds three plugins and `FlowX.Http` is the
-> only *transport* among them; there is no Kafka client anywhere in this
-> repository, and no `ITriggerSource` contract for one to implement
-> ([17](../../docs/17-Plugin-System.md)). `TriggerKind` is switched on in no file
-> under `src/FlowX.Runtime`, `src/FlowX.Hosting` or `plugins/`, and
-> `ANonHttpTriggerProducesNoEndpoint` is the test that pins a bus trigger to
-> nothing on purpose. So an author who writes the commit-2 flow gets a green
-> build, a manifest entry downstream consumers can read — and a topic no process
-> is subscribed to. **A silent success is a worse outcome than a build error**,
-> which is why this box is longer than the others.
->
-> `[CronTrigger]` sits one row down in exactly the same position: it compiles,
-> publishes `"kind": "Schedule"` with its cron expression and time zone, and there
-> is no scheduler — see [scheduler](../scheduler/).
->
-> | What has to exist first | Where it comes from |
-> |---|---|
-> | `ITriggerSource` and a published transport conformance suite | **WP-70**, [P3](../../PLAN.md#6-p3--transport-breadth). `PluginsPassConformance` has been blocked on it since P1 |
-> | The unchanged-file CI assertion this page is built around | **WP-71**, P3 — it is to run against `samples/ecommerce` first, where it must pass trivially |
-> | A Kafka transport: consumer loop, offset commit after completion, dead-lettering | **WP-72**, P3 |
-> | Cron as the third transport, fired once across N nodes | **WP-75**, P3 — leader election *is* a lease, which is why it follows P2 |
-> | A broker on the far side of `.Emit<T>()` | `IEventPublisher` is declared and the only implementation anywhere is a recording test double ([11 §5](../../docs/11-Distributed-Runtime.md#5-the-transactional-outbox)) |
->
-> Read the rest as the design a P3 implementer is held to. Outside the HTTP
-> commit, do not read any sentence below as describing behaviour you can observe
-> today.
+```bash
+export FLOWX_POSTGRES_CONNECTION="Host=localhost;Port=5432;Database=postgres;Username=postgres"
+export FLOWX_REDIS_CONNECTION="localhost:6379"
 
-## The experiment
-
-Three git commits, three transports, one unchanged flow body.
-
-```csharp
-// commit 1 — HTTP
-[Flow("invoice.issue", Profile = ExecutionProfile.Durable)]
-[HttpTrigger("POST", "/api/v1/invoices")]
-public sealed partial class IssueInvoiceFlow : Flow<IssueInvoice, Invoice>
-{
-    protected override void Define(IFlowBuilder<IssueInvoice, Invoice> flow) => flow
-        .Step<ValidateInvoice>()
-        .Step<CalculateTax>()
-        .Step<PersistInvoice>().CompensateWith<VoidInvoice>()
-        .Emit<InvoiceIssued>()
-        .Return(ctx => ctx.Get<Invoice>());
-}
-
-// commit 2 — Kafka. One attribute line differs.
-[KafkaTrigger("billing.invoice_requested", Group = "invoicing")]
-
-// commit 3 — all three at once.
-[HttpTrigger("POST", "/api/v1/invoices")]
-[KafkaTrigger("billing.invoice_requested", Group = "invoicing")]
-[CronTrigger("0 3 * * *", TimeZone = "UTC")]
+dotnet run --project samples/event-driven
 ```
 
-> **All three commits compile; only the first one runs.** Commit 1 is served —
-> `FlowXEndpoints.g.cs` maps the route. Commits 2 and 3 build clean, publish
-> `"kind": "Bus"` and `"kind": "Schedule"` into the manifest, and are activated by
-> nothing. `.Emit<InvoiceIssued>()` reaches `IEventPublisher` and stops there.
-> `Profile = ExecutionProfile.Durable` is honoured since WP-52 and needs a
-> journal registered, or the flow is refused with `flow.durability_not_configured`
-> ([11](../../docs/11-Distributed-Runtime.md)).
+## The four transports, and the one chain under them
 
-## The CI assertion
-
-> **This test does not exist and neither does `GitFixture`.** Nothing under
-> `tests/` reads git history. It is **WP-71**, whose first job is to run against
-> `samples/ecommerce` — a sample that does exist — and pass there trivially.
-
-```csharp
-[Fact]
-public void Business_logic_is_byte_identical_across_transport_commits()
-{
-    var http  = GitFixture.FileAt("commit-1-http",  "IssueInvoiceFlow.cs");
-    var kafka = GitFixture.FileAt("commit-2-kafka", "IssueInvoiceFlow.cs");
-
-    StripAttributes(http).Should().Be(StripAttributes(kafka));
-
-    GitFixture.ChangedFiles("commit-1-http", "commit-2-kafka")
-        .Should().BeEquivalentTo("IssueInvoiceFlow.cs");   // no capability touched
-}
+```
+                      ┌─ invoice.validate ─ invoice.tax ─ invoice.persist ─┐
+POST /api/v1/invoices ┤                          (compensated by invoice.void)
+                      └──────────────────────────────────────── .Emit<InvoiceIssued>()
 ```
 
-Q4 is not a claim in a README here; it is a failing test if it stops being true.
+Four flows carry that chain. Each declares the input contract its trigger fixes, spends its
+first step turning that into the chain's own input, and is identical from there on:
+
+| Flow | Trigger | Input contract | Adapter step |
+|---|---|---|---|
+| `invoice.issue.http` | `[HttpTrigger("POST", "/api/v1/invoices")]` | `IssueInvoice` | none — the request *is* the input |
+| `invoice.issue.bus` | `[BusTrigger("invoice.requested", Group = "billing")]` | `BusMessage` | `invoice.read_request` |
+| `invoice.issue.change` | `[ChangeTrigger("invoice.requested", Group = "billing-projection")]` | `BusMessage` | `invoice.read_request` |
+| `invoice.issue.schedule` | `[CronTrigger("0 3 * * *", TimeZone = "UTC")]` | `ScheduledFire` | `invoice.due` |
+
+`invoice.request` is the fifth flow: `POST /api/v1/invoice-requests` validates and stages
+`invoice.requested`. The outbox drains it to Redis for the bus flow and offers the same rows
+directly to the change flow. Nothing between them names anything: the emitter names a
+contract, the consumers name a topic, and the topic is the contract's identity.
+
+### Why four flows and not one class with four attributes
+
+The vision illustrates Q4 with three trigger attributes stacked on one flow. **That does not
+compile, and the reason is not a gap.** A trigger that carries a body fixes what the body
+*is* — a schedule can give only its occurrence, a delivery and a change only the message, a
+closed window only its records — so three of the five kinds fix the flow's input contract to
+three different types, and a class has one base type.
+
+Writing it anyway used to raise `FLOWX1038` telling you to declare `Flow<ScheduledFire, …>`
+and `FLOWX1039` the moment you did. [`FLOWX1048`](../../docs/diagnostics/FLOWX1048.md) now
+reports the real fact instead of either.
+[ADR-0062](../../docs/adr/ADR-0062-transport-portability-is-a-property-of-the-capability-chain.md)
+is the decision: **portability is a property of the capability chain, one adapter step in.**
+
+## The assertion
+
+`tests/EventDriven.Tests` holds both halves, and neither is sufficient alone.
+
+**Structural** — `TransportPortabilityTests` compares the four compiled `ExecutionPlan`s
+against the chain written out in the test, not against each other. Four plans compared only
+with each other agree perfectly when all four are wrong.
+
+**Behavioural** — `TransportEquivalenceTests` runs one billing reference through a real HTTP
+server, a real Redis broker, a real outbox change feed and a real cron sweep, and reads the
+journal back:
+
+```csharp
+run.Chain.ShouldBe(["invoice.validate Success", "invoice.tax Success",
+                    "invoice.persist Success", "invoice.issued Success"]);
+
+run.Invoice.ShouldBe(new Invoice("INV-" + arm.Reference, "acme", 100m, 20m, 120m, "GBP"));
+```
+
+The structural half cannot see a stance a broker delivery cannot satisfy or an adapter that
+decoded the wrong field; the behavioural half cannot see four chains that happen to agree on
+one input. Both were confirmed to fail on a deliberate mutation before this shipped.
+
+Which is why the shared capabilities declare `Authorization.Internal`. Two of the four
+transports start a flow with **no principal at all**, so `Authenticated` or `Permission` on a
+shared step is a chain that passes over HTTP and refuses every message — portability lost at
+run time rather than at build time.
+
+## Kafka
+
+Not built, and the position is worth stating precisely because `[KafkaTrigger]` is real.
+
+`KafkaTriggerAttribute` ships. A flow applying it compiles and publishes `"kind": "Bus"` with
+`transport: kafka` into `flowx.manifest.json`. What has changed since this page first said so
+is the failure mode: `FlowBusSubscriptionRegistration.Add` compares the declared transport
+against the registered `IBusConsumer`, so a `[KafkaTrigger]` on this Redis-wired host is a
+**startup failure** rather than a subscription silently served by the wrong broker.
+
+This sample therefore declares `[BusTrigger]` — a flow says what it consumes, not on what,
+and which bus serves it is the host's registration. That is the honest form of the claim, and
+it is what makes a Kafka plugin an `IBusConsumer` implementation rather than a change to any
+flow here.
 
 ## Event chaining
 
 ```mermaid
 flowchart LR
-    T1(["HTTP"]) --> F1["invoice.issue"]
-    T2(["Kafka billing.invoice_requested"]) --> F1
-    T3(["Cron 03:00 UTC"]) --> F1
+    T1(["HTTP"]) --> F1["invoice.issue.http"]
+    T2(["Bus invoice.requested"]) --> F2["invoice.issue.bus"]
+    T3(["Change invoice.requested"]) --> F3["invoice.issue.change"]
+    T4(["Cron 03:00 UTC"]) --> F4["invoice.issue.schedule"]
+    F0["invoice.request"] --> E0[["invoice.requested"]]
+    E0 --> T2
+    E0 --> T3
     F1 --> E1[["invoice.issued"]]
-    E1 --> F2["notification.send"]
-    E1 --> F3["ledger.record"]
-    E1 --> F4["analytics.ingest"]
-    F3 --> E2[["ledger.recorded"]]
-    E2 --> F5["reconciliation.check"]
+    F2 --> E1
+    F3 --> E1
+    F4 --> E1
 ```
 
-Drawn by hand, for now. `flowx graph` renders one manifest as a flowchart and has
-no `--events` switch; the CLI has five verbs — `graph`, `manifest`, `diff`,
-`verify` and `replay` ([22-CLI](../../docs/22-CLI.md)). The estate-wide topology above is what
-those manifests make *possible*, not something any command assembles today, so
-this diagram can and does drift.
+Drawn by hand. `flowx graph` renders one manifest as a flowchart and has no `--events`
+switch; the CLI has five verbs — `graph`, `manifest`, `diff`, `verify` and `replay`
+([22-CLI](../../docs/22-CLI.md)). The estate-wide topology is what those manifests make
+*possible*, not something any command assembles today, so this diagram can drift.
 
 ## Outbox guarantee
 
-> **Not runnable.** `IntegrationTestHost`, `UseKafka()` and
-> `KillDuringOutboxPublish()` exist nowhere in `tests/`. What does exist is the
-> half of the path below the broker: `PostgresOutboxPublisher` drains the outbox
-> at-least-once in per-`partition_key` order, and `EmitReachesTheBrokerTests`
-> exercises `.Emit<T>()` end to end — into a recording test double, because no
-> plugin implements `IEventPublisher`. The republish-and-deduplicate guarantee
-> stated below is therefore proved on this side of the interface and unproved on
-> the far one.
+`.Emit<InvoiceIssued>()` is staged in the emitting step's own transaction and drained by
+`PostgresOutboxPublisher` — at-least-once, in per-`partition_key` order. FlowX republishes,
+the consumer deduplicates, and the *effect* happens once
+([11 §4](../../docs/11-Distributed-Runtime.md#4-exactly-once-honestly)): a delivery derives
+the instance id it starts ([ADR-0035](../../docs/adr/ADR-0035-a-delivery-names-the-instance-it-starts.md)),
+so the journal's primary key refuses the second one.
 
-```csharp
-[Fact]
-public async Task Event_is_published_exactly_once_even_if_the_process_dies_mid_publish()
-{
-    await using var host = await IntegrationTestHost.CreateAsync(c => c.UseKafka().UsePostgresJournal());
-
-    await host.RunFlow<IssueInvoiceFlow>(AnInvoice());
-    await host.KillDuringOutboxPublish();          // crash between publish and mark-published
-    await host.RestartAndDrainOutbox();
-
-    var events = await host.Kafka.ConsumeAll("invoice.issued");
-    events.Should().HaveCount(2);                            // at-least-once: republished
-    events.Select(e => e.Key).Distinct().Should().HaveCount(1);
-    host.Consumer.ProcessedDistinct.Should().Be(1);          // idempotency deduplicated it
-}
-```
-
-This test states the honest guarantee: FlowX republishes, the consumer
-deduplicates, and the *effect* happens once
-([11 §4](../../docs/11-Distributed-Runtime.md#4-exactly-once-honestly)).
+The redelivery half is asserted in `tests/Ecommerce.Tests/EmitStartsAFlowTests`, which
+republishes a staged event under its own `event_id` and requires one instance. It is not
+repeated here — this sample's subject is the transport, not the outbox.
 
 ## Things to try
 
-*Nothing here can be tried yet — there is no project to run them against. Kept as
-the acceptance list this sample is written to, with what each one currently needs.*
-
-1. Add `[MqttTrigger("devices/+/invoice")]` — a fourth transport, still zero
-   logic changes. *A plugin author can already declare one: carry
-   `[TriggerKind(TriggerKind.Bus)]` on the attribute class and the compiler reads
-   the kind out of a referenced assembly. That half of **WP-70** shipped three
-   phases early. The consumer behind it is **WP-76**.*
-2. Break the `InvoiceIssued` contract and run `flowx diff` — CI fails, naming the
-   downstream consumers that would break. *`flowx diff` is the one item on this
-   list that works today, against `flowx.manifest.json`.*
-3. Stop the broker and run the flow — the outbox accumulates, flows keep
-   completing, and events drain when the broker returns. *The accumulating half is
-   real and tested against PostgreSQL; there is no broker to stop.*
+1. **Stop the broker** and post to `/api/v1/invoice-requests`. `invoice.issue.bus` stops;
+   `invoice.issue.change` keeps issuing, because it reads the outbox rather than a broker.
+   That is the same chain over two transports with a broker in only one of them.
+2. **Watch the cron transport.** `FLOWX_SAMPLE_SCHEDULE_CRON="* * * * *"` with
+   `FLOWX_SAMPLE_SCHEDULE_SCAN=00:00:01` registers a denser schedule *beside* the declared
+   one, so the expression the manifest publishes stays the expression a reader sees.
+3. **Run three replicas** with different `FLOWX_SAMPLE_NODE` values. The schedule fires once:
+   every node computes the same occurrence and derives the same instance id, and the lease
+   store and the journal's primary key refuse the other two.
+4. **Add `.Step<PostToLedger>()` to one flow and not the others.** The build stays green and
+   `TransportPortabilityTests` goes red, naming the flow that diverged.
+5. **Break the `InvoiceIssued` contract and run `flowx diff`** — it names the downstream
+   consumers that would break.

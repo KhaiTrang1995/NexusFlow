@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>EventDriven</RootNamespace>
+    <AssemblyName>EventDriven</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      NativeAOT is deliberately not enabled, for samples/workflow's reason: every flow here
+      declares Durable, a durable flow is refused without a journal, and serving the bus
+      transport needs a broker — so this project references Npgsql and StackExchange.Redis
+      by way of the two plugins. samples/ecommerce stays constraint C2's smoke test, with
+      nothing behind it.
+    -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The wire serialiser context is internal: it is infrastructure, not part of the
+      sample's story. The test project reads the invoice a journalled step committed
+      through it, rather than the sample widening its surface to be testable — the same
+      bargain samples/ecommerce and samples/workflow strike.
+    -->
+    <InternalsVisibleTo Include="EventDriven.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+    <ProjectReference Include="../../plugins/FlowX.Http/FlowX.Http.csproj" />
+
+    <!--
+      The journal, the outbox, the change feed and the broker. Four transports over one
+      chain is what this sample exists to demonstrate, and three of the four are refused
+      without a store: a delivery, a change and an occurrence each derive the instance id
+      they start, and that id is inert unless something journals it.
+    -->
+    <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+    <ProjectReference Include="../../plugins/FlowX.Redis/FlowX.Redis.csproj" />
+
+    <!--
+      The compiler as an ANALYZER, not a library — so the generator runs inside this
+      project's build against this project's source, exactly as it would for a consumer.
+      This sample is the only place in the repository where it is handed the four trigger
+      kinds that bind a flow's input contract, at once, over one capability chain.
+    -->
+    <ProjectReference Include="../../src/FlowX.Compiler/FlowX.Compiler.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      Condition="'$(FlowXGeneratorDisabled)' != 'true'" />
+  </ItemGroup>
+
+</Project>
