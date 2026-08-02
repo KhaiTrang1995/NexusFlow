@@ -96,6 +96,13 @@ app.MapFlowX();
 // the journal rows in the README come from.
 app.Services.AddFlowXSubscriptions();
 
+// Every change subscription this application declares, generated from the [ChangeTrigger] on the
+// flow that declares it. Same arrangement as the line above and the same guarantee about the
+// address; what differs is what serves it — an IChangeFeed over this deployment's own outbox
+// rather than a broker, so the transport needs no infrastructure the journal did not already
+// require (ADR-0047). This host registers neither, so it is registered and observes nothing.
+app.Services.AddFlowXChangeSubscriptions();
+
 // `await RunAsync()` rather than `Run()`. Identical behaviour — top-level statements compile
 // to an async entry point, so the process still blocks here until shutdown — and it is the
 // form that stays correct if a reader lifts the line into a method of their own. The

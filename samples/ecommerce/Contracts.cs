@@ -31,3 +31,11 @@ public sealed record OrderPlaced(string OrderId, string Sku, int Quantity);
 /// bus-triggered flow's return has.
 /// </remarks>
 public sealed record RepricedOrder(string OrderId, string Sku, decimal Total);
+
+/// <summary>The read-model row an observed order produced.</summary>
+/// <remarks>
+/// The output of <see cref="ProjectOrderFlow"/>, which is started by the outbox rather than by a
+/// caller — so <see cref="RepricedOrder"/>'s note applies unchanged: nobody is waiting for this
+/// value, and the journal row is its whole audience.
+/// </remarks>
+public sealed record OrderProjection(string OrderId, string Sku, int Quantity);
