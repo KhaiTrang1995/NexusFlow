@@ -40,6 +40,7 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
         Leases = new PostgresLeaseStore(dataSource);
         RecoveryIndex = new PostgresRecoveryIndex(dataSource);
         Retention = new PostgresRetention(dataSource);
+        ChangeFeed = new PostgresChangeFeed(dataSource);
         Migrator = new PostgresMigrator(dataSource, options);
         RecoveryScan = stores is null
             ? RecoveryIndex
@@ -82,8 +83,23 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
     /// <summary>The recovery scan's query, under test.</summary>
     public PostgresRecoveryIndex RecoveryIndex { get; }
 
-    /// <summary>The retention sweeper under test.</summary>
+    /// <summary>The retention sweeper under test, with the default consumer set.</summary>
     public PostgresRetention Retention { get; }
+
+    /// <summary>The change feed under test, which is also what writes <c>change_cursor</c>.</summary>
+    public PostgresChangeFeed ChangeFeed { get; }
+
+    /// <summary>
+    /// A retention sweeper over this schema that knows what consumes its outbox.
+    /// </summary>
+    /// <param name="consumers">The publisher and the change subscriptions, if any.</param>
+    /// <returns>The sweeper.</returns>
+    /// <remarks>
+    /// Constructed per call for <see cref="OutboxPublisher"/>'s reason: the consumer set is what
+    /// the sweep's answer depends on, so a test that varies it needs more than one of these.
+    /// </remarks>
+    public PostgresRetention RetentionFor(RetentionConsumers consumers) =>
+        new(DataSource, consumers);
 
     /// <summary>The migrator for this schema.</summary>
     public PostgresMigrator Migrator { get; }

@@ -91,6 +91,14 @@ internal static class Db
     public static NpgsqlParameter UuidArray(string name, Guid[] value) =>
         new(name, value) { DataTypeName = "uuid[]" };
 
+    /// <summary>A <c>text[]</c> parameter, for <see cref="UuidArray"/>'s reason.</summary>
+    public static NpgsqlParameter TextArray(string name, string[] value) =>
+        new(name, value) { DataTypeName = "text[]" };
+
+    /// <summary>A <c>boolean</c> parameter.</summary>
+    public static NpgsqlParameter Bool(string name, bool value) =>
+        new(name, NpgsqlDbType.Boolean) { Value = value };
+
     /// <summary>
     /// Whether a column on the current row is null.
     /// </summary>

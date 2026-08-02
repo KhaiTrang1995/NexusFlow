@@ -71,8 +71,8 @@ public sealed class FlowChangeCatalog
     /// <exception cref="ArgumentNullException">An argument is null.</exception>
     /// <exception cref="ArgumentException">
     /// The plan is not the flow the subscription names, it does not declare
-    /// <see cref="ExecutionProfile.Durable"/>, or it emits the very type the subscription
-    /// observes.
+    /// <see cref="ExecutionProfile.Durable"/>, it emits the very type the subscription
+    /// observes, or it closes a cycle with the subscriptions already registered.
     /// </exception>
     /// <remarks>
     /// <para>
@@ -90,8 +90,17 @@ public sealed class FlowChangeCatalog
     /// identity, and the feed offers that one — for ever, with the outbox growing and every
     /// instance legitimately distinct, so nothing downstream can tell it from work. The emitted
     /// types are in the plan, which is why the answer is read from the artifact that will run
-    /// rather than from syntax. An <em>indirect</em> cycle across two flows is not refused: this
-    /// catalogue sees one registration at a time.
+    /// rather than from syntax.
+    /// </para>
+    /// <para>
+    /// <strong>An indirect cycle is refused by the same rule read over the whole
+    /// catalogue.</strong> A observes <c>x</c> and emits <c>y</c>, B observes <c>y</c> and emits
+    /// <c>x</c>: neither flow observes what it emits, and between them they run for ever.
+    /// ADR-0050 decision 3 recorded that as unbounded because "the catalogue sees one
+    /// registration at a time" — it does not; it holds every subscription registered before this
+    /// one, and a subscription's source together with its plan's <c>Emit</c> set is an edge. The
+    /// registration that would close the cycle is the one refused, which makes the refusal
+    /// deterministic in registration order and names a real pair rather than a set.
     /// </para>
     /// <para>
     /// Last registration wins for a given <c>(id, version, source, group)</c>, for
@@ -139,18 +148,153 @@ public sealed class FlowChangeCatalog
                 nameof(plan));
         }
 
+        var key = new SubscriptionKey(
+            subscription.FlowId,
+            subscription.FlowVersion,
+            subscription.Source,
+            subscription.Group);
+
         lock (_gate)
         {
-            _subscriptions[new SubscriptionKey(
-                subscription.FlowId,
-                subscription.FlowVersion,
-                subscription.Source,
-                subscription.Group)] =
+            if (CycleClosedBy(subscription, plan, key) is { Count: > 0 } cycle)
+            {
+                throw new ArgumentException(
+                    $"Flow '{subscription.FlowId}' observes '{subscription.Source}' and closes a " +
+                    $"cycle across this node's subscriptions: {Describe(cycle)}. Each flow in it " +
+                    "emits what the next one observes, so a single change starts a run that " +
+                    "stages the change that starts the next — for ever, with every instance " +
+                    "legitimately distinct so nothing refuses it and nothing downstream can tell " +
+                    "the loop from work. Break the chain: one of these flows has to observe a " +
+                    "different type, or emit one.",
+                    nameof(plan));
+            }
+
+            _subscriptions[key] =
                 new ChangeRegistration(subscription, new FlowRegistration(plan, dispatcher));
         }
 
         return this;
     }
+
+    /// <summary>
+    /// The chain of subscriptions this registration would close into a loop, or null.
+    /// </summary>
+    /// <param name="subscription">What the incoming registration observes.</param>
+    /// <param name="plan">Its plan, whose <c>Emit</c> nodes are its outgoing edges.</param>
+    /// <param name="key">Its key, so a re-registration is measured against its replacement.</param>
+    /// <returns>The hops, starting with this registration, or null when there is no cycle.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Only the incoming edge is searched, because the rest of the graph is already
+    /// acyclic.</strong> Every registration passes through here, so no cycle can exist among the
+    /// subscriptions already held — which makes "does this close one" a walk forward from the
+    /// types this plan emits, looking for a way back to the type it observes, rather than a
+    /// cycle search over the whole graph on every registration.
+    /// </para>
+    /// <para>
+    /// <strong>The key being replaced is excluded.</strong> Last registration wins, so the edge
+    /// the incoming one is about to take the place of is not part of the graph it joins;
+    /// counting it would refuse a flow for a cycle with the version of itself it supersedes.
+    /// </para>
+    /// <para>
+    /// Called under <c>_gate</c> because the answer is about the whole dictionary and a
+    /// concurrent <see cref="Add"/> would otherwise be able to insert the closing edge between
+    /// this walk and the write below it.
+    /// </para>
+    /// </remarks>
+    private List<Hop>? CycleClosedBy(
+        ChangeSubscription subscription, ExecutionPlan plan, SubscriptionKey key)
+    {
+        if (!plan.HasEmit)
+        {
+            return null;
+        }
+
+        // Ordered so that a node registering the same subscriptions reports the same cycle:
+        // an error message that varies with dictionary layout is an error message two operators
+        // compare and disagree about.
+        var observers = _subscriptions
+            .Where(entry => entry.Key != key)
+            .OrderBy(static entry => entry.Key.FlowId, StringComparer.Ordinal)
+            .ThenBy(static entry => entry.Key.FlowVersion, StringComparer.Ordinal)
+            .ThenBy(static entry => entry.Key.Source, StringComparer.Ordinal)
+            .ThenBy(static entry => entry.Key.Group, StringComparer.Ordinal)
+            .Select(static entry => entry.Value)
+            .ToLookup(static registration => registration.Subscription.Source, StringComparer.Ordinal);
+
+        var path = new List<Hop>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var emitted in Emitted(plan))
+        {
+            path.Add(new Hop(subscription.FlowId, subscription.Source, emitted));
+
+            if (Reaches(emitted, subscription.Source, observers, seen, path))
+            {
+                return path;
+            }
+
+            path.RemoveAt(path.Count - 1);
+        }
+
+        return null;
+    }
+
+    /// <summary>Whether an emitted type leads back to the type the new subscription observes.</summary>
+    /// <param name="emitted">The type just staged by the hop at the end of <paramref name="path"/>.</param>
+    /// <param name="target">The type the incoming subscription observes.</param>
+    /// <param name="observers">Which registrations observe which type.</param>
+    /// <param name="seen">Types already walked, so a shared prefix is not re-walked.</param>
+    /// <param name="path">The hops so far; on true it is the cycle.</param>
+    private static bool Reaches(
+        string emitted,
+        string target,
+        ILookup<string, ChangeRegistration> observers,
+        HashSet<string> seen,
+        List<Hop> path)
+    {
+        if (string.Equals(emitted, target, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (!seen.Add(emitted))
+        {
+            return false;
+        }
+
+        foreach (var observer in observers[emitted])
+        {
+            foreach (var next in Emitted(observer.Flow.Plan))
+            {
+                path.Add(new Hop(observer.Subscription.FlowId, emitted, next));
+
+                if (Reaches(next, target, observers, seen, path))
+                {
+                    return true;
+                }
+
+                path.RemoveAt(path.Count - 1);
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>The cycle as an operator has to read it: every flow in it, and both its types.</summary>
+    private static string Describe(List<Hop> cycle) => string.Join(
+        ", then ",
+        cycle.Select(static hop =>
+            $"'{hop.Flow}' observes '{hop.Observes}' and emits '{hop.Stages}'"));
+
+    /// <summary>The distinct types a plan's <c>Emit</c> nodes stage, in step order.</summary>
+    private static IEnumerable<string> Emitted(ExecutionPlan plan) =>
+        plan.HasEmit
+            ? plan.Graph.Steps
+                .Where(static step => step.Kind == StepKind.Emit && step.EventType is not null)
+                .Select(static step => step.EventType!)
+                .Distinct(StringComparer.Ordinal)
+            : [];
 
     /// <summary>Whether any <c>Emit</c> node in the plan stages the type given.</summary>
     /// <remarks>
@@ -166,4 +310,7 @@ public sealed class FlowChangeCatalog
     /// <summary>Ordinal by construction: an id, a version, a type and a group are identifiers.</summary>
     private readonly record struct SubscriptionKey(
         string FlowId, string FlowVersion, string Source, string Group);
+
+    /// <summary>One flow in a cycle: what it observes, and the type it stages in response.</summary>
+    private readonly record struct Hop(string Flow, string Observes, string Stages);
 }
