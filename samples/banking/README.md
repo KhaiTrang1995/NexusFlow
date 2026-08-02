@@ -302,11 +302,14 @@ ledger legs and the settlement write are counted by
 `flowx_policy_invocations_total` whether they fire or not — the second is the
 denominator without which the first is a number with no scale.
 
-**Three of the seven metrics [10 §9](../../docs/10-Policy-Framework.md#9-observing-policies--four-of-seven-metrics-emit)
-specifies are still not emitted, and they are the three belonging to the stages this
+**Two of the seven metrics [10 §9](../../docs/10-Policy-Framework.md#9-observing-policies--six-of-seven-metrics-emit)
+specifies are still not emitted, and they are the two belonging to the stages this
 sample suppresses below.** A rate-limit rejection counter would read zero for ever,
 which says "nothing has ever been refused" rather than "nothing refuses", so no
-instrument is created for it.
+instrument is created for it. *This paragraph said three; the cache pair left the list
+when stage 5 landed, and `Audit` never had a row of its own — it reaches
+`flowx_policy_invocations_total` like every other policy that applies, which is what
+stopped that counter's `stage` label being constant.*
 
 ### The rule this sample deliberately does not trigger
 

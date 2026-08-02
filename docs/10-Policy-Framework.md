@@ -1,6 +1,6 @@
 # 10 — Policy Framework
 
-> **Status:** Accepted · **stage 4 executed in full, four declarable kinds still inert** · **Audience:** application engineers, SRE
+> **Status:** Accepted · **stages 4, 5 and 7 executed; two declarable kinds still inert** · **Audience:** application engineers, SRE
 > **Answers:** how are cross-cutting concerns declared, ordered and made safe?
 
 > [!IMPORTANT]
@@ -17,18 +17,30 @@
 > real plan, and `samples/banking` settles a transfer whose screening provider
 > fails once.
 >
-> **Four declarable kinds are still executed by nothing:** `RateLimit` (stage 1),
-> `Idempotency` (stage 3), `Cache` (stage 5) and `Audit` (stage 7). No rate is
-> counted, no recorded result is replayed for a repeated key, no cache is
-> consulted and no audit record is written.
-> [`FLOWX1032`](diagnostics/FLOWX1032.md) reports exactly those four, narrowed
-> from the eight it reported when it was written.
+> **Stage 5 — `Cache` — and stage 7's `Audit` now execute too.** A declared cache is consulted
+> before the dispatch and holds what the step produced, keyed on the capability, its version,
+> the tenant, the principal's permission set under `CacheScope.Principal`, and the input
+> document; a declared audit produces an immutable record naming the step, the principal that
+> authorised it, the stance it was decided against, and a redacted request/result payload.
+> `IResultCache` and `IAuditSink` are plugin contracts —
+> [ADR-0036](adr/ADR-0036-a-cache-is-a-plugin-store-keyed-by-the-redacted-input.md) and
+> [ADR-0035](adr/ADR-0035-an-audit-record-is-the-journals-payload-redacted-twice.md).
+> `CachePolicyTests` and `AuditPolicyTests` assert each against a real engine, and
+> `samples/banking` settles a transfer that leaves three financial audit records behind.
+>
+> **Two declarable kinds are still executed by nothing:** `RateLimit` (stage 1) and
+> `Idempotency` (stage 3). No rate is counted and no recorded result is replayed for a
+> repeated key.
+> [`FLOWX1032`](diagnostics/FLOWX1032.md) reports exactly those two, narrowed
+> from the eight it reported when it was written and the four it reported after the policy
+> engine landed.
 > [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)
-> argues each of the four skips separately, including the one that looks like a
+> argued each of the four skips separately, including the one that looks like a
 > violation of [ADR-0011](adr/ADR-0011-fixed-policy-stage-order.md): running a
 > retry without the stage-3 policy is safe because `FLOWX1014` refuses a retry
 > over a capability that is not idempotent, and because every attempt presents
-> the same `ctx.IdempotencyKey`.
+> the same `ctx.IdempotencyKey`. Two of its four subsections are now history and are marked as
+> such rather than deleted.
 >
 > **Eight catalogue rows in §3 cannot be declared at all.** `PolicySet` offers
 > nine builder methods, and there is no policy attribute anywhere in
@@ -38,10 +50,12 @@
 > are specification with no surface: no author can write one, and there is
 > nothing for an engine to execute. §3 marks each of them.
 >
-> **The cut is a list of kinds, not a range of stages, and this document used to
-> get that wrong in both directions.** `Audit` is a stage-7 `Consistency` policy —
-> the same stage as `CompensationRetry`, which runs — so no line drawn by stage
-> number separates what executes from what does not.
+> **The cut is a list of kinds, not a range of stages, and this document has now got that
+> wrong in both available directions.** It once implied the line was "stages 1–6", which
+> `Audit` falsified by being a stage-7 policy that did not run beside a stage-7 policy that
+> did. The opposite reading is available now: `Cache` at stage 5 and `Audit` at stage 7 both
+> execute while `Idempotency` at stage 3 does not. No line drawn by stage number has ever
+> separated what executes from what does not.
 >
 > Four rules report the ways a declared set reaches even less than the plan:
 > [`FLOWX1033`](diagnostics/FLOWX1033.md) a `CompensationRetry` on a step with no
@@ -53,10 +67,11 @@
 > read at all — one in a referenced assembly or built at run time — which reaches
 > no plan, no manifest and none of the rules above it.
 >
-> Read §2's stage order as the contract the engine is built to. Read §5, §6 and
-> §11 as behaviour, with §6's composite `BreakerKey` excepted — the breaker is
-> keyed by capability id and there is no syntax for the other three components.
-> Read §7 and §8 as specification: they describe the two stages that do not run.
+> Read §2's stage order as the contract the engine is built to. Read §5, §6, §8 and §11 as
+> behaviour, with two exceptions: §6's composite `BreakerKey` — the breaker is keyed by
+> capability id and there is no syntax for the other three components — and §8's stampede
+> protection, which is not built. Read §7 as specification: it describes the one stage that
+> does not run.
 
 ---
 
@@ -139,9 +154,9 @@ attribute, no descriptor kind: specification with no surface).
 | `Bulkhead` | 4 | **executes** | `maxConcurrency`, `queueDepth` | isolates a slow dependency. One pool per capability, so two steps calling it share the bound. Past the queue depth a caller is refused rather than queued |
 | `Hedge` | 4 | *undeclarable* | `afterDelay`, `maxAttempts` | tail-latency cutting; idempotent only |
 | `Fallback` | 4 | *undeclarable* | capability or constant | explicit degraded mode |
-| `Cache` | 5 | **declared only** | `ttl`, `scope` | tenant-scoped by default. Nothing is cached or consulted. `FLOWX1018` still refuses one on a capability with side effects |
+| `Cache` | 5 | **executes** | `ttl`, `scope` | tenant-scoped by default. Keyed on capability id + version + tenant + (under `Principal`) the caller's permission set + the input document, hashed. `FLOWX1018` refuses one on a capability with side effects, and the engine relies on that rather than re-checking. **Single-flight is not built** ([ADR-0036](adr/ADR-0036-a-cache-is-a-plugin-store-keyed-by-the-redacted-input.md)) |
 | `Batch` | 5 | *undeclarable* | `size`, `window` | coalesces N invocations into one |
-| `Audit` | 7 | **declared only** | `category`, `redact` | immutable audit record. **Stage 7 and still inert:** it wraps the *step*, so it stays on `StepNode.Policies`, which the step loop reads only for stage 4. `FLOWX1032` reports it, and it is the reason the cut cannot be written as a range of stages |
+| `Audit` | 7 | **executes** | `category`, `redact` | immutable audit record, written to `IAuditSink` after the step's commit. Carries the journal's own payload — a composed `request`/`result` document — so `redact` is a longer list of member names handed to the one redaction pass, and can only remove ([ADR-0035](adr/ADR-0035-an-audit-record-is-the-journals-payload-redacted-twice.md)). A **missing sink fails the step**, unlike every other seam on this path |
 | `Outbox` | 7 | *undeclarable* | — | implicit on `.Emit` in durable flows, and real — but it is the emit step's own commit rather than a policy anybody declares |
 | `CompensationRetry` | 7 | **executes** | `attempts`, `backoff`, `retryOn` | wraps the step's *compensation*, so it requires the **compensating** capability to declare `Idempotent = true`. Defaults: 5 attempts (more aggressive than forward retry, [06 §7](06-Execution-Engine.md#7-compensation-semantics) rule 2), full jitter, `Conflict`/`Unavailable`/`Internal` |
 
@@ -343,51 +358,89 @@ key both execute. This is the most common bug in hand-rolled idempotency.
 
 ---
 
-## 8. Cache safety — *specification*
+## 8. Cache safety — *four of five defaults are behaviour*
 
-> [!NOTE]
-> **No cache is consulted.** Stage 5 is not implemented, so every defaulting decision below
-> is a decision about a cache that does not exist. The one half that is enforced is the last
-> line: `FLOWX1018` refuses a `Cache` on a capability with side effects, at build time,
-> whether or not anything would have cached it.
+> [!IMPORTANT]
+> **A cache is consulted.** Stage 5 executes
+> ([ADR-0036](adr/ADR-0036-a-cache-is-a-plugin-store-keyed-by-the-redacted-input.md)), through
+> the `IResultCache` plugin contract, which `plugins/FlowX.Redis` and `plugins/FlowX.Postgres`
+> both implement and `ResultCacheConformance` holds both to. **The one row below that is still
+> specification is stampede protection**, and it is marked.
+>
+> **A cache runs outside the dispatch and inside stage 4**, which is the insertion point
+> [ADR-0025 §2.5](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) named
+> before there was anything to insert. The full nesting is
+> `Retry { CircuitBreaker { Bulkhead { Timeout { Cache { capability } } } } }` — so a store
+> round trip is inside the budget the author wrote for the step, a hit counts as a call the
+> breaker saw succeed, and a caller the bulkhead refused never reaches the store.
+>
+> **Every failure degrades to a dispatch.** A store that is down, a key that cannot be built and
+> an entry that cannot be read back all mean the capability is called, which is what the step
+> did before anything cached it. A cache outage costs latency and never correctness.
 
 Caching is the most dangerous policy in a multi-tenant system, so its defaults
 are conservative:
 
-| Default | Value | Rationale |
-|---|---|---|
-| Scope | `Tenant` | cross-tenant leakage is unacceptable by default |
-| Key | capability id + input hash + tenant + **principal permission set** | prevents privilege-based leakage |
-| Applies to | capabilities with **no** declared side effects | caching a write is a bug |
-| Stampede protection | single-flight per key | prevents cache-miss herds |
-| Negative caching | off | stale failures are worse than a retry |
+| Default | Value | Built? | Rationale |
+|---|---|---|---|
+| Scope | `Tenant` | **yes** | cross-tenant leakage is unacceptable by default |
+| Key | capability id + **version** + input document + tenant + **principal permission set** | **yes** — SHA-256 over the components, U+001F-separated; the permission set only under `CacheScope.Principal` | prevents privilege-based leakage. The version is included because a capability that changed its answer for one input is a different capability to a cache |
+| Applies to | capabilities with **no** declared side effects | **yes** — `FLOWX1018`, at build time, and relied on rather than re-checked at run time | caching a write is a bug |
+| Stampede protection | single-flight per key | **no** — *n* concurrent misses are *n* dispatches | prevents cache-miss herds |
+| Negative caching | off | **yes** — only a success is held | stale failures are worse than a retry |
 
 Declaring `Cache` on a capability with side effects is `FLOWX1018` (error).
 
+### A `[Sensitive]` member cannot reach a cache, and cannot come back out of one
+
+What the engine hands a store is what `JournalPayload.ToJson` produced — the same document the
+journal would have written, through the same single exit, with every `[Sensitive]` member
+replaced by `[redacted]`. That is correct for a journal row and unusable for a cache, twice
+over, so the engine refuses both halves:
+
+- **A key document carrying the placeholder is not hashed**, because two callers whose inputs
+  differ only in a marked member would key identically — and the second would be served the
+  first one's result. The step is dispatched instead.
+- **An entry document carrying it is not stored**, because a hit would restore `[redacted]`
+  where a capability's answer should be, and every step after it would bind to a value nothing
+  produced.
+
+The consequence is worth stating plainly: **a step whose input or output contract carries a
+member the flow marks `[Sensitive]` is never cached**, silently. ADR-0036 records why the
+obvious build-time rule is not sound as stated, and a warning that *is* sound is outstanding.
+
 ---
 
-## 9. Observing policies — *four of seven metrics emit*
+<!-- The heading's count changed when stage 5 landed; this keeps the old anchor resolving,
+     because accepted records link to it and an accepted record is not edited. -->
+<a id="9-observing-policies--four-of-seven-metrics-emit"></a>
+
+## 9. Observing policies — *six of seven metrics emit*
 
 > [!NOTE]
-> **The four rows whose policy executes are emitted; the three whose policy does not are not
-> named at all.** A breaker opening, a retry attempting, a bulkhead refusing and a timeout
-> firing each produce a measurement — which they did not before
-> [ADR-0026](adr/ADR-0026-policy-metrics-name-only-what-executes.md), and the note that used to
-> stand here said so. The other three describe stages
-> [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) skips, and an
-> instrument that exists and is never written to publishes an empty series that reads as a
-> healthy one. **The span-event half of this section is still unbuilt.**
+> **The rows whose policy executes are emitted; the two whose policy does not are not named at
+> all.** A breaker opening, a retry attempting, a bulkhead refusing, a timeout firing and a
+> cache answering each produce a measurement — the cache pair joined them when stage 5 landed,
+> which is exactly the condition
+> [ADR-0026](adr/ADR-0026-policy-metrics-name-only-what-executes.md) set for it. The two that
+> remain describe stages
+> [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) still skips, and
+> an instrument that exists and is never written to publishes an empty series that reads as a
+> healthy one. `Audit` gains no row of its own — this table never gave it one — and reaches
+> `flowx_policy_invocations_total` like every other policy that applies, which is also what
+> stopped that counter's `stage` label being constant. **The span-event half of this section is
+> still unbuilt.**
 
 Every policy is specified to emit telemetry with a uniform schema, so that resilience never
 has to be instrumented by hand:
 
 | Metric | Type | Labels | Emitted |
 |---|---|---|---|
-| `flowx_policy_invocations_total` | counter | `policy`, `stage`, `capability`, `outcome` | **yes** — on refusal *and* on clean application, so a refusal rate has a denominator |
+| `flowx_policy_invocations_total` | counter | `policy`, `stage`, `capability`, `outcome` | **yes** — on refusal *and* on clean application, so a refusal rate has a denominator. `stage` is no longer constant: `Cache` reports `Efficiency` and `Audit` reports `Consistency` |
 | `flowx_retry_attempts_total` | counter | `capability`, `attempt`, `error_code` | **yes** — attempts beyond the first only; the first dispatch is not a retry |
 | `flowx_circuit_state` | gauge (0/1/2) | `capability`, `key` | **yes** — recorded on transition, not per scrape. `key` equals `capability` until §6's composite key is expressible |
 | `flowx_ratelimit_rejected_total` | counter | `scope`, `tenant` | no — stage 1 is not executed, and `scope` presupposes a decision nobody has made |
-| `flowx_cache_hits_total` / `_misses_total` | counter | `capability`, `scope` | no — stage 5 is not executed |
+| `flowx_cache_hits_total` / `_misses_total` | counter | `capability`, `scope` | **yes** — both, so a hit *rate* has a denominator. `scope` is the declared `CacheScope` by name, never the resolved tenant or principal |
 | `flowx_bulkhead_queue_depth` | gauge | `capability` | **yes** — on the queueing path only, so an uncontended pool publishes nothing rather than a flat zero |
 | `flowx_idempotency_replays_total` | counter | `capability`, `scope` | no — stage 3 is not executed |
 
