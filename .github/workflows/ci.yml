@@ -191,6 +191,10 @@ jobs:
         # IsAotCompatible. A reflection call that would break trimming surfaces
         # here as an IL2xxx/IL3xxx error at build time, not at publish time.
         run: |
+          # pipefail, for the reason the test step in `build` spells out: without it the
+          # step's exit status is tee's, so a build that FAILED reports a passing step and
+          # the grep runs over a truncated log.
+          set -o pipefail
           dotnet build FlowX.slnx --configuration Release 2>&1 | tee build.log
           if grep -qE 'IL2[0-9]{3}|IL3[0-9]{3}'  build.log; then
             echo "::error::Trim or AOT warnings found — constraint C2 forbids them."
@@ -201,14 +205,37 @@ jobs:
         # The reference sample is the executable that makes constraint C2 checkable:
         # PublishAot is a no-op on a class library, so until WP-10 this step had
         # nothing to publish and said so rather than passing vacuously.
+        #
+        # PublishAot is NOT passed with /p: here, and that is the whole point. A property
+        # given on the command line is a *global* property: MSBuild passes it down into
+        # every project this one references, including the two that are referenced as
+        # analyzers — FlowX.Compiler and FlowX.Compiler.CodeFixes, both netstandard2.0,
+        # because that is what Roslyn loads. netstandard2.0 cannot be AOT-compiled, so
+        # each answered with NETSDK1207 and the publish produced no binary at all.
+        #
+        # samples/ecommerce/Ecommerce.csproj already sets <PublishAot>true</PublishAot> in
+        # its own PropertyGroup, where it applies to that project and stops there. So this
+        # is not a relaxation of constraint C2: the sample is still published ahead of
+        # time, by the declaration that was always the right place for it. The command
+        # line asking for it a second time is what broke it.
         run: |
+          set -o pipefail
           dotnet publish samples/ecommerce/Ecommerce.csproj --configuration Release \
-            --runtime linux-x64 --self-contained /p:PublishAot=true \
+            --runtime linux-x64 --self-contained \
             /p:TrimmerSingleWarn=false 2>&1 | tee aot.log
           if grep -qE 'IL2[0-9]{3}|IL3[0-9]{3}' aot.log; then
             echo "::error::Trim or AOT warnings in the AOT publish."
             exit 1
           fi
+
+          # The publish having "succeeded" is not the same fact as a binary existing, and
+          # for days it was not the same fact here. Assert the artifact, so a publish that
+          # emits nothing fails in the step that was supposed to produce it rather than in
+          # the next one as a puzzling "did not become healthy".
+          BIN=samples/ecommerce/bin/Release/net10.0/linux-x64/publish/Ecommerce
+          test -x "$BIN" || {
+            echo "::error::The publish reported success but produced no native binary at $BIN."
+            exit 1; }
 
       - name: The native binary serves a request
         # Publishing proves it links. This proves it runs: a trim-related failure that
@@ -228,8 +255,27 @@ jobs:
           curl -sf http://127.0.0.1:5210/health >/dev/null || {
             echo "::error::The native binary did not become healthy."; exit 1; }
 
+          # A no-token request must be refused, and it is asserted FIRST because it is the
+          # cheaper half of the same fact: authorisation is decided by the engine, from
+          # validated claims, inside a natively-compiled binary. An AOT build that lost the
+          # claims plumbing would answer 200 here and this step would otherwise applaud it.
+          UNAUTH=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:5210/api/v1/orders \
+            -H 'Content-Type: application/json' \
+            -H 'Idempotency-Key: ci-smoke-anon' \
+            -d '{"sku":"SKU-1","quantity":1,"paymentToken":"tok"}')
+          [ "$UNAUTH" = "403" ] || {
+            echo "::error::An unauthenticated order got $UNAUTH, not 403. order.validate declares"
+            echo "::error::Authorization.Authenticated and the engine must enforce it in the AOT build too."
+            exit 1; }
+
+          # And the positive case needs a caller who satisfies BOTH stances the flow
+          # declares: order.validate wants any authenticated principal, payment.capture
+          # wants the payment.write permission. Tokens.Cashier in samples/ecommerce is the
+          # one demonstration token holding it; Tokens.Shopper deliberately does not, and
+          # is refused at the third step after the inventory hold is compensated.
           BODY=$(curl -sf -X POST http://127.0.0.1:5210/api/v1/orders \
             -H 'Content-Type: application/json' \
+            -H 'Authorization: Bearer cashier-token' \
             -H 'Idempotency-Key: ci-smoke' \
             -d '{"sku":"SKU-1","quantity":1,"paymentToken":"tok"}') || {
             echo "::error::The native binary refused a valid order."; exit 1; }
