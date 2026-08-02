@@ -278,7 +278,7 @@ public interface IFlowBuilder<TIn, TOut>
     /// <paramref name="timeout"/> rather than an element count.
     /// </para>
     /// </remarks>
-    IAwaitBuilder<TIn, TOut> PollUntil<TCapability>(
+    IPollBuilder<TIn, TOut> PollUntil<TCapability>(
         Func<FlowContext<TIn>, bool> until,
         Backoff interval,
         TimeSpan timeout);
@@ -386,16 +386,55 @@ public interface ISwitchBuilder<TIn, TOut, TValue> : IFlowBuilder<TIn, TOut>
 
 /// <summary>A suspension point awaiting its timeout branch.</summary>
 /// <remarks>
-/// Returned by <see cref="IFlowBuilder{TIn, TOut}.AwaitSignal{TSignal}"/> and by
-/// <see cref="IFlowBuilder{TIn, TOut}.PollUntil{TCapability}"/>, because the two ask the same
-/// question of an author — <em>and if it never happens?</em> — and lay the answer out the same
-/// way: a block contiguous with the wait, which the satisfied path skips over. A second
-/// interface with the same member would be two spellings of one construct.
+/// Returned by <see cref="IFlowBuilder{TIn, TOut}.AwaitSignal{TSignal}"/> and reached from
+/// <see cref="IFlowBuilder{TIn, TOut}.PollUntil{TCapability}"/> through
+/// <see cref="IPollBuilder{TIn, TOut}"/>, because the two ask the same question of an author —
+/// <em>and if it never happens?</em> — and lay the answer out the same way: a block contiguous
+/// with the wait, which the satisfied path skips over. A second interface with the same member
+/// would be two spellings of one construct.
 /// </remarks>
 public interface IAwaitBuilder<TIn, TOut> : IFlowBuilder<TIn, TOut>
 {
     /// <summary>Declares what happens when the wait runs out.</summary>
     IFlowBuilder<TIn, TOut> OnTimeout(Action<IFlowBuilder<TIn, TOut>> onTimeout);
+}
+
+/// <summary>A poll awaiting its optional signal and its timeout branch.</summary>
+/// <remarks>
+/// Exists so that <see cref="OrSignal{TSignal}"/> is reachable from a poll and from nothing
+/// else. It returns <see cref="IAwaitBuilder{TIn, TOut}"/> rather than itself, which is what
+/// makes a second <c>.OrSignal</c> on one poll a C# error rather than a rule to write down: one
+/// wait has one alternative ending, because it has one row and one delivery slot.
+/// </remarks>
+public interface IPollBuilder<TIn, TOut> : IAwaitBuilder<TIn, TOut>
+{
+    /// <summary>
+    /// Ends the same wait early when <typeparamref name="TSignal"/> is delivered, instead of
+    /// waiting for the next attempt to fall due.
+    /// </summary>
+    /// <typeparam name="TSignal">
+    /// The contract the delivery carries. Seeded into the state bag exactly as
+    /// <see cref="IFlowBuilder{TIn, TOut}.AwaitSignal{TSignal}"/>'s is, so the steps after the
+    /// poll bind it the same way — and journaled with the row that records the ending, which is
+    /// why it needs the same generated metadata a step's output does (<c>FLOWX1006</c>).
+    /// </typeparam>
+    /// <remarks>
+    /// <para>
+    /// <strong>One wait with two ways to end it, not a race between two.</strong> The instance
+    /// is parked on one row carrying one <c>wake_at</c>; a delivery arrives at that same row and
+    /// the arrival path asks <c>TakeSignal</c> before it asks whether the next attempt is due. So
+    /// there is no second branch to cancel and no second schedule to reconcile —
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0058-a-poll-is-one-wait-not-a-race-between-two.md">ADR-0058</a>
+    /// is why the fork spelling was refused and this one was named.
+    /// </para>
+    /// <para>
+    /// <strong>A signal arriving between two attempts ends the wait without making
+    /// another.</strong> The poll's schedule is not consulted, the escalation is not entered, and
+    /// control continues where a satisfied predicate would have taken it — with the delivered
+    /// payload in the state bag and a committed row saying which of the two endings happened.
+    /// </para>
+    /// </remarks>
+    IAwaitBuilder<TIn, TOut> OrSignal<TSignal>();
 }
 
 /// <summary>Collects concurrent branches.</summary>

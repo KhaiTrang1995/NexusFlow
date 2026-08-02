@@ -1086,10 +1086,12 @@ public sealed class FlowEngine
                     break;
                 }
 
-                // Satisfied lands past the escalation block; expired-with-a-block lands in it,
-                // which is the ordinary next index after the one-step body. RunPollAsync
-                // chooses between them and reports the index rather than the reason, because
-                // the reason is spent by the time control moves.
+                // Satisfied lands past the escalation block — whether the predicate or a
+                // delivered signal satisfied it, because one wait ending twice over would be
+                // two waits; expired-with-a-block lands in it, which is the ordinary next index
+                // after the one-step body. RunPollAsync chooses between them and reports the
+                // index rather than the reason, because the reason is spent by the time control
+                // moves.
                 i = polled.Resume!.Value;
                 continue;
             }
@@ -2373,13 +2375,28 @@ public sealed class FlowEngine
     /// when that is simply the next index.
     /// </summary>
     /// <remarks>
-    /// Non-null only for an <see cref="StepKind.AwaitSignal"/> whose author declared an
+    /// <para>
+    /// Non-null for an <see cref="StepKind.AwaitSignal"/> whose author declared an
     /// <c>.OnTimeout(...)</c>. That block is laid out immediately after the wait — it is the
     /// one of the two paths that has an end to jump over — so the satisfied path is the one
     /// that needs a target, and this is where a delivered signal skips the escalation.
+    /// </para>
+    /// <para>
+    /// <strong>And always non-null for a <see cref="StepKind.Poll"/>, because a poll node
+    /// commits a row in exactly one case and it is this one.</strong> A poll that ended on its
+    /// predicate or on its budget writes nothing of its own, so the skip above never fires for
+    /// it; a poll that ended on a delivered signal writes the row that says so, and the resumed
+    /// instance has to leave the wait where that delivery left it — past the escalation when
+    /// there is one, and otherwise past the one-step attempt. Falling through to
+    /// <c>Index + 1</c> would re-enter the attempt the poll had already stopped making.
+    /// </para>
     /// </remarks>
-    private static int? SignalTargetOf(StepNode step) =>
-        step.Kind == StepKind.AwaitSignal ? step.Target : null;
+    private static int? SignalTargetOf(StepNode step) => step.Kind switch
+    {
+        StepKind.AwaitSignal => step.Target,
+        StepKind.Poll => step.Target ?? step.Index + 2,
+        _ => null,
+    };
 
     /// <summary>What the loop does when it arrives at a suspension point.</summary>
     private enum WaitVerdict
@@ -3213,6 +3230,16 @@ public sealed class FlowEngine
     /// that ended it: the last attempt's result is in the restored state bag and the predicate
     /// still holds. Without that, every resume of a completed flow would poll one more time.
     /// </para>
+    /// <para>
+    /// <strong>A declared signal is the wait's second ending, and it is the same wait.</strong>
+    /// One <c>TakeSignal</c> call on this arrival path, against the row the instance is already
+    /// parked on: no second branch, no second <c>wake_at</c>, nothing to cancel. It is asked
+    /// after the predicate — so a poll that is already over does not consume a delivery a later
+    /// wait is open for — and before the schedule, which is what makes a signal arriving between
+    /// two attempts end the wait rather than park it again. That ending <em>does</em> commit a
+    /// row, and the paragraph above is why: the predicate is not what ended it, so nothing else
+    /// on a later arrival would say the polling had stopped.
+    /// </para>
     /// </remarks>
     private async ValueTask<PollOutcome> RunPollAsync(
         ExecutionPlan plan,
@@ -3256,6 +3283,44 @@ public sealed class FlowEngine
         if (_clock.UtcNow >= context.Deadline)
         {
             return new PollOutcome(FlowErrors.DeadlineExceeded(plan.Flow.Id, context.Deadline), 0);
+        }
+
+        // The wait's second ending, and the whole of `.OrSignal<T>()`. One TakeSignal call on
+        // the same arrival path, against the same row: the instance is parked here, a delivery
+        // resumed it, and the wait is over — so nothing is asked of the schedule, no attempt is
+        // made, and the escalation is not entered.
+        //
+        // After the predicate above, deliberately. A poll the last attempt already satisfied is
+        // over, and taking a delivery there would consume a signal a later wait in the same flow
+        // is open for — `PendingSignal` is one slot per invocation. After the deadline check, on
+        // the reason that check is before everything: an instance whose whole budget has gone
+        // fails rather than committing another row.
+        //
+        // Before the "is the next attempt due" park below, which is the sentence this construct
+        // exists to make true: a signal arriving between two attempts ends the wait instead of
+        // parking it again.
+        if (step.SignalType is not null &&
+            cursor.Run is { } signalled &&
+            signalled.TakeSignal(step.SignalType) is { } delivered)
+        {
+            context.Deliver(delivered);
+
+            // The one row a poll node ever commits, and it is load-bearing rather than
+            // bookkeeping. A poll that ends on its predicate needs no row because the predicate
+            // is still true on the next arrival (ADR-0058 decision 5); a poll that ends on a
+            // delivery has no such witness — the predicate says "not yet" and the signal has
+            // been consumed — so without this an instance resumed past the poll would go back to
+            // polling, and the delivered payload would be gone. The state-bag snapshot on this
+            // row is also what carries that payload across the next node death, which is the
+            // same mechanism an AwaitSignal's own row uses.
+            var refusal = await CommitStepAsync(
+                plan, dispatcher, context, scope, cursor, step,
+                failure: null, startedAt: _clock.UtcNow, capabilityVersion: null, attempt: 1, ct)
+                .ConfigureAwait(false);
+
+            return refusal is not null
+                ? new PollOutcome(refusal, 0)
+                : new PollOutcome(null, 1, satisfied);
         }
 
         if (made > 0)
