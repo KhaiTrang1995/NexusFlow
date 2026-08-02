@@ -311,6 +311,11 @@ public static class MermaidRenderer
         // A subroutine box, which is Mermaid's shape for "this runs a block". A loop is
         // not a decision either, and it is not a fork: exactly one block, run repeatedly.
         "ForEach" => $"[[{Quote(label)}]]",
+        // A subroutine box too, because a poll is a loop and its block is drawn on this
+        // diagram — the same fact that earns a ForEach its shape. It is not given a shape of
+        // its own: what a reader has to see is "this runs a block repeatedly", and the
+        // difference between "once per element" and "until it answers" is in the label.
+        "Poll" => $"[[{Quote(label)}]]",
         // A doubled-border rectangle. Not the subroutine box a ForEach uses, even though
         // "this runs a block" is nearly right: a loop's block is drawn on this diagram and
         // a sub-flow's is not — its steps belong to another flow's subgraph. A distinct

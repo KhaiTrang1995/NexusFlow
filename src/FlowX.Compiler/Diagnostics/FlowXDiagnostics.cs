@@ -1317,6 +1317,73 @@ public static class FlowXDiagnostics
         "is a manifest publishing a stream subscription and a host that reads nothing.",
         DiagnosticSeverity.Error);
 
+    /// <summary>FLOWX1043 — a poll whose first gap is longer than the poll's own timeout.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The arithmetic makes the loop a single call.</strong> A poll runs its first
+    /// attempt immediately and then parks for the interval; if that interval is longer than the
+    /// budget, the instance wakes past its own timeout and takes the escalation — so a
+    /// declaration that reads as "check every ten minutes for five minutes" checks once and
+    /// gives up, and does it silently, because one attempt and an escalation is exactly what a
+    /// genuinely slow dependency looks like.
+    /// </para>
+    /// <para>
+    /// <strong>A warning, on <c>FLOWX1019</c>'s argument.</strong> Both are a statement about
+    /// two declared durations that cannot both be honoured, both are legal C#, and both have a
+    /// legitimate — if unusual — reading: an author who wants exactly one attempt and a
+    /// fallback has written it, in an obscure way. An error would refuse a flow that runs.
+    /// </para>
+    /// <para>
+    /// Silent when either duration is one <c>DeclaredDuration</c> cannot evaluate, which is
+    /// <c>FLOWX1019</c>'s stance again: a rule that guessed at a schedule read from
+    /// configuration would fire on flows that are correct at run time.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor PollIntervalOutlastsItsTimeout = Create(
+        "FLOWX1043",
+        "Poll interval outlasts the poll's own timeout",
+        "Polling '{0}' waits {1} between attempts and gives up after {2}, so it makes one " +
+        "attempt and then escalates",
+        "A poll makes its first attempt immediately and parks for the interval before the " +
+        "second. An interval longer than the timeout means the instance wakes after its " +
+        "budget has gone, so the loop is a single call followed by the OnTimeout block — " +
+        "which reads in a journal exactly like a dependency that never answered. Shorten the " +
+        "interval, or lengthen the timeout to fit the attempts you meant to make.",
+        DiagnosticSeverity.Warning);
+
+    /// <summary>FLOWX1044 — a polled capability that has not declared itself idempotent.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><c>FLOWX1014</c>'s argument, reached by a different door.</strong> That rule
+    /// refuses a retry on a capability that has not declared repetition safe, because retrying
+    /// a capture is a duplicate charge. A poll repeats too — deliberately, tens of times, with
+    /// one request's worth of input and one idempotency key — so the same declaration is the
+    /// same promise, and a poll is if anything the stronger case: a retry repeats only after a
+    /// failure, while a poll repeats after every success.
+    /// </para>
+    /// <para>
+    /// <strong>An error, and not the warning <c>FLOWX1043</c> is.</strong> A declaration whose
+    /// two durations disagree produces a flow that runs and reads oddly; this produces a flow
+    /// that runs correctly the first time and creates a second OCR job on the second attempt.
+    /// There is no reading under which polling something that is not repeatable is what the
+    /// author meant.
+    /// </para>
+    /// <para>
+    /// Satisfied by <c>Idempotent = true</c> on the capability, which is a claim about the
+    /// capability and not about this flow — so if it is not true, the repair is a second
+    /// capability that reads the status rather than an attribute added to make a build pass.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor PollRequiresIdempotency = Create(
+        "FLOWX1044",
+        "PollUntil requires an idempotent capability",
+        "Capability '{0}' does not declare Idempotent = true, so it cannot be polled",
+        "A poll invokes its capability once per attempt with one request's worth of input, " +
+        "under one idempotency key, until a condition holds — which is the repetition " +
+        "Idempotent = true declares to be safe, and the same promise FLOWX1014 requires of a " +
+        "retry. Declare it on the capability if reading twice is harmless, and otherwise poll " +
+        "a capability that reads the state rather than one that changes it.");
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1355,7 +1422,9 @@ public static class FlowXDiagnostics
         ScheduledFlowCannotBeFired,
         BusFlowCannotBeConsumed,
         ChangeFlowCannotBeObserved,
-        StreamFlowCannotBeWindowed);
+        StreamFlowCannotBeWindowed,
+        PollIntervalOutlastsItsTimeout,
+        PollRequiresIdempotency);
 
     private static DiagnosticDescriptor Create(
         string id,

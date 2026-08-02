@@ -50,6 +50,15 @@ public enum StepKindModel
     /// of the same source.
     /// </remarks>
     Delay = 9,
+
+    /// <summary><c>.PollUntil&lt;TCapability&gt;(until, interval, timeout)</c>.</summary>
+    /// <remarks>
+    /// Appended for <see cref="Delay"/>'s reason, and it is the one kind that carries
+    /// <em>another kind</em> in its block: the polled capability is an ordinary
+    /// <see cref="Capability"/> step at <c>Index + 1</c>, so the descriptors, the dispatcher's
+    /// switch and the manifest's capability list see it without learning anything new.
+    /// </remarks>
+    Poll = 10,
 }
 
 /// <summary>One branch of a <c>Parallel</c>: a block of steps that runs concurrently with its siblings.</summary>
@@ -390,6 +399,59 @@ public sealed record StepModel
     /// </remarks>
     public string? DelayDuration { get; private init; }
 
+    /// <summary>
+    /// The <c>interval:</c> argument's source text, copied verbatim, or <c>null</c> for every
+    /// other kind.
+    /// </summary>
+    /// <remarks>
+    /// Verbatim for <see cref="MergeExpression"/>'s reason: an author may write
+    /// <c>Waits.OcrSchedule</c> or a schedule built from a constant on the flow, and a
+    /// generator that rebuilt the call would disagree with the source for every expression it
+    /// could not fold. It reaches the generated plan and nothing else — the manifest publishes
+    /// structure and has no field for a tuning number, which is
+    /// <c>MaxDegreeOfParallelism</c>'s stance and this is the same kind of number.
+    /// </remarks>
+    public string? PollInterval { get; private init; }
+
+    /// <summary>
+    /// The <c>timeout:</c> argument's source text, copied verbatim, or <c>null</c> for every
+    /// other kind.
+    /// </summary>
+    /// <remarks>
+    /// Kept apart from <see cref="SignalTimeout"/> even though both are a bound on a wait, for
+    /// that property's own reason: one field would make the emitter's two arms
+    /// indistinguishable and would leave every reader of a model asking which construct it was
+    /// looking at.
+    /// </remarks>
+    public string? PollTimeout { get; private init; }
+
+    /// <summary>
+    /// The same timeout, evaluated to an ISO-8601 duration, or <c>null</c> when it could not
+    /// be. Reaches the manifest as a <c>Poll</c> step's <c>timeout</c>.
+    /// </summary>
+    /// <remarks>
+    /// Two fields for one declaration, for <see cref="SignalTimeoutIso"/>'s reason and by
+    /// exactly its route: the plan carries the expression because generated C# can evaluate it,
+    /// and the manifest cannot, because a consumer reading JSON has never seen the assembly the
+    /// symbol lives in.
+    /// </remarks>
+    public string? PollTimeoutIso { get; private init; }
+
+    /// <summary>
+    /// Source text of the <c>until:</c> predicate, copied verbatim, or <c>null</c> for every
+    /// other kind.
+    /// </summary>
+    /// <remarks>
+    /// Held apart from <see cref="Predicate"/> so that a poll and a conditional stay two things
+    /// in the model, and emitted into the same <c>Conditions</c> class the conditional's goes
+    /// into — because the engine asks both through <c>IStepDispatcher.Evaluate</c>, and a
+    /// second seam for the same question is a second thing to keep in step.
+    /// </remarks>
+    public string? PollPredicate { get; private init; }
+
+    /// <summary><c>file:line</c> of the <c>until:</c> expression, for its <c>#line</c> directive.</summary>
+    public string? PollPredicateLocation { get; private init; }
+
     /// <summary>Named policy set applied via <c>.WithPolicy(...)</c>.</summary>
     public string? PolicySetName { get; private init; }
 
@@ -622,7 +684,7 @@ public sealed record StepModel
     /// </remarks>
     public int NextIndex =>
         Kind is StepKindModel.Condition or StepKindModel.Switch or StepKindModel.Parallel
-            or StepKindModel.ForEach or StepKindModel.AwaitSignal
+            or StepKindModel.ForEach or StepKindModel.AwaitSignal or StepKindModel.Poll
             ? JoinIndex
             : Index + 1;
 
@@ -644,6 +706,20 @@ public sealed record StepModel
         get
         {
             yield return this;
+
+            // Before `Then`, because a poll is the one kind that carries both and its layout is
+            // `poll · attempt · escalation`: the attempt is the block the engine re-enters and
+            // the escalation is the block it may jump into, in that order. Every other kind
+            // fills one of the two collections and leaves the other empty, so the move is
+            // invisible to them and the enumeration stays the flat array's own order — which is
+            // what this property promises and what the descriptor list relies on.
+            foreach (var nested in Body)
+            {
+                foreach (var step in nested.SelfAndNested)
+                {
+                    yield return step;
+                }
+            }
 
             foreach (var nested in Then)
             {
@@ -688,14 +764,6 @@ public sealed record StepModel
                     {
                         yield return step;
                     }
-                }
-            }
-
-            foreach (var nested in Body)
-            {
-                foreach (var step in nested.SelfAndNested)
-                {
-                    yield return step;
                 }
             }
         }
@@ -902,6 +970,92 @@ public sealed record StepModel
         return new StepModel(index, StepKindModel.Delay)
         {
             DelayDuration = durationExpression,
+            Location = location,
+        };
+    }
+
+    /// <summary>Models a <c>.PollUntil&lt;TCapability&gt;(until, interval, timeout)</c> call.</summary>
+    /// <param name="index">Flat index of the poll node itself.</param>
+    /// <param name="attempt">
+    /// The polled capability, modelled exactly as a <c>.Step&lt;T&gt;()</c> is and already
+    /// carrying flat index <c>index + 1</c>. A whole <see cref="StepModel"/> rather than three
+    /// loose strings, for <see cref="Compensation"/>'s reason: the capability a poll calls is
+    /// the same kind of thing as any other capability, so its stance, its side effects and its
+    /// idempotency reach the manifest and <c>flowx diff</c> unchanged.
+    /// </param>
+    /// <param name="predicate">The <c>until:</c> expression's source text, copied verbatim.</param>
+    /// <param name="interval">The <c>interval:</c> expression's source text, copied verbatim.</param>
+    /// <param name="timeoutExpression">The <c>timeout:</c> expression's source text, copied verbatim.</param>
+    /// <param name="predicateLocation"><c>file:line</c> of the predicate expression.</param>
+    /// <param name="location"><c>file:line</c> of the <c>.PollUntil</c> call.</param>
+    /// <param name="timeout">
+    /// The same timeout as an ISO-8601 duration, for the manifest, or null when the compiler
+    /// could not evaluate the expression.
+    /// </param>
+    /// <param name="onTimeout">
+    /// Steps of the <c>.OnTimeout(...)</c> block, already carrying their flat indices, or empty
+    /// when the author declared none.
+    /// </param>
+    /// <exception cref="System.ArgumentException">
+    /// <paramref name="timeout"/> is not an ISO-8601 duration the manifest schema accepts.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>The layout is <c>poll · attempt · escalation…</c>, and it is the only one here
+    /// with two contiguous blocks of different meanings.</strong> The attempt is a block the
+    /// engine re-enters; the escalation is a block it may jump into. They cannot be
+    /// interchanged, which is why the attempt is exactly one step and the join is derived from
+    /// the escalation rather than from both.
+    /// </para>
+    /// <para>
+    /// The attempt is carried in <see cref="Body"/> and the escalation in <see cref="Then"/>,
+    /// which is reuse rather than overloading, for <see cref="AwaitSignal"/>'s reason: a loop's
+    /// body and a wait's escalation are what those two collections already mean, and every
+    /// reader that walks <see cref="SelfAndNested"/> sees both without learning anything.
+    /// </para>
+    /// </remarks>
+    public static StepModel Poll(
+        int index,
+        StepModel attempt,
+        string? predicate = null,
+        string? interval = null,
+        string? timeoutExpression = null,
+        string? predicateLocation = null,
+        string? location = null,
+        string? timeout = null,
+        IReadOnlyList<StepModel>? onTimeout = null)
+    {
+        // Refused here rather than left to the schema, for AwaitSignal's reason: the schema is
+        // validated by this repository's tests and never by an application's build.
+        if (timeout != null && !Iso8601.IsMatch(timeout))
+        {
+            throw new System.ArgumentException(
+                $"'{timeout}' is not an ISO-8601 duration. The manifest's `timeout` field is " +
+                "`#/$defs/duration`, the same shape a flow's deadline uses.",
+                nameof(timeout));
+        }
+
+        var body = attempt is null
+            ? System.Array.Empty<StepModel>()
+            : new[] { attempt };
+
+        var block = onTimeout ?? (IReadOnlyList<StepModel>)System.Array.Empty<StepModel>();
+
+        return new StepModel(index, StepKindModel.Poll)
+        {
+            Body = body,
+            Then = block,
+            PollPredicate = predicate,
+            PollPredicateLocation = predicateLocation,
+            PollInterval = interval,
+            PollTimeout = timeoutExpression,
+            PollTimeoutIso = timeout,
+
+            // One past the escalation block, which is where a satisfied poll carries on — and
+            // where the block falls through to, because the two paths rejoin. With no block it
+            // is the index after the attempt, and the emitter writes no target at all: a target
+            // equal to that index would read as an escalation that runs nothing.
+            JoinIndex = block.Count == 0 ? index + 2 : block[block.Count - 1].NextIndex,
             Location = location,
         };
     }

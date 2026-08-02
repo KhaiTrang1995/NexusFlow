@@ -270,6 +270,7 @@
             "SubFlow",
             "AwaitSignal",
             "Delay",
+            "Poll",
             "Fail"
           ],
           "default": "Capability"
@@ -316,7 +317,7 @@
           "$ref": "#/$defs/identity"
         },
         "timeout": {
-          "description": "AwaitSignal steps only: the wait the author declared, evaluated at compile time. Absent when the declaring expression could not be evaluated — the plan carries the expression verbatim because generated C# can, and a symbol name is not a duration to a reader who has never seen the assembly. Nothing arms this: there is no scheduler and no timer table, so it states what was declared, as the step's policies do.",
+          "description": "AwaitSignal and Poll steps only: the wait the author declared, evaluated at compile time. On an AwaitSignal it is how long the signal has to arrive; on a Poll it is how long the loop keeps trying, measured from its first attempt. Absent when the declaring expression could not be evaluated — the plan carries the expression verbatim because generated C# can, and a symbol name is not a duration to a reader who has never seen the assembly. Nothing arms this: there is no scheduler and no timer table, so it states what was declared, as the step's policies do.",
           "$ref": "#/$defs/duration"
         },
         "branches": {

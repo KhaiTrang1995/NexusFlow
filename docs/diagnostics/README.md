@@ -340,6 +340,8 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1040](FLOWX1040.md) | `Idempotency` is declared on a flow whose result cannot be recorded without redaction | **A replayed transfer answering with an IBAN of `[redacted]` and a `200`: the second caller's money moves to a placeholder, every step reports success, and nothing anywhere says a value was fabricated** |
 | [FLOWX1041](FLOWX1041.md) | Change-triggered flow cannot be observed | **A published change subscription with nothing registered behind it: a flow that cannot bind the change and is never started, or an ephemeral one started again every time the cursor is re-read from an uncommitted position — with no error, no duplicate row and nothing anywhere to count** |
 | [FLOWX1042](FLOWX1042.md) | Stream-triggered flow cannot be windowed | **A published stream subscription with nothing registered behind it: a flow that cannot bind a window, a non-`Streaming` one whose rebuilt window aggregates a second time after every crash, or a window shape the engine does not implement — a stream nobody reads, and nothing anywhere saying why** |
+| [FLOWX1043](FLOWX1043.md) | Poll interval outlasts the poll's own timeout | A `PollUntil` whose first gap is longer than its budget: the instance wakes past it, so the loop is one call followed by the `OnTimeout` block — and one attempt then an escalation reads in a journal exactly like a dependency that never answered |
+| [FLOWX1044](FLOWX1044.md) | `PollUntil` requires an idempotent capability | **A second OCR job, a second charge or a second reservation on every attempt of a loop built to make tens of them** — the repetition `Idempotent = true` declares to be safe, asked of a construct that repeats after every success rather than only after a failure |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -568,7 +570,27 @@ shape the engine does not implement, which is a property of the attribute rather
 why only tumbling windows survive. It is an **error** where `FLOWX1028` is a warning, and the
 difference is that every one of these three has a fix that produces a flow the engine runs today.
 
-The next is `FLOWX1043`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1043` is claimed** — *poll interval outlasts the poll's own timeout*: a `PollUntil`
+whose first gap is longer than the budget it declares. A poll makes its first attempt
+immediately and parks for the interval before the second, so the instance wakes after its budget
+has gone and takes the escalation — the loop is a single call, and nothing about the instance
+says so. It is a **warning**, on `FLOWX1019`'s argument: the flow runs, both durations are legal
+C#, and an author who wants exactly one attempt and a fallback has written it in an obscure way.
+It is silent whenever either duration is one `DeclaredDuration` or `DeclaredBackoff` cannot
+evaluate, which is `FLOWX1019`'s stance again — a rule that guessed at a schedule read from
+configuration would fire on flows that are correct at run time.
+
+**`FLOWX1044` is claimed** — *`PollUntil` requires an idempotent capability*: a poll invokes its
+capability once per attempt, with one request's worth of input and one idempotency key, until a
+condition holds. That is exactly the repetition `Idempotent = true` declares to be safe, and it
+is `FLOWX1014`'s argument reached by a different door — the stronger of the two, because a retry
+repeats only after a failure and a poll repeats after every success. An **error** where
+`FLOWX1043` is a warning: a declaration whose two durations disagree produces a flow that runs
+and reads oddly, and this produces a flow that runs correctly the first time and creates a second
+OCR job on the second attempt. [ADR-0058](../adr/ADR-0058-a-poll-is-one-wait-not-a-race-between-two.md)
+is the decision the pair belongs to.
+
+The next is `FLOWX1045`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

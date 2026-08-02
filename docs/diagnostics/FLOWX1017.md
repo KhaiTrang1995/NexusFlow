@@ -10,8 +10,13 @@ nowhere to record when it is due, which leaves holding the process for the durat
 only way to honour it.
 
 > [!NOTE]
-> **This rule covers `.Delay(duration)` as well as `.AwaitSignal<T>(timeout)`, since
-> 2026-08-02.** It could not before, and not because anybody decided it should not: `.Delay`
+> **This rule covers `.PollUntil<T>(...)` as well as `.Delay(duration)` and
+> `.AwaitSignal<T>(timeout)`.** The third arrived with the construct: a poll parks between
+> attempts and reads which attempt it is on out of the journal that parked it, so outside one it
+> has neither anywhere to record when the next call is due nor any way to count the ones already
+> made — the same sentence twice over.
+>
+> **It covered `.Delay(duration)` from 2026-08-02.** It could not before, and not because anybody decided it should not: `.Delay`
 > compiled to no step at all, so there was nothing for a rule that reads the compiled step
 > model to see. The title still names `AwaitSignal` alone — an id and a title are what an
 > `.editorconfig` line and a build log carry, and renaming a shipped rule to cover a second

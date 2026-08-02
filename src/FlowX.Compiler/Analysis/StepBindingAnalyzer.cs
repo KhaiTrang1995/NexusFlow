@@ -199,6 +199,13 @@ public sealed class StepBindingAnalyzer : DiagnosticAnalyzer
             switch (link.MethodName)
             {
                 case "Step":
+
+                // A poll invokes a capability, so it consumes that capability's input and puts
+                // its output in the bag exactly as a step does — the difference is only how
+                // many times, which this rule does not ask about. An `.OnTimeout(...)` after it
+                // ends the walk at the default arm below, which is the conservative answer
+                // every other block already gets.
+                case "PollUntil":
                     if (!CheckStep(context, flowType, link, available, produced, scope))
                     {
                         return;
