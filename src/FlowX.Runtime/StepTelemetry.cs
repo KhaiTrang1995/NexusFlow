@@ -77,7 +77,8 @@ public sealed class StepTelemetry : IStepDispatcher
         FlowXTelemetry.Source.HasListeners()
         || FlowXMetrics.StepDuration.Enabled
         || FlowXMetrics.CapabilityDuration.Enabled
-        || FlowXMetrics.CapabilityUnhandled.Enabled;
+        || FlowXMetrics.CapabilityUnhandled.Enabled
+        || FlowXLog.IsEnabled;
 
     /// <summary>
     /// Wraps <paramref name="inner"/> so its steps are observed, or returns it unchanged when
@@ -140,6 +141,9 @@ public sealed class StepTelemetry : IStepDispatcher
             Fail(span, exception);
             Record(startedAt, stepIndex, step, identity, "Failure");
 
+            Log(stepIndex, step, identity, "Failure", "capability.unhandled",
+                nameof(FlowX.ErrorCategory.Internal), ctx);
+
             throw;
         }
 
@@ -153,6 +157,15 @@ public sealed class StepTelemetry : IStepDispatcher
         }
 
         Record(startedAt, stepIndex, step, identity, outcomeLabel);
+
+        Log(
+            stepIndex,
+            step,
+            identity,
+            outcomeLabel,
+            outcome.Error?.Code,
+            outcome.Error?.Category.ToString(),
+            ctx);
 
         return outcome;
     }
@@ -183,11 +196,32 @@ public sealed class StepTelemetry : IStepDispatcher
                 span.SetStatus(ActivityStatusCode.Error, error.Message);
             }
 
+            FlowXLog.WriteStepCompensated(
+                _plan.Flow.Id,
+                stepIndex,
+                identity,
+                _instanceId,
+                _tenantId,
+                outcome.IsSuccess ? "Success" : "Failure",
+                outcome.Error?.Code,
+                outcome.Error?.Category.ToString());
+
             return outcome;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             Fail(span, exception);
+
+            FlowXLog.WriteStepCompensated(
+                _plan.Flow.Id,
+                stepIndex,
+                identity,
+                _instanceId,
+                _tenantId,
+                "Failure",
+                "capability.unhandled",
+                nameof(FlowX.ErrorCategory.Internal));
+
             throw;
         }
     }
@@ -294,6 +328,64 @@ public sealed class StepTelemetry : IStepDispatcher
         }
 
         return span;
+    }
+
+    /// <summary>
+    /// Writes the step's record for
+    /// <a href="../../../docs/12-Observability.md">12-Observability</a> §4.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The payload is obtained inside the guard, and that is budget B6 rather than
+    /// tidiness.</strong> <c>DescribeStep</c> is generated code that builds a
+    /// <see cref="JournalPayload"/> — an allocation, and on a journaled flow the same work the
+    /// journal is about to do. Calling it before <see cref="FlowXLog.IsEnabledFor"/> would pay
+    /// for it on every step of every unobserved flow and then throw the result away, which is
+    /// the exact shape <c>TelemetryCostTests</c> caught on an interpolated span name.
+    /// </para>
+    /// <para>
+    /// <strong>What the record carries is the payload, never the value.</strong> The step's
+    /// result is a contract instance which may declare a <c>[Sensitive]</c> member, and this is
+    /// the seam where a log could have leaked one. It cannot: <c>DescribeStep</c> hands back the
+    /// same <see cref="JournalPayload"/> the journal is given, already carrying the flow's
+    /// <c>SensitiveMembers</c>, and that type has no accessor for the object graph — its only
+    /// exit is <see cref="JournalPayload.ToJson"/>, which redacts. So the subscriber receives
+    /// what a store receives, and the redaction is structural rather than a rule somebody has to
+    /// remember at this call site.
+    /// </para>
+    /// <para>
+    /// <strong>Read from the dispatcher rather than the engine's state bag</strong>, because the
+    /// engine holds a <c>Dictionary&lt;Type, object&gt;</c> and can name no
+    /// <c>JsonTypeInfo&lt;T&gt;</c> for anything in it. That is the same division of labour
+    /// <see cref="StepJournalEntry"/> exists for, and reusing it means the logged payload and the
+    /// journaled payload cannot drift apart.
+    /// </para>
+    /// </remarks>
+    private void Log(
+        int stepIndex,
+        StepNode step,
+        string identity,
+        string outcome,
+        string? errorCode,
+        string? errorCategory,
+        FlowContext ctx)
+    {
+        if (!FlowXLog.IsEnabledFor(FlowXLog.StepCompleted))
+        {
+            return;
+        }
+
+        FlowXLog.WriteStepCompleted(
+            _plan.Flow.Id,
+            stepIndex,
+            identity,
+            step.Capability?.Version,
+            _instanceId,
+            _tenantId,
+            outcome,
+            errorCode,
+            errorCategory,
+            _inner.DescribeStep(stepIndex, ctx).Result);
     }
 
     private void Record(long startedAt, int stepIndex, StepNode step, string identity, string outcome)

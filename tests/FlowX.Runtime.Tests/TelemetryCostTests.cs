@@ -207,6 +207,123 @@ public sealed class TelemetryCostTests
     }
 
     /// <summary>
+    /// Every §4 log event reports itself disabled, and writing one to nobody allocates nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>B6 for the third pillar, and it is the half most likely to have been lost.</strong>
+    /// <see cref="DiagnosticSource.Write"/> is cheap with no subscriber — but its
+    /// <em>payload</em> is a <see cref="FlowLogRecord"/>, which is an allocation, and C#
+    /// evaluates an argument before the call that would have discarded it. A helper written as
+    /// <c>Write(name, new FlowLogRecord(…))</c> would allocate a record per step of every
+    /// unobserved flow and hand it to a listener list that is empty, while correctly reporting
+    /// <c>IsEnabled = false</c> to anyone who asked.
+    /// </para>
+    /// <para>
+    /// <strong>That is the same defect this file already caught once.</strong>
+    /// <c>StepTelemetry.StartSpan</c> was written <c>StartActivity($"step {i} {id}")</c>, which
+    /// measured 68 B per step for a string that was thrown away, because the interpolation ran
+    /// before the call returned null. The shape is identical here and one layer more expensive,
+    /// so it is measured rather than argued.
+    /// </para>
+    /// <para>
+    /// Measured through the emit helpers rather than through a flow, for the reason
+    /// <see cref="APolicyReportingADecisionToNobodyAllocatesNothing"/> gives: a measurement
+    /// around a whole execution cannot tell a discarded record from anything else the path
+    /// allocates, and would go green the day the logs started costing something.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryLogEventReportsItselfDisabledAndWritingOneAllocatesNothing()
+    {
+        RequireOptimisedBuild();
+
+        FlowXLog.IsEnabled.ShouldBeFalse(
+            "Another test in this assembly has left a log subscriber attached, which makes " +
+            "every measurement here meaningless.");
+
+        FlowXLog.IsEnabledFor(FlowXLog.FlowStarted).ShouldBeFalse();
+        FlowXLog.IsEnabledFor(FlowXLog.FlowCompleted).ShouldBeFalse();
+        FlowXLog.IsEnabledFor(FlowXLog.StepCompleted).ShouldBeFalse();
+        FlowXLog.IsEnabledFor(FlowXLog.StepCompensated).ShouldBeFalse();
+        FlowXLog.IsEnabledFor(FlowXLog.JournalCalled).ShouldBeFalse();
+        FlowXLog.IsEnabledFor(FlowXLog.JournalRefused).ShouldBeFalse();
+
+        var instanceId = Guid.NewGuid();
+
+        Measure(() =>
+        {
+            FlowXLog.WriteFlowStarted("order.place", "1.2.0", "Durable", "acme", "corr-1");
+
+            FlowXLog.WriteFlowCompleted(
+                "order.place", "1.2.0", "Durable", instanceId, "acme", "corr-1",
+                "Failure", "payment.declined", "Conflict");
+
+            FlowXLog.WriteStepCompleted(
+                "order.place", 2, "payment.capture", "2.1.0", null, "acme",
+                "Failure", "payment.declined", "Conflict", JournalPayload.Empty);
+
+            FlowXLog.WriteStepCompensated(
+                "order.place", 2, "payment.refund", null, "acme", "Success", null, null);
+
+            FlowXLog.WriteJournalCall("CommitAsync", instanceId, null, null);
+            FlowXLog.WriteJournalCall("CommitAsync", instanceId, "journal.fenced", "Conflict");
+        })
+        .ShouldBe(
+            0,
+            "B6: with no subscriber, a log event must cost exactly what it cost before logs " +
+            "existed. A record built before the IsEnabled check — or a Guid formatted into an " +
+            "instance id before it — allocates on every step of every unobserved flow and is " +
+            "then dropped, which is the defect this file caught on an interpolated span name.");
+    }
+
+    /// <summary>
+    /// A log subscriber that goes away leaves nothing behind on the step path.
+    /// </summary>
+    /// <remarks>
+    /// The stronger half, and the mirror of
+    /// <see cref="AnInstalledDecoratorStillCostsNothingWithNoListener"/> for §4. A subscriber is
+    /// attached, the decorator is built while it is — so <see cref="StepTelemetry.Wrap"/> really
+    /// does wrap, on the strength of the log listener alone and with no span or metric listener
+    /// anywhere — and the subscription is then disposed and four steps are measured. What is
+    /// left is the cost of being an observed-then-unobserved process, which is what a host that
+    /// reconfigures logging at run time actually is.
+    /// </remarks>
+    [Fact]
+    public void ALogSubscriberThatGoesAwayCostsNothingPerStep()
+    {
+        RequireOptimisedBuild();
+
+        var plan = Plans.FourStepSaga();
+        var inner = new NullDispatcher();
+
+        IStepDispatcher decorated;
+
+        using (FlowXLog.Subscribe(static (_, _) => { }))
+        {
+            StepTelemetry.IsEnabled.ShouldBeTrue(
+                "a log subscriber alone must be reason enough to instrument the step boundary; " +
+                "otherwise a host that bridges logs and exports nothing else gets no records.");
+
+            decorated = StepTelemetry.Wrap(plan, Plans.Invocation, inner, Guid.NewGuid());
+
+            decorated.ShouldNotBeSameAs(
+                inner, "with a subscriber attached the dispatcher must be wrapped.");
+        }
+
+        StepTelemetry.IsEnabled.ShouldBeFalse("the subscription was disposed.");
+
+        var engine = new FlowEngine(new UnixEpochClock());
+
+        Measure(() => Complete(engine.ExecuteAsync(plan, decorated, Plans.Invocation)))
+            .ShouldBe(
+                0,
+                "B6: four steps dispatched through an installed decorator with no log " +
+                "subscriber must allocate exactly nothing — no record, no formatted instance " +
+                "id, and no payload described for a listener that is not there.");
+    }
+
+    /// <summary>
     /// A decorator that <em>is</em> installed still costs nothing per step once the listener
     /// goes away.
     /// </summary>
