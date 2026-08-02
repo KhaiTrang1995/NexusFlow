@@ -178,6 +178,18 @@ public static class FlowXServiceCollectionExtensions
                 ResolveChangeScan(provider),
                 provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
 
+        // Registered whether or not anything is put in it, for FlowScheduleCatalog's reason.
+        services.TryAddSingleton<FlowStreamCatalog>();
+
+        // A sixth loop. A stream pass holds a bounded channel and a set of open windows for the
+        // life of the process, so it cannot share an interval with a sweep that is stateless
+        // between passes — and its interval is a read cadence rather than a latency, because what
+        // closes a window is a record's event time and not a clock (ADR-0056).
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowStreamService>(
+            static provider => new FlowStreamService(
+                ResolveStreamScan(provider),
+                provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
+
         services.TryAddSingleton<FlowXHealthCheck>();
 
         // Registering the type is not the same as registering the check. Before this,
@@ -366,6 +378,99 @@ public static class FlowXServiceCollectionExtensions
             feed,
             durability,
             provider.GetRequiredService<IOptions<FlowXOptions>>().Value);
+    }
+
+    /// <summary>
+    /// The stream pass, or null when this host is missing one of the four things it needs.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The side output is required, and that is the point.</strong> docs/09 §9 promises
+    /// that a record later than the declared lateness is "routed to a side output rather than
+    /// dropped silently"; a host with no <see cref="IStreamSideOutput"/> has nowhere to route
+    /// one, and defaulting to a sink that discards would be the silent drop with a type name on
+    /// it. So the pass does not exist, and <c>FlowStreamCatalog.Add</c> is where an application
+    /// that meant to read a stream finds out it registered no sink.
+    /// </remarks>
+    private static FlowStreamScan? ResolveStreamScan(IServiceProvider provider)
+    {
+        if (provider.GetService<IStreamSource>() is not { } source ||
+            provider.GetService<IStreamCheckpointStore>() is not { } checkpoints ||
+            provider.GetService<IStreamSideOutput>() is not { } sideOutput ||
+            ResolveDurability(provider) is not { } durability)
+        {
+            return null;
+        }
+
+        return new FlowStreamScan(
+            provider.GetRequiredService<FlowHost>(),
+            provider.GetRequiredService<FlowStreamCatalog>(),
+            source,
+            checkpoints,
+            sideOutput,
+            durability,
+            provider.GetRequiredService<IOptions<FlowXOptions>>().Value);
+    }
+}
+
+/// <summary>
+/// What generated stream-subscription registration code calls, and the only thing it knows about
+/// this assembly.
+/// </summary>
+/// <remarks>
+/// <see cref="FlowChangeSubscriptionRegistration"/>'s shape and reasons. It takes the window
+/// declaration as the strings the attribute carried, because the generated call site is C# the
+/// compiler writes from attribute data, and attribute data is strings.
+/// </remarks>
+public static class FlowStreamSubscriptionRegistration
+{
+    /// <summary>Registers one declared stream subscription on this node.</summary>
+    /// <param name="services">The built container, which is where the dispatcher comes from.</param>
+    /// <param name="plan">The compiled flow.</param>
+    /// <param name="dispatcher">Resolves the flow's generated dispatcher.</param>
+    /// <param name="source">The stream, exactly as the manifest published it.</param>
+    /// <param name="window">The declared window, e.g. <c>tumbling:1m</c>.</param>
+    /// <param name="lateness">The declared lateness, an ISO-8601 duration.</param>
+    /// <param name="checkpoint">The declared checkpoint interval, an ISO-8601 duration.</param>
+    /// <param name="parallelism">How many closed windows may run at once.</param>
+    /// <returns>The same provider, so registrations chain.</returns>
+    /// <exception cref="ArgumentException">
+    /// The flow does not declare <c>Streaming</c>, or the window is a shape the engine does not
+    /// implement. Both are startup failures on purpose — see <see cref="FlowStreamCatalog.Add"/>.
+    /// </exception>
+    public static IServiceProvider Add(
+        IServiceProvider services,
+        ExecutionPlan plan,
+        Func<IServiceProvider, IStepDispatcher> dispatcher,
+        string source,
+        string window,
+        string lateness,
+        string checkpoint,
+        int parallelism)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(dispatcher);
+
+        services.GetRequiredService<FlowStreamCatalog>().Add(
+            // The group is empty because [StreamTrigger] declares none, and it needs none: a
+            // subscription is already keyed on the flow's id and version, so two flows reading one
+            // stream keep two checkpoints and one flow cannot declare the same source twice. The
+            // term is kept in StreamSubscription so that the identity derivation has the same four
+            // terms as every other trigger's, rather than a special case one node could get wrong.
+            new StreamSubscription(plan.Flow.Id, plan.Flow.Version, source, string.Empty),
+            window,
+            lateness,
+            checkpoint,
+            parallelism,
+            plan,
+            dispatcher(services));
+
+        // A windowed instance is a journaled instance like any other: a node that dies holding
+        // one has abandoned it, and a recovery sweep can only take it over if this node can turn
+        // its (flow_id, flow_version) back into a plan.
+        services.GetRequiredService<FlowCatalog>().Add(plan, dispatcher(services));
+
+        return services;
     }
 }
 

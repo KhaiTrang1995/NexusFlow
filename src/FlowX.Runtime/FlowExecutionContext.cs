@@ -588,7 +588,7 @@ public sealed class FlowExecutionContext : FlowContext
         // The runtime reading ExecutionProfile, in one line. Everything a durable execution
         // costs hangs off this field, and everything an ephemeral one does not pay is the
         // branches that read it being false.
-        _journaled = plan.Flow.Profile == ExecutionProfile.Durable;
+        _journaled = ExecutionProfiles.IsJournaled(plan.Flow.Profile);
         _flowId = plan.Flow.Id;
         _flowVersion = plan.Flow.Version;
         _correlationId = invocation.CorrelationId;

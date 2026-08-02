@@ -529,7 +529,7 @@ public sealed class FlowEngine
     {
         refusal = null;
 
-        if (plan.Flow.Profile != ExecutionProfile.Durable)
+        if (!ExecutionProfiles.IsJournaled(plan.Flow.Profile))
         {
             if (durable is not null)
             {
@@ -3297,7 +3297,7 @@ public sealed class FlowEngine
         // is — as its own instance. A durable child under a parent that has no journal is
         // refused rather than run ephemerally, which is the same refusal the top of the
         // engine makes and for the same reason.
-        var childIsDurable = source.Plan.Flow.Profile == ExecutionProfile.Durable;
+        var childIsDurable = ExecutionProfiles.IsJournaled(source.Plan.Flow.Profile);
 
         if (childIsDurable && !cursor.IsJournaled)
         {

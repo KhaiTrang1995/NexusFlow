@@ -934,7 +934,7 @@ public sealed class FlowHost
     /// profile is read, and not in two places that can disagree about it.
     /// </remarks>
     private bool IsJournaled(ExecutionPlan plan) =>
-        _durability is not null && plan.Flow.Profile == ExecutionProfile.Durable;
+        _durability is not null && ExecutionProfiles.IsJournaled(plan.Flow.Profile);
 
     /// <summary>
     /// Wins the instance and opens it: acquire, then start, in that order and no other.
