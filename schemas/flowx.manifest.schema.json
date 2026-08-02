@@ -313,7 +313,7 @@
           ]
         },
         "signal": {
-          "description": "AwaitSignal steps only: the identity of the signal this step waits for — the name a transport addresses a delivery to, and the string StepNode.SignalType carries. Structure, not a value: it is the flow's inbound address for being continued, exactly as a trigger is its inbound address for being started. Present on every AwaitSignal step; a step whose contract could not be resolved produces no step at all.",
+          "description": "AwaitSignal steps, and Poll steps that declared .OrSignal<T>(): the identity of a signal that ends this step's wait — the name a transport addresses a delivery to, and the string StepNode.SignalType carries. Structure, not a value: it is the flow's inbound address for being continued, exactly as a trigger is its inbound address for being started. Present on every AwaitSignal step; a step whose contract could not be resolved produces no step at all. On a Poll it is absent unless the author declared a second way for the wait to end, which is the difference a reader should see.",
           "$ref": "#/$defs/identity"
         },
         "timeout": {

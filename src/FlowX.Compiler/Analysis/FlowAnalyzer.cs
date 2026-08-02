@@ -443,8 +443,20 @@ public static class FlowAnalyzer
                     // spell the pair `.X(...).OnTimeout(block)`, and consuming both here is
                     // what stops the escalation being modelled as steps that run
                     // unconditionally after the poll.
+                    //
+                    // `.OrSignal<T>()` may sit between them, because a poll's second ending is
+                    // declared before its escalation is. It is a modifier on this one wait
+                    // rather than a step, so it produces no index and the `OnTimeout` search
+                    // starts past it — matching the wrong link would attach an escalation to a
+                    // poll the author wrote it for and lay its block out twice over.
                     i += AddPollStep(
-                        link, NextOnTimeout(links, i), semanticModel, diagnostics, steps, ref nextIndex);
+                        link,
+                        NextOrSignal(links, i),
+                        NextOnTimeout(links, NextOrSignal(links, i) is null ? i : i + 1),
+                        semanticModel,
+                        diagnostics,
+                        steps,
+                        ref nextIndex);
                     break;
 
                 case "Fail":
@@ -614,6 +626,19 @@ public static class FlowAnalyzer
     /// </remarks>
     private static ChainLink? NextOnTimeout(IReadOnlyList<ChainLink> links, int index) =>
         index + 1 < links.Count && links[index + 1].MethodName == "OnTimeout"
+            ? links[index + 1]
+            : null;
+
+    /// <summary>The <c>.OrSignal&lt;T&gt;()</c> immediately following the link at <paramref name="index"/>, if any.</summary>
+    /// <remarks>
+    /// Immediately, for <see cref="NextOnTimeout"/>'s reason and more strictly: <c>OrSignal</c>
+    /// belongs to <c>IPollBuilder</c>, which only a <c>PollUntil</c> returns and which returns
+    /// <c>IAwaitBuilder</c> in turn — so a second one on the same poll does not compile, and a
+    /// call anywhere else does not either. What this stops is a flow with two polls in it
+    /// attaching one poll's signal to the other.
+    /// </remarks>
+    private static ChainLink? NextOrSignal(IReadOnlyList<ChainLink> links, int index) =>
+        index + 1 < links.Count && links[index + 1].MethodName == "OrSignal"
             ? links[index + 1]
             : null;
 
@@ -1769,13 +1794,14 @@ public static class FlowAnalyzer
     /// </remarks>
     private static int AddPollStep(
         ChainLink link,
+        ChainLink? orSignal,
         ChainLink? onTimeout,
         SemanticModel semanticModel,
         List<Diagnostic> diagnostics,
         List<StepModel> steps,
         ref int nextIndex)
     {
-        var consumed = onTimeout is null ? 0 : 1;
+        var consumed = (orSignal is null ? 0 : 1) + (onTimeout is null ? 0 : 1);
         var pollIndex = nextIndex;
         var attempt = ReadCapabilityStep(link, semanticModel, diagnostics, pollIndex + 1);
 
@@ -1819,6 +1845,15 @@ public static class FlowAnalyzer
                 budget));
         }
 
+        // The wait's second ending. It spends no index — it is a modifier on this node, not a
+        // step — and an unresolved contract produces no signal at all, for the reason an
+        // unreadable trigger produces no endpoint: the identity the engine takes a delivery by
+        // and the type it seeds the bag under both come from the symbol, and half of a wait's
+        // ending is worse than none.
+        var signal = orSignal is { TypeArguments.Count: > 0 }
+            ? ResolveType(orSignal.TypeArguments[0], semanticModel)
+            : null;
+
         // Two indices are spent before the block: the poll node and its attempt.
         nextIndex = pollIndex + 2;
 
@@ -1847,7 +1882,10 @@ public static class FlowAnalyzer
             // number — MaxDegreeOfParallelism's stance, on the same kind of number.
             budget,
 
-            block));
+            block,
+
+            signal is null ? null : ToEventIdentity(signal.Name),
+            signal is null ? null : Display(signal)));
 
         return consumed;
     }

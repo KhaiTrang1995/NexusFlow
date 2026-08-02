@@ -507,6 +507,13 @@ public static class ManifestWriter
         // polls, what it polls, and how long it will keep trying.
         if (step.Kind == StepKindModel.Poll)
         {
+            // And `signal` when the poll declared an `.OrSignal<T>()`, on the same grounds this
+            // field is published for a suspension point: it is the identity a transport
+            // addresses a delivery to, so it is how the flow is reached from outside rather than
+            // anything an instance carried — which is also what makes it comparable, and puts a
+            // poll's second ending under `flowx diff`'s existing wait rules with no rule of its
+            // own. A poll with one ending publishes no field, which is the honest difference.
+            WriteOptional(writer, "signal", step.SignalType);
             WriteOptional(writer, "timeout", step.PollTimeoutIso);
             return;
         }

@@ -406,7 +406,8 @@ public static class FlowEmitter
         foreach (var step in flow.AllSteps
             .Where(s =>
                 (s.Kind == StepKindModel.Capability && !string.IsNullOrEmpty(s.CapabilityOutput)) ||
-                (s.Kind == StepKindModel.AwaitSignal && !string.IsNullOrEmpty(s.SignalContractTypeName)))
+                (s.Kind is StepKindModel.AwaitSignal or StepKindModel.Poll &&
+                    !string.IsNullOrEmpty(s.SignalContractTypeName)))
             .OrderBy(s => s.Index))
         {
             // A suspension point produces a value in exactly the sense a capability step
@@ -414,6 +415,12 @@ public static class FlowEmitter
             // the step, and the commit that records the step carries the snapshot. So the
             // signal's contract belongs in the state bag's membership, and the generated
             // DescribeStep and RestoreState carry it with no special case of their own.
+            //
+            // A poll's `.OrSignal<T>()` is the same fact reached the other way: that ending
+            // commits the poll node's own row, and the snapshot on it is the only thing that
+            // carries the delivered payload past the next node death. Without the contract here
+            // the row would be written with the payload silently missing from the bag, and the
+            // steps after the poll would bind a value nothing restored.
             Add(
                 step.CapabilityOutput ?? step.SignalContractTypeName!,
                 isFlowInput: false,
@@ -1762,7 +1769,15 @@ public static class FlowEmitter
         }
 
         return "StepNode.ForPoll(" + step.Index + ", " + interval + ", " + timeout +
-               (step.Then.Count == 0 ? string.Empty : ", satisfiedTarget: " + step.JoinIndex) + ")";
+               (step.Then.Count == 0 ? string.Empty : ", satisfiedTarget: " + step.JoinIndex) +
+
+               // Named, so a poll with a signal and no escalation does not have to write a null
+               // for a target it does not have. Written only when the author declared an
+               // `.OrSignal<T>()`: its absence is what tells the engine the predicate and the
+               // budget are the only two endings, so it never asks the invocation for a signal.
+               (step.SignalType is { Length: > 0 } signal
+                   ? ", signalType: " + Quote(signal)
+                   : string.Empty) + ")";
     }
 
     /// <summary>Emits the composition node: which flow, and how it relates to this one.</summary>

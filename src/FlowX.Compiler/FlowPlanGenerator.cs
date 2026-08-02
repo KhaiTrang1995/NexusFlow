@@ -1084,7 +1084,11 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
 
         foreach (var step in flow.AllSteps)
         {
-            if (step.Kind == StepKindModel.AwaitSignal &&
+            // A poll's `.OrSignal<T>()` is a wait the flow can be continued at in exactly the
+            // sense a suspension point is — the instance is parked, and a delivery to that
+            // identity ends the wait — so it gets the same route. Distinguishing the two here
+            // would be publishing an address for one kind of parked instance and not the other.
+            if (step.Kind is StepKindModel.AwaitSignal or StepKindModel.Poll &&
                 step.SignalType is { Length: > 0 } signal &&
                 step.SignalContractTypeName is { Length: > 0 } contract &&
                 seen.Add(signal))

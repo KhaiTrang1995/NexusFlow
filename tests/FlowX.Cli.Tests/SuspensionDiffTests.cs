@@ -243,6 +243,67 @@ public sealed class SuspensionDiffTests
         report.HasBreakingChange.ShouldBeFalse();
     }
 
+    // ------------------------------------------------------------ a poll's second ending
+
+    /// <summary>
+    /// A poll that gains an <c>.OrSignal&lt;T&gt;()</c> is reported by the rule that already
+    /// exists, and not by one of its own.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The manifest publishes a poll's second ending in the same <c>signal</c> field a
+    /// suspension point's is published in, because it is the same fact: an identity a transport
+    /// addresses a delivery to, which is how the flow is reached from outside. So
+    /// <c>FLOWX-DIFF-022</c> fires on it unchanged — a poll that starts accepting a webhook has
+    /// a new inbound address, and a caller who never publishes it gets the flow it always had.
+    /// </para>
+    /// <para>
+    /// A second code would have been a second thing to document, gate and explain for a change
+    /// the tool already classifies correctly.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void APollThatGainsASecondEndingIsReportedByTheWaitRules()
+    {
+        var report = Diff(candidate => candidate.Replace(
+            PriceStep,
+            "{ \"id\": 0, \"kind\": \"Poll\", \"timeout\": \"PT4H\", \"signal\": \"quote.returned\", " +
+            "\"branches\": [ [ " + PriceStep + " ] ] }",
+            StringComparison.Ordinal));
+
+        var finding = Fired(report, "FLOWX-DIFF-022");
+
+        finding.Severity.ShouldBe(DiffSeverity.Breaking);
+        finding.Subject.ShouldBe("flow offer.quote@1");
+        finding.Summary.ShouldContain("quote.returned");
+    }
+
+    /// <summary>And a poll that loses one breaks its senders exactly as a wait does.</summary>
+    /// <remarks>
+    /// The quiet break: a delivery to an instance not waiting for that identity is inert, so
+    /// the webhook keeps being accepted, keeps doing nothing, and every document falls back to
+    /// being polled for its whole budget without one line saying so.
+    /// </remarks>
+    [Fact]
+    public void APollThatLosesItsSecondEndingIsBreaking()
+    {
+        var polling = Baseline.Replace(
+            PriceStep,
+            "{ \"id\": 0, \"kind\": \"Poll\", \"timeout\": \"PT4H\", \"signal\": \"quote.returned\", " +
+            "\"branches\": [ [ " + PriceStep + " ] ] }",
+            StringComparison.Ordinal);
+
+        var candidate = polling.Replace(
+            ", \"signal\": \"quote.returned\"", string.Empty, StringComparison.Ordinal);
+
+        candidate.ShouldNotBe(polling, "The edit matched nothing, so this test proves nothing.");
+
+        var report = ManifestDiff.Compare(Parse(polling), Parse(candidate));
+
+        Fired(report, "FLOWX-DIFF-021").Summary.ShouldContain("quote.returned");
+        report.HasBreakingChange.ShouldBeTrue();
+    }
+
     // -------------------------------------------------------------------- plumbing
 
     private static ManifestDocument Parse(string json) =>
