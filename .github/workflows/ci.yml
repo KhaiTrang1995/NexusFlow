@@ -339,13 +339,26 @@ jobs:
           dotnet-version: '10.0.x'   # the flow-graph step below runs the CLI
 
       - name: Mermaid diagrams parse
-        # 70+ diagrams across docs/ and samples/. A diagram that does not render is a
-        # broken document, and GitHub gives no error when one fails silently.
+        # 70+ diagrams. A diagram that does not render is a broken document, and GitHub
+        # gives no error when one fails silently.
+        #
+        # This step used to report the whole truth as one line: "mermaid diagram failed to
+        # parse". The file was passed as `file=` on the annotation, which the web UI shows
+        # against the file and which does NOT appear in the log — so anyone reading the log,
+        # which is what you get from the CLI, an API client or a notification, learned that
+        # one of seventy-odd diagrams somewhere was broken and nothing else. Finding it meant
+        # reinstalling mermaid-cli locally and bisecting by hand. The parser's own message,
+        # which says the line and the token, was being sent to /dev/null.
+        #
+        # So: name the file and the diagram's index in the log body, print the diagram, and
+        # print what mermaid actually said. The stack frames are dropped because they are
+        # puppeteer's, never the document's.
         run: |
           npm install -g @mermaid-js/mermaid-cli
           echo '{"args":["--no-sandbox"]}' > /tmp/pptr.json
           fail=0
           while IFS= read -r file; do
+            rm -f /tmp/block*.mmd
             python3 - "$file" <<'PY' > /tmp/blocks.txt
           import re, sys
           text = open(sys.argv[1]).read()
@@ -353,11 +366,24 @@ jobs:
               open(f'/tmp/block{i}.mmd', 'w').write(m.group(1))
               print(f'/tmp/block{i}.mmd')
           PY
+            n=0
             while IFS= read -r block; do
-              mmdc -i "$block" -o /tmp/out.svg -p /tmp/pptr.json >/dev/null 2>&1 \
-                || { echo "::error file=$file::mermaid diagram failed to parse"; fail=1; }
+              n=$((n + 1))
+              if ! mmdc -i "$block" -o /tmp/out.svg -p /tmp/pptr.json > /tmp/mmdc.log 2>&1; then
+                echo "::error file=$file::mermaid diagram #$n failed to parse"
+                echo "=== $file: diagram #$n does not parse ==="
+                sed 's/^/    /' "$block"
+                echo "--- mermaid said ---"
+                grep -vE '^\s+at ' /tmp/mmdc.log | sed 's/^/    /'
+                echo "==="
+                fail=1
+              fi
             done < /tmp/blocks.txt
-          done < <(find docs samples -name '*.md')
+          # Every tracked markdown file, not `find docs samples`. A diagram in PLAN.md or in
+          # a README outside those two trees renders on the same GitHub page as the rest and
+          # was checked by nothing; `git ls-files` also cannot wander into node_modules or a
+          # bin/ directory the way a bare `find` over the repository would.
+          done < <(git ls-files '*.md')
           exit $fail
 
       - name: Rendered flow graph parses
