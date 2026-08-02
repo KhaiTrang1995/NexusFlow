@@ -107,7 +107,8 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
             FlowXDiagnostics.ScheduledFlowCannotBeFired,
             FlowXDiagnostics.BusFlowCannotBeConsumed,
             FlowXDiagnostics.ChangeFlowCannotBeObserved,
-            FlowXDiagnostics.StreamFlowCannotBeWindowed);
+            FlowXDiagnostics.StreamFlowCannotBeWindowed,
+            FlowXDiagnostics.TriggerInputContractsConflict);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -159,11 +160,97 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
                 type.Name));
         }
 
+        // Reported instead of the four below and never beside them. Each of those tells the
+        // author to declare the input contract its own transport needs, and on a flow carrying
+        // two of them following either message re-raises the other — so the actionable-looking
+        // message has to be the one that names the real fact.
+        if (ReportConflictingTriggerInputs(context, type, attributes))
+        {
+            return;
+        }
+
         ReportUnfireableSchedules(context, type, attributes);
         ReportUnconsumableSubscriptions(context, type, attributes);
         ReportUnobservableChangeSubscriptions(context, type, attributes);
         ReportUnwindowableStreams(context, type, attributes);
     }
+
+    /// <summary>
+    /// Reports FLOWX1048 when this flow's triggers cannot share one input contract.
+    /// </summary>
+    /// <returns><c>true</c> when it reported, which suppresses the four rules it replaces.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Judged on the trigger kinds and never on the flow's declared input.</strong> Two
+    /// triggers demanding different contracts are in conflict whichever of the two the class
+    /// happens to declare — and whether it declares neither. Reading the input as well would make
+    /// the rule silent on exactly the flow whose author has not chosen yet.
+    /// </para>
+    /// <para>
+    /// <strong><c>[HttpTrigger]</c> and <c>[AgentTrigger]</c> are not in the set, and that is not
+    /// an omission.</strong> They bind the flow's own request contract, whatever it is, so they
+    /// conflict with nothing: a <c>Flow&lt;BusMessage, TOut&gt;</c> reachable over HTTP is
+    /// unusual and is a decision its author can defend, not a build error.
+    /// </para>
+    /// </remarks>
+    private static bool ReportConflictingTriggerInputs(
+        SymbolAnalysisContext context, INamedTypeSymbol type, ImmutableArray<AttributeData> attributes)
+    {
+        var demands = attributes
+            .Select(static a => ContractDemandedBy(a.AttributeClass?.ToDisplayString()))
+            .Where(static demand => demand is not null)
+            .Select(static demand => demand!)
+            .Distinct()
+            .OrderBy(static demand => demand, System.StringComparer.Ordinal)
+            .ToArray();
+
+        if (demands.Length < 2)
+        {
+            return false;
+        }
+
+        var reason = string.Join(", ", attributes
+            .Where(static a => ContractDemandedBy(a.AttributeClass?.ToDisplayString()) is not null)
+            .Select(static a =>
+                $"[{a.AttributeClass!.Name.Replace("Attribute", string.Empty)}] needs " +
+                ContractDemandedBy(a.AttributeClass.ToDisplayString()))
+            .Distinct()
+            .OrderBy(static text => text, System.StringComparer.Ordinal));
+
+        foreach (var attribute in attributes)
+        {
+            if (ContractDemandedBy(attribute.AttributeClass?.ToDisplayString()) is null)
+            {
+                continue;
+            }
+
+            context.ReportDiagnostic(Diagnostic.Create(
+                FlowXDiagnostics.TriggerInputContractsConflict,
+                LocationOf(attribute, type, context.CancellationToken),
+                FlowIdOf(type, attributes),
+                reason));
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The input contract a trigger attribute forces on the flow, or <c>null</c> when it forces
+    /// none.
+    /// </summary>
+    /// <remarks>
+    /// The same by-name matching the four rules below use, for
+    /// <see cref="BusTriggerAttributeNames"/>'s reason: a third-party attribute carrying a kind
+    /// but no shape this build knows produces no registration either, and FLOWX1025 is the rule
+    /// that covers it with something the author can act on.
+    /// </remarks>
+    private static string? ContractDemandedBy(string? attributeName) => attributeName switch
+    {
+        CronTriggerAttributeName => ScheduledFireName,
+        ChangeTriggerAttributeName => BusMessageName,
+        StreamTriggerAttributeName => StreamWindowBatchName,
+        _ => System.Array.IndexOf(BusTriggerAttributeNames, attributeName) >= 0 ? BusMessageName : null,
+    };
 
     /// <summary>
     /// Reports FLOWX1042 on each stream trigger the host would have nothing to do with.

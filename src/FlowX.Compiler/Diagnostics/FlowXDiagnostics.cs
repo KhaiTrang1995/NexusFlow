@@ -1317,6 +1317,62 @@ public static class FlowXDiagnostics
         "is a manifest publishing a stream subscription and a host that reads nothing.",
         DiagnosticSeverity.Error);
 
+    /// <summary>
+    /// FLOWX1048: a flow declares two triggers whose input contracts cannot both be satisfied.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This rule exists because the four rules above give unsatisfiable advice when two
+    /// of them apply at once, and none of them can see the other.</strong> A flow carrying
+    /// <c>[BusTrigger]</c> and <c>[CronTrigger]</c> is reported by <c>FLOWX1038</c> if its input
+    /// is <c>BusMessage</c> — "declare it as <c>Flow&lt;ScheduledFire, TOut&gt;</c>" — and by
+    /// <c>FLOWX1039</c> the moment the author does, which says the opposite. Following either
+    /// message alternates between two errors for ever, and the fact neither states is that the
+    /// two triggers cannot be on one class at all.
+    /// </para>
+    /// <para>
+    /// <strong>It is the one place the trigger model's cost is visible, and it is worth naming
+    /// there.</strong> Every other transport concern is an attribute — that is what quality goal
+    /// Q4 buys — but a trigger that carries a body fixes what the body <em>is</em>, and three of
+    /// the five kinds fix it to a different type. Portability therefore holds over the capability
+    /// chain rather than over the flow class, and the repair is to declare one flow per input
+    /// contract and compose the same steps in each
+    /// (<a href="../adr/ADR-0062-transport-portability-is-a-property-of-the-capability-chain.md">ADR-0062</a>).
+    /// </para>
+    /// <para>
+    /// <strong>Reported instead of the four, not beside them.</strong> A flow in this state would
+    /// otherwise carry this message and one of theirs, and theirs is the one that reads as
+    /// actionable — so an author would follow it, and arrive at the other error. Kinds that agree
+    /// on a contract are not in conflict: <c>Bus</c> and <c>Change</c> both take
+    /// <c>BusMessage</c>, and a flow declaring both is exactly the two-subscriber arrangement
+    /// <c>samples/event-driven</c> ships.
+    /// </para>
+    /// <para>
+    /// <strong>An error.</strong> There is no deployment, configuration or later release under
+    /// which a class has two input contracts, and a suppression buys a manifest publishing two
+    /// triggers of which at most one is served.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor TriggerInputContractsConflict = Create(
+        "FLOWX1048",
+        "Triggers on one flow require different input contracts",
+        "Flow '{0}' declares triggers that cannot share an input contract: {1}",
+        "A trigger that carries a body fixes what the flow's input contract is — a schedule can " +
+        "give only its occurrence (FlowX.ScheduledFire), a bus delivery and an outbox change " +
+        "only the message (FlowX.BusMessage), and a closed window only its records " +
+        "(FlowX.StreamWindowBatch) — so two triggers naming different contracts cannot be " +
+        "declared on one class. Reported instead of FLOWX1038, FLOWX1039, FLOWX1041 and " +
+        "FLOWX1042, because each of those tells the author to declare the contract its own " +
+        "transport needs and following any of them re-raises another. Declare one flow per " +
+        "input contract, give each the transport attribute it serves, and compose the same " +
+        "capabilities in each: the transport costs one decoding step and the chain below it is " +
+        "unchanged, which is what quality goal Q4 claims and all this rule narrows. Two " +
+        "triggers that agree on a contract are not in conflict and are not reported. There is " +
+        "no suppression that makes this work — the generator emits a registration for at most " +
+        "one of the declarations, so what a suppression buys is a manifest publishing a trigger " +
+        "no host serves.",
+        DiagnosticSeverity.Error);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1355,7 +1411,8 @@ public static class FlowXDiagnostics
         ScheduledFlowCannotBeFired,
         BusFlowCannotBeConsumed,
         ChangeFlowCannotBeObserved,
-        StreamFlowCannotBeWindowed);
+        StreamFlowCannotBeWindowed,
+        TriggerInputContractsConflict);
 
     private static DiagnosticDescriptor Create(
         string id,
