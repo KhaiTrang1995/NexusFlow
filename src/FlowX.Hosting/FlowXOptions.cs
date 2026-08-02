@@ -249,6 +249,55 @@ public sealed class FlowXOptions
     /// </remarks>
     public int ChangeReadBatchSize { get; set; } = 16;
 
+    /// <summary>How often a node runs a pass over its stream subscriptions.</summary>
+    /// <remarks>
+    /// A pass reads until the source is caught up or <see cref="StreamReadBudget"/> is spent, so
+    /// on a busy stream this is the gap between passes rather than the latency of a record. It is
+    /// not the latency of a <em>window</em>: a window closes when the watermark reaches its upper
+    /// bound, and the watermark only moves when a record with a later event time arrives
+    /// (<c>docs/adr/ADR-0056-the-watermark-is-observed-never-wall-clock.md</c>). No setting here
+    /// closes a window that the data has not closed.
+    /// </remarks>
+    public TimeSpan StreamScanInterval { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// How many records may sit between the source and the windowing loop.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the backpressure bound</strong>, and it is enforced by not reading rather
+    /// than by blocking on a full buffer: <c>FlowStreamScan</c> computes the room left and issues
+    /// no read when there is none, so a slow flow leaves the backlog in the source
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/06-Execution-Engine.md">06 §10</a>).
+    /// <c>StreamBackpressureTests</c> is what holds it to that, by counting the records the source
+    /// was asked for while a deliberately slow consumer ran.
+    /// </para>
+    /// <para>
+    /// Raising it buys throughput on a bursty source and costs exactly this many records of
+    /// resident memory. It is not a batch size: a pass reads many times.
+    /// </para>
+    /// </remarks>
+    public int StreamChannelCapacity { get; set; } = 256;
+
+    /// <summary>
+    /// How many records one subscription's open windows may hold at once.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The second half of the memory bound, and a refusal rather than a knob.</strong> A
+    /// window is held until the watermark closes it, so a wide window over a fast stream is the
+    /// one place this engine could grow without limit. Exceeding this stops the subscription with
+    /// <c>stream.window_overflow</c>; it never evicts, because a window emitted without some of
+    /// its records is an aggregate that is quietly wrong.
+    /// </remarks>
+    public int StreamMaxResidentRecords { get; set; } = 10_000;
+
+    /// <summary>How many records one pass reads from one subscription before yielding.</summary>
+    /// <remarks>
+    /// Bounds how long one node holds a subscription lease, which is what lets another node take
+    /// over a stream that is permanently behind. What is not read this pass is read on the next.
+    /// </remarks>
+    public int StreamReadBudget { get; set; } = 4096;
+
     /// <summary>
     /// How far apart this deployment keeps its tenants' data.
     /// </summary>
@@ -496,6 +545,38 @@ internal sealed class FlowXOptionsValidator : IValidateOptions<FlowXOptions>
                 $"{nameof(FlowXOptions.ChangeReadBatchSize)} must be greater than zero; it is " +
                 $"{options.ChangeReadBatchSize}. Zero is not 'change subscriptions disabled' — " +
                 "register no change subscription for that.");
+        }
+
+        if (options.StreamScanInterval <= TimeSpan.Zero)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.StreamScanInterval)} must be positive; it is " +
+                $"{options.StreamScanInterval}. A zero interval is a poll loop with no pause in it.");
+        }
+
+        if (options.StreamChannelCapacity <= 0)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.StreamChannelCapacity)} must be greater than zero; it is " +
+                $"{options.StreamChannelCapacity}. Zero is not 'unbounded' and it is not " +
+                "'disabled' — it is a channel nothing can be written to, and the whole of this " +
+                "engine's memory bound is that this number exists.");
+        }
+
+        if (options.StreamMaxResidentRecords <= 0)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.StreamMaxResidentRecords)} must be greater than zero; it " +
+                $"is {options.StreamMaxResidentRecords}. A window holds at least one record or " +
+                "it is never opened.");
+        }
+
+        if (options.StreamReadBudget <= 0)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.StreamReadBudget)} must be greater than zero; it is " +
+                $"{options.StreamReadBudget}. Zero is not 'stream subscriptions disabled' — " +
+                "register no stream subscription for that.");
         }
 
         if (options.MaxConcurrentRecoveries <= 0)

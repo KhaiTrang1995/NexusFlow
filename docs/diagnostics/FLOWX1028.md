@@ -1,10 +1,26 @@
 # FLOWX1028 — Execution profile is declared but not honoured by the runtime
 
 > **Severity:** Warning · **Category:** FlowX · **Since:** 0.1.0
-> **Applies to:** `Profile = ExecutionProfile.Streaming` only.
-> **Scheduled for deletion:** when P7 lands the stream engine — see
-> [When this rule is deleted](#when-this-rule-is-deleted). This is scaffolding for a
-> phase that has not happened, not a rule about your code.
+> **Applies to:** `Profile = ExecutionProfile.Streaming` on a flow carrying **no**
+> `[StreamTrigger]`. *It applied to every `Streaming` flow until 2026-08-02, when P7 built
+> the engine.*
+> **Scheduled for deletion:** see [When this rule is deleted](#when-this-rule-is-deleted).
+
+> [!NOTE]
+> **P7 landed, and this rule narrowed a second time rather than being deleted.** A flow that
+> declares `Streaming` **and** a `[StreamTrigger]` is bound: `FlowStreamScan` reads the
+> source under a bounded channel, windows it on event time, starts one journaled instance per
+> closed window through the same `FlowEngine.ExecuteAsync` an HTTP request reaches, and
+> checkpoints the prefix it has finished with
+> ([ADR-0055](../adr/ADR-0055-a-window-names-the-instance-it-starts.md),
+> [ADR-0056](../adr/ADR-0056-the-watermark-is-observed-never-wall-clock.md)). Warning about
+> that would now be false.
+>
+> A flow that declares the profile and **no** stream trigger gets none of it: there is no
+> source to checkpoint, no watermark and no window, and its instances are journaled per
+> invocation like a `Durable` flow's while the manifest says `Streaming`. That is the same
+> silence this rule was written to close, and it is what is left of it. The declarations that
+> *do* bind, and the three ways they can fail to, are [FLOWX1042](FLOWX1042.md)'s.
 
 > [!NOTE]
 > **This rule used to cover `Durable`, and no longer does.** WP-52 made `FlowX.Runtime`
@@ -19,21 +35,21 @@
 
 ## What it means
 
-The flow declares `Profile = ExecutionProfile.Streaming`, and **there is no stream
-engine.** The flow runs on the ephemeral one. Concretely, and in the terms
+The flow declares `Profile = ExecutionProfile.Streaming` and **nothing starts it from a
+stream.** Concretely, and in the terms
 [06 §4](../06-Execution-Engine.md#4-execution-profiles--the-central-trade-off)
 uses to sell the third column:
 
-| The `Streaming` column promises | What actually happens today |
+| The `Streaming` column promises | What a flow with no `[StreamTrigger]` gets |
 |---|---|
-| checkpointed offsets | nothing is checkpointed |
+| checkpointed offsets | no source, so nothing is checkpointed |
 | windowing and watermarks | there is no window; each invocation is one flow |
 | backpressure | the caller's own concurrency is the only limit |
 | continuous ingestion | the flow runs once per trigger, like any other |
 
-What the declaration *does* reach is a validation in `ExecutionPlan` and the
-`profile` field of `flowx.manifest.json`. That is the whole of it: a fact in a
-published contract, and no behaviour.
+What the declaration *does* reach is a validation in `ExecutionPlan`, the `profile` field of
+`flowx.manifest.json`, and a journal — the profile is journaled since P7, so the flow pays a
+durable flow's cost per invocation and buys none of the column above.
 
 **Why that is worth stopping a build.** An author who sets `Streaming` on an
 ingestion pipeline has made a deliberate, reviewed, expensive-looking decision,
@@ -77,8 +93,14 @@ visible in the code, the manifest and the diagram is how P7 will find the flows 
 has to make work. Erasing it to buy back a build is the one repair this page argues
 against.
 
-There is no fix in this release, in the same sense as
-[FLOWX1024](FLOWX1024.md): the feature it waits on does not exist. Your options:
+**The fix, since P7, is to bind the flow to a stream** — add a `[StreamTrigger]` and declare
+`Flow<StreamWindowBatch, TOut>`, at which point everything the third column promises is real and
+this rule is silent. [FLOWX1042](FLOWX1042.md) reports a binding the engine cannot serve.
+
+If the flow is not a windowed aggregation — if it has no source of its own, or a shape this
+engine does not implement ([ADR-0055](../adr/ADR-0055-a-window-names-the-instance-it-starts.md)
+refuses sliding, session and global windows) — then the options below are the ones that remain,
+and they are what this page said before the engine existed:
 
 - **Confirm the flow is correct as a per-message execution, and record that.** This
   is the honest default and it is real work, not a formality. The flow has to be
@@ -194,7 +216,8 @@ noise, and noise is what teaches people to suppress a catalogue.
 | Event | Action | Status |
 |---|---|---|
 | [P2](../20-Roadmap.md#3-increment-detail) lands the journal, leases and resumption, and the engine reads `ExecutionProfile` | Narrow the rule to `Streaming` | **Done — WP-52.** The `Durable` half of the analyzer, the descriptor, the tests, the `AnalyzerReleases` row and this page went with it, and `ExecutionProfileHonestyTests` was deleted rather than skipped |
-| [P7](../20-Roadmap.md#3-increment-detail) lands the stream engine | Delete `FLOWX1028`, `ExecutionProfileAnalyzer`, this page and the release-tracking row | Outstanding |
+| [P7](../20-Roadmap.md#3-increment-detail) lands the stream engine | Delete `FLOWX1028`, `ExecutionProfileAnalyzer`, this page and the release-tracking row | **Narrowed instead — 2026-08-02.** Deleting would have handed the `Streaming`-with-no-trigger case the silence the rule exists to close, which is the argument that narrowed it the first time. The analyzer now returns early for a flow carrying `[StreamTrigger]`, and `AStreamBoundFlowIsNoLongerToldItsProfileIsUnhonoured` asserts both halves |
+| A flow may declare `Streaming` without meaning "a stream starts this" — because the profile stops being the thing a stream trigger implies | Delete all of the above | Outstanding, and unlikely: the two are the same declaration made twice, and the honest end of this rule is `Streaming` becoming unspellable without a trigger |
 
 **The remaining row has no executable reminder, and that is worth saying plainly.**
 The `Durable` half had one: `RuntimeDoesNotReadTheExecutionProfile` asserted that

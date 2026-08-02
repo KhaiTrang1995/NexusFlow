@@ -3,6 +3,15 @@ using StackExchange.Redis;
 
 namespace FlowX.Redis;
 
+// StackExchange.Redis and FlowX both have a StreamPosition, and both are in scope here. The
+// driver's is the one this file means — the `0-0` / `$` sentinels an XREADGROUP starts from —
+// while FlowX's is the opaque cursor a stream subscription checkpoints (see RedisStreamSource).
+// Aliased rather than renaming either: the driver's name is not ours to change, and FlowX's
+// matches ChangePosition, which is the shape it is a sibling of. Inside the namespace rather
+// than above it, because a compilation-unit alias loses to a member of the enclosing namespace
+// and FlowX.StreamPosition is one.
+using StreamPosition = StackExchange.Redis.StreamPosition;
+
 /// <summary>
 /// Consumes the streams <see cref="RedisStreamEventPublisher"/> writes, one consumer group per
 /// subscription, one partition per stream.

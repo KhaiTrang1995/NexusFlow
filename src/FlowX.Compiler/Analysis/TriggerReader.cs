@@ -232,6 +232,70 @@ public static class TriggerReader
     }
 
     /// <summary>
+    /// The part of each <c>[StreamTrigger]</c> the manifest does not publish.
+    /// </summary>
+    /// <param name="flow">The flow's type symbol, or null.</param>
+    /// <returns>One declaration per stream trigger, in declaration order.</returns>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ReadSchedules"/>'s arrangement and its reason: the window, the lateness, the
+    /// checkpoint interval and the parallelism are what this release's runtime reads, and none of
+    /// them is address or admission, so they travel beside the <see cref="TriggerModel"/> rather
+    /// than on it (ADR-0034's rule, one transport over).
+    /// </para>
+    /// <para>
+    /// <strong>Every value is carried verbatim, including one the engine will refuse.</strong>
+    /// <c>Window = "session:5m"</c> is read into a declaration here and reported by
+    /// <c>FLOWX1042</c>; discarding it at the reader would leave the analyzer nothing to name and
+    /// would make the generated registration silently disagree with the source.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<StreamDeclaration> ReadStreams(INamedTypeSymbol? flow)
+    {
+        if (flow is null)
+        {
+            return System.Array.Empty<StreamDeclaration>();
+        }
+
+        var streams = new List<StreamDeclaration>();
+
+        foreach (var attribute in flow.GetAttributes())
+        {
+            if (attribute.AttributeClass?.ToDisplayString() != "FlowX.StreamTriggerAttribute" ||
+                Positional(attribute, 0) is not { } source)
+            {
+                continue;
+            }
+
+            streams.Add(new StreamDeclaration(
+                source,
+                Named(attribute, "Window") ?? string.Empty,
+
+                // The attribute's own defaults, repeated because an argument that was not written
+                // and one written as its default are the same declaration and must generate the
+                // same registration.
+                Named(attribute, "Lateness") ?? "PT0S",
+                Named(attribute, "Checkpoint") ?? "PT5S",
+                NamedInt(attribute, "Parallelism") ?? 1));
+        }
+
+        return streams;
+    }
+
+    private static int? NamedInt(AttributeData attribute, string name)
+    {
+        foreach (var pair in attribute.NamedArguments)
+        {
+            if (pair.Key == name && pair.Value.Value is int value)
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Maps <c>MissedFirePolicy</c>'s underlying value back to its name.
     /// </summary>
     /// <remarks>

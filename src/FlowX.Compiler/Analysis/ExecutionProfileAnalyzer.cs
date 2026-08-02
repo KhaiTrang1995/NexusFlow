@@ -21,13 +21,13 @@ namespace FlowX.Compiler.Analysis;
 /// is now silent here.
 /// </para>
 /// <para>
-/// <strong><c>Streaming</c> is not, and it is the worse hole of the two.</strong>
-/// <c>06 §4</c> puts it plainly: "<c>Streaming</c> has no engine at all". Deleting this rule
-/// outright when the journal landed would have handed <c>Streaming</c> exactly the silence
-/// <c>Durable</c> had — and it would have to be written a second time in P7 to say so. So it
-/// is narrowed rather than removed, which is what
-/// <a href="../../../docs/diagnostics/FLOWX1028.md">its own deletion table</a> and ADR-0015's
-/// take-down list both call for.
+/// <strong><c>Streaming</c> was not, and P7 narrowed it a second time rather than deleting
+/// it.</strong> A flow declaring the profile <em>and</em> a <c>[StreamTrigger]</c> is bound and
+/// silent here. A flow declaring the profile and no trigger has no source to checkpoint, no
+/// watermark and no window, and is journaled per invocation like a <c>Durable</c> flow while the
+/// manifest says <c>Streaming</c> — so it pays the cost and buys nothing, and deleting the rule
+/// would hand exactly that case the silence <c>Durable</c> was rescued from. The declarations
+/// that do bind are <c>FLOWX1042</c>'s.
 /// </para>
 /// <para>
 /// <strong>Why a diagnostic is the intervention.</strong> The stream engine is a phase of
@@ -56,8 +56,9 @@ namespace FlowX.Compiler.Analysis;
 /// <c>Streaming</c>, not when the generator next runs.
 /// </para>
 /// <para>
-/// <strong>Delete this analyzer when P7 lands the stream engine.</strong> It is scaffolding
-/// for a missing phase, and a rule nobody removes when it stops being true becomes noise.
+/// <strong>Delete this analyzer when a flow may declare <c>Streaming</c> without meaning "a
+/// stream starts this".</strong> It is scaffolding for a gap, and a rule nobody removes when it
+/// stops being true becomes noise.
 /// The reminder that watched the <c>Durable</c> half —
 /// <c>RuntimeDoesNotReadTheExecutionProfile</c> in <c>FlowX.Architecture.Tests</c> — failed
 /// on WP-52 as it was written to, and was deleted with the half it described rather than
@@ -70,6 +71,13 @@ namespace FlowX.Compiler.Analysis;
 public sealed class ExecutionProfileAnalyzer : DiagnosticAnalyzer
 {
     private const string FlowAttributeName = "FlowX.FlowAttribute";
+
+    /// <summary>
+    /// The declaration that makes <c>Streaming</c> mean something, and therefore silences this
+    /// rule.
+    /// </summary>
+    private const string StreamTriggerAttributeName = "FlowX.StreamTriggerAttribute";
+
     private const string ProfileArgument = "Profile";
 
     /// <summary>
@@ -115,6 +123,18 @@ public sealed class ExecutionProfileAnalyzer : DiagnosticAnalyzer
     private static void Analyze(SymbolAnalysisContext context)
     {
         if (context.Symbol is not INamedTypeSymbol type)
+        {
+            return;
+        }
+
+        // P7 built the engine, so `Streaming` is honoured — for a flow a stream actually starts.
+        // A flow that declares the profile and no [StreamTrigger] gets nothing the profile
+        // promises: there is no source to checkpoint, no watermark and no window, and its
+        // instances are journaled per invocation like a Durable flow's while the manifest says
+        // Streaming. That is the same silence this rule was written to close, narrowed to the
+        // one shape of it that survived, and FLOWX1042 covers the declarations that do bind.
+        if (type.GetAttributes().Any(static a =>
+                a.AttributeClass?.ToDisplayString() == StreamTriggerAttributeName))
         {
             return;
         }
