@@ -52,6 +52,7 @@ stays checkable.
 | `BSD-3-Clause` | permissive | Redistribution and use in source and binary forms |
 | `ISC` | permissive | Permission to use, copy, modify, and/or distribute |
 | `PostgreSQL` | permissive | Permission to use, copy, modify, and distribute |
+| `Apache-2.0 OR MPL-2.0` | permissive | — |
 | `MS-DOTNET-LIBRARY` | restricted | MICROSOFT .NET LIBRARY |
 | `SONAR-SOURCE-AVAILABLE-1.0` | restricted | SONAR Source-Available License |
 | `BUSL-1.1` | restricted | Business Source License |
@@ -70,6 +71,14 @@ deliberately. The gate's rule is that an *unclassified* licence is a failure, so
 these rows a GPL package would fail with "nobody has classified GPL-3.0-only" — true, but
 weaker than "ADR-0012 forbids this outright, and no exception exists". A definition that
 only names what is already present is a description, not a definition.
+
+`Apache-2.0 OR MPL-2.0` is a **disjunction**, and that is the whole of why it has its own
+row rather than being split into two. SPDX `OR` means the licensee chooses; this project
+takes the Apache-2.0 half and is bound by nothing in MPL-2.0, so the expression is
+permissive by ADR-0012's test even though one of its two branches is `forbidden` on the
+row above. Only `RabbitMQ.Client` carries it. A **conjunction** — `A AND B` — would be a
+different question and has no row, because it obliges both and the verdict is then the
+worse of the two.
 
 `MS-PL`, `MS-RL` and `CC-BY-SA` are absent because nothing depends on them and they would
 each need a considered verdict rather than a guess. Adding one is the point at which
@@ -142,10 +151,13 @@ Stated here rather than left to be discovered, on the same principle as
    is a decision that has changed between SDK feature bands, and nothing in this repository
    pins one — there is no `global.json`, and CI asks for `10.0.x`. Reading both is what
    stops the answer depending on whose machine asked.
-5. **Dual-licensed packages.** Every row here is a single licence id. A package offering a
-   choice, or an `A OR B` / `A AND B` expression, has no representation in this table yet
-   and would fail as unclassified — which is the safe direction, but it is a gap, not a
-   feature.
+5. **Dual-licensed packages, in one direction only.** A disjunction is representable: the
+   whole expression is one id in §1.1 with the verdict the branch this project takes
+   deserves, which is how `Apache-2.0 OR MPL-2.0` is classified. A **conjunction**
+   (`A AND B`) still has none and would fail as unclassified — the safe direction, and
+   still a gap. What the gate never does either way is decide *which* branch of a
+   disjunction applies; a person did that once, in §1.1's prose, and the gate holds the
+   expression to it verbatim.
 6. **What a licence obliges beyond redistribution.** "Permissive" here means the
    Apache-2.0 redistribution question. Attribution and NOTICE-file obligations
    (ADR-0012's last consequence) are a separate matter and nothing enforces them.
@@ -246,6 +258,7 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `Newtonsoft.Json` | `MIT` | nuspec | — |
 | `Npgsql` | `PostgreSQL` | nuspec | — |
 | `Perfolizer` | `MIT` | nuspec | — |
+| `RabbitMQ.Client` | `Apache-2.0 OR MPL-2.0` | nuspec | — |
 | `RESPite` | `MIT` | nuspec | — |
 | `runtime.linux-x64.Microsoft.DotNet.ILCompiler` | `MIT` | nuspec | — |
 | `Shouldly` | `BSD-3-Clause` | nuspec | — |
@@ -272,6 +285,7 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `System.Runtime.CompilerServices.Unsafe` | `MIT` | nuspec | — |
 | `System.Text.Encoding.CodePages` | `MIT` | nuspec | — |
 | `System.Threading.Channels` | `MIT` | nuspec | — |
+| `System.Threading.RateLimiting` | `MIT` | nuspec | — |
 | `System.Threading.Tasks.Extensions` | `MIT` | read | `LICENSE.TXT` |
 | `xunit.analyzers` | `Apache-2.0` | nuspec | — |
 | `xunit.runner.visualstudio` | `Apache-2.0` | nuspec | — |
@@ -300,9 +314,17 @@ user's application — is much smaller, and every entry is permissive:
 | `FlowX.Testing` | none |
 | `FlowX.Compiler`, `FlowX.Compiler.CodeFixes` | none — both pack with an empty dependency group |
 | `FlowX.Postgres` | `Npgsql` (`PostgreSQL`), `Microsoft.Extensions.DependencyInjection.Abstractions` (`MIT`) |
+| `FlowX.RabbitMq` | `RabbitMQ.Client` (`Apache-2.0 OR MPL-2.0`, taken as Apache-2.0), which brings `System.Threading.RateLimiting` (`MIT`); `Microsoft.Extensions.DependencyInjection.Abstractions` (`MIT`) |
 | `flowx` (CLI tool) | bundles `System.Reflection.MetadataLoadContext.dll` (`MIT`) in `tools/` |
 
-**`Npgsql`, added by WP-53, is the only non-Microsoft package in that set.** Its licence is
+**`RabbitMQ.Client` is the one row here whose licence a reader should not skim.** It
+declares `Apache-2.0 OR MPL-2.0`, and MPL-2.0 on its own is `forbidden` above. The
+disjunction is what makes it permissible: SPDX `OR` is the licensor offering a choice, this
+project takes Apache-2.0, and no MPL obligation attaches. §1.1 carries the argument and the
+gate compares the whole expression against the `.nuspec`, so a future version that dropped
+the Apache-2.0 branch would fail here rather than pass as "still dual-licensed".
+
+**`Npgsql`, added by WP-53, is the other non-Microsoft package in that set.** Its licence is
 the PostgreSQL Licence — a BSD/MIT-style permissive licence with attribution terms and no
 copyleft obligation, not the database's own terms by another name. It is permissive by
 ADR-0012's test, and it is worth naming because a scan built around an allow-list of

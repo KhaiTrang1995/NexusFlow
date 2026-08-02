@@ -151,7 +151,7 @@ flowchart TB
 | Contract | Extends | First-party implementations |
 |---|---|---|
 | `ITriggerSource` | how flows are activated | Http, Grpc, GraphQL, Kafka, RabbitMq, AzureServiceBus, Mqtt, Sqs, Cron, FileWatcher, SignalR, Agent |
-| `IEventPublisher` | where events go | **Redis Streams (WP-56b) ships**; none of Kafka, RabbitMq, ServiceBus, EventHubs, Sns exists |
+| `IEventPublisher` | where events go | **Redis Streams (WP-56b) and RabbitMQ both ship**; none of Kafka, ServiceBus, EventHubs, Sns exists |
 | `IFlowJournal` | durable state | PostgreSql, SqlServer, Redis, Cosmos |
 | `ILeaseStore` | ownership | **PostgreSql (WP-53) and Redis (WP-54) both ship**; etcd does not |
 | `IIdempotencyStore` | dedup | Redis, PostgreSql, in-memory |
