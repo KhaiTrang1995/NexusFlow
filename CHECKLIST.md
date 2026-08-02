@@ -1643,11 +1643,14 @@ executes it, not when something publishes it.*
 specify. What is left is narrower than a phase:
 
 1. **Studio** — **not next**. Sixteen one-line mentions and no design.
-2. **`.Window(…)` and `.Aggregate(…)` are not members of `IFlowBuilder<TIn, TOut>`**, so
-   [09 §9](docs/09-Trigger-Model.md#9-stream-trigger)'s example does not compile. A stream
-   flow declares `Flow<StreamWindowBatch, TOut>` and aggregates in a capability instead.
-3. **Nothing measures a tenant's p99 under load**, so [21](docs/21-Quality-Gates.md)'s
-   tenant-fairness gate stays unwritten though all six mechanisms exist.
+2. **Nothing measures a tenant's p99 under load**, so [21](docs/21-Quality-Gates.md)'s
+   tenant-fairness gate stays unwritten though all six mechanisms exist. It is a
+   measurement, so it waits with the rest of the performance work.
+3. **`CompensationDurabilityAnalyzer` (`FLOWX1012`) still reports on `not Durable`** and its
+   remarks justify that with "`Streaming` runs on the ephemeral engine", which the runtime
+   contradicts — `Streaming` is journaled, which is why `FLOWX1017` now accepts it.
+   `ACompensableStreamingFlowIsReported` pins the current behaviour, so changing it is a
+   decision rather than a fix.
 
 ## 5f. The vision's success criteria · current state
 
