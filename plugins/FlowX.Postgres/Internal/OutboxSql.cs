@@ -47,6 +47,15 @@ internal static class OutboxSql
     /// declared and serialise the whole unkeyed stream to do it.
     /// </para>
     /// <para>
+    /// <strong>The join is what puts a tenant on the wire.</strong> <c>outbox_event</c> carries
+    /// no <c>tenant_id</c> and 0008's comment says why; the emitting instance's row has one, and
+    /// it is the same key the table's own policy decides visibility through. A publisher fanned
+    /// out per schema already knows the tenant from the schema it claimed in, so this changes
+    /// nothing there — what it adds is the answer at row isolation, where the schema says
+    /// nothing and the consumer of the published message would otherwise have no tenant to start
+    /// its flow in.
+    /// </para>
+    /// <para>
     /// <c>MATERIALIZED</c> is stated rather than inferred. <c>claimed</c> is referenced three
     /// times and PostgreSQL would materialise it anyway, but the locking is the point: the
     /// CTE must be evaluated exactly once, taking exactly one set of row locks, and saying so
@@ -63,8 +72,10 @@ internal static class OutboxSql
              LIMIT @batch
                FOR UPDATE SKIP LOCKED
         )
-        SELECT c.event_id, c.instance_id, c.type, c.schema_version, c.partition_key, c.payload
+        SELECT c.event_id, c.instance_id, c.type, c.schema_version, c.partition_key, c.payload,
+               i.tenant_id
           FROM claimed c
+          JOIN flow_instance i ON i.instance_id = c.instance_id
          WHERE c.partition_key IS NULL
             OR NOT EXISTS (
                    SELECT 1

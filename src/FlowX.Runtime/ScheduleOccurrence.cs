@@ -53,18 +53,29 @@ public static class ScheduleOccurrence
     /// <param name="cron">The expression, verbatim as declared and published.</param>
     /// <param name="timeZone">The IANA zone the expression was evaluated in.</param>
     /// <param name="occurrence">The instant the expression named.</param>
+    /// <param name="tenantId">
+    /// Whose firing this is for a <c>PerTenant</c> schedule, or null for one that fires once.
+    /// </param>
     /// <returns>
     /// A UUID version 8 — RFC 9562's slot for a derived id. Not a version 4, which would claim
     /// the bytes were random, and not the version 7 <c>FlowHost</c> mints for a request-started
     /// instance, which would claim the leading bits were the instant it was created. An
     /// operator reading a journal row is entitled to tell a derived key from a minted one.
     /// </returns>
+    /// <remarks>
+    /// <strong>The tenant is a term because a fan-out is many firings, not one.</strong> Ten
+    /// tenants sharing an id would mean the first tenant's instance row refusing the other nine
+    /// through the primary key that exists to refuse a <em>second node</em> — the mechanism
+    /// working perfectly on the wrong subject. Appended last and only when there is one, so
+    /// every id an untenanted schedule has ever written stays where it is.
+    /// </remarks>
     public static Guid InstanceIdFor(
         string flowId,
         string flowVersion,
         string cron,
         string timeZone,
-        DateTimeOffset occurrence)
+        DateTimeOffset occurrence,
+        string? tenantId = null)
     {
         ArgumentNullException.ThrowIfNull(flowId);
         ArgumentNullException.ThrowIfNull(flowVersion);
@@ -80,9 +91,13 @@ public static class ScheduleOccurrence
             // The instant, normalised to UTC and to the minute cron resolves to. Written with
             // an explicit format rather than through the current culture, because a node with
             // a different culture must derive the same id.
-            .Append(occurrence.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture))
-            .ToString();
+            .Append(occurrence.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture));
 
-        return DerivedIdentity.FromMaterial(material);
+        if (tenantId is { Length: > 0 })
+        {
+            material.Append(Separator).Append(tenantId);
+        }
+
+        return DerivedIdentity.FromMaterial(material.ToString());
     }
 }

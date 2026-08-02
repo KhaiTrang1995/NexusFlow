@@ -58,6 +58,9 @@ public readonly record struct ChangePosition(string Value);
 /// change before it has been finished with too, so the cursor never moves past something that did
 /// not run.
 /// </param>
+/// <param name="TenantId">
+/// Whose change this is, or null on a deployment that does not isolate.
+/// </param>
 /// <remarks>
 /// <strong>There is no delivery count and no acknowledgement token, and neither is an
 /// omission.</strong> A feed does not hold a change on a consumer's behalf — it is a log, and the
@@ -65,8 +68,19 @@ public readonly record struct ChangePosition(string Value);
 /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0048-a-change-feed-advances-a-cursor.md">ADR-0048</a>:
 /// no per-change acknowledgement, and no dead-letter path, because a change that cannot be
 /// processed is a flow that failed and a flow that failed is a recorded outcome.
+/// <para>
+/// <strong><see cref="TenantId"/> is where a change trigger's tenant comes from, and the feed is
+/// the only thing that can supply it.</strong> A change is read <em>out of</em> a tenant's data —
+/// its own schema at <see cref="TenantIsolation.Schema"/>, the emitting instance's row at
+/// <see cref="TenantIsolation.Row"/> — so by the time it is offered, whose it is has already been
+/// established by where it was found. Nothing above the plugin could recover that: the message is
+/// a payload and a type, and a host that guessed would be guessing at isolation. Carried here
+/// rather than on <see cref="BusMessage"/> because a change never crosses a wire, so there is no
+/// producer to have written a field and no consumer to read one back.
+/// </para>
 /// </remarks>
-public sealed record ObservedChange(BusMessage Message, ChangePosition Position);
+public sealed record ObservedChange(
+    BusMessage Message, ChangePosition Position, string? TenantId = null);
 
 /// <summary>
 /// The seam between a change feed and the runtime — the outbox read forwards rather than drained.

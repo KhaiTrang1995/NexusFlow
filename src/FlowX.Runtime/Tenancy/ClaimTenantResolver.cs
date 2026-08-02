@@ -51,14 +51,26 @@ namespace FlowX.Runtime;
 /// the same reason.
 /// </para>
 /// <para>
-/// <strong>Bus and schedule triggers are refused in an isolating deployment, and that is
-/// honest rather than finished.</strong> <c>docs/16 §3</c> gives them tenant sources of their
-/// own — a producer-set message header, a schedule's declared tenant — and neither is built:
-/// <c>CronTriggerAttribute.PerTenant</c> is declared and inert, and no bus header carries a
-/// tenant. Until one does, such a call reaches this class with no principal and is refused
-/// with <see cref="TenantErrors.TenantRequired"/>, which names what is missing. The
-/// alternative — admitting it untenanted — would write rows no tenant can read back, and
-/// admitting whatever it asserted would be the believing this class was written to stop.
+/// <strong>An attested tenant is admitted, and it is not the continuation's bypass under
+/// another name.</strong> <c>docs/16 §3</c> gives the three platform-initiated triggers tenant
+/// sources of their own, and all three are now built: a change carries the tenant whose schema
+/// it was read out of, a message carries the field this platform's publisher wrote onto it, and
+/// a <c>PerTenant</c> schedule is fanned out over the tenant directory. None of those is a
+/// claim, and none of them is a caller's assertion either — no caller is involved, and none of
+/// the three values passes through anything a caller can set. So
+/// <see cref="FlowInvocation.TenantAttested"/> is believed here, and only here; what it does
+/// <em>not</em> buy is <see cref="FlowInvocation.IsContinuation"/>'s other effect, so every
+/// step of an attested start still has its stance decided — against an absent principal, which
+/// refuses an authenticated step rather than running it.
+/// </para>
+/// <para>
+/// <strong>An attestation that names nothing is a refusal rather than a pass.</strong> A
+/// trigger that reached admission attested and empty could not work out whose work it was
+/// holding, and the branch above — a continuation's <see cref="TenantResolution.NotConfigured"/>
+/// — would admit it untenanted and write rows no tenant can read back. The refusal is what
+/// makes the caller hold: a change scan that reads
+/// <see cref="TenantErrors.TenantRequired"/> leaves its cursor where it was, and a bus scan
+/// leaves the message unacknowledged.
 /// </para>
 /// </remarks>
 public sealed class ClaimTenantResolver : ITenantResolver
@@ -100,6 +112,18 @@ public sealed class ClaimTenantResolver : ITenantResolver
             return invocation.TenantId is { Length: > 0 } carried
                 ? TenantResolution.Tenant(carried)
                 : TenantResolution.NotConfigured;
+        }
+
+        if (invocation.TenantAttested)
+        {
+            return invocation.TenantId is { Length: > 0 } attested
+                ? TenantResolution.Tenant(attested)
+                : TenantResolution.Refuse(
+                    "this deployment isolates by tenant and the trigger that would have " +
+                    "started this flow could not name one. A change names the schema it was " +
+                    "read from, a message names the field its publisher wrote, and a schedule " +
+                    "names the tenant it was fanned out for — this one named none, so the work " +
+                    "is held rather than started untenanted.");
         }
 
         var claimed = FromClaims(invocation.Principal);

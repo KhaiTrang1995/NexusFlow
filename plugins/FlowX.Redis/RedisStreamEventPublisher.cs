@@ -156,6 +156,14 @@ public sealed class RedisStreamEventPublisher : IEventPublisher
             entry.Add(new NameValueEntry(RedisKeys.PayloadField, payload));
         }
 
+        // Omitted rather than written empty, for the reason above: a consumer must be able to
+        // tell "this event came from a deployment that does not isolate" from "this event names
+        // the empty tenant", because the first starts a flow and the second is a refusal.
+        if (staged.TenantId is { Length: > 0 } tenant)
+        {
+            entry.Add(new NameValueEntry(RedisKeys.TenantIdField, tenant));
+        }
+
         await _database
             .StreamAddAsync(
                 RedisKeys.EventStream(_options.KeyPrefix, staged.PartitionKey),

@@ -49,10 +49,12 @@ namespace FlowX.Hosting;
 /// <para>
 /// <strong>There is no dead-letter path, and that is not an omission.</strong> A change whose flow
 /// <em>ran and failed</em> reached a recorded outcome, so it does not block the subscription; the
-/// only dispositions that hold the cursor are host and store refusals, every one of which is
-/// transient by construction. A change that can never be processed — the broker's poison message
-/// — does not arise, because the row was written by this system's own serialiser rather than by a
-/// stranger.
+/// only dispositions that hold the cursor are refusals that journalled nothing. A change that can
+/// never be processed — the broker's poison message — does not arise, because the row was written
+/// by this system's own serialiser rather than by a stranger. The one held disposition that is
+/// not transient is a deployment that isolates and cannot name the change's tenant, and it holds
+/// on purpose: a stopped subscription is visible and recoverable, and a committed cursor is
+/// neither.
 /// </para>
 /// </remarks>
 public sealed class FlowChangeScan
@@ -239,7 +241,16 @@ public sealed class FlowChangeScan
                 // observing instance's carry one id between them; the causation id is the
                 // instance this change started. FlowBusScan's reasoning, unchanged — there is no
                 // inbound request to inherit either from.
-                new FlowInvocation(message.EventId.ToString("d"), instanceId.ToString()),
+                //
+                // The tenant is the feed's, and it is attested rather than asserted: a change was
+                // read out of that tenant's data, which is a stronger provenance than a claim and
+                // not one any caller touched. Attested and not IsContinuation, so the steps of
+                // the flow this starts still have their stances decided.
+                new FlowInvocation(
+                    message.EventId.ToString("d"),
+                    instanceId.ToString(),
+                    change.TenantId,
+                    TenantAttested: true),
                 message,
                 instanceId,
                 ct)
@@ -271,9 +282,20 @@ public sealed class FlowChangeScan
     /// </para>
     /// <para>
     /// <strong>Only a refusal that journalled nothing holds the cursor.</strong> The lease was
-    /// lost, the fence was raised under us, the host is draining, or no journal is configured. In
-    /// each of those no instance row describes this change, so the cursor is the only thing that
-    /// will bring it back.
+    /// lost, the fence was raised under us, the host is draining, no journal is configured, or
+    /// admission refused the change on its tenant's account. In each of those no instance row
+    /// describes this change, so the cursor is the only thing that will bring it back.
+    /// </para>
+    /// <para>
+    /// <strong>A tenant refusal is the case this list was missing, and it lost work.</strong>
+    /// <c>tenant.required</c> reached the default arm and was counted as progress, so a
+    /// subscription on an isolating deployment committed its cursor past every change that never
+    /// ran — silently, because a cursor that moves looks exactly like a cursor that is keeping up.
+    /// Held is the answer for all five tenant codes: the two that are configuration
+    /// (<c>tenant.required</c>, <c>tenant.cross_tenant_denied</c>) hold until somebody repairs
+    /// it, which is a subscription an operator can see stopped rather than a queue of changes
+    /// nobody can recover; the three that are fairness are transient by construction and the next
+    /// pass is exactly the retry they want.
     /// </para>
     /// </remarks>
     private static Disposition DispositionFor(FlowExecutionResult result)
@@ -293,7 +315,13 @@ public sealed class FlowChangeScan
                 or DurabilityErrors.LeaseLostCode
                 or DurabilityErrors.FencedOutCode
                 or HostDrainingCode
-                or DurabilityNotConfiguredCode => Disposition.Held,
+                or DurabilityNotConfiguredCode
+                or TenantErrors.TenantRequiredCode
+                or TenantErrors.CrossTenantDeniedCode
+                or TenantErrors.RateLimitedCode
+                or TenantErrors.QuotaExhaustedCode
+                or TenantErrors.SaturatedCode
+                or TenantErrors.FairnessUnavailableCode => Disposition.Held,
 
             // The flow ran and ended badly, which is the flow's outcome and not the change's.
             _ => Disposition.Started,

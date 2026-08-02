@@ -268,7 +268,15 @@ public sealed class FlowBusScan
                 // instance this delivery started. There is no inbound request to inherit either
                 // from, and minting a fresh correlation per node would make one message look like
                 // several.
-                new FlowInvocation(message.EventId.ToString("d"), instanceId.ToString()),
+                //
+                // The tenant is the message's own field, written beside the body by the
+                // publishing side and never read out of the payload (docs/16 §3). Attested and
+                // not IsContinuation: this is a start, so every step's stance is still decided.
+                new FlowInvocation(
+                    message.EventId.ToString("d"),
+                    instanceId.ToString(),
+                    message.TenantId,
+                    TenantAttested: true),
                 message,
                 instanceId,
                 ct)
@@ -342,9 +350,17 @@ public sealed class FlowBusScan
     /// </para>
     /// <para>
     /// <strong>Only a refusal that journalled nothing requeues.</strong> The lease was held
-    /// elsewhere, the fence was raised under us, the host is draining, or no journal is
-    /// configured. In each of those no instance row describes this message, so the broker is the
-    /// only thing still holding it.
+    /// elsewhere, the fence was raised under us, the host is draining, no journal is configured,
+    /// or admission refused the message on its tenant's account. In each of those no instance row
+    /// describes this message, so the broker is the only thing still holding it.
+    /// </para>
+    /// <para>
+    /// <strong>A tenant refusal requeues, and <see cref="PoisonReasonFor"/> is what stops that
+    /// becoming a loop.</strong> Acknowledging a message admission never let start would discard
+    /// it at the broker with nothing anywhere describing it — the same silent loss the change
+    /// cursor used to commit. Requeued, it is redelivered; a deployment that genuinely cannot
+    /// name the tenant spends <see cref="FlowXOptions.BusMaxDeliveries"/> and is dead-lettered,
+    /// which puts it somewhere a human can find rather than nowhere.
     /// </para>
     /// </remarks>
     private static Disposition DispositionFor(FlowExecutionResult result)
@@ -364,7 +380,13 @@ public sealed class FlowBusScan
                 or DurabilityErrors.LeaseLostCode
                 or DurabilityErrors.FencedOutCode
                 or HostDrainingCode
-                or DurabilityNotConfiguredCode => Disposition.Requeue,
+                or DurabilityNotConfiguredCode
+                or TenantErrors.TenantRequiredCode
+                or TenantErrors.CrossTenantDeniedCode
+                or TenantErrors.RateLimitedCode
+                or TenantErrors.QuotaExhaustedCode
+                or TenantErrors.SaturatedCode
+                or TenantErrors.FairnessUnavailableCode => Disposition.Requeue,
 
             // The flow ran and ended badly, which is the flow's outcome and not the delivery's
             // (ADR-0007, ADR-0036).

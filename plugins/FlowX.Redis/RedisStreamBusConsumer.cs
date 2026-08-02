@@ -557,7 +557,13 @@ public sealed class RedisStreamBusConsumer : IBusConsumer
                 // key is in the unkeyed stream and legitimately has none, and reading the key back
                 // would invent one.
                 Field(entry, RedisKeys.PartitionKeyField),
-                Field(entry, RedisKeys.PayloadField)),
+                Field(entry, RedisKeys.PayloadField),
+
+                // The tenant the publisher wrote, which is what the host starts the flow in on
+                // a deployment that isolates. Absent is null and not a refusal here: whether an
+                // untenanted message may start a flow is admission's decision, and a consumer
+                // that refused it would be deciding isolation in a plugin.
+                Field(entry, RedisKeys.TenantIdField)),
             token,
             deliveries);
     }

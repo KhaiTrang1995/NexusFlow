@@ -668,7 +668,8 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                     ScheduleMethodName(flow.TypeName, names),
                     trigger.Cron!,
                     trigger.TimeZone ?? "UTC",
-                    MissedFireFor(flowTriggers, trigger.Cron!)));
+                    MissedFireFor(flowTriggers, trigger.Cron!),
+                    PerTenantFor(flowTriggers, trigger.Cron!)));
             }
         }
 
@@ -714,6 +715,13 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
         .Where(schedule => string.Equals(schedule.Cron, cron, StringComparison.Ordinal))
         .Select(static schedule => schedule.MissedFire)
         .FirstOrDefault() ?? "RunOnce";
+
+    /// <summary>Whether the declaration beside this expression asked for a per-tenant fan-out.</summary>
+    /// <remarks><see cref="MissedFireFor"/>'s join, for the other property read off the attribute.</remarks>
+    private static bool PerTenantFor(FlowTriggersModel triggers, string cron) => triggers.Schedules
+        .Where(schedule => string.Equals(schedule.Cron, cron, StringComparison.Ordinal))
+        .Select(static schedule => schedule.PerTenant)
+        .FirstOrDefault();
 
     /// <summary>The extension method one schedule is registered by.</summary>
     /// <remarks>

@@ -24,9 +24,14 @@ namespace FlowX.Compiler.Model;
 /// desynchronise one.
 /// </para>
 /// <para>
-/// <c>Overlap</c>, <c>Jitter</c> and <c>PerTenant</c> are declared on the same attribute and are
-/// not here, because nothing in this release reads them — <c>docs/09-Trigger-Model.md §8</c> is
-/// where that is recorded.
+/// <see cref="PerTenant"/> is read from the attribute for the same reason and is not published
+/// either: it decides how many instances one occurrence produces on this deployment, which is a
+/// fan-out over a tenant set nobody outside the application can see.
+/// </para>
+/// <para>
+/// <c>Overlap</c> and <c>Jitter</c> are declared on the same attribute and are not here, because
+/// nothing in this release reads them — <c>docs/09-Trigger-Model.md §8</c> is where that is
+/// recorded.
 /// </para>
 /// </remarks>
 public sealed class ScheduleModel
@@ -38,13 +43,15 @@ public sealed class ScheduleModel
     /// <param name="cron">The expression, exactly as the manifest states it.</param>
     /// <param name="timeZone">The IANA zone, exactly as the manifest states it.</param>
     /// <param name="missedFire">The declared <c>MissedFirePolicy</c> member's name.</param>
+    /// <param name="perTenant">Whether one occurrence fires once per tenant.</param>
     public ScheduleModel(
         string flowId,
         string flowTypeName,
         string methodName,
         string cron,
         string timeZone,
-        string missedFire)
+        string missedFire,
+        bool perTenant = false)
     {
         FlowId = flowId;
         FlowTypeName = flowTypeName;
@@ -52,6 +59,7 @@ public sealed class ScheduleModel
         Cron = cron;
         TimeZone = timeZone;
         MissedFire = missedFire;
+        PerTenant = perTenant;
     }
 
     /// <summary>The flow's business id.</summary>
@@ -71,4 +79,7 @@ public sealed class ScheduleModel
 
     /// <summary>The declared <c>MissedFirePolicy</c> member, by name.</summary>
     public string MissedFire { get; }
+
+    /// <summary>Whether one occurrence of this schedule fires once per tenant.</summary>
+    public bool PerTenant { get; }
 }

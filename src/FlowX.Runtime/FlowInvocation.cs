@@ -26,6 +26,11 @@ namespace FlowX.Runtime;
 /// True when the platform is continuing an instance it already admitted — a timer sweep or a
 /// recovery scan — rather than a caller asking for something.
 /// </param>
+/// <param name="TenantAttested">
+/// True when <see cref="TenantId"/> was derived by the platform from a source no caller can
+/// set — the schema a change was read from, a broker field a FlowX producer wrote, a
+/// schedule's declared tenant — rather than asserted by whoever is calling.
+/// </param>
 /// <remarks>
 /// <para>
 /// A readonly record struct, so starting a flow does not allocate an argument object. The
@@ -62,6 +67,22 @@ namespace FlowX.Runtime;
 /// something now — so <c>FlowHost.SignalAsync</c> takes a principal and leaves this false,
 /// and the steps after that wait are decided against the deliverer.
 /// </para>
+/// <para>
+/// <strong><see cref="TenantAttested"/> is what lets a trigger with no caller start a flow, and
+/// it is deliberately not <see cref="IsContinuation"/>.</strong> A change, a broker message and
+/// a cron occurrence each know a tenant without anybody having claimed one — a change was read
+/// out of that tenant's schema, a message carries a field this platform's own publisher wrote,
+/// a schedule declared <c>PerTenant</c> and was fanned out over the tenant directory. Reusing
+/// <see cref="IsContinuation"/> to carry that would have been one field fewer and one guarantee
+/// fewer: that flag also suppresses the step-authorisation decision, which is right for a sweep
+/// resuming an instance already admitted and wrong for a start. An attested start is a start —
+/// every stance is decided, against a principal that is absent, so a step declaring
+/// <c>Authenticated</c> under a cron trigger is refused rather than run.
+/// </para>
+/// <para>
+/// Nothing a caller can reach sets it: <c>HttpTriggerReader</c> leaves it false, and
+/// <c>OnlyAPlatformTriggerAttestsATenant</c> is the gate that keeps it that way.
+/// </para>
 /// </remarks>
 public readonly record struct FlowInvocation(
     string CorrelationId,
@@ -69,7 +90,8 @@ public readonly record struct FlowInvocation(
     string? TenantId = null,
     DateTimeOffset? Deadline = null,
     ClaimsPrincipal? Principal = null,
-    bool IsContinuation = false);
+    bool IsContinuation = false,
+    bool TenantAttested = false);
 
 /// <summary>What happened to the compensations after a flow failed.</summary>
 public enum CompensationOutcome

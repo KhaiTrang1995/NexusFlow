@@ -51,6 +51,7 @@ public sealed class FlowScheduleScan
     private readonly FlowDurability _durability;
     private readonly FlowXOptions _options;
     private readonly IClock _clock;
+    private readonly ITenantDirectory? _tenants;
     private readonly DateTimeOffset _startedAt;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, DateTimeOffset> _accounted = new(StringComparer.Ordinal);
@@ -67,12 +68,17 @@ public sealed class FlowScheduleScan
     /// The runtime's clock, so "due" is measured against the same instant every other sweep
     /// measures it against — and so a suite can wind a day forward without waiting for one.
     /// </param>
+    /// <param name="tenants">
+    /// Who a <c>PerTenant</c> schedule fans out over, or null on a host that registered no
+    /// directory — where such a schedule fires nothing and says so.
+    /// </param>
     public FlowScheduleScan(
         FlowHost host,
         FlowScheduleCatalog schedules,
         FlowDurability durability,
         FlowXOptions options,
-        IClock clock)
+        IClock clock,
+        ITenantDirectory? tenants = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(schedules);
@@ -85,6 +91,7 @@ public sealed class FlowScheduleScan
         _durability = durability;
         _options = options;
         _clock = clock;
+        _tenants = tenants;
         _startedAt = clock.UtcNow;
     }
 
@@ -119,26 +126,43 @@ public sealed class FlowScheduleScan
         }
 
         var now = _clock.UtcNow;
-        var due = new List<(ScheduleRegistration Registration, DateTimeOffset Occurrence)>();
+        var due = new List<Firing>();
+        var unresolved = 0;
 
         foreach (var registration in _schedules.Registrations)
         {
-            var occurrences = await DueForAsync(registration, now, ct).ConfigureAwait(false);
+            var audience = await AudienceForAsync(registration.Schedule, ct).ConfigureAwait(false);
 
-            due.AddRange(occurrences.Select(occurrence => (registration, occurrence)));
+            if (audience.IsFailure)
+            {
+                // The directory did not answer, so this schedule's audience is unknown for this
+                // pass. Firing the tenants it did name would fire a subset and record it as
+                // complete; firing none is one late occurrence, which is what MissedFire is for.
+                unresolved++;
+
+                continue;
+            }
+
+            foreach (var tenant in audience.Value)
+            {
+                var occurrences = await DueForAsync(registration, tenant, now, ct)
+                    .ConfigureAwait(false);
+
+                due.AddRange(occurrences.Select(o => new Firing(registration, o, tenant)));
+            }
         }
 
         if (due.Count == 0)
         {
-            return Tagged(span, ScheduleScanReport.Nothing);
+            return Tagged(span, ScheduleScanReport.Nothing with { Failed = unresolved });
         }
 
         var capacity = _options.MaxConcurrentRecoveries;
         var fires = new List<Task<Attempt>>(Math.Min(due.Count, capacity));
 
-        foreach (var (registration, occurrence) in due.Take(capacity))
+        foreach (var firing in due.Take(capacity))
         {
-            fires.Add(FireAsync(registration, occurrence, ct));
+            fires.Add(FireAsync(firing, ct));
         }
 
         var attempts = await Task.WhenAll(fires).ConfigureAwait(false);
@@ -148,9 +172,57 @@ public sealed class FlowScheduleScan
             Due = due.Count,
             Fired = attempts.Count(static a => a == Attempt.Fired),
             Contended = attempts.Count(static a => a == Attempt.Contended),
-            Failed = attempts.Count(static a => a == Attempt.Failed),
+            Failed = attempts.Count(static a => a == Attempt.Failed) + unresolved,
         });
     }
+
+    /// <summary>One occurrence of one schedule, for one tenant or for none.</summary>
+    private readonly record struct Firing(
+        ScheduleRegistration Registration, DateTimeOffset Occurrence, string? TenantId);
+
+    /// <summary>
+    /// Who this schedule fires for: the tenant directory for a <c>PerTenant</c> one, and the
+    /// single null audience for every other.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A <c>PerTenant</c> schedule is <em>n</em> schedules that share an expression.</strong>
+    /// Each tenant gets its own instance id, its own journal row and its own floor, so one
+    /// tenant's firing being contended, late or refused says nothing about the next tenant's —
+    /// which is the whole reason the fan-out is here and not inside the flow, where a single
+    /// instance would have had to iterate tenants itself with one journal row and one failure
+    /// mode for all of them.
+    /// </para>
+    /// <para>
+    /// <strong>An empty directory fires nothing rather than firing once, untenanted.</strong> A
+    /// deployment that declared <c>PerTenant</c> and named no tenants has asked for zero firings
+    /// and gets zero. A host with no directory registered at all is the same answer for a
+    /// different reason, and it is reached only by a deployment that wired a per-tenant schedule
+    /// and nothing to enumerate tenants with.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<Result<IReadOnlyList<string?>>> AudienceForAsync(
+        FlowSchedule schedule, CancellationToken ct)
+    {
+        if (!schedule.PerTenant)
+        {
+            return Result.Ok<IReadOnlyList<string?>>(Untenanted);
+        }
+
+        if (_tenants is null)
+        {
+            return Result.Ok<IReadOnlyList<string?>>([]);
+        }
+
+        var known = await _tenants.KnownTenantsAsync(ct).ConfigureAwait(false);
+
+        return known.IsFailure
+            ? Result.Fail<IReadOnlyList<string?>>(known.Error)
+            : Result.Ok<IReadOnlyList<string?>>([.. known.Value]);
+    }
+
+    /// <summary>The audience of a schedule that fires once however many tenants there are.</summary>
+    private static readonly string?[] Untenanted = [null];
 
     /// <summary>
     /// The occurrences of one schedule this node should fire now, ascending.
@@ -204,10 +276,19 @@ public sealed class FlowScheduleScan
     /// </para>
     /// </remarks>
     private async ValueTask<List<DateTimeOffset>> DueForAsync(
-        ScheduleRegistration registration, DateTimeOffset now, CancellationToken ct)
+        ScheduleRegistration registration,
+        string? tenantId,
+        DateTimeOffset now,
+        CancellationToken ct)
     {
         var schedule = registration.Schedule;
-        var key = schedule.FlowId + "\0" + schedule.FlowVersion + "\0" + schedule.Cron.Expression;
+
+        // The tenant is in the key because the floor is per tenant: a tenant provisioned this
+        // morning has fired nothing, and folding it onto a tenant that has been firing for a
+        // month would set its floor to now and skip the occurrence it was owed.
+        var key = schedule.FlowId + "\0" + schedule.FlowVersion + "\0" + schedule.Cron.Expression
+            + "\0" + tenantId;
+
         var horizon = now - _options.ScheduleCatchUp;
 
         DateTimeOffset? known;
@@ -219,7 +300,7 @@ public sealed class FlowScheduleScan
 
         var floor = known is { } accounted && accounted > horizon
             ? accounted
-            : await FirstFloorAsync(schedule, now, horizon, ct).ConfigureAwait(false);
+            : await FirstFloorAsync(schedule, tenantId, now, horizon, ct).ConfigureAwait(false);
 
         var occurrences = schedule.Cron.Between(floor, now).ToList();
 
@@ -266,15 +347,23 @@ public sealed class FlowScheduleScan
     /// the journal already holds, or this node's own start.
     /// </summary>
     private async ValueTask<DateTimeOffset> FirstFloorAsync(
-        FlowSchedule schedule, DateTimeOffset now, DateTimeOffset horizon, CancellationToken ct)
+        FlowSchedule schedule,
+        string? tenantId,
+        DateTimeOffset now,
+        DateTimeOffset horizon,
+        CancellationToken ct)
     {
         var candidates = schedule.Cron.Between(horizon, now).ToList();
         var budget = _options.ScheduleFireBatchSize;
 
+        // The tenant's own journal, because at Schema isolation the row this probe is looking for
+        // is in that tenant's schema and the control schema has no such table to answer from.
+        var journal = _durability.JournalFor(tenantId);
+
         for (var i = candidates.Count - 1; i >= 0 && budget > 0; i--, budget--)
         {
-            var read = await _durability.Journal
-                .ReadInstanceAsync(schedule.InstanceIdFor(candidates[i]), ct)
+            var read = await journal
+                .ReadInstanceAsync(schedule.InstanceIdFor(candidates[i], tenantId), ct)
                 .ConfigureAwait(false);
 
             if (read.IsSuccess)
@@ -329,13 +418,11 @@ public sealed class FlowScheduleScan
     /// instance.
     /// </para>
     /// </remarks>
-    private async Task<Attempt> FireAsync(
-        ScheduleRegistration registration,
-        DateTimeOffset occurrence,
-        CancellationToken ct)
+    private async Task<Attempt> FireAsync(Firing firing, CancellationToken ct)
     {
+        var (registration, occurrence, tenantId) = firing;
         var schedule = registration.Schedule;
-        var instanceId = schedule.InstanceIdFor(occurrence);
+        var instanceId = schedule.InstanceIdFor(occurrence, tenantId);
 
         var result = await _host
             .RunAsync(
@@ -346,7 +433,16 @@ public sealed class FlowScheduleScan
                 // occurrence carries the same one — including the nine that were refused. There
                 // is no inbound request to inherit one from, and inventing a fresh one per node
                 // would make one firing look like ten.
-                new FlowInvocation(instanceId.ToString(), instanceId.ToString()),
+                //
+                // The tenant is the one this occurrence was fanned out for, and it is attested:
+                // it came from the tenant directory by way of the schedule's own declaration,
+                // which is a deployment's statement rather than anybody's assertion. Attested and
+                // not IsContinuation, so the flow's steps still have their stances decided.
+                new FlowInvocation(
+                    instanceId.ToString(),
+                    instanceId.ToString(),
+                    tenantId,
+                    TenantAttested: true),
                 schedule.FireFor(occurrence),
                 instanceId,
                 ct)

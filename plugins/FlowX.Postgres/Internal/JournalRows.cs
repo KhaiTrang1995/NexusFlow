@@ -86,10 +86,11 @@ internal static class JournalRows
     /// <summary>Reads a row claimed by <see cref="OutboxSql.ClaimPending"/>.</summary>
     /// <param name="reader">The reader, positioned on the row.</param>
     /// <param name="tenantId">
-    /// Whose schema the claim ran in, or null where every tenant shares one outbox. Supplied
-    /// rather than selected, for <see cref="Step"/>'s reason: every row of a claim came from
-    /// one schema, so a column would be a value per row for a fact stated once — and there is
-    /// no such column to select.
+    /// Whose schema the claim ran in, or null where every tenant shares one outbox. The fallback
+    /// rather than the answer: the claim joins the emitting instance and reads that row's
+    /// <c>tenant_id</c>, which is the only source at row isolation and agrees with the schema at
+    /// schema isolation. This parameter is what a schema-scoped claim has to say when the
+    /// instance row somehow carries none.
     /// </param>
     /// <returns>The pending event.</returns>
     /// <remarks>
@@ -107,6 +108,6 @@ internal static class JournalRows
         SchemaVersion = reader.GetString(3),
         PartitionKey = Db.NullableString(reader, 4),
         PayloadJson = Db.NullableString(reader, 5),
-        TenantId = tenantId,
+        TenantId = Db.NullableString(reader, 6) ?? tenantId,
     };
 }
