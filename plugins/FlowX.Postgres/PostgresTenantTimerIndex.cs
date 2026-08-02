@@ -14,8 +14,9 @@ namespace FlowX.Postgres;
 /// </para>
 /// <para>
 /// <see cref="PostgresTenantRecoveryIndex"/> carries the argument for the ordering and the
-/// per-tenant cap; the only difference here is which instant the merged page is ordered by, and
-/// it is the one <see cref="ITimerIndex"/> names.
+/// per-tenant cap, and <see cref="TenantSweepFanOut"/> the one for stepping over a tenant whose
+/// schema will not answer; the only difference here is which instant the merged page is ordered
+/// by, and it is the one <see cref="ITimerIndex"/> names.
 /// </para>
 /// </remarks>
 public sealed class PostgresTenantTimerIndex : ITimerIndex
@@ -39,38 +40,18 @@ public sealed class PostgresTenantTimerIndex : ITimerIndex
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        var tenants = query.TenantId is { Length: > 0 } only
-            ? [only]
-            : await _stores.KnownTenantsAsync(cancellationToken).ConfigureAwait(false);
+        var perTenant = TenantSweepFanOut.PerTenant(query.PerTenantLimit, query.Limit);
 
-        var perTenant = query.PerTenantLimit > 0
-            ? Math.Min(query.PerTenantLimit, query.Limit)
-            : query.Limit;
-
-        var merged = new List<DueInstance>();
-
-        foreach (var tenant in tenants)
-        {
-            var store = await _stores.ForAsync(tenant, cancellationToken).ConfigureAwait(false);
-
-            var listed = await new PostgresTimerIndex(store)
-                .ListDueAsync(
-                    query with { TenantId = tenant, Limit = perTenant, PerTenantLimit = 0 },
-                    cancellationToken)
-                .ConfigureAwait(false);
-
-            if (listed.IsFailure)
-            {
-                return listed;
-            }
-
-            merged.AddRange(listed.Value);
-        }
-
-        merged.Sort(static (left, right) => left.WakeAt.CompareTo(right.WakeAt));
-
-        return merged.Count <= query.Limit
-            ? merged
-            : merged.GetRange(0, query.Limit);
+        return await TenantSweepFanOut.SweepAsync(
+            _stores,
+            query.TenantId,
+            nameof(ListDueAsync),
+            (store, tenant) => new PostgresTimerIndex(store).ListDueAsync(
+                query with { TenantId = tenant, Limit = perTenant, PerTenantLimit = 0 },
+                cancellationToken),
+            static (left, right) => left.WakeAt.CompareTo(right.WakeAt),
+            query.Limit,
+            cancellationToken)
+            .ConfigureAwait(false);
     }
 }
