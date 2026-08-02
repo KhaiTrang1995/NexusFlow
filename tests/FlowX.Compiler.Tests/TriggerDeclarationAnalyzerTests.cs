@@ -425,7 +425,7 @@ public sealed class TriggerDeclarationAnalyzerTests
             .Select(static d => d.Id)
             .ShouldBe([
                 "FLOWX1025", "FLOWX1038", "FLOWX1039", "FLOWX1041", "FLOWX1042",
-                "FLOWX1045", "FLOWX1048",
+                "FLOWX1045", "FLOWX1049", "FLOWX1048",
             ]);
     }
 
