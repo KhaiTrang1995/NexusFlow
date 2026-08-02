@@ -1062,6 +1062,38 @@ public sealed class FlowEngine
                 continue;
             }
 
+            if (step.Kind == StepKind.Poll)
+            {
+                var polled = await RunPollAsync(
+                    plan, dispatcher, context, scope, compensations, step, cursor, ct).ConfigureAwait(false);
+
+                // Counted for a loop's reason: the attempts really ran, and a poll that gave
+                // up after eleven of them has still made eleven calls to somebody's service.
+                completed += polled.Completed;
+
+                if (polled.Failure is not null)
+                {
+                    failure = polled.Failure;
+                    break;
+                }
+
+                if (polled.Suspended)
+                {
+                    // The gap between two attempts, and it is the whole point: the instance
+                    // parks holding nothing and a sweep brings it back for the next one.
+                    suspended = true;
+                    wake = polled.Wake;
+                    break;
+                }
+
+                // Satisfied lands past the escalation block; expired-with-a-block lands in it,
+                // which is the ordinary next index after the one-step body. RunPollAsync
+                // chooses between them and reports the index rather than the reason, because
+                // the reason is spent by the time control moves.
+                i = polled.Resume!.Value;
+                continue;
+            }
+
             if (step.Kind == StepKind.SubFlow)
             {
                 // No target: a sub-flow occupies exactly one index, so control resumes at
@@ -3118,6 +3150,218 @@ public sealed class FlowEngine
 
         return fatal;
     }
+
+    /// <summary>What one arrival at a <see cref="StepKind.Poll"/> node came to.</summary>
+    /// <remarks>
+    /// Not a <see cref="RangeOutcome"/>, because a poll answers one thing a range never has to:
+    /// <em>where control goes next</em>. A range's caller already knows — the next index, or a
+    /// target on the node — while a poll chooses between the satisfied path and the escalation
+    /// block after reading the journal. Widening <see cref="RangeOutcome"/> would put a
+    /// property on every fork, branch and loop outcome that only one kind of step ever sets.
+    /// </remarks>
+    private readonly struct PollOutcome(
+        Error? failure,
+        int completed,
+        int? resume = null,
+        bool suspended = false,
+        FlowWake? wake = null)
+    {
+        public Error? Failure { get; } = failure;
+
+        public int Completed { get; } = completed;
+
+        /// <summary>Where the step loop continues, or <c>null</c> when it is not continuing.</summary>
+        public int? Resume { get; } = resume;
+
+        /// <summary>Whether the instance parked between two attempts.</summary>
+        public bool Suspended { get; } = suspended;
+
+        /// <summary>When the next attempt is due, for the row that records the parking.</summary>
+        public FlowWake? Wake { get; } = wake;
+    }
+
+    /// <summary>
+    /// Makes one attempt at a poll, or parks the instance until the next one is due.
+    /// </summary>
+    /// <param name="plan">The compiled flow, for its identity in an error.</param>
+    /// <param name="dispatcher">Answers the <c>until</c> predicate and runs the attempt.</param>
+    /// <param name="context">The flow's own context and its books.</param>
+    /// <param name="scope">What the attempt reads — the same object outside a loop.</param>
+    /// <param name="compensations">The unwind stack, or null when the flow has none.</param>
+    /// <param name="step">The <see cref="StepKind.Poll"/> node.</param>
+    /// <param name="cursor">The instance, and which iteration the poll itself runs in.</param>
+    /// <param name="ct">The caller's token.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>One attempt per invocation, and no loop in this method at all.</strong> That is
+    /// the claim the construct exists to make: the gap between two attempts is a parked row and
+    /// a sweep, not a <c>Task.Delay</c> — so a poll spanning four hours is four hours of
+    /// nothing running, re-entered a few dozen times through the same <c>ExecuteAsync</c> a
+    /// signal and a recovery scan use.
+    /// </para>
+    /// <para>
+    /// <strong>Everything it needs to know is on committed rows.</strong> Which attempt is
+    /// next, and when the polling started, come from
+    /// <see cref="DurableExecution.PollAttemptsMade"/>; when the next attempt is due comes from
+    /// the wake instant the parking wrote. Nothing is remembered between invocations, which is
+    /// what lets a different node pick the poll up an hour later and continue it exactly.
+    /// </para>
+    /// <para>
+    /// <strong>The predicate is asked before the attempt, not only after it.</strong> A poll
+    /// node commits no row of its own, so an instance resumed <em>past</em> a finished poll
+    /// arrives here again — and the thing that says the polling is over is the same question
+    /// that ended it: the last attempt's result is in the restored state bag and the predicate
+    /// still holds. Without that, every resume of a completed flow would poll one more time.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<PollOutcome> RunPollAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        FlowContext scope,
+        CompensationStack? compensations,
+        StepNode step,
+        JournalCursor cursor,
+        CancellationToken ct)
+    {
+        var body = step.Index + 1;
+
+        // Where a satisfied poll lands: past the escalation block when there is one, and
+        // otherwise the index after the one-step body. The absence of a target is read exactly
+        // as an AwaitSignal's is — "there is nowhere for this timeout to go".
+        var satisfied = step.Target ?? body + 1;
+
+        DateTimeOffset? since = null;
+        var made = cursor.Run is { } run ? run.PollAttemptsMade(cursor.Scope, body, out since) : 0;
+
+        if (made > 0)
+        {
+            var already = Holds(plan, dispatcher, step, scope);
+
+            if (already.Failure is not null)
+            {
+                return new PollOutcome(already.Failure, 0);
+            }
+
+            if (already.Held)
+            {
+                return new PollOutcome(null, 0, satisfied);
+            }
+        }
+
+        // Before anything that parks, and for the reason the step loop checks it before
+        // evaluating a suspension point: an instance whose whole budget has gone must fail
+        // rather than schedule a wake nothing will act on, because a suspension is the one
+        // ending from which only a sweep would ever look again.
+        if (_clock.UtcNow >= context.Deadline)
+        {
+            return new PollOutcome(FlowErrors.DeadlineExceeded(plan.Flow.Id, context.Deadline), 0);
+        }
+
+        if (made > 0)
+        {
+            var previous = cursor.Scope.Element(made - 1);
+            var due = cursor.Run?.RecordedWake(previous, step.Index) ?? _clock.UtcNow;
+
+            if (_clock.UtcNow < due)
+            {
+                return new PollOutcome(null, 0, null, suspended: true, new FlowWake(previous, step.Index, due));
+            }
+        }
+
+        // The poll's own budget, measured from the instant attempt zero committed rather than
+        // from this invocation's clock — so a poll picked up by three different nodes over four
+        // hours has one deadline rather than three fresh ones.
+        if (since is { } began && _clock.UtcNow >= began + step.PollTimeout!.Value)
+        {
+            return step.Target is null
+                ? new PollOutcome(
+                    FlowErrors.PollNotSatisfied(plan.Flow.Id, step.Index, made, step.PollTimeout!.Value),
+                    0)
+
+                // The block is laid out immediately after the body, so entering it is the index
+                // past the attempt — the mirror of an AwaitSignal's escalation, whose block is
+                // immediately after the wait because the wait occupies one index and a poll
+                // occupies two.
+                : new PollOutcome(null, 0, body + 1);
+        }
+
+        var attempt = await RunRangeAsync(
+            plan, dispatcher, context, scope, compensations, body, body + 1,
+            cursor.Element(made), ct).ConfigureAwait(false);
+
+        if (attempt.Failure is not null)
+        {
+            return new PollOutcome(attempt.Failure, attempt.Completed);
+        }
+
+        // Unreachable through the DSL — the generator lays exactly one capability in the body,
+        // and a capability does not park — and carried through rather than dropped so that a
+        // layout which one day put a wait there suspends the flow instead of asking the
+        // predicate about an attempt that never ran.
+        if (attempt.Suspended)
+        {
+            return new PollOutcome(null, attempt.Completed, null, suspended: true, attempt.Wake);
+        }
+
+        var verdict = Holds(plan, dispatcher, step, scope);
+
+        if (verdict.Failure is not null)
+        {
+            return new PollOutcome(verdict.Failure, attempt.Completed);
+        }
+
+        if (verdict.Held)
+        {
+            return new PollOutcome(null, attempt.Completed, satisfied);
+        }
+
+        // Not satisfied, and the budget has not gone: park until the next attempt. The gap is a
+        // pure function of how many attempts have been made, so nothing about the schedule has
+        // to survive this invocation either.
+        return new PollOutcome(
+            null,
+            attempt.Completed,
+            null,
+            suspended: true,
+            new FlowWake(
+                cursor.Scope.Element(made),
+                step.Index,
+
+                // `made` is one-based here by arithmetic rather than by accident: the attempt
+                // just committed was number `made` counting from zero, so the gap before the
+                // next one is the first entry of the schedule the first time round. The jitter
+                // draw comes from the engine's one source of randomness, exactly as a
+                // compensation retry's does.
+                _clock.UtcNow + step.PollInterval!.After(made + 1, Random.Shared.NextDouble())));
+    }
+
+    /// <summary>Whether a poll's <c>until</c> predicate holds, or why it could not be asked.</summary>
+    /// <remarks>
+    /// The dispatcher's <c>Evaluate</c>, which is the seam a conditional already uses — a poll
+    /// asks the same kind of question about the same context, and a second seam would be a
+    /// second thing for a generated dispatcher to keep in step. A predicate that throws joins
+    /// the failure path rather than escaping, for <see cref="StepKind.Branch"/>'s reason:
+    /// escaping would skip the compensation the already-completed steps need.
+    /// </remarks>
+    private static PollVerdict Holds(
+        ExecutionPlan plan, IStepDispatcher dispatcher, StepNode step, FlowContext scope)
+    {
+        try
+        {
+            return new PollVerdict(dispatcher.Evaluate(step.Index, scope), null);
+        }
+#pragma warning disable CA1031 // As for a branch's predicate and a switch's selector: a
+        catch (Exception exception) //   delegate escaping here would leave the saga standing
+        {                           //   on work with nothing left to undo it.
+            return new PollVerdict(
+                false, FlowErrors.PredicateFailed(plan.Flow.Id, step.Index, exception));
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>What a poll's predicate answered, or the defect that stopped it answering.</summary>
+    private readonly record struct PollVerdict(bool Held, Error? Failure);
 
     /// <summary>Reads a finished branch, converting a fault into an error rather than rethrowing.</summary>
     /// <remarks>

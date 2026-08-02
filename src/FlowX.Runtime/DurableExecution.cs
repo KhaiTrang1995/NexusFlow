@@ -294,6 +294,72 @@ public sealed class DurableExecution
     }
 
     /// <summary>
+    /// The lowest attempt of a poll whose body has not committed, and when the first one did.
+    /// </summary>
+    /// <param name="scope">The scope the poll node itself runs in.</param>
+    /// <param name="bodyStepId">The polled capability's flat index.</param>
+    /// <param name="firstAt">
+    /// When the first attempt <em>ran</em>, or <c>null</c> when none has — which is the same
+    /// fact as a return of zero, and is returned beside it because both come from one scan.
+    /// </param>
+    /// <returns>How many attempts have completed, which is also the number of the next one.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is what makes a poll's bound survive the node that started it.</strong> The
+    /// attempt number and the instant the polling began are both facts on committed rows —
+    /// <c>flow_step</c> keyed by the iteration scope, exactly as a <c>ForEach</c> element's row
+    /// is — so a poll resumed on a different node an hour later knows which attempt it is on
+    /// and how much of its budget is left without anything having been remembered.
+    /// </para>
+    /// <para>
+    /// <strong>The instant is the one the step itself read, and not the one the store stamped
+    /// on the row.</strong> <see cref="NondeterminismCapture.UtcNow"/> is
+    /// <c>FlowContext.UtcNow</c> captured for replay — the engine's own <c>IClock</c>, the same
+    /// one that decides whether the next attempt is due — and every journaled capability step
+    /// has one, because the loop's deadline check reads the clock before the step is
+    /// dispatched. <see cref="JournalStep.CommittedAt"/> comes from the store: PostgreSQL's
+    /// <c>now()</c>, a second clock on a second machine. Bounding a loop by the difference
+    /// between two clocks is the ambient read <c>FLOWX1007</c> forbids a capability, performed
+    /// by the engine instead — and under a test clock, or a host whose <c>IClock</c> is
+    /// deliberately not wall-clock, the difference is not a small one.
+    /// </para>
+    /// <para>
+    /// The store's stamp is the fallback and nothing more: it is the only other instant on the
+    /// row, and a poll whose first attempt somehow recorded no capture is better bounded
+    /// approximately than not at all.
+    /// </para>
+    /// <para>
+    /// Linear and from zero, for <see cref="Completed"/>'s reason: the frontier is a list in
+    /// commit order, an index over it would cost every resumed instance an allocation, and the
+    /// attempts a capped exponential makes inside any tolerable timeout are tens rather than
+    /// thousands.
+    /// </para>
+    /// </remarks>
+    internal int PollAttemptsMade(StepScope scope, int bodyStepId, out DateTimeOffset? firstAt)
+    {
+        firstAt = null;
+
+        if (Frontier is null)
+        {
+            return 0;
+        }
+
+        var made = 0;
+
+        while (Completed(scope.Element(made), bodyStepId) is { } attempt)
+        {
+            if (made == 0)
+            {
+                firstAt = attempt.Nondeterminism.UtcNow ?? attempt.CommittedAt;
+            }
+
+            made++;
+        }
+
+        return made;
+    }
+
+    /// <summary>
     /// Whether this instance has already committed a row saying this step's compensation ran.
     /// </summary>
     /// <remarks>

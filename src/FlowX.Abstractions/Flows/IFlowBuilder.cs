@@ -238,6 +238,51 @@ public interface IFlowBuilder<TIn, TOut>
     /// <summary>A durable timer. Holds no resources while waiting. Durable flows only.</summary>
     IFlowBuilder<TIn, TOut> Delay(TimeSpan duration);
 
+    /// <summary>
+    /// Invokes a capability repeatedly until <paramref name="until"/> holds, suspending
+    /// between attempts. Durable flows only (FLOWX1017).
+    /// </summary>
+    /// <typeparam name="TCapability">
+    /// What each attempt invokes. Polled, so it is called an unbounded number of times with
+    /// one flow's worth of input: <c>FLOWX1044</c> refuses one that has not declared itself
+    /// idempotent, on <c>FLOWX1014</c>'s argument.
+    /// </typeparam>
+    /// <param name="until">
+    /// What ends the polling, evaluated after each attempt against what that attempt
+    /// produced. Obeys the same determinism rule as a <see cref="When"/> predicate — context,
+    /// flow input and prior step results only (FLOWX1011).
+    /// </param>
+    /// <param name="interval">
+    /// How long to park between attempts. Bounded by construction, for the reason
+    /// <see cref="ForEachOptions.MaxDegreeOfParallelism"/> is required.
+    /// </param>
+    /// <param name="timeout">
+    /// How long the polling may go on, measured from the first attempt. What happens when it
+    /// runs out is <see cref="IAwaitBuilder{TIn, TOut}.OnTimeout"/>'s block, and a poll that
+    /// declares none ends the flow with <c>flow.poll_not_satisfied</c>.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Between attempts the instance is suspended, holding nothing.</strong> This is
+    /// the same parking <see cref="AwaitSignal{TSignal}"/> and <see cref="Delay"/> use — one
+    /// row carrying the instant it is due, no lease, no pooled context, no thread — so a
+    /// hundred thousand documents waiting on somebody else's OCR service cost a hundred
+    /// thousand rows and no compute. <c>while (!done) await Task.Delay(...)</c> costs a
+    /// process each and loses them all on the next deployment.
+    /// </para>
+    /// <para>
+    /// <strong>The loop is not a backward jump.</strong> Every target in a compiled plan
+    /// points forward, which is what proves the step loop terminates; a poll keeps that by
+    /// re-entering the contiguous span after its own node once per attempt, exactly as a
+    /// <see cref="ForEach"/> re-enters its body. What bounds it is
+    /// <paramref name="timeout"/> rather than an element count.
+    /// </para>
+    /// </remarks>
+    IAwaitBuilder<TIn, TOut> PollUntil<TCapability>(
+        Func<FlowContext<TIn>, bool> until,
+        Backoff interval,
+        TimeSpan timeout);
+
     /// <summary>Terminates with a business error.</summary>
     /// <param name="error">
     /// The failure the flow ends with. Reaches the generated dispatcher as a
@@ -340,9 +385,16 @@ public interface ISwitchBuilder<TIn, TOut, TValue> : IFlowBuilder<TIn, TOut>
 }
 
 /// <summary>A suspension point awaiting its timeout branch.</summary>
+/// <remarks>
+/// Returned by <see cref="IFlowBuilder{TIn, TOut}.AwaitSignal{TSignal}"/> and by
+/// <see cref="IFlowBuilder{TIn, TOut}.PollUntil{TCapability}"/>, because the two ask the same
+/// question of an author — <em>and if it never happens?</em> — and lay the answer out the same
+/// way: a block contiguous with the wait, which the satisfied path skips over. A second
+/// interface with the same member would be two spellings of one construct.
+/// </remarks>
 public interface IAwaitBuilder<TIn, TOut> : IFlowBuilder<TIn, TOut>
 {
-    /// <summary>Declares what happens when the signal never arrives.</summary>
+    /// <summary>Declares what happens when the wait runs out.</summary>
     IFlowBuilder<TIn, TOut> OnTimeout(Action<IFlowBuilder<TIn, TOut>> onTimeout);
 }
 

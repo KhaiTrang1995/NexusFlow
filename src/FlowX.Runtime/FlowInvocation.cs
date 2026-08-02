@@ -945,6 +945,49 @@ public static class FlowErrors
             .With("signalType", signalType)
             .With("timeout", timeout);
 
+    /// <summary>The code <see cref="PollNotSatisfied"/> raises.</summary>
+    /// <remarks>
+    /// A constant for <see cref="SignalNotReceivedCode"/>'s reason, and it is the same reason
+    /// twice: this is a business outcome the author anticipated — the document was still not
+    /// ready — rather than something going wrong.
+    /// </remarks>
+    public const string PollNotSatisfiedCode = "flow.poll_not_satisfied";
+
+    /// <summary>
+    /// A poll's declared timeout ran out with its predicate still false, and the flow declared
+    /// no <c>.OnTimeout(...)</c> block to take instead.
+    /// </summary>
+    /// <param name="flowId">The polling flow.</param>
+    /// <param name="stepIndex">Index of the poll, so the failure names one call site.</param>
+    /// <param name="attempts">How many attempts were made before the budget ran out.</param>
+    /// <param name="timeout">How long the author gave it.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>A failure, for the reason <see cref="SignalNotReceived"/> is one.</strong>
+    /// Carrying on at the step after the poll would run it against whatever the last
+    /// unsuccessful attempt happened to leave in the bag — a document's fields extracted from
+    /// an OCR job that never finished — which is worse than stopping, and is the defect the
+    /// predicate exists to prevent.
+    /// </para>
+    /// <para>
+    /// The attempt count is carried because it is the one number an operator needs and cannot
+    /// derive from the declaration: it says whether the poll was starved of time or the thing
+    /// it was polling never changed.
+    /// </para>
+    /// </remarks>
+    public static Error PollNotSatisfied(string flowId, int stepIndex, int attempts, TimeSpan timeout) =>
+        new Error(
+            PollNotSatisfiedCode,
+            $"Step {stepIndex} of flow '{flowId}' polled {attempts} time(s) over {timeout} " +
+            "and its condition never held. The flow declares no OnTimeout block, so there is " +
+            "nowhere for the poll to go: continuing would run the steps after it against the " +
+            "last attempt's unfinished result.",
+            ErrorCategory.Unavailable)
+            .With("flowId", flowId)
+            .With("stepIndex", stepIndex)
+            .With("attempts", attempts)
+            .With("timeout", timeout);
+
     /// <summary>
     /// An inline composed child reached a suspension point, which its parent cannot wait at.
     /// </summary>

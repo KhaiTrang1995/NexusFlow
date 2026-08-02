@@ -99,4 +99,41 @@ public sealed class ExecutionPlanTests
 
         plan.Graph.Count.ShouldBe(2);
     }
+
+    /// <summary>And so does polling, on the same argument twice over.</summary>
+    /// <remarks>
+    /// A poll parks between attempts and reads which attempt it is on out of the journal that
+    /// parked it. Outside one it has neither anywhere to record when the next call is due nor
+    /// any way to count the ones already made, which leaves a hot loop against somebody else's
+    /// service. FLOWX1017 says the same thing at build time.
+    /// </remarks>
+    [Fact]
+    public void PollingRequiresTheDurableProfile()
+    {
+        var graph = StepGraph.Create([
+            StepNode.ForPoll(0, Backoff.Exponential("PT5S", "PT5M"), TimeSpan.FromHours(4)),
+            StepNode.ForCapability(1, Fixtures.ValidateOrder),
+        ]);
+
+        Should.Throw<InvalidFlowPlanException>(() => ExecutionPlan.Create(Fixtures.PlaceOrder, graph))
+            .Message.ShouldContain("Durable");
+    }
+
+    /// <summary>A poll counts towards the flag that decides whether a timer sweep matters.</summary>
+    /// <remarks>
+    /// The flag answers "can an instance of this flow be waiting on a clock", and a parked poll
+    /// is one — so a deployment that registered no <c>ITimerIndex</c> is told about a flow that
+    /// polls for the same reason it is told about one that delays.
+    /// </remarks>
+    [Fact]
+    public void APollIsAWaitTheHostHasToKnowAbout()
+    {
+        var durable = FlowDescriptor.Create(
+            "order.place", "1.0.0", ExecutionProfile.Durable, TimeSpan.FromDays(30));
+
+        ExecutionPlan.Create(durable, StepGraph.Create([
+            StepNode.ForPoll(0, Backoff.Exponential("PT5S", "PT5M"), TimeSpan.FromHours(4)),
+            StepNode.ForCapability(1, Fixtures.ValidateOrder),
+        ])).HasTimers.ShouldBeTrue();
+    }
 }

@@ -309,7 +309,7 @@ public sealed class ExecutionPlan
             // Both kinds, because both park the instance until an instant the row records and
             // both are woken by the same sweep. The flag answers "can an instance of this flow
             // be waiting on a clock", and a suspension point with an armed timeout can.
-            timers |= step.Kind is StepKind.Delay or StepKind.AwaitSignal;
+            timers |= step.Kind is StepKind.Delay or StepKind.AwaitSignal or StepKind.Poll;
 
             AddEffects(effects, step.Capability);
             AddEffects(effects, step.Compensation);
@@ -372,6 +372,20 @@ public sealed class ExecutionPlan
                     $"{step.Index} delays for {step.Delay}. A durable timer requires the " +
                     "Durable profile: there is nowhere outside a journal to record when it " +
                     "is due, and a wait that survives nothing is a held thread.");
+            }
+
+            // And a third time, for the construct that is a timer per attempt. A poll parks
+            // between attempts and reads which attempt it is on out of the committed rows, so
+            // outside a journal it has neither a place to record when the next one is due nor
+            // any way to know how many have been made — which leaves only a hot loop.
+            if (step.Kind == StepKind.Poll)
+            {
+                throw new InvalidFlowPlanException(
+                    $"Flow '{flow.Id}' runs under the {flow.Profile} profile, but step " +
+                    $"{step.Index} polls for {step.PollTimeout}. " +
+                    "Polling requires the Durable profile: the gap between attempts is a " +
+                    "parked instance, and the attempt number is read back from the journal " +
+                    "that parked it.");
             }
         }
     }
