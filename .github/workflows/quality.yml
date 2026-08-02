@@ -17,6 +17,32 @@ jobs:
   coverage:
     name: Coverage thresholds
     runs-on: ubuntu-latest
+    # The same two servers ci.yml's build job runs, for the same reason one commit later:
+    # without them the durability, tenancy and sample suites skip, and every line they
+    # would have covered is counted as uncovered. A coverage number measured with a third
+    # of the suite absent is not a smaller number, it is a wrong one.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -34,6 +60,9 @@ jobs:
         # coverlet.runsettings excludes source-generated code. Without it the regex
         # generator's output is measured, which reports the generator's branches
         # rather than ours and drags the number down for no signal.
+        env:
+          FLOWX_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres"
+          FLOWX_REDIS_CONNECTION: "localhost:6379"
         run: >
           dotnet test FlowX.slnx --configuration Release --no-build
           --settings coverlet.runsettings
