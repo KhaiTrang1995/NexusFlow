@@ -30,13 +30,82 @@ public sealed class FleetTests
 {
     /// <summary>One occurrence is one instance, however many nodes are sweeping for it.</summary>
     /// <remarks>
+    /// <para>
     /// Five nodes, one declaration, one database — and one row. Every node computes the same
     /// occurrence from the same expression, derives the same id from it, and four of the five
     /// are refused: by the lease while the winner is running, and by the primary key for ever
     /// afterwards. There is nothing to elect and nothing to kill.
+    /// </para>
+    /// <para>
+    /// <strong>All five reach the claim because the fleet is primed, and the count below means
+    /// nothing without that.</strong> A node that has never accounted for this schedule takes its
+    /// floor from the journal, so a cold node whose probe runs after the winner's row lands finds
+    /// nothing due and is refused by nobody — which is the mechanism working and is
+    /// <see cref="AColdFleetFiresOnceHoweverManyNodesReachTheClaim"/>'s subject. Asserting four
+    /// refusals against a cold fleet asserts how a loaded box interleaved five tasks.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task FiveNodesFireOneOccurrenceOnce()
+    {
+        await using var cluster = await SchedulerCluster.CreateAsync(Cancellation.Token);
+
+        var nodes = cluster.Nodes(5);
+
+        await SchedulerCluster.PrimeAsync(nodes, Cancellation.Token);
+
+        cluster.Clock.Advance(TimeSpan.FromHours(1));
+
+        var reports = await Task.WhenAll(
+            nodes.Select(node => node.RunOnceAsync(Cancellation.Token).AsTask()));
+
+        (await cluster.InstanceCountAsync(Cancellation.Token)).ShouldBe(
+            1,
+            "the occurrence names the instance, so five nodes race to start one row.");
+
+        reports.Sum(static r => r.Due).ShouldBe(
+            5,
+            "a primed node decides what is due without reading a store, so every node holds " +
+            "this occurrence whatever order the five of them are scheduled in.");
+
+        reports.Sum(static r => r.Fired).ShouldBe(1);
+        reports.Sum(static r => r.Contended).ShouldBe(
+            4,
+            "a refusal is the mechanism working, so it is contended rather than failed — an " +
+            "operator watching Contended expecting zero is watching the wrong number.");
+
+        reports.Sum(static r => r.Failed).ShouldBe(
+            0, "neither lease.held nor journal.instance_exists is a failure.");
+
+        cluster.Desk.Filed.ShouldHaveSingleItem().Unmatched.ShouldBe(
+            1,
+            "three entries were booked, the bank referenced one and settled one without a " +
+            "reference, and the third is what the job exists to surface.");
+    }
+
+    /// <summary>
+    /// A fleet with no memory fires one occurrence once, however many of its nodes get as far as
+    /// attempting it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The invariant ADR-0031 actually states, on the fleet that cannot be counted.</strong>
+    /// Every node here is sweeping this schedule for the first time, so each takes its floor from
+    /// the journal — and a node whose probe runs after the winner's row lands reads that row,
+    /// takes the occurrence as its floor, and finds nothing due. That node is not refused because
+    /// it never asks. How many nodes are in that position is decided by how the machine
+    /// interleaved five tasks, so <c>Contended</c> is a number about the box and not about the
+    /// scheduler; what is about the scheduler is that <em>one</em> node fired, one row exists, and
+    /// every node that did reach the claim was refused rather than failed.
+    /// </para>
+    /// <para>
+    /// The lower bound is the half that matters second: a scheduler that fired nothing at all
+    /// would satisfy "no two nodes fired", and <c>Fired</c> summing to exactly one is what refuses
+    /// it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AColdFleetFiresOnceHoweverManyNodesReachTheClaim()
     {
         await using var cluster = await SchedulerCluster.CreateAsync(Cancellation.Token);
 
@@ -48,19 +117,23 @@ public sealed class FleetTests
             nodes.Select(node => node.RunOnceAsync(Cancellation.Token).AsTask()));
 
         (await cluster.InstanceCountAsync(Cancellation.Token)).ShouldBe(
-            1,
-            "the occurrence names the instance, so five nodes race to start one row.");
+            1, "the occurrence names the instance, and the primary key is what settles the race.");
 
-        reports.Sum(static r => r.Fired).ShouldBe(1);
+        reports.Sum(static r => r.Fired).ShouldBe(
+            1, "exactly one — not 'at most one', which a scheduler that never fires satisfies.");
+
+        reports.Count(static r => r.Fired > 0).ShouldBe(
+            1, "and it is one node's firing rather than a total that happens to sum to one.");
+
+        reports.Sum(static r => r.Failed).ShouldBe(
+            0, "a node that lost the race was refused, which is not a failure.");
+
         reports.Sum(static r => r.Contended).ShouldBe(
-            4,
-            "a refusal is the mechanism working, so it is contended rather than failed — an " +
-            "operator watching Contended expecting zero is watching the wrong number.");
+            reports.Sum(static r => r.Due) - 1,
+            "every node that reached the claim and lost it was refused — the ones missing from " +
+            "this count never had the occurrence due, because the journal already held it.");
 
-        cluster.Desk.Filed.ShouldHaveSingleItem().Unmatched.ShouldBe(
-            1,
-            "three entries were booked, the bank referenced one and settled one without a " +
-            "reference, and the third is what the job exists to surface.");
+        cluster.Desk.Filed.ShouldHaveSingleItem();
     }
 
     /// <summary>

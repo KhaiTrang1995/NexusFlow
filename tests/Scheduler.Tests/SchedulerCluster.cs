@@ -310,6 +310,41 @@ internal sealed class SchedulerCluster : IAsyncDisposable
     public IReadOnlyList<FlowScheduleScan> Nodes(int count) => [.. _fleet.Take(count)];
 
     /// <summary>
+    /// Sweeps a fleet once while nothing is due, so every node holds its own floor before the
+    /// occurrence a test is about falls due.
+    /// </summary>
+    /// <param name="fleet">The nodes.</param>
+    /// <param name="cancellationToken">Cancels the sweeps.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is what a replica that has been up for an hour is, and it is what makes a
+    /// fleet race a race.</strong> A node takes its floor from the newest occurrence it has
+    /// itself accounted for and asks the journal only when it has never accounted for one. A node
+    /// whose first sweep of its life is the racing one therefore probes the journal — and if the
+    /// winner's row is already there it correctly finds nothing due and never reaches the claim
+    /// at all. On a loaded box that is how many of <em>n</em> nodes get as far as being refused,
+    /// which is not a property of the mechanism and not something a count may be asserted
+    /// against.
+    /// </para>
+    /// <para>
+    /// A primed node reads no store to decide, so every node holds the occurrence before any of
+    /// them writes a row and all of them race. The cold fleet is
+    /// <see cref="FleetTests.AColdFleetFiresOnceHoweverManyNodesReachTheClaim"/>.
+    /// </para>
+    /// </remarks>
+    public static async Task PrimeAsync(
+        IReadOnlyList<FlowScheduleScan> fleet, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(fleet);
+
+        foreach (var node in fleet)
+        {
+            (await node.RunOnceAsync(cancellationToken)).Due.ShouldBe(
+                0, "priming must run before the occurrence falls due, or it is the firing");
+        }
+    }
+
+    /// <summary>
     /// A node that started just now, with no memory of any schedule.
     /// </summary>
     /// <returns>The sweep.</returns>

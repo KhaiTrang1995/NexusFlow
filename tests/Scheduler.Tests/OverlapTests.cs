@@ -193,11 +193,17 @@ public sealed class OverlapTests
 
         var fleet = cluster.Nodes(4);
 
+        // Primed, so all four reach the claim and the three refusals are the mechanism's rather
+        // than the scheduler's: a cold node whose floor probe runs after the winner's row lands
+        // finds nothing due and is refused by nobody. FleetTests covers that fleet.
+        await SchedulerCluster.PrimeAsync(fleet, Cancellation.Token);
+
         cluster.Clock.Advance(TimeSpan.FromHours(1));
 
         var reports = await Task.WhenAll(
             fleet.Select(node => node.RunOnceAsync(Cancellation.Token).AsTask()));
 
+        reports.Sum(static r => r.Due).ShouldBe(4, "every node held the occurrence");
         reports.Sum(static r => r.Fired).ShouldBe(1);
         reports.Sum(static r => r.Contended).ShouldBe(3);
 
