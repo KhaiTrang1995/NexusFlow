@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>
+      FlowX agent trigger: an MCP tool surface projected from flowx.manifest.json, and
+      JSON-RPC tools/list and tools/call over HTTP.
+    </Description>
+    <PackageTags>flowx;mcp;agent;ai;json-rpc</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      A plugin depends on the runtime; the runtime never depends on a plugin. The same
+      direction FlowX.Http points in, and RuntimeDoesNotReferenceAnyPlugin enforces it.
+    -->
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+  </ItemGroup>
+
+</Project>
