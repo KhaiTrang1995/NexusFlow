@@ -187,7 +187,7 @@ sequenceDiagram
     FE->>J: commit step 9, attempt 1 — Failure
     FE->>D: reverse debit (contra entry, key = …:ledger.reverse_debit)
     FE->>J: commit step 8, attempt 2 — Compensated
-    Note over FE,J: one dispatch, because the first one worked —<br/>Policies.LedgerPost allows five; see below
+    Note over FE,J: one dispatch, because the first one worked —<br/>Policies.LedgerPost allows five, see below
 ```
 
 ---
