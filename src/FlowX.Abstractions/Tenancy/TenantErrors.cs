@@ -88,6 +88,47 @@ public static class TenantErrors
             ErrorCategory.Forbidden)
             .With("claimedTenantId", claimed);
 
+    /// <summary>The code <see cref="ResidencyRefused"/> raises.</summary>
+    public const string ResidencyRefusedCode = "tenant.residency_refused";
+
+    /// <summary>
+    /// The tenant's data may not be processed in the region this deployment runs in.
+    /// </summary>
+    /// <param name="tenantId">The resolved tenant.</param>
+    /// <param name="required">The region the tenant is pinned to.</param>
+    /// <param name="actual">The region this deployment declares, or null when it declares none.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Refused rather than forwarded.</strong> Proxying the call to the right region
+    /// would be the platform routing personal data across a boundary a customer asked it not to
+    /// cross, on the strength of a configuration entry — the one action a residency control
+    /// must not take on its own. The caller is told which region to address and does the
+    /// addressing.
+    /// </para>
+    /// <para>
+    /// <strong>The required region is named, and that is a deliberate disclosure.</strong> It
+    /// is the caller's own tenant's configuration, the caller already holds a token for that
+    /// tenant, and an error that withheld it would leave a client with a retry loop against an
+    /// endpoint that will never answer. This is not <see cref="CrossTenantDenied"/>, which
+    /// withholds because naming the other side would be an oracle over somebody else's data.
+    /// </para>
+    /// <para>
+    /// <see cref="ErrorCategory.Forbidden"/>: terminal, not transient. Waiting does not move
+    /// the pod.
+    /// </para>
+    /// </remarks>
+    public static Error ResidencyRefused(string tenantId, string required, string? actual) =>
+        new Error(
+            ResidencyRefusedCode,
+            $"Tenant '{tenantId}' is pinned to region '{required}' and this deployment runs in " +
+            $"'{actual ?? "(none declared)"}'. The call was refused rather than forwarded: " +
+            "moving the request would be the platform carrying the data across the boundary " +
+            "the pin exists to hold. Address the deployment in the required region.",
+            ErrorCategory.Forbidden)
+            .With("tenantId", tenantId)
+            .With("requiredRegion", required)
+            .With("region", actual ?? string.Empty);
+
     /// <summary>The code <see cref="RateLimited"/> raises.</summary>
     public const string RateLimitedCode = "tenant.rate_limited";
 

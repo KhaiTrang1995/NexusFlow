@@ -107,17 +107,20 @@ public sealed class JournalPayload
     private readonly JsonTypeInfo? _typeInfo;
     private readonly IReadOnlyList<JournalMember> _members;
     private readonly IReadOnlyList<string> _sensitiveMembers;
+    private readonly string? _subjectMember;
 
     private JournalPayload(
         object? value,
         JsonTypeInfo? typeInfo,
         IReadOnlyList<JournalMember> members,
-        IReadOnlyList<string> sensitiveMembers)
+        IReadOnlyList<string> sensitiveMembers,
+        string? subjectMember = null)
     {
         _value = value;
         _typeInfo = typeInfo;
         _members = members;
         _sensitiveMembers = sensitiveMembers;
+        _subjectMember = subjectMember;
     }
 
     /// <summary>No payload — the column is null.</summary>
@@ -125,6 +128,71 @@ public sealed class JournalPayload
 
     /// <summary>Whether there is nothing to write.</summary>
     public bool IsEmpty => _typeInfo is null && _members.Count == 0;
+
+    /// <summary>
+    /// The handle the data subject's rows are found by, or <c>null</c> when this payload
+    /// names no subject.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is not a second exit, and the distinction is the whole of why it is
+    /// allowed to be here.</strong> An exit returns the value; this returns
+    /// <see cref="FlowX.SubjectDigest"/> of it — a one-way function of one named member, with
+    /// no route back. There is still no accessor for the object graph, still one
+    /// <see cref="ToJson"/>, and still one place that decides what a marked member is replaced
+    /// with. What this adds is the one question a store has to be able to ask without being
+    /// told the answer: <em>whose record is this?</em>
+    /// </para>
+    /// <para>
+    /// <strong>Computed before the redaction pass, on purpose.</strong> The member that
+    /// identifies the subject is usually the member that must never be written down — a
+    /// national identifier is both — so a digest taken from the stored document would digest
+    /// the literal <c>[redacted]</c> and give every patient in the deployment one handle.
+    /// Reading the composed document rather than the value keeps the object graph out of
+    /// reach: the pass sees JSON that this type produced and this type is the only holder of
+    /// it.
+    /// </para>
+    /// <para>
+    /// <strong>Top level only.</strong> The marked member belongs to the flow's input
+    /// contract, so it is a member of the document's root; a nested member of the same name is
+    /// a different contract's field and digesting whichever one a walk happened to reach first
+    /// would make the handle depend on serialisation order. A root that is not an object, a
+    /// member that is absent, and a member that is not a non-empty string all answer
+    /// <c>null</c> — a row with no handle is one erasure cannot find, which is truthful, where
+    /// a fabricated handle would be a row erasure finds by mistake.
+    /// </para>
+    /// </remarks>
+    public string? SubjectDigest
+    {
+        get
+        {
+            if (_subjectMember is null || IsEmpty)
+            {
+                return null;
+            }
+
+            using var document = JsonDocument.Parse(Compose());
+
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (!string.Equals(property.Name, _subjectMember, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                return property.Value.ValueKind == JsonValueKind.String
+                    ? FlowX.SubjectDigest.OfOrNull(property.Value.GetString())
+                    : null;
+            }
+
+            return null;
+        }
+    }
 
     /// <summary>
     /// Wraps a value for the journal.
@@ -139,15 +207,21 @@ public sealed class JournalPayload
     /// The contract members declared <c>[Sensitive]</c> — pass <c>Flow.SensitiveMembers</c>.
     /// Their values never reach the store.
     /// </param>
+    /// <param name="subjectMember">
+    /// The contract member declared <c>[Subject]</c> — pass <c>Flow.SubjectMember</c>. Its
+    /// value is never stored; <see cref="SubjectDigest"/> is derived from it. Null on a
+    /// contract that declares none.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="typeInfo"/> is null.</exception>
     public static JournalPayload Of<T>(
         T value,
         JsonTypeInfo<T> typeInfo,
-        IReadOnlyList<string>? sensitiveMembers = null)
+        IReadOnlyList<string>? sensitiveMembers = null,
+        string? subjectMember = null)
     {
         ArgumentNullException.ThrowIfNull(typeInfo);
 
-        return new JournalPayload(value, typeInfo, [], sensitiveMembers ?? []);
+        return new JournalPayload(value, typeInfo, [], sensitiveMembers ?? [], subjectMember);
     }
 
     /// <summary>
@@ -161,6 +235,11 @@ public sealed class JournalPayload
     /// <param name="sensitiveMembers">
     /// The contract members declared <c>[Sensitive]</c> — pass <c>Flow.SensitiveMembers</c>.
     /// Their values never reach the store.
+    /// </param>
+    /// <param name="subjectMember">
+    /// The contract member declared <c>[Subject]</c> — pass <c>Flow.SubjectMember</c>. Its
+    /// value is never stored; <see cref="SubjectDigest"/> is derived from it. Null on a
+    /// contract that declares none.
     /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="context"/> is null.</exception>
     /// <exception cref="InvalidOperationException">
@@ -190,7 +269,8 @@ public sealed class JournalPayload
     public static JournalPayload Of<T>(
         T value,
         JsonSerializerContext context,
-        IReadOnlyList<string>? sensitiveMembers = null)
+        IReadOnlyList<string>? sensitiveMembers = null,
+        string? subjectMember = null)
     {
         ArgumentNullException.ThrowIfNull(context);
 
@@ -202,7 +282,7 @@ public sealed class JournalPayload
                 "pass one that has it.");
         }
 
-        return new JournalPayload(value, typeInfo, [], sensitiveMembers ?? []);
+        return new JournalPayload(value, typeInfo, [], sensitiveMembers ?? [], subjectMember);
     }
 
     /// <summary>

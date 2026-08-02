@@ -339,6 +339,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1039](FLOWX1039.md) | Bus-triggered flow cannot be consumed | **A published `topic` with no subscription registered behind it: a flow that cannot bind the message and is never started, or an ephemeral one started again on every redelivery — with no error, no duplicate row and nothing anywhere to count** |
 | [FLOWX1040](FLOWX1040.md) | `Idempotency` is declared on a flow whose result cannot be recorded without redaction | **A replayed transfer answering with an IBAN of `[redacted]` and a `200`: the second caller's money moves to a placeholder, every step reports success, and nothing anywhere says a value was fabricated** |
 | [FLOWX1041](FLOWX1041.md) | Change-triggered flow cannot be observed | **A published change subscription with nothing registered behind it: a flow that cannot bind the change and is never started, or an ephemeral one started again every time the cursor is re-read from an uncommitted position — with no error, no duplicate row and nothing anywhere to count** |
+| [FLOWX1047](FLOWX1047.md) | Data subject is declared where the runtime cannot record it | **A deployment that runs perfectly and cannot answer an erasure request** — the marker names two members, or the output contract, or a member that is not a string, or a flow that keeps no journal, so the handle is never written and the rows can never be found. Discovered when somebody exercises the right, by which time the identifier the handle would have been computed from has been redacted for months |
 | [FLOWX1042](FLOWX1042.md) | Stream-triggered flow cannot be windowed | **A published stream subscription with nothing registered behind it: a flow that cannot bind a window, a non-`Streaming` one whose rebuilt window aggregates a second time after every crash, or a window shape the engine does not implement — a stream nobody reads, and nothing anywhere saying why** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
@@ -568,7 +569,18 @@ shape the engine does not implement, which is a property of the attribute rather
 why only tumbling windows survive. It is an **error** where `FLOWX1028` is a warning, and the
 difference is that every one of these three has a fix that produces a flow the engine runs today.
 
-The next is `FLOWX1043`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1047` is claimed** — *data subject is declared where the runtime cannot record it*: a
+`[Subject]` marker the runtime would have to ignore. Four shapes, one rule and one suppression,
+unlike `FLOWX1038`–`FLOWX1042`, which are four rules about four attributes precisely so that a
+suppression of one does not silence another. These four are one rule about one attribute — *the
+handle will never be written* — and a project that legitimately suppressed it for one of them
+would legitimately suppress it for all of them, because the consequence is identical in every
+case: rows no erasure can ever find.
+[ADR-0061](../adr/ADR-0061-a-subject-is-erased-by-digest-and-a-residency-is-a-refusal.md) is the
+decision. It is an **error** on `FLOWX1038`'s argument: every shape has a one-line fix that
+produces a flow this runtime serves today.
+
+The next is `FLOWX1048`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

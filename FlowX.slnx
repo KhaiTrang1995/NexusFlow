@@ -19,6 +19,7 @@
   <Folder Name="/samples/">
     <Project Path="samples/banking/Banking.csproj" />
     <Project Path="samples/ecommerce/Ecommerce.csproj" />
+    <Project Path="samples/healthcare/Healthcare.csproj" />
     <Project Path="samples/workflow/Workflow.csproj" />
   </Folder>
   <Folder Name="/tests/">
@@ -34,6 +35,7 @@
     <Project Path="tests/FlowX.Conformance.Tests/FlowX.Conformance.Tests.csproj" />
     <Project Path="tests/FlowX.Core.Tests/FlowX.Core.Tests.csproj" />
     <Project Path="tests/FlowX.Hosting.Tests/FlowX.Hosting.Tests.csproj" />
+    <Project Path="tests/Healthcare.Tests/Healthcare.Tests.csproj" />
     <Project Path="tests/FlowX.Http.Tests/FlowX.Http.Tests.csproj" />
     <Project Path="tests/FlowX.Mcp.Tests/FlowX.Mcp.Tests.csproj" />
     <Project Path="tests/FlowX.Logging.Tests/FlowX.Logging.Tests.csproj" />

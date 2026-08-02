@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>Healthcare</RootNamespace>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      No PublishAot, for samples/banking's reason: this sample journals to PostgreSQL, so it
+      pulls in Npgsql, and claiming a NativeAOT publish for a graph nobody has published that
+      way would be the untested claim these samples exist to argue against. The trim and AOT
+      analysers still run — Directory.Build.props turns them on for every project.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The in-memory clinic systems are internal to the sample's story and are exercised by the
+      test project rather than being widened into public surface to be testable.
+    -->
+    <InternalsVisibleTo Include="Healthcare.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+    <ProjectReference Include="../../plugins/FlowX.Http/FlowX.Http.csproj" />
+
+    <!--
+      The journal, and the store behind ISubjectErasure. Not optional here: patient.intake
+      declares Durable, and the handle a patient's records are erased by lives on the instance
+      row this plugin writes.
+    -->
+    <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+
+    <!--
+      The compiler as an ANALYZER, not a library: the generator runs inside this project's
+      build against this project's source, as it would for any consumer. This is the only place
+      in the repository where it runs over a flow declaring a [Subject].
+    -->
+    <ProjectReference Include="../../src/FlowX.Compiler/FlowX.Compiler.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

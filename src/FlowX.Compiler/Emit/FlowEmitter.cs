@@ -142,6 +142,7 @@ public static class FlowEmitter
         writer.Line();
         EmitProjection(writer, flow);
         EmitSensitiveMembers(writer, flow);
+        EmitSubjectMember(writer, flow);
         EmitStateBag(writer, journaled);
         EmitDispatcher(writer, flow, staged, journaled, audited, cached);
 
@@ -960,9 +961,13 @@ public static class FlowEmitter
         }
         else
         {
+            // SubjectMember rides the same call as SensitiveMembers, and is the only payload
+            // that carries it: the handle identifies the instance, and an instance is opened
+            // from its input exactly once. A step result or a state bag carrying it would offer
+            // a second, later chance to disagree about whose record this is.
             writer.Line("return input is " + input.TypeName + " typed");
             writer.Line("    ? JournalPayload.Of(typed, global::" + input.JsonContextTypeName +
-                ".Default, SensitiveMembers)");
+                ".Default, SensitiveMembers, SubjectMember)");
             writer.Line("    : JournalPayload.Empty;");
         }
 
@@ -1135,6 +1140,29 @@ public static class FlowEmitter
             (members.Count == 0
                 ? "System.Array.Empty<string>();"
                 : "new[] { " + string.Join(", ", members.Select(m => "\"" + m + "\"")) + " };"));
+        writer.Line();
+    }
+
+    /// <summary>
+    /// Emits the name of the input-contract member marked <c>[Subject]</c>.
+    /// </summary>
+    /// <remarks>
+    /// Emitted even when there is none, for <c>SensitiveMembers</c>'s reason: the caller is
+    /// generated code in this same file, and a member that exists only on some flows would make
+    /// the payload writer's shape depend on the contract. <c>null</c> is what
+    /// <c>JournalPayload</c> reads as "this flow identifies nobody", which is the truthful
+    /// answer for most flows.
+    /// </remarks>
+    private static void EmitSubjectMember(SourceWriter writer, FlowModel flow)
+    {
+        writer.Line("/// <summary>The input-contract member declared <c>[Subject]</c>, or null.</summary>");
+        writer.Line("/// <remarks>");
+        writer.Line("/// The handle this flow's instances are erased by is the digest of this member's");
+        writer.Line("/// value, computed inside <c>JournalPayload</c> before the redaction pass.");
+        writer.Line("/// </remarks>");
+        writer.Line(
+            "public const string? SubjectMember = " +
+            (flow.SubjectMember is null ? "null;" : "\"" + flow.SubjectMember + "\";"));
         writer.Line();
     }
 

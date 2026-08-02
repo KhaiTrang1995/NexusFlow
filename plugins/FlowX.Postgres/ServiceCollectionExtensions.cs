@@ -94,6 +94,18 @@ public static class ServiceCollectionExtensions
                 : new PostgresTimerIndex(provider.GetRequiredService<NpgsqlDataSource>()));
         }
 
+        // Erasure, registered beside retention because they are the same obligation asked two
+        // ways: retention answers "how long may this be kept", erasure answers "this one, now".
+        // It takes the per-tenant pools at Schema isolation for the reason the sweeps do — at
+        // that level a subject's rows are in that tenant's schema, and an erasure that searched
+        // the control schema would find nothing and report a complete erasure of it.
+        services.AddSingleton<ISubjectErasure>(provider => new PostgresSubjectErasure(
+            provider.GetRequiredService<NpgsqlDataSource>(),
+            settings.TenantSchemas.IsEnabled
+                ? provider.GetRequiredService<PostgresTenantStores>()
+                : null,
+            provider.GetService<RetentionConsumers>()));
+
         services.AddSingleton(provider => new PostgresRetention(
             provider.GetRequiredService<NpgsqlDataSource>(),
             provider.GetService<RetentionConsumers>()));

@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit.v3" Version="2.0.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.3" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+
+    <!--
+      The database is not a stand-in here and cannot be one. What this project asserts is that
+      PostgreSQL refuses a cross-tenant read and that an erasure clears the columns it says it
+      clears — both are properties of migrations 0008 and 0012 and of the statements the adapter
+      issues, and a reference journal in memory would report them as passing without either
+      existing. samples/banking makes the opposite trade for the opposite reason: what it
+      asserts is store-independent by construction.
+    -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The sample project itself, not a copy of it. If the sample stops compiling or its flow
+      changes shape, these tests fail — which is the only way a reference application stays a
+      reference rather than becoming stale documentation.
+    -->
+    <ProjectReference Include="../../samples/healthcare/Healthcare.csproj" />
+
+    <!-- The store under test, and the test context the platform ships. -->
+    <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+    <ProjectReference Include="../../src/FlowX.Testing/FlowX.Testing.csproj" />
+  </ItemGroup>
+
+</Project>
