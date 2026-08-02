@@ -1632,28 +1632,21 @@ executes it, not when something publishes it.*
 | Manifest | **runs** | a build artifact, byte-pinned, diffed by 40-odd rules |
 | Telemetry · traces and metrics | **runs** | 11 of 13 metrics, 10 of 13 attributes; B6's allocation half gated |
 | **Telemetry · logs** | **runs** | `FlowXLog` over `DiagnosticSource`; `src/FlowX.Logging` bridges to `ILogger` without moving `AbstractionsHasNoDependencies` |
-| **Triggers** | **7 of 8 bound** | HTTP, Schedule, Bus, Change, Agent, Manual, Cli. **`Stream` alone is unbound**, blocked on the stream engine |
-| **Multi-tenancy** | **runs** | resolution at admission, `Row` and `Schema` isolation, five of six fairness mechanisms. `Database` refused as a topology, not a level ([ADR-0051](docs/adr/ADR-0051-database-isolation-is-a-topology-not-a-runtime-level.md)) |
-| **Stream engine** | **absent** | no checkpoint format, no watermark, no windowing — P7, and the least specified phase |
+| **Triggers** | **8 of 8 bound** | HTTP, Schedule, Bus, Change, Agent, Manual, Cli, Stream |
+| **Multi-tenancy** | **runs** | resolution at admission, `Row` and `Schema` isolation, six of six fairness mechanisms. `Database` refused as a topology, not a level ([ADR-0051](docs/adr/ADR-0051-database-isolation-is-a-topology-not-a-runtime-level.md)) |
+| **Stream engine** | **runs** | tumbling event-time windows, an observed watermark and a checkpointed source position; window state is not journaled because a closed window derives the instance id it starts ([ADR-0055](docs/adr/ADR-0055-a-window-names-the-instance-it-starts.md)). Sliding, session and global windows are refused by `FLOWX1042` |
 | **AI surface / MCP** | **runs** | `plugins/FlowX.Mcp`; `tools/list` is a projection of the manifest and `tools/call` meets the same authorisation stance HTTP does |
 | **Studio** | **absent** | sixteen one-line mentions and no design |
 
-**What is planned next.** Every subsystem above either runs or is one of two the roadmap
-cannot yet specify. What is left is narrower than a phase:
+**What is planned next.** Every subsystem above runs but Studio, which the roadmap cannot yet
+specify. What is left is narrower than a phase:
 
-1. **A non-HTTP trigger cannot start a flow in a tenanted deployment.** Change, bus and
-   schedule start with no principal, so the tenant resolver refuses them — and the refusal
-   is not a holding disposition, so a change cursor commits past work that never ran. Only
-   HTTP carries a caller. This is the widest gap left.
-2. **Failure isolation in the tenant sweeps.** `PostgresTenantRecoveryIndex` and
-   `PostgresTenantTimerIndex` return the first tenant's failure and abandon the page.
-3. **Journal write budget per tenant** — [16 §4](docs/16-Multi-Tenant.md)'s sixth fairness
-   mechanism. A shared budget costs a limiter round trip per step commit; a process-local
-   one is what [ADR-0040](docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md)
-   refuses. It needs a decision, not code.
-4. **Stream engine**, and `Stream` behind it — **not next**. Nothing defines the checkpoint
-   format, watermark generation or window journaling, so building it means inventing it.
-5. **Studio** — **not next**. Sixteen one-line mentions and no design.
+1. **Studio** — **not next**. Sixteen one-line mentions and no design.
+2. **`.Window(…)` and `.Aggregate(…)` are not members of `IFlowBuilder<TIn, TOut>`**, so
+   [09 §9](docs/09-Trigger-Model.md#9-stream-trigger)'s example does not compile. A stream
+   flow declares `Flow<StreamWindowBatch, TOut>` and aggregates in a capability instead.
+3. **Nothing measures a tenant's p99 under load**, so [21](docs/21-Quality-Gates.md)'s
+   tenant-fairness gate stays unwritten though all six mechanisms exist.
 
 ## 5f. The vision's success criteria · current state
 
