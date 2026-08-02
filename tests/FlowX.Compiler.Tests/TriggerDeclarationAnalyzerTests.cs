@@ -423,8 +423,10 @@ public sealed class TriggerDeclarationAnalyzerTests
     {
         new TriggerDeclarationAnalyzer().SupportedDiagnostics
             .Select(static d => d.Id)
-            .ShouldBe(
-                ["FLOWX1025", "FLOWX1038", "FLOWX1039", "FLOWX1041", "FLOWX1042", "FLOWX1048"]);
+            .ShouldBe([
+                "FLOWX1025", "FLOWX1038", "FLOWX1039", "FLOWX1041", "FLOWX1042",
+                "FLOWX1045", "FLOWX1048",
+            ]);
     }
 
     /// <summary>

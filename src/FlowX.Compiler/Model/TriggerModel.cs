@@ -143,16 +143,29 @@ public sealed class TriggerModel : IEquatable<TriggerModel>
 /// Whether the declaration asked for one firing per tenant, and therefore a fan-out over the
 /// host's <c>ITenantDirectory</c> rather than a single instance per occurrence.
 /// </param>
+/// <param name="Overlap">The declared <c>OverlapPolicy</c> member, by name.</param>
+/// <param name="Jitter">
+/// The declared spread, verbatim — an ISO-8601 duration, or null when the declaration carried
+/// none. Carried verbatim including a value the host will refuse, for
+/// <see cref="StreamDeclaration"/>'s reason: discarding it here would leave <c>FLOWX1045</c>
+/// nothing to name and would make the generated registration silently disagree with the source.
+/// </param>
 /// <remarks>
 /// Separate from <see cref="TriggerModel"/> because that model is address and admission only,
-/// and a missed-fire policy is neither: it decides what this deployment does about work that is
-/// late, which is a run-time behaviour rather than a promise to a caller
+/// and none of these four is either: they decide what this deployment does about work that is
+/// late, whose work it is, what happens when it runs long and when in the minute it starts —
+/// run-time behaviour rather than a promise to a caller
 /// (<a href="../../../docs/adr/ADR-0034-the-manifest-publishes-a-schedules-address.md">ADR-0029</a>).
-/// Folding it onto <see cref="TriggerModel"/> would have put a value in the model whose own
+/// Folding them onto <see cref="TriggerModel"/> would have put values in the model whose own
 /// remarks say operational tuning is deliberately absent, one field away from
-/// <c>ManifestWriter</c> writing it.
+/// <c>ManifestWriter</c> writing them.
 /// </remarks>
-public sealed record ScheduleDeclaration(string Cron, string MissedFire, bool PerTenant = false);
+public sealed record ScheduleDeclaration(
+    string Cron,
+    string MissedFire,
+    bool PerTenant = false,
+    string Overlap = "Skip",
+    string? Jitter = null);
 
 /// <summary>
 /// The part of a <c>[StreamTrigger]</c> the manifest deliberately does not publish.

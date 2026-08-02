@@ -343,6 +343,9 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1042](FLOWX1042.md) | Stream-triggered flow cannot be windowed | **A published stream subscription with nothing registered behind it: a flow that cannot bind a window, a non-`Streaming` one whose rebuilt window aggregates a second time after every crash, or a window shape the engine does not implement — a stream nobody reads, and nothing anywhere saying why** |
 | [FLOWX1048](FLOWX1048.md) | Triggers on one flow require different input contracts | **Two transports on one class that cannot both be served, and four rules whose advice alternates between them: `FLOWX1038` says declare it as `Flow<ScheduledFire, TOut>` and `FLOWX1039` says declare it as `Flow<BusMessage, TOut>`, and neither can see the other** |
 | [FLOWX1046](FLOWX1046.md) | Agent tool declares no confirmation over declared side effects | **A tool a model may call to move money, publishing `confirmationRequired: false`: no client prompts, a server enforcing confirmation has nothing to enforce, and the flow that says so and the capability that charges the card are in two different files** |
+| [FLOWX1045](FLOWX1045.md) | Schedule jitter cannot be read | **Every replica of a deployment failing to become ready over a compile-time constant — `FlowSchedule.Create` throws on a `Jitter` it cannot read, and the value was a literal on the attribute the whole way; or a declared `PT0S` that reads as a spread and is not one** |
+
+The next is `FLOWX1049`. The range is `FLOWX1001`–`FLOWX1099`.
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -607,6 +610,18 @@ case: rows no erasure can ever find.
 [ADR-0061](../adr/ADR-0061-a-subject-is-erased-by-digest-and-a-residency-is-a-refusal.md) is the
 decision. It is an **error** on `FLOWX1038`'s argument: every shape has a one-line fix that
 produces a flow this runtime serves today.
+
+**`FLOWX1045` is claimed** — *schedule jitter cannot be read*: a `[CronTrigger]` whose `Jitter`
+is not a positive ISO-8601 duration. Unlike `FLOWX1038` this is a property of the **declaration**
+rather than of the flow, so it is reported per attribute: a flow with two schedules can have a
+readable spread on one and rubble on the other, and a suppression written against the second must
+not silence the first. The consequence is that every replica of the deployment fails to become
+ready — `FlowSchedule.Create` throws on a spread it cannot read, for the reason it throws on an
+expression it cannot read — over a value that was a compile-time constant the whole way. A
+declared `PT0S` is refused with the rest, because asking for a spread and getting none reads as
+working; an **omitted** property is the ordinary declaration and is silent.
+[ADR-0059](../adr/ADR-0059-schedule-jitter-is-derived-from-the-firing.md) is the decision the
+value belongs to. It is none of the reservations.
 
 The next is `FLOWX1049`. The range is `FLOWX1001`–`FLOWX1099`.
 

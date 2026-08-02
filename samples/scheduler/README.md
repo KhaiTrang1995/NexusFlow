@@ -1,184 +1,210 @@
 # Sample — Scheduled and recurring work
 
-**Claim it is meant to prove:** cron work is an ordinary flow. Leader election,
-overlap policy, missed-fire recovery, per-tenant fan-out and DST correctness are
-platform services, not job-framework glue.
+**Claim proved:** cron work is an ordinary flow. Overlap policy, jitter, missed-fire
+recovery, per-tenant fan-out and DST correctness are platform services, not
+job-framework glue.
 
-> [!NOTE]
-> **The scheduler has since been built, and the warning box after this one is kept
-> as written rather than edited.** *"There is no scheduler"* is false. A
-> `[CronTrigger]` generates a registration, every node computes the same occurrence,
-> and every node derives the same instance id from it — so a firing happens once
-> across a cluster because the lease store and then the journal's primary key refuse
-> the losers, which is leader election's outcome without a leader
-> ([ADR-0031](../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md)).
-> A firing that fell due while every node was down happens late.
+> [!IMPORTANT]
+> **Two of this page's claims were wrong rather than merely unbuilt, and both are
+> corrected below rather than implemented around.**
 >
-> `samples/workflow`'s `offer.window.close` is that, running: no route, no hosted
-> service, and no line in its `Program.cs` naming a time. `tests/Workflow.Tests/ScheduleTests`
-> is where three replicas over one PostgreSQL are held to six firings rather than
-> eighteen. `PerTenant` fan-out is served too, over the tenant registry at L2.
+> **There is no leader election, and there will not be one.**
+> [ADR-0031](../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md)
+> refuses it: an election has to be *held*, a dead leader has to be *detected*, and
+> hand-over has to *complete* — three mechanisms, each with a window in which a
+> schedule fires twice or not at all, and a leader that has lost its lease without
+> noticing fires anyway. What ships needs no coordination at all and is stronger.
+> The [section below](#one-occurrence-one-run-no-leader) is the mechanism that
+> replaced the sequence diagram this page used to draw.
 >
-> **What is left is this page's larger claim**: `Overlap` and `Jitter`
-> as declared options, and DST correctness stated rather than assumed.
+> **The flow could not have compiled as printed.** It declared
+> `Flow<ReconciliationRequest, ReconciliationReport>`, and `FLOWX1038` refuses a
+> `[CronTrigger]` on a flow whose input is not `ScheduledFire`. A firing carries no
+> body; nobody sends a reconciliation request, a night arrives.
 
-> [!WARNING]
-> **This sample has no code.** `samples/scheduler/` is this file and nothing else.
-> **There is no scheduler.** Nothing anywhere in `src/` or `plugins/` reads a cron
-> expression, computes a next firing, or starts a flow because a clock said so —
-> the word *leader* appears exactly once in the whole of `src/` and `plugins/`,
-> in the doc comment on `CronTriggerAttribute` promising the behaviour this page
-> describes.
->
-> `[CronTrigger("0 2 * * *", TimeZone = "Europe/Berlin")]` nevertheless
-> **compiles**, and `EveryTriggerKindTheAbstractionShipsIsRecognised` asserts it
-> reaches `flowx.manifest.json` as `"kind": "Schedule"`. Its cron expression and
-> its time zone get that far.
-> `Overlap`, `MissedFire`, `Jitter` and `PerTenant` do not: only
-> `cron` and `timeZone` are read by `TriggerReader` and written by
-> `ManifestWriter`, so the four options the [policy table](#policy-semantics)
-> below is about are, today, defaults on an attribute nobody reads —
-> `CronTriggerDefaultsProtectAgainstTheTwoClassicSchedulerIncidents` asserts the
-> defaults are the safe ones and is the only thing that touches them.
->
-> **The lease under the diagram is the part that exists.** `ILeaseStore` is
-> declared, `DurableLease` acquires, renews and releases under a fencing token,
-> and two stores implement it — `plugins/FlowX.Postgres` and `plugins/FlowX.Redis`
-> — both passing `LeaseStoreConformance` unmodified
-> ([11 §3](../../docs/11-Distributed-Runtime.md#3-leases-and-fencing)). What that
-> lease is taken on is a *flow instance*, not a schedule. Electing one scheduler
-> across N nodes is the same primitive pointed at a different key, and nobody has
-> pointed it there.
->
-> | What has to exist first | Where it comes from |
-> |---|---|
-> | A scheduler: next-firing computation, DST-correct time zones, a firing loop | **WP-75**, [P3](../../PLAN.md#6-p3--transport-breadth) |
-> | Leader election over the existing lease store | **WP-75**, which depends on **WP-55** — *leader election is a lease, which is why P3 follows P2* |
-> | `Overlap`, `MissedFire`, `Jitter` and `PerTenant` read into the manifest | Unassigned. The reader and the writer are three lines each; the semantics behind them are WP-75 |
-> | `PerTenant` fan-out | **P6** — nothing consumes `TenantId` beyond carrying it ([16](../../docs/16-Multi-Tenant.md)) |
-> | A retry policy that executes on a forward step | **P4.** Only `PolicySet.CompensationRetry` runs today, at `PolicyStage.Consistency`; the forward path runs zero policies |
->
-> Read the rest as the design a P3 implementer is held to, not as behaviour you
-> can observe.
+## Running it
+
+```bash
+FLOWX_POSTGRES_CONNECTION="Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=postgres" \
+FLOWX_SAMPLE_SCHEDULE_CRON="* * * * *" FLOWX_SAMPLE_SCHEDULE_SCAN=00:00:01 \
+dotnet run --project samples/scheduler
+```
+
+**PostgreSQL is not optional here**, and that is the sample's point rather than a
+dependency it happens to have. What makes one occurrence one run across a whole
+fleet is `flow_instance`'s primary key; with no journal the sweep is disabled
+outright rather than firing once per replica in silence. There is no HTTP endpoint
+and no principal — nothing calls this application, a cron expression starts it, and
+the capabilities run under `Authorization.Internal` with no request in the path.
+
+`0 2 * * *` is the declared schedule and what the manifest publishes. `Program.cs`
+registers a *second*, denser schedule from the environment for a demonstration
+rather than overriding the first, so the declaration a reader sees stays the
+declaration that runs.
 
 ## The flow
 
-> **Compiles; never fires.** Every attribute below is real and the flow builds.
-> Four of the five `[CronTrigger]` options are inert, and nothing starts the flow
-> at 02:00 or at any other time. `.WithPolicy(Policies.ExternalRead)` on a forward
-> step is recorded in the plan and the manifest and applies nothing at run time.
-
 ```csharp
-[Flow("reconciliation.daily", Profile = ExecutionProfile.Durable)]
+[Flow("reconciliation.daily", Version = "1.0.0", Profile = ExecutionProfile.Durable)]
 [CronTrigger("0 2 * * *",
     TimeZone   = "Europe/Berlin",       // DST-correct; never runs twice on the fall-back night
     Overlap    = OverlapPolicy.Skip,    // yesterday's run still going? skip today's
     MissedFire = MissedFirePolicy.RunOnce,
-    Jitter     = "PT120S",              // spread load across replicas and tenants
+    Jitter     = "PT120S",              // spread load across tenants
     PerTenant  = true)]                 // fan out: one instance per active tenant
-public sealed partial class DailyReconciliationFlow : Flow<ReconciliationRequest, ReconciliationReport>
+public sealed partial class DailyReconciliationFlow : Flow<ScheduledFire, ReconciliationReport>
 {
-    protected override void Define(IFlowBuilder<ReconciliationRequest, ReconciliationReport> flow) => flow
+    protected override void Define(IFlowBuilder<ScheduledFire, ReconciliationReport> flow) => flow
         .Step<LoadLedgerSnapshot>()
         .Step<LoadBankStatement>().WithPolicy(Policies.ExternalRead)
         .Parallel(p => p
-            .Branch<MatchByReference>()
-            .Branch<MatchByAmountAndDate>(),
+            .Branch(exact => exact.Step<MatchByReference, Reconcilable>(ctx =>
+                new Reconcilable(ctx.Get<LedgerSnapshot>(), ctx.Get<BankStatement>())))
+            .Branch(fuzzy => fuzzy.Step<MatchByAmountAndDate, Reconcilable>(ctx =>
+                new Reconcilable(ctx.Get<LedgerSnapshot>(), ctx.Get<BankStatement>()))),
          merge: MergeStrategy.AllSettled)
-        .Step<ProduceReport>()
-        .Emit<ReconciliationCompleted>()
+        .Step<ProduceReport, MatchSet>(ctx => new MatchSet(
+            ctx.Get<LedgerSnapshot>(), ctx.Get<ReferenceMatches>(), ctx.Get<HeuristicMatches>()))
+        .Emit(ctx => new ReconciliationCompleted(/* … */))
         .Return(ctx => ctx.Get<ReconciliationReport>());
 }
 ```
 
-The same capabilities are reachable on demand — add `[HttpTrigger]` and an
-operator can run reconciliation manually. Nothing about the flow changes.
+The occurrence arrives as the flow's input and is journalled on
+`flow_instance.input` like any other trigger's payload
+([ADR-0033](../../docs/adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md)),
+because `FLOWX1007` and `FLOWX1011` forbid the flow reading a clock to work out
+which occurrence it is. A run at 02:41 therefore reconciles the day that ended at
+02:00, and so does a resumed one.
 
-## Leader election
+The mapping lambdas are what let one capability bind two earlier outputs; a
+capability takes exactly one input contract, and each branch writes its own so that
+two threads never share a slot of the state bag (`FLOWX1013`).
 
-> **The lease store in this diagram is built; the scheduler on either side of it
-> is not.** `acquire`, `renew` and the TTL takeover at token 13 are exactly what
-> `LeaseStoreConformance` asserts of both implementations. The two participants
-> named `scheduler-1` and `scheduler-2` do not exist.
+**The same capabilities are reachable on demand — but not from this flow.** A
+schedule supplies its own payload and an HTTP endpoint binds a caller's, so one
+flow cannot serve both and `FLOWX1038` says so. Running reconciliation manually
+means a second flow over the same capabilities, which is the honest shape of
+"transport-free business logic" and the limit
+[09 §3](../../docs/09-Trigger-Model.md) records.
+
+## One occurrence, one run, no leader
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant S1 as scheduler-1
     participant S2 as scheduler-2
-    participant L as Lease store
+    participant J as Journal + leases (PostgreSQL)
 
-    S1->>L: acquire("scheduler-leader", ttl 30s) → token 12
-    S2->>L: acquire → denied (held)
-    loop while leading
-        S1->>L: renew (every 10s)
-        S1->>S1: fire due schedules
-    end
-    Note over S1: 💥 scheduler-1 dies
-    S2->>L: acquire after TTL → token 13
-    S2->>S2: MissedFirePolicy applies to anything missed
-    Note over S2: exactly one leader at any time —<br/>schedules never double-fire
+    Note over S1,S2: both compute 02:00 from the same expression, talking to nobody
+    S1->>S1: id = uuidv8(sha256(flow ␀ version ␀ cron ␀ zone ␀ 02:00 ␀ tenant))
+    S2->>S2: same inputs, same id
+    S1->>J: acquire(id) → token 1, then StartAsync(id)
+    S2->>J: acquire(id) → refused, held
+    Note over S2: contended, not failed —<br/>the expected answer on n−1 nodes
+    Note over S1: 💥 scheduler-1 dies mid-run
+    S2->>J: recovery sweep takes the abandoned instance over at token 2
+    Note over S2: the occurrence is not re-fired;<br/>the primary key already holds it
 ```
 
-## Policy semantics
+Nothing is elected and nothing is renewed at the *schedule* level. The lease is the
+fast refusal while the winner runs and the primary key is the permanent one — which
+is what a node restarted an hour later meets, and what a TTL cannot give.
 
-*Four of these five options are declared and unread — see the box at the top. The
-table states what each one is for, which is why they were put on the attribute
-before anything served them.*
+## Policy semantics
 
 | Option | Values | What it prevents |
 |---|---|---|
 | `Overlap` | `Skip` \| `Queue` \| `Concurrent` | a long run stacking on itself until the system dies |
 | `MissedFire` | `Skip` \| `RunOnce` \| `RunAll` | a 2-hour outage producing 120 replayed minute-jobs at once |
 | `TimeZone` | IANA id | the twice-yearly DST bug (double-run or skipped run) |
-| `Jitter` | duration | 500 tenants all hitting the same downstream at 02:00:00 |
+| `Jitter` | ISO-8601 duration | 500 tenants all hitting the same downstream at 02:00:00 |
 | `PerTenant` | bool | writing your own tenant loop, and forgetting isolation inside it |
+
+**`Overlap` is decided against the journal, never against a lease.** A lease answers
+"is a node holding this *right now*", which is false for the whole window between a
+node dying and a recovery sweep taking its instance over — so an overlap policy
+built on leases would start a second run beside the resumed first, which is the
+exact stacking it exists to prevent. `Skip` drops the occurrence and counts it;
+`Queue` defers it and fires it when the run in front finishes; `Concurrent` does not
+ask. A `Skip` schedule whose last firing is *suspended* stays overlapping until that
+instance resolves, which is the honest reading of "the previous run is still going".
+
+**`Jitter` is derived from the firing and never drawn at random**
+([ADR-0059](../../docs/adr/ADR-0059-schedule-jitter-is-derived-from-the-firing.md)).
+With no leader, *n* nodes race for one occurrence — so *n* independent random delays
+fire at min(*n* draws), and the spread collapses towards zero exactly as the fleet
+grows large enough to need it. The offset is a function of the instance id, so every
+node computes the same instant and the firing moves as a unit. It changes *when a
+firing is acted on* and nothing else: the occurrence, the derived id and the
+`ScheduledFire` the flow binds are all un-jittered, because an id that moved when a
+deployment widened its window would re-fire the whole catch-up horizon. A value that
+is not a positive ISO-8601 duration is `FLOWX1045` at build time.
 
 ## Tests
 
-> **Neither test exists.** `SchedulerCluster` and `SchedulerTestHost` are in no
-> file under `tests/` or `src/FlowX.Testing`, which ships `FlowTestHost` and a
-> `WithClock(IClock)` seam — not `WithVirtualTime()`, and nothing that advances a
-> cluster through a DST boundary. WP-75's exit criterion is the first of these two
-> made real: *three nodes, one fire per tick, proven under a kill.*
+`tests/Scheduler.Tests`. The fleet and overlap tests need a real PostgreSQL: they
+are about what a *store* refuses, and an in-memory double would assert that against
+code written for the test.
 
 ```csharp
 [Fact]
-public async Task Does_not_double_fire_when_the_leader_is_replaced()
+public async Task FiveNodesFireOneOccurrenceOnce()
 {
-    await using var cluster = await SchedulerCluster.CreateAsync(nodes: 3);
-    await cluster.AdvanceTimeTo("02:00:00");
-    await cluster.KillLeader();
-    await cluster.AdvanceTime(TimeSpan.FromMinutes(1));
+    await using var cluster = await SchedulerCluster.CreateAsync(Cancellation.Token);
+    var nodes = cluster.Nodes(5);
 
-    cluster.Firings("reconciliation.daily").Should().HaveCount(1);
+    cluster.Clock.Advance(TimeSpan.FromHours(1));
+
+    var reports = await Task.WhenAll(nodes.Select(n => n.RunOnceAsync(Cancellation.Token).AsTask()));
+
+    (await cluster.InstanceCountAsync(Cancellation.Token)).ShouldBe(1);
+    reports.Sum(static r => r.Contended).ShouldBe(4);
 }
 
 [Fact]
-public async Task Skips_overlapping_runs_and_records_why()
+public async Task SkipDropsAnOccurrenceWhosePredecessorIsStillRunning()
 {
-    var host = SchedulerTestHost.For<DailyReconciliationFlow>().WithVirtualTime().Build();
-    host.SimulateRunTaking(TimeSpan.FromHours(25));
+    await using var bank = new GatedBank();          // holds the flow inside the bank read
+    await using var cluster = await SchedulerCluster.CreateAsync(bank, Cancellation.Token);
 
-    await host.AdvanceDays(2);
+    cluster.Register(SchedulerCluster.Minutely, OverlapPolicy.Skip);
+    var fleet = cluster.Nodes(3);
 
-    host.Firings.Should().HaveCount(1);
-    host.Metrics.Counter("flowx_schedule_skipped_total").Should().Be(1);
+    cluster.Clock.Advance(TimeSpan.FromMinutes(1));
+    var overrunning = fleet[0].RunOnceAsync(Cancellation.Token).AsTask();
+    await bank.EnteredAsync(Cancellation.Token);     // the run is genuinely still going
+
+    cluster.Clock.Advance(TimeSpan.FromMinutes(1));
+
+    (await fleet[1].RunOnceAsync(Cancellation.Token)).Skipped.ShouldBe(1);
 }
 ```
 
+**There is no `KillLeader` and no `SchedulerTestHost.WithVirtualTime()`**, and this
+page used to print both. There is nothing to kill — a node holds no schedule-level
+lease, so its death is not an event a schedule can observe — and what a replacement
+pod *is*, is a fresh `FlowScheduleScan` over the same stores: `cluster.Replacement()`.
+Time is a `FlowTestClock` the sweep reads through `IClock`, exactly as it does in
+production. The overrun is a gate rather than a sleep, because a 25-hour run
+simulated with a delay is a race on a loaded machine.
+
 ## Things to try
 
-*None of these can be tried here — there is no project. Item 1 is still the
-acceptance list it always was: `Overlap` and `Jitter` are declared on the attribute
-and reach nothing. **Item 2 can be tried elsewhere**, because `MissedFire` is read
-into the schedule and narrows what a sweep fires — `samples/workflow` is where a
-schedule fires once across three nodes and a firing that fell due while every node
-was down happens late.*
-
-1. Set `Overlap = OverlapPolicy.Concurrent` and simulate a 25-hour run — watch
-   instances stack, and see why `Skip` is the default.
-2. Stop all schedulers for three hours and restart: compare `MissedFire` values
-   `Skip`, `RunOnce` and `RunAll`.
-3. Set the timezone to `America/New_York` and advance through a DST boundary —
-   the 02:00 job neither runs twice nor disappears.
+1. Set `Overlap = OverlapPolicy.Concurrent`, `FLOWX_SAMPLE_BANK_LATENCY=00:02:00`
+   and `FLOWX_SAMPLE_SCHEDULE_CRON="* * * * *"` — watch instances stack, and see why
+   `Skip` is the default.
+   `ConcurrentLetsTheNextOccurrenceStartBesideTheRunningOne` is the same thing
+   asserted.
+2. Stop the scheduler for three hours and restart: compare `MissedFire` values
+   `Skip`, `RunOnce` and `RunAll`. Beyond `FlowXOptions.ScheduleCatchUp` — one day
+   by default — the firings outside the horizon are lost, with nothing to report
+   them.
+3. Set `FLOWX_SAMPLE_JITTER=PT30S` with several tenants and read
+   `flow_instance.created_at`: the firings are spread across the window, and the
+   same tenant lands in the same place every night.
+4. Set the time zone to `America/New_York` and advance through a DST boundary — the
+   02:00 job neither runs twice nor disappears.
+   `TheAutumnFoldProducesOneFiringAndNotTwo` and
+   `TheSpringGapProducesOneLateFiringAndNotNone` pin both directions.

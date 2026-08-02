@@ -29,9 +29,10 @@ namespace FlowX.Compiler.Model;
 /// fan-out over a tenant set nobody outside the application can see.
 /// </para>
 /// <para>
-/// <c>Overlap</c> and <c>Jitter</c> are declared on the same attribute and are not here, because
-/// nothing in this release reads them — <c>docs/09-Trigger-Model.md §8</c> is where that is
-/// recorded.
+/// <see cref="Overlap"/> and <see cref="Jitter"/> are read off the attribute for the same
+/// reason and are published no more than the other two: one decides what this deployment does
+/// when a run outlives its own expression, and the other when in a window it starts. Both were
+/// absent from this model — and from everything downstream of it — until the sweep read them.
 /// </para>
 /// </remarks>
 public sealed class ScheduleModel
@@ -44,6 +45,8 @@ public sealed class ScheduleModel
     /// <param name="timeZone">The IANA zone, exactly as the manifest states it.</param>
     /// <param name="missedFire">The declared <c>MissedFirePolicy</c> member's name.</param>
     /// <param name="perTenant">Whether one occurrence fires once per tenant.</param>
+    /// <param name="overlap">The declared <c>OverlapPolicy</c> member's name.</param>
+    /// <param name="jitter">The declared spread, verbatim, or null when none was declared.</param>
     public ScheduleModel(
         string flowId,
         string flowTypeName,
@@ -51,7 +54,9 @@ public sealed class ScheduleModel
         string cron,
         string timeZone,
         string missedFire,
-        bool perTenant = false)
+        bool perTenant = false,
+        string overlap = "Skip",
+        string? jitter = null)
     {
         FlowId = flowId;
         FlowTypeName = flowTypeName;
@@ -60,6 +65,8 @@ public sealed class ScheduleModel
         TimeZone = timeZone;
         MissedFire = missedFire;
         PerTenant = perTenant;
+        Overlap = overlap;
+        Jitter = jitter;
     }
 
     /// <summary>The flow's business id.</summary>
@@ -82,4 +89,17 @@ public sealed class ScheduleModel
 
     /// <summary>Whether one occurrence of this schedule fires once per tenant.</summary>
     public bool PerTenant { get; }
+
+    /// <summary>The declared <c>OverlapPolicy</c> member, by name.</summary>
+    public string Overlap { get; }
+
+    /// <summary>
+    /// The declared spread, verbatim, or null when the declaration carried none.
+    /// </summary>
+    /// <remarks>
+    /// Not parsed here. This assembly is netstandard2.0 and reads a compile-time constant; the
+    /// registration parses it where a failure can be a pod that never becomes ready, and
+    /// <c>FLOWX1045</c> is the earlier half of the same rule.
+    /// </remarks>
+    public string? Jitter { get; }
 }

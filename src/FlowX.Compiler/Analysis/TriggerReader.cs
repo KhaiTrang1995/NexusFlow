@@ -200,11 +200,11 @@ public static class TriggerReader
     /// (<a href="../../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md">ADR-0031</a>).
     /// </para>
     /// <para>
-    /// <c>MissedFire</c> and <c>PerTenant</c> are the properties here because they are the ones
-    /// this release's runtime reads — the first decides what happens to a firing that is late,
-    /// the second whether an occurrence is one instance or one per tenant. <c>Overlap</c> and
-    /// <c>Jitter</c> are declared on the same attribute and reach nothing, which
-    /// <c>docs/09-Trigger-Model.md §8</c> records rather than this method pretending otherwise.
+    /// Every property <c>[CronTrigger]</c> declares beside its address is here, because the
+    /// runtime now reads all four: what happens to a firing that is late, whether an occurrence
+    /// is one instance or one per tenant, what happens when the previous run has not finished,
+    /// and how wide a window the firing is released within. <c>Overlap</c> and <c>Jitter</c>
+    /// reached nothing until the sweep learned to ask both questions.
     /// </para>
     /// </remarks>
     public static IReadOnlyList<ScheduleDeclaration> ReadSchedules(INamedTypeSymbol? flow)
@@ -225,7 +225,11 @@ public static class TriggerReader
             }
 
             schedules.Add(new ScheduleDeclaration(
-                cron, MissedFireName(attribute), PerTenantFlag(attribute)));
+                cron,
+                MissedFireName(attribute),
+                PerTenantFlag(attribute),
+                OverlapName(attribute),
+                Named(attribute, "Jitter")));
         }
 
         return schedules;
@@ -317,6 +321,29 @@ public static class TriggerReader
             0 => "Skip",
             2 => "RunAll",
             _ => "RunOnce",
+        };
+    }
+
+    /// <summary>
+    /// Maps <c>OverlapPolicy</c>'s underlying value back to its name.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="MissedFireName"/>'s map and its reason. The default matches the attribute's
+    /// own — <c>Skip</c> — so omitting the argument and writing it produce the same
+    /// registration, which is what makes the default a real default rather than a comment.
+    /// </remarks>
+    private static string OverlapName(AttributeData attribute)
+    {
+        var declared = attribute.NamedArguments
+            .Where(pair => pair.Key == "Overlap")
+            .Select(pair => pair.Value.Value)
+            .FirstOrDefault();
+
+        return declared switch
+        {
+            1 => "Queue",
+            2 => "Concurrent",
+            _ => "Skip",
         };
     }
 

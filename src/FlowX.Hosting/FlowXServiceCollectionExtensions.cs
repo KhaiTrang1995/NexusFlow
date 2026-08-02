@@ -637,10 +637,18 @@ public static class FlowScheduleRegistration
     /// <param name="perTenant">
     /// Whether one occurrence is one firing per tenant, from <c>CronTriggerAttribute.PerTenant</c>.
     /// </param>
+    /// <param name="overlap">
+    /// What happens when the previous firing is still running, from
+    /// <c>CronTriggerAttribute.Overlap</c>.
+    /// </param>
+    /// <param name="jitter">
+    /// The ISO-8601 window a firing is released within, from <c>CronTriggerAttribute.Jitter</c>,
+    /// or null for a schedule that fires on its occurrence.
+    /// </param>
     /// <returns>The same provider, so registrations chain.</returns>
     /// <exception cref="ArgumentException">
-    /// The expression or the zone could not be read, or the flow does not declare
-    /// <c>Durable</c>. Both are startup failures on purpose — see
+    /// The expression, the zone or the jitter could not be read, or the flow does not declare
+    /// <c>Durable</c>. All are startup failures on purpose — see
     /// <see cref="FlowScheduleCatalog.Add"/>.
     /// </exception>
     public static IServiceProvider Add(
@@ -650,7 +658,9 @@ public static class FlowScheduleRegistration
         string cron,
         string timeZone,
         MissedFirePolicy missedFire,
-        bool perTenant = false)
+        bool perTenant = false,
+        OverlapPolicy overlap = OverlapPolicy.Skip,
+        string? jitter = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(plan);
@@ -658,7 +668,14 @@ public static class FlowScheduleRegistration
 
         services.GetRequiredService<FlowScheduleCatalog>().Add(
             FlowSchedule.Create(
-                plan.Flow.Id, plan.Flow.Version, cron, timeZone, missedFire, perTenant),
+                plan.Flow.Id,
+                plan.Flow.Version,
+                cron,
+                timeZone,
+                missedFire,
+                perTenant,
+                overlap,
+                jitter),
             plan,
             dispatcher(services));
 
