@@ -513,10 +513,16 @@ jobs:
           # Through the environment, not interpolated into the shell line: a `${{ }}`
           # expansion inside a script is a script-injection shape whatever it holds today.
           FLOWX_NEEDS: ${{ toJSON(needs) }}
+          # Same rule, and it was stated here while four expansions below broke it. A branch
+          # name is the one an attacker can choose.
+          FLOWX_BRANCH: ${{ github.ref_name }}
+          FLOWX_COMMIT: ${{ github.sha }}
+          FLOWX_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FLOWX_OWNER: ${{ github.repository_owner }}
         run: |
           python3 scripts/report-red-run.py \
-            --branch "${{ github.ref_name }}" \
-            --commit "${{ github.sha }}" \
-            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --owner "${{ github.repository_owner }}" \
+            --branch "$FLOWX_BRANCH" \
+            --commit "$FLOWX_COMMIT" \
+            --run-url "$FLOWX_RUN_URL" \
+            --owner "$FLOWX_OWNER" \
             --notify
