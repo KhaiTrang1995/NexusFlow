@@ -253,6 +253,34 @@ internal sealed class SubstitutingDispatcher : IStepDispatcher
         _inner.EnterSubFlow(stepIndex, new SubFlowSource(source.Plan, original, source.Input), child);
     }
 
+    // Forwarded rather than traced. None of these is a step boundary, so none belongs in the
+    // trace — but each has an interface default, so leaving them out is the silent kind of
+    // wrong: a substituted run would describe nothing and every one of them would read as an
+    // empty payload. That is the defect StepTelemetry shipped with.
+
+    /// <inheritdoc />
+    public StepJournalEntry DescribeStep(int stepIndex, FlowContext ctx) =>
+        _inner.DescribeStep(stepIndex, ctx);
+
+    /// <inheritdoc />
+    public JournalPayload DescribeInput(object? input) => _inner.DescribeInput(input);
+
+    /// <inheritdoc />
+    public JournalPayload DescribeCacheKey(int stepIndex, FlowContext ctx) =>
+        _inner.DescribeCacheKey(stepIndex, ctx);
+
+    /// <inheritdoc />
+    public JournalPayload DescribeCacheEntry(int stepIndex, FlowContext ctx) =>
+        _inner.DescribeCacheEntry(stepIndex, ctx);
+
+    /// <inheritdoc />
+    public JournalPayload DescribeAudit(int stepIndex, FlowContext ctx, IReadOnlyList<string> redact) =>
+        _inner.DescribeAudit(stepIndex, ctx, redact);
+
+    /// <inheritdoc />
+    public void RestoreState(FlowContext ctx, string stateBagJson) =>
+        _inner.RestoreState(ctx, stateBagJson);
+
     private static string StepName(StepNode step) => step.Kind switch
     {
         StepKind.Capability => step.Capability!.Id,
