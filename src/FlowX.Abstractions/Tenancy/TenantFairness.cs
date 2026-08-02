@@ -121,6 +121,61 @@ public sealed class TenantFairness
     public int MaxConcurrency { get; set; }
 
     /// <summary>
+    /// Journal rows one tenant may write per <see cref="JournalWriteWindow"/>, or zero for no
+    /// write budget.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The sixth mechanism, and the one whose two obvious shapes are both wrong.</strong>
+    /// Spending a shared budget on every commit costs a limiter round trip in front of the write
+    /// it protects, which roughly doubles the latency of the thing being defended; keeping the
+    /// budget per process is the anti-conservative limiter
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>
+    /// refuses, and for a <em>write</em> budget that means the store it names is not protected.
+    /// What is built instead draws <see cref="JournalWriteBlock"/> rows of credit from the
+    /// shared bucket in one call and spends them locally, one per row written — so the fleet
+    /// total is decided by the shared store and the per-write cost is an interlocked decrement.
+    /// See
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0055-a-write-budget-is-drawn-in-blocks-and-paces-rather-than-refuses.md">ADR-0055</a>.
+    /// </para>
+    /// <para>
+    /// <strong>It cannot be charged at admission, and the reason is worth stating.</strong> The
+    /// number of rows an instance writes is not a property of its plan: a <c>ForEach</c> commits
+    /// once per iteration over a collection the plan never sees, a retry commits a new row per
+    /// attempt, and a backward <c>Jump</c> is a loop. So there is no figure stage 1 could spend
+    /// on behalf of an invocation, and the budget has to be spent where the rows are.
+    /// </para>
+    /// </remarks>
+    public int JournalWritesPerWindow { get; set; }
+
+    /// <summary>The period <see cref="JournalWritesPerWindow"/> is granted over.</summary>
+    public TimeSpan JournalWriteWindow { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// How many rows of credit one node draws from the shared budget per round trip.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the amortisation, and it must divide
+    /// <see cref="JournalWritesPerWindow"/>.</strong> The shared bucket is denominated in
+    /// blocks — <see cref="JournalWriteBlocksPerWindow"/> of them per window — so a budget that
+    /// is not a whole number of blocks would be silently rounded down, and a limit that does not
+    /// mean what it says is the defect this whole mechanism is careful about. The startup
+    /// validator refuses it rather than rounding.
+    /// </para>
+    /// <para>
+    /// <strong>What the size buys and what it costs.</strong> One write in every
+    /// <see cref="JournalWriteBlock"/> pays a limiter round trip and the rest pay an interlocked
+    /// decrement, so a larger block is cheaper. Against that, a block is drawn whole: credit a
+    /// node holds and does not spend before the window turns over is lost, and a node holding
+    /// unspent credit can burst up to a block ahead of the declared pace. Both errors are in the
+    /// conservative direction — the fleet never writes more per window than was declared — which
+    /// is the property a process-local budget does not have at any block size.
+    /// </para>
+    /// </remarks>
+    public int JournalWriteBlock { get; set; } = 32;
+
+    /// <summary>
     /// How many of a sweep's page one tenant may occupy, or zero for the page a sweep always
     /// took.
     /// </summary>
@@ -162,15 +217,38 @@ public sealed class TenantFairness
     /// bounds nothing pays one comparison rather than a store round trip it did not ask for.
     /// </remarks>
     public bool IsEnabled =>
-        PermitsPerWindow > 0 || QuotaPerWindow > 0 || MaxConcurrency > 0 || PerTenantScanShare > 0;
+        PermitsPerWindow > 0
+        || QuotaPerWindow > 0
+        || MaxConcurrency > 0
+        || PerTenantScanShare > 0
+        || JournalWritesPerWindow > 0;
 
     /// <summary>Whether admission has anything to decide.</summary>
     /// <remarks>
     /// The three stage-1 mechanisms, separately from <see cref="PerTenantScanShare"/>, which is
-    /// a sweep's concern and reaches no invocation.
+    /// a sweep's concern and reaches no invocation, and from
+    /// <see cref="JournalWritesPerWindow"/>, which is spent at the row rather than at the call.
     /// </remarks>
     public bool BoundsAdmission =>
         PermitsPerWindow > 0 || QuotaPerWindow > 0 || MaxConcurrency > 0;
+
+    /// <summary>Whether a journal write budget is declared.</summary>
+    /// <remarks>
+    /// Read once where the host binds a journal to a tenant. False leaves the journal the store
+    /// handed over untouched — no decorator, no credit, no dictionary — so a deployment that
+    /// declares no write budget reaches its journal by exactly the call it always did.
+    /// </remarks>
+    public bool BoundsJournalWrites => JournalWritesPerWindow > 0;
+
+    /// <summary>How many blocks of credit the shared bucket grants per window.</summary>
+    /// <remarks>
+    /// The bucket is denominated in blocks rather than in rows, which is what lets one existing
+    /// <c>IRateLimiterStore.TryAcquireAsync</c> — one permit per call — grant
+    /// <see cref="JournalWriteBlock"/> rows. The arithmetic is exact because the validator
+    /// refuses a budget the block does not divide.
+    /// </remarks>
+    public int JournalWriteBlocksPerWindow =>
+        JournalWriteBlock > 0 ? JournalWritesPerWindow / JournalWriteBlock : 0;
 
     /// <summary>What one tenant's share of a round is worth.</summary>
     /// <param name="tenantId">The tenant, or null for untenanted work.</param>

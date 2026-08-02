@@ -307,6 +307,60 @@ public sealed class StartupValidationTests
             $"the message must name the registration that is missing.\n{error.Message}");
     }
 
+    /// <summary>
+    /// A journal write budget the block size does not divide is refused rather than rounded
+    /// down.
+    /// </summary>
+    /// <remarks>
+    /// The shared bucket is denominated in blocks of credit, so 100 rows per window drawn 32 at
+    /// a time would enforce 96 while the configuration said 100. A limit that does not mean what
+    /// it says is the one failure this mechanism has to be free of to be worth having over the
+    /// per-process budget ADR-0040 refuses, so the arithmetic is made exact at startup rather
+    /// than approximate at run time.
+    /// </remarks>
+    [Fact]
+    public async Task RefusesToStartWithAWriteBudgetItsBlockSizeDoesNotDivide()
+    {
+        using var host = BuildHost(options =>
+        {
+            options.ApplicationName = "Sample.App";
+            options.TenantIsolation = TenantIsolation.Row;
+            options.Fairness.JournalWritesPerWindow = 100;
+            options.Fairness.JournalWriteBlock = 32;
+        });
+
+        var error = await Should.ThrowAsync<OptionsValidationException>(
+            async () => await host.StartAsync(TestContext.Current.CancellationToken));
+
+        error.Message.Contains("96", StringComparison.Ordinal).ShouldBeTrue(
+            $"the message must name what would actually have been enforced.\n{error.Message}");
+    }
+
+    /// <summary>A journal write budget with no shared limiter is refused at startup.</summary>
+    /// <remarks>
+    /// The same check as the rate limit's and for a sharper reason: a write budget each node
+    /// kept for itself would multiply by the replica count the very thing it exists to protect —
+    /// the shared durable store — so the mechanism would be at its least effective exactly where
+    /// it is most needed.
+    /// </remarks>
+    [Fact]
+    public async Task RefusesToStartWithAWriteBudgetAndNoSharedLimiter()
+    {
+        using var host = BuildHost(options =>
+        {
+            options.ApplicationName = "Sample.App";
+            options.TenantIsolation = TenantIsolation.Row;
+            options.Fairness.JournalWritesPerWindow = 64;
+            options.Fairness.JournalWriteBlock = 32;
+        });
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(
+            async () => await host.StartAsync(TestContext.Current.CancellationToken));
+
+        error.Message.Contains("IRateLimiterStore", StringComparison.Ordinal).ShouldBeTrue(
+            $"the message must name the registration that is missing.\n{error.Message}");
+    }
+
     /// <summary>A bulkhead alone needs no store, and starts.</summary>
     /// <remarks>
     /// The other half of the check above. Concurrency is a property of one process's threads and

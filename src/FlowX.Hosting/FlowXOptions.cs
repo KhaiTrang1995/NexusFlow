@@ -592,6 +592,47 @@ internal sealed class FlowXOptionsValidator : IValidateOptions<FlowXOptions>
                 $"{fairness.MaxConcurrency}. Zero is how a deployment declares no bulkhead.");
         }
 
+        if (fairness.JournalWritesPerWindow < 0)
+        {
+            failures.Add(
+                $"{nameof(TenantFairness.JournalWritesPerWindow)} cannot be negative; it is " +
+                $"{fairness.JournalWritesPerWindow}. Zero is how a deployment declares no " +
+                "journal write budget.");
+        }
+
+        if (fairness.JournalWritesPerWindow > 0 && fairness.JournalWriteWindow <= TimeSpan.Zero)
+        {
+            failures.Add(
+                $"{nameof(TenantFairness.JournalWriteWindow)} must be positive; it is " +
+                $"{fairness.JournalWriteWindow}. Rows granted over no time is an unbounded " +
+                "write rate wearing a bound.");
+        }
+
+        if (fairness.JournalWritesPerWindow > 0 && fairness.JournalWriteBlock <= 0)
+        {
+            failures.Add(
+                $"{nameof(TenantFairness.JournalWriteBlock)} must be positive; it is " +
+                $"{fairness.JournalWriteBlock}. It is how many rows of credit one node draws " +
+                "per round trip, so zero would be a budget nothing can ever spend.");
+        }
+
+        // Refused rather than rounded down. The shared bucket is denominated in blocks, so a
+        // budget the block does not divide would silently enforce the next multiple below it —
+        // a limit that does not mean what it says, which is the one failure this mechanism has
+        // to be free of to be worth having.
+        if (fairness.JournalWritesPerWindow > 0
+            && fairness.JournalWriteBlock > 0
+            && fairness.JournalWritesPerWindow % fairness.JournalWriteBlock != 0)
+        {
+            failures.Add(
+                $"{nameof(TenantFairness.JournalWriteBlock)} ({fairness.JournalWriteBlock}) " +
+                $"must divide {nameof(TenantFairness.JournalWritesPerWindow)} " +
+                $"({fairness.JournalWritesPerWindow}). The shared budget is drawn a block at a " +
+                $"time, so this deployment would enforce " +
+                $"{fairness.JournalWriteBlocksPerWindow * fairness.JournalWriteBlock} rows per " +
+                "window while declaring more.");
+        }
+
         if (fairness.PerTenantScanShare < 0)
         {
             failures.Add(
