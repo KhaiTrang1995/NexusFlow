@@ -186,12 +186,43 @@ else
 fi
 
 body='{"subject":"Printer on fire","reporter":"ops","contactPhone":"+44 7700 900000"}'
-post() {
+
+# The generated project authenticates its callers, because every capability it contains
+# declares who may call it and the engine enforces that. `post` therefore presents the
+# token that satisfies both stances; the anonymous and under-privileged cases are asserted
+# on purpose further down, with `post_as`.
+post_as() {
+  local token="$1" key="$2" payload="${3:-$body}"
   curl -sS -o "$WORK/response" -w '%{http_code}' \
     -X POST "http://127.0.0.1:$PORT/api/v1/tickets" \
-    -H 'Content-Type: application/json' ${1:+-H "Idempotency-Key: $1"} \
-    -d "${2:-$body}"
+    -H 'Content-Type: application/json' \
+    ${token:+-H "Authorization: Bearer $token"} \
+    ${key:+-H "Idempotency-Key: $key"} \
+    -d "$payload"
 }
+
+post() { post_as support-token "${1:-}" "${2:-$body}"; }
+
+# ---- the two refusals, first, because they are what a template silently loses ----
+#
+# This project was shipped for a while with capabilities declaring a stance and no
+# authentication wired up to satisfy it, so `dotnet new flowx && dotnet run` produced an
+# application that refused its own documented request. Asserting the refusals here means
+# the next person to remove the wiring is told which of the two things they broke.
+
+status="$(post_as '' ticket-anon)"
+if [[ "$status" == "403" ]] && grep -q '"code":"authorization.not_authenticated"' "$WORK/response"; then
+  pass "a request with no token is refused by ticket.validate"
+else
+  fail "expected 403 + authorization.not_authenticated, got $status $(cat "$WORK/response")"
+fi
+
+status="$(post_as reader-token ticket-reader)"
+if [[ "$status" == "403" ]] && grep -q '"code":"authorization.permission_denied"' "$WORK/response"; then
+  pass "an authenticated caller without ticket.write is refused by ticket.record"
+else
+  fail "expected 403 + authorization.permission_denied, got $status $(cat "$WORK/response")"
+fi
 
 status="$(post ticket-1)"
 if [[ "$status" == "200" && "$(cat "$WORK/response")" == '{"ticketId":"ticket-1","subject":"Printer on fire"}' ]]; then
