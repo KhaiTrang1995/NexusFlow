@@ -41,9 +41,11 @@ builder.Services.AddSingleton<ReserveInventory>();
 builder.Services.AddSingleton<ReleaseInventory>();
 builder.Services.AddSingleton<CapturePayment>();
 builder.Services.AddSingleton<RepriceBasket>();
+builder.Services.AddSingleton<ProjectOrder>();
 builder.Services.AddSingleton<PlaceOrderFlow.Dispatcher>();
 builder.Services.AddSingleton<ConfirmOrderFlow.Dispatcher>();
 builder.Services.AddSingleton<RepriceOrderFlow.Dispatcher>();
+builder.Services.AddSingleton<ProjectOrderFlow.Dispatcher>();
 
 // Spans to the console, metrics at /metrics. Hand-written rather than an OpenTelemetry SDK
 // reference because this is the repository's only NativeAOT-published assembly (constraint

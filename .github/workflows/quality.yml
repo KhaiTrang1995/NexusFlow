@@ -178,7 +178,9 @@ jobs:
         # Every tree that ships or is read as an example, not just src and tests. A
         # TODO in samples/ is copied by whoever follows the sample.
         run: |
-          if grep -rnE '(TODO|FIXME|HACK|XXX)' --include='*.cs' src tests plugins samples scripts 2>/dev/null | grep -vE 'FLOWX-DEBT|issue #[0-9]+'; then
+        # Word-bounded: without \b, XXX matches the branch code every BIC ends in,
+        # and the banking sample's correspondent table failed this job as debt.
+          if grep -rnE '\b(TODO|FIXME|HACK|XXX)\b' --include='*.cs' src tests plugins samples scripts 2>/dev/null | grep -vE 'FLOWX-DEBT|issue #[0-9]+'; then
             echo "::error::A TODO/FIXME/HACK must reference a FLOWX-DEBT id or an issue number."
             exit 1
           fi

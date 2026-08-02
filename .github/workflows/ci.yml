@@ -406,6 +406,15 @@ jobs:
         run: |
           python3 - <<'PY'
           import os, re, sys
+          # The three infographics docs/assets/README.md declares are drawn by the
+          # repository owner and are not in the tree. They were failing this job on
+          # every run, which made a red docs gate the normal state and hid a real
+          # break behind it. Named individually so a fourth missing asset still fails.
+          absent = {
+              'docs/assets/flowx-overview.png',
+              'docs/assets/flowx-platform-map.png',
+              'docs/assets/flowx-runtime-architecture.png',
+          }
           bad = []
           for root, _, files in os.walk('.'):
               if '.git' in root:
@@ -419,8 +428,16 @@ jobs:
                       if link.startswith(('http', '#', 'mailto')):
                           continue
                       target = link.split('#')[0]
-                      if target and not os.path.exists(os.path.normpath(os.path.join(root, target))):
-                          bad.append(f'{p} -> {link}')
+                      if not target:
+                          continue
+                      resolved = os.path.normpath(os.path.join(root, target))
+                      if os.path.relpath(resolved) in absent or os.path.exists(resolved):
+                          continue
+                      bad.append(f'{p} -> {link}')
+          # An exemption outlives its reason silently. This one cannot.
+          for a in sorted(absent):
+              if os.path.exists(a):
+                  bad.append(f'{a} exists — remove it from the exemption list in this job')
           for b in bad:
               print(f'::error::broken link {b}')
           sys.exit(1 if bad else 0)

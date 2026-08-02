@@ -180,14 +180,19 @@ jobs:
           # failure. Matched on the heading rather than on the word appearing anywhere: the
           # checker prints an arm's refusals beside its failures, so a document that is both
           # carries the word INCONCLUSIVE inside a FAIL legitimately.
-          if ! grep -q '^## QR2 chaos — FAIL$' /tmp/fail.published; then
-            echo "::error::A FAIL was not reported as a FAIL."
+          # Quoting the line it actually read: this assertion failed for a fortnight
+          # against a file whose heading was demonstrably right when the same script
+          # ran outside Actions, and it could not say what it had seen.
+          heading() { head -1 "$1" | sed -n 's/^## QR2 chaos .* \([A-Z]*\)$/\1/p'; }
+
+          if [ "$(heading /tmp/fail.published)" != "FAIL" ]; then
+            echo "::error::A FAIL was not reported as a FAIL. The first line was: $(head -1 /tmp/fail.published)"
             exit 1
           fi
 
-          if ! grep -q '^## QR2 chaos — INCONCLUSIVE$' /tmp/inconclusive.published \
+          if [ "$(heading /tmp/inconclusive.published)" != "INCONCLUSIVE" ] \
              || ! grep -q 'produced no verdict' /tmp/inconclusive.published; then
-            echo "::error::An INCONCLUSIVE run was not reported as one. Folding it into either of the other two is the failure both this job and check-chaos-qr2.py exist to prevent."
+            echo "::error::An INCONCLUSIVE run was not reported as one. Folding it into either of the other two is the failure both this job and check-chaos-qr2.py exist to prevent. The first line was: $(head -1 /tmp/inconclusive.published)"
             exit 1
           fi
 
