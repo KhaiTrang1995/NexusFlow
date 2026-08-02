@@ -243,11 +243,12 @@ public sealed class ManifestTests
     {
         var source = Flow.GetProperty("source").GetString().ShouldNotBeNull();
 
-        // Moves whenever the file's header does — most recently when the flow's remarks
-        // stopped saying its policies were executed by nothing and started saying which four
-        // of them are. The number is the assertion, not an incidental: a source pointer that
-        // drifts from the declaration it names is a pointer a reader follows to the wrong line.
-        source.ShouldBe("ExecuteTransferFlow.cs:53");
+        // Moves whenever the file's header does — most recently when the last inert
+        // declaration became an executed one and the remarks stopped counting them, taking
+        // the flow's last `#pragma warning disable` with them. The number is the assertion,
+        // not an incidental: a source pointer that drifts from the declaration it names is a
+        // pointer a reader follows to the wrong line.
+        source.ShouldBe("ExecuteTransferFlow.cs:65");
         source.ShouldNotStartWith("/");
         source.ShouldNotContain(":\\");
     }

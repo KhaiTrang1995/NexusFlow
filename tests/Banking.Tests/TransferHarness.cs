@@ -56,6 +56,35 @@ internal sealed class TransferHarness
     /// <summary>Where the instance's exclusive ownership comes from.</summary>
     public InMemoryLeaseStore Leases { get; } = new();
 
+    /// <summary>
+    /// The budget <c>Policies.Admission</c>'s rate limit is counted against.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A double, and it has to be one — but the reason is not the usual one.</strong>
+    /// The sample's limit is real and is enforced against a shared store in a deployment; what
+    /// this project cannot do is reach one, for the same reason it stands in a reference journal
+    /// for PostgreSQL. What holds a real limiter to the contract is
+    /// <c>RateLimiterConformance</c>, derived by Redis and by PostgreSQL, and what holds *this*
+    /// to it is that the engine cannot tell the difference — it calls the same seam.
+    /// </para>
+    /// <para>
+    /// Generous by default, so that a test about a transfer is not also a test about admission.
+    /// <see cref="WithPermits"/> narrows it, and one test does exactly that.
+    /// </para>
+    /// </remarks>
+    public FixedBudgetLimiter Limiter { get; private set; } = new(int.MaxValue);
+
+    /// <summary>Narrows the admission budget to a number a test can exhaust.</summary>
+    /// <param name="permits">How many transfers this harness admits before refusing.</param>
+    /// <returns>This harness.</returns>
+    public TransferHarness WithPermits(int permits)
+    {
+        Limiter = new FixedBudgetLimiter(permits);
+
+        return this;
+    }
+
     /// <summary>Capability ids the engine dispatched, in order.</summary>
     public List<string> Executed { get; } = [];
 
@@ -158,8 +187,17 @@ internal sealed class TransferHarness
         return outbox.Value;
     }
 
+    /// <summary>Every audit record this harness's transfers produced, in order.</summary>
+    /// <remarks>
+    /// The sample's own sink, not a double. Three of this flow's steps declare an
+    /// <c>Audit</c> and the engine refuses an audited step it cannot record, so a harness that
+    /// omitted this would fail every transfer at the debit — which is the behaviour, and is
+    /// asserted separately in <c>TransferAuditTests</c>.
+    /// </remarks>
+    public InMemoryAuditTrail Audit { get; } = new();
+
     private FlowHost Host() => new(
-        new FlowEngine(SystemClock.Instance),
+        new FlowEngine(SystemClock.Instance, rateLimiter: Limiter, audit: Audit),
         new FlowXOptions { ApplicationName = "Banking", NodeName = "test-node" },
         new FlowDurability(Journal, Leases));
 
@@ -262,6 +300,16 @@ internal sealed class TransferHarness
         public void RestoreState(FlowContext ctx, string stateBagJson) =>
             _inner.RestoreState(ctx, stateBagJson);
 
+        // Forwarded for DescribeInput's reason, one policy later. The generated DescribeAudit
+        // is what composes the request/result document and applies the flow's SensitiveMembers
+        // together with the policy's redact list; a decorator that stopped here would inherit
+        // the interface's default — JournalPayload.Empty — and every audit record in this bank
+        // would carry nothing while still being written, which is the shape of failure the
+        // whole policy was declined twice to avoid.
+        public JournalPayload DescribeAudit(
+            int stepIndex, FlowContext ctx, IReadOnlyList<string> redact) =>
+            _inner.DescribeAudit(stepIndex, ctx, redact);
+
         /// <summary>
         /// The same name <c>FlowTestTrace</c> uses: the capability id verbatim, and a
         /// prefixed form for everything that is not one.
@@ -273,5 +321,42 @@ internal sealed class TransferHarness
             StepKind.Fail => "fail",
             _ => step.Kind.ToString().ToLowerInvariant(),
         };
+    }
+}
+
+/// <summary>
+/// A budget with no refill, so a test can say exactly how many callers get in.
+/// </summary>
+/// <remarks>
+/// Deliberately not a token bucket: the real stores refill continuously and
+/// <c>RateLimiterConformance</c> holds them to it, and a sample test that waited out a window
+/// would be a test about the clock. What this shares with a real store is the only thing the
+/// sample's tests are about — the decision and the consumption happen together, and a refusal is
+/// a successful call reporting <c>false</c>.
+/// </remarks>
+internal sealed class FixedBudgetLimiter(int budget) : IRateLimiterStore
+{
+    private readonly Dictionary<string, int> _taken = new(StringComparer.Ordinal);
+
+    /// <summary>Every key the engine built, in the order it built them.</summary>
+    public List<string> Keys { get; } = [];
+
+    /// <inheritdoc />
+    public ValueTask<Result<RateLimitVerdict>> TryAcquireAsync(
+        string key,
+        int permits,
+        TimeSpan window,
+        CancellationToken cancellationToken)
+    {
+        Keys.Add(key);
+
+        _taken.TryGetValue(key, out var used);
+        _taken[key] = ++used;
+
+        var verdict = used <= budget
+            ? new RateLimitVerdict(true, budget - used, TimeSpan.Zero)
+            : new RateLimitVerdict(false, 0, window);
+
+        return new ValueTask<Result<RateLimitVerdict>>(Result.Ok(verdict));
     }
 }

@@ -79,7 +79,7 @@ added to `Authorization` cannot fall through both.
 
 ### 2.1 Why an error, when `FLOWX1032` is a warning for the same shape of gap
 
-[FLOWX1032](../diagnostics/FLOWX1032.md) reports a declared policy the runtime does not
+`FLOWX1032` reports a declared policy the runtime does not
 execute, as a **warning**, on two arguments. Neither transfers.
 
 **"An error erases the inventory the fixing phase needs."** FLOWX1032's argument turns on the
@@ -144,7 +144,7 @@ holding the old grant are now judged against a different one.
   the schema's `authorization.value` are now dead paths kept against this record being
   reopened.
 * **The rule has to be deleted rather than fixed**, and a rule scheduled for deletion is a rule
-  somebody must remember to delete. [FLOWX1032](../diagnostics/FLOWX1032.md) carries the same
+  somebody must remember to delete. `FLOWX1032` carries the same
   debt and the same table.
 
 **Revisit when:** an evaluator abstraction the engine may call ships — declared in
@@ -160,7 +160,7 @@ name which of them it means.
 ---
 
 **See also:** [FLOWX1037](../diagnostics/FLOWX1037.md) ·
-[FLOWX1032](../diagnostics/FLOWX1032.md) ·
+`FLOWX1032` ·
 [ADR-0027](ADR-0027-authorisation-runs-in-the-step-loop.md) ·
 [ADR-0004](ADR-0004-universal-trigger-model.md) ·
 [15 — Security](../15-Security.md)

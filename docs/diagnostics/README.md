@@ -41,10 +41,10 @@ is its argument, kept apart from the determinism set's on purpose.
 `FLOWX1031` was the twelfth and **is deleted**, with the gap it described;
 [the section below](#flowx1031-is-deleted-with-what-it-described) is what it said and why the
 argument for keeping a rule of that shape expired.
-[FLOWX1032](FLOWX1032.md) is the thirteenth and is `FLOWX1028`'s argument taken one level
-down, from the flow's execution profile to a step's policy set;
-[its section](#the-severity-of-flowx1032-which-is-flowx1028s-argument-one-level-down) says
-where the two rules' reasoning is the same and where this one has to make its own case.
+`FLOWX1032` was the thirteenth and **is deleted** the same way, with the last of the gap
+*it* described; [its section](#flowx1032-is-deleted-with-what-it-described) is what it said,
+where its reasoning was `FLOWX1028`'s one level down, and why narrowing it a third time was
+not an option.
 
 ## The severity of the determinism set
 
@@ -228,9 +228,32 @@ diagnostic — the thing `ExecutionProfileAnalyzerTests` calls a broken fix. The
 provider's own remarks rest on, *"the author wrote `AwaitSignal`, so the flow suspends"*, is
 true now, so its output is a flow that compiles and waits.
 
-## The severity of `FLOWX1032`, which is `FLOWX1028`'s argument one level down
+## `FLOWX1032` is deleted, with what it described
 
-A **warning**, and the argument is not new: it is [FLOWX1028](FLOWX1028.md)'s, moved from
+**Deleted on 2026-08-02, when stage 5 and stage 7's `Audit` landed beside the stage 1 and
+stage 3 that had landed alongside them.** The rule reported that a declared policy reached the
+plan and the manifest and no code applied it. It was narrowed twice rather than deleted — from
+the eight kinds it was written over to four when the policy engine landed
+`PolicyStage.Resilience`, then to two when `RateLimit` and `Idempotency` started executing —
+and there is no third narrowing, because every kind `PolicySet` offers is now read by
+`StepPolicy.From`, `StepAudit.From` or `CompensationPolicy.From`. A rule that outlives the gap
+it describes is noise, and noise is what teaches people to suppress a catalogue — so the
+descriptor, its analysis, its page, its release row, its tests and `samples/banking`'s
+`#pragma warning disable` went together, and the id is retired rather than reused. That is
+`FLOWX1028`'s and `FLOWX1031`'s precedent: a build log or a suppression naming `FLOWX1032`
+means what it said when it was written, and reusing the number would silently retarget it.
+
+**What survives it is `DeclaredPolicyAnalyzer.ExecutedKinds`**, which was the list the rule
+was the complement of. The complement is empty and the list is not: it is the compiler's
+statement of what the runtime applies, pinned against `StepPolicy`'s constants,
+`StepAudit.AuditKind` and `CompensationPolicy.CompensationRetryKind` by
+`PolicyStageFitnessTests`, and it is what will notice the next kind `PolicySet` gains before
+any resolver reads it.
+
+**This section is what it said, kept because a catalogue that quietly rewrites its own
+history teaches nobody what it got wrong.**
+
+A **warning**, and the argument was not new: it was [FLOWX1028](FLOWX1028.md)'s, moved from
 the flow's `Profile` to a step's `.WithPolicy(...)`. Both of that rule's halves transfer,
 which is worth saying explicitly, because the deleted `FLOWX1031` — the nearest neighbour in
 shape — could only use one of them.
@@ -255,19 +278,22 @@ author wrote. The plan here carries exactly the declared set, in exactly ADR-001
 order; what a reader over-reads is *behaviour*, not *declaration*. That is
 [FLOWX1027](FLOWX1027.md)'s category at `CS0162`'s severity.
 
-**The rule has since been narrowed rather than deleted**, from the eight kinds it was
-written over to the four no code path applies — `RateLimit`, `Idempotency`, `Cache` and
-`Audit`. `Timeout`, `Retry`, `CircuitBreaker` and `Bulkhead` left it when the policy engine
-landed `PolicyStage.Resilience`, which is the same take-down step [FLOWX1028](FLOWX1028.md)
-took when `Durable` started running and `FLOWX1031` took before it was finally deleted.
+**The rule was narrowed rather than deleted, twice**, from the eight kinds it was written
+over to the four no code path applied — `RateLimit`, `Idempotency`, `Cache` and `Audit` —
+and then to the two that outlasted stages 1 and 3. `Timeout`, `Retry`, `CircuitBreaker` and
+`Bulkhead` left it when the policy engine landed `PolicyStage.Resilience`, which is the same
+take-down step [FLOWX1028](FLOWX1028.md) took when `Durable` started running and `FLOWX1031`
+took before it was finally deleted. The third narrowing is the deletion above: a rule whose
+complement is empty reports nothing, and a rule that reports nothing is a suppression waiting
+to be written.
 
-**What does not transfer is [FLOWX1033](FLOWX1033.md)**, which is an **error**, and the two
-being adjacent ids about the same DSL call makes the distinction worth stating here rather
-than only on the pages. FLOWX1032 reports a policy that a *later release* will execute;
+**What did not transfer is [FLOWX1033](FLOWX1033.md)**, which is an **error**, and the two
+being adjacent ids about the same DSL call made the distinction worth stating here rather
+than only on the pages. FLOWX1032 reported a policy that a *later release* would execute;
 FLOWX1033 reports a `CompensationRetry` attached to a step with no compensation, which no
-release will ever execute because there is nothing for it to wrap. One is scaffolding for a
-missing phase and is deleted when the phase lands; the other is a mistake in the source and
-is permanent. `StepNode.ForCapability` already refuses that shape with an
+release will ever execute because there is nothing for it to wrap. One was scaffolding for a
+missing phase and is deleted now that the phase has landed; the other is a mistake in the
+source and is permanent. `StepNode.ForCapability` already refuses that shape with an
 `InvalidFlowPlanException`, which is the same relationship `FLOWX1014` and `FLOWX1018` have
 to `PolicyChain`'s two rejections — and all three are errors.
 
@@ -304,14 +330,14 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1029](FLOWX1029.md) | Step input mapping produces the wrong contract | A `CS1503` inside generated source, about a call the developer cannot see |
 | [FLOWX1028](FLOWX1028.md) | Execution profile is declared but not honoured by the runtime | **A payment saga declaring `Durable` and losing its instance on the next deploy** |
 | [FLOWX1030](FLOWX1030.md) | Authorisation stance names no permission or policy | **A capability published as permission-protected that names no permission, and a `flowx diff` rule with nothing to compare when the grant moves** |
-| [FLOWX1032](FLOWX1032.md) | Declared policy is not executed by the runtime | **A step declaring a three-second timeout, three retries and a circuit breaker, published in the manifest as wrapped in all three and dispatched once with no clock, no attempt count and no breaker** |
 | [FLOWX1033](FLOWX1033.md) | `CompensationRetry` is declared on a step with no compensation | **The one policy the runtime executes, dropped by the emitter in silence: a manifest promising five attempts at an undo, and a plan with no undo to attempt** |
 | [FLOWX1034](FLOWX1034.md) | Step declares more than one policy set | **A declared timeout, breaker or audit deleted before the plan and the manifest are written, because the second `.WithPolicy(...)` on a step replaces the first rather than adding to it** |
 | [FLOWX1035](FLOWX1035.md) | `CompensationRetry` declares a single attempt | A manifest entry that says the undo is retried, over an undo dispatched exactly once — `IsRetrying` is `Attempts > 1`, so one attempt leaves `HasCompensationPolicies` false and the engine takes `CompensationPolicy.None` |
-| [FLOWX1036](FLOWX1036.md) | Policy set cannot be read at compile time | **A whole policy set reaching no plan, no manifest and none of `FLOWX1014`, `FLOWX1018`, `FLOWX1019`, `FLOWX1032` or `FLOWX1033` — a shared library's `CompensationRetry` not running, and a duplicate-charge rule with nothing to read** |
+| [FLOWX1036](FLOWX1036.md) | Policy set cannot be read at compile time | **A whole policy set reaching no plan, no manifest and none of `FLOWX1014`, `FLOWX1018`, `FLOWX1019`, `FLOWX1033` or `FLOWX1040` — a shared library's `CompensationRetry` not running, and a duplicate-charge rule with nothing to read** |
 | [FLOWX1037](FLOWX1037.md) | Authorisation stance is not enforced by the runtime | **A capability published as policy-protected, diffed as policy-protected, and dispatched with nothing consulting the policy — the one stance of the five the engine cannot decide** |
 | [FLOWX1038](FLOWX1038.md) | Scheduled flow cannot be fired | **A published `cron` with no schedule registered behind it: a flow that cannot bind the occurrence and is never started, or an ephemeral one started by every node in the fleet on every occurrence — with no error, no duplicate row and nothing anywhere to count** |
 | [FLOWX1039](FLOWX1039.md) | Bus-triggered flow cannot be consumed | **A published `topic` with no subscription registered behind it: a flow that cannot bind the message and is never started, or an ephemeral one started again on every redelivery — with no error, no duplicate row and nothing anywhere to count** |
+| [FLOWX1040](FLOWX1040.md) | `Idempotency` is declared on a flow whose result cannot be recorded without redaction | **A replayed transfer answering with an IBAN of `[redacted]` and a `200`: the second caller's money moves to a placeholder, every step reports success, and nothing anywhere says a value was fabricated** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -425,30 +451,32 @@ retired id is retired, because a build log or a suppression referring to `FLOWX1
 what it meant, and giving it a second subject would make an old `.editorconfig` line silence
 a rule nobody chose.
 
-**`FLOWX1032` is claimed** — *declared policy is not executed by the runtime*: every kind a
-`.WithPolicy(...)` set declares except `CompensationRetry`, which is the only policy any code
-path in `src/` reads. It is none of the reservations, and it is not `FLOWX1014` or
-`FLOWX1018`: those ask whether a declared policy is *safe* for the capability it wraps and
-have always been enforced, and this one presupposes that they passed and asks whether the
-policy is *applied*. It is not `FLOWX1028` either — that rule reads a flow's profile, this one
-reads a step's policy set — though it takes that rule's severity argument wholesale, which is
-[below](#the-severity-of-flowx1032-which-is-flowx1028s-argument-one-level-down).
+**`FLOWX1032` was claimed and is now retired** — *declared policy is not executed by the
+runtime*: every kind a `.WithPolicy(...)` set declared except `CompensationRetry`, which was
+once the only policy any code path in `src/` read. It was not `FLOWX1014` or `FLOWX1018`:
+those ask whether a declared policy is *safe* for the capability it wraps and have always been
+enforced, and this one presupposed that they passed and asked whether the policy was
+*applied*. It was not `FLOWX1028` either — that rule reads a flow's profile, this one read a
+step's policy set — though it took that rule's severity argument wholesale. Every kind is
+applied now, so the rule is
+[deleted](#flowx1032-is-deleted-with-what-it-described) and the id is **not reused**, for the
+reason `FLOWX1031`'s is not.
 
 **`FLOWX1033` is claimed** — *`CompensationRetry` is declared on a step with no
 compensation*: `FlowEmitter.PolicyArguments` emits the compensation chain only for a step
 that `IsCompensable`, so on any other step the one policy this runtime executes is dropped
-without a word, while `ManifestWriter` publishes it regardless. It is a separate id from
-`FLOWX1032` rather than a second report of it because the two have opposite lifetimes and
-opposite severities: `FLOWX1032` is deleted when P4 lands, and this one is not, because no
-release gives a non-compensable step an undo. It is not `FLOWX1014` either — that rule asks
+without a word, while `ManifestWriter` publishes it regardless. It was a separate id from the
+retired `FLOWX1032` rather than a second report of it because the two had opposite lifetimes
+and opposite severities: `FLOWX1032` was deleted when the last stage landed, and this one is
+not, because no release gives a non-compensable step an undo. It is not `FLOWX1014` either — that rule asks
 whether the *compensating capability* is idempotent, and presupposes there is one.
 
 **`FLOWX1034` is claimed** — *step declares more than one policy set*: `StepModel.WithPolicy`
 assigns `PolicySetName` and `PolicyKinds` rather than adding to them, so the second
 `.WithPolicy(...)` on a step replaces the first and everything the first declared is gone
-before the emitter and the manifest writer run. It is none of the reservations, and it is not
-`FLOWX1032`: that rule reports a policy the plan and the manifest both carry and no code
-applies, and this one reports a policy neither of them carries at all. [FLOWX1019's
+before the emitter and the manifest writer run. It is none of the reservations, and it was not
+the retired `FLOWX1032`: that rule reported a policy the plan and the manifest both carry and
+no code applies, and this one reports a policy neither of them carries at all. [FLOWX1019's
 page](FLOWX1019.md) already recorded the gap — it declines to count a second `.WithPolicy` on
 the grounds that "which set wins is a resolution question this rule has no answer to" — and
 this is the rule that answers it.
@@ -466,10 +494,10 @@ presupposes that it has and asks whether the count retries anything.
 argument that resolves to no initialiser the compiler can walk — a set in a referenced
 assembly, one returned by a method, one assembled at run time. `PolicySetReader` returns
 nothing rather than guessing, and `FlowEmitter`, `ManifestWriter`, `FLOWX1014`, `FLOWX1018`,
-`FLOWX1019`, `FLOWX1032` and `FLOWX1033` are all quiet together on the same argument, which
-is not an unchecked policy but an absent one. It is none of the reservations, and it is not
-`FLOWX1032`: that rule names the kinds a set declares and says they do not execute, and this
-one fires precisely because there are no kinds to name.
+`FLOWX1019`, `FLOWX1033` and `FLOWX1040` are all quiet together on the same argument, which
+is not an unchecked policy but an absent one. It is none of the reservations, and it was not
+the retired `FLOWX1032`: that rule named the kinds a set declares and said they do not
+execute, and this one fires precisely because there are no kinds to name.
 
 **`FLOWX1037` is claimed** — *authorisation stance is not enforced by the runtime*:
 `Authorization = Authorization.Policy`, the one stance of the five whose decision the engine
@@ -479,8 +507,8 @@ step loop; this one names an ASP.NET Core authorisation policy, which only
 `RuntimeIsolationTests` is the gate. It is none of the reservations, and it is not
 `FLOWX1030`: that rule asks whether the stance *names* a policy and presupposes the name can
 then be checked; this one presupposes that it was named and reports that nothing checks it.
-It is `FLOWX1032`'s shape one concept across — a declaration the runtime does not honour —
-and it is an **error** rather than that rule's warning, for the reason
+It is the retired `FLOWX1032`'s shape one concept across — a declaration the runtime does not
+honour — and it is an **error** rather than that rule's warning, for the reason
 [ADR-0030](../adr/ADR-0030-policy-stance-is-refused-at-build-time.md) gives.
 
 **`FLOWX1038` is claimed** — *scheduled flow cannot be fired*: a `[CronTrigger]` the generator
@@ -504,7 +532,19 @@ rule asks whether a trigger attribute declares a readable kind, and this one pre
 does. It is `FLOWX1038`'s rule one transport over and is deliberately a separate id rather than a
 widened one — the two name different input contracts and different failure modes, and a
 suppression of one must not silently suppress the other.
-The next is `FLOWX1040`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1040` is claimed** — *`Idempotency` is declared on a flow whose result cannot be recorded
+without redaction*: stage 3 records the flow's state bag through `JournalPayload`, whose only exit
+replaces every `[Sensitive]`-named member at every depth, so a flow that marks one member records a
+document that is not what it produced — and replaying it hands a later step the literal
+`[redacted]` as if it were the value. It is none of the reservations, and it was not the retired
+`FLOWX1032`: that rule said a stage is unimplemented, and this one presupposes the stage runs and
+reports a declaration it cannot serve. It is not `FLOWX1014` either — that rule asks whether a *capability*
+tolerates being called twice, and this asks whether the platform can record what the call produced.
+[ADR-0042](../adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md) is the
+decision, and it is an **error** for [ADR-0030](../adr/ADR-0030-policy-stance-is-refused-at-build-time.md)'s
+reason: the alternative to the rule is not a policy that does less, it is a step that fails at run
+time on its first execution.
+The next is `FLOWX1041`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

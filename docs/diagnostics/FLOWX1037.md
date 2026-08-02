@@ -80,13 +80,13 @@ Any suppression must still carry a `FLOWX-DEBT` marker with an owner and an expi
 
 ## Why this is an error and not a warning
 
-[FLOWX1032](FLOWX1032.md) reports the same shape of gap — a declaration the runtime does not
-honour — as a **warning**, on the argument that "an error erases the inventory the fixing
+The since-deleted `FLOWX1032` reported the same shape of gap — a declaration the runtime does
+not honour — as a **warning**, on the argument that "an error erases the inventory the fixing
 phase needs" and that "the source is not wrong; it is written correctly for a platform that
 has the feature". Neither half transfers, and the reason is what
 [ADR-0030](../adr/ADR-0030-policy-stance-is-refused-at-build-time.md) records:
 
-**There is no inventory to preserve.** FLOWX1032's argument turns on the `.WithPolicy(...)`
+**There is no inventory to preserve.** FLOWX1032's argument turned on the `.WithPolicy(...)`
 calls being the list of steps that asked for a timeout, which is what let P4 find them. Here
 the inventory is one attribute argument on a capability that has four other stances available,
 two of which are enforced and one of which — `Permission` — is what most `Policy` declarations
@@ -104,25 +104,25 @@ the whole model rests on.
 set**, and FLOWX1010 and FLOWX1030 are both errors. A warning here would make the third rule
 in one family the only one a team may leave on.
 
-## Why this is not FLOWX1030, FLOWX1032 or FLOWX1010
+## Why this is not FLOWX1030, FLOWX1010 or the retired FLOWX1032
 
 | Rule | Asks |
 |---|---|
 | [FLOWX1010](FLOWX1010.md) | Was a stance declared **at all**? |
 | [FLOWX1030](FLOWX1030.md) | Does a stance that needs a **name** have one? |
 | **FLOWX1037** | Can the runtime **decide** the stance that was declared and named? |
-| [FLOWX1032](FLOWX1032.md) | Is the **stage** a declared policy runs in implemented? |
+| `FLOWX1032` (deleted) | Was the **stage** a declared policy runs in implemented? |
 
 The first three are a chain, and each presupposes the previous one passed:
 `Authorization.Policy` with no `Policy = "…"` is FLOWX1030 and not this rule, because a stance
-naming nothing is a different defect from one naming something nothing reads. FLOWX1032 is a
+naming nothing is a different defect from one naming something nothing reads. FLOWX1032 was a
 neighbour rather than a member: it reads a step's `.WithPolicy(...)` chain, and this reads a
 capability's `[Capability]` attribute — different declaration, different file, opposite
 severity.
 
 ## When this rule is deleted
 
-**Deleted, not downgraded**, on [FLOWX1032](FLOWX1032.md)'s precedent: it describes a gap in
+**Deleted, not downgraded**, on the now-executed `FLOWX1032`'s precedent: it describes a gap in
 the platform, and a rule that outlives what it describes teaches people to suppress a
 catalogue.
 
@@ -139,6 +139,6 @@ unhandled.
 ---
 
 **Back to:** [diagnostics index](README.md) · [FLOWX1010](FLOWX1010.md) ·
-[FLOWX1030](FLOWX1030.md) · [FLOWX1032](FLOWX1032.md) ·
+[FLOWX1030](FLOWX1030.md) ·
 [Security](../15-Security.md) ·
 [ADR-0030](../adr/ADR-0030-policy-stance-is-refused-at-build-time.md)

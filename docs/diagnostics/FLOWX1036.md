@@ -7,7 +7,7 @@
 
 > [!NOTE]
 > **This is the silence the other policy rules are built on, said out loud.**
-> [FLOWX1032](FLOWX1032.md), [FLOWX1033](FLOWX1033.md), [FLOWX1014](FLOWX1014.md),
+> [FLOWX1033](FLOWX1033.md), [FLOWX1014](FLOWX1014.md), [FLOWX1040](FLOWX1040.md),
 > [FLOWX1018](FLOWX1018.md) and [FLOWX1019](FLOWX1019.md) all ask a question about what is
 > *in* a set, and all five stay quiet when the compiler cannot read one. So does
 > `FlowEmitter`, and so does `ManifestWriter`. Five rules and two artifacts being quiet
@@ -108,14 +108,14 @@ In the order they should be considered:
 
 **Only with the first repair ruled out and written down.** A suppression here does not make
 the policies apply; it makes a step whose declared controls reach no plan, no manifest and no
-safety rule look like a step with no controls declared. If the set contains nothing but kinds
-FLOWX1032 would report as inert anyway, that is a defensible position for this release and an
-indefensible one on the day P4 lands — record it with a `FLOWX-DEBT` marker rather than a
-bare `#pragma`.
+safety rule look like a step with no controls declared. That was arguable while some kinds
+were inert and the deleted `FLOWX1032` reported them; it is not now, because every kind a set
+can declare is applied and an unreadable set is a set of controls that silently do nothing —
+record any suppression with a `FLOWX-DEBT` marker rather than a bare `#pragma`.
 
 ## Related
 
-- [FLOWX1032](FLOWX1032.md) — declared policy is not executed by the runtime.
+- `FLOWX1032` (deleted) — declared policy was not executed by the runtime.
 - [FLOWX1014](FLOWX1014.md) — retry requires an idempotent capability; the rule this silence
   disables.
 - [FLOWX1019](FLOWX1019.md) — flow deadline shorter than the step timeouts it must contain.

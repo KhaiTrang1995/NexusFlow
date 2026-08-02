@@ -86,8 +86,8 @@ occurrence is what the *trigger* knows and nothing else does.
 
 ## Why an error rather than a warning
 
-[FLOWX1032](FLOWX1032.md) is a warning because the runtime will eventually execute the
-policies it reports: the source is ahead of the platform, not wrong. This rule is
+The deleted `FLOWX1032` was a warning because the runtime would eventually execute the
+policies it reported: the source was ahead of the platform, not wrong. This rule is
 [FLOWX1033](FLOWX1033.md)'s shape instead. Neither case has a deployment, a configuration or a
 later release under which it becomes correct — a cron firing will never have a body, and an
 ephemeral flow will never have a primary key — and both present as work that silently does not

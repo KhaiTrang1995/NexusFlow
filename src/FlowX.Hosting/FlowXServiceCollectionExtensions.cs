@@ -70,10 +70,28 @@ public static class FlowXServiceCollectionExtensions
         {
             var options = provider.GetRequiredService<IOptions<FlowXOptions>>().Value;
 
+            // The four policy seams are resolved rather than required, and there is deliberately
+            // no default for any of them — TryAdd's bargain above does not transfer. A default
+            // alert sink that counts leaves a deployment degraded about a state the instance row
+            // still records; a default in-memory rate limiter would leave one admitting n × the
+            // declared rate across n nodes behind a declaration that reads as a deployment-wide
+            // bound, a default in-memory idempotency store would deduplicate one caller in n, and
+            // an in-memory audit sink would be a compliance control that survives no restart.
+            //
+            // The absences do not mean the same thing. A step declaring a RateLimit, an
+            // Idempotency window or an Audit with no store registered is refused rather than run
+            // (ADR-0040 §2.2, ADR-0025 §2.4, ADR-0043 §2), which is loud and one registration
+            // fixes. A step declaring a Cache with no IResultCache simply dispatches, which is
+            // what it did before stage 5 existed (ADR-0025 §2.3): the cache is the one seam
+            // whose absence costs latency rather than correctness.
             return new FlowEngine(
                 provider.GetRequiredService<IClock>(),
                 options.MaxPooledContexts,
-                provider.GetService<ICompensationAlertSink>());
+                provider.GetService<ICompensationAlertSink>(),
+                provider.GetService<IRateLimiterStore>(),
+                provider.GetService<IIdempotencyStore>(),
+                provider.GetService<IResultCache>(),
+                provider.GetService<IAuditSink>());
         });
 
         // The catalogue is registered whether or not anything is put in it. It is only read
