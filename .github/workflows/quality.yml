@@ -134,6 +134,11 @@ jobs:
   mutation:
     name: Mutation score (FlowX.Core)
     runs-on: ubuntu-latest
+    # A job with no timeout inherits six hours. This one ran past thirty-five minutes
+    # with no output on the first push where the workflow parsed at all, which reads
+    # as "still working" for the rest of a working day. Twenty-five minutes or it is
+    # a failure somebody looks at.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -152,7 +157,13 @@ jobs:
           # Pinned: the flag below was renamed once already, and an unpinned tool
           # turns that into a red job on a morning nobody changed anything.
           dotnet tool install --global dotnet-stryker --version 4.16.0
-          dotnet stryker --project FlowX.Core.csproj --break-at 70 --reporter progress --reporter html
+          # --test-project, or Stryker discovers every test project in the solution and
+          # runs all ~2700 tests against every mutant. That is the difference between a
+          # job that finishes and one that does not: FlowX.Core's own suite is what can
+          # notice a mutation in FlowX.Core.
+          dotnet stryker --project FlowX.Core.csproj \
+            --test-project ../../tests/FlowX.Core.Tests/FlowX.Core.Tests.csproj \
+            --break-at 70 --reporter progress --reporter html
 
       - uses: actions/upload-artifact@v4
         if: always()
