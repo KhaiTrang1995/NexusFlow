@@ -770,15 +770,32 @@ The Stream Engine never grows an unbounded queue. When the channel is full it
 **pauses consumption at the source** (Kafka `Pause`, AMQP prefetch, MQTT flow
 control) rather than buffering in memory.
 
-> **Design only.** There is no Stream Engine: the `Streaming` profile is an enum
-> value the runtime never reads, no transport but HTTP exists, and no bounded
-> channel is created anywhere in `src/`. `BackpressureConformanceTest` does not
-> exist and has nothing to assert against. This section, and budget B13, are
-> **P7**. Kept because backpressure has to be a design constraint from the first
-> line of the Stream Engine rather than a retrofit — but nothing here is running.
+> **Running since 2026-08-02, and narrower than the diagram.** *This box said there was no
+> Stream Engine and no bounded channel anywhere in `src/`.* `FlowStreamScan` creates one per
+> subscription and — this is the part the diagram understates — **issues no read at all when
+> it is full**, so the backlog stays in the source rather than in a batch already in flight.
+> `StreamBackpressureTests` is what holds it to that: a deliberately slow flow, and an
+> assertion on how many records the source was asked for beyond what the flows consumed. It is
+> written so that it fails if the bound stops working, by running the same workload at two
+> capacities and asserting the peak follows the capacity.
+>
+> **"Pause partition consumption" is not what happens, because there are no partitions.** One
+> subscription is read by one node, in order, under a lease; a stream is paused by not being
+> read. Kafka `Pause`, AMQP prefetch and MQTT flow control are still design — there is no
+> `FlowX.Kafka`, and the one `IStreamSource` that ships is Redis.
+>
+> Two bounds, both configurable and both refusals rather than buffers:
+> `FlowXOptions.StreamChannelCapacity` and `StreamMaxResidentRecords`. Exceeding the second
+> stops the subscription with `stream.window_overflow`
+> ([ADR-0055](adr/ADR-0055-a-window-names-the-instance-it-starts.md)). **B13 is still
+> unmeasured** — the subsystem exists, the harness does not.
 
-Offset commit is **after** flow completion, giving at-least-once semantics;
-combined with capability idempotency this yields effectively-once processing.
+Offset commit is **after** flow completion, giving at-least-once semantics; what makes it
+effectively-once is not capability idempotency but the instance id a closed window derives —
+a rebuilt window meets `flow_instance`'s primary key
+([ADR-0055](adr/ADR-0055-a-window-names-the-instance-it-starts.md)). And the checkpoint is not
+"the last record read": it is the last record of the longest prefix whose windows have closed,
+which is what lets a restart rebuild an open window rather than lose it.
 
 ---
 

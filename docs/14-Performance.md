@@ -101,7 +101,10 @@ none of the four has a harness. *The reason given was "because the subsystems th
 measure are not built", and for **B7 and B8** that stopped being true: the durable
 step-commit path exists (WP-52) and `plugins/FlowX.Postgres` (WP-53) is a real store
 to run it against. What those two lack is the harness itself — WP-50, unstarted.*
-B9 and B13 are still waiting on the subsystem. The paragraph above is a commitment
+B9 is still waiting on the subsystem. **B13's subsystem shipped on 2026-08-02 and its harness did
+not**, so it joins B7 and B8: a stream engine that has been made correct — backpressure
+demonstrated against a deliberately slow consumer, in a test written to fail if the bound is
+removed — and never once made fast. The paragraph above is a commitment
 about how load tests will be run, not a description of a run that has happened.
 
 ---
