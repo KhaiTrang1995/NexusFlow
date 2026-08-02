@@ -259,6 +259,69 @@ public sealed class StreamGenerationTests
             "and the wait is laid out, so the refusal was not standing in for a gap in the plan.");
     }
 
+    /// <summary>
+    /// A window's saga is silent under FLOWX1012, and <c>Durable</c> — the profile that rule's
+    /// message prescribes — is the one this flow may not declare.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Both halves in one test, because either alone understates it.</strong> The rule
+    /// promised that a compensation pending across a node death is lost, and for a window it is
+    /// not: the instance is journaled (<c>OpenJournal</c> asks
+    /// <c>ExecutionProfiles.IsJournaled</c>), <c>PostgresRecoveryIndex</c> lists a
+    /// <c>Compensating</c> row without reading a profile,
+    /// <c>FlowStreamSubscriptionRegistration.Add</c> puts the plan in <c>FlowCatalog</c> so
+    /// <c>FlowRecoveryScan</c> can resume it, and the skip in the step loop puts a completed
+    /// compensable step back on the unwind stack off <c>cursor.IsJournaled</c>. The window a
+    /// surviving node rebuilds does not re-enter that half-run unwind either — its derived id
+    /// meets the journal's primary key and <c>FlowStreamScan.DispositionFor</c> deduplicates it
+    /// (<c>ADR-0055</c>).
+    /// </para>
+    /// <para>
+    /// And the second half is why the first is not a nicety: an author who took the rule's
+    /// advice would have lost their subscription. <c>Durable</c> here is <c>FLOWX1042</c>, emits
+    /// no registration, and is refused by <c>FlowStreamCatalog.Add</c> at start-up.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AStreamingSagaIsSilentAndDurableWouldNotHaveBeenItsFix()
+    {
+        var saga = Windowing
+            .Replace(
+                "public sealed record DeviceStats(int Count);",
+                """
+                public sealed record DeviceStats(int Count);
+
+                [Capability("telemetry.retract", Version = "1.0.0", Authorization = Authorization.Internal, Idempotent = true)]
+                public sealed class Retract : ICapability<DeviceStats, DeviceStats>
+                {
+                    public ValueTask<Result<DeviceStats>> ExecuteAsync(
+                        DeviceStats input, CapabilityContext ctx, CancellationToken ct) =>
+                        ValueTask.FromResult(Result.Ok(input));
+                }
+                """,
+                StringComparison.Ordinal)
+            .Replace(
+                "flow.Step<Aggregate>().Return",
+                "flow.Step<Aggregate>().CompensateWith<Retract>().Return",
+                StringComparison.Ordinal);
+
+        GeneratorHarness.CompileErrorsIn(saga).ShouldBeEmpty();
+
+        GeneratorHarness.Analyze(saga, new CompensationDurabilityAnalyzer()).ShouldBeEmpty(
+            "A window's flow journals its step boundaries and a recovery sweep rebuilds its " +
+            "unwind stack, so there is no pending compensation for a node death to take.");
+
+        var durable = saga.Replace(
+            "Profile = ExecutionProfile.Streaming",
+            "Profile = ExecutionProfile.Durable",
+            StringComparison.Ordinal);
+
+        GeneratorHarness.Analyze(durable, new TriggerDeclarationAnalyzer()).ShouldContain(
+            "FLOWX1042",
+            "and the edit FLOWX1012 used to ask for is the one the stream refuses.");
+    }
+
     /// <summary>A flow with no stream trigger produces no registration and no rule.</summary>
     [Fact]
     public void AFlowWithNoStreamTriggerIsUntouched()

@@ -291,8 +291,15 @@ public static class FlowXDiagnostics
         "whose result the flow can then read.",
         DiagnosticSeverity.Warning);
 
-    /// <summary>FLOWX1012 — compensation declared on a flow whose profile is not <c>Durable</c>.</summary>
+    /// <summary>FLOWX1012 — compensation declared on a flow whose profile journals nothing.</summary>
     /// <remarks>
+    /// <para>
+    /// <strong>The condition is the journal, not the <c>Durable</c> literal</strong>, from
+    /// 2026-08-02 and for <see cref="AwaitSignalRequiresDurable"/>'s reason: every clause below
+    /// names a journal as the missing thing, and a <c>Streaming</c> flow has one
+    /// (<c>ADR-0055</c>). The title still names durability because that is what an
+    /// <c>.editorconfig</c> line and a build log carry.
+    /// </para>
     /// <para>
     /// Specified alongside <see cref="AwaitSignalRequiresDurable"/> in ADR-0003's negative
     /// bullet — "a wrong profile is a real bug class" — and the half of that pair that was
