@@ -39,6 +39,7 @@ public static class ProfileCostCheck
     private const string DurableProfile = "Durable";
     private const string AwaitSignalStep = "AwaitSignal";
     private const string DelayStep = "Delay";
+    private const string PollStep = "Poll";
     private const string SubFlowStep = "SubFlow";
     private const string DetachedMode = "Detached";
     private const string AwaitCompletionMode = "AwaitCompletion";
@@ -102,7 +103,10 @@ public static class ProfileCostCheck
         foreach (var step in Flatten(flow.Steps))
         {
             if (!string.IsNullOrEmpty(step.Compensation)
-                || step.Kind is AwaitSignalStep or DelayStep)
+                // A poll parks between attempts and counts them out of the journal, so it
+                // uses durability for both of the reasons the other two waits use it — which
+                // makes a Durable profile earned rather than accidental wherever one appears.
+                || step.Kind is AwaitSignalStep or DelayStep or PollStep)
             {
                 return true;
             }

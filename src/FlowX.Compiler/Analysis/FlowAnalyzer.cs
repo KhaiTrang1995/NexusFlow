@@ -155,9 +155,14 @@ public static class FlowAnalyzer
         // nothing to report about it — the call reached the analyzer's `default:` arm and
         // produced no step at all — so the rule named one construct because one was all a plan
         // could carry.
+        // Three kinds now rather than two. A poll is a timer per attempt and reads which
+        // attempt it is on out of the journal that parked it, so outside one it has neither
+        // anywhere to record when the next call is due nor any way to count the ones already
+        // made — which leaves a hot loop, and is the same sentence twice over.
         if (profile != "Durable" &&
             steps.SelectMany(s => s.SelfAndNested)
-                .FirstOrDefault(s => s.Kind is StepKindModel.AwaitSignal or StepKindModel.Delay)
+                .FirstOrDefault(s => s.Kind is StepKindModel.AwaitSignal or StepKindModel.Delay
+                    or StepKindModel.Poll)
                 is { } wait)
         {
             diagnostics.Add(Diagnostic.Create(
@@ -165,7 +170,12 @@ public static class FlowAnalyzer
                 declaration.Identifier.GetLocation(),
                 flowType.Name,
                 profile,
-                wait.Kind == StepKindModel.Delay ? "Delay" : "AwaitSignal"));
+                wait.Kind switch
+                {
+                    StepKindModel.Delay => "Delay",
+                    StepKindModel.Poll => "PollUntil",
+                    _ => "AwaitSignal",
+                }));
 
             return AnalysisResult.Failure(diagnostics);
         }
@@ -428,6 +438,15 @@ public static class FlowAnalyzer
                     AddDelayStep(link, steps, ref nextIndex);
                     break;
 
+                case "PollUntil":
+                    // `OnTimeout` is the next link, exactly as it is for `AwaitSignal`: both
+                    // spell the pair `.X(...).OnTimeout(block)`, and consuming both here is
+                    // what stops the escalation being modelled as steps that run
+                    // unconditionally after the poll.
+                    i += AddPollStep(
+                        link, NextOnTimeout(links, i), semanticModel, diagnostics, steps, ref nextIndex);
+                    break;
+
                 case "Fail":
                     // Terminal. Everything else in this switch says what happens next;
                     // this says there is no next, which is why the block ends here rather
@@ -541,7 +560,7 @@ public static class FlowAnalyzer
     private static readonly HashSet<string> StepProducingMethods = new HashSet<string>(System.StringComparer.Ordinal)
     {
         "Step", "Emit", "EmitOnFailure", "AwaitSignal", "When", "Switch", "Parallel",
-        "ForEach", "SubFlow", "Fail", "Delay",
+        "ForEach", "SubFlow", "Fail", "Delay", "PollUntil",
     };
 
     /// <summary>
@@ -1326,16 +1345,48 @@ public static class FlowAnalyzer
         List<StepModel> steps,
         ref int nextIndex)
     {
+        if (ReadCapabilityStep(link, semanticModel, diagnostics, nextIndex) is { } step)
+        {
+            steps.Add(step);
+            nextIndex++;
+        }
+    }
+
+    /// <summary>
+    /// Reads the capability a builder call names, at a supplied flat index, reporting
+    /// everything that is wrong with the declaration.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Split out of <see cref="AddCapabilityStep"/> when <c>PollUntil</c> arrived, because a
+    /// poll's attempt is a capability step in every sense that matters — the descriptors, the
+    /// dispatcher's switch, the manifest's capability list and every rule from
+    /// <c>FLOWX1002</c> to <c>FLOWX1037</c> apply to it unchanged. A second reader would have
+    /// been six diagnostics with two implementations, and the polled capability would have been
+    /// the one place in a flow where a missing authorisation stance went unreported.
+    /// </para>
+    /// <para>
+    /// The index is a parameter rather than a <c>ref</c> counter because the caller decides the
+    /// layout: a <c>.Step</c> takes the next index, a poll's attempt takes the one after the
+    /// poll node.
+    /// </para>
+    /// </remarks>
+    private static StepModel? ReadCapabilityStep(
+        ChainLink link,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        int index)
+    {
         if (link.TypeArguments.Count == 0)
         {
-            return;
+            return null;
         }
 
         var symbol = ResolveType(link.TypeArguments[0], semanticModel);
 
         if (symbol is null)
         {
-            return;
+            return null;
         }
 
         // FLOWX1002 — a step invokes a capability, and this type is not one.
@@ -1346,7 +1397,7 @@ public static class FlowAnalyzer
                 link.TypeArguments[0].GetLocation(),
                 symbol.Name));
 
-            return;
+            return null;
         }
 
         // FLOWX1015 — a capability has exactly one input and one output type.
@@ -1360,14 +1411,14 @@ public static class FlowAnalyzer
                 symbol.Name,
                 contracts));
 
-            return;
+            return null;
         }
 
         var info = CapabilityReader.Read(symbol);
 
         if (info is null)
         {
-            return;
+            return null;
         }
 
         // FLOWX1010 — there is no permissive default.
@@ -1406,8 +1457,8 @@ public static class FlowAnalyzer
 
         var mapping = ReadInputMapping(link, semanticModel, info, diagnostics);
 
-        steps.Add(StepModel.Capability(
-            nextIndex++,
+        return StepModel.Capability(
+            index,
             info.TypeName,
             info.Id,
             info.Version,
@@ -1420,7 +1471,7 @@ public static class FlowAnalyzer
             info.OutputTypeName,
             mapping?.Text,
             mapping?.TypeName,
-            mapping?.Location));
+            mapping?.Location);
     }
 
     /// <summary>
@@ -1694,6 +1745,162 @@ public static class FlowAnalyzer
             block));
 
         return onTimeout is null ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Models a <c>.PollUntil&lt;TCapability&gt;(until, interval, timeout)</c> and lays out its
+    /// attempt and its escalation block.
+    /// </summary>
+    /// <returns>How many further links were consumed: 1 for an <c>OnTimeout</c>, 0 without.</returns>
+    /// <remarks>
+    /// <para>
+    /// The layout is <c>poll · attempt · escalation…</c> and the indices are handed out in
+    /// exactly that order, so the attempt is always <c>poll + 1</c> — which is the fact the
+    /// engine relies on to find the body it re-enters without the node having to carry a
+    /// target for it.
+    /// </para>
+    /// <para>
+    /// <strong>The attempt is read by <see cref="ReadCapabilityStep"/> and not by a reader of
+    /// its own.</strong> Everything true of a capability a <c>.Step</c> names is true of the
+    /// one a poll names, including every rule about its stance and its contracts, and a second
+    /// reader is how the polled capability would have become the one place in a flow where
+    /// those went unchecked.
+    /// </para>
+    /// </remarks>
+    private static int AddPollStep(
+        ChainLink link,
+        ChainLink? onTimeout,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics,
+        List<StepModel> steps,
+        ref int nextIndex)
+    {
+        var consumed = onTimeout is null ? 0 : 1;
+        var pollIndex = nextIndex;
+        var attempt = ReadCapabilityStep(link, semanticModel, diagnostics, pollIndex + 1);
+
+        if (attempt is null)
+        {
+            // The capability could not be read, and whatever stopped it has already been
+            // reported — by this analyzer or by C# itself. Laying out a poll around nothing
+            // would produce a plan whose body index names a step that is not there.
+            return consumed;
+        }
+
+        // FLOWX1044 — a poll calls its capability an unbounded number of times with one
+        // request's worth of input, which is what `Idempotent = true` declares to be safe.
+        if (!attempt.IsIdempotent)
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.PollRequiresIdempotency,
+                link.TypeArguments[0].GetLocation(),
+                attempt.CapabilityId));
+        }
+
+        var arguments = link.Invocation.ArgumentList.Arguments;
+        var until = Argument(arguments, "until", 0);
+        var interval = Argument(arguments, "interval", 1);
+        var timeout = Argument(arguments, "timeout", 2);
+
+        var budget = FoldDeclaredWait(timeout, semanticModel);
+
+        // FLOWX1043 — the second attempt falls due after the budget has gone, so the loop is
+        // one call and an escalation. Silent whenever either duration is one this compiler
+        // cannot evaluate, which is FLOWX1019's stance: a rule that guessed at a schedule read
+        // from configuration would fire on flows that are correct at run time.
+        if (DeclaredBackoff.FoldFirstGap(interval?.ToString()) is { } gap && budget is not null &&
+            Duration(gap) is { } first && Duration(budget) is { } window && first > window)
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.PollIntervalOutlastsItsTimeout,
+                link.CallLocation,
+                attempt.CapabilityId,
+                gap,
+                budget));
+        }
+
+        // Two indices are spent before the block: the poll node and its attempt.
+        nextIndex = pollIndex + 2;
+
+        var block = onTimeout is null
+            ? new List<StepModel>()
+            : BuildBlock(FlowChainWalker.WalkBlock(onTimeout, 0), semanticModel, diagnostics, ref nextIndex);
+
+        steps.Add(StepModel.Poll(
+            pollIndex,
+            attempt,
+
+            // Copied verbatim, like every other expression the plan carries. A call missing an
+            // argument does not compile — the DSL declares one overload and all three
+            // parameters are required — so the null branches are reachable only from a
+            // half-typed buffer, where C# is already saying something more useful and the
+            // emitter refuses the model rather than inventing a schedule for it.
+            until?.ToString(),
+            interval?.ToString(),
+            timeout?.ToString(),
+            until is null ? null : FormatLocation(until.GetLocation()),
+            FormatLocation(link.CallLocation),
+
+            // And the same duration again, folded, for the manifest. ADR-0021 §2.2 is why one
+            // declaration reaches two artifacts in two forms; the interval is deliberately not
+            // folded, because the manifest publishes structure and has no field for a tuning
+            // number — MaxDegreeOfParallelism's stance, on the same kind of number.
+            budget,
+
+            block));
+
+        return consumed;
+    }
+
+    /// <summary>Reads an ISO-8601 duration this compiler folded, for one comparison.</summary>
+    /// <remarks>
+    /// Only ever handed a string <see cref="DeclaredDuration"/> or
+    /// <see cref="DeclaredBackoff"/> produced, so a failure is a defect in one of those rather
+    /// than something an author wrote — and the honest answer to it is still "say nothing",
+    /// because the rule this feeds is a warning about arithmetic and not a claim about the
+    /// build.
+    /// </remarks>
+    private static System.TimeSpan? Duration(string iso8601)
+    {
+        try
+        {
+            return System.Xml.XmlConvert.ToTimeSpan(iso8601);
+        }
+        catch (System.FormatException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// One argument of a builder call, found by name when the author named it and by position
+    /// when they did not.
+    /// </summary>
+    /// <remarks>
+    /// Needed here and not for the older constructs because <c>PollUntil</c> is the first call
+    /// in this DSL with three arguments of which two are durations. <c>.When(predicate, then)</c>
+    /// and <c>.ForEach(selector, body, options)</c> are read positionally and that is safe: the
+    /// arguments have different types, so a transposition does not compile. Two
+    /// <c>TimeSpan</c>-shaped arguments would transpose silently, which is why the DSL names
+    /// them and why this reads the names.
+    /// </remarks>
+    private static ExpressionSyntax? Argument(
+        SeparatedSyntaxList<ArgumentSyntax> arguments, string name, int position)
+    {
+        foreach (var argument in arguments)
+        {
+            if (argument.NameColon?.Name.Identifier.ValueText == name)
+            {
+                return argument.Expression;
+            }
+        }
+
+        // A named argument earlier in the list shifts nothing — C# requires positional
+        // arguments to come first — so a positional read is only correct while every argument
+        // up to this one is positional.
+        return position < arguments.Count && arguments[position].NameColon is null
+            ? arguments[position].Expression
+            : null;
     }
 
     /// <summary>

@@ -140,22 +140,16 @@ public sealed class CompensationPolicy
     /// pure and its arithmetic is pinned by a table of cases instead of by a statistical
     /// assertion, and the engine keeps its one source of randomness in one place.
     /// </para>
+    /// <para>
+    /// <strong>The arithmetic moved onto <see cref="FlowX.Backoff"/> and this delegates to
+    /// it.</strong> <c>PollUntil</c> spaces its attempts by the same formula over the same
+    /// three fields, and the second copy would have been the place the two schedules came to
+    /// disagree about what <c>Exponential(PT5S, PT5M)</c> means. This method stays because it
+    /// is where an unwind asks the question and because the name says which attempts it is
+    /// about.
+    /// </para>
     /// </remarks>
-    public TimeSpan DelayBefore(int attempt, double sample)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(attempt);
-
-        // Doubles rather than TimeSpan arithmetic: 2^attempt overflows a tick count long
-        // before it stops being a number, and a negative TimeSpan would be a wait that
-        // returns immediately rather than the cap the author asked for.
-        var ceiling = Math.Min(
-            Backoff.BaseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1),
-            Backoff.MaxDelay.TotalMilliseconds);
-
-        var milliseconds = Backoff.Jitter ? ceiling * Math.Clamp(sample, 0, 1) : ceiling;
-
-        return TimeSpan.FromMilliseconds(milliseconds);
-    }
+    public TimeSpan DelayBefore(int attempt, double sample) => Backoff.After(attempt, sample);
 
     private static T Parameter<T>(PolicyDescriptor policy, string key, T fallback) =>
         policy.Parameters.TryGetValue(key, out var value) && value is T typed ? typed : fallback;

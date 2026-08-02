@@ -719,6 +719,38 @@ public sealed class StepGraphTests
             .ToString()
             .ShouldBe("[2] subflow order.fulfil (Detached)");
 
+    /// <summary>A poll's satisfied path must lie past the attempt it polls with.</summary>
+    /// <remarks>
+    /// The forward-target rule read one index further out. A target of <c>index + 1</c> points
+    /// <em>at</em> the body, so a satisfied poll would land on the step that satisfied it and
+    /// run it again — which is the loop the rule exists to make unrepresentable, wearing a
+    /// legal-looking number.
+    /// </remarks>
+    [Fact]
+    public void APollsSatisfiedPathMustLiePastItsAttempt() =>
+        Should.Throw<InvalidFlowPlanException>(
+            () => StepNode.ForPoll(0, Backoff.Exponential("PT5S", "PT5M"), TimeSpan.FromHours(4), 1))
+            .Message.ShouldContain("past the attempt");
+
+    /// <summary>A poll with no gap between attempts is refused.</summary>
+    /// <remarks>
+    /// A zero interval parks the instance on an instant already in the past, so every sweep
+    /// finds it due and the flow spends its whole budget hot-looping against somebody else's
+    /// service — which is the shape polling exists to replace.
+    /// </remarks>
+    [Fact]
+    public void APollWithNoGapBetweenAttemptsIsRefused() =>
+        Should.Throw<InvalidFlowPlanException>(
+            () => StepNode.ForPoll(0, Backoff.Exponential(TimeSpan.Zero, TimeSpan.Zero), TimeSpan.FromHours(4)))
+            .Message.ShouldContain("no gap");
+
+    /// <summary>A poll describes itself with its body, its schedule and its budget.</summary>
+    [Fact]
+    public void APollDescribesItselfWithItsBodyAndItsBudget() =>
+        StepNode.ForPoll(1, Backoff.Exponential("PT5S", "PT5M"), TimeSpan.FromHours(4), 5)
+            .ToString()
+            .ShouldBe("[1] poll 2 every 00:00:05..00:05:00 for 04:00:00, else 3, satisfied 5");
+
     [Fact]
     public void TheGraphIsImmutableOnceBuilt()
     {

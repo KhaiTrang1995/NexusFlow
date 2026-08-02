@@ -178,6 +178,14 @@ public sealed class PredicatePurityAnalyzer : DiagnosticAnalyzer
         // Routing again: which collection is iterated decides how many times the body runs.
         new CoveredDelegate("ForEach", 0, "ForEach selector"),
 
+        // And a third time, with the worst consequence of the three. A poll's `until` decides
+        // whether the loop is over, and it is asked again on every resume — so one that reads
+        // the ambient clock answers differently on the node that picks the instance up than it
+        // did on the one that parked it, and the flow either walks past a poll that never
+        // succeeded or polls for ever. Named by parameter, so `until:` written in any position
+        // is the argument this reads.
+        new CoveredDelegate("PollUntil", 0, "PollUntil condition"),
+
         // 06 §5 puts "Projection / Return expression" inside the deterministic zone by name.
         new CoveredDelegate("Return", 0, "Return projection"),
 

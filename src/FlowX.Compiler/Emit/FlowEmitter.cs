@@ -1198,7 +1198,7 @@ public static class FlowEmitter
     /// </remarks>
     private static void EmitConditions(SourceWriter writer, FlowModel flow)
     {
-        var conditions = flow.AllSteps.Where(s => s.Kind == StepKindModel.Condition).ToList();
+        var conditions = Conditions(flow);
 
         if (conditions.Count == 0)
         {
@@ -1207,25 +1207,51 @@ public static class FlowEmitter
 
         writer.Line("/// <summary>Branch predicates, built once at type initialisation.</summary>");
         writer.Line("/// <remarks>");
-        writer.Line("/// Each is your <c>.When(...)</c> expression, copied verbatim. They are pure and");
-        writer.Line("/// synchronous by design: a condition may read only the context, the flow input");
-        writer.Line("/// and prior step results, so that a replay takes the branch it took before.");
+        writer.Line("/// Each is your <c>.When(...)</c> or <c>.PollUntil(until: ...)</c> expression,");
+        writer.Line("/// copied verbatim. They are pure and synchronous by design: a condition may read");
+        writer.Line("/// only the context, the flow input and prior step results, so that a replay takes");
+        writer.Line("/// the branch it took before — and so that a resumed poll can be asked whether it");
+        writer.Line("/// is already over without calling anything.");
         writer.Line("/// </remarks>");
         writer.Line("private static class Conditions");
         writer.OpenBrace();
 
-        foreach (var condition in conditions.OrderBy(c => c.Index))
+        foreach (var condition in conditions)
         {
-            EmitLineDirective(writer, condition.PredicateLocation);
+            var predicate = condition.Kind == StepKindModel.Poll
+                ? condition.PollPredicate
+                : condition.Predicate;
+
+            var location = condition.Kind == StepKindModel.Poll
+                ? condition.PollPredicateLocation
+                : condition.PredicateLocation;
+
+            EmitLineDirective(writer, location);
             writer.Line(
                 "public static readonly Func<FlowContext<" + flow.InputTypeName + ">, bool> Step" +
-                condition.Index + " = " + condition.Predicate + ";");
-            EmitLineDirectiveEnd(writer, condition.PredicateLocation);
+                condition.Index + " = " + predicate + ";");
+            EmitLineDirectiveEnd(writer, location);
         }
 
         writer.CloseBrace();
         writer.Line();
     }
+
+    /// <summary>
+    /// Every step the engine asks <c>IStepDispatcher.Evaluate</c> about, in layout order.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Two kinds, one seam.</strong> A <c>.When(...)</c> asks whether to take a block;
+    /// a <c>.PollUntil(until: ...)</c> asks whether the polling is over. Both are a pure
+    /// predicate over the same context, reached by the same step index, so they share the
+    /// generated <c>Conditions</c> class and the same <c>Evaluate</c> switch — and a flow that
+    /// declares a poll and no conditional still gets both, rather than a second seam that
+    /// exists only for polling.
+    /// </remarks>
+    private static List<StepModel> Conditions(FlowModel flow) => flow.AllSteps
+        .Where(s => s.Kind is StepKindModel.Condition or StepKindModel.Poll)
+        .OrderBy(s => s.Index)
+        .ToList();
 
     /// <summary>
     /// Emits one <c>static readonly</c> delegate per <c>.Switch(...)</c> selector.
@@ -1634,6 +1660,17 @@ public static class FlowEmitter
                     EmitStepNodes(writer, step.Then);
                     break;
 
+                case StepKindModel.Poll:
+                    // `poll · attempt · escalation…` — an AwaitSignal's layout with a block in
+                    // front of the escalation. The attempt is one capability, always at the
+                    // index after the node, which is what lets the node carry no target for
+                    // it; the satisfied path is the target, one past the escalation, and the
+                    // two rejoin there exactly as a wait's do.
+                    writer.Line("        " + PollNodeExpression(step) + ",");
+                    EmitStepNodes(writer, step.Body);
+                    EmitStepNodes(writer, step.Then);
+                    break;
+
                 default:
                     writer.Line("        " + StepNodeExpression(step) + ",");
                     break;
@@ -1695,6 +1732,38 @@ public static class FlowEmitter
     private static string ForEachNodeExpression(StepModel step) =>
         "StepNode.ForEach(" + step.Index + ", joinTarget: " + step.JoinIndex +
         ", options: " + step.OptionsExpression + ")";
+
+    /// <summary>
+    /// Emits the poll node, with the author's <c>interval:</c> and <c>timeout:</c> expressions
+    /// copied verbatim.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Verbatim for <see cref="ForEachNodeExpression"/>'s reason, and the refusal below is
+    /// <see cref="StepNodeExpression"/>'s <c>AwaitSignal</c> arm stated a third time: this
+    /// generator does not invent a duration or a schedule. <c>PollUntil</c> has one overload
+    /// and all three arguments are required, so an empty model means a half-typed buffer, and
+    /// failing loudly there keeps the choice in front of the next person "carry what the
+    /// author wrote" rather than "put a default back".
+    /// </para>
+    /// <para>
+    /// The target is written only when the author declared an escalation. One equal to the
+    /// index after the attempt would be a node claiming a block that is not there, and the
+    /// engine reads its absence as "there is nowhere for this timeout to go" — which ends the
+    /// flow rather than continuing past a poll that never succeeded.
+    /// </para>
+    /// </remarks>
+    private static string PollNodeExpression(StepModel step)
+    {
+        if (step.PollInterval is not { Length: > 0 } interval ||
+            step.PollTimeout is not { Length: > 0 } timeout)
+        {
+            throw new System.InvalidOperationException(NoDuration("A poll"));
+        }
+
+        return "StepNode.ForPoll(" + step.Index + ", " + interval + ", " + timeout +
+               (step.Then.Count == 0 ? string.Empty : ", satisfiedTarget: " + step.JoinIndex) + ")";
+    }
 
     /// <summary>Emits the composition node: which flow, and how it relates to this one.</summary>
     /// <remarks>
@@ -2273,16 +2342,18 @@ public static class FlowEmitter
         writer.Line("switch (stepIndex)");
         writer.OpenBrace();
 
-        // Conditions, switches, forks, loops and sub-flows have no case: the engine reaches
-        // a condition through Evaluate, a switch through Select, a loop through
-        // BeginIteration and a composition through BeginSubFlow, and it handles a fork, a
-        // loop and a child flow entirely itself — the blocks' own steps get cases, the
-        // branching node does not, and a child's steps are the child's dispatcher's
-        // business. A case here would be dead code in the file the header promises is
-        // readable.
+        // Conditions, switches, forks, loops, polls and sub-flows have no case: the engine
+        // reaches a condition and a poll through Evaluate, a switch through Select, a loop
+        // through BeginIteration and a composition through BeginSubFlow, and it handles a
+        // fork, a loop, a poll and a child flow entirely itself — the blocks' own steps get
+        // cases, the branching node does not, and a child's steps are the child's
+        // dispatcher's business. A case here would be dead code in the file the header
+        // promises is readable. A poll's attempt is one of those blocks and does get a case,
+        // because it is an ordinary capability step that happens to run many times.
         foreach (var step in flow.AllSteps
             .Where(s => s.Kind is not (StepKindModel.Condition or StepKindModel.Switch
-                or StepKindModel.Parallel or StepKindModel.ForEach or StepKindModel.SubFlow))
+                or StepKindModel.Parallel or StepKindModel.ForEach or StepKindModel.SubFlow
+                or StepKindModel.Poll))
             .OrderBy(s => s.Index))
         {
             writer.Line("case " + step.Index + ":");
@@ -2426,10 +2497,7 @@ public static class FlowEmitter
 
     private static void EmitDispatcherEvaluate(SourceWriter writer, FlowModel flow)
     {
-        var conditions = flow.AllSteps
-            .Where(s => s.Kind == StepKindModel.Condition)
-            .OrderBy(s => s.Index)
-            .ToList();
+        var conditions = Conditions(flow);
 
         writer.Line("/// <inheritdoc />");
         writer.Line("public bool Evaluate(int stepIndex, FlowContext ctx)");
@@ -2443,9 +2511,9 @@ public static class FlowEmitter
             writer.Line("throw new ArgumentOutOfRangeException(");
             writer.Line("    nameof(stepIndex),");
             writer.Line("    stepIndex,");
-            writer.Line("    \"This flow declares no conditional, so the engine never asks it to \" +");
-            writer.Line("    \"evaluate one. Reaching this means the plan and this dispatcher came \" +");
-            writer.Line("    \"from different builds.\");");
+            writer.Line("    \"This flow declares no conditional and no poll, so the engine never \" +");
+            writer.Line("    \"asks it to evaluate one. Reaching this means the plan and this \" +");
+            writer.Line("    \"dispatcher came from different builds.\");");
             writer.CloseBrace();
             return;
         }
@@ -2466,9 +2534,9 @@ public static class FlowEmitter
         writer.Line("throw new ArgumentOutOfRangeException(");
         writer.Line("    nameof(stepIndex),");
         writer.Line("    stepIndex,");
-        writer.Line("    \"Step index does not name a branch in the compiled plan. The plan and \" +");
-        writer.Line("    \"this dispatcher are generated together, so this means they came from \" +");
-        writer.Line("    \"different builds.\");");
+        writer.Line("    \"Step index does not name a branch or a poll in the compiled plan. The \" +");
+        writer.Line("    \"plan and this dispatcher are generated together, so this means they \" +");
+        writer.Line("    \"came from different builds.\");");
         writer.CloseBrace();
 
         writer.CloseBrace();

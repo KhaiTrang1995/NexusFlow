@@ -31,7 +31,24 @@ public enum PolicyStage
     Consistency = 7,
 }
 
-/// <summary>Retry backoff shapes.</summary>
+/// <summary>
+/// How the gap before an attempt grows with the number already made.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>One shape for both things that space attempts out.</strong> It was written for
+/// <c>Retry</c>, and <c>PollUntil</c> asks the identical question — <em>how long before the
+/// next call?</em> — of an identical answer: a base, a ceiling, and whether to decorrelate.
+/// A second type would have been the same three numbers under different names, with two
+/// implementations of one formula to keep in step, and an author reading a flow would have had
+/// to know which <c>Backoff</c> they were looking at.
+/// </para>
+/// <para>
+/// The difference is only in what an attempt is. A retry's attempts are one step recovering
+/// from a fault, bounded by a count; a poll's are one step asking a question that has not been
+/// answered yet, bounded by a duration. <see cref="After"/> is where both meet.
+/// </para>
+/// </remarks>
 public sealed record Backoff
 {
     private Backoff() { }
@@ -56,13 +73,104 @@ public sealed record Backoff
         Jitter = true,
     };
 
-    /// <summary>Exponential without jitter. Rarely correct at scale; prefer <see cref="ExponentialJitter"/>.</summary>
+    /// <summary>Exponential without jitter. Rarely correct at scale; prefer <see cref="ExponentialJitter(TimeSpan?, TimeSpan?)"/>.</summary>
     public static Backoff Exponential(TimeSpan? baseDelay = null, TimeSpan? maxDelay = null) => new()
     {
         BaseDelay = baseDelay ?? TimeSpan.FromMilliseconds(200),
         MaxDelay = maxDelay ?? TimeSpan.FromSeconds(30),
         Jitter = false,
     };
+
+    /// <summary>Exponential, with both bounds written as ISO-8601 durations.</summary>
+    /// <param name="from">The gap before the second attempt, e.g. <c>PT5S</c>.</param>
+    /// <param name="to">The gap the schedule never exceeds, e.g. <c>PT5M</c>.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The overload a <c>PollUntil</c> reaches for, and the reason is where it is
+    /// written.</strong> A retry's backoff is configuration — declared in a
+    /// <see cref="PolicySet"/> beside attempt counts, where <c>TimeSpan.FromSeconds(5)</c>
+    /// reads as the number it is. A poll's is part of the flow's own declaration, next to
+    /// <c>[FlowDeadline("PT6H")]</c> and <c>[CronTrigger("0 2 * * *")]</c>, which is how this
+    /// DSL already writes a duration an author is stating rather than computing.
+    /// </para>
+    /// <para>
+    /// Both bounds are required, unlike the <see cref="TimeSpan"/> overload's. A default base
+    /// of 200&#160;ms and ceiling of 30&#160;s are sensible for recovering from a fault and
+    /// wrong for waiting on somebody else's four-hour job, and a poll that silently took them
+    /// would make forty thousand calls where the author expected fifty.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentException">Either bound is not an ISO-8601 duration.</exception>
+    public static Backoff Exponential(string from, string to) =>
+        Exponential(Iso8601(from, nameof(from)), Iso8601(to, nameof(to)));
+
+    /// <summary>Exponential with full jitter, with both bounds written as ISO-8601 durations.</summary>
+    /// <param name="from">The gap before the second attempt, e.g. <c>PT5S</c>.</param>
+    /// <param name="to">The gap the schedule never exceeds, e.g. <c>PT5M</c>.</param>
+    /// <remarks>
+    /// The one to reach for when many instances poll the same dependency. A hundred thousand
+    /// documents accepted in the same minute and parked on the same undecorrelated schedule
+    /// wake in the same second, which turns "waiting costs nothing" into a load test somebody
+    /// else pays for.
+    /// </remarks>
+    /// <exception cref="ArgumentException">Either bound is not an ISO-8601 duration.</exception>
+    public static Backoff ExponentialJitter(string from, string to) =>
+        ExponentialJitter(Iso8601(from, nameof(from)), Iso8601(to, nameof(to)));
+
+    /// <summary>How long to wait before attempt number <paramref name="attempt"/>.</summary>
+    /// <param name="attempt">
+    /// The one-based attempt about to be made. <c>1</c> is the attempt after the first and
+    /// waits <see cref="BaseDelay"/>.
+    /// </param>
+    /// <param name="sample">
+    /// A uniform sample in <c>[0, 1]</c>, used only when <see cref="Jitter"/> is set. Passed in
+    /// rather than drawn here so that the type stays a pure function and a test can pin a
+    /// schedule — the same bargain <c>CompensationPolicy.DelayBefore</c> struck, which is now
+    /// this method.
+    /// </param>
+    /// <remarks>
+    /// Computed from the attempt number rather than accumulated, which is what lets a durable
+    /// poll resumed on another node an hour later schedule the gap the author declared: the
+    /// number comes from the journal's committed rows and this is a pure function of it.
+    /// </remarks>
+    public TimeSpan After(int attempt, double sample)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(attempt);
+
+        // Doubles rather than TimeSpan arithmetic: 2^attempt overflows a tick count long
+        // before it stops being a number, and a negative TimeSpan would be a wait that
+        // returns immediately rather than the cap the author asked for.
+        var ceiling = Math.Min(
+            BaseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1),
+            MaxDelay.TotalMilliseconds);
+
+        return TimeSpan.FromMilliseconds(Jitter ? ceiling * Math.Clamp(sample, 0, 1) : ceiling);
+    }
+
+    /// <summary>Reads an ISO-8601 duration, refusing anything that is not one.</summary>
+    /// <remarks>
+    /// <c>XmlConvert</c> rather than a parser of this repository's own, because the emitted
+    /// plan already folds a manifest's duration back with exactly that call — two parsers for
+    /// one grammar is two chances for a declared <c>PT5M</c> and a published <c>PT5M</c> to
+    /// come to mean different things.
+    /// </remarks>
+    private static TimeSpan Iso8601(string value, string parameter)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value, parameter);
+
+        try
+        {
+            return System.Xml.XmlConvert.ToTimeSpan(value);
+        }
+        catch (FormatException reason)
+        {
+            throw new ArgumentException(
+                $"'{value}' is not an ISO-8601 duration. Write it the way this DSL writes " +
+                "every other duration it declares — PT5S, PT5M, PT1H.",
+                parameter,
+                reason);
+        }
+    }
 }
 
 /// <summary>A single declared policy and its parameters.</summary>

@@ -402,6 +402,7 @@ byte-identical step inputs and identical control flow.
 > | `.AwaitSignal<T>(timeout)` | **Honoured.** The plan carries the author's declared duration and `FlowEngine` stops at the step. A delivered signal satisfies it; the declared duration expiring takes the `.OnTimeout` block, or ends the flow with `flow.signal_not_received` when there is none |
 > | `.OnTimeout(block)` | **Honoured.** The block is laid out immediately after the wait, and the wait carries the index a delivered signal jumps to. Both paths rejoin there, so an escalation that should end the flow says `.Fail(...)` — exactly as it would inside an `.Otherwise(...)` |
 > | `.Delay(duration)` | **Honoured.** One step of its own, carrying the author's expression. The instance parks and a sweep brings it back |
+> | `.PollUntil<T>(until, interval, timeout)` | **Honoured.** The same parking, re-entered once per attempt: the body is the capability at the next index and the attempt number is its journal scope, so the loop needs no backward target and the step loop's termination argument is untouched. The budget is measured from the instant the first attempt read, which is on its row |
 >
 > **What a wait costs.** The instance is sealed `Suspended` with its committed prefix
 > intact; the lease is released rather than renewed for the length of the wait; the

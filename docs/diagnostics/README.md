@@ -345,6 +345,9 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1046](FLOWX1046.md) | Agent tool declares no confirmation over declared side effects | **A tool a model may call to move money, publishing `confirmationRequired: false`: no client prompts, a server enforcing confirmation has nothing to enforce, and the flow that says so and the capability that charges the card are in two different files** |
 | [FLOWX1045](FLOWX1045.md) | Schedule jitter cannot be read | **Every replica of a deployment failing to become ready over a compile-time constant — `FlowSchedule.Create` throws on a `Jitter` it cannot read, and the value was a literal on the attribute the whole way; or a declared `PT0S` that reads as a spread and is not one** |
 
+| [FLOWX1043](FLOWX1043.md) | Poll interval outlasts the poll's own timeout | A `PollUntil` whose first gap is longer than its budget: the instance wakes past it, so the loop is one call followed by the `OnTimeout` block — and one attempt then an escalation reads in a journal exactly like a dependency that never answered |
+| [FLOWX1044](FLOWX1044.md) | `PollUntil` requires an idempotent capability | **A second OCR job, a second charge or a second reservation on every attempt of a loop built to make tens of them** — the repetition `Idempotent = true` declares to be safe, asked of a construct that repeats after every success rather than only after a failure |
+
 The next is `FLOWX1049`. The range is `FLOWX1001`–`FLOWX1099`.
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
@@ -622,6 +625,26 @@ declared `PT0S` is refused with the rest, because asking for a spread and gettin
 working; an **omitted** property is the ordinary declaration and is silent.
 [ADR-0059](../adr/ADR-0059-schedule-jitter-is-derived-from-the-firing.md) is the decision the
 value belongs to. It is none of the reservations.
+
+**`FLOWX1043` is claimed** — *poll interval outlasts the poll's own timeout*: a `PollUntil`
+whose first gap is longer than the budget it declares. A poll makes its first attempt
+immediately and parks for the interval before the second, so the instance wakes after its budget
+has gone and takes the escalation — the loop is a single call, and nothing about the instance
+says so. It is a **warning**, on `FLOWX1019`'s argument: the flow runs, both durations are legal
+C#, and an author who wants exactly one attempt and a fallback has written it in an obscure way.
+It is silent whenever either duration is one `DeclaredDuration` or `DeclaredBackoff` cannot
+evaluate, which is `FLOWX1019`'s stance again — a rule that guessed at a schedule read from
+configuration would fire on flows that are correct at run time.
+
+**`FLOWX1044` is claimed** — *`PollUntil` requires an idempotent capability*: a poll invokes its
+capability once per attempt, with one request's worth of input and one idempotency key, until a
+condition holds. That is exactly the repetition `Idempotent = true` declares to be safe, and it
+is `FLOWX1014`'s argument reached by a different door — the stronger of the two, because a retry
+repeats only after a failure and a poll repeats after every success. An **error** where
+`FLOWX1043` is a warning: a declaration whose two durations disagree produces a flow that runs
+and reads oddly, and this produces a flow that runs correctly the first time and creates a second
+OCR job on the second attempt. [ADR-0058](../adr/ADR-0058-a-poll-is-one-wait-not-a-race-between-two.md)
+is the decision the pair belongs to.
 
 The next is `FLOWX1049`. The range is `FLOWX1001`–`FLOWX1099`.
 

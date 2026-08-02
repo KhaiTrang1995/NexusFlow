@@ -499,6 +499,18 @@ public static class ManifestWriter
     /// </remarks>
     private static void WriteWait(JsonWriter writer, StepModel step)
     {
+        // A poll declares a timeout in exactly the sense a suspension point does — how long
+        // before the escalation runs — so it publishes the same field, folded the same way.
+        // Its `interval` deliberately does not appear: the schema's step object publishes
+        // structure, and how often a loop asks is the same kind of tuning number as
+        // MaxDegreeOfParallelism, which has no field either. A reader learns that the flow
+        // polls, what it polls, and how long it will keep trying.
+        if (step.Kind == StepKindModel.Poll)
+        {
+            WriteOptional(writer, "timeout", step.PollTimeoutIso);
+            return;
+        }
+
         if (step.Kind != StepKindModel.AwaitSignal)
         {
             return;
@@ -577,6 +589,27 @@ public static class ManifestWriter
             writer.PropertyName("branches");
             writer.OpenArray();
             WriteBranch(writer, step.Then);
+            writer.CloseArray();
+            return;
+        }
+
+        // A poll writes two entries where a wait writes one: the attempt it repeats, then the
+        // escalation it takes when the budget runs out. Both are blocks the flow may run and
+        // both would otherwise be capabilities named in the top-level list with nothing in the
+        // step tree that runs them — the untruth the AwaitSignal arm above was added to end.
+        // The attempt is always present; the escalation may be absent, and then there is one
+        // entry, which is the shape a reader should see for a poll that simply fails.
+        if (step.Kind == StepKindModel.Poll)
+        {
+            writer.PropertyName("branches");
+            writer.OpenArray();
+            WriteBranch(writer, step.Body);
+
+            if (step.Then.Count > 0)
+            {
+                WriteBranch(writer, step.Then);
+            }
+
             writer.CloseArray();
             return;
         }
@@ -950,6 +983,12 @@ public static class ManifestWriter
         // deliberately absent, on `merge`'s precedent and `Fail`'s: the manifest carries
         // structure, and a delay's duration is an arbitrary expression in the flow's source.
         StepKindModel.Delay => "Delay",
+
+        // A poll is its own kind rather than a Capability with an interval on it, because what
+        // it says about the flow is a fact about control: this step runs many times and may
+        // escalate. Publishing the attempt as an ordinary capability step and the loop as
+        // nothing would have made a flow that polls indistinguishable from one that calls once.
+        StepKindModel.Poll => "Poll",
 
         _ => "Capability",
     };

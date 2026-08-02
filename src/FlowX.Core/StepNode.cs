@@ -166,6 +166,30 @@ public enum StepKind
     /// </para>
     /// </remarks>
     Delay = 10,
+
+    /// <summary>
+    /// Invokes the capability at <c>Index + 1</c> once per attempt, suspending between
+    /// attempts, until a predicate holds or the poll's own timeout runs out. Durable flows
+    /// only.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><see cref="ForEach"/>'s layout and <see cref="AwaitSignal"/>'s ending.</strong>
+    /// The body is the one step immediately after this node and is re-entered per attempt, so
+    /// nothing in the array is duplicated and no target points backwards; what a delivered
+    /// signal is to a suspension point, a satisfied predicate is to this — and
+    /// <see cref="StepNode.Target"/> is where that path lands, one past the escalation block,
+    /// for exactly the reason it is on an <see cref="AwaitSignal"/>.
+    /// </para>
+    /// <para>
+    /// <strong>Termination is the loop's timeout, and it is measured from the journal.</strong>
+    /// A <see cref="ForEach"/> is bounded by a count read before the first iteration; this is
+    /// bounded by <see cref="StepNode.PollTimeout"/> measured from the instant the first
+    /// attempt committed, which is a fact on a row rather than a number a node has to
+    /// remember. That is what makes the bound survive the node that started the polling.
+    /// </para>
+    /// </remarks>
+    Poll = 11,
 }
 
 /// <summary>
@@ -280,6 +304,28 @@ public sealed record StepNode
     /// happening; this is the whole of what the step does.
     /// </remarks>
     public TimeSpan? Delay { get; private init; }
+
+    /// <summary>How a <see cref="StepKind.Poll"/> step spaces its attempts.</summary>
+    /// <remarks>
+    /// <c>null</c> for every other kind, and unread there. A schedule rather than a single
+    /// duration because the gap is a function of how many attempts have been made — which is
+    /// the difference between polling and a timer, and the reason the two are separate kinds.
+    /// The type is the one a <c>Retry</c> policy already declares: two spellings of "how far
+    /// apart are the attempts" would be two formulas to keep in step.
+    /// </remarks>
+    public Backoff? PollInterval { get; private init; }
+
+    /// <summary>
+    /// How long a <see cref="StepKind.Poll"/> step keeps polling, measured from the instant
+    /// its first attempt committed.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="SignalTimeout"/> for that property's own reason: they bound
+    /// different things and one property would leave every reader of a plan asking which it
+    /// was looking at. A signal timeout bounds an event somebody else causes; this bounds work
+    /// this flow is doing.
+    /// </remarks>
+    public TimeSpan? PollTimeout { get; private init; }
 
     /// <summary>
     /// Where control transfers, for the two control-flow kinds. <c>null</c> for every
@@ -633,6 +679,77 @@ public sealed record StepNode
         return new StepNode(index, StepKind.Delay)
         {
             Delay = duration,
+        };
+    }
+
+    /// <summary>Creates a poll: one capability, re-invoked until a predicate holds.</summary>
+    /// <param name="index">Position in the graph.</param>
+    /// <param name="interval">How the gap between attempts grows.</param>
+    /// <param name="timeout">How long the polling may go on. Must be positive.</param>
+    /// <param name="satisfiedTarget">
+    /// Where control continues when the predicate holds, when the author declared an
+    /// <c>.OnTimeout(...)</c> block. Must point past the body. <c>null</c> when they declared
+    /// none, and then the satisfied path is <c>index + 2</c> — the index after the one-step
+    /// body.
+    /// </param>
+    /// <exception cref="InvalidFlowPlanException">The target does not lie past the body.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>The body is one capability at <c>index + 1</c>, implied rather than
+    /// stored</strong> — <see cref="ForEach"/>'s reason for not storing its body's start,
+    /// applied to a block whose length is fixed as well as whose start is. A multi-step poll
+    /// body would need each attempt to be journaled as a range and would let an author put a
+    /// compensable step inside a loop that runs an unbounded number of times, which is a
+    /// compensation stack of unbounded depth for one declaration.
+    /// </para>
+    /// <para>
+    /// <strong>The predicate is not here</strong>, for <see cref="ForBranch"/>'s reason: the
+    /// engine cannot invoke a delegate it has no types for, so it lives with the generated
+    /// dispatcher and is reached by this node's index through <c>IStepDispatcher.Evaluate</c>.
+    /// A poll and a conditional therefore ask the dispatcher the same question, which is why
+    /// no second seam was opened for one.
+    /// </para>
+    /// <para>
+    /// Whether this step is <em>permitted</em> depends on the flow's execution profile, which
+    /// the node cannot see. <see cref="ExecutionPlan"/> enforces it, on the grounds it enforces
+    /// the other two waits: an in-memory poll is a held thread with a plan node on it.
+    /// </para>
+    /// </remarks>
+    public static StepNode ForPoll(
+        int index,
+        Backoff interval,
+        TimeSpan timeout,
+        int? satisfiedTarget = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        ArgumentNullException.ThrowIfNull(interval);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+
+        if (interval.BaseDelay <= TimeSpan.Zero)
+        {
+            throw new InvalidFlowPlanException(
+                $"Step {index} polls with no gap between attempts. A zero interval parks the " +
+                "instance on an instant already in the past, so every sweep finds it due and " +
+                "the flow spends its whole timeout hot-looping against somebody else's " +
+                "service — which is the shape polling exists to replace.");
+        }
+
+        // Past the body, not merely past the node. A target of index + 1 would be a satisfied
+        // path landing *on* the step it is satisfied by, which is the loop the forward-target
+        // rule exists to make unrepresentable.
+        if (satisfiedTarget is { } target && target <= index + 1)
+        {
+            throw new InvalidFlowPlanException(
+                $"Step {index} is a poll whose satisfied path targets step {target}, which is " +
+                "not past the attempt it polls with. The body occupies index " + (index + 1) +
+                ", so a target at or before it re-enters the poll rather than leaving it.");
+        }
+
+        return new StepNode(index, StepKind.Poll)
+        {
+            PollInterval = interval,
+            PollTimeout = timeout,
+            Target = satisfiedTarget,
         };
     }
 
@@ -994,6 +1111,11 @@ public sealed record StepNode
             ? $"[{Index}] await {SignalType} ({SignalTimeout}), else {Index + 1}, signalled {signalled}"
             : $"[{Index}] await {SignalType} ({SignalTimeout})",
         StepKind.Delay => $"[{Index}] delay {Delay}",
+        StepKind.Poll => Target is { } satisfied
+            ? $"[{Index}] poll {Index + 1} every {PollInterval?.BaseDelay}..{PollInterval?.MaxDelay} " +
+              $"for {PollTimeout}, else {Index + 2}, satisfied {satisfied}"
+            : $"[{Index}] poll {Index + 1} every {PollInterval?.BaseDelay}..{PollInterval?.MaxDelay} " +
+              $"for {PollTimeout}",
         StepKind.Branch => $"[{Index}] branch, else {Target}",
         StepKind.Jump => $"[{Index}] jump {Target}",
         StepKind.Switch => $"[{Index}] switch {string.Join(", ", CaseTargets)}, else {Target}",
