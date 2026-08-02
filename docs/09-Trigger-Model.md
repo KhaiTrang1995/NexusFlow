@@ -133,36 +133,58 @@ continued**: nothing reads it, because nothing starts an `Activity` (see
 
 ## 3. Declaring triggers
 
+A trigger whose payload the *caller* supplies binds the flow's own request contract, so those
+stack freely on one class:
+
 ```csharp
-[Flow("order.place", Profile = ExecutionProfile.Durable)]
-[HttpTrigger("POST", "/api/v1/orders", Idempotent = true, Version = "v1")]
-[KafkaTrigger("orders.requested", Group = "order-placement", StartFrom = Offset.Committed)]
-[CronTrigger("0 2 * * *", TimeZone = "Europe/Berlin", Overlap = OverlapPolicy.Skip)]
-[AgentTrigger(Description = "Place a customer order with payment and inventory reservation")]
-public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderPlacedResult> { … }
+[Flow("invoice.issue.http", Profile = ExecutionProfile.Durable)]
+[HttpTrigger("POST", "/api/v1/invoices", Idempotent = true, Version = "v1")]
+[AgentTrigger(Description = "Issue an invoice for a billing account")]
+public sealed partial class IssueInvoiceOverHttpFlow : Flow<IssueInvoice, Invoice>
+{
+    protected override void Define(IFlowBuilder<IssueInvoice, Invoice> flow) => flow
+        .Step<ValidateInvoice>()
+        .Step<CalculateTax>()
+        .Step<PersistInvoice>().CompensateWith<VoidInvoice>()
+        .Emit<InvoiceIssued>(/* … */)
+        .Return(ctx => ctx.Get<Invoice>());
+}
 ```
 
-Four transports, zero changes to the flow body. **This is quality goal Q4, and it
-is the single most visible benefit of the model.**
+A trigger whose payload the *platform* supplies fixes the contract instead — a delivery has a
+`BusMessage`, an occurrence has a `ScheduledFire`, a closed window has a `StreamWindowBatch` —
+so it gets a class of its own, and the transport costs exactly one decoding step:
 
-> [!WARNING]
-> **The block above does not compile, and the reason is a real limit rather than a typo.** A flow
-> carrying `[CronTrigger]` must declare `Flow<ScheduledFire, TOut>` — a firing has no body, and
-> `FLOWX1007` and `FLOWX1011` forbid the flow reading a clock to discover which occurrence it is,
-> so the occurrence has to arrive as input
-> ([ADR-0033](adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md)). `PlaceOrderFlow` takes
-> a `PlaceOrder`, which is what its `[HttpTrigger]` binds a request body into. **A flow cannot
-> declare both**, and [FLOWX1038](diagnostics/FLOWX1038.md) reports the attempt.
->
-> Q4 survives, narrowed to the claim it can actually make: **zero changes to the flow body**
-> across every transport whose payload the *caller* supplies — HTTP, bus, stream, agent. The one
-> whose payload the *platform* supplies fixes the contract, and the ordinary shape for "this
-> operation runs on a request and on a schedule" has always been two flows over one capability.
->
-> This was found by a test rather than by reading it:
-> `TriggerDeclarationAnalyzerTests.AllFiveTogetherAreSilent` asserted an empty diagnostic list
-> against exactly this declaration, and began reporting `FLOWX1038` the day the schedule trigger
-> was bound.
+```csharp
+[Flow("invoice.issue.bus", Profile = ExecutionProfile.Durable)]
+[BusTrigger("invoice.requested", Group = "billing")]
+public sealed partial class IssueInvoiceOverBusFlow : Flow<BusMessage, Invoice>
+{
+    protected override void Define(IFlowBuilder<BusMessage, Invoice> flow) => flow
+        .Step<ReadInvoiceRequest>()          // the transport's whole cost
+        .Step<ValidateInvoice>()             // ── from here, character for character
+        .Step<CalculateTax>()                //    the HTTP flow's chain
+        .Step<PersistInvoice>().CompensateWith<VoidInvoice>()
+        .Emit<InvoiceIssued>(/* … */)
+        .Return(ctx => ctx.Get<Invoice>());
+}
+```
+
+Four transports, one chain. **This is quality goal Q4**, and
+[ADR-0062](adr/ADR-0062-transport-portability-is-a-property-of-the-capability-chain.md) states it
+over the capability chain rather than over a flow class: portability holds one adapter step in,
+and it is the single most visible benefit of the model. `samples/event-driven` is the worked
+example — HTTP, bus, outbox change feed and cron over one billing chain — and
+`TransportPortabilityTests` compares the four compiled plans against that chain written out.
+
+> [!NOTE]
+> **This block used to stack `[HttpTrigger]`, `[KafkaTrigger]`, `[CronTrigger]` and
+> `[AgentTrigger]` on one class, and that never compiled.** A class has one base type and
+> therefore one `TIn`, so two triggers naming different contracts cannot both be served,
+> whichever the author picks — and the four rules that each check one transport alternate between
+> two messages that each tell the author to declare what the other refuses.
+> [FLOWX1048](diagnostics/FLOWX1048.md) is reported instead of all four and names the real
+> constraint. `[HttpTrigger]` and `[AgentTrigger]` are not in that set at all.
 
 ---
 

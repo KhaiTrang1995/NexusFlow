@@ -236,8 +236,9 @@ would be the one nothing checks; that is
 [ADR-0015](adr/ADR-0015-journal-schema-and-durable-execution.md)'s own argument for deriving
 the resume position, applied to a signal.
 
-[`FLOWX1017`](diagnostics/FLOWX1017.md) refuses either construct below `Durable`. The rule
-that used to refuse them *at* `Durable` is deleted, with the gap it described.
+[`FLOWX1017`](diagnostics/FLOWX1017.md) refuses either construct on a flow that journals
+nothing. The rule that used to refuse them *at* `Durable` is deleted, with the gap it
+described.
 
 **A timer did need something a signal did not, and it is three columns rather than a table.**
 `0005_suspended_wake.sql` adds `wake_at`, `wake_step_id` and `wake_scope` to `flow_instance`,

@@ -1118,9 +1118,9 @@ lease, and it records which wait it is parked at and when it is due. `FlowHost.S
 resumes it on a signal; `FlowTimerScan` — a sweep on an interval, not a timer per instance —
 resumes it when the instant passes. An `.OnTimeout(…)` block runs when the declared duration
 expires, and a wait with no block ends the flow with `flow.signal_not_received`. `FLOWX1017`
-refuses either construct on a non-durable flow, correctly: an in-memory wait does not survive
-a deployment, and a timer outside a journal has nowhere to record when it is due. **What that
-costs you:** a wait is a lower bound, because it is resolved by a sweep —
+refuses either construct on a flow that journals nothing, correctly: an in-memory wait does
+not survive a deployment, and a timer outside a journal has nowhere to record when it is due.
+**What that costs you:** a wait is a lower bound, because it is resolved by a sweep —
 `FlowXOptions.TimerScanInterval` is ten seconds by default. `SubFlowMode.AwaitCompletion` is
 still refused outright by `FLOWX1026`, and an inline composed child that suspends is refused
 at run time — give a flow that waits its own trigger, or compose it `Detached`.

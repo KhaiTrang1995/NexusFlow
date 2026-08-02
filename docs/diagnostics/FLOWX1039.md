@@ -135,7 +135,7 @@ redelivery runs it" — and a merged rule would have to say both and mean one.
 - [ADR-0038](../adr/ADR-0038-a-poison-message-is-dead-lettered.md) — what happens to a message
   the flow can never consume
 - [FLOWX1038](FLOWX1038.md) — the same rule for the schedule trigger
-- [FLOWX1017](FLOWX1017.md) — the other rule that requires `Durable`, for the construct in the
-  flow's body that cannot work without a journal
+- [FLOWX1017](FLOWX1017.md) — the other rule that requires a journal, for the construct in the
+  flow's body that cannot work without one
 - [09 §7](../09-Trigger-Model.md#7-bus-trigger) — what a bus declaration binds, and which of its
   properties still bind nothing

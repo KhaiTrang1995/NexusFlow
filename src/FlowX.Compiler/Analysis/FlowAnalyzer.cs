@@ -159,7 +159,16 @@ public static class FlowAnalyzer
         // attempt it is on out of the journal that parked it, so outside one it has neither
         // anywhere to record when the next call is due nor any way to count the ones already
         // made — which leaves a hot loop, and is the same sentence twice over.
-        if (profile != "Durable" &&
+        //
+        // Asked as "does this journal?" rather than as `profile != "Durable"`, because every
+        // clause above is about a journal and not one of them is about `Durable`. A `Streaming`
+        // flow has one: the runtime reads the profile in a single place and asks
+        // `ExecutionProfiles.IsJournaled` there, a suspension is committed off the cursor that
+        // question opens, `FlowTimerScan` and `FlowHost.SignalAsync` resume by instance id and
+        // read no profile at all, and `FlowStreamScan.DispositionFor` already counts a suspended
+        // window's flow as started and checkpoints past it. Refusing it here was the fifth
+        // `== Durable` that meant "does this journal?", left standing when the other four went.
+        if (!ExecutionProfiles.Journals(profile) &&
             steps.SelectMany(s => s.SelfAndNested)
                 .FirstOrDefault(s => s.Kind is StepKindModel.AwaitSignal or StepKindModel.Delay
                     or StepKindModel.Poll)

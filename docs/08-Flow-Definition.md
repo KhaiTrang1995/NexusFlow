@@ -318,7 +318,8 @@ flow.AwaitSignal<PaymentConfirmed>(timeout: TimeSpan.FromMinutes(30))
 | `.Delay(duration)` | a durable timer holding no resources while it waits | **This.** One step of its own, carrying the author's expression. The instance parks and a sweep brings it back |
 | `.PollUntil<T>(until, interval, timeout)` | invokes a capability repeatedly until a condition holds, parking between attempts | **This.** One node whose body is the capability at the next index, re-entered once per attempt with the attempt number as its journal scope. The instance parks between attempts on the declared `Backoff`; the budget runs from the first attempt and is read back off its row; the `.OnTimeout` block is laid out after the body, and a poll that declares none ends the flow with `flow.poll_not_satisfied`. `samples/polling` is the running example, and [ADR-0058](adr/ADR-0058-a-poll-is-one-wait-not-a-race-between-two.md) the record |
 
-`AwaitSignal`, `Delay` and `PollUntil` are all `Durable`-only, and any of them in an `Ephemeral` flow is
+`AwaitSignal`, `Delay` and `PollUntil` all need a journal — `Durable`, or the `Streaming` a
+window's flow declares — and any of them in an `Ephemeral` flow is
 [`FLOWX1017`](diagnostics/FLOWX1017.md) (error): an in-memory wait cannot survive a
 deployment, and a timer outside a journal has nowhere to record when it is due — so the only
 way to honour one in memory is to hold the process for the duration.
@@ -565,9 +566,9 @@ edge out of it.
 | `.SubFlow<TFlow>(map, mode)` | compose flows | all |
 | `.Emit<TEvent>(map)` | publish a domain event | all |
 | `.EmitOnFailure<TEvent>(map)` | publish on failure path | all |
-| `.AwaitSignal<T>(timeout)` | external wait | Durable, and **honoured**: the instance suspends, a signal resumes it, and the declared timeout takes the `.OnTimeout` block — or ends the flow with `flow.signal_not_received` when there is none |
-| `.OnTimeout(b)` | the branch taken when the signal never arrives | Durable. Laid out after the wait; both paths rejoin past it |
-| `.Delay(duration)` | durable timer | Durable — [`FLOWX1017`](diagnostics/FLOWX1017.md) below it, for the reason a suspension point is refused there |
+| `.AwaitSignal<T>(timeout)` | external wait | Durable, Streaming, and **honoured**: the instance suspends, a signal resumes it, and the declared timeout takes the `.OnTimeout` block — or ends the flow with `flow.signal_not_received` when there is none |
+| `.OnTimeout(b)` | the branch taken when the signal never arrives | Durable, Streaming. Laid out after the wait; both paths rejoin past it |
+| `.Delay(duration)` | durable timer | Durable, Streaming — [`FLOWX1017`](diagnostics/FLOWX1017.md) on a flow that journals nothing, for the reason a suspension point is refused there |
 | `.Window(spec)` / `.Aggregate(...)` | stream windowing | Streaming |
 | [`.Fail(error)`](#38-failing) | terminate with a business error, unwinding what completed | all |
 | `.Return(projection)` | produce the flow output | all |

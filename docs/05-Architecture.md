@@ -31,7 +31,7 @@ orchestration graph at compile time.
 | Q1 | **Predictable low latency** | 4-step ephemeral flow, warm process, single node | p99 platform overhead ≤ **5 µs**, ≤ **1 alloc/step** | 1 |
 | Q2 | **Durable correctness** | node killed mid-flow at any step boundary | flow resumes on another node, **zero duplicate side effects** for idempotent capabilities, p99 checkpoint ≤ **15 ms** @ 5 000 flows/s/node | 1 |
 | Q3 | **Static knowability** | any build | **100 %** of flows/capabilities/policies/events present in manifest; breaking contract change fails CI | 1 |
-| Q4 | **Transport portability** | move a flow from HTTP to Kafka | **0** lines of business logic changed; only attributes | 2 |
+| Q4 | **Transport portability** | move a chain from HTTP to a broker, an outbox feed or a schedule | **1** adapter step; **0** lines of the chain below it changed | 2 |
 | Q5 | **Operational uniformity** | any FlowX service | golden signals + trace + replay available with **no user instrumentation** | 2 |
 | Q6 | **Extensibility** | add a new transport | implemented against public contracts, **0** changes to `FlowX.Runtime` | 2 |
 | Q7 | **Startup & footprint** | container cold start, NativeAOT | ≤ **200 ms** to ready, ≤ **60 MB** RSS idle | 3 |
@@ -120,7 +120,7 @@ flowchart LR
 | Q1 latency | Compile the flow graph into a static execution plan; pooled context; struct step frames; listener-gated telemetry | [ADR-0002](adr/ADR-0002-compile-time-orchestration.md), [06](06-Execution-Engine.md) |
 | Q2 durability | Per-flow execution profile; append-only journal with step-boundary checkpoints; lease-based ownership; deterministic replay | [ADR-0003](adr/ADR-0003-execution-profiles.md), [ADR-0006](adr/ADR-0006-journal-and-leases.md), [11](11-Distributed-Runtime.md) |
 | Q3 knowability | Source generator emits `flowx.manifest.json`; `flowx diff` gates CI; architecture fitness tests | [ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md), [13](13-AI-Native.md) |
-| Q4 portability | Trigger attributes are metadata only; flows are transport-free by analyzer rule | [ADR-0004](adr/ADR-0004-universal-trigger-model.md), [09](09-Trigger-Model.md) |
+| Q4 portability | Trigger attributes are metadata only; flows are transport-free by analyzer rule; the claim is stated over the capability chain, one adapter step in | [ADR-0004](adr/ADR-0004-universal-trigger-model.md), [ADR-0062](adr/ADR-0062-transport-portability-is-a-property-of-the-capability-chain.md), [09](09-Trigger-Model.md) |
 | Q5 uniformity | Runtime owns spans/metrics because it owns the graph; replay from journal | [12](12-Observability.md) |
 | Q6 extensibility | Everything above `FlowX.Core` is a plugin against published contracts | [ADR-0009](adr/ADR-0009-plugin-contracts.md), [17](17-Plugin-System.md) |
 | Q7 startup | Zero reflection; generated registration; AOT smoke test in CI | [ADR-0002](adr/ADR-0002-compile-time-orchestration.md) |

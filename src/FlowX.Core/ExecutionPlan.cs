@@ -181,8 +181,8 @@ public sealed class ExecutionPlan
     /// </para>
     /// <para>
     /// <strong>It is false for every <see cref="ExecutionProfile.Ephemeral"/> plan, by
-    /// construction rather than by convention.</strong> Both kinds it counts are refused below
-    /// <see cref="ExecutionProfile.Durable"/> by
+    /// construction rather than by convention.</strong> Every kind it counts is refused on a
+    /// plan that journals nothing by
     /// <see cref="ValidateProfileSupportsEveryStep"/>, so the ephemeral path reaches nothing
     /// this flag guards and budget B2 is untouched — the same bargain <see cref="HasEmit"/>
     /// struck for the outbox.
@@ -345,7 +345,16 @@ public sealed class ExecutionPlan
 
     private static void ValidateProfileSupportsEveryStep(FlowDescriptor flow, StepGraph graph)
     {
-        if (flow.Profile == ExecutionProfile.Durable)
+        // "Does this journal?", not "is this Durable?". Each refusal below names a journal as
+        // the thing that is missing, and a `Streaming` flow has one — the engine reads the
+        // profile in exactly one place, `OpenJournal`, and asks this same predicate there; a
+        // suspension is sealed off the cursor that call opens; `FlowTimerScan` and
+        // `FlowHost.SignalAsync` resume by instance id without reading a profile; and
+        // `FlowStreamScan` already counts a suspended window's flow as started and checkpoints
+        // past it. Written as `== Durable`, this was the one remaining place where the two
+        // questions had different answers, and it refused at plan construction what the engine
+        // would have run. FLOWX1017 is the build-time half and asks the same question.
+        if (ExecutionProfiles.IsJournaled(flow.Profile))
         {
             return;
         }

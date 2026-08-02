@@ -384,9 +384,9 @@ byte-identical step inputs and identical control flow.
 > output and adds no fourth fidelity limit. A timer adds none either: the instant is on
 > the instance row rather than in the flow's own state, so nothing about it is replayed
 > — it is read once, by the engine, when it arrives back at the node it is parked at.
-> [`FLOWX1017`](diagnostics/FLOWX1017.md) still refuses `AwaitSignal` below `Durable`,
-> and now refuses `Delay` there too; the rule that used to refuse both at `Durable` is
-> deleted.
+> [`FLOWX1017`](diagnostics/FLOWX1017.md) still refuses `AwaitSignal` on a flow that
+> journals nothing, and now refuses `Delay` there too; the rule that used to refuse both
+> at `Durable` is deleted.
 
 ---
 

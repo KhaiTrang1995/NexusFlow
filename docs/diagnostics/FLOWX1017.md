@@ -10,6 +10,19 @@ nowhere to record when it is due, which leaves holding the process for the durat
 only way to honour it.
 
 > [!NOTE]
+> **The rule asks "does this journal?", not "is this `Durable`?", from 2026-08-02.** It asked
+> the second and meant the first, which cost a `Streaming` flow a wait it could have had: a
+> window's flow is journaled for the reason a durable one is
+> ([ADR-0055](../adr/ADR-0055-a-window-names-the-instance-it-starts.md)), the engine reads the
+> profile in one place and asks `ExecutionProfiles.IsJournaled` there, `FlowTimerScan` and
+> `FlowHost.SignalAsync` resume by instance id without reading a profile at all, and
+> `FlowStreamScan` already counts a suspended window's flow as started and checkpoints past
+> it. The message it got named `Streaming` back at it under a fix it could not take — a
+> stream-triggered flow that declares `Durable` instead is
+> [`FLOWX1042`](FLOWX1042.md). `ExecutionPlan.Create` was the same literal and made the same
+> refusal, and asks the same question now.
+
+> [!NOTE]
 > **This rule covers `.PollUntil<T>(...)` as well as `.Delay(duration)` and
 > `.AwaitSignal<T>(timeout)`.** The third arrived with the construct: a poll parks between
 > attempts and reads which attempt it is on out of the journal that parked it, so outside one it
