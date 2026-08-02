@@ -98,6 +98,14 @@ public sealed class FlowModel
     /// <summary>Execution profile name: <c>Ephemeral</c>, <c>Durable</c> or <c>Streaming</c>.</summary>
     public string Profile { get; }
 
+    /// <summary>Whether this flow's instances, state bag and step results reach a journal.</summary>
+    /// <remarks>
+    /// <see cref="ExecutionProfiles.Journals"/>, as a property, because every emitter that asks
+    /// the question has a model in hand and the question is about the flow rather than about a
+    /// string.
+    /// </remarks>
+    public bool IsJournaled => ExecutionProfiles.Journals(Profile);
+
     /// <summary>ISO-8601 duration from <c>[FlowDeadline]</c>, or <c>null</c> for the runtime default.</summary>
     public string? Deadline { get; }
 

@@ -141,6 +141,51 @@ public sealed class EmitStagingTests
     }
 
     /// <summary>
+    /// A <c>Streaming</c> flow stages its event, because a closed window's flow is journaled.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>It did not, and the failure was silent in three directions at once.</strong>
+    /// Whether an <c>.Emit</c> could be staged was written as <c>Profile == "Durable"</c>, so a
+    /// windowing flow — journaled for exactly a durable flow's reason, and refused registration
+    /// by <c>FlowStreamCatalog.Add</c> unless it is — described no event, journaled no state bag
+    /// and was told by <c>FLOWX1024</c> that it "declares Profile = Ephemeral". It had declared
+    /// <c>Streaming</c>.
+    /// </para>
+    /// <para>
+    /// <see cref="AStreamingFlowJournalsItsStateBagLikeADurableOne"/> is the half that matters
+    /// after a crash: without the payload the dispatcher describes, a window rebuilt from the
+    /// checkpoint re-entered with an empty bag and re-ran every step past the frontier against
+    /// values no step had produced.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AStreamingFlowDescribesItsEventBecauseAWindowsFlowIsJournaled()
+    {
+        var source = FlowEmitter.Emit(Emitting("Streaming"), [Declaring]);
+
+        source.ShouldContainText(
+            "return StepJournalEntry.OfEvent(new OutboxWrite",
+            "A Streaming flow commits each step boundary exactly as a Durable one does — that " +
+            "is what makes the instance id a closed window derives refuse a rebuilt window — so " +
+            "its Emit step has the same transaction to stage into.");
+    }
+
+    /// <summary>A <c>Streaming</c> flow's state bag is a journal payload, like a durable one's.</summary>
+    [Fact]
+    public void AStreamingFlowJournalsItsStateBagLikeADurableOne()
+    {
+        var source = FlowEmitter.Emit(Emitting("Streaming"), [Declaring]);
+
+        source.ShouldContainText(
+            "JournalPayload.OfState(",
+            "A window resumed after a node death reads its bag back out of the journal. A " +
+            "dispatcher that described no payload made every one of those resumes re-enter " +
+            "empty, which is the defect FLOWX1006 exists to report and could not, because it " +
+            "was scoped to Durable too.");
+    }
+
+    /// <summary>
     /// A contract no context declares stages no event — and, since WP-59, still journals.
     /// </summary>
     /// <remarks>

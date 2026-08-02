@@ -1,0 +1,75 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <RootNamespace>RealtimeStream</RootNamespace>
+    <AssemblyName>RealtimeStream</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      A worker, not a web application, and the difference is the sample's subject. The
+      other three samples are started by a request and have a route to show you; this one
+      is started by a *window closing*, which nothing outside the process can ask for.
+      Adding an HTTP surface would mean the first thing a reader saw was the one part of
+      the story that is not stream processing.
+
+      NativeAOT is not enabled here for `samples/workflow`'s reason, doubled: this project
+      references Npgsql for the checkpoint store and StackExchange.Redis for the source,
+      so a C2 smoke test over it would be a test of two drivers this repository does not
+      own. `samples/ecommerce` remains the AOT arm.
+    -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The in-memory aggregate store and the late-reading log are internal: they are this
+      sample's stand-ins for a time-series database, not part of what it demonstrates. The
+      test project sees them rather than the sample widening its surface to be testable —
+      the bargain samples/ecommerce and samples/workflow both strike.
+    -->
+    <InternalsVisibleTo Include="RealtimeStream.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The Worker SDK gives the generic host's targets, not the package that carries
+      Host.CreateApplicationBuilder. FlowX.Hosting takes Hosting.Abstractions on purpose — a
+      library takes the contract, not the container — so the application supplies the host.
+    -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+
+    <!--
+      The two halves of a stream subscription, and neither is optional here.
+
+      PostgreSQL is the journal *and* the checkpoint store. The journal is what makes the
+      instance id a closed window derives refuse a rebuilt window rather than merely name
+      it (ADR-0055); the checkpoint is where the subscription's position lives. A
+      Streaming flow is refused without the first, and the second is what a restart reads.
+
+      Redis is the stream. IStreamSource is the seam and RedisStreamSource is the only
+      implementation this repository ships.
+    -->
+    <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+    <ProjectReference Include="../../plugins/FlowX.Redis/FlowX.Redis.csproj" />
+
+    <!--
+      The compiler as an ANALYZER, so the generator runs inside this project's build
+      against this project's source, exactly as it would for a consumer. This sample is
+      the only place in the repository where it is handed a flow carrying a
+      [StreamTrigger], so the emitted FlowXStreamSubscriptions.g.cs is compiled here or
+      nowhere.
+    -->
+    <ProjectReference Include="../../src/FlowX.Compiler/FlowX.Compiler.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      Condition="'$(FlowXGeneratorDisabled)' != 'true'" />
+  </ItemGroup>
+
+</Project>
