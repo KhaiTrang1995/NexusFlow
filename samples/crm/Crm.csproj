@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>Crm</RootNamespace>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      No PublishAot, for samples/banking's reason: this sample keeps its own tables in
+      PostgreSQL, so it pulls in Npgsql, and claiming a NativeAOT publish for a graph nobody
+      has published that way would be an untested claim. The trim and AOT analysers still
+      run — Directory.Build.props turns them on everywhere — so the sample's own code is held
+      to constraint C2 either way.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The CRM schema's own DDL, compiled into the assembly rather than read off disk.
+
+      This is the same arrangement plugins/FlowX.Postgres uses and it is what lets
+      CrmMigrator.ReadScript hand a statement straight to a command: the bytes are settled by
+      the build, so SqlFitnessTests.EveryStatementIsFixedAtBuildTime holds over them exactly
+      as it does over a `const string`. A migrator that read *.sql from the working directory
+      would be a run-time value dressed as a constant.
+    -->
+    <EmbeddedResource Include="Migrations/*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The tests read the schema this sample owns — its policies, its trigger, its view — and
+      do it through the sample's own connection helpers rather than through a copy of them.
+      A second spelling of "assume flowx_tenant and set flowx.tenant_id" in the test project
+      is a second thing that can be wrong while the first stays right.
+    -->
+    <InternalsVisibleTo Include="Crm.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+    <ProjectReference Include="../../plugins/FlowX.Http/FlowX.Http.csproj" />
+
+    <!-- The journal, and the data source every CRM statement is issued on. -->
+    <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+
+    <!-- The generator runs inside this project's build, over this project's source. -->
+    <ProjectReference Include="../../src/FlowX.Compiler/FlowX.Compiler.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

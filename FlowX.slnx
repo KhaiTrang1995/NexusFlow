@@ -20,6 +20,7 @@
   <Folder Name="/samples/">
     <Project Path="samples/ai-agent/AiAgent.csproj" />
     <Project Path="samples/banking/Banking.csproj" />
+    <Project Path="samples/crm/Crm.csproj" />
     <Project Path="samples/ecommerce/Ecommerce.csproj" />
     <Project Path="samples/event-driven/EventDriven.csproj" />
     <Project Path="samples/realtime-stream/RealtimeStream.csproj" />
@@ -31,6 +32,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/AiAgent.Tests/AiAgent.Tests.csproj" />
     <Project Path="tests/Banking.Tests/Banking.Tests.csproj" />
+    <Project Path="tests/Crm.Tests/Crm.Tests.csproj" />
     <Project Path="tests/Ecommerce.Tests/Ecommerce.Tests.csproj" />
     <Project Path="tests/EventDriven.Tests/EventDriven.Tests.csproj" />
     <Project Path="tests/FlowX.Abstractions.Tests/FlowX.Abstractions.Tests.csproj" />
