@@ -54,6 +54,15 @@ internal static class PolicyKeys
     /// <summary>The prefix a tenant's long-window quota bucket carries.</summary>
     internal const string TenantQuotaPrefix = "flowx:tenant:quota";
 
+    /// <summary>The prefix a tenant's journal write budget carries.</summary>
+    /// <remarks>
+    /// A third bucket rather than a share of the admission one, because the two are counted in
+    /// different units: that one is spent once per call and this one once per row, and an
+    /// instance writes as many rows as its data says. Folding them together would make a
+    /// tenant's plan limit depend on how loop-heavy its flows happen to be.
+    /// </remarks>
+    internal const string TenantWritesPrefix = "flowx:tenant:writes";
+
     /// <summary>The component an invocation that carried no tenant or principal keys under.</summary>
     /// <remarks>
     /// A one-character component that no present value can produce, because every present value
@@ -94,6 +103,10 @@ internal static class PolicyKeys
     /// <summary>The bucket one tenant's long-window quota is counted in.</summary>
     /// <param name="tenantId">The resolved tenant. Never null — admission has refused that.</param>
     public static string TenantQuota(string tenantId) => Build(TenantQuotaPrefix, tenantId);
+
+    /// <summary>The bucket one tenant's blocks of journal write credit are drawn from.</summary>
+    /// <param name="tenantId">The resolved tenant. Never null — the host binds no budget without one.</param>
+    public static string TenantWrites(string tenantId) => Build(TenantWritesPrefix, tenantId);
 
     /// <summary>The breaker key for one capability under one tenant.</summary>
     /// <param name="capabilityId">The dependency being guarded.</param>

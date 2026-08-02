@@ -31,6 +31,7 @@ public sealed class FlowHost
     private readonly LeasePolicy _policy;
     private readonly ITenantResolver _tenants;
     private readonly TenantAdmissionControl? _fairness;
+    private readonly TenantWriteBudget? _writes;
     private readonly object _sync = new();
     private readonly HashSet<DurableLease> _leases = [];
 
@@ -69,12 +70,17 @@ public sealed class FlowHost
     /// deployment that declares a budget and registers no store, so a null here on a bounded
     /// host is a host built by hand and is refused per call rather than admitted unbounded.
     /// </param>
+    /// <param name="clock">
+    /// What a tenant over its journal write budget waits through. Defaults to the system clock;
+    /// supplied only so a suite can prove the pacing without spending a window in real time.
+    /// </param>
     public FlowHost(
         FlowEngine engine,
         FlowXOptions options,
         FlowDurability? durability = null,
         ITenantResolver? tenants = null,
-        IRateLimiterStore? limiter = null)
+        IRateLimiterStore? limiter = null,
+        IClock? clock = null)
     {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(options);
@@ -110,6 +116,13 @@ public sealed class FlowHost
         // engine past exactly the comparisons it always did.
         _fairness = options.TenantIsolation != TenantIsolation.None && options.Fairness.BoundsAdmission
             ? new TenantAdmissionControl(options.Fairness, limiter)
+            : null;
+
+        // And null on the same two deployments, so that JournalFor hands back the store's own
+        // journal rather than a decorator that would charge nothing: the write budget is absent
+        // from the commit path rather than switched off in it.
+        _writes = options.TenantIsolation != TenantIsolation.None && options.Fairness.BoundsJournalWrites
+            ? new TenantWriteBudget(options.Fairness, limiter, clock ?? SystemClock.Instance)
             : null;
     }
 
@@ -919,11 +932,27 @@ public sealed class FlowHost
     /// assuming a restricted role because its tokens happen to have a <c>tid</c> claim — a
     /// round trip per call, and a set of policies applied to a deployment that never asked for
     /// them. <see cref="TenantIsolation.None"/> takes the path it always took.
+    /// <para>
+    /// <strong>The write budget is bound here, at the one point a journal meets a tenant.</strong>
+    /// <c>docs/16 §4</c>'s sixth mechanism counts rows, and rows are written by a fresh
+    /// execution, by a resumed one and by a sweep's continuation alike — so binding it to the
+    /// journal charges all three, where a check at admission would charge only the first and
+    /// would have no figure to charge it with (a <c>ForEach</c> or a retry writes as many rows
+    /// as the data says, not as the plan says). A deployment declaring no budget gets the
+    /// store's own journal back unchanged.
+    /// </para>
     /// </remarks>
-    private IFlowJournal JournalFor(string? tenantId) =>
-        _options.TenantIsolation == TenantIsolation.None
-            ? _durability!.Journal
-            : _durability!.JournalFor(tenantId);
+    private IFlowJournal JournalFor(string? tenantId)
+    {
+        if (_options.TenantIsolation == TenantIsolation.None)
+        {
+            return _durability!.Journal;
+        }
+
+        var journal = _durability!.JournalFor(tenantId);
+
+        return _writes is null ? journal : _writes.Bind(journal, tenantId);
+    }
 
     /// <summary>Whether this execution journals: the flow asked for it and the host can.</summary>
     /// <remarks>

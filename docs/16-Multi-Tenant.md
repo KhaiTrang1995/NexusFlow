@@ -28,11 +28,7 @@
 > filter.*
 >
 > **Still not built**, and every one of them is a real gap rather than a detail:
-> of §4's six mechanisms the journal write budget is absent, and it is the one whose
-> absence is a decision rather than an omission — a shared budget costs a limiter round
-> trip per step commit and a per-process one is
-> [ADR-0040](adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md)'s
-> anti-conservative limiter; no cache or idempotency
+> no cache or idempotency
 > store to key (§6); no residency binding, so L4 is a deployment convention; and
 > `TenantIsolation.Database` is **declarable and refused at startup** — it names a deployment
 > per tenant, whose pod declares `None`
@@ -169,9 +165,18 @@ flowchart TD
 | Per-tenant circuit breaker | tenant × capability | one tenant's bad downstream does not trip everyone |
 | Journal write budget | per tenant | protects the shared durable store |
 
-All limits are enforced at **stage 1 (Admission)** — before authentication,
+The first five are enforced at **stage 1 (Admission)** — before authentication,
 before any allocation, before any journal write. Rejecting expensively is how
 rate limiting becomes the DoS.
+
+The journal write budget is the exception, and it has to be: a flow's row count
+is not a property of its plan — a `ForEach`, a retry and a backward jump each
+write rows the graph does not count — so admission has no figure to charge. It
+is spent where the rows are, a block of credit at a time so that the shared
+bucket is not consulted per commit, and an exhausted tenant is **paced rather
+than refused**, because a refused commit halfway through a durable flow strands
+a saga instead of applying backpressure
+([ADR-0057](adr/ADR-0057-a-write-budget-is-drawn-in-blocks-and-paces-rather-than-refuses.md)).
 
 ---
 

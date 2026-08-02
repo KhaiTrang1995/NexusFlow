@@ -115,7 +115,8 @@ public static class FlowXServiceCollectionExtensions
             // argument against a process-local limiter applies with more force to a per-tenant
             // bound than to a per-capability one: the multiplier is the replica count and the
             // promise it breaks is contractual.
-            provider.GetService<IRateLimiterStore>()));
+            provider.GetService<IRateLimiterStore>(),
+            provider.GetRequiredService<IClock>()));
 
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowRecoveryService>(
             static provider => new FlowRecoveryService(
@@ -733,18 +734,23 @@ internal sealed class FlowXLifecycleService : IHostedService
     public Task StartAsync(CancellationToken cancellationToken)
     {
         // A registration this options validator cannot see, checked at the first moment
-        // anything can: a per-tenant rate limit or quota declared with no store to spend it
-        // against would refuse every call at run time, and a pod that never becomes ready is
-        // the cheaper failure. The bulkhead is exempt because it is per node and needs no store.
+        // anything can: a per-tenant rate limit, quota or journal write budget declared with no
+        // store to spend it against would refuse every call at run time, and a pod that never
+        // becomes ready is the cheaper failure. The bulkhead is exempt because it is per node
+        // and needs no store.
         var fairness = _options.Fairness;
 
-        if ((fairness.PermitsPerWindow > 0 || fairness.QuotaPerWindow > 0) && _limiter is null)
+        if ((fairness.PermitsPerWindow > 0
+                || fairness.QuotaPerWindow > 0
+                || fairness.BoundsJournalWrites)
+            && _limiter is null)
         {
             throw new InvalidOperationException(
-                $"{nameof(FlowXOptions.Fairness)} declares a per-tenant rate limit or quota and " +
-                "no IRateLimiterStore is registered, so no budget could be consulted. A " +
-                "per-tenant budget each node kept for itself would be the declared limit times " +
-                "the replica count (ADR-0040): register a shared limiter, or remove the bound.");
+                $"{nameof(FlowXOptions.Fairness)} declares a per-tenant rate limit, quota or " +
+                "journal write budget and no IRateLimiterStore is registered, so no budget " +
+                "could be consulted. A per-tenant budget each node kept for itself would be " +
+                "the declared limit times the replica count (ADR-0040): register a shared " +
+                "limiter, or remove the bound.");
         }
 
         _host.MarkReady();
