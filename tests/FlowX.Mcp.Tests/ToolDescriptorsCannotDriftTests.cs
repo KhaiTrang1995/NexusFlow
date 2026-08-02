@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using FlowX.Generated;
@@ -256,6 +258,72 @@ public sealed class ToolDescriptorsCannotDriftTests
         McpToolCatalog.From(FlowXManifest.Json).Tools
             .Select(static tool => tool.FlowId)
             .ShouldBe(declared, ignoreOrder: true);
+    }
+
+    /// <summary>
+    /// The projection has no input but the manifest, and its output holds nothing it could
+    /// read a second one from.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The structural half of the argument, where the mutations above are the behavioural
+    /// half. They show that each published field <em>does</em> come from the manifest; this
+    /// shows there is nothing else it <em>could</em> come from — no <c>Assembly</c>, no
+    /// <c>Type</c>, no <c>ExecutionPlan</c>, no <c>IServiceProvider</c> anywhere on the way
+    /// in, and nothing but data on the way out.
+    /// </para>
+    /// <para>
+    /// Written as a test rather than left to the class comment because the comment is the
+    /// thing a later change quietly makes false. Adding a second parameter to
+    /// <c>McpToolCatalog.From</c> is exactly how a projection acquires a second source, and
+    /// it is a one-line change that reads as a convenience.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheProjectionTakesTheManifestAndNothingElse()
+    {
+        // Every way in, and only the ways in. A private helper takes what the projection has
+        // already derived from the manifest and cannot be a second source; a member callable
+        // from outside the class is exactly where one would arrive.
+        typeof(McpToolCatalog)
+            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+            .Where(static method => method.DeclaringType == typeof(McpToolCatalog))
+            .Where(static method => method.IsPublic || method.IsAssembly)
+
+            // A local function is emitted as an internal static method and is not reachable
+            // from anywhere: `CapabilitiesOf`'s `Walk` is one, and it takes what its enclosing
+            // method already read out of the manifest.
+            .Where(static method => !method.IsDefined(typeof(CompilerGeneratedAttribute), false))
+            .SelectMany(static method => method.GetParameters()
+                .Where(static parameter => parameter.ParameterType != typeof(string))
+                .Select(parameter =>
+                    $"{parameter.Member.Name}({parameter.Name}: {parameter.ParameterType})"))
+            .ShouldBeEmpty(
+                "McpToolCatalog has a reachable static entry point taking something other " +
+                "than the manifest. Whatever it is, a descriptor can now be derived from " +
+                "it, and 'tools/list is a projection of the manifest' has stopped being true.");
+
+        // And the one that matters most is still the one the class is named for.
+        typeof(McpToolCatalog)
+            .GetMethod(nameof(McpToolCatalog.From))!
+            .GetParameters()
+            .Select(static parameter => parameter.ParameterType)
+            .ShouldBe([typeof(string)]);
+
+        var held = typeof(McpToolDescriptor)
+            .GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .SelectMany(static constructor => constructor.GetParameters())
+            .Select(static parameter => parameter.ParameterType)
+            .Where(static type =>
+                type != typeof(string) &&
+                type != typeof(bool) &&
+                type != typeof(IReadOnlyList<string>))
+            .ToList();
+
+        held.ShouldBeEmpty(
+            "A descriptor holds something that is not data read out of the manifest. A live " +
+            "object here is a second source the renderer can reach, whatever the projection " +
+            "was careful to do.");
     }
 
     private static string Mutate(string manifest, Mutation mutation)

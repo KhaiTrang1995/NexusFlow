@@ -15,13 +15,21 @@
 > stances and `[Sensitive]` members. `flowx graph` renders it. That is the
 > concrete claim in §1, and it holds.
 >
-> Of the eleven consumers in the diagram below, **one exists** — diagrams, via
-> `flowx graph`. There is no OpenAPI or AsyncAPI generation, no alert or
-> dashboard generation, no test scaffolding, no impact analysis, no knowledge
-> graph and no MCP tool surface. `flowx query` and `flowx ai …` are not CLI
-> verbs; the CLI has four ([22-CLI](22-CLI.md)). `AgentTriggerAttribute` is
-> declared in `FlowX.Abstractions` and is read by the compiler into the manifest,
-> and nothing serves it — no agent can invoke anything.
+> Of the eleven consumers in the diagram below, **two exist** — diagrams, via
+> `flowx graph`, and the MCP tool surface. There is no OpenAPI or AsyncAPI
+> generation, no alert or dashboard generation, no test scaffolding, no impact
+> analysis and no knowledge graph. `flowx query` and `flowx ai …` are not CLI
+> verbs; the CLI has four ([22-CLI](22-CLI.md)).
+>
+> *This paragraph said `AgentTriggerAttribute` was read into the manifest and that
+> nothing served it — that no agent could invoke anything. That expired on
+> 2026-08-02.* `plugins/FlowX.Mcp` serves `tools/list` and `tools/call` over
+> JSON-RPC, `AgentToolEmitter` writes one binding per `[AgentTrigger]` into the
+> user's assembly, and a call reaches the same `FlowEngine.ExecuteAsync` an HTTP
+> request reaches, with the agent's principal on the invocation. §6 below is what
+> ships, with one exception it names: `inputSchema` carries the contract's identity
+> rather than a `$ref`, because the `schemas` map it would point into is still one
+> of the thirteen unwritten fields.
 >
 > Everything past §2 is **P8**, gated behind the manifest v1.0 freeze. The point
 > of writing it now is that each consumer is a constraint on what the manifest
@@ -241,19 +249,40 @@ effects and an error catalogue. The MCP surface is therefore a projection, not a
 integration.
 
 ```jsonc
-// Generated MCP tool descriptor
+// The descriptor `tools/list` returns, every field of it read out of the manifest
 {
-  "name": "order_place",
-  "description": "Place a customer order with payment and inventory reservation",
-  "inputSchema": { "$ref": "#/schemas/PlaceOrder" },
+  "name": "order_place",                      // flow.id, with '.' → '_'
+  "description": "Place a customer order…",   // trigger.description
+  "inputSchema": {
+    "type": "object",
+    "x-flowx-contract": "Ordering.Contracts.PlaceOrder",   // flow.input.type
+    "x-flowx-sensitive": ["CardNumber"]                    // flow.input.sensitive
+  },
   "annotations": {
-    "idempotent": true,
-    "sideEffects": ["inventory-store", "payment-gateway"],
-    "requiresPermission": "order:create",
-    "confirmationRequired": true
+    "flowId": "order.place",
+    "idempotent": true,                            // every step's capability.idempotent
+    "confirmationRequired": true,                  // trigger.confirmation + sideEffects
+    "sideEffects": ["inventory-store", "payment-gateway"],  // ∪ capability.sideEffects
+    "requiredPermissions": ["order:create"]                 // ∪ capability.authorization.value
   }
 }
 ```
+
+Two departures from the descriptor this section first drew, both forced:
+
+- **`inputSchema` is an open object naming the contract, not a `$ref`.** The
+  top-level `schemas` map is one of the fields the committed schema declares and
+  nothing writes ([ADR-0017](adr/ADR-0017-manifest-v1-freeze-criteria.md)), so
+  there is nothing to point at. Generating one by reflecting over the contract
+  would supply the missing field from a second source — published to agents,
+  unversioned, and outside `flowx diff` — which is the defect this whole section
+  exists to avoid. When `schemas` is written the `$ref` appears and nothing else
+  changes.
+- **`requiredPermissions` is a list where this drew a single `requiresPermission`.**
+  A flow is a sequence of capabilities and each declares its own stance, so a flow
+  that reserves inventory and captures payment genuinely needs both grants.
+  Publishing the first would tell an agent it could call a tool the step loop will
+  refuse halfway through.
 
 ```mermaid
 sequenceDiagram
@@ -279,14 +308,31 @@ sequenceDiagram
     end
 ```
 
+One branch of that diagram is drawn on the wrong side of the wire, and the built
+surface does not follow it. **The server does not prompt the human.** MCP puts
+human-in-the-loop on the client, which is the side a human is attached to; a
+server-driven prompt would need a session and a second round trip that the
+protocol does not define for this. What ships is the `confirmationRequired`
+annotation above, computed from the declared mode and the declared side effects —
+which is what a client reads to decide whether to ask. The accuracy claim below is
+therefore about the annotation, and it holds.
+
 Three safety properties, all inherited rather than added:
 
 1. **An agent cannot exceed a human's permissions** — authorisation lives on the
-   capability (P11), not on the transport.
+   capability (P11), not on the transport. Concretely: `tools/call` builds its
+   `FlowInvocation` with the same `HttpTriggerReader` an `[HttpTrigger]` route
+   uses, so the principal the step loop decides against is resolved by one piece
+   of code for both. There is no second reader for a separate agent path to live
+   in, and a refusal is the same `Error` down either transport
+   ([ADR-0029](adr/ADR-0029-a-refusal-is-a-result-failure.md)).
 2. **Confirmation prompts are accurate**, because side effects are declared in
    the capability contract rather than guessed from a function name.
 3. **Every agent action is traced, journaled and replayable** exactly like any
-   other trigger — including who or what invoked it.
+   other trigger — including who or what invoked it. As for any other trigger,
+   the journalled half of that holds for a `Durable` flow; an `Ephemeral` agent
+   tool is traced and not journalled, which is the same trade an `Ephemeral` HTTP
+   endpoint makes.
 
 ---
 
