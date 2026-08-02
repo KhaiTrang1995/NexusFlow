@@ -339,13 +339,18 @@ public sealed class DependencyRuleTests
     [Fact]
     public void EveryShippedRuntimeProjectIsAotAnalyzed()
     {
-        foreach (var project in RepositoryLayout.SourceProjects)
-        {
-            if (RepositoryLayout.IsRoslynComponent(project))
-            {
-                continue;
-            }
+        // plugins/ as well as src/. This walked src/ alone until 2026-08-02, so the four
+        // plugins that ship into a user's process — Http, Postgres, Redis, Mcp — were outside
+        // the only gate constraint C2 has. They pass: Directory.Build.props sets
+        // IsAotCompatible true for everything and opts out only projects whose name ends
+        // .Tests. That is the point. A gate whose subject is absent cannot fail, and this
+        // repository has already shipped two of those.
+        var shipped = RepositoryLayout.SourceProjects
+            .Concat(RepositoryLayout.ProjectsIn("plugins"))
+            .Where(static p => !RepositoryLayout.IsRoslynComponent(p));
 
+        foreach (var project in shipped)
+        {
             File.ReadAllText(project.FullName)
                 .Contains("<IsAotCompatible>false</IsAotCompatible>", StringComparison.OrdinalIgnoreCase)
                 .ShouldBeFalse(
