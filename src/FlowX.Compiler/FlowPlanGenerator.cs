@@ -80,6 +80,19 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     /// </remarks>
     private const string BusRegistrationName = "FlowX.Hosting.FlowBusSubscriptionRegistration";
 
+    /// <summary>
+    /// The one thing this generator knows about the agent surface: a name to look for.
+    /// </summary>
+    /// <remarks>
+    /// The same arrangement <see cref="HttpEndpointExtensionsName"/> has, and for the same
+    /// reason — <c>FlowX.Mcp</c> is a plugin, and a generator that referenced it would put a
+    /// plugin underneath the compiler. Note what this binding does <em>not</em> need to look up:
+    /// anything that describes the tool. The description, the confirmation mode, the required
+    /// permissions and the declared side effects are already in the manifest this same run
+    /// writes, and <c>FlowX.Mcp</c> reads them back from there.
+    /// </remarks>
+    private const string AgentToolRegistrationName = "FlowX.Mcp.FlowAgentToolRegistration";
+
     /// <summary>The id whose reporting this class decides rather than passes through.</summary>
     private static readonly string EmitDiagnosticId = FlowXDiagnostics.EmitIsNotYetPublished.Id;
 
@@ -220,6 +233,133 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                 var (((analysed, declared), available), assembly) = data;
                 ProduceSubscriptions(production, analysed, declared, available, assembly);
             });
+
+        // Whether this compilation can bind an agent tool at all, expressed as one bool for the
+        // reason httpAvailable is.
+        var agentToolsAvailable = context.CompilationProvider.Select(
+            static (compilation, _) => compilation.GetTypeByMetadataName(AgentToolRegistrationName) is not null);
+
+        context.RegisterSourceOutput(
+            flows.Collect()
+                .Combine(triggers.Collect())
+                .Combine(jsonContexts.Collect())
+                .Combine(agentToolsAvailable)
+                .Combine(application),
+            static (production, data) =>
+            {
+                var ((((analysed, declared), contexts), available), assembly) = data;
+                ProduceAgentTools(production, analysed, declared, contexts, available, assembly);
+            });
+    }
+
+    /// <summary>
+    /// Emits one binding per <c>[AgentTrigger]</c>, or nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing at all is the common case: a project with no agent-triggered flow, or a flow
+    /// library with no agent surface to register into, gets no file — zero types, zero IL.
+    /// </para>
+    /// <para>
+    /// <strong>There is no <c>CanBeCalled</c> predicate here, unlike
+    /// <see cref="ProduceSchedules"/>'s <c>CanBeFired</c> and
+    /// <see cref="ProduceSubscriptions"/>'s <c>CanBeConsumed</c>, and the absence is the
+    /// honest answer rather than an omission.</strong> A firing has no body and a delivery
+    /// has only a message, so each constrains the flow's input contract and each has a
+    /// diagnostic saying so. A <c>tools/call</c> carries an arbitrary JSON object, so any
+    /// contract a serialiser can read is a contract an agent can supply — there is no
+    /// condition to report and therefore no diagnostic to raise. Nor does an agent tool
+    /// require <c>Durable</c>: nothing derives an instance id for it, because an agent's call
+    /// is a request rather than a redelivery, so an <c>Ephemeral</c> flow is served exactly
+    /// as an HTTP request serves one.
+    /// </para>
+    /// </remarks>
+    private static void ProduceAgentTools(
+        SourceProductionContext production,
+        ImmutableArray<AnalysisResult?> results,
+        ImmutableArray<FlowTriggersModel?> triggers,
+        ImmutableArray<JsonContextModel?> contexts,
+        bool agentToolsAvailable,
+        string assemblyName)
+    {
+        if (!agentToolsAvailable)
+        {
+            return;
+        }
+
+        var declared = triggers
+            .Where(static t => t is not null)
+            .GroupBy(static t => t!.FlowId, StringComparer.Ordinal)
+            .ToDictionary(static g => g.Key, static g => g.First()!, StringComparer.Ordinal);
+
+        var models = results
+            .Where(static r => r is { IsSuccess: true, Model: not null })
+            .Select(static r => r!.Model!)
+            .OrderBy(static m => m.FlowId, StringComparer.Ordinal)
+            .ToList();
+
+        var serialisers = contexts.Where(static c => c is not null).Select(static c => c!).ToList();
+        var tools = new List<AgentToolModel>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var flow in models)
+        {
+            if (!declared.TryGetValue(flow.FlowId, out var flowTriggers) ||
+                !flowTriggers.Triggers.Any(IsAgentTool))
+            {
+                continue;
+            }
+
+            tools.Add(new AgentToolModel(
+                flow.FlowId,
+                flow.FullTypeName,
+                AgentToolMethodName(flow.TypeName, names),
+                flow.InputTypeName,
+                flow.OutputTypeName,
+                ContextFor(serialisers, flow.InputTypeName, flow.OutputTypeName)));
+        }
+
+        if (tools.Count > 0)
+        {
+            production.AddSource(
+                AgentToolEmitter.FileName,
+                SourceText.From(AgentToolEmitter.Emit(assemblyName, tools), Encoding.UTF8));
+        }
+    }
+
+    /// <summary>An agent trigger, matched on kind alone.</summary>
+    /// <remarks>
+    /// On kind alone, where <see cref="IsHttpAddress"/>, <see cref="IsScheduleAddress"/> and
+    /// <see cref="IsBusAddress"/> each additionally require the address they read to be
+    /// present. An agent tool has no address to read — it is named by the flow's own id and
+    /// described by the manifest — so a <c>[AgentTrigger]</c> whose arguments this build
+    /// could not interpret still binds, and publishes a tool with no description rather than
+    /// no tool at all. A missing description costs a model some context; a missing tool is a
+    /// capability the application declared and nothing serves, which is the whole gap this
+    /// closes.
+    /// </remarks>
+    private static bool IsAgentTool(TriggerModel trigger) =>
+        string.Equals(trigger.Kind, "Agent", StringComparison.Ordinal);
+
+    /// <summary>The extension method one agent tool is bound by.</summary>
+    /// <remarks>
+    /// Named from the flow's type for <see cref="MethodName"/>'s reason:
+    /// <c>services.AddPlaceOrderFlowTool()</c> reads as the flow it binds. <c>[AgentTrigger]</c>
+    /// is <c>AllowMultiple = false</c>, so the numeric suffix is reachable only through two
+    /// flows of the same type name in different namespaces.
+    /// </remarks>
+    private static string AgentToolMethodName(string typeName, HashSet<string> taken)
+    {
+        var candidate = "Add" + typeName + "Tool";
+        var suffix = 2;
+
+        while (!taken.Add(candidate))
+        {
+            candidate = "Add" + typeName + "Tool" + suffix.ToString(CultureInfo.InvariantCulture);
+            suffix++;
+        }
+
+        return candidate;
     }
 
     /// <summary>
