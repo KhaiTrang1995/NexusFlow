@@ -147,7 +147,20 @@ public sealed class TransferAuditTests
 
         var debit = harness.Audit.Entries[0];
 
-        using var posted = JsonDocument.Parse(debit.Document!);
+        // This has failed twice in CI and never once locally, always here, always with a null
+        // document — which is JournalPayload.Empty, which is the generated DescribeAudit
+        // switch reaching its default for a step the engine believed was audited. Whichever
+        // record arrived is the evidence, so say what it was rather than dying inside
+        // JsonDocument.Parse with the word "json".
+        debit.Document.ShouldNotBeNull(
+            $"the first audit record carried no payload at all: step {debit.Record.StepIndex}, "
+            + $"capability '{debit.Record.CapabilityId}', category '{debit.Record.Category}', "
+            + $"and {harness.Audit.Entries.Count} record(s) in total — "
+            + string.Join(", ", harness.Audit.Entries.Select(
+                static e => $"[{e.Record.StepIndex}] {e.Record.CapabilityId} "
+                    + (e.Document is null ? "no payload" : "payload"))));
+
+        using var posted = JsonDocument.Parse(debit.Document);
 
         posted.RootElement.GetProperty("request").GetProperty("debtorIban").GetString().ShouldBe(
             JournalPayload.Redacted,
