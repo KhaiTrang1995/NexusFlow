@@ -1666,12 +1666,12 @@ everything else.*
 | # | Criterion | Satisfied? | Gated by a check that can fail? |
 |---|---|---|---|
 | **V1** | ≤ 3 files, ≤ 60 lines for a 4-step flow | **yes** | **no** — a review. Endpoint generation cut the sample from 12 lines to 2 and no assertion noticed the number move |
-| **V2** | HTTP → Kafka, zero logic edits | **no** — one transport | no — WP-71 writes the assertion |
+| **V2** | HTTP → Kafka, zero logic edits | **partly** — four transports over one capability chain in `samples/event-driven`, each costing one adapter step; **not Kafka**, which needs a broker | **yes, over the transports that exist** — `TransportEquivalenceTests` runs one reference through HTTP, bus, change and cron and asserts on journal rows |
 | **V3** | p99 ≤ 5 µs, ≤ 1 alloc/step | **yes** — 172.3 ns / 0 B | **yes.** The only one of the eight |
 | **V4** | durable checkpoint p99 ≤ 15 ms @ 5 000 flows/s | **unknown** — a journal exists since WP-53; nothing times it. **WP-50 shipping did not move this row:** its rig times *resume* after a `SIGKILL`, not the *checkpoint commit* this criterion names | no — WP-50's unbuilt half |
 | **V5** | cold start ≤ 200 ms, NativeAOT | **unknown** — the binary links and serves; nothing times it | no — P9 |
 | **V6** | build overhead ≤ 8 % | **no** — +67.1 % | **no, and deliberately.** The job that measures it is advisory by an ADR-0014 commitment; the blocking gate is relative |
-| **V7** | 100 % of flows, capabilities, **policies and events** in the manifest | **partly** — flows and capabilities yes; policies and events neither exist nor are checked | partly — `ManifestIsComplete` covers the half that exists |
+| **V7** | 100 % of flows, capabilities, **policies and events** in the manifest | **partly** — all four kinds are published, but a policy carries `kind` and `stage` and none of its parameters, and an event carries `type` and `schemaVersion` and no payload schema | partly — `ManifestIsComplete` covers what is published |
 | **V8** | mid-level engineer ships a flow in ≤ 2 h, n ≥ 10 | **not run** | no — P9 |
 
 **One of eight is gated.** Three more are satisfied or partly satisfied and enforced by
