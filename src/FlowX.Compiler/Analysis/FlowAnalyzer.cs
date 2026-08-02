@@ -209,11 +209,11 @@ public static class FlowAnalyzer
     /// holds it.
     /// </para>
     /// <para>
-    /// <strong>Raised only for a <c>Durable</c> flow.</strong> An ephemeral flow keeps no
-    /// journal, so nothing serialises its bag and the rule protects nothing there. That is
-    /// unlike <c>FLOWX1024</c>, whose provisional is raised under both profiles because "the
-    /// flow is <c>Ephemeral</c>" is one of <em>its</em> two reasons; here the profile is not a
-    /// reason, it is the trigger.
+    /// <strong>Raised only for a flow whose bag reaches a journal</strong> — <c>Durable</c> and
+    /// <c>Streaming</c> both. An ephemeral flow keeps no journal, so nothing serialises its bag
+    /// and the rule protects nothing there. That is unlike <c>FLOWX1024</c>, whose provisional is
+    /// raised under every profile because "the flow is <c>Ephemeral</c>" is one of <em>its</em>
+    /// two reasons; here the profile is not a reason, it is the trigger.
     /// </para>
     /// <para>
     /// Located at the flow's declaration rather than at each step, and that is a choice worth
@@ -226,7 +226,7 @@ public static class FlowAnalyzer
     private static void AddStateBagDiagnostics(
         FlowModel model, ClassDeclarationSyntax declaration, List<Diagnostic> diagnostics)
     {
-        if (!string.Equals(model.Profile, "Durable", System.StringComparison.Ordinal))
+        if (!model.IsJournaled)
         {
             return;
         }

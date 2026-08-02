@@ -1280,13 +1280,19 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
             .Select(static c => c!)
             .ToList();
 
-        var durable = string.Equals(result.Model?.Profile, "Durable", StringComparison.Ordinal);
+        // Journaled, not "Durable" — and the variable is named for the question rather than for
+        // one of its answers, because the old name is how the bug survived reading. A Streaming
+        // flow stages an event for the same reason a durable one does; while this compared the
+        // profile name literally it restated every FLOWX1024 on a windowing flow as "the flow
+        // declares Profile = Ephemeral", a sentence that was false about a flow declaring
+        // Streaming.
+        var journaled = ExecutionProfiles.Journals(result.Model?.Profile);
 
         foreach (var diagnostic in result.Diagnostics)
         {
             if (string.Equals(diagnostic.Id, EmitDiagnosticId, StringComparison.Ordinal))
             {
-                Report(production, SettleEmitDiagnostic(diagnostic, contexts, durable));
+                Report(production, SettleEmitDiagnostic(diagnostic, contexts, journaled));
                 continue;
             }
 
@@ -1318,12 +1324,12 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     /// <c>null</c> when the event is staged and published, so there is nothing to warn about.
     /// </returns>
     private static Diagnostic? SettleEmitDiagnostic(
-        Diagnostic provisional, List<JsonContextModel> contexts, bool durable)
+        Diagnostic provisional, List<JsonContextModel> contexts, bool journaled)
     {
         provisional.Properties.TryGetValue(EmitReasons.ContractProperty, out var contract);
         provisional.Properties.TryGetValue(EmitReasons.NameProperty, out var name);
 
-        if (!durable)
+        if (!journaled)
         {
             return Restate(provisional, name, EmitReasons.Ephemeral);
         }

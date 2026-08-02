@@ -286,7 +286,9 @@ public static class FlowEmitter
     {
         var staged = new List<StagedEvent>();
 
-        if (!string.Equals(flow.Profile, "Durable", System.StringComparison.Ordinal))
+        // Streaming as well as Durable: a window's flow is journaled, so its Emit step has a
+        // transaction to stage into for exactly the reason a durable one does.
+        if (!flow.IsJournaled)
         {
             return staged;
         }
@@ -373,7 +375,10 @@ public static class FlowEmitter
     {
         var journaled = new List<JournaledContract>();
 
-        if (!string.Equals(flow.Profile, "Durable", System.StringComparison.Ordinal))
+        // Streaming as well as Durable. Without this a closed window's dispatcher described no
+        // payloads at all, so a window resumed after a node death re-entered with an empty bag
+        // and re-ran every step after the frontier against values no step had produced.
+        if (!flow.IsJournaled)
         {
             return journaled;
         }
