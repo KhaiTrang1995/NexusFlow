@@ -82,6 +82,26 @@ public sealed class TriggerDeclarationAnalyzerTests
         }
         """;
 
+    /// <summary>A durable flow taking the contract both bus and change triggers require.</summary>
+    private static string BusFlowWith(string attributes) =>
+        Preamble + "\n\n" + $$"""
+        [Capability("order.reprice", Version = "1.0.0", Authorization = Authorization.Internal, Idempotent = true)]
+        public sealed class RepriceBasket : ICapability<BusMessage, OrderResult>
+        {
+            public ValueTask<Result<OrderResult>> ExecuteAsync(BusMessage input, CapabilityContext ctx, CancellationToken ct)
+                => ValueTask.FromResult(Result.Ok(new OrderResult(input.Type)));
+        }
+
+        [Flow("order.reprice", Profile = ExecutionProfile.Durable)]
+        {{attributes}}
+        public sealed partial class RepriceOrderFlow : Flow<BusMessage, OrderResult>
+        {
+            protected override void Define(IFlowBuilder<BusMessage, OrderResult> flow) => flow
+                .Step<RepriceBasket>()
+                .Return(ctx => new OrderResult("id"));
+        }
+        """;
+
     private static string[] Analyze(string source)
     {
         GeneratorHarness.CompileErrorsIn(source).ShouldBeEmpty();
@@ -245,30 +265,28 @@ public sealed class TriggerDeclarationAnalyzerTests
     }
 
     /// <summary>
-    /// All five together raise nothing about a missing kind — and one thing about the cron.
+    /// All five together raise nothing about a missing kind — and one thing about the three
+    /// that cannot share an input contract.
     /// </summary>
     /// <remarks>
-    /// <strong>This test asserted an empty list until the schedule trigger was bound, and the
-    /// difference is a real limit rather than a rule being noisy.</strong> A schedule's flow must
-    /// take <c>ScheduledFire</c>, because a firing has no body and the flow may not read a clock
-    /// (<a href="../../docs/adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md">ADR-0028</a>),
-    /// and an HTTP endpoint binds a request body into whatever the flow declares. So one flow
-    /// cannot serve both — <c>09 §3</c>'s "four transports, zero changes to the flow body" holds
-    /// for the four whose payload the caller supplies, and stops at the ones whose payload the
-    /// platform supplies. FLOWX1038 is what says so.
     /// <para>
-    /// <strong>FLOWX1039 joined it when the bus trigger was bound, and it sharpens the same
-    /// finding rather than repeating it.</strong> A bus flow must take <c>BusMessage</c>, because
-    /// a delivery hands the body over undeserialised — the host has no <c>JsonTypeInfo</c> and
-    /// constraint C2 forbids it reflecting for one. So there are now <em>two</em> kinds whose
-    /// payload the platform supplies, and neither composes with the three whose payload a caller
-    /// supplies. That is the honest shape of ADR-0004's claim, and the reason these two ids are
-    /// separate: this flow is wrong for two different reasons, and an author fixing one still
-    /// has the other.
+    /// <strong>This test asserted an empty list until the schedule trigger was bound, then three
+    /// ids, and now one — and each change is the same finding being stated more precisely.</strong>
+    /// A schedule's flow must take <c>ScheduledFire</c>, a bus or change flow <c>BusMessage</c>,
+    /// a stream flow <c>StreamWindowBatch</c>; a class has one base type; so this declaration is
+    /// unsatisfiable. Reporting <c>FLOWX1038</c>, <c>FLOWX1039</c> and <c>FLOWX1042</c> at once
+    /// said so three times and told the author three incompatible things to do about it.
+    /// <c>FLOWX1048</c> says it once, and is reported instead of the three
+    /// (<a href="../../docs/adr/ADR-0062-transport-portability-is-a-property-of-the-capability-chain.md">ADR-0062</a>).
+    /// </para>
+    /// <para>
+    /// The two whose payload a caller supplies — <c>[HttpTrigger]</c> and <c>[AgentTrigger]</c> —
+    /// are silent here and are silent on purpose: they bind whatever the flow declares, so they
+    /// conflict with nothing.
     /// </para>
     /// </remarks>
     [Fact]
-    public void AllFiveTogetherAreSilent()
+    public void AllFiveTogetherReportOneConflictAndNothingElse()
     {
         Analyze(FlowWith(
             """
@@ -279,11 +297,71 @@ public sealed class TriggerDeclarationAnalyzerTests
             [AgentTrigger(Description = "Place a customer order", Confirmation = ConfirmationMode.Always)]
             """))
             .ShouldBe(
-                ["FLOWX1038", "FLOWX1039", "FLOWX1042"],
-                "no trigger here fails to declare its kind; what is reported is that one flow " +
-                "cannot bind both a caller's payload and the platform's — three times over now " +
-                "that a stream is bound, because a closed window is a third payload the " +
-                "platform supplies and it needs a profile of its own besides");
+                ["FLOWX1048"],
+                "no trigger here fails to declare its kind. What is reported is that three of " +
+                "the five fix the flow's input contract to three different types — and not " +
+                "FLOWX1038, FLOWX1039 or FLOWX1042, whose advice would send the author round in " +
+                "a circle");
+    }
+
+    /// <summary>
+    /// Two triggers that agree on an input contract are not a conflict.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The false-positive half, and the one that matters more.</strong> A bus delivery
+    /// and an outbox change both hand the flow a <c>BusMessage</c>, so a flow consuming a topic
+    /// from a broker and observing the same event in the outbox is one flow with two
+    /// subscriptions — which is an arrangement <c>samples/ecommerce</c> and
+    /// <c>samples/event-driven</c> both ship. A rule that reported it would be suppressed
+    /// wherever it fired and would then protect nothing.
+    /// </remarks>
+    [Fact]
+    public void TwoTriggersThatAgreeOnTheInputContractAreSilent()
+    {
+        Analyze(BusFlowWith(
+            """
+            [BusTrigger("order.placed", Group = "pricing")]
+            [ChangeTrigger("order.placed", Group = "projection")]
+            """))
+            .ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A conflict is reported whichever contract the flow declared — including neither.
+    /// </summary>
+    /// <remarks>
+    /// Judged on the trigger kinds alone. Reading the declared input as well would make the rule
+    /// silent on exactly the flow whose author has not chosen yet, and would leave that author
+    /// with the two alternating messages this rule exists to replace.
+    /// </remarks>
+    [Fact]
+    public void AConflictIsReportedEvenWhenTheFlowDeclaresNeitherContract()
+    {
+        Analyze(FlowWith(
+            """
+            [BusTrigger("orders.requested", Group = "order-placement")]
+            [CronTrigger("0 2 * * *", TimeZone = "Europe/Berlin")]
+            """))
+            .ShouldBe(["FLOWX1048"]);
+    }
+
+    /// <summary>The message names both demands, so the author can see why they cannot meet both.</summary>
+    [Fact]
+    public void TheConflictMessageNamesEveryContractDemanded()
+    {
+        var message = GeneratorHarness
+            .AnalyzeWithMessages(
+                FlowWith(
+                    """
+                    [BusTrigger("orders.requested", Group = "order-placement")]
+                    [CronTrigger("0 2 * * *", TimeZone = "Europe/Berlin")]
+                    """),
+                new TriggerDeclarationAnalyzer())
+            .First(static text => text.Contains("FLOWX1048", StringComparison.Ordinal));
+
+        message.ShouldContain("order.place");
+        message.ShouldContain("[BusTrigger] needs FlowX.BusMessage");
+        message.ShouldContain("[CronTrigger] needs FlowX.ScheduledFire");
     }
 
     [Fact]
@@ -345,7 +423,8 @@ public sealed class TriggerDeclarationAnalyzerTests
     {
         new TriggerDeclarationAnalyzer().SupportedDiagnostics
             .Select(static d => d.Id)
-            .ShouldBe(["FLOWX1025", "FLOWX1038", "FLOWX1039", "FLOWX1041", "FLOWX1042"]);
+            .ShouldBe(
+                ["FLOWX1025", "FLOWX1038", "FLOWX1039", "FLOWX1041", "FLOWX1042", "FLOWX1048"]);
     }
 
     /// <summary>

@@ -340,6 +340,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1040](FLOWX1040.md) | `Idempotency` is declared on a flow whose result cannot be recorded without redaction | **A replayed transfer answering with an IBAN of `[redacted]` and a `200`: the second caller's money moves to a placeholder, every step reports success, and nothing anywhere says a value was fabricated** |
 | [FLOWX1041](FLOWX1041.md) | Change-triggered flow cannot be observed | **A published change subscription with nothing registered behind it: a flow that cannot bind the change and is never started, or an ephemeral one started again every time the cursor is re-read from an uncommitted position — with no error, no duplicate row and nothing anywhere to count** |
 | [FLOWX1042](FLOWX1042.md) | Stream-triggered flow cannot be windowed | **A published stream subscription with nothing registered behind it: a flow that cannot bind a window, a non-`Streaming` one whose rebuilt window aggregates a second time after every crash, or a window shape the engine does not implement — a stream nobody reads, and nothing anywhere saying why** |
+| [FLOWX1048](FLOWX1048.md) | Triggers on one flow require different input contracts | **Two transports on one class that cannot both be served, and four rules whose advice alternates between them: `FLOWX1038` says declare it as `Flow<ScheduledFire, TOut>` and `FLOWX1039` says declare it as `Flow<BusMessage, TOut>`, and neither can see the other** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -568,7 +569,19 @@ shape the engine does not implement, which is a property of the attribute rather
 why only tumbling windows survive. It is an **error** where `FLOWX1028` is a warning, and the
 difference is that every one of these three has a fix that produces a flow the engine runs today.
 
-The next is `FLOWX1043`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1048` is claimed** — *triggers on one flow require different input contracts*: two
+triggers on one class that fix the flow's input contract to different types. It is the only rule
+here that exists because of the other rules: a flow carrying `[BusTrigger]` and `[CronTrigger]`
+raises `FLOWX1038` telling the author to declare `Flow<ScheduledFire, TOut>`, and `FLOWX1039` the
+moment they do — so this is reported *instead of* `FLOWX1038`, `FLOWX1039`, `FLOWX1041` and
+`FLOWX1042` rather than beside them.
+[ADR-0062](../adr/ADR-0062-transport-portability-is-a-property-of-the-capability-chain.md) is the
+decision, and it is where the shape of quality goal Q4's claim is settled: portability holds over
+the capability chain, one adapter step in, and not over a single flow class. Kinds that agree on a
+contract are not in conflict — `Bus` and `Change` both take `BusMessage`, which is the
+two-subscriber arrangement `samples/event-driven` ships.
+
+The next is `FLOWX1049`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 
