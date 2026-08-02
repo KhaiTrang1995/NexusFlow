@@ -105,7 +105,7 @@ sequenceDiagram
     Note over S2: contended, not failed —<br/>the expected answer on n−1 nodes
     Note over S1: 💥 scheduler-1 dies mid-run
     S2->>J: recovery sweep takes the abandoned instance over at token 2
-    Note over S2: the occurrence is not re-fired;<br/>the primary key already holds it
+    Note over S2: the occurrence is not re-fired —<br/>the primary key already holds it
 ```
 
 Nothing is elected and nothing is renewed at the *schedule* level. The lease is the
