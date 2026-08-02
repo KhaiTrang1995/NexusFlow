@@ -199,6 +199,54 @@ public sealed class TenantIsolationTests
     }
 
     /// <summary>
+    /// A tenant's own step can stage an outbox event, which needs more than a table grant.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The positive case, and it is here because it did not work.</strong> Migration
+    /// <c>0008</c> granted <c>flowx_tenant</c> the three tables and stopped, but
+    /// <c>outbox_event.staged_seq</c> defaults to <c>nextval</c> and a sequence carries its own
+    /// privilege — so a scoped journal could read, insert and update everything except the one
+    /// insert that has a sequence behind it. Staging is inside the step's transaction, so what
+    /// a deployment saw was not a lost event but a step that could not commit at all: any
+    /// tenanted flow that emits an event, refused with <c>42501</c> and refused again on every
+    /// retry. Migration <c>0010</c> is the grant; this is what stops it being removed.
+    /// </remarks>
+    [Fact]
+    public async Task ATenantCanStageAnOutboxEventOnItsOwnStep()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation);
+
+        var ofA = await schema.AbandonAsync(
+            FlowInstanceState.Running, TimeSpan.Zero, TenantA, Cancellation);
+
+        var committed = await schema.Journal.ForTenant(TenantA).CommitAsync(
+            new StepCommit
+            {
+                Key = StepKey.First(ofA, 4),
+                Token = new FencingToken(1),
+                CapabilityId = "order.validate",
+                CapabilityVersion = "1.0.0",
+                Outcome = JournalOutcome.Success,
+                State = FlowInstanceState.Running,
+                Outbox =
+                [
+                    new OutboxWrite { Type = "order.placed", SchemaVersion = "1.0.0" },
+                ],
+            },
+            Cancellation);
+
+        committed.IsSuccess.ShouldBeTrue(
+            "a tenant's own step must be able to stage its own event. " +
+            (committed.IsFailure ? committed.Error.ToString() : string.Empty));
+
+        var staged = await schema.Journal.ForTenant(TenantA).ReadOutboxAsync(ofA, Cancellation);
+
+        staged.Value.ShouldContain(
+            row => row.Type == "order.placed",
+            "and read it back, because the row it could not write is a row it could not publish.");
+    }
+
+    /// <summary>
     /// A scoped connection returned to the pool does not carry its tenant into the next
     /// borrower.
     /// </summary>

@@ -79,6 +79,25 @@ public sealed class FlowHost
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(options);
 
+        // Refused where the host is built rather than where the first tenanted call arrives.
+        // The options validator cannot see the store and the store cannot see the options, so
+        // this is the one place that holds both — and it holds them before anything has been
+        // journaled under a level the store was never going to serve.
+        //
+        // Only above Row, deliberately. Row over a store that cannot scope is the trade ADR-0046
+        // §3 recorded and accepted: admission still refuses, and FlowDurability.CanIsolateTenants
+        // is what reports the missing second wall. Schema over a row store has no equivalent
+        // reading — the rows would all be in one schema — so it is refused rather than reported.
+        if (options.TenantIsolation > TenantIsolation.Row
+            && durability is not null
+            && durability.IsolationEnforced < options.TenantIsolation)
+        {
+            throw new InvalidOperationException(
+                TenantErrors
+                    .IsolationNotEnforceable(options.TenantIsolation, durability.IsolationEnforced)
+                    .Message);
+        }
+
         _engine = engine;
         _options = options;
         _durability = durability;

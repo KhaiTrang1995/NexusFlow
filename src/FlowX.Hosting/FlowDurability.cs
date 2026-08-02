@@ -87,6 +87,18 @@ public sealed class FlowDurability
     /// </remarks>
     public bool CanIsolateTenants => Journal is ITenantScopedJournal;
 
+    /// <summary>How far apart the journal behind this host can actually keep two tenants.</summary>
+    /// <remarks>
+    /// <strong>Reported rather than assumed, because the seam does not reveal it.</strong>
+    /// <see cref="ITenantScopedJournal.ForTenant"/> looks identical whether the store filters
+    /// rows or hands out a schema of its own, so a deployment declaring
+    /// <see cref="TenantIsolation.Schema"/> over a row store would have been served the weaker
+    /// level under the stronger name and told nothing. <c>FlowHost</c> compares this against
+    /// what the deployment declared and refuses to be constructed when it asked for more.
+    /// </remarks>
+    public TenantIsolation IsolationEnforced =>
+        Journal is ITenantScopedJournal scoped ? scoped.Isolation : TenantIsolation.None;
+
     /// <summary>
     /// The journal, bound to one tenant when the store can bind it.
     /// </summary>

@@ -63,6 +63,7 @@ public sealed class PostgresMigrator
         new(7, "result_cache", "0007_result_cache.sql"),
         new(8, "tenant_row_level_security", "0008_tenant_row_level_security.sql"),
         new(9, "change_feed", "0009_change_feed.sql"),
+        new(10, "tenant_sequence_grant", "0010_tenant_sequence_grant.sql"),
     ];
 
     /// <summary>The schema version this build of the adapter reads and writes.</summary>

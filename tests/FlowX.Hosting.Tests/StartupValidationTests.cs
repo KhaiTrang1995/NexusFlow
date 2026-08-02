@@ -168,6 +168,72 @@ public sealed class StartupValidationTests
     }
 
     /// <summary>
+    /// An isolation level this runtime does not implement is refused at startup, and the
+    /// refusal says why.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The refusal has to be reachable, and until this test nothing checked that it
+    /// was.</strong> The whole point of naming a level in <c>TenantIsolation</c> and not
+    /// building it is that a deployment configuring it gets a pod that never becomes ready
+    /// instead of one silently serving less separation than it asked for — and a validator
+    /// branch nobody exercises is exactly how that guarantee is lost to a refactor.
+    /// </para>
+    /// <para>
+    /// The message is asserted as well as the failure. <c>Database</c> is refused for a reason
+    /// an operator can act on — it is a deployment per tenant, so the pod serving one declares
+    /// <c>None</c> against that tenant's own store — and a refusal that only said "not
+    /// supported" would send them looking for a version of FlowX that supports it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RefusesToStartWithAnIsolationLevelItDoesNotImplement()
+    {
+        using var host = BuildHost(options =>
+        {
+            options.ApplicationName = "Sample.App";
+            options.TenantIsolation = TenantIsolation.Database;
+        });
+
+        var error = await Should.ThrowAsync<OptionsValidationException>(
+            async () => await host.StartAsync(TestContext.Current.CancellationToken));
+
+        error.Message.Contains(nameof(TenantIsolation.Database), StringComparison.Ordinal)
+            .ShouldBeTrue($"the message must name the level that is refused.\n{error.Message}");
+
+        error.Message.Contains("dedicated deployment", StringComparison.Ordinal)
+            .ShouldBeTrue(
+                "and say why, because the repair is a topology rather than a newer build.\n" +
+                error.Message);
+    }
+
+    /// <summary>
+    /// The levels this runtime does implement start, including the one that needs a store to
+    /// cooperate.
+    /// </summary>
+    /// <remarks>
+    /// The other half of the assertion above, and it is not redundant: a validator that refused
+    /// every level would satisfy the first test and break every multi-tenant deployment. Schema
+    /// starts here with no journal registered at all, which is the case the constructor's own
+    /// check deliberately lets through — there is no store to be weaker than the declaration.
+    /// </remarks>
+    [Theory]
+    [InlineData(TenantIsolation.None)]
+    [InlineData(TenantIsolation.Row)]
+    [InlineData(TenantIsolation.Schema)]
+    public async Task AcceptsAnIsolationLevelItImplements(TenantIsolation isolation)
+    {
+        using var host = BuildHost(options =>
+        {
+            options.ApplicationName = "Sample.App";
+            options.TenantIsolation = isolation;
+        });
+
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
     /// A per-tenant bound on a deployment that resolves no tenant is refused at startup.
     /// </summary>
     /// <remarks>

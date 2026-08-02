@@ -26,16 +26,46 @@ namespace FlowX.Postgres.Tests;
 /// </remarks>
 internal sealed class PostgresTestSchema : IAsyncDisposable
 {
-    private PostgresTestSchema(NpgsqlDataSource dataSource, PostgresJournalOptions options)
+    private PostgresTestSchema(
+        NpgsqlDataSource dataSource,
+        PostgresJournalOptions options,
+        PostgresTenantStores? stores)
     {
         DataSource = dataSource;
         Options = options;
-        Journal = new PostgresFlowJournal(dataSource);
+        TenantStores = stores;
+        Journal = stores is null
+            ? new PostgresFlowJournal(dataSource)
+            : new PostgresFlowJournal(dataSource, stores);
         Leases = new PostgresLeaseStore(dataSource);
         RecoveryIndex = new PostgresRecoveryIndex(dataSource);
         Retention = new PostgresRetention(dataSource);
         Migrator = new PostgresMigrator(dataSource, options);
+        RecoveryScan = stores is null
+            ? RecoveryIndex
+            : new PostgresTenantRecoveryIndex(stores);
+        TimerSweep = stores is null
+            ? new PostgresTimerIndex(dataSource)
+            : new PostgresTenantTimerIndex(stores);
     }
+
+    /// <summary>The per-tenant pools, or null when every tenant shares this schema.</summary>
+    public PostgresTenantStores? TenantStores { get; }
+
+    /// <summary>
+    /// The recovery scan as a host would resolve it: fanned out across tenant schemas where the
+    /// deployment has them, and the single-schema query where it does not.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="RecoveryIndex"/> rather than replacing it, because the two are
+    /// asserted about different things. That one is the query — its plan, its ordering, its
+    /// partial index — and it is the same query at both levels. This one is the service, and at
+    /// schema level it is a different type.
+    /// </remarks>
+    public IRecoveryIndex RecoveryScan { get; }
+
+    /// <summary>The timer sweep as a host would resolve it, for <see cref="RecoveryScan"/>'s reason.</summary>
+    public ITimerIndex TimerSweep { get; }
 
     /// <summary>The data source, with <c>search_path</c> already pointing at the schema.</summary>
     public NpgsqlDataSource DataSource { get; }
@@ -100,9 +130,29 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
     /// <exception cref="InvalidOperationException">
     /// A database was promised by the environment and is not reachable.
     /// </exception>
-    public static async ValueTask<PostgresTestSchema> CreateAsync(
+    public static ValueTask<PostgresTestSchema> CreateAsync(
         CancellationToken cancellationToken,
-        int? throughVersion = null)
+        int? throughVersion = null) =>
+        CreateAsync(tenantSchemas: false, throughVersion, cancellationToken);
+
+    /// <summary>
+    /// Creates a control schema whose tenants each get a schema of their own.
+    /// </summary>
+    /// <param name="cancellationToken">Cancels the setup.</param>
+    /// <returns>The prepared store, with per-tenant pools.</returns>
+    /// <remarks>
+    /// The prefix is unique to this fixture, so two tests running side by side cannot provision
+    /// the same tenant into the same schema — which would make an isolation assertion pass or
+    /// fail depending on what else the runner happened to be doing.
+    /// </remarks>
+    public static ValueTask<PostgresTestSchema> CreateWithTenantSchemasAsync(
+        CancellationToken cancellationToken) =>
+        CreateAsync(tenantSchemas: true, throughVersion: null, cancellationToken);
+
+    private static async ValueTask<PostgresTestSchema> CreateAsync(
+        bool tenantSchemas,
+        int? throughVersion,
+        CancellationToken cancellationToken)
     {
         if (!PostgresTestDatabase.IsAvailable)
         {
@@ -114,15 +164,29 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
             Assert.Skip(PostgresTestDatabase.Reason);
         }
 
+        var identity = Guid.NewGuid().ToString("n");
+
         var options = new PostgresJournalOptions
         {
-            Schema = "flowx_t_" + Guid.NewGuid().ToString("n"),
+            Schema = "flowx_t_" + identity,
+            TenantSchemas = new TenantSchemaOptions
+            {
+                IsEnabled = tenantSchemas,
+
+                // 22 characters, which is the whole prefix budget: a fixture-unique prefix is
+                // also what makes DisposeAsync able to find every schema it created.
+                Prefix = "t" + identity[..20] + "_",
+            },
         };
 
         var dataSource = ServiceCollectionExtensions.BuildDataSource(
             PostgresTestDatabase.ConnectionString!, options);
 
-        var schema = new PostgresTestSchema(dataSource, options);
+        var stores = tenantSchemas
+            ? new PostgresTenantStores(dataSource, PostgresTestDatabase.ConnectionString!, options)
+            : null;
+
+        var schema = new PostgresTestSchema(dataSource, options, stores);
 
         await schema.Migrator
             .MigrateAsync(throughVersion ?? PostgresMigrator.TargetVersion, cancellationToken)
@@ -177,7 +241,14 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
             "a node takes the lease before it opens the instance row. The TTL is a millisecond " +
             "because the node this stands for is not coming back.");
 
-        var started = await Journal.StartAsync(
+        // Written through the scoped journal only where the tenant's rows live somewhere else.
+        // At row level the arrangement deliberately uses the unscoped journal — the row is what
+        // the test is arranging, and scoping it would be asserting the write path twice — but at
+        // schema level the unscoped journal writes into the control schema, which is not where
+        // this instance is supposed to end up.
+        var journal = Writer(tenantId);
+
+        var started = await journal.StartAsync(
             new FlowInstanceStart
             {
                 InstanceId = instance,
@@ -190,7 +261,7 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
 
         started.IsSuccess.ShouldBeTrue(started.IsFailure ? started.Error.ToString() : string.Empty);
 
-        await MoveAsync(instance, lease.Value.Token, state, cancellationToken);
+        await MoveAsync(journal, instance, lease.Value.Token, state, cancellationToken);
 
         if (idleFor > TimeSpan.Zero)
         {
@@ -202,14 +273,33 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
                         SET updated_at = now() - interval '{(long)idleFor.TotalSeconds} seconds'
                       WHERE instance_id = '{instance}'
                      """),
+                tenantId,
                 cancellationToken);
         }
 
         return instance;
     }
 
+    /// <summary>Which journal an arrangement for this tenant has to be written through.</summary>
+    public IFlowJournal Writer(string? tenantId) =>
+        TenantStores is not null && tenantId is { Length: > 0 }
+            ? Journal.ForTenant(tenantId)
+            : Journal;
+
+    /// <summary>The data source a tenant's rows are actually in.</summary>
+    /// <param name="tenantId">The tenant, or null for the control schema.</param>
+    /// <param name="cancellationToken">Cancels the lookup, and any provisioning it triggers.</param>
+    /// <returns>The tenant's data source, or the control one.</returns>
+    public async ValueTask<NpgsqlDataSource> SourceFor(
+        string? tenantId,
+        CancellationToken cancellationToken) =>
+        TenantStores is not null && tenantId is { Length: > 0 }
+            ? await TenantStores.ForAsync(tenantId, cancellationToken)
+            : DataSource;
+
     /// <summary>Moves a freshly opened instance to the state under test.</summary>
-    private async ValueTask MoveAsync(
+    private static async ValueTask MoveAsync(
+        IFlowJournal journal,
         Guid instance,
         FencingToken token,
         FlowInstanceState state,
@@ -225,7 +315,7 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
             or FlowInstanceState.TimedOut
             or FlowInstanceState.CompensationFailed)
         {
-            var completed = await Journal.CompleteAsync(
+            var completed = await journal.CompleteAsync(
                 instance, token, state, JournalPayload.Empty, wake: null, cancellationToken);
 
             completed.IsSuccess.ShouldBeTrue(
@@ -234,7 +324,7 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
             return;
         }
 
-        var committed = await Journal.CommitAsync(
+        var committed = await journal.CommitAsync(
             new StepCommit
             {
                 Key = StepKey.First(instance, 0),
@@ -368,9 +458,28 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
     /// <param name="sql">The statement.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>How many rows it affected.</returns>
-    public async Task<int> ExecuteAsync(string sql, CancellationToken cancellationToken)
+    public Task<int> ExecuteAsync(string sql, CancellationToken cancellationToken) =>
+        ExecuteAsync(sql, tenantId: null, cancellationToken);
+
+    /// <summary>Runs a statement against the schema one tenant's rows are in.</summary>
+    /// <param name="sql">The statement.</param>
+    /// <param name="tenantId">Whose schema, or null for the control schema.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>How many rows it affected.</returns>
+    /// <remarks>
+    /// The statement runs as the migrating role rather than as <c>flowx_tenant</c>, which is
+    /// what lets an arrangement backdate a row that the policy would otherwise hide from it.
+    /// Nothing asserted is arranged this way — only <c>updated_at</c>, which is the premise of
+    /// the recovery query and whose alternative is a test that sleeps for a lease TTL.
+    /// </remarks>
+    public async Task<int> ExecuteAsync(
+        string sql,
+        string? tenantId,
+        CancellationToken cancellationToken)
     {
-        await using var connection = await DataSource.OpenConnectionAsync(cancellationToken);
+        var source = await SourceFor(tenantId, cancellationToken);
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
 
         command.CommandText = sql;
@@ -397,6 +506,38 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
     /// <summary>Drops the schema and everything in it.</summary>
     public async ValueTask DisposeAsync()
     {
+        if (TenantStores is not null)
+        {
+            await TenantStores.DisposeAsync();
+
+            // Every schema this fixture's prefix owns, dropped before the control schema that
+            // records them. A test that provisions three tenants creates three schemas, and a
+            // suite that left them behind would grow the database by one schema per tenant per
+            // run until an unrelated catalogue query started timing out.
+            await using var connection = await DataSource.OpenConnectionAsync();
+            await using var drop = connection.CreateCommand();
+
+            drop.CommandText =
+                """
+                SELECT set_config('flowx.drop_prefix', @prefix, false);
+                DO $$
+                DECLARE victim text;
+                BEGIN
+                    FOR victim IN
+                        SELECT nspname FROM pg_namespace
+                         WHERE nspname LIKE current_setting('flowx.drop_prefix') || '%'
+                    LOOP
+                        EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', victim);
+                    END LOOP;
+                END
+                $$;
+                """;
+
+            drop.Parameters.AddWithValue("prefix", Options.TenantSchemas.Prefix);
+
+            await drop.ExecuteNonQueryAsync();
+        }
+
         await using (var connection = await DataSource.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {

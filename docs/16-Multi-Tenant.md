@@ -1,6 +1,6 @@
 # 16 — Multi-Tenancy
 
-> **Status:** Accepted as a specification · **row isolation and fairness are enforced;
+> **Status:** Accepted as a specification · **row isolation, schema isolation and fairness are enforced;
 > the residency layer is not** ·
 > **Audience:** platform engineers, SaaS architects
 > **Answers:** what isolation levels exist, and what does the platform guarantee at each?
@@ -34,8 +34,11 @@
 > [ADR-0040](adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md)'s
 > anti-conservative limiter; no cache or idempotency
 > store to key (§6); no residency binding, so L4 is a deployment convention; and
-> `TenantIsolation.Schema` and `.Database` are **declarable and refused at startup**, because
-> `ITenantStoreResolver` is still not declared anywhere. Nothing partitions or shards the
+> `TenantIsolation.Database` is **declarable and refused at startup** — it names a deployment
+> per tenant, whose pod declares `None`
+> ([ADR-0051](adr/ADR-0051-database-isolation-is-a-topology-not-a-runtime-level.md)).
+> `TenantIsolation.Schema` **is enforced** as of 2026-08-02, and at that level the outbox
+> publisher and the change feed are refused rather than fanned out. Nothing partitions or shards the
 > journal — [11 §6](11-Distributed-Runtime.md) names sharding and stops, so building it would
 > be invention.
 >
@@ -209,8 +212,17 @@ capability with a bug cannot read another tenant's rows, because the database re
 
 ### L2 — schema/database per tenant
 
-`ITenantStoreResolver` maps `TenantId` → connection. Connection pools are
-per-tenant and bounded, so a tenant with 10 000 idle connections is impossible.
+Connection pools are per-tenant and bounded, so a tenant with 10 000 idle
+connections is impossible — and, more to the point, so a pooled connection has no
+other tenant to carry a `search_path` to. The schema is in each tenant's
+**connection string**, never in a `SET` issued per borrow.
+
+*This paragraph named an `ITenantStoreResolver` until 2026-08-02. None was declared:
+`ITenantScopedJournal.ForTenant` is already the per-tenant seam, so the map is
+`PostgresTenantStores` inside the adapter and the abstraction gained one property —
+`ITenantScopedJournal.Isolation` — which is how a host refuses a level its store
+cannot serve.
+[ADR-0051](adr/ADR-0051-database-isolation-is-a-topology-not-a-runtime-level.md).*
 
 ### L3/L4 — deployment per tenant
 
