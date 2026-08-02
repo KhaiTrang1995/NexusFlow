@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>
+      Bridges the structured events FlowX.Abstractions publishes through DiagnosticSource
+      onto Microsoft.Extensions.Logging. Reference this only if you want FlowX's logs on
+      your ILogger — the platform emits them either way, and a host that wants neither
+      references neither.
+    </Description>
+    <PackageTags>flowx;logging;observability;diagnosticsource</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!--
+    The one package reference this feature costs, and the reason this project exists rather
+    than the bridge living in FlowX.Abstractions. AbstractionsHasNoDependencies (ADR-0009)
+    forbids a package reference there because every plugin and all user code inherit it;
+    Microsoft.Extensions.Logging.Abstractions is a package while
+    System.Diagnostics.DiagnosticSource is in the net10.0 shared framework, which is exactly
+    why traces and metrics were buildable and logs were not (docs/12 §4).
+
+    Abstractions only. ILoggerFactory is the whole surface this needs, and taking
+    Microsoft.Extensions.Logging itself would drag a logging implementation into a consumer
+    that already composes its own.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../FlowX.Abstractions/FlowX.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

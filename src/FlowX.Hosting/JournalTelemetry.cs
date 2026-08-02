@@ -55,22 +55,39 @@ public sealed class JournalTelemetry : IFlowJournal
     /// <param name="journal">The store to time.</param>
     /// <returns>A timing decorator, or <paramref name="journal"/> itself.</returns>
     public static IFlowJournal Wrap(IFlowJournal journal) =>
-        FlowXMetrics.JournalCommit.Enabled ? new JournalTelemetry(journal) : journal;
+        FlowXMetrics.JournalCommit.Enabled || FlowXLog.IsEnabled
+            ? new JournalTelemetry(journal)
+            : journal;
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The null check is new and is not defensive noise: this decorator now reads the instance
+    /// off the write so a §4 record can name it, so a null argument would fault here rather than
+    /// inside the store, one frame further from the caller that supplied it.
+    /// </remarks>
     public ValueTask<Result<FlowInstanceRecord>> StartAsync(
-        FlowInstanceStart start, CancellationToken cancellationToken) =>
-        TimeAsync(nameof(StartAsync), _inner.StartAsync(start, cancellationToken));
+        FlowInstanceStart start, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(start);
+
+        return ObserveAsync(nameof(StartAsync), start.InstanceId, _inner.StartAsync(start, cancellationToken));
+    }
 
     /// <inheritdoc />
     public ValueTask<Result<FencingToken>> FenceAsync(
         Guid instanceId, FencingToken token, CancellationToken cancellationToken) =>
-        TimeAsync(nameof(FenceAsync), _inner.FenceAsync(instanceId, token, cancellationToken));
+        ObserveAsync(nameof(FenceAsync), instanceId, _inner.FenceAsync(instanceId, token, cancellationToken));
 
     /// <inheritdoc />
+    /// <remarks>Guarded for the reason <see cref="StartAsync"/> is.</remarks>
     public ValueTask<Result<JournalStep>> CommitAsync(
-        StepCommit commit, CancellationToken cancellationToken) =>
-        TimeAsync(nameof(CommitAsync), _inner.CommitAsync(commit, cancellationToken));
+        StepCommit commit, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(commit);
+
+        return ObserveAsync(
+            nameof(CommitAsync), commit.Key.InstanceId, _inner.CommitAsync(commit, cancellationToken));
+    }
 
     /// <inheritdoc />
     public ValueTask<Result<FlowInstanceRecord>> CompleteAsync(
@@ -80,48 +97,77 @@ public sealed class JournalTelemetry : IFlowJournal
         JournalPayload stateBag,
         FlowWake? wake,
         CancellationToken cancellationToken) =>
-        TimeAsync(
+        ObserveAsync(
             nameof(CompleteAsync),
+            instanceId,
             _inner.CompleteAsync(instanceId, token, state, stateBag, wake, cancellationToken));
 
     /// <inheritdoc />
     public ValueTask<Result<FlowInstanceRecord>> ReadInstanceAsync(
         Guid instanceId, CancellationToken cancellationToken) =>
-        TimeAsync(nameof(ReadInstanceAsync), _inner.ReadInstanceAsync(instanceId, cancellationToken));
+        ObserveAsync(nameof(ReadInstanceAsync), instanceId, _inner.ReadInstanceAsync(instanceId, cancellationToken));
 
     /// <inheritdoc />
     public ValueTask<Result<ResumeFrontier>> ReadResumeFrontierAsync(
         Guid instanceId, CancellationToken cancellationToken) =>
-        TimeAsync(
-            nameof(ReadResumeFrontierAsync), _inner.ReadResumeFrontierAsync(instanceId, cancellationToken));
+        ObserveAsync(
+            nameof(ReadResumeFrontierAsync),
+            instanceId,
+            _inner.ReadResumeFrontierAsync(instanceId, cancellationToken));
 
     /// <inheritdoc />
     public ValueTask<Result<IReadOnlyList<OutboxRecord>>> ReadOutboxAsync(
         Guid instanceId, CancellationToken cancellationToken) =>
-        TimeAsync(nameof(ReadOutboxAsync), _inner.ReadOutboxAsync(instanceId, cancellationToken));
+        ObserveAsync(nameof(ReadOutboxAsync), instanceId, _inner.ReadOutboxAsync(instanceId, cancellationToken));
 
     /// <summary>
-    /// Awaits <paramref name="call"/> and records how long it took under
-    /// <paramref name="operation"/>.
+    /// Awaits <paramref name="call"/>, records how long it took under
+    /// <paramref name="operation"/>, and writes the store's answer as a §4 record.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The inner call is started by the caller and passed in already running, so this adds an
     /// await and no extra branch on the store's own path. A store that answers synchronously —
     /// a cached instance read — still completes synchronously through here.
+    /// </para>
+    /// <para>
+    /// <strong>Generic over the <see cref="Result{T}"/>'s value rather than over the whole
+    /// answer</strong>, which is what lets one helper tell a refusal from an answer. §4 wants
+    /// the refusals in particular: a fenced-out commit is how an operator learns a lease moved,
+    /// and it is invisible in the histogram above — where a refusal is just a working store
+    /// answering quickly, as this type's own remarks say.
+    /// </para>
+    /// <para>
+    /// A thrown store — a dropped connection — is left to propagate untouched and unlogged. It
+    /// is not a refusal the store expressed, the caller sees the exception, and inventing an
+    /// error code for it here would put a code in the logs that no error catalogue contains.
+    /// </para>
     /// </remarks>
-    private static async ValueTask<T> TimeAsync<T>(string operation, ValueTask<T> call)
+    private static async ValueTask<Result<TValue>> ObserveAsync<TValue>(
+        string operation, Guid instanceId, ValueTask<Result<TValue>> call)
     {
         var startedAt = Stopwatch.GetTimestamp();
 
         try
         {
-            return await call.ConfigureAwait(false);
+            var result = await call.ConfigureAwait(false);
+
+            FlowXLog.WriteJournalCall(
+                operation,
+                instanceId,
+                result.IsFailure ? result.Error.Code : null,
+                result.IsFailure ? result.Error.Category.ToString() : null);
+
+            return result;
         }
         finally
         {
-            FlowXMetrics.JournalCommit.Record(
-                Stopwatch.GetElapsedTime(startedAt).TotalSeconds,
-                new KeyValuePair<string, object?>(TelemetryNames.OperationLabel, operation));
+            if (FlowXMetrics.JournalCommit.Enabled)
+            {
+                FlowXMetrics.JournalCommit.Record(
+                    Stopwatch.GetElapsedTime(startedAt).TotalSeconds,
+                    new KeyValuePair<string, object?>(TelemetryNames.OperationLabel, operation));
+            }
         }
     }
 }

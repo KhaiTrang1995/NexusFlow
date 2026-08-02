@@ -31,6 +31,13 @@ an admission. All four execute, and the rule is deleted with the gap.
 shape named at the top of this document — *a contract declared, published and diffed, with
 the wire cut at the last inch* — is what it was an instance of, and what its §3 now records
 having closed.
+| 1 | **Four policy kinds** — `RateLimit`, `Idempotency`, `Cache`, `Audit` | declared, inert | The only item that **deletes a diagnostic**. `FLOWX1032` exists to tell a user their declaration does nothing; every release shipping it ships an admission |
+| 2 | **Multi-tenancy** | plumbed, unenforced | The only *correctness* gap left: nothing stops one tenant's flow reading another's rows. A data-isolation bug is not a missing feature |
+| 3 | ~~**Logs**~~ | **built** | Was "absent, blocked on one decision, not effort". The decision was taken as designed in [§2](#2-logs--the-design): `FlowXLog` emits through `DiagnosticSource` and `src/FlowX.Logging` bridges to `ILogger` |
+| 4 | **AI surface (MCP)** | declared, unbound | `AgentTrigger` exists and nothing serves it. [13](13-AI-Native.md) specifies the descriptor and the `tools/call` sequence in full |
+| 5 | **`Stream` and `Change` triggers** | declared, unbound | Two of eight kinds. `Change` is CDC over the outbox, which already exists |
+| 6 | **Stream engine** | absent | **Not next.** Nothing defines the checkpoint format, watermark generation or how window state is journaled — implementing it means inventing it |
+| 7 | **Studio** | absent | **Not next.** Sixteen one-line mentions and no design |
 
 ## 1. Multi-tenancy — the design
 
@@ -153,7 +160,24 @@ documentation actually specifies.
 - `Ephemeral` and single-tenant deployments pay nothing: budget **B2** stays a
   hard zero, gated by the existing allocation tests.
 
-## 2. Logs — the design
+## 2. Logs — the design ✅ built
+
+> [!NOTE]
+> **This one is built, and it was built as designed.** `FlowXLog` publishes through a
+> `DiagnosticListener` named `FlowX`; the flow boundary, the step boundary and the stores write
+> the records; `src/FlowX.Logging` is the separate project that bridges them to `ILogger`;
+> `AbstractionsHasNoDependencies` never had to move. The design below is kept in the present
+> tense because it describes what shipped rather than what was intended.
+>
+> Two things the sketch did not say, both found in the building.
+> **`DiagnosticSource.Write` is annotated `RequiresUnreferencedCode`**, because the usual
+> subscriber reflects over an `object` payload — which constraint C2 makes a build error here,
+> not a warning. It is answered where it is raised: one write site, one payload type named
+> statically, and a `DynamicDependency` that roots the properties a reflecting subscriber would
+> read. **And the scope is not the sink**: `[Sensitive]` is safe because a record carries a
+> `JournalPayload`, but correlating a *capability's own* `ILogger` needs `BeginScope` called from
+> `FlowX.Runtime`, which is the one thing this shape forbids. [12 §4](12-Observability.md#4-logs)
+> marks that clause as still specification.
 
 ```mermaid
 flowchart LR

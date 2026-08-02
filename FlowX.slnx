@@ -6,6 +6,7 @@
     <Project Path="src/FlowX.Cli/FlowX.Cli.csproj" />
     <Project Path="src/FlowX.Core/FlowX.Core.csproj" />
     <Project Path="src/FlowX.Hosting/FlowX.Hosting.csproj" />
+    <Project Path="src/FlowX.Logging/FlowX.Logging.csproj" />
     <Project Path="src/FlowX.Runtime/FlowX.Runtime.csproj" />
     <Project Path="src/FlowX.Testing/FlowX.Testing.csproj" />
   </Folder>
@@ -35,6 +36,7 @@
     <Project Path="tests/FlowX.Hosting.Tests/FlowX.Hosting.Tests.csproj" />
     <Project Path="tests/FlowX.Http.Tests/FlowX.Http.Tests.csproj" />
     <Project Path="tests/FlowX.Mcp.Tests/FlowX.Mcp.Tests.csproj" />
+    <Project Path="tests/FlowX.Logging.Tests/FlowX.Logging.Tests.csproj" />
     <Project Path="tests/FlowX.Postgres.Tests/FlowX.Postgres.Tests.csproj" />
     <Project Path="tests/FlowX.Redis.Tests/FlowX.Redis.Tests.csproj" />
     <Project Path="tests/FlowX.Runtime.Tests/FlowX.Runtime.Tests.csproj" />

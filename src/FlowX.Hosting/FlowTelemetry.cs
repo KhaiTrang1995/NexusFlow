@@ -33,21 +33,41 @@ internal readonly struct FlowScope
     private readonly Activity? _span;
     private readonly ExecutionPlan? _plan;
     private readonly string? _tenantLabel;
+    private readonly string? _tenantId;
+    private readonly string? _correlationId;
     private readonly long _startedAt;
 
-    private FlowScope(Activity? span, ExecutionPlan plan, string tenantLabel, long startedAt)
+    private FlowScope(
+        Activity? span,
+        ExecutionPlan plan,
+        string tenantLabel,
+        string? tenantId,
+        string? correlationId,
+        long startedAt)
     {
         _span = span;
         _plan = plan;
         _tenantLabel = tenantLabel;
+        _tenantId = tenantId;
+        _correlationId = correlationId;
         _startedAt = startedAt;
     }
 
-    /// <summary>Whether anything is listening for FlowX spans or FlowX flow metrics.</summary>
+    /// <summary>
+    /// Whether anything is listening for FlowX spans, FlowX flow metrics or FlowX log events.
+    /// </summary>
+    /// <remarks>
+    /// The log subscriber is one more reason to open a scope, not a fourth kind of scope. A host
+    /// that exports no traces and no metrics but does bridge logs
+    /// (<a href="../../../docs/12-Observability.md">12-Observability</a> §4) is a supported
+    /// configuration, and before this read it got a <c>default</c> scope whose
+    /// <see cref="Complete"/> returned immediately.
+    /// </remarks>
     internal static bool IsEnabled =>
         FlowXTelemetry.Source.HasListeners()
         || FlowXMetrics.FlowDuration.Enabled
-        || FlowXMetrics.FlowTotal.Enabled;
+        || FlowXMetrics.FlowTotal.Enabled
+        || FlowXLog.IsEnabled;
 
     /// <summary>The span this execution runs under, or <c>null</c> when nothing is listening.</summary>
     internal Activity? Span => _span;
@@ -88,8 +108,24 @@ internal readonly struct FlowScope
             }
         }
 
+        // After the span, so the record carries the trace and span ids §4's example shows. They
+        // come from Activity.Current, which is this span — so a host that bridges logs and also
+        // exports traces gets a record joined to the trace, and one that exports no traces gets
+        // nulls rather than a fabricated id.
+        FlowXLog.WriteFlowStarted(
+            plan.Flow.Id,
+            plan.Flow.Version,
+            plan.Flow.Profile.ToString(),
+            invocation.TenantId,
+            invocation.CorrelationId);
+
         return new FlowScope(
-            span, plan, FlowXTelemetry.TenantLabel(invocation.TenantId), Stopwatch.GetTimestamp());
+            span,
+            plan,
+            FlowXTelemetry.TenantLabel(invocation.TenantId),
+            invocation.TenantId,
+            invocation.CorrelationId,
+            Stopwatch.GetTimestamp());
     }
 
     /// <summary>
@@ -140,6 +176,21 @@ internal readonly struct FlowScope
 
             span.Dispose();
         }
+
+        // After the tags and after the span is closed, but the ids are read from the record's own
+        // WithCurrentTrace — which sees the parent once this span is disposed. Written here rather
+        // than before the Dispose so that a subscriber cannot observe a flow as completed while
+        // the span it belongs to is still open.
+        FlowXLog.WriteFlowCompleted(
+            plan.Flow.Id,
+            plan.Flow.Version,
+            plan.Flow.Profile.ToString(),
+            result.InstanceId,
+            _tenantId,
+            _correlationId,
+            outcome,
+            result.Error?.Code,
+            result.Error?.Category.ToString());
 
         if (FlowXMetrics.FlowDuration.Enabled)
         {

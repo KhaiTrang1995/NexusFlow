@@ -73,6 +73,12 @@ public sealed class DependencyRuleTests
     // before adding a second row like this one.
     [InlineData("FlowX.Runtime.Durable", new[] { "FlowX.Abstractions", "FlowX.Core", "FlowX.Runtime" })]
     [InlineData("FlowX.Hosting", new[] { "FlowX.Abstractions", "FlowX.Core", "FlowX.Runtime" })]
+    // FlowX.Logging bridges the DiagnosticSource events FlowX.Abstractions publishes onto
+    // ILogger (docs/12 §4). Abstractions and nothing else, which is the narrowest row here and
+    // is the point of the project: it exists so that Microsoft.Extensions.Logging.Abstractions
+    // is referenced by the one assembly that needs it rather than inherited by every plugin and
+    // all user code, which is what AbstractionsHasNoDependencies forbids.
+    [InlineData("FlowX.Logging", new[] { "FlowX.Abstractions" })]
     // FlowX.Testing gained Core and Runtime with FlowTestHost (WP-49), which runs the
     // real engine over the real compiled plan inside the test process. Still points
     // inward, and still narrower than Hosting: no transport, no journal, no container.

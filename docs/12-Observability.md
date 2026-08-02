@@ -1,6 +1,6 @@
 # 12 — Observability
 
-> **Status:** Accepted · **traces and metrics built, logs not** · **Audience:** SRE, application engineers
+> **Status:** Accepted · **all three pillars built** · **Audience:** SRE, application engineers
 > **Answers:** what does FlowX emit, and how do you answer "why did instance 42 fail?"
 
 > [!NOTE]
@@ -12,9 +12,15 @@
 > sweeps emit through them; and [§3](#3-metrics) says per row which of the thirteen metrics has
 > a producer and which two do not, and why.
 >
-> ***What has not changed is the logs.*** There is still no `ILogger` anywhere under `src/` or
-> `plugins/`, so [§4](#4-logs) is the one section of this document that is still entirely
-> specification — see the box there.
+> ***The logs have now changed too.*** [§4](#4-logs) has a producer: `FlowXLog` publishes the
+> records below through a `DiagnosticListener` named `FlowX`, and the flow boundary, the step
+> boundary and the stores write them. There is still no `ILogger` under `src/` or `plugins/`, and
+> that is the design rather than the gap — the dependency lives in **`src/FlowX.Logging`**, a
+> separate project that bridges the events to `ILogger`, so a host that wants neither references
+> neither and `AbstractionsHasNoDependencies` is untouched. See the box in §4.
+>
+> One clause of §4 is still ahead of us and is marked there: **no logging scope is opened around a
+> capability**, so a capability's own `_logger` is not correlated by the platform.
 >
 > `TelemetryConformanceTest` was named in four documents as an existing gate and existed in
 > none of them. It exists: `tests/FlowX.Hosting.Tests/TelemetryConformanceTests.cs`, which
@@ -244,28 +250,27 @@ occurrence rather than on a rate.
 
 ## 4. Logs
 
-> [!WARNING]
-> **This section is still entirely specification.** WP-90 built the traces and the metrics and
-> did not build the logs: there is no `ILogger` anywhere under `src/` or `plugins/`, no logging
-> scope is opened around a capability, and no record below is produced by any code path. The
-> box at the top of this document used to say that about all three pillars; it is now true of
-> this one.
+> [!NOTE]
+> **This section has a producer.** It said "this section is still entirely specification", and
+> that expired: `FlowXLog` in `FlowX.Abstractions` publishes the records below through a
+> `DiagnosticListener` named `FlowX`, and three boundaries write them — the flow boundary
+> (`FlowScope`), the step boundary (`StepTelemetry`) and the stores (`JournalTelemetry`).
+> `LogConformanceTests` asserts the fields of each, the way `TelemetryConformanceTests` asserts
+> the spans and the metrics.
 >
-> **It is a smaller gap than it looks, and a different kind of gap.** The correlating fields —
-> `flowx.flow.id`, `flowx.flow.instance_id`, `flowx.step.id`, `flowx.capability.id`,
-> `flowx.error.code`, `flowx.attempt`, `flowx.tenant.id` — are the span attributes in
-> [§2](#2-traces), and `trace_id` and `span_id` come free from `Activity.Current` once a span
-> exists, which it now does at both boundaries. What is missing is the scope and the sink, not
-> the vocabulary.
+> **The decision it was blocked on was taken, and it was the second of the two options.**
+> `FlowX.Abstractions` has zero package references by
+> [ADR-0009](adr/ADR-0009-plugin-contracts.md), enforced by `AbstractionsHasNoDependencies` —
+> and `Microsoft.Extensions.Logging.Abstractions` is a package while
+> `System.Diagnostics.DiagnosticSource` is in the `net10.0` shared framework, which is exactly
+> why `ActivitySource` and `Meter` were free and `ILogger` was not. So the platform emits
+> through `DiagnosticSource` and **`src/FlowX.Logging`** — a separate project — bridges the
+> events to `ILogger`. A host that wants neither references neither, the dependency is not
+> inherited by every plugin and all user code, and budget **B6** still holds: with no subscriber
+> a record is never built, which `TelemetryCostTests` measures rather than asserts.
 >
-> **What it is blocked on is a decision, not effort.** `FlowX.Abstractions` has zero package
-> references by [ADR-0009](adr/ADR-0009-plugin-contracts.md), enforced by
-> `AbstractionsHasNoDependencies` — and `Microsoft.Extensions.Logging.Abstractions` is a package.
-> `ActivitySource` and `Meter` were free because `System.Diagnostics.DiagnosticSource` is in the
-> `net10.0` shared framework; `ILogger` is not, so the pillar that looks cheapest is the one that
-> costs a dependency inherited by every plugin and all user code. Either that dependency is
-> accepted, or logging lives above `FlowX.Abstractions` and a capability's logger comes from its
-> own container rather than from the platform. Neither has been chosen, and choosing is the work.
+> **One clause below is still ahead of us**, and it is the scope, not the sink — see the note
+> after the example.
 
 Structured only. Data as fields, never interpolated into the message.
 
@@ -273,23 +278,45 @@ Structured only. Data as fields, never interpolated into the message.
 {
   "timestamp": "2026-07-30T09:14:02.113Z",
   "level": "Warning",
-  "message": "Step failed and will be retried",
+  "message": "Step failed",
   "flowx.flow.id": "order.place",
   "flowx.flow.instance_id": "fi_01HV8…",
   "flowx.step.id": 2,
   "flowx.capability.id": "payment.capture",
+  "flowx.capability.version": "2.1.0",
   "flowx.error.code": "payment.gateway_timeout",
-  "flowx.attempt": 1,
+  "flowx.error.category": "Unavailable",
   "flowx.tenant.id": "acme",
   "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
   "span_id": "00f067aa0ba902b7"
 }
 ```
 
-Every log written inside a capability inherits this scope automatically — the
-Capability Engine opens the logging scope before invoking. A capability that logs
-`_logger.LogWarning("Payment failed for {OrderId}", id)` produces a record already
-correlated to its flow, step, tenant and trace. *No scope is opened today; see the box above.*
+**The message is a constant and the data is beside it**, which is what the sentence above
+requires and what `NoMessageCarriesDataAndEveryMessageIsAConstant` gates — by reference
+equality against the frozen set, because an interpolated string that happens to equal a
+constant is still an interpolated string. This is the same discipline
+[§3](#3-metrics) states for metric labels: a message built per occurrence makes the count of
+distinct messages grow with traffic, and an aggregator can no longer group by it. The example
+above therefore reads `"Step failed"` rather than `"Step failed and will be retried"` — nothing
+retries a step on the forward path ([10](10-Policy-Framework.md)), so the old message described
+behaviour the runtime does not have.
+
+**`flowx.attempt` is not in the record, deliberately.** This example used to show it. §2's own
+table says the attribute is "not emitted, and it would be a constant" — 1 by construction,
+because no policy runs on the forward path, so a step is dispatched once. A literal `1` on every
+record would read as a retry count somebody had measured. `NoRecordCarriesAnAttemptBecauseNothingCanCountOne`
+holds it out until there is something to count.
+
+> **The scope is not built, and it is the one clause of this section that is still
+> specification.** This paragraph said: *"Every log written inside a capability inherits this
+> scope automatically — the Capability Engine opens the logging scope before invoking. A
+> capability that logs `_logger.LogWarning("Payment failed for {OrderId}", id)` produces a record
+> already correlated to its flow, step, tenant and trace."* No scope is opened today. Opening one
+> means calling `ILogger.BeginScope` from the step boundary, which is in `FlowX.Runtime` and
+> therefore in the half of the platform that must not know what an `ILogger` is — the same
+> constraint that put the bridge in its own project. What FlowX emits about a capability is
+> correlated; what a capability emits about itself is not, unless the host opens the scope.
 
 ### Redaction
 
@@ -307,16 +334,26 @@ scan them for known secret patterns. What does run today is
 `ManifestContainsNoSecrets`, which scans the emitted **manifests** for the shape
 of a secret; that is a different artifact and a narrower claim.
 
-> **Status: one path, not every path.** The compiler reads `[Sensitive]`, records the
-> member in `flowx.manifest.json`, and emits the names as `Flow.SensitiveMembers`. The
-> HTTP endpoint uses that list to replace matching structured error detail with
-> `[redacted]` before the body is written — so a capability that attaches a secret to an
-> `Error` does not send it to the caller.
+> **Status: three paths now, and the logs are structural rather than remembered.** The compiler
+> reads `[Sensitive]`, records the member in `flowx.manifest.json`, and emits the names as
+> `Flow.SensitiveMembers`. The HTTP endpoint uses that list to replace matching structured error
+> detail with `[redacted]` before the body is written; the journal wraps every persisted value in
+> `JournalPayload`, whose only exit is `ToJson()` and which redacts on the way out.
 >
-> That is the **only** path this release serialises a capability-supplied value on.
-> Logs, traces, the journal and the replay view do not exist yet, so the "no code path
-> can forget it" claim above is still ahead of us. The value also still travels wherever
-> your own code puts it. Tracked as **WP-12a** in [PLAN.md](../PLAN.md).
+> **The logs inherit that control rather than re-implementing it.** A `FlowLogRecord` carries a
+> `JournalPayload` and has no property a value could be assigned to — the step boundary takes the
+> payload from `IStepDispatcher.DescribeStep`, which is the same object the journal is handed —
+> so a subscriber has nothing to reach and the bridge has no call it could make instead of the
+> redacting one. `ALogRecordHasNoPropertyAValueCouldBeAssignedTo` gates the shape and
+> `ASensitiveMemberIsRedactedOnTheWayOutOfALogRecord` gates the behaviour, at both ends of the
+> bridge.
+>
+> **Traces and the replay view are still the paths this does not cover**, so the "no code path
+> can forget it" claim above is not yet whole: a span attribute is a caller-supplied string that
+> nothing filters. `SecretsNeverLeaveTheProcess` remains unwritten as a repository-wide CI scan —
+> `NoFieldOfAnyRecordCarriesTheSensitiveValue` is the log-shaped part of it and a narrower claim,
+> over one sink and one known value. The value also still travels wherever your own code puts it.
+> Tracked as **WP-12a** in [PLAN.md](../PLAN.md).
 
 ---
 
@@ -484,7 +521,7 @@ when unobserved:
 |---|---|---|
 | `ActivitySource.HasListeners()` checked before span creation | zero cost with no exporter attached | **done, and it is checked before the span's *name* as well as before the span.** `StartActivity` returns `null` with no listener, but its argument is evaluated first — so `StartActivity($"step {i} {id}")` builds the name on every step and throws it away. That cost 68 B per step in the first draft of this work and was caught by the assertion below, not by review |
 | Metrics use pre-resolved tag arrays from the plan | no per-call tag allocation | **done in effect, by a different route.** Every emit site is guarded by `Instrument.Enabled`, so with no listener no tag list is built at all; with one, the only label that is not already a `string` is the step index, and those are pre-resolved. A metric label boxes on its way into a `KeyValuePair<string, object?>`, which is the whole reason this row exists |
-| Log scopes are structs, pooled with the context | no per-step allocation | **not built.** There are no logs ([§4](#4-logs)) |
+| Log scopes are structs, pooled with the context | no per-step allocation | **not built, and the row is now the wrong shape.** There are logs ([§4](#4-logs)) and there is no scope: a record is built only inside a `DiagnosticListener.IsEnabled` check, so with no subscriber nothing is allocated and there is no per-step object for a pool to hold. What this row would describe — a scope around a *capability's own* logger — is the clause §4 marks as still specification |
 | Sampling: head-based 1 %, plus tail-based 100 % on error | full fidelity where it matters | **not built, and it is not FlowX's to build.** Sampling is a property of the `ActivityListener` an exporter installs, so this row describes an OpenTelemetry configuration rather than anything under `src/`. What FlowX owes it is that a dropped span costs nothing, which the row above is |
 | Journal is the replay source, not the trace backend | replay does not depend on trace retention | **true, and unchanged.** `flowx replay --mode inspect` reads `flow_step`, not a trace |
 
@@ -501,6 +538,15 @@ telemetry on this path" that costs nothing to produce. Then a decorator is *forc
 existence with a listener attached, the listener is disposed, and a four-step ephemeral flow is
 run through it: **0 B**, which also pins that the decorator completes synchronously when its
 step does, since an `async ValueTask` that suspends boxes its state machine.
+
+**The logs are held to the same zero and by the same argument.** A log record is an allocation
+and C# evaluates an argument before the call that would have discarded it, so a helper written
+`Write(name, new FlowLogRecord(…))` would build a record per step for an empty listener list
+while correctly reporting `IsEnabled = false` — the same shape as the interpolated span name in
+the first row above, one layer more expensive.
+`EveryLogEventReportsItselfDisabledAndWritingOneAllocatesNothing` measures every emit helper at
+**0 B**, and `ALogSubscriberThatGoesAwayCostsNothingPerStep` measures a four-step flow through a
+decorator that a log subscriber — and nothing else — caused to be installed.
 
 > **The old version of this section said: "Measured in `FlowX.Benchmarks`: telemetry adds
 > < 200 ns per step with an exporter attached, 0 ns and 0 allocations without one."** No such
