@@ -50,7 +50,7 @@
 > being made fast. See
 > [§5d](#5d-p2--durable-execution--nearly-complete-qr2-measured-on-demand-b7-and-b8-not-at-all).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** **2250/2250 passing across 17 assemblies**
+> **Build:** 0 warnings, 0 errors · **Tests:** **2271/2271 passing across 17 assemblies**
 > (a large share against a live PostgreSQL 16.13 and Redis 7.0.15; **0 failed, 0 skipped**).
 > *This read **2004**, the count before the timer half, the manifest's wait, the 202 shape, three policy rules, the QR2 nightly and the telemetry seam merged. The figure here is
 > re-measured on the merged tree — `dotnet test FlowX.slnx -c Release` with both stores
@@ -59,7 +59,7 @@
 > reasons**; set to an unreachable server it **fails 114 and skips none**, on purpose.
 > *Those two figures read 79 and 80 until 2026-08-01: the suite grew and nobody re-ran the
 > probes. Both are re-measured rather than annotated.*
-> **The chaos rig is not in the 2250 and must not be** — `tests/FlowX.Chaos` is an `Exe`,
+> **The chaos rig is not in the 2271 and must not be** — `tests/FlowX.Chaos` is an `Exe`,
 > not a test project, so the ordinary suite is unchanged by it; it kills processes, and one
 > recorded run took 328 s and spawned 203 children ·
 > **Coverage:** **83.9 % line / 77.6 % branch** over `src/` and `plugins/`, measured
