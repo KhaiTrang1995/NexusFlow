@@ -253,6 +253,27 @@ public sealed class StepTelemetry : IStepDispatcher
     /// <inheritdoc />
     public JournalPayload DescribeInput(object? input) => _inner.DescribeInput(input);
 
+    // The three below were missing, and a missing forward here is not a missing span: every
+    // describe member of IStepDispatcher has a default, so an unforwarded one degrades to
+    // JournalPayload.Empty instead of failing to compile. Wrapping is decided per process by
+    // StepTelemetry.IsEnabled, so the consequence was that attaching an exporter — the one
+    // action an operator takes to see more — silently turned two features off: every audit
+    // record went out with a null document (redact over nothing), and CacheKey read null and
+    // treated every cached step as uncached. Anything added to the interface must be forwarded
+    // here; EveryDispatcherDecoratorForwardsEveryMember is the gate that says so.
+
+    /// <inheritdoc />
+    public JournalPayload DescribeCacheKey(int stepIndex, FlowContext ctx) =>
+        _inner.DescribeCacheKey(stepIndex, ctx);
+
+    /// <inheritdoc />
+    public JournalPayload DescribeCacheEntry(int stepIndex, FlowContext ctx) =>
+        _inner.DescribeCacheEntry(stepIndex, ctx);
+
+    /// <inheritdoc />
+    public JournalPayload DescribeAudit(int stepIndex, FlowContext ctx, IReadOnlyList<string> redact) =>
+        _inner.DescribeAudit(stepIndex, ctx, redact);
+
     /// <inheritdoc />
     public void RestoreState(FlowContext ctx, string stateBagJson) => _inner.RestoreState(ctx, stateBagJson);
 
