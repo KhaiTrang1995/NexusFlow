@@ -161,6 +161,67 @@ public sealed class BusScanTests
         fixture.Broker.Pending.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// A message carrying its publisher's tenant field starts the subscribing flow in that
+    /// tenant.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The field, never the payload.</strong> <c>docs/16 §3</c> allows a bus tenant from
+    /// "a message header set by a FlowX producer" and forbids one read out of the body, and the
+    /// difference is where the value travels: this one is written by the publisher from
+    /// <c>OutboxRecord.TenantId</c> and read back by the consumer plugin, so nothing the event's
+    /// author wrote is consulted.
+    /// </remarks>
+    [Fact]
+    public async Task AMessageStartsItsFlowInTheTenantItsPublisherNamed()
+    {
+        var fixture = Fixture.Create(isolation: TenantIsolation.Row);
+
+        fixture.Broker.Stage(Topic, partitionKey: "instance-1", tenantId: "tenant-a");
+
+        var report = await fixture.PassAsync();
+
+        report.Started.ShouldBe(1);
+
+        fixture.Journal.Instances.ShouldHaveSingleItem().TenantId.ShouldBe("tenant-a");
+
+        fixture.Broker.Acknowledged.Count.ShouldBe(
+            1, "the flow reached a recorded outcome, which is what an acknowledgement means.");
+    }
+
+    /// <summary>
+    /// A message naming no tenant on an isolating deployment is left with the broker rather than
+    /// acknowledged.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Acknowledging it would discard it with nothing anywhere describing it</strong> —
+    /// the broker's version of a cursor committed past a change that never ran. Requeued, it is
+    /// redelivered, and a deployment that genuinely cannot name the tenant spends
+    /// <c>BusMaxDeliveries</c> and is dead-lettered, which puts the message somewhere a human can
+    /// find rather than nowhere.
+    /// </remarks>
+    [Fact]
+    public async Task AnUntenantedMessageIsNotAcknowledgedWhereTheDeploymentIsolates()
+    {
+        var fixture = Fixture.Create(isolation: TenantIsolation.Row);
+
+        fixture.Broker.Stage(Topic, partitionKey: "instance-1");
+
+        var report = await fixture.PassAsync();
+
+        report.Started.ShouldBe(0);
+        report.Requeued.ShouldBe(1);
+
+        fixture.Journal.Instances.ShouldBeEmpty();
+
+        fixture.Broker.Acknowledged.ShouldBeEmpty(
+            "this is the assertion: an acknowledged message admission never let start is work " +
+            "lost with no record of it anywhere.");
+
+        fixture.Broker.Pending.ShouldHaveSingleItem(
+            "and the broker is still holding it, so a repaired deployment runs it.");
+    }
+
     /// <summary>An entry that is not a message is dead-lettered on its first delivery.</summary>
     [Fact]
     public async Task AnUnreadableEntryIsDeadLetteredImmediately()
@@ -310,13 +371,14 @@ public sealed class BusScanTests
     {
         private FlowBusScan? _resident;
 
-        private Fixture(bool failing)
+        private Fixture(bool failing, TenantIsolation isolation)
         {
             Options = new FlowXOptions
             {
                 ApplicationName = "Tests",
                 NodeName = "node",
                 ShutdownDrainTimeout = TimeSpan.FromSeconds(5),
+                TenantIsolation = isolation,
             };
 
             Durability = new FlowDurability(Journal, Leases);
@@ -354,9 +416,10 @@ public sealed class BusScanTests
 
         public RecordingDispatcher Dispatcher { get; }
 
-        public static Fixture Create(bool failing = false)
+        public static Fixture Create(
+            bool failing = false, TenantIsolation isolation = TenantIsolation.None)
         {
-            var fixture = new Fixture(failing);
+            var fixture = new Fixture(failing, isolation);
 
             fixture.Subscriptions.Add(
                 new BusSubscription("pricing.reprice", "1.0.0", Topic, Group),

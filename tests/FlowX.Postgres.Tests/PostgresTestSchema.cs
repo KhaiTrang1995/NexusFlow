@@ -367,7 +367,23 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
     /// <see cref="AbandonAsync"/>'s reason: a fixture that inserted the row itself could pass
     /// against a shape the journal does not produce.
     /// </remarks>
-    public async ValueTask<Guid> StageableInstanceAsync(CancellationToken cancellationToken)
+    public ValueTask<Guid> StageableInstanceAsync(CancellationToken cancellationToken) =>
+        StageableInstanceAsync(tenantId: null, cancellationToken);
+
+    /// <summary>
+    /// Opens an instance belonging to one tenant, through that tenant's own journal.
+    /// </summary>
+    /// <param name="tenantId">Whose instance, or null for an untenanted one.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The instance id.</returns>
+    /// <remarks>
+    /// Written through <see cref="Writer"/> rather than through the control journal, because at
+    /// schema isolation the row has to land in that tenant's schema for the change feed to find
+    /// it there — and at row isolation the connection has to be bound for the policy's
+    /// <c>WITH CHECK</c> to accept the tenant it names.
+    /// </remarks>
+    public async ValueTask<Guid> StageableInstanceAsync(
+        string? tenantId, CancellationToken cancellationToken)
     {
         var instance = Guid.NewGuid();
 
@@ -376,12 +392,13 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
 
         lease.IsSuccess.ShouldBeTrue(lease.IsFailure ? lease.Error.ToString() : string.Empty);
 
-        var started = await Journal.StartAsync(
+        var started = await Writer(tenantId).StartAsync(
             new FlowInstanceStart
             {
                 InstanceId = instance,
                 FlowId = RecoveryStore.FlowId,
                 FlowVersion = RecoveryStore.FlowVersion,
+                TenantId = tenantId,
                 Token = lease.Value.Token,
             },
             cancellationToken);
@@ -399,10 +416,25 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
     /// <param name="payload">The body, as JSON.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>The event's identity.</returns>
+    public ValueTask<Guid> StageAsync(
+        Guid instance, string type, string payload, CancellationToken cancellationToken) =>
+        StageAsync(instance, type, payload, tenantId: null, cancellationToken);
+
+    /// <summary>Stages one outbox row in the schema the instance's tenant owns.</summary>
+    /// <param name="instance">The instance the event belongs to.</param>
+    /// <param name="type">The event type, which is a change subscription's address.</param>
+    /// <param name="payload">The body, as JSON.</param>
+    /// <param name="tenantId">Whose schema, or null for the control one.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The event's identity.</returns>
     public async ValueTask<Guid> StageAsync(
-        Guid instance, string type, string payload, CancellationToken cancellationToken)
+        Guid instance,
+        string type,
+        string payload,
+        string? tenantId,
+        CancellationToken cancellationToken)
     {
-        await using var staging = await BeginAsync(cancellationToken);
+        await using var staging = await BeginAsync(tenantId, cancellationToken);
 
         var eventId = await staging.StageAsync(instance, type, payload, cancellationToken);
 
@@ -421,9 +453,18 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
     /// closes is reachable: one transaction staging and holding while another stages and
     /// commits behind it.
     /// </remarks>
-    public async ValueTask<StagingTransaction> BeginAsync(CancellationToken cancellationToken)
+    public ValueTask<StagingTransaction> BeginAsync(CancellationToken cancellationToken) =>
+        BeginAsync(tenantId: null, cancellationToken);
+
+    /// <summary>Opens a staging transaction against one tenant's schema.</summary>
+    /// <param name="tenantId">Whose schema, or null for the control one.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The open transaction.</returns>
+    public async ValueTask<StagingTransaction> BeginAsync(
+        string? tenantId, CancellationToken cancellationToken)
     {
-        var connection = await DataSource.OpenConnectionAsync(cancellationToken);
+        var source = await SourceFor(tenantId, cancellationToken);
+        var connection = await source.OpenConnectionAsync(cancellationToken);
         var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
         return new StagingTransaction(connection, transaction);

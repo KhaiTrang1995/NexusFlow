@@ -462,6 +462,20 @@ public sealed class FlowScheduleScan
 
             HostDrainingCode => Attempt.Contended,
 
+            // Admission refused the occurrence on its tenant's account, so no instance row
+            // describes it and the schedule did not fire. Counted rather than swallowed, because
+            // the two cases that reach here are both a deployment's to repair and neither is
+            // self-correcting: a schedule that names no tenant on an isolating deployment needs
+            // PerTenant on its declaration, and a tenant over its budget needs a bigger one.
+            // Reporting either as Fired would put the sweep's healthiest number on a schedule
+            // that has never run.
+            TenantErrors.TenantRequiredCode
+                or TenantErrors.CrossTenantDeniedCode
+                or TenantErrors.RateLimitedCode
+                or TenantErrors.QuotaExhaustedCode
+                or TenantErrors.SaturatedCode
+                or TenantErrors.FairnessUnavailableCode => Attempt.Failed,
+
             // The flow ran and ended badly, which is the flow's outcome and not the sweep's.
             _ => Attempt.Fired,
         };

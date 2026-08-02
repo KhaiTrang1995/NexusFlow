@@ -38,16 +38,17 @@
 > per tenant, whose pod declares `None`
 > ([ADR-0051](adr/ADR-0051-database-isolation-is-a-topology-not-a-runtime-level.md)).
 > `TenantIsolation.Schema` **is enforced** as of 2026-08-02, and at that level the outbox
-> publisher fans out across tenant schemas while the change feed is refused, because a change has
-> to start a flow in its own tenant and a change scan carries no claims to be admitted with
-> ([ADR-0052](adr/ADR-0053-the-outbox-fans-out-and-the-change-feed-cannot-yet.md)).
+> publisher and the change feed both fan out across tenant schemas
+> ([ADR-0054](adr/ADR-0054-a-platform-trigger-attests-its-tenant.md)).
 > Nothing partitions or shards the
 > journal — [11 §6](11-Distributed-Runtime.md) names sharding and stops, so building it would
 > be invention.
 >
-> A tenant source that is not a claim is also absent: a **bus or schedule trigger is refused**
-> in an isolating deployment, because the sources §3's table gives them do not exist yet. It
-> fails closed and it is the largest known gap.
+> §3's non-claim tenant sources are built: a change carries the tenant whose schema and
+> emitting instance it was read from, a bus message carries a field its publisher wrote, and
+> `[CronTrigger(PerTenant = true)]` fans out over an `ITenantDirectory`. A trigger that cannot
+> name a tenant **holds its work** rather than losing it — the change cursor does not advance
+> and the message is not acknowledged.
 
 ---
 

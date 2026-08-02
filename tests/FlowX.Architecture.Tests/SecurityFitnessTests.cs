@@ -80,6 +80,86 @@ public sealed class SecurityFitnessTests
     // ------------------------------------------------------------------ A01: access control
 
     /// <summary>
+    /// The files this repository allows to build an invocation that attests its own tenant.
+    /// </summary>
+    /// <remarks>
+    /// Exactly the three triggers with no caller, and the list is short because that is the
+    /// whole guarantee: each of them derives a tenant from something no caller can set — the
+    /// schema a change was read out of, the field a publisher wrote, the directory a schedule
+    /// was fanned out over. A transport reading a request cannot be on this list, because
+    /// everything a request carries is something its sender chose.
+    /// </remarks>
+    private static readonly string[] MayAttestATenant =
+    [
+        "src/FlowX.Hosting/FlowChangeScan.cs",
+        "src/FlowX.Hosting/FlowBusScan.cs",
+        "src/FlowX.Hosting/FlowScheduleScan.cs",
+    ];
+
+    /// <summary>
+    /// Principle P11: only a trigger with no caller may attest a tenant.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Attestation is believed without a claim behind it, which is exactly why its
+    /// call sites are enumerated.</strong> <c>ClaimTenantResolver</c> derives a tenant from
+    /// validated claims and refuses one the claims do not support; an attested invocation
+    /// bypasses that comparison, on the grounds that no caller was involved at any point in
+    /// the value's provenance. A transport that set the flag would hand every caller its own
+    /// choice of tenant — the escalation <c>tenant.cross_tenant_denied</c> exists to catch,
+    /// reintroduced one layer up and no longer catchable.
+    /// </para>
+    /// <para>
+    /// A source scan rather than a type check, because the flag is a boolean on a record
+    /// struct and nothing in the type system distinguishes the three callers from a fourth.
+    /// The scan is anchored on <c>FlowInvocation</c>'s own parameter name, so renaming the
+    /// parameter fails <see cref="TheAttestationSurveyCanStillSeeItsCallSites"/> first rather
+    /// than turning this into a vacuous pass.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void OnlyAPlatformTriggerAttestsATenant()
+    {
+        var offenders = AttestingFiles()
+            .Where(static file => !MayAttestATenant.Contains(file, StringComparer.Ordinal))
+            .ToArray();
+
+        offenders.ShouldBeEmpty(
+            "A tenant may be attested only where no caller exists to have chosen it. These " +
+            "files construct a FlowInvocation with TenantAttested: true and are not one of " +
+            "the three platform-initiated triggers (principle P11, OWASP A01, docs/16 §3):" +
+            Environment.NewLine + string.Join(Environment.NewLine, offenders));
+    }
+
+    /// <summary>
+    /// The attestation survey still finds the three call sites it is written against.
+    /// </summary>
+    /// <remarks>
+    /// The gate above passes on an empty set, and an empty set is what a renamed parameter, a
+    /// moved file or a reformatted argument list produces. Without this, "nothing attests a
+    /// tenant it should not" would become "nothing attests a tenant" and nobody would notice
+    /// until a deployment stopped starting flows.
+    /// </remarks>
+    [Fact]
+    public void TheAttestationSurveyCanStillSeeItsCallSites()
+    {
+        AttestingFiles().Order(StringComparer.Ordinal).ShouldBe(
+            MayAttestATenant.Order(StringComparer.Ordinal),
+            "the survey no longer sees the three triggers that attest a tenant, so the gate " +
+            "above is passing vacuously.");
+    }
+
+    /// <summary>Every shipping file that constructs an attesting invocation.</summary>
+    private static IReadOnlyList<string> AttestingFiles() =>
+    [
+        .. SourceSurvey.SourceFiles(SourceSurvey.ShippingTrees)
+            .Where(static file =>
+                File.ReadAllText(file.FullName)
+                    .Contains("TenantAttested: true", StringComparison.Ordinal))
+            .Select(SourceSurvey.RelativePath),
+    ];
+
+    /// <summary>
     /// Principle P11: no capability ships without an authorisation stance.
     /// </summary>
     /// <remarks>

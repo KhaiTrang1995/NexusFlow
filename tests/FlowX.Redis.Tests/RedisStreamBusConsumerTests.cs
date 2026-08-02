@@ -65,6 +65,59 @@ public sealed class RedisStreamBusConsumerTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// The tenant a publisher wrote onto an entry is the tenant the consumer reads back.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The wire is the contract, and this is the only test that can prove it.</strong>
+    /// <c>FlowBusScan</c> starts the flow in <c>BusMessage.TenantId</c>, so a publisher that
+    /// wrote the field under one name and a consumer that read another would leave every
+    /// tenanted deployment refusing every message with <c>tenant.required</c> — and every
+    /// in-memory double would still pass. Both halves are the real plugin here.
+    /// </remarks>
+    [Fact]
+    public async Task ATenantWrittenByThePublisherIsReadBackByTheConsumer()
+    {
+        var fixture = await CreateAsync();
+
+        await fixture.PublishAsync(Guid.NewGuid(), "instance-1", tenantId: "tenant-a");
+
+        var received = await fixture.Consumer.ReceiveAsync(
+            fixture.Subscription, 8, 8, TestContext.Current.CancellationToken);
+
+        received.IsSuccess.ShouldBeTrue();
+
+        received.Value
+            .SelectMany(static batch => batch.Deliveries)
+            .ShouldHaveSingleItem()
+            .Message!.TenantId
+            .ShouldBe("tenant-a");
+    }
+
+    /// <summary>An entry published without a tenant carries none, rather than an empty one.</summary>
+    /// <remarks>
+    /// The distinction admission turns on: null is "the producing deployment did not isolate"
+    /// and is refused where this one does, while an empty string would be a tenant no row can
+    /// carry and would fail somewhere further in. A field written as <c>""</c> rather than
+    /// omitted is what would produce the second.
+    /// </remarks>
+    [Fact]
+    public async Task AnEntryPublishedWithNoTenantCarriesNone()
+    {
+        var fixture = await CreateAsync();
+
+        await fixture.PublishAsync(Guid.NewGuid(), "instance-1");
+
+        var received = await fixture.Consumer.ReceiveAsync(
+            fixture.Subscription, 8, 8, TestContext.Current.CancellationToken);
+
+        received.Value
+            .SelectMany(static batch => batch.Deliveries)
+            .ShouldHaveSingleItem()
+            .Message!.TenantId
+            .ShouldBeNull();
+    }
+
+    /// <summary>
     /// The same event published twice — which is what the outbox's at-least-once produces —
     /// starts one flow.
     /// </summary>
@@ -298,7 +351,11 @@ public sealed class RedisStreamBusConsumerTests : IAsyncLifetime
         /// rather than that the publisher and the consumer do.
         /// </remarks>
         public async ValueTask PublishAsync(
-            Guid eventId, string? partitionKey, string? payload = null, string type = Topic)
+            Guid eventId,
+            string? partitionKey,
+            string? payload = null,
+            string type = Topic,
+            string? tenantId = null)
         {
             var published = await _publisher.PublishAsync(
                 [
@@ -310,6 +367,7 @@ public sealed class RedisStreamBusConsumerTests : IAsyncLifetime
                         SchemaVersion = "1.0.0",
                         PartitionKey = partitionKey,
                         PayloadJson = payload,
+                        TenantId = tenantId,
                     },
                 ],
                 TestContext.Current.CancellationToken);
