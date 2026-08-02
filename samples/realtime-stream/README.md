@@ -1,143 +1,166 @@
 # Sample — Real-time telemetry aggregation
 
-**Claim it is meant to prove:** 250 000 records/s/node with **bounded memory**
-under a deliberately slow downstream — windowing, watermarks and checkpointing are
-runtime services, not user code (budget B13, principle P9).
+**Claim proved:** windowing, watermarks, lateness and checkpointing are runtime services
+rather than user code, and the number of records this process holds stays inside a bound
+the deployment declared — however far behind the sink falls (principle P9).
 
 > [!NOTE]
-> **The engine has since been built, and the warning box after this one is kept as
-> written rather than edited.** *"There is no stream engine"* is false, and so is
-> `FLOWX1028`'s subject as that box describes it: the rule narrowed rather than being
-> deleted, and now fires on a flow declaring `Streaming` with **no `[StreamTrigger]`**
-> — a flow with no source to checkpoint, no watermark and no window. A flow that
-> declares both builds clean. The engine reads a source under a bounded channel,
-> windows on event time, starts one journaled instance per closed window and
-> checkpoints the prefix it has finished with; `plugins/FlowX.Redis` is a source and
-> `plugins/FlowX.Postgres` holds the checkpoint.
->
-> **What is left is this page's number.** 250 000 rec/s/node under a slow sink is
-> budget **B13**, and no sample, benchmark or CI job measures it — which is why this
-> directory still has no code, and why the box below is worth reading for what the
-> claim would have to survive.
+> **The throughput half of budget B13 is not proved here, and this sample ships no
+> benchmark.** 250 000 rec/s/node was this page's headline for as long as there was no
+> engine to measure. Performance work is deferred until the features are done, so what is
+> asserted instead is the property that makes throughput worth having: **bounded memory,
+> as a correctness test rather than a measurement**. A peak record count that follows a
+> declared capacity is a thing a test can prove on any machine;
+> "250 000 records a second" is a thing a benchmark measures on one.
+> See [Backpressure](#backpressure--the-property-being-demonstrated).
 
-> [!WARNING]
-> **This sample has no code, and it is the furthest from having any.**
-> `samples/realtime-stream/` is this file and nothing else. **There is no stream
-> engine**, and a flow declaring `Profile = ExecutionProfile.Streaming` says so
-> out loud: [`FLOWX1028`](../../docs/diagnostics/FLOWX1028.md) is a warning whose
-> whole subject is that the declaration reaches `ExecutionPlan` validation and the
-> manifest's `profile` field and **buys no behaviour** — nothing is checkpointed,
-> there is no window, and the flow runs once per trigger like any other. This
-> repository sets `TreatWarningsAsErrors`, so the flow below would not build
-> *inside this repository* without an `.editorconfig` downgrade carrying a
-> `FLOWX-DEBT` owner and expiry. That is deliberate: the diagnostic's own page
-> says *"no sample, test or reference application can quietly declare
-> `Streaming`."*
->
-> **The DSL is not there either.** `.Window(...)` and `.Aggregate<T>(...)` are not
-> members of `IFlowBuilder<,>`; they are a row in
-> [08 §4](../../docs/08-Flow-Definition.md#4-the-full-builder-surface)'s builder
-> table — one row, marked `Streaming` — and a sketch in
-> [09 §9](../../docs/09-Trigger-Model.md#9-stream-trigger). `[StreamTrigger]`
-> compiles and publishes `"kind": "Stream"` with its source topic — its `Window`,
-> `Lateness`, `Checkpoint` and `Parallelism` are not read into the manifest at
-> all, and nothing consumes the trigger.
->
-> | What has to exist first | Where it comes from |
-> |---|---|
-> | A stream engine: checkpoints, watermarks, window state, backpressure | **P7**, numbers **WP-110…WP-119** *reserved and unallocated* ([PLAN §6a](../../PLAN.md#6a-p4p9--what-this-plan-does-not-yet-contain)) |
-> | A design to build it from | **Does not exist.** PLAN §6a rates P7's packages as *invented* rather than recorded: nothing anywhere defines the checkpoint format, watermark generation, or how window state is journaled. One backpressure diagram and a window-semantics table are the whole of the specification |
-> | A Kafka consumer to put records in | **WP-72**, P3 ([event-driven](../event-driven/)) |
-> | Budget B13 measured at all | `StreamingBenchmarks` does not exist; [14 §8](../../docs/14-Performance.md#8-benchmark-suite-and-ci-gating) lists B13 among the budgets with **no gate**, becoming measurable at P7 |
-> | `FLOWX1028` deleted | The rule is *scheduled for deletion* when P7 lands. Its table row is the only executable-free reminder in the catalogue, and it says so |
->
-> Every number in [Benchmarks](#benchmarks) below is a **budget stated in
-> advance**, not a measurement. Read the rest as the design P7 would be held to —
-> a design that, on this repository's own assessment, is not yet complete enough
-> to write work packages against.
->
-> **The one thing on this page that is already true** is the argument in
-> [Backpressure](#backpressure--the-property-being-demonstrated): a test that
-> asserts the system *slows down* rather than that it is fast. That is the shape
-> P7's acceptance test should take, and it costs nothing to keep it written down.
+## Infrastructure
+
+`dotnet run --project samples/realtime-stream` needs two servers.
+
+| | Why | Configuration |
+|---|---|---|
+| **Redis** | The stream. `RedisStreamSource` is the only `IStreamSource` this repository ships, and it reads with `XRANGE` rather than a consumer group so the engine can re-read from its checkpoint to rebuild an open window. | `FLOWX_REDIS_CONNECTION`, else `localhost:6379` |
+| **PostgreSQL** | The journal **and** the checkpoint store. A `Streaming` flow is refused without a journal: the instance id a closed window derives is only exclusive because `flow_instance`'s primary key refuses the second start. | `FLOWX_POSTGRES_CONNECTION`, else `Host=localhost;Port=5432;…` |
+
+The application migrates its own schema at startup and produces its own telemetry, so
+there is nothing else to install and no second process to run.
+
+```bash
+FLOWX_POSTGRES_CONNECTION="Host=localhost;Port=5433;Username=postgres;Password=postgres;Database=postgres" \
+FLOWX_REDIS_CONNECTION="localhost:6399" \
+dotnet run --project samples/realtime-stream
+```
+
+```
+Window 12:01:00-12:02:00: 144 readings from 12 devices, mean 26.2 C, range 21.6-30.0 C.
+Window 12:02:00-12:03:00: 144 readings from 12 devices, mean 18.9 C, range 14.3-24.8 C.
+Late record 1785672022048-7 on 'device.telemetry': event time 11:58:20 is 00:04:50 behind
+  the watermark. Routed to the side output, not dropped.
+```
+
+The producer advances *event time* faster than the clock, so a window closes every few
+seconds rather than every minute. The engine never reads a wall clock, so this changes how
+long you wait and nothing else
+([ADR-0056](../../docs/adr/ADR-0056-the-watermark-is-observed-never-wall-clock.md)). It
+also resumes from the stream's own last event time, so running the sample twice continues
+the series instead of back-dating it.
 
 ## The flow
 
-> **Does not compile here.** `.Window(...)` and `.Aggregate<T>(...)` are not
-> members, and `Profile = ExecutionProfile.Streaming` raises `FLOWX1028`, which
-> this repository's `TreatWarningsAsErrors` turns into a build failure.
-
 ```csharp
-[Flow("telemetry.aggregate", Profile = ExecutionProfile.Streaming)]
+[Flow("telemetry.aggregate", Version = "1.0.0", Profile = ExecutionProfile.Streaming, Owner = "platform")]
 [StreamTrigger("device.telemetry",
-    Window = "tumbling:1m", Lateness = "10s", Checkpoint = "PT5S", Parallelism = 8)]
-public sealed partial class AggregateTelemetryFlow : Flow<TelemetryBatch, DeviceStats>
+    Window = "tumbling:1m", Lateness = "PT10S", Checkpoint = "PT5S", Parallelism = 8)]
+[FlowDeadline("PT60S")]
+public sealed partial class AggregateTelemetryFlow : Flow<StreamWindowBatch, DeviceStats>
 {
-    protected override void Define(IFlowBuilder<TelemetryBatch, DeviceStats> flow) => flow
-        .Window(w => w.Tumbling(TimeSpan.FromMinutes(1))
-                      .AllowLateness(TimeSpan.FromSeconds(10))
-                      .SideOutputLate<LateReading>())
-        .Aggregate<DeviceStats>((acc, reading) => acc.Add(reading))
+    protected override void Define(IFlowBuilder<StreamWindowBatch, DeviceStats> flow) => flow
+        .Step<FoldReadings>()
         .Step<DetectAnomalies>()
-        .Step<PersistAggregate>().WithPolicy(Policies.BulkWrite)
-        .Emit<AggregateComputed>();
+        .Step<PersistAggregate, AggregateToPersist>(ctx => new AggregateToPersist(
+            ctx.Get<DeviceStats>(),
+            ctx.Get<AnomalyVerdict>().IsAnomalous,
+            ctx.Get<AnomalyVerdict>().Reason))
+            .WithPolicy(Policies.BulkWrite)
+        .Emit<AggregateComputed>(ctx => /* … */)
+        .Return(ctx => ctx.Get<DeviceStats>());
 }
 ```
 
 No offset management, no watermark bookkeeping, no checkpoint code, no manual
 backpressure. Those are Stream Engine responsibilities
-([06 §10](../../docs/06-Execution-Engine.md#10-backpressure-streaming-profile)).
-*There is no Stream Engine, so today there is none of the bookkeeping and none of
-the guarantee — the declaration is a fact in a published contract and nothing
-else.* `.WithPolicy(Policies.BulkWrite)` is recorded in the plan and the manifest
-and applies nothing at run time; the forward path runs zero policies until P4.
+([06 §10](../../docs/06-Execution-Engine.md#10-backpressure-streaming-profile)). There is
+no hosted service in this project for any of it: `AddFlowXStreamSubscriptions()` is one
+generated line in `Program.cs`, written from the attribute above.
+
+### Why there is no `.Window(…)` or `.Aggregate(…)`
+
+This page used to show both. `IFlowBuilder<,>` has neither, and the shipped shape is not a
+lesser substitute for them:
+
+- **The window is *declared*, on the trigger.** `tumbling:1m` is what the flow's output
+  *means* — a deployment that could retune it would be changing the aggregate, not the
+  throughput — so it travels with the registration the compiler emits rather than with
+  host configuration. The two values that genuinely are tuning,
+  `StreamChannelCapacity` and `StreamMaxResidentRecords`, sit in `FlowXOptions` where the
+  other tuning is.
+- **The fold is a capability** (`FoldReadings`), because it is a business rule and business
+  rules live in capabilities. A builder-level `.Aggregate(acc, x => …)` would take a
+  lambda, and a lambda inside a flow definition is code the manifest cannot publish and a
+  reviewer cannot find.
+- **The interval is input, not a clock read.** It arrives on the `StreamWindowBatch` and is
+  journaled on `flow_instance.input`, which is what lets a resumed instance aggregate the
+  interval it committed to. `FLOWX1007` and `FLOWX1011` forbid the alternative, and
+  `FLOWX1042` reports a stream flow whose input contract is anything else.
+
+`Lateness` is an ISO-8601 duration (`PT10S`); only `Window` takes the short `1m` form —
+this page previously wrote `"10s"`, which `StreamWindowSpec.Read` refuses at startup.
+`DeclarationTests` now registers the declaration through `FlowStreamCatalog`, so a spelling
+the engine would refuse fails as a test rather than as somebody's deployment.
 
 ## Backpressure — the property being demonstrated
 
 ```mermaid
 flowchart LR
-    K["Kafka<br/>device.telemetry<br/>8 partitions"] --> CH["Bounded channel<br/>capacity 1024/partition"]
-    CH --> F["Flow instances<br/>degree 8"]
-    F --> DB[("Timescale")]
-    CH -. "channel full" .-> P["PAUSE partition"]
-    P -. "below low-water mark" .-> K
+    R["Redis stream<br/>device.telemetry"] --> CH["Bounded channel<br/>StreamChannelCapacity"]
+    CH --> W["Open windows<br/>StreamMaxResidentRecords"]
+    W --> F["Flow<br/>parallelism 8"]
+    F --> DB[("Aggregate store")]
+    CH -. "no room" .-> P["Issue no read"]
+    P -. "room again" .-> R
     style P fill:#ef6c00,color:#fff
 ```
 
-> **Not runnable.** `StreamTestHost` is in no file under `tests/` or
-> `src/FlowX.Testing`, and neither is `WithSlowCapability`. There is no bounded
-> channel, no partition to pause and no consumer to pause it.
+**The pause is the absence of a read, not a signal sent to a broker.** `FlowStreamScan`
+computes the room left in its channel and asks the source for nothing at all when there is
+none. A record the source was never asked for is a record in Redis rather than in this
+process, which is the only sense in which memory is bounded — a channel with
+`BoundedChannelFullMode.Wait` alone would still let an already-issued read materialise a
+whole batch.
 
 ```csharp
 [Fact]
-public async Task Slow_sink_reduces_consumption_instead_of_growing_memory()
+public async Task ASlowStoreBoundsTheRecordsThisProcessHolds()
 {
-    await using var host = await StreamTestHost.CreateAsync(cfg => cfg
-        .WithSlowCapability<PersistAggregate>(delay: TimeSpan.FromMilliseconds(50)));
+    var harness = StreamHarness.Create(channelCapacity: 16, storeCost: TimeSpan.FromMilliseconds(2));
 
-    await host.ProduceAsync(recordCount: 1_000_000);
-    await host.RunFor(TimeSpan.FromSeconds(30));
+    StageOneRecordPerWindow(harness, 600);
 
-    host.Memory.PeakBytes.Should().BeLessThan(512.Megabytes());
-    host.Kafka.PauseEvents.Should().BeGreaterThan(0);       // ← the actual assertion
-    host.Consumed.Should().BeLessThan(1_000_000);           // it slowed down, as intended
+    await harness.PassAsync(TestContext.Current.CancellationToken);
+
+    harness.Stream.PeakOutstanding.ShouldBeLessThanOrEqualTo(24);  // ← the actual assertion
+    harness.Stream.Reads.ShouldBeGreaterThan(150);                 // a few at a time, not one gulp
 }
 ```
 
-An unbounded queue would pass a throughput test and fail in production at 3 a.m.
-This test asserts the *opposite* of throughput: that the system slows down
-correctly.
+**Records, not bytes.** A record handed to the engine and not yet finished with is a record
+in this process's heap; a record still on the stream is Redis's problem. So
+`HandedOut − Consumed` is exactly the quantity the design bounds, it is an integer rather
+than an estimate, and the source samples it inside `ReadAsync` — the instant the engine is
+asking for more, which is precisely where an unbounded engine would run away. Asserting on
+`GC.GetTotalMemory` instead would give a test that fails when an unrelated allocation
+changes and passes when the bound is deleted.
+
+**The bound is what does the work, and that is asserted separately.**
+`ThePeakFollowsTheDeclaredCapacity` runs the identical workload at capacity 16 and at
+capacity 512 and requires the peak to follow it. Measured: the peak is capacity + 3 at
+every capacity tried. Replacing the reader's `capacity - channel.Reader.Count` with a bare
+`capacity` — a reader that never consults its channel — moves the tight peak from 19 to 35
+and fails both tests.
+
+An unbounded queue would pass a throughput test and fail in production at 3 a.m. These
+tests assert the *opposite* of throughput: that the system slows down correctly.
 
 ## Late data
 
 ```mermaid
 stateDiagram-v2
     [*] --> Open : first record in window
-    Open --> Closing : watermark passes window end
-    Closing --> Closed : lateness (10s) elapsed / AggregateComputed
-    Closing --> Open : late record within lateness → window updated
-    Closed --> SideOutput : late record after lateness → LateReading
-    Closed --> [*]
+    Open --> Open : record inside the lateness → window updated
+    Open --> Closed : watermark (highest event time − 10s) passes window end
+    Closed --> SideOutput : any later record → LateReading
+    Closed --> [*] : AggregateComputed
     note right of SideOutput
       Late data is routed, never silently dropped.
       Dropping late data quietly is how
@@ -145,34 +168,44 @@ stateDiagram-v2
     end note
 ```
 
-## Benchmarks
+There is no separate "closing" state: the watermark already trails the highest observed
+event time by the declared lateness, so a window that is still open **is** the window still
+accepting late records.
 
-> **Budgets, not results — and nothing measures any of them.** There is no
-> `StreamingBenchmarks` class; the filter below matches nothing.
-> [14 §8](../../docs/14-Performance.md#8-benchmark-suite-and-ci-gating) lists B13 among the budgets with no gate,
-> *"stated in advance, which is rule zero working as intended"*, becoming
-> measurable at P7.
+**Registering a side output is not optional.** A host with no `IStreamSideOutput` builds no
+stream pass at all — defaulting to a sink that discarded would be the silent drop this
+promise exists to forbid, wearing a type name. A failure in the sink holds the checkpoint,
+so the record is offered again rather than lost.
 
-| Metric | Budget | Notes |
-|---|---|---|
-| Throughput | 250 000 rec/s/node | 1 KB records, 8 partitions |
-| Peak memory | < 512 MB | under a 50 ms slow sink |
-| Checkpoint p99 | < 50 ms | every 5 s |
-| Recovery after kill | < 15 s | resumes from last checkpoint |
-| Duplicates after recovery | 0 | at-least-once + idempotent persist |
+## What is asserted
 
-```bash
-dotnet run -c Release --project ../../tests/FlowX.Benchmarks -- --filter '*Streaming*'
-```
+`tests/RealtimeStream.Tests`, driving the sample's own generated plan and dispatcher:
+
+| | |
+|---|---|
+| `BoundedMemoryTests` | The peak record count is bounded by the declared channel capacity; it follows that capacity when it changes; and a window over `StreamMaxResidentRecords` refuses rather than evicting, because an aggregate computed from part of its input is quietly wrong. |
+| `WindowingTests` | A closed window aggregates its own records only; an open one holds the checkpoint; a record past the lateness reaches `LateReading` with the watermark that refused it; one *inside* the lateness still joins its window; a window rebuilt after a node death is not aggregated twice. |
+| `CapabilityTests` | The fold, the detector and the derived store key — each constructed with `new` and called, with no engine anywhere. |
+| `DeclarationTests` | The declared window is one the engine will serve; the manifest publishes the source and none of the tuning; every capability is `Internal`, because a window has no principal. |
+
+The engine's own tests are `tests/FlowX.Hosting.Tests/StreamScanTests.cs` and
+`StreamBackpressureTests.cs`; these are about *this application* being right when the
+engine hands it a window.
 
 ## Things to try
 
-*None of these can be tried yet — there is no project, no stream engine and no
-consumer. Kept as the acceptance list P7 would be written to.*
-
-1. Set `Parallelism = 1` and watch consumer lag grow — then watch KEDA scale
-   workers on lag rather than CPU.
-2. Kill a node mid-window; the window is rebuilt from the last checkpoint, and
-   the aggregate is identical.
-3. Emit a record with a 5-minute-old timestamp — it lands in the `LateReading`
-   side output, visible in the trace.
+1. **Stop the process mid-window and start it again.** The window is rebuilt from the last
+   checkpoint, derives the same instance id, and is refused by the journal's primary key
+   rather than aggregated twice. Its aggregate is also filed under a key derived from the
+   interval, so this application would have been correct even if the journal had not caught
+   it — which is the half of exactly-once the platform cannot supply for you.
+   `WindowingTests.AWindowRebuiltAfterANodeDeathIsNotAggregatedTwice` is that, asserted.
+2. **Watch the planted late record.** After forty batches the producer writes one reading
+   five minutes behind the watermark; it lands in the side output and is logged with how
+   far behind it was.
+3. **Change `options.StreamChannelCapacity` in `Program.cs`.** Nothing about any aggregate
+   changes — it is tuning, not meaning, which is exactly why it lives there while the
+   window lives on the trigger.
+4. **Run two copies with different `FLOWX_SAMPLE_NODE`.** One holds the subscription's
+   lease and reads; the other finds it contended and waits. Two readers would each hold
+   half of every window.
