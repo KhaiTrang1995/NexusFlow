@@ -78,6 +78,24 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
     /// </remarks>
     private const string ChangeTriggerAttributeName = "FlowX.ChangeTriggerAttribute";
 
+    /// <summary>The attribute a stream subscription is declared with.</summary>
+    /// <remarks>
+    /// Matched by name for <see cref="BusTriggerAttributeNames"/>'s reason.
+    /// </remarks>
+    private const string StreamTriggerAttributeName = "FlowX.StreamTriggerAttribute";
+
+    private const string StreamWindowBatchName = "FlowX.StreamWindowBatch";
+
+    /// <summary>The prefix of the only window shape the stream engine implements.</summary>
+    /// <remarks>
+    /// Repeated here rather than read from <c>StreamWindowSpec.TumblingPrefix</c>, because this
+    /// assembly is netstandard2.0 and references no runtime assembly. The two are kept in step by
+    /// a pair of tests over the same shapes:
+    /// <c>StreamGenerationTests.AWindowShapeTheEngineDoesNotImplementIsReported</c> here and
+    /// <c>StreamWindowAssignerTests.AWindowShapeTheEngineDoesNotImplementIsRefused</c> there.
+    /// </remarks>
+    private const string TumblingPrefix = "tumbling:";
+
     private const string BusMessageName = "FlowX.BusMessage";
 
     private const string FlowBaseName = "FlowX.Flow";
@@ -88,7 +106,8 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
             FlowXDiagnostics.TriggerDeclaresNoKind,
             FlowXDiagnostics.ScheduledFlowCannotBeFired,
             FlowXDiagnostics.BusFlowCannotBeConsumed,
-            FlowXDiagnostics.ChangeFlowCannotBeObserved);
+            FlowXDiagnostics.ChangeFlowCannotBeObserved,
+            FlowXDiagnostics.StreamFlowCannotBeWindowed);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -143,7 +162,123 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
         ReportUnfireableSchedules(context, type, attributes);
         ReportUnconsumableSubscriptions(context, type, attributes);
         ReportUnobservableChangeSubscriptions(context, type, attributes);
+        ReportUnwindowableStreams(context, type, attributes);
     }
+
+    /// <summary>
+    /// Reports FLOWX1042 on each stream trigger the host would have nothing to do with.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ReportUnobservableChangeSubscriptions"/>'s shape, with one difference that is
+    /// the reason this is a separate rule rather than a widened one: two of the three reasons are
+    /// properties of the flow and the third is a property of <em>this attribute</em>. So the
+    /// window is read per attribute rather than once per flow, and a flow declaring two streams
+    /// gets a report on the one whose window this engine cannot serve and silence on the other.
+    /// </remarks>
+    private static void ReportUnwindowableStreams(
+        SymbolAnalysisContext context, INamedTypeSymbol type, ImmutableArray<AttributeData> attributes)
+    {
+        if (!attributes.Any(static a =>
+                a.AttributeClass?.ToDisplayString() == StreamTriggerAttributeName))
+        {
+            return;
+        }
+
+        var flowReason = UnwindowableFlowReason(type, attributes);
+
+        foreach (var attribute in attributes)
+        {
+            if (attribute.AttributeClass?.ToDisplayString() != StreamTriggerAttributeName)
+            {
+                continue;
+            }
+
+            var reason = flowReason ?? UnservableWindowReason(attribute);
+
+            if (reason is null)
+            {
+                continue;
+            }
+
+            context.ReportDiagnostic(Diagnostic.Create(
+                FlowXDiagnostics.StreamFlowCannotBeWindowed,
+                LocationOf(attribute, type, context.CancellationToken),
+                FlowIdOf(type, attributes),
+                reason));
+        }
+    }
+
+    /// <summary>
+    /// Why no window could start this flow, or <c>null</c> when one could.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="UnobservableReason"/>'s two conditions with both terms changed, checked in the
+    /// order an author would repair them.
+    /// </remarks>
+    private static string? UnwindowableFlowReason(
+        INamedTypeSymbol type, ImmutableArray<AttributeData> attributes)
+    {
+        if (InputOf(type) is not { } input)
+        {
+            // The base type did not resolve, so C# is already reporting something more useful
+            // about the same span and this rule would be piling on.
+            return null;
+        }
+
+        if (input.ToDisplayString() != StreamWindowBatchName)
+        {
+            return
+                $"its input contract is '{input.ToDisplayString()}' and a closed window has an " +
+                "interval and its records to give it — declare it as " +
+                "Flow<StreamWindowBatch, TOut> and deserialise each record's payload in a " +
+                "capability";
+        }
+
+        return IsStreaming(attributes)
+            ? null
+            : "it does not declare ExecutionProfile.Streaming, so nothing journals its " +
+              "instances, the instance id a window derives is inert, and — because the " +
+              "checkpoint is committed after the window's flow has run — every crash in between " +
+              "would aggregate that window a second time — declare " +
+              "Profile = ExecutionProfile.Streaming";
+    }
+
+    /// <summary>
+    /// Why this declaration's window is not one the engine serves, or <c>null</c> when it is.
+    /// </summary>
+    /// <remarks>
+    /// Only the shape family is judged, not the duration inside it: this assembly cannot call the
+    /// runtime's reader, and a rule that reimplemented duration parsing would be a second parser
+    /// to keep in step for the sake of an error <c>FlowStreamCatalog.Add</c> already gives at
+    /// startup with better words.
+    /// </remarks>
+    private static string? UnservableWindowReason(AttributeData attribute)
+    {
+        var window = attribute.NamedArguments
+            .Where(static pair => pair.Key == "Window")
+            .Select(static pair => pair.Value.Value as string)
+            .FirstOrDefault();
+
+        if (window is null)
+        {
+            // Window is `required`, so C# has already reported its absence.
+            return null;
+        }
+
+        return window.StartsWith(TumblingPrefix, System.StringComparison.Ordinal)
+            ? null
+            : $"its window is '{window}' and this engine implements tumbling windows only — a " +
+              "sliding or session window assigns a record to a window whose bounds are not a " +
+              "function of the event time alone, so a window rebuilt after a crash would not " +
+              "derive the id that deduplicates it, and a global window is never closed by a " +
+              "watermark so nothing would ever run — declare Window = \"tumbling:<duration>\"";
+    }
+
+    /// <summary>Whether the flow declares <c>Profile = ExecutionProfile.Streaming</c>.</summary>
+    private static bool IsStreaming(ImmutableArray<AttributeData> attributes) => attributes
+        .Where(static a => a.AttributeClass?.ToDisplayString() == FlowAttributeName)
+        .SelectMany(static a => a.NamedArguments)
+        .Any(static pair => pair.Key == "Profile" && pair.Value.Value is int profile && profile == 2);
 
     /// <summary>
     /// Reports FLOWX1041 on each change trigger the host would have nothing to do with.

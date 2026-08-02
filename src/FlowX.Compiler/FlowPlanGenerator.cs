@@ -88,6 +88,12 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     private const string ChangeRegistrationName = "FlowX.Hosting.FlowChangeSubscriptionRegistration";
 
     /// <summary>
+    /// The host type a stream-subscription registration calls, looked up by name for
+    /// <see cref="BusRegistrationName"/>'s reason.
+    /// </summary>
+    private const string StreamRegistrationName = "FlowX.Hosting.FlowStreamSubscriptionRegistration";
+
+    /// <summary>
     /// The one thing this generator knows about the agent surface: a name to look for.
     /// </summary>
     /// <remarks>
@@ -255,6 +261,22 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
             {
                 var (((analysed, declared), available), assembly) = data;
                 ProduceChangeSubscriptions(production, analysed, declared, available, assembly);
+            });
+
+        // Whether this compilation can register a stream subscription at all, expressed as one
+        // bool for the reason httpAvailable is.
+        var streamAvailable = context.CompilationProvider.Select(
+            static (compilation, _) => compilation.GetTypeByMetadataName(StreamRegistrationName) is not null);
+
+        context.RegisterSourceOutput(
+            flows.Collect()
+                .Combine(triggers.Collect())
+                .Combine(streamAvailable)
+                .Combine(application),
+            static (production, data) =>
+            {
+                var (((analysed, declared), available), assembly) = data;
+                ProduceStreamSubscriptions(production, analysed, declared, available, assembly);
             });
 
         // Whether this compilation can bind an agent tool at all, expressed as one bool for the
@@ -573,6 +595,137 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     private static bool CanBeConsumed(FlowModel flow) =>
         string.Equals(flow.InputTypeName, "FlowX.BusMessage", StringComparison.Ordinal) &&
         string.Equals(flow.Profile, "Durable", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Emits one registration per <c>[StreamTrigger]</c> the host can actually read, or nothing
+    /// at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ProduceChangeSubscriptions"/>'s shape and its reasons. The three conditions are
+    /// reported by <c>TriggerDeclarationAnalyzer</c> as <c>FLOWX1042</c> rather than here, for
+    /// that method's reason: the analyzer has the attribute's own span.
+    /// </para>
+    /// <para>
+    /// <strong>The window shape is one of the three, which is what makes this different from the
+    /// other transports.</strong> A bus or a change registration is refused for a property of the
+    /// <em>flow</em>; a stream registration is also refused for a property of the
+    /// <em>declaration</em> — <c>Window = "session:5m"</c> names a shape this engine does not
+    /// implement. Emitting a registration for it and letting <c>FlowStreamCatalog.Add</c> throw
+    /// at startup would turn a build error into a deployment failure.
+    /// </para>
+    /// </remarks>
+    private static void ProduceStreamSubscriptions(
+        SourceProductionContext production,
+        ImmutableArray<AnalysisResult?> results,
+        ImmutableArray<FlowTriggersModel?> triggers,
+        bool streamAvailable,
+        string assemblyName)
+    {
+        if (!streamAvailable)
+        {
+            return;
+        }
+
+        var declared = triggers
+            .Where(static t => t is not null)
+            .GroupBy(static t => t!.FlowId, StringComparer.Ordinal)
+            .ToDictionary(static g => g.Key, static g => g.First()!, StringComparer.Ordinal);
+
+        var models = results
+            .Where(static r => r is { IsSuccess: true, Model: not null })
+            .Select(static r => r!.Model!)
+            .OrderBy(static m => m.FlowId, StringComparer.Ordinal)
+            .ToList();
+
+        var subscriptions = new List<StreamSubscriptionModel>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var flow in models)
+        {
+            if (!declared.TryGetValue(flow.FlowId, out var flowTriggers) || !CanBeWindowed(flow))
+            {
+                continue;
+            }
+
+            foreach (var trigger in flowTriggers.Triggers.Where(IsStreamAddress))
+            {
+                var stream = flowTriggers.Streams
+                    .FirstOrDefault(s => string.Equals(s.Source, trigger.Topic, StringComparison.Ordinal));
+
+                if (stream is null || !IsWindowShapeThisEngineImplements(stream.Window))
+                {
+                    continue;
+                }
+
+                subscriptions.Add(new StreamSubscriptionModel(
+                    flow.FlowId,
+                    flow.FullTypeName,
+                    StreamSubscriptionMethodName(flow.TypeName, names),
+                    trigger.Topic!,
+                    stream.Window,
+                    stream.Lateness,
+                    stream.Checkpoint,
+                    stream.Parallelism));
+            }
+        }
+
+        if (subscriptions.Count > 0)
+        {
+            production.AddSource(
+                StreamEmitter.FileName,
+                SourceText.From(StreamEmitter.Emit(assemblyName, subscriptions), Encoding.UTF8));
+        }
+    }
+
+    /// <summary>A flow a closed window can start.</summary>
+    /// <remarks>
+    /// <see cref="CanBeConsumed"/>'s two conditions with both terms changed. A window hands the
+    /// flow an interval and its records, so the input must be <c>StreamWindowBatch</c>; and the
+    /// checkpoint is committed after the window's flow has run, so only a journaled instance has
+    /// a primary key to refuse the rebuild a crash forces — which for a stream is the
+    /// <c>Streaming</c> profile specifically, because that is the one line that says this flow's
+    /// input is a window.
+    /// </remarks>
+    private static bool CanBeWindowed(FlowModel flow) =>
+        string.Equals(flow.InputTypeName, "FlowX.StreamWindowBatch", StringComparison.Ordinal) &&
+        string.Equals(flow.Profile, "Streaming", StringComparison.Ordinal);
+
+    /// <summary>A stream trigger this build could read an address off.</summary>
+    private static bool IsStreamAddress(TriggerModel trigger) =>
+        string.Equals(trigger.Kind, "Stream", StringComparison.Ordinal) &&
+        !string.IsNullOrEmpty(trigger.Topic);
+
+    /// <summary>
+    /// Whether the declared window is the one shape the stream engine implements.
+    /// </summary>
+    /// <remarks>
+    /// <strong>A prefix test, and deliberately weaker than <c>StreamWindowSpec.Read</c>.</strong>
+    /// This assembly is netstandard2.0 and references no runtime assembly, so the real reader is
+    /// not callable here and duplicating it would be a second parser to keep in step. What this
+    /// has to get right is the half that decides whether a registration is emitted at all —
+    /// which shape family was named — and <c>tumbling:</c> is that whole question. A malformed
+    /// duration inside a tumbling window still reaches <c>FlowStreamCatalog.Add</c>, which
+    /// refuses it at startup with the reader's own message.
+    /// </remarks>
+    private static bool IsWindowShapeThisEngineImplements(string window) =>
+        window.StartsWith("tumbling:", StringComparison.Ordinal);
+
+    /// <summary>The extension method one stream subscription is registered by.</summary>
+    private static string StreamSubscriptionMethodName(string typeName, HashSet<string> taken)
+    {
+        var candidate = "Add" + typeName + "StreamSubscription";
+        var suffix = 2;
+
+        while (!taken.Add(candidate))
+        {
+            candidate = "Add" + typeName + "StreamSubscription" +
+                        suffix.ToString(CultureInfo.InvariantCulture);
+            suffix++;
+        }
+
+        return candidate;
+    }
 
     /// <summary>A bus trigger this build could read an address off.</summary>
     /// <remarks>
@@ -1015,7 +1168,11 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
         var attribute = context.Attributes.FirstOrDefault(a => a.ConstructorArguments.Length > 0);
         var flowId = attribute?.ConstructorArguments[0].Value as string ?? symbol.Name;
 
-        return new FlowTriggersModel(flowId, declared, TriggerReader.ReadSchedules(symbol));
+        return new FlowTriggersModel(
+            flowId,
+            declared,
+            TriggerReader.ReadSchedules(symbol),
+            TriggerReader.ReadStreams(symbol));
     }
 
     private static void ProduceManifest(

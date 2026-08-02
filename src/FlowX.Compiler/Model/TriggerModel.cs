@@ -154,6 +154,28 @@ public sealed class TriggerModel : IEquatable<TriggerModel>
 /// </remarks>
 public sealed record ScheduleDeclaration(string Cron, string MissedFire, bool PerTenant = false);
 
+/// <summary>
+/// The part of a <c>[StreamTrigger]</c> the manifest deliberately does not publish.
+/// </summary>
+/// <param name="Source">
+/// The stream, which is <em>not</em> carried for the registration to use — that comes off the
+/// <see cref="TriggerModel"/> the manifest published — but as the key that joins this declaration
+/// back to it. A flow may declare several streams.
+/// </param>
+/// <param name="Window">The declared window, e.g. <c>tumbling:1m</c>.</param>
+/// <param name="Lateness">The declared lateness, an ISO-8601 duration.</param>
+/// <param name="Checkpoint">The declared checkpoint interval, an ISO-8601 duration.</param>
+/// <param name="Parallelism">How many closed windows may have flows running at once.</param>
+/// <remarks>
+/// <see cref="ScheduleDeclaration"/>'s arrangement and its reason.
+/// <see cref="TriggerModel"/>'s own remarks name "a stream trigger's <c>Checkpoint</c>" as the
+/// example of operational tuning that is deliberately absent from the manifest — so these four
+/// reach the generated registration without reaching the published contract, and the schema's
+/// <c>trigger</c> object is unchanged.
+/// </remarks>
+public sealed record StreamDeclaration(
+    string Source, string Window, string Lateness, string Checkpoint, int Parallelism);
+
 /// <summary>Every trigger one flow declares, keyed by the flow's business identity.</summary>
 /// <remarks>
 /// <para>
@@ -177,16 +199,21 @@ public sealed class FlowTriggersModel : IEquatable<FlowTriggersModel>
     /// The unpublished half of each <c>[CronTrigger]</c>, in declaration order. Empty for a flow
     /// that declares no schedule, which is most of them.
     /// </param>
+    /// <param name="streams">
+    /// The unpublished half of each <c>[StreamTrigger]</c>, in declaration order.
+    /// </param>
     public FlowTriggersModel(
         string flowId,
         IReadOnlyList<TriggerModel> triggers,
-        IReadOnlyList<ScheduleDeclaration>? schedules = null)
+        IReadOnlyList<ScheduleDeclaration>? schedules = null,
+        IReadOnlyList<StreamDeclaration>? streams = null)
     {
         FlowId = flowId;
         Triggers = triggers
             .OrderBy(t => t.SortKey, StringComparer.Ordinal)
             .ToList();
         Schedules = schedules ?? Array.Empty<ScheduleDeclaration>();
+        Streams = streams ?? Array.Empty<StreamDeclaration>();
     }
 
     /// <summary>Business identity of the flow these triggers start.</summary>
@@ -198,6 +225,9 @@ public sealed class FlowTriggersModel : IEquatable<FlowTriggersModel>
     /// <summary>What each <c>[CronTrigger]</c> declares that the manifest does not carry.</summary>
     public IReadOnlyList<ScheduleDeclaration> Schedules { get; }
 
+    /// <summary>What each <c>[StreamTrigger]</c> declares that the manifest does not carry.</summary>
+    public IReadOnlyList<StreamDeclaration> Streams { get; }
+
     /// <inheritdoc />
     public bool Equals(FlowTriggersModel? other) =>
         other is not null
@@ -205,7 +235,9 @@ public sealed class FlowTriggersModel : IEquatable<FlowTriggersModel>
         && Triggers.Count == other.Triggers.Count
         && Triggers.SequenceEqual(other.Triggers)
         && Schedules.Count == other.Schedules.Count
-        && Schedules.SequenceEqual(other.Schedules);
+        && Schedules.SequenceEqual(other.Schedules)
+        && Streams.Count == other.Streams.Count
+        && Streams.SequenceEqual(other.Streams);
 
     /// <inheritdoc />
     public override bool Equals(object? obj) => Equals(obj as FlowTriggersModel);

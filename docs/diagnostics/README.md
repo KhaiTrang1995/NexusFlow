@@ -339,6 +339,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1039](FLOWX1039.md) | Bus-triggered flow cannot be consumed | **A published `topic` with no subscription registered behind it: a flow that cannot bind the message and is never started, or an ephemeral one started again on every redelivery — with no error, no duplicate row and nothing anywhere to count** |
 | [FLOWX1040](FLOWX1040.md) | `Idempotency` is declared on a flow whose result cannot be recorded without redaction | **A replayed transfer answering with an IBAN of `[redacted]` and a `200`: the second caller's money moves to a placeholder, every step reports success, and nothing anywhere says a value was fabricated** |
 | [FLOWX1041](FLOWX1041.md) | Change-triggered flow cannot be observed | **A published change subscription with nothing registered behind it: a flow that cannot bind the change and is never started, or an ephemeral one started again every time the cursor is re-read from an uncommitted position — with no error, no duplicate row and nothing anywhere to count** |
+| [FLOWX1042](FLOWX1042.md) | Stream-triggered flow cannot be windowed | **A published stream subscription with nothing registered behind it: a flow that cannot bind a window, a non-`Streaming` one whose rebuilt window aggregates a second time after every crash, or a window shape the engine does not implement — a stream nobody reads, and nothing anywhere saying why** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -557,7 +558,17 @@ change trigger, and a suppression of one must not silence the other.
 **not** the rule that refuses a flow whose change source is a type it emits — that is a
 registration-time refusal in `FlowChangeCatalog.Add`, because the emitted types are in the
 `ExecutionPlan` and reading them there reads the artifact that will run.
-The next is `FLOWX1042`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1042` is claimed** — *stream-triggered flow cannot be windowed*: a `[StreamTrigger]` the
+generator cannot turn into a stream-subscription registration. Two of its three reasons are
+`FLOWX1041`'s with the terms changed — the input contract is not `StreamWindowBatch`, or the flow
+is not `Streaming`, whose consequence is that the window a crash forces the engine to rebuild is
+aggregated a second time rather than refused. The third has no precedent: the declared window is a
+shape the engine does not implement, which is a property of the attribute rather than of the flow.
+[ADR-0055](../adr/ADR-0055-a-window-names-the-instance-it-starts.md) is the decision, and it is
+why only tumbling windows survive. It is an **error** where `FLOWX1028` is a warning, and the
+difference is that every one of these three has a fix that produces a flow the engine runs today.
+
+The next is `FLOWX1043`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

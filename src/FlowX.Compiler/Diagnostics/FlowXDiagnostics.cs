@@ -793,12 +793,13 @@ public static class FlowXDiagnostics
     /// <remarks>
     /// <para>
     /// <strong>A scaffold for a missing phase, not a rule about the source.</strong>
-    /// <c>Streaming</c> has no engine at all: a flow that declares it executes on the
-    /// ephemeral path, with no checkpointed offsets, no windowing, no watermarks and no
-    /// backpressure. The profile reaches an <c>ExecutionPlan</c> validation and the
-    /// <c>profile</c> field of <c>flowx.manifest.json</c>, and stops there — so the
-    /// declaration produces a fact in a published contract and no behaviour, and without this
-    /// rule nothing would say so.
+    /// <em>This paragraph said <c>Streaming</c> has no engine at all. P7 built one, and the
+    /// rule narrowed a second time rather than being deleted:</em> a flow declaring the profile
+    /// and no <c>[StreamTrigger]</c> has no source to checkpoint, no watermark and no window,
+    /// and its instances are journaled per invocation like a <c>Durable</c> flow's while the
+    /// manifest says <c>Streaming</c>. The declaration produces a cost and a fact in a published
+    /// contract, and none of the behaviour it names, and without this rule nothing would say so.
+    /// <see cref="StreamFlowCannotBeWindowed"/> covers the declarations that do bind.
     /// </para>
     /// <para>
     /// <strong>This rule was narrowed rather than deleted, and the distinction matters.</strong>
@@ -836,20 +837,21 @@ public static class FlowXDiagnostics
     public static readonly DiagnosticDescriptor ProfileIsNotHonouredByTheRuntime = Create(
         "FLOWX1028",
         "Execution profile is declared but not honoured by the runtime",
-        "Flow '{0}' declares Profile = ExecutionProfile.{1}, which the runtime does not " +
-        "implement: this flow executes on the ephemeral engine",
-        "Streaming has no engine at all, so a flow declared Streaming gets the ephemeral one " +
-        "with a different word in the manifest — no checkpointed offsets, no windowing, no " +
-        "watermarks, no backpressure. Keep the declaration: it is the design decision " +
-        "ADR-0003 asks you to make, it is what P7 will honour, and changing it to Ephemeral " +
-        "to silence this warning would delete the record of what this flow needs while " +
-        "changing nothing about how it runs. Instead, confirm that running this flow on the " +
-        "ephemeral engine is survivable until the stream engine ships, and if it is, " +
-        "downgrade this rule in .editorconfig with a FLOWX-DEBT marker. If it is not, this " +
-        "flow cannot ship on this release. Durable no longer reports here: WP-52 made the " +
-        "runtime journal a durable flow's step boundaries, so the declaration is honoured. " +
-        "This rule is deleted, not fixed: it goes away when the runtime implements the " +
-        "remaining profile.",
+        "Flow '{0}' declares Profile = ExecutionProfile.{1} and no [StreamTrigger], so nothing " +
+        "starts it from a stream and the profile buys it nothing",
+        "Streaming is what a stream trigger's flow declares: the engine reads the source under " +
+        "a bounded channel, windows it on event time, starts one journaled instance per closed " +
+        "window and checkpoints the prefix it has finished with. A flow with no [StreamTrigger] " +
+        "gets none of that — no source to checkpoint, no watermark, no window — and it is " +
+        "journaled per invocation like a Durable flow while the manifest says Streaming, so it " +
+        "pays the cost and buys nothing. Add a [StreamTrigger] and declare the flow as " +
+        "Flow<StreamWindowBatch, TOut>; FLOWX1042 reports a binding this engine cannot serve. " +
+        "Do not silence this by writing Ephemeral: ADR-0003 makes the profile a design " +
+        "decision, and erasing it deletes the record of what this flow needs. If the flow is " +
+        "correct as an independent per-invocation execution, downgrade this rule in " +
+        ".editorconfig with a FLOWX-DEBT marker. Durable stopped reporting here at WP-52 and " +
+        "bound Streaming stopped at P7; this rule is deleted, not fixed, and what is left of " +
+        "it is a profile declared where no stream can honour it.",
         DiagnosticSeverity.Warning);
 
     /// <summary>
@@ -1263,6 +1265,58 @@ public static class FlowXDiagnostics
         "that observes nothing.",
         DiagnosticSeverity.Error);
 
+    /// <summary>
+    /// FLOWX1042: a flow declares a stream trigger that nothing could window.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><see cref="ChangeFlowCannotBeObserved"/>'s rule, one transport over</strong>, and a
+    /// separate id rather than a widened one for that rule's own reason: a suppression is per id,
+    /// and a flow may declare a stream trigger beside another kind.
+    /// </para>
+    /// <para>
+    /// <strong>Three reasons, and the third is new.</strong> The first two are the familiar pair —
+    /// the input must be what the transport can supply, and the profile must be one that journals
+    /// — with <c>StreamWindowBatch</c> and <c>Streaming</c> in place of <c>BusMessage</c> and
+    /// <c>Durable</c>. The third is a property of the declaration rather than of the flow: this
+    /// engine implements tumbling windows and refuses the other three shapes docs/09 §9's table
+    /// names, because a sliding or session window's bounds are not a function of the event time
+    /// alone — so a window rebuilt after a crash would not derive the id that deduplicates it
+    /// (<a href="../adr/ADR-0055-a-window-names-the-instance-it-starts.md">ADR-0055</a>) — and a
+    /// global window is never closed by a watermark.
+    /// </para>
+    /// <para>
+    /// <strong>An error rather than a warning, unlike <see cref="ProfileIsNotHonouredByTheRuntime"/>.</strong>
+    /// That rule is a warning because its only fix erases a declaration the platform will one day
+    /// honour, and there was nothing else the author could do. Here there is: every one of the
+    /// three reasons has a fix that produces a flow this engine runs today. A declaration that is
+    /// refused emits no registration, so an error is the difference between a build that stops
+    /// and a deployment where a stream is never read and nothing says why.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor StreamFlowCannotBeWindowed = Create(
+        "FLOWX1042",
+        "Stream-triggered flow cannot be windowed",
+        "Flow '{0}' declares a stream trigger and no subscription is registered for it: {1}",
+        "A [StreamTrigger] is turned into a stream-subscription registration by the same " +
+        "reading of the attribute that produces the manifest's triggers block, so a declared " +
+        "subscription and a served one cannot disagree — but only for a declaration this engine " +
+        "can serve. Three things stop it. A flow whose input contract is not " +
+        "FlowX.StreamWindowBatch has nothing to bind: a closed window has an interval and its " +
+        "records to give, and each record's body is undeserialised because turning it into a " +
+        "typed contract needs a JsonTypeInfo only generated code can name. A flow that does not " +
+        "declare ExecutionProfile.Streaming journals no instance, so the id a window derives is " +
+        "inert and there is no primary key to refuse a rebuild: because the checkpoint is " +
+        "committed after the window's flow has run, every crash in between aggregates that " +
+        "window a second time. And a window that is not tumbling:<duration> is a shape this " +
+        "engine does not implement — sliding and session windows assign a record to a window " +
+        "whose bounds are not a function of the event time alone, so a rebuilt window would not " +
+        "derive the id that deduplicates it, and a global window is never closed by a watermark " +
+        "so the checkpoint would never advance. There is no suppression that makes any of the " +
+        "three work: the generator emits no registration either way, so what a suppression buys " +
+        "is a manifest publishing a stream subscription and a host that reads nothing.",
+        DiagnosticSeverity.Error);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1300,7 +1354,8 @@ public static class FlowXDiagnostics
         PolicySetCannotBeRead,
         ScheduledFlowCannotBeFired,
         BusFlowCannotBeConsumed,
-        ChangeFlowCannotBeObserved);
+        ChangeFlowCannotBeObserved,
+        StreamFlowCannotBeWindowed);
 
     private static DiagnosticDescriptor Create(
         string id,

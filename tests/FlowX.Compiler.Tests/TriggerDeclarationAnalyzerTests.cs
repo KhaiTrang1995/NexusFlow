@@ -279,9 +279,11 @@ public sealed class TriggerDeclarationAnalyzerTests
             [AgentTrigger(Description = "Place a customer order", Confirmation = ConfirmationMode.Always)]
             """))
             .ShouldBe(
-                ["FLOWX1038", "FLOWX1039"],
+                ["FLOWX1038", "FLOWX1039", "FLOWX1042"],
                 "no trigger here fails to declare its kind; what is reported is that one flow " +
-                "cannot bind both a caller's payload and the platform's, twice over");
+                "cannot bind both a caller's payload and the platform's — three times over now " +
+                "that a stream is bound, because a closed window is a third payload the " +
+                "platform supplies and it needs a profile of its own besides");
     }
 
     [Fact]
@@ -343,7 +345,7 @@ public sealed class TriggerDeclarationAnalyzerTests
     {
         new TriggerDeclarationAnalyzer().SupportedDiagnostics
             .Select(static d => d.Id)
-            .ShouldBe(["FLOWX1025", "FLOWX1038", "FLOWX1039", "FLOWX1041"]);
+            .ShouldBe(["FLOWX1025", "FLOWX1038", "FLOWX1039", "FLOWX1041", "FLOWX1042"]);
     }
 
     /// <summary>
