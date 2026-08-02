@@ -4,6 +4,24 @@
 overlap policy, missed-fire recovery, per-tenant fan-out and DST correctness are
 platform services, not job-framework glue.
 
+> [!NOTE]
+> **The scheduler has since been built, and the warning box after this one is kept
+> as written rather than edited.** *"There is no scheduler"* is false. A
+> `[CronTrigger]` generates a registration, every node computes the same occurrence,
+> and every node derives the same instance id from it — so a firing happens once
+> across a cluster because the lease store and then the journal's primary key refuse
+> the losers, which is leader election's outcome without a leader
+> ([ADR-0031](../../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md)).
+> A firing that fell due while every node was down happens late.
+>
+> `samples/workflow`'s `offer.window.close` is that, running: no route, no hosted
+> service, and no line in its `Program.cs` naming a time. `tests/Workflow.Tests/ScheduleTests`
+> is where three replicas over one PostgreSQL are held to six firings rather than
+> eighteen. `PerTenant` fan-out is served too, over the tenant registry at L2.
+>
+> **What is left is this page's larger claim**: `Overlap`, `MissedFire` and `Jitter`
+> as declared options, and DST correctness stated rather than assumed.
+
 > [!WARNING]
 > **This sample has no code.** `samples/scheduler/` is this file and nothing else.
 > **There is no scheduler.** Nothing anywhere in `src/` or `plugins/` reads a cron

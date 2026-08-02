@@ -4,6 +4,27 @@
 surface with **no parallel permission system** — it can only do what its identity
 is authorised to do, and confirmation prompts state the real consequences.
 
+> [!NOTE]
+> **The surface below has since been built, and the warning box after this one is
+> kept as written rather than edited.** `plugins/FlowX.Mcp` serves `initialize`,
+> `tools/list` and `tools/call` over MCP's Streamable HTTP transport;
+> `[AgentTrigger]` generates a binding per flow; `tools/list` is a projection of
+> `flowx.manifest.json` rather than a second description. The sentence that box
+> quotes from 13-AI-Native — *"nothing serves it — no agent can invoke anything"* —
+> is false, and so is *"there is no MCP anywhere in this repository"*.
+>
+> **The claim in bold at the top of this page is the part that is now provable, and
+> it is proved elsewhere.** `samples/ecommerce` publishes `order.place` as the tool
+> `order_place` beside its HTTP endpoint, and
+> `AgentSurfaceTests.OneStanceRefusesTheSameCallerOnBothTransports` asserts that the
+> same token is refused at the same step with the same error code down both — which
+> is "no parallel permission system" as a test rather than as an intention.
+> `dotnet new flowx` ships the same pair, and `templates/verify.sh` drives it.
+>
+> What this sample would still add is everything below that is *not* the action
+> surface: sampling, elicitation, a resource surface, and confirmation prompts that
+> state consequences. The manifest carries `confirmationRequired`; nothing prompts.
+
 > [!WARNING]
 > **This sample has no code.** `samples/ai-agent/` is this file and nothing else,
 > and [13-AI-Native](../../docs/13-AI-Native.md) states the gap in one sentence:

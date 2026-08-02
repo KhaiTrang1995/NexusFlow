@@ -140,7 +140,9 @@ public sealed partial class ProvisionWorkspaceFlow : Flow<ProvisionWorkspace, Wo
 | `Emit` | `employee.onboarded` | `ManifestTests.TheEventIsPublishedWithoutASuppression`, and the outbox row in [§5](#5-what-it-actually-does-when-you-run-it) |
 | `Durable` + `[FlowDeadline]` | all three flows | `TimeoutTests`, `ResumeTests` |
 | `AwaitSignal` | not here — `offer.accept`, the third flow, is where the wait is | `SuspensionTests`, and [§2](#2-the-wait-what-it-used-to-do-instead-and-what-is-still-missing) |
-| `OnTimeout` | **absent** | [§2](#2-the-wait-what-it-used-to-do-instead-and-what-is-still-missing) |
+| `OnTimeout` | `offer.accept`, guarding the countersignature wait. *This row read **absent** until WP-63's second half* | `TimeoutTests`, and [§2](#2-the-wait-what-it-used-to-do-instead-and-what-is-still-missing) |
+| `Delay` | `offer.accept`, the settling period after the signature | `TimeoutTests`, `ResumeTests` |
+| `Authorization` | every capability; six permissions, and `Internal` on the scheduled one | `AuthenticationTests` |
 
 The nesting is the part a table cannot show: the loop contains a conditional whose two arms
 meet, the fork's branches carry their own compensations, and the child is composed from the

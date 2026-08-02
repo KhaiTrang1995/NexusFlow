@@ -33,11 +33,11 @@ templates/local-feed.sh                       # pre-release only
 dotnet new install templates/FlowX.Templates
 ```
 
-`local-feed.sh` packs seven packages into `.artifacts/local-feed` and registers it as a
+`local-feed.sh` packs eight packages into `.artifacts/local-feed` and registers it as a
 NuGet source. The day the packages publish, that line disappears and nothing else changes —
 the generated project already references FlowX as ordinary `PackageReference`s.
 `templates/local-feed.sh --remove` undoes it. The details, including why the script evicts
-those seven ids from the NuGet cache before packing, are in
+those eight ids from the NuGet cache before packing, are in
 [templates/README.md](../templates/README.md).
 
 ---
@@ -64,14 +64,14 @@ Build succeeded.
     0 Error(s)
 ```
 
-Seven files: five of C#, the project file, and a README.
+Eight files: six of C#, the project file, and a README.
 
 | File | What it holds |
 |---|---|
 | `Contracts.cs` | The records on the wire and between steps. No behaviour. |
 | `Capabilities.cs` | Two capabilities and the one port they depend on. All the business rules. |
-| `OpenTicketFlow.cs` | The control flow: order, and where recovery would go. |
-| `Program.cs` | Composition. Registrations, and `MapFlowX()` for every declared endpoint. |
+| `OpenTicketFlow.cs` | The control flow: order, and where recovery would go. Two triggers on it. |
+| `Program.cs` | Composition. Registrations, `MapFlowX()` for every declared endpoint and `MapFlowXMcp()` for the agent surface. |
 | `Infrastructure.cs` | The in-memory adapter and the JSON serialiser context. |
 | `Authentication.cs` | Two demonstration tokens. A stand-in for your identity provider. |
 
@@ -110,7 +110,11 @@ header and you get `403` with `authorization.not_authenticated` instead. Send
 caller does not hold it. Both tokens are constants in `Authentication.cs`, which is a stand-in
 for an identity provider and is meant to be replaced by `AddJwtBearer`; §12 says what that
 costs. The stance lives on the capability rather than the route, so it holds however the flow
-is triggered.
+is triggered — and the generated project proves that rather than asserting it, because
+`OpenTicketFlow` also carries an `[AgentTrigger]`. The same flow is the MCP tool
+`ticket_open` at `POST /mcp`, and `reader-token` is refused there by `ticket.record` with the
+same `authorization.permission_denied`. Two transports, one decision, and no rule attached to
+either of them.
 
 **A business failure is not an exception.** Post a blank subject and you get RFC 7807
 problem details carrying the code the capability returned:
@@ -1069,10 +1073,16 @@ its input — [`FLOWX1006`](diagnostics/FLOWX1006.md) asks for exactly that one 
 `tests/Ecommerce.Tests/EmitStartsAFlowTests.cs` runs it against a real PostgreSQL and a real
 Redis.
 
-**No telemetry.** Not "partial", not "basic" — none. There is no `ActivitySource` and no
-`Meter` anywhere under `src/`. No spans, no metrics, no structured log scope.
-[12-Observability](12-Observability.md) describes the intended design; the code emits
-nothing, so plan on your own instrumentation inside capabilities.
+**Telemetry, on all three signals.** *This paragraph read "No telemetry. Not 'partial', not
+'basic' — none. There is no `ActivitySource` and no `Meter` anywhere under `src/`."* There
+are both, and a log bridge: FlowX emits spans per flow and per step and metrics through an
+`ActivitySource` and a `Meter` both named `FlowX`, which is the seam an OpenTelemetry SDK
+attaches to with `AddSource("FlowX")` and `AddMeter("FlowX")`. `FlowXLogBridge` puts the
+flow, the step and the correlation id into a log scope, and a `[Sensitive]` member reaches
+that sink redacted like every other `JournalPayload` exit. Nothing allocates per step until
+something is listening, which is budget **B6**. `samples/ecommerce/Telemetry.cs` is a
+hand-written collector — spans to the console, Prometheus text at `/metrics` — written that
+way because that project is published with NativeAOT and takes no SDK reference.
 
 **All nine policy kinds execute.** `PolicySet` has `Retry`, `Timeout`, `CircuitBreaker`,
 `Bulkhead`, `Cache`, `RateLimit`, `Idempotency`, `Audit` and `CompensationRetry`, and every
@@ -1094,11 +1104,14 @@ unconsulted cache costs latency and never correctness.
 **And four things you may expect around a policy are missing.** There is no `[Timeout]`,
 `[Retry]` or `[CircuitBreaker]` attribute — a policy attaches through `.WithPolicy(...)` on
 a step and nowhere else; there is no flow-level policy surface; there is no runtime
-configuration that reaches a policy parameter; and no policy emits a metric, because there
-is no metrics infrastructure at all (see the paragraph above). A breaker that opens does so
-silently.
+configuration that reaches a policy parameter. *The fourth item here read "no policy emits a
+metric, because there is no metrics infrastructure at all … a breaker that opens does so
+silently". Both halves are false*: all seven metrics
+[10 §9](10-Policy-Framework.md) specifies are emitted, including
+`flowx_circuit_state` when a breaker opens and `flowx_policy_invocations_total` as the
+denominator without which the rest have no scale.
 
-**Waits work; there is no scheduler engine behind them.** A `Durable` flow that reaches an
+**Waits work, and a schedule fires them without a scheduler process.** A `Durable` flow that reaches an
 `AwaitSignal<TSignal>(timeout)` or a `Delay(duration)` **suspends**: the invocation returns,
 the instance is `Suspended` in the journal at its resume frontier holding no thread and no
 lease, and it records which wait it is parked at and when it is due. `FlowHost.SignalAsync`
@@ -1112,19 +1125,31 @@ costs you:** a wait is a lower bound, because it is resolved by a sweep —
 still refused outright by `FLOWX1026`, and an inline composed child that suspends is refused
 at run time — give a flow that waits its own trigger, or compose it `Detached`.
 
-**No multi-tenancy.** `TenantId` is read from validated claims at the HTTP boundary and
-carried on the flow context. **Nothing consumes it**: no admission control, no quota, no
-rate limit, no journal partitioning, no cache keying, no residency. Every isolation level in
-[16-Multi-Tenant](16-Multi-Tenant.md) is currently the same level, and it is "none enforced
-by the platform". An application on FlowX today must scope tenants inside its own
-capabilities.
+*This paragraph's heading read "there is no scheduler engine behind them".* A `[CronTrigger]`
+is served: `app.Services.AddFlowXSchedules()` is generated from the attribute, every node
+sweeps for the same occurrence and derives the same instance id from it, so the firing happens
+once across a cluster and the replicas that lost are refused by the lease store and then by
+the journal's primary key. A firing that fell due while every node was down happens late.
+`samples/workflow`'s `offer.window.close` is the whole of it, and no line of its `Program.cs`
+names a time. What is not read into a plan is `Overlap`, `MissedFire` and `Jitter`.
 
-**No Studio, and no `flowx dev`.** The CLI has four verbs — `graph`, `manifest`, `diff`,
-`verify --cost` ([22-CLI](22-CLI.md)). There is no visual designer, no live reload, no
-start-up banner.
+**Multi-tenancy at two of four levels.** *This paragraph read "No multi-tenancy. Nothing
+consumes it … every isolation level is the same level, and it is 'none enforced by the
+platform'". That is no longer true of any clause in it.* A tenant is resolved at admission
+from validated claims and refused when absent — `FlowXOptions.TenantIsolation` is `None` by
+default and costs nothing, `Row` binds every journal connection to an unprivileged role under
+PostgreSQL row-level security, and `Schema` gives each tenant a schema and a connection pool
+of its own. Five fairness mechanisms bound what one tenant may cost the others: admissions
+per window, a longer quota, in-flight concurrency, a share of each recovery page, and
+per-tenant weights. `samples/banking` runs at both levels one environment variable apart.
+**What is left:** L3 and L4 — a database or a region per tenant — and residency.
+
+**No Studio, and no `flowx dev`.** The CLI has five verbs — `graph`, `manifest`, `diff`,
+`verify --cost` and `replay --mode inspect` ([22-CLI](22-CLI.md)). *That count was four until
+`replay` landed.* There is no visual designer, no live reload, no start-up banner.
 
 **And one smaller one you will meet sooner than you expect.** `FLOWX.Sdk`, the metapackage
-the SDK document's table promises, does not exist; a project references five packages by
+the SDK document's table promises, does not exist; a project references six packages by
 hand.
 
 **Authentication is yours to supply.** The declared authorisation stance *is* enforced at
@@ -1133,7 +1158,7 @@ decides against has to come from somewhere, and `Authentication.cs` in the gener
 is a dictionary of two constant tokens with no signature, issuer, audience or expiry. It is
 a stand-in, and the first thing to replace: delete that file and register a real scheme —
 `builder.Services.AddAuthentication().AddJwtBearer(...)` with your authority and audience —
-which needs the `Microsoft.AspNetCore.Authentication.JwtBearer` package, the sixth this
+which needs the `Microsoft.AspNetCore.Authentication.JwtBearer` package, the seventh this
 project would reference by hand. Nothing else in the project changes, because nothing else
 in it knows how the principal was obtained.
 

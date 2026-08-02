@@ -183,6 +183,7 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `FlowX.Compiler.CodeFixes` | `Apache-2.0` | first-party | — |
 | `FlowX.Hosting` | `Apache-2.0` | first-party | — |
 | `FlowX.Http` | `Apache-2.0` | first-party | — |
+| `FlowX.Mcp` | `Apache-2.0` | first-party | — |
 | `Gee.External.Capstone` | `MIT` | nuspec | — |
 | `Humanizer.Core` | `MIT` | nuspec | — |
 | `Iced` | `MIT` | nuspec | — |
@@ -295,6 +296,7 @@ user's application — is much smaller, and every entry is permissive:
 | `FlowX.Runtime` | none |
 | `FlowX.Hosting` | `Microsoft.Extensions.{DependencyInjection.Abstractions, Diagnostics.HealthChecks, Hosting.Abstractions, Options}` — all `MIT` |
 | `FlowX.Http` | none |
+| `FlowX.Mcp` | none — it packs against `FlowX.Http` and the shared framework, which is what lets `dotnet new flowx` take it without adding a licence to vet |
 | `FlowX.Testing` | none |
 | `FlowX.Compiler`, `FlowX.Compiler.CodeFixes` | none — both pack with an empty dependency group |
 | `FlowX.Postgres` | `Npgsql` (`PostgreSQL`), `Microsoft.Extensions.DependencyInjection.Abstractions` (`MIT`) |

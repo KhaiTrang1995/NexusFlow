@@ -4,6 +4,27 @@
 L1 (shared) and L4 (region-pinned, dedicated) with **no code change** — plus
 consent enforcement, PII redaction and subject erasure.
 
+> [!NOTE]
+> **Two of the four isolation levels have since been built, and the warning box
+> after this one is kept as written rather than edited.** *"Every isolation level
+> in §2 is currently the same level, and it is 'none enforced by the platform'"* is
+> false. A tenant is resolved at admission from validated claims and refused when
+> absent (`tenant.required`); **L1** is PostgreSQL row-level security under an
+> unprivileged role that cannot bypass it; **L2** is a schema and a connection pool
+> per tenant, provisioned on first use. Five fairness mechanisms bound what one
+> tenant may cost the others, which is the separate guarantee this page's §4 is
+> about.
+>
+> **The "no code change" half is demonstrated**, one level apart, in
+> `samples/banking`: `FLOWX_SAMPLE_TENANCY=schema` moves the deployment from L1 to
+> L2 by changing two lines of `Program.cs` and no flow, capability or contract.
+> `tests/Banking.Tests/TransferTenancyTests` and
+> `tests/FlowX.Postgres.Tests/TenantSchema*Tests` are what hold it.
+>
+> **L3 and L4 are what is left**, with residency, consent and subject erasure —
+> everything below that is about *where* a tenant's data physically lives rather
+> than about who may read it.
+
 > [!WARNING]
 > **This sample has no code.** `samples/healthcare/` is this file and nothing
 > else. **The platform guarantees nothing about tenant isolation**, which

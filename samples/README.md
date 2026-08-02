@@ -1,7 +1,7 @@
 # FlowX Samples
 
 Nine directories, each named for a claim in the specification it is meant to prove
-— not to demonstrate syntax. **One of them contains an application.**
+— not to demonstrate syntax. **Three of them contain an application.**
 
 > [!WARNING]
 > **Three of the nine have code.** This page used to open by saying *"every sample
@@ -25,20 +25,22 @@ Nine directories, each named for a claim in the specification it is meant to pro
 
 | Sample | Proves | Code? | What blocks it |
 |---|---|---|---|
-| [ecommerce](ecommerce/) | A three-step ephemeral saga with compensation behind one HTTP endpoint, in five files | **Yes** | Nothing. `dotnet run --project samples/ecommerce` serves an order; `tests/Ecommerce.Tests` covers the capabilities, the flow's failure path, the endpoint and the manifest |
-| [banking](banking/) | A durable transfer saga: compensation in strict reverse order, `[Sensitive]` redaction reaching a real outbox row, one event staged per instance | **Yes** | Nothing. Needs PostgreSQL. Its README states what it *cannot* prove — no declared policy runs, the journal holds no principal or input |
-| [workflow](workflow/) | Multi-step orchestration exercising the whole shipped DSL: `Switch`, `Parallel`, `ForEach` containing `When`, `SubFlow`, `Fail`, compensation at six sites | **Yes** | Nothing. Needs PostgreSQL. The human-approval half of its original claim needs WP-63 — `OnTimeout`, `Delay` and `AwaitSignal` do not work, and its README shows the generated output proving it |
-| [event-driven](event-driven/) | Transport portability: HTTP → Kafka → cron, zero logic changes (Q4, V2) | No | **No Kafka.** `[KafkaTrigger]` compiles and publishes `"kind": "Bus"`, and nothing serves it — `FlowX.Http` is the only transport plugin. WP-70 (conformance), WP-71 (the CI assertion this sample *is*), WP-72 (Kafka), P3 |
-| [scheduler](scheduler/) | Cron with leader election, overlap and missed-fire policies | No | **No scheduler.** `[CronTrigger]` compiles and publishes `"kind": "Schedule"`; four of its five options are not even read into the manifest. WP-75, P3 — leader election is a lease, which is why it follows P2 |
-| [polling](polling/) | Waiting costs one database row: 100 000 documents in flight, zero compute | No | **No durable suspension** — WP-63, P2. Also the only sample whose DSL does not exist: `PollUntil`, `RaceUntil` and `Backoff.Exponential(from:, to:)` appear nowhere but on its own page |
-| [healthcare](healthcare/) | The same code at isolation L1 and L4, plus consent, PII redaction and erasure | No | **No tenant isolation of any kind.** `TenantId` is carried from validated claims to the journal row and consumed by nothing. P4 (admission, quotas, cache) and P6 (partitioning, RLS, residency), WP-100…WP-109 reserved |
+| [ecommerce](ecommerce/) | A three-step ephemeral saga with compensation, served over HTTP *and* to an agent, plus the bus and change triggers on three durable flows beside it | **Yes** | Nothing. `dotnet run --project samples/ecommerce` serves an order and answers `POST /mcp` with no infrastructure at all. It is also the only NativeAOT-published assembly, which is what proves `FlowX.Http` and `FlowX.Mcp` publish that way |
+| [banking](banking/) | A durable transfer saga: compensation in strict reverse order, `[Sensitive]` redaction reaching a real outbox row, every policy stage executing, and multi-tenancy at both shipped levels | **Yes** | Nothing. Needs PostgreSQL. *This cell used to read "no declared policy runs, the journal holds no principal or input"; every one of those is now false and its README retracts each in place* |
+| [workflow](workflow/) | Multi-step orchestration exercising the whole shipped DSL: `Switch`, `Parallel`, `ForEach` containing `When`, `SubFlow`, `Fail`, compensation at six sites — plus a human wait, a timer and a cron schedule | **Yes** | Nothing. Needs PostgreSQL. *This cell used to say `OnTimeout`, `Delay` and `AwaitSignal` do not work.* All three do, and `offer.accept` and `offer.window.close` are where |
+| [event-driven](event-driven/) | Transport portability: HTTP → broker → cron, zero logic changes (Q4, V2) | No | **No Kafka.** *This cell used to say `FlowX.Http` is the only transport plugin.* There are four, and `plugins/FlowX.Redis` serves a bus — `samples/ecommerce` declares both halves of one event chain over it. What is unbuilt is Kafka specifically, and the CI assertion this sample *is*. WP-72, P3 |
+| [scheduler](scheduler/) | Cron with leader election, overlap and missed-fire policies | No | **The scheduler exists.** *This cell used to say it did not.* `[CronTrigger]` is served — `samples/workflow`'s `offer.window.close` fires once across three nodes over one PostgreSQL, and a missed firing happens late. What is left is this sample's own overlap and per-tenant options, and its README's larger claim |
+| [polling](polling/) | Waiting costs one database row: 100 000 documents in flight, zero compute | No | **Durable suspension exists** — *this cell used to say it did not*, and `samples/workflow`'s parked instance is one row holding no thread and no lease. What does not exist is this sample's own DSL: `PollUntil`, `RaceUntil` and `Backoff.Exponential(from:, to:)` appear nowhere but on its page |
+| [healthcare](healthcare/) | The same code at isolation L1 and L4, plus consent, PII redaction and erasure | No | **Isolation exists at L1 and L2.** *This cell used to read "no tenant isolation of any kind ... consumed by nothing".* A tenant is resolved at admission from validated claims, enforced by PostgreSQL row-level security or a schema per tenant, and bounded by five fairness mechanisms — `samples/banking` is the demonstration. L3 and L4, residency and erasure are what is left |
 | [realtime-stream](realtime-stream/) | 250 000 rec/s/node with bounded memory under a slow sink (budget B13, principle P9) | No | **No stream engine, and no design for one.** `Profile = Streaming` raises [FLOWX1028](../docs/diagnostics/FLOWX1028.md), which this repository's `TreatWarningsAsErrors` makes a build failure. P7, WP-110…WP-119 reserved; PLAN §6a rates its packages *invented* rather than recorded |
-| [ai-agent](ai-agent/) | Capabilities as agent tools with real authorisation and no parallel permission system | No | **No MCP surface.** `[AgentTrigger]` compiles and publishes `"kind": "Agent"`, and [13-AI-Native](../docs/13-AI-Native.md) says it plainly: *nothing serves it — no agent can invoke anything*. P8 on top of P4, WP-120…WP-129 reserved |
+| [ai-agent](ai-agent/) | Capabilities as agent tools with real authorisation and no parallel permission system | No | **The MCP surface exists.** *This cell used to read "nothing serves it — no agent can invoke anything".* `plugins/FlowX.Mcp` serves `initialize`, `tools/list` and `tools/call`, `samples/ecommerce` and `dotnet new flowx` both publish a tool, and the stance that refuses an agent is the one that refuses a request — there is no second permission system, which was this sample's whole claim. Its *other* claims — sampling, elicitation, a resource surface — are what is left |
 
 **Read the "What blocks it" column as the sample's real content.** Six of these
-nine are, today, a statement of what the platform would need before the claim in
-column two could be made. That is a useful thing for a specification repository to
-hold, and a dishonest thing to present as a working example.
+nine still are, today, a statement of what the platform would need before the claim
+in column two could be made — but for four of them the blocker named there is gone
+and what is left is narrower than the sample. That is a useful thing for a
+specification repository to hold, and a dishonest thing to present as a working
+example.
 
 ## Key documents, per sample
 
@@ -67,20 +69,31 @@ infrastructure at all**. The in-memory inventory store and payment gateway are i
 in [its README](ecommerce/README.md).
 
 *This section used to read `flowx dev up` (Postgres + Redpanda + OTel collector +
-Studio), then `flowx graph --live`. None of those exist: `flowx` has four verbs —
-`graph`, `manifest`, `diff`, `verify` ([22-CLI](../docs/22-CLI.md)) — `graph` has
-no `--live`, and there is no `dev` verb, no Studio and no collector.*
+Studio), then `flowx graph --live`. None of those exist: `flowx` has five verbs —
+`graph`, `manifest`, `diff`, `verify` and `replay` ([22-CLI](../docs/22-CLI.md)) —
+`graph` has no `--live`, and there is no `dev` verb, no Studio and no collector.
+The count in that sentence was four until `replay --mode inspect` landed.*
+
+The other two applications each need one server, and say so on their own pages:
+
+```bash
+FLOWX_POSTGRES_CONNECTION="Host=localhost;Port=5432;Database=postgres;Username=postgres" \
+  dotnet run --project samples/banking     # and samples/workflow
+```
 
 ## What every sample must contain
 
 A sample that does not meet this bar is not merged — samples are how the
 specification is proven, so they are held to the same standard as the runtime.
-**`ecommerce` is the only sample this list has ever been applied to**, and three of
-its rows are not met even there, which is stated rather than quietly dropped:
+**`ecommerce` is the sample this list is applied to**, and three of its rows are not
+met even there, which is stated rather than quietly dropped. The last row is met by
+`ecommerce` alone: `banking` and `workflow` each need PostgreSQL, and both argue for
+it on their own pages rather than being held to a bar written for a sample whose
+whole point is that it needs nothing.
 
 - [x] A `README.md` stating the claim it proves and the documents it maps to
 - [ ] Flows and capabilities in the standard `<Feature>/` folder layout — *not met
-  for `ecommerce`, deliberately: it is five flat files, and the claim it proves is
+  for `ecommerce`, deliberately: it is flat files, and the claim it proves is
   ≤ 3 files for a 4-step flow ([V1](../docs/01-Vision.md#7-measurable-success-criteria)).
   A folder layout is for a sample with more than one feature*
 - [x] Unit tests for every capability; flow tests for every failure path
