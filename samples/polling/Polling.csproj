@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>Polling</RootNamespace>
+    <AssemblyName>Polling</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      NativeAOT is deliberately NOT enabled, for samples/workflow's reason and it is the
+      same reason: this flow declares `Durable`, a durable flow is refused without a
+      journal, and the only journal FlowX ships is PostgreSQL — so this project references
+      Npgsql, which the ecommerce sample does not. `samples/ecommerce` stays the AOT arm.
+    -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The OCR stand-in is internal: it is infrastructure, not part of the sample's story.
+      The test project sees it rather than the sample widening its surface to be testable.
+    -->
+    <InternalsVisibleTo Include="Polling.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+    <ProjectReference Include="../../plugins/FlowX.Http/FlowX.Http.csproj" />
+
+    <!--
+      The journal, and the timer index on it. A poll parks between attempts; without an
+      ITimerIndex the instance parks correctly and nothing ever comes back for it, which is
+      the difference between a sample that finishes and one that stops after one attempt.
+    -->
+    <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+
+    <!--
+      The compiler as an ANALYZER, not a library — so the generator runs inside this
+      project's build against this project's source, exactly as it would for a consumer.
+    -->
+    <ProjectReference Include="../../src/FlowX.Compiler/FlowX.Compiler.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      Condition="'$(FlowXGeneratorDisabled)' != 'true'" />
+  </ItemGroup>
+
+</Project>
