@@ -198,7 +198,6 @@ Split into four diagrams because one diagram of eight aggregates is a picture no
 classDiagram
     class Lead {
         +LeadId Id
-        +TenantId Tenant
         +string Company
         +string ContactName
         +string Email
@@ -212,7 +211,6 @@ classDiagram
 
     class Account {
         +AccountId Id
-        +TenantId Tenant
         +string Name
         +string Industry
         +Lifecycle Lifecycle
@@ -266,6 +264,13 @@ Modelling it as a separate table would mean either duplicating every account fie
 carrying a foreign key that is always one-to-one, and it would make the moment of becoming
 a customer a *move* rather than a *transition*. The read model in §6 exposes
 `customer_account` as a view for the reports that want one.
+
+**No entity record carries a tenant, and the first draft of this document was wrong about
+that.** It gave `TenantId Tenant` to lead, account, activity and process definition. A
+tenant on a contract is a value the caller sets, and
+[ADR-0046](adr/ADR-0046-a-tenant-is-resolved-at-admission.md) resolves it from validated
+claims instead. It lives on `CapabilityContext.TenantId` and in the `tenant_id` column,
+and `ContractTests.NoEntityRecordCarriesATenant` keeps it off the contracts.
 
 `Contact.Email` and `Contact.Phone` carry `[Sensitive]`. That is not a comment: it puts
 them behind `JournalPayload`'s redaction pass, which has one exit and no accessor, so they
@@ -344,7 +349,6 @@ hold and a manager does.
 classDiagram
     class Activity {
         +ActivityId Id
-        +TenantId Tenant
         +ActivityKind Kind
         +string Subject
         +RelatedRef RelatesTo
@@ -402,7 +406,6 @@ stated rather than hidden.
 classDiagram
     class ProcessDefinition {
         +ProcessId Id
-        +TenantId Tenant
         +EntityKind AppliesTo
         +int Version
         +bool IsActive
@@ -645,7 +648,14 @@ first makes every query against activities read four columns to find the one tha
 entity kind.** An administrator publishes a new version; opportunities already in flight
 keep the version they started on, exactly as `flow_instance` pins `flow_version`.
 
-**Every table carries `tenant_id` and is covered by row-level security.** The existing
+**`tenant_id` is `NOT NULL` on every root, and the five child tables do not carry one.**
+The diagram above draws it nullable, copying `flow_instance`; that is wrong for this schema.
+A composite foreign key containing a NULL is not checked at all under MATCH SIMPLE, which
+would make the cross-tenant guards decoration. The child tables — quote lines, stages,
+transitions, guards, actions — reach their tenant through the foreign key rather than
+copying it, because a copy can disagree with the row it came from.
+
+**Every root table carries `tenant_id` and is covered by row-level security.** The existing
 migration pattern applies unchanged: `FORCE` row-level security and an unprivileged
 `flowx_tenant` role, because a policy a superuser bypasses is decoration.
 
