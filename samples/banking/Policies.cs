@@ -149,16 +149,44 @@ public static class Policies
     /// which is the closest thing to admission the DSL can express.
     /// </para>
     /// <para>
-    /// Neither line counts anything: stage 1 and stage 3 are the two the policy engine did
-    /// not implement. The honest summary is that they tell a reviewer what the endpoint is
-    /// <em>supposed</em> to be bounded by, while a real deployment puts the limit in front of
-    /// the process. This is the one set in the file that is entirely inert, and it is the
-    /// reason <c>ExecuteTransferFlow</c> still carries a suppression on its first step.
+    /// <strong>Twenty principals a second is now enforced, across every replica.</strong> The
+    /// limit is counted in a shared store — this application registers the Redis one — so the
+    /// twenty is the deployment's and not each node's.
+    /// <a href="../../docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>
+    /// is why it could not ship as a process-local counter: a breaker that is per process is
+    /// slower to protect and never wrong, and a limiter that is per process admits n × the
+    /// declared rate across n nodes, with the factor being the replica count and nothing
+    /// declaring it. The twenty-first principal in a second gets
+    /// <c>policy.rate_limited</c> and the ledger is never reached.
+    /// </para>
+    /// <para>
+    /// <strong>The <c>Idempotency</c> window that used to sit beside it is gone, and its
+    /// absence is the most interesting thing in this file.</strong> It read
+    /// <c>.Idempotency(TimeSpan.FromHours(24))</c>, and stage 3 now executes — so it would
+    /// have run. It is removed because it cannot run <em>here</em>, and
+    /// <a href="../../docs/diagnostics/FLOWX1040.md">FLOWX1040</a> is a build error that says
+    /// so: <see cref="ExecuteTransfer"/> marks two IBANs <c>[Sensitive]</c>, so
+    /// <c>ExecuteTransferFlow.SensitiveMembers</c> is non-empty, so every document this flow
+    /// records has <c>[redacted]</c> where an account number was — including the state bag a
+    /// replay would restore. A second caller presenting the same key would have been answered
+    /// with a <c>ValidatedTransfer</c> whose <c>DebtorIban</c> was the literal string
+    /// <c>[redacted]</c>, and <c>PostDebit</c> would have posted against it, and the flow
+    /// would have returned <c>200</c>.
+    /// </para>
+    /// <para>
+    /// That is worse than no idempotency at all, which is exactly what
+    /// <a href="../../docs/adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0042</a>
+    /// decides: without the window the step is simply dispatched again — the posting
+    /// capabilities declare <c>Idempotent = true</c> and keep that promise — and the second
+    /// caller gets the real answer for the second time. **The duplicate this window was
+    /// reaching for is already held shut** by <c>FLOWX1014</c> and by the stable
+    /// <c>ctx.IdempotencyKey</c> every attempt presents, which is
+    /// <a href="../../docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>
+    /// §2.2 and is unchanged by stage 3 landing.
     /// </para>
     /// </remarks>
     public static readonly PolicySet Admission = PolicySet.Named("transfer-admission")
-        .RateLimit(permits: 20, TimeSpan.FromSeconds(1), RateLimitScope.Principal)
-        .Idempotency(TimeSpan.FromHours(24));
+        .RateLimit(permits: 20, TimeSpan.FromSeconds(1), RateLimitScope.Principal);
 
     /// <summary>The settlement register write.</summary>
     /// <remarks>

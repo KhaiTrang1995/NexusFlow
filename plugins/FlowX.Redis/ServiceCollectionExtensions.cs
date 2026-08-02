@@ -59,6 +59,64 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Registers <see cref="IRateLimiterStore"/> and <see cref="IIdempotencyStore"/> over one
+    /// Redis connection.
+    /// </summary>
+    /// <param name="services">The container being built.</param>
+    /// <param name="configuration">A StackExchange.Redis configuration string.</param>
+    /// <param name="options">Where in the key space the buckets and records live.</param>
+    /// <returns>The same collection, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="configuration"/> is null or blank.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>A third call rather than a flag on <see cref="AddFlowXRedis"/></strong>, for the
+    /// reason <see cref="AddFlowXRedisStreams"/> is a second one: a deployment that wants its
+    /// leases in Redis is not thereby a deployment that wants its rate limits there, and a
+    /// registration that assumed otherwise would put a store in front of a policy the
+    /// application never declared.
+    /// </para>
+    /// <para>
+    /// <strong>Both stores, one call.</strong> They are not the same policy — stage 1 and stage 3
+    /// are two decisions ADR-0011 deliberately keeps apart — but they are the same operational
+    /// choice: which server holds the state the policy engine needs. Splitting them would make an
+    /// application register two things to answer one question, and a flow declaring both would
+    /// then have two ways to be half-configured.
+    /// </para>
+    /// <para>
+    /// <strong>Unlike the lease key space, this one is safe under an eviction policy.</strong>
+    /// A lease key is kept for ever because deleting it loses the fencing counter; a bucket that
+    /// vanishes is a full bucket and a record that vanishes is a window that closed early — the
+    /// first is what an untouched bucket becomes anyway, and the second is a step dispatched
+    /// again against a capability the retry rules already require to be idempotent.
+    /// </para>
+    /// </remarks>
+    public static IServiceCollection AddFlowXRedisPolicyStores(
+        this IServiceCollection services,
+        string configuration,
+        RedisPolicyOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentException.ThrowIfNullOrWhiteSpace(configuration);
+
+        var settings = options ?? new RedisPolicyOptions();
+
+        services.AddSingleton(settings);
+        services.TryAddSingleton<IConnectionMultiplexer>(
+            _ => ConnectionMultiplexer.Connect(configuration));
+
+        services.AddSingleton<IRateLimiterStore>(provider => new RedisRateLimiterStore(
+            provider.GetRequiredService<IConnectionMultiplexer>(),
+            provider.GetRequiredService<RedisPolicyOptions>()));
+
+        services.AddSingleton<IIdempotencyStore>(provider => new RedisIdempotencyStore(
+            provider.GetRequiredService<IConnectionMultiplexer>(),
+            provider.GetRequiredService<RedisPolicyOptions>()));
+
+        return services;
+    }
+
     /// <summary>Registers <see cref="IEventPublisher"/> over Redis Streams.</summary>
     /// <param name="services">The container being built.</param>
     /// <param name="configuration">A StackExchange.Redis configuration string.</param>

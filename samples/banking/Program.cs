@@ -29,6 +29,23 @@ builder.Services.AddFlowX(options => options.ApplicationName = "Banking");
 // so a host that omitted this line would build and would refuse every durable flow.
 builder.Services.AddFlowXPostgres(connectionString);
 
+// The rate limit on the first step is enforced against this, and against nothing if this line
+// is deleted — a step declaring a RateLimit with no IRateLimiterStore registered is refused
+// rather than admitted, which is deliberate and is ADR-0040 §2.2. There is no in-memory
+// default, because a limiter counting in a process admits twenty transfers per second *per
+// replica* behind a declaration that reads as twenty for the deployment, and the multiplier is
+// the replica count, which nothing declares and nothing reports.
+//
+// PostgreSQL here because this sample already has one. A deployment that wanted the bucket
+// somewhere hotter would call AddFlowXRedisPolicyStores instead and change nothing else: the
+// engine reads a seam, and RateLimiterConformance is what makes the two interchangeable.
+//
+// This registers an IIdempotencyStore too. Nothing in this flow declares an Idempotency window
+// — FLOWX1040 refuses one here, see Policies.Admission — so the store is registered and unused,
+// which is the honest state rather than a line to delete: the next flow this application gains
+// may well be one whose contracts mark nothing.
+builder.Services.AddFlowXPostgresPolicyStores();
+
 // Infrastructure. In memory here; the capabilities do not know or care, because they depend
 // on the four interfaces below and never on these classes.
 builder.Services.AddSingleton<ILedger, InMemoryLedger>();

@@ -109,11 +109,11 @@ public sealed class DeclaredPolicyAnalyzerTests
     [Fact]
     public void AnInertPolicySetIsReported() =>
         Analyze(FlowWith(
-            ".WithPolicy(Policies.Admission)",
+            ".WithPolicy(Policies.Deferred)",
             """
-            public static readonly PolicySet Admission = PolicySet.Named("admission")
-                .RateLimit(permits: 5, TimeSpan.FromSeconds(1))
-                .Idempotency(TimeSpan.FromHours(1));
+            public static readonly PolicySet Deferred = PolicySet.Named("deferred")
+                .Cache(TimeSpan.FromSeconds(10))
+                .Audit("financial");
             """))
             .ShouldBe(["FLOWX1032"]);
 
@@ -127,19 +127,24 @@ public sealed class DeclaredPolicyAnalyzerTests
     public void TheMessageNamesTheSetAndEveryInertKind()
     {
         var messages = Messages(FlowWith(
-            ".WithPolicy(Policies.Admission)",
+            ".WithPolicy(Policies.Deferred)",
             """
-            public static readonly PolicySet Admission = PolicySet.Named("admission")
-                .RateLimit(permits: 5, TimeSpan.FromSeconds(1))
-                .Idempotency(TimeSpan.FromHours(1))
-                .Cache(TimeSpan.FromSeconds(10));
+            public static readonly PolicySet Deferred = PolicySet.Named("deferred")
+                .Timeout(TimeSpan.FromSeconds(1))
+                .Cache(TimeSpan.FromSeconds(10))
+                .Audit("financial");
             """));
 
         messages.ShouldHaveSingleItem();
-        messages[0].ShouldContain("Policies.Admission");
-        messages[0].ShouldContain("RateLimit");
-        messages[0].ShouldContain("Idempotency");
+        messages[0].ShouldContain("Policies.Deferred");
         messages[0].ShouldContain("Cache");
+        messages[0].ShouldContain("Audit");
+
+        messages[0].ShouldNotContain(
+            "Timeout",
+            Case.Sensitive,
+            "the Timeout beside them is applied, and a message that named it would tell the " +
+            "author their armed timeout is decorative.");
     }
 
     /// <summary>
@@ -190,18 +195,24 @@ public sealed class DeclaredPolicyAnalyzerTests
         messages[0].ShouldContain("Audit");
     }
 
-    /// <summary>Each of the four kinds nothing applies, on its own.</summary>
+    /// <summary>Each of the two kinds nothing applies, on its own.</summary>
     /// <remarks>
-    /// A theory rather than one set with all four in it, so that a rule which happened to
-    /// recognise three of them and miss the fourth fails on the row that names it. The five
-    /// kinds that are applied get the same treatment in the theory below, which is the half
+    /// <para>
+    /// A theory rather than one set with both in it, so that a rule which happened to
+    /// recognise one of them and miss the other fails on the row that names it. The kinds
+    /// that are applied get the same treatment in the theory below, which is the half
     /// that goes wrong silently: a rule reporting a policy that runs looks like a rule
     /// working.
+    /// </para>
+    /// <para>
+    /// <strong>Narrowed from four rows to two.</strong> <c>RateLimit</c> and
+    /// <c>Idempotency</c> moved to the theory below when stage 1 and stage 3 landed — which is
+    /// the same edit, made in the opposite direction, and is why both theories exist rather
+    /// than one.
+    /// </para>
     /// </remarks>
     [Theory]
     [InlineData("Cache(TimeSpan.FromSeconds(1))", "Cache")]
-    [InlineData("RateLimit(permits: 5, TimeSpan.FromSeconds(1))", "RateLimit")]
-    [InlineData("Idempotency(TimeSpan.FromHours(1))", "Idempotency")]
     [InlineData("Audit(\"category\")", "Audit")]
     public void EveryKindNothingAppliesIsReported(string declaration, string kind)
     {
@@ -215,19 +226,29 @@ public sealed class DeclaredPolicyAnalyzerTests
         messages[0].ShouldContain(kind);
     }
 
-    /// <summary>Each of the four stage-4 kinds the engine now applies, on its own.</summary>
+    /// <summary>Each of the six kinds the engine now applies, on its own.</summary>
     /// <remarks>
-    /// <strong>Every row of this theory used to be a row of the one above.</strong> The
-    /// compensation retry has its own silence test further down, because it is silent for a
-    /// different reason — it needs a compensation to wrap, and FLOWX1033 reports when it has
-    /// none.
+    /// <para>
+    /// <strong>Every row of this theory used to be a row of the one above.</strong> The four
+    /// stage-4 kinds moved when the policy engine landed; <c>RateLimit</c> and
+    /// <c>Idempotency</c> moved when stage 1 and stage 3 did. The compensation retry has its
+    /// own silence test further down, because it is silent for a different reason — it needs a
+    /// compensation to wrap, and FLOWX1033 reports when it has none.
+    /// </para>
+    /// <para>
+    /// This is the half that goes wrong quietly. A rule still reporting a kind the engine
+    /// applies tells an author their enforced limit is decorative, and the first thing they do
+    /// about it is suppress the catalogue.
+    /// </para>
     /// </remarks>
     [Theory]
     [InlineData("Timeout(TimeSpan.FromSeconds(1))")]
     [InlineData("Retry(attempts: 2)")]
     [InlineData("CircuitBreaker(failureRatio: 0.5, breakDuration: TimeSpan.FromSeconds(1))")]
     [InlineData("Bulkhead(maxConcurrency: 4)")]
-    public void EveryStageFourKindIsSilent(string declaration) =>
+    [InlineData("RateLimit(permits: 5, TimeSpan.FromSeconds(1))")]
+    [InlineData("Idempotency(TimeSpan.FromHours(1))")]
+    public void EveryExecutedKindIsSilent(string declaration) =>
         Analyze(FlowWith(
             ".WithPolicy(Policies.OneKind)",
             $"""

@@ -899,23 +899,77 @@ public static class FlowXDiagnostics
         "Declared policy is not executed by the runtime",
         "'{0}' declares policies this release does not execute: {1}. The compiled plan and " +
         "flowx.manifest.json carry them; no code applies them.",
-        "Four of the nine kinds PolicySet offers are executed by nothing: RateLimit, " +
-        "Idempotency, Cache and Audit. So a declared RateLimit counts nothing, an Idempotency " +
-        "window records and replays nothing, a Cache is never consulted, and an Audit writes " +
-        "no record. The other five do run — Timeout, Retry, CircuitBreaker and Bulkhead are " +
-        "applied around the step, and CompensationRetry around its undo — so this rule names " +
-        "only what is left. Keep the declaration: it is the published statement of what this " +
-        "step needs, it reaches flowx.manifest.json where a reviewer and a 'flowx diff' can " +
-        "read it, it is what the stage that implements it will execute, and deleting it to " +
+        "Two of the nine kinds PolicySet offers are executed by nothing: Cache and Audit. So a " +
+        "declared Cache is never consulted and a declared Audit writes no record. The other " +
+        "seven do run — Timeout, Retry, CircuitBreaker and Bulkhead are applied around the " +
+        "step, RateLimit admits or refuses the caller before it, an Idempotency window records " +
+        "and replays the step's result, and CompensationRetry wraps the undo — so this rule " +
+        "names only what is left. Keep the declaration: it is the published statement of what " +
+        "this step needs, it reaches flowx.manifest.json where a reviewer and a 'flowx diff' " +
+        "can read it, it is what the stage that implements it will execute, and deleting it to " +
         "silence this warning would remove the record while changing nothing about how the " +
         "step runs. Instead, confirm the step is survivable with the policy unenforced — a " +
-        "rate limit the gateway already applies, a cache the capability can hold itself — and " +
+        "cache the capability can hold itself, an audit record the capability writes — and " +
         "if it is, downgrade this rule in .editorconfig with a FLOWX-DEBT marker; if it is " +
-        "not, move the control into the capability or in front of the process, where it is " +
-        "real. FLOWX1014 and FLOWX1018 are unaffected and still errors: whether a declared " +
-        "policy is safe is a different question from whether it is applied. This rule is " +
-        "deleted, not fixed, and only when the last four kinds execute.",
+        "not, move the control into the capability, where it is real. FLOWX1014 and FLOWX1018 " +
+        "are unaffected and still errors: whether a declared policy is safe is a different " +
+        "question from whether it is applied. This rule is deleted, not fixed, and only when " +
+        "the last two kinds execute.",
         DiagnosticSeverity.Warning);
+
+    /// <summary>
+    /// FLOWX1040 — an <c>Idempotency</c> window on a flow whose result cannot be recorded
+    /// without redaction.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>An error, where <see cref="PolicyIsNotExecutedByTheRuntime"/> is a
+    /// warning</strong>, and every argument that makes that rule a warning fails here. That
+    /// rule's central claim is "the source is not wrong; it is written correctly for a platform
+    /// that has the feature" — a rate limit the gateway applies is a correct program. Here the
+    /// platform *has* the feature and cannot serve this flow with it, and no release changes
+    /// that except one giving <c>[Sensitive]</c> a read path, at which point the rule is deleted
+    /// rather than downgraded.
+    /// </para>
+    /// <para>
+    /// <strong>Flow-wide, because the redaction is.</strong> <c>SensitiveMembers</c> is read off
+    /// the flow's input and output contracts and matched by name, case-insensitively, at every
+    /// depth, against every document the flow writes. A per-step rule would have to traverse a
+    /// contract graph reaching referenced assemblies, generics and collections, and a traversal
+    /// wrong in the permissive direction ships a silently fabricated replay. See ADR-0042 §1.4.
+    /// </para>
+    /// <para>
+    /// The build-time rule is the report and not the guarantee: a policy set the compiler cannot
+    /// read (FLOWX1036) leaves it silent, and a hand-built plan never meets an analyzer at all.
+    /// <c>JournalPayload.TryToReplayableJson</c> is the guarantee, and it refuses at run time.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor IdempotencyCannotRecordARedactedResult = Create(
+        "FLOWX1040",
+        "Idempotency is declared on a flow whose result cannot be recorded without redaction",
+        "'{0}' declares an Idempotency window on '{1}', which declares '{2}' [Sensitive]. The " +
+        "recorded result would carry '[redacted]' where that value was, and replaying it would " +
+        "answer a later caller with the placeholder.",
+        "Stage 3 records the flow's state bag through JournalPayload, whose only exit replaces " +
+        "every member named in the flow's SensitiveMembers — matched case-insensitively, at " +
+        "every depth — with the literal '[redacted]'. SensitiveMembers is read off the flow's " +
+        "input and output contracts, so a flow that marks one member records a document that is " +
+        "not what it produced. Replaying that document hands a later step the placeholder as if " +
+        "somebody had computed it: the second caller gets a plausible wrong answer with a " +
+        "success beside it, every step reports success, and nothing is logged or counted. That " +
+        "is worse than having no idempotency at all, because without it the step would simply " +
+        "be dispatched again — the capability is idempotent, which is what makes the window " +
+        "declarable — and would return the real value. Fix it by removing the Idempotency from " +
+        "the set (the duplicate you were worried about is already held shut by FLOWX1014 and by " +
+        "the stable ctx.IdempotencyKey), by taking the [Sensitive] marker off if the member is " +
+        "not actually sensitive (check what else the marker is doing first: it strips the " +
+        "member from RFC 7807 bodies, journal rows and emitted events), or by moving the marked " +
+        "member off the flow's input and output contracts. Suppressing this does not make it " +
+        "safe: JournalPayload.TryToReplayableJson refuses the recording at run time, so the " +
+        "step fails on its first execution after its capability has already been dispatched. " +
+        "This rule is deleted, not fixed, and only when a read path for [Sensitive] values " +
+        "exists.",
+        DiagnosticSeverity.Error);
 
     /// <summary>FLOWX1033 — a compensation retry attached to a step with no compensation.</summary>
     /// <remarks>

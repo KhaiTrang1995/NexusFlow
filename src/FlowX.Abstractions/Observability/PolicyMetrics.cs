@@ -9,13 +9,23 @@ namespace FlowX.Observability;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Four instruments, not seven, and the absences are the same discipline
-/// <see cref="FlowXMetrics"/> applies.</strong> §9 lists a rate-limit counter, a cache
-/// hit/miss pair and an idempotency replay counter. Their policies are not executed, so the
-/// instruments are not created: an instrument that exists and is never written to publishes an
-/// empty series, and an empty series is indistinguishable from a healthy one. A dashboard
-/// showing <c>flowx_ratelimit_rejected_total == 0</c> would be evidence that no request was
-/// ever refused, when the truth is that nothing ever refuses.
+/// <strong>Six instruments, not seven, and the absence is the same discipline
+/// <see cref="FlowXMetrics"/> applies.</strong> The one §9 row with no instrument here is the
+/// cache hit/miss pair: stage 5 is not executed, so the instrument is not created, because one
+/// that exists and is never written to publishes an empty series and an empty series is
+/// indistinguishable from a healthy one.
+/// </para>
+/// <para>
+/// <strong>Two of them were absent for exactly that reason until stage 1 and stage 3
+/// landed.</strong>
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md">ADR-0026</a>
+/// left <c>flowx_ratelimit_rejected_total</c> and <c>flowx_idempotency_replays_total</c>
+/// unnamed on the argument that "a dashboard showing
+/// <c>flowx_ratelimit_rejected_total == 0</c> would be evidence that no request was ever
+/// refused, when the truth is that nothing ever refuses" — and, for the limiter, that its
+/// <c>scope</c> label "presupposes a decision nobody has made". Both policies execute now and
+/// the scope is decided, so that record's own revisit condition has fired and the omission has
+/// become an addition.
 /// </para>
 /// <para>
 /// <strong>Separate from <see cref="FlowXMetrics"/> because the tables are separate.</strong>
@@ -67,6 +77,17 @@ public static class PolicyMetrics
 
     /// <summary>A retry used every attempt it was allowed and the step still failed.</summary>
     public const string ExhaustedOutcome = "exhausted";
+
+    /// <summary>
+    /// An idempotency window answered from its record instead of dispatching the step.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="OkOutcome"/>, which a fresh key produces. Collapsing the two
+    /// would make <c>flowx_policy_invocations_total{policy="Idempotency"}</c> count how often
+    /// the policy was consulted and nothing about how often it did anything — and the second
+    /// number is the only one that says whether the declaration is earning its store.
+    /// </remarks>
+    public const string ReplayedOutcome = "replayed";
 
     /// <summary>
     /// Metric label values for small attempt numbers, so a label costs no allocation and no box.
@@ -152,6 +173,41 @@ public static class PolicyMetrics
         unit: null,
         "Callers waiting for a bulkhead permit, excluding those already holding one.");
 
+    /// <summary>Callers a rate limit refused. Labels: scope, tenant.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Refusals only, and this is the one counter here that has no denominator on
+    /// purpose.</strong> <see cref="Invocations"/> already carries both halves for every policy
+    /// including this one — <c>policy="RateLimit", outcome="ok"</c> is the admitted caller —
+    /// so a second series counting admissions would be the same number under two names.
+    /// <c>docs/10 §9</c> froze this row as a rejection counter and it is emitted as one.
+    /// </para>
+    /// <para>
+    /// The instrument exists now because the decision exists now. It was deliberately unnamed
+    /// while stage 1 was inert, because
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md">ADR-0026</a>
+    /// makes an always-zero series worse than an absent one: a dashboard reading
+    /// <c>flowx_ratelimit_rejected_total == 0</c> would be evidence that no caller was ever
+    /// refused, when the truth was that nothing ever refused.
+    /// </para>
+    /// </remarks>
+    public static Counter<long> RateLimitRejected { get; } = FlowXTelemetry.Meter.CreateCounter<long>(
+        TelemetryNames.RateLimitRejectedTotal,
+        unit: null,
+        "Callers refused by a declared RateLimit, by the scope whose budget was spent.");
+
+    /// <summary>Steps answered from an idempotency record. Labels: capability, scope.</summary>
+    /// <remarks>
+    /// The duplicate work that did not happen. A rising count is the policy earning its store; a
+    /// flat zero on a step that declares a window means either that callers are not repeating
+    /// keys — which is fine and is worth knowing — or that they are repeating them outside the
+    /// declared window, which is a window to lengthen.
+    /// </remarks>
+    public static Counter<long> IdempotencyReplays { get; } = FlowXTelemetry.Meter.CreateCounter<long>(
+        TelemetryNames.IdempotencyReplaysTotal,
+        unit: null,
+        "Steps answered from a recorded result instead of being dispatched.");
+
     /// <summary>Whether anything is listening for any policy metric.</summary>
     /// <remarks>
     /// Read at the one place a policy path begins, so a policed step with no exporter pays a
@@ -159,7 +215,8 @@ public static class PolicyMetrics
     /// </remarks>
     public static bool IsEnabled =>
         Invocations.Enabled || RetryAttempts.Enabled ||
-        CircuitState.Enabled || BulkheadQueueDepth.Enabled;
+        CircuitState.Enabled || BulkheadQueueDepth.Enabled ||
+        RateLimitRejected.Enabled || IdempotencyReplays.Enabled;
 
     /// <summary>Counts one application of a policy to a step.</summary>
     /// <param name="policy">The descriptor kind, e.g. <c>Timeout</c>.</param>
@@ -230,6 +287,38 @@ public static class PolicyMetrics
         BulkheadQueueDepth.Record(
             waiting,
             new KeyValuePair<string, object?>(TelemetryNames.CapabilityLabel, capability));
+    }
+
+    /// <summary>Counts one caller a rate limit refused.</summary>
+    /// <param name="scope">The declared <see cref="RateLimitScope"/>, by name.</param>
+    /// <param name="tenantId">The invocation's tenant, or null. Bucketed before it is emitted.</param>
+    public static void RateLimitRefused(string scope, string? tenantId)
+    {
+        if (!RateLimitRejected.Enabled)
+        {
+            return;
+        }
+
+        RateLimitRejected.Add(
+            1,
+            new KeyValuePair<string, object?>(TelemetryNames.ScopeLabel, scope),
+            new KeyValuePair<string, object?>(TelemetryNames.TenantLabel, FlowXTelemetry.TenantLabel(tenantId)));
+    }
+
+    /// <summary>Counts one step answered from a record instead of dispatched.</summary>
+    /// <param name="capability">The capability that was not called.</param>
+    /// <param name="scope">The declared <see cref="IdempotencyScope"/>, by name.</param>
+    public static void IdempotencyReplayed(string capability, string scope)
+    {
+        if (!IdempotencyReplays.Enabled)
+        {
+            return;
+        }
+
+        IdempotencyReplays.Add(
+            1,
+            new KeyValuePair<string, object?>(TelemetryNames.CapabilityLabel, capability),
+            new KeyValuePair<string, object?>(TelemetryNames.ScopeLabel, scope));
     }
 
     /// <summary>The label for an attempt number, without allocating for the common ones.</summary>

@@ -92,6 +92,8 @@ public sealed class FlowEngine
     private readonly IClock _clock;
     private readonly ContextPool _contexts;
     private readonly ICompensationAlertSink? _alerts;
+    private readonly IRateLimiterStore? _rateLimiter;
+    private readonly IIdempotencyStore? _idempotency;
     private readonly object _detachedSync = new();
 
     /// <summary>
@@ -131,10 +133,37 @@ public sealed class FlowEngine
     /// recorded on the instance row, so a deployment with no alerting is degraded rather than
     /// blind.
     /// </param>
+    /// <param name="rateLimiter">
+    /// Where a declared <c>RateLimit</c>'s budget lives, or <c>null</c> when none was registered.
+    /// </param>
+    /// <param name="idempotency">
+    /// Where a declared <c>Idempotency</c> window's records live, or <c>null</c> when none was
+    /// registered.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The two stores are optional to construct and mandatory to declare against.</strong>
+    /// A step whose resolved <c>StepPolicy</c> names a policy whose store is absent is
+    /// <em>refused</em>, never dispatched — which is the whole of what makes stage 1 and stage 3
+    /// honest, and is the opposite of <see cref="ICompensationAlertSink"/>'s bargain above.
+    /// A missing alert sink leaves a deployment blind about a state the instance row still
+    /// records; a missing limiter would leave one admitting every caller behind a declaration
+    /// that reads as a deployment-wide bound. Degraded and wrong are not the same absence. See
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>
+    /// §2.2.
+    /// </para>
+    /// <para>
+    /// There is deliberately no in-memory default for either. A process-local rate limiter
+    /// admits n × the declared rate across n nodes, and a process-local idempotency store
+    /// deduplicates only the callers that happened to land on the same replica.
+    /// </para>
+    /// </remarks>
     public FlowEngine(
         IClock clock,
         int maxPooledContexts = DefaultMaxPooledContexts,
-        ICompensationAlertSink? alerts = null)
+        ICompensationAlertSink? alerts = null,
+        IRateLimiterStore? rateLimiter = null,
+        IIdempotencyStore? idempotency = null)
     {
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxPooledContexts);
@@ -142,6 +171,8 @@ public sealed class FlowEngine
         _clock = clock;
         _contexts = new ContextPool(maxPooledContexts);
         _alerts = alerts;
+        _rateLimiter = rateLimiter;
+        _idempotency = idempotency;
     }
 
     /// <summary>Executes a plan to completion, to first failure, or to its deadline.</summary>
@@ -1074,11 +1105,33 @@ public sealed class FlowEngine
             }
 
             // ADR-0023, and the whole of the forward policy hook: one comparison against a
-            // field the plan already holds. A flow that declares no stage-4 policy reaches
+            // field the plan already holds. A flow that declares no executed policy reaches
             // StepPolicy.None, the loop below runs exactly once, and the execution is
             // byte-for-byte the one it always was — which is what keeps budget B2 a hard zero
             // for the shapes that have always had it.
+            //
+            // Six kinds are counted now rather than four, and no second flag went with them.
+            // That is ADR-0023's own "widening is mechanical" taken literally, so its "a third
+            // flag of this shape is proposed" revisit condition did not fire: stage 1 and stage 3
+            // arrive on the same PolicyChain that StepPolicy.From already walks, unlike a stance,
+            // which is resolved from a capability attribute and therefore needed
+            // HasAuthorizedSteps of its own.
             var policy = plan.HasStepPolicies ? step.StepPolicy : StepPolicy.None;
+
+            // Stage 1 · Admission. Before the authorisation below, which is ADR-0011's order and
+            // docs/10 §2's "rate limit after authentication → unauthenticated flood exhausts the
+            // token validator" row: an unadmitted caller must not reach the claim lookup.
+            //
+            // Outside the retry loop below, which is the other half of the position. A permit
+            // taken per attempt would make a RateLimit(20, PT1S) beside a Retry(3) admit
+            // somewhere between seven and twenty callers a second depending on how healthy the
+            // dependency was — a limit whose effective value is a function of an outage.
+            if (policy.HasRateLimit &&
+                await AdmitAsync(policy, context, capabilityId, ct).ConfigureAwait(false) is { } unadmitted)
+            {
+                failure = unadmitted;
+                break;
+            }
 
             // ADR-0027, and the whole of the authorisation hook: ADR-0023's shape struck a
             // second time. One comparison against a field the plan already holds, and a plan
@@ -1104,6 +1157,50 @@ public sealed class FlowEngine
             {
                 failure = denial;
                 break;
+            }
+
+            // Stage 3 · Integrity. After admission and identity, before the retry loop — which is
+            // ADR-0011's order and, for the retry, a correctness requirement rather than a
+            // preference: a claim taken per attempt would find its own in-flight marker on
+            // attempt two and deadlock the step against itself.
+            //
+            // Three outcomes. A replay skips the dispatch entirely and restores what the first
+            // execution produced; an in-flight repeat is refused with the holder's remaining
+            // lease; a fresh key is claimed and released again below.
+            string? idempotencyKey = null;
+
+            if (policy.HasIdempotency)
+            {
+                var began = await BeginIdempotentAsync(
+                    policy, dispatcher, context, scope, capabilityId, ct).ConfigureAwait(false);
+
+                if (began.Refusal is { } notClaimed)
+                {
+                    failure = notClaimed;
+                    break;
+                }
+
+                if (began.Replayed)
+                {
+                    completed++;
+
+                    // Registered for compensation exactly as a dispatched step is, and the
+                    // reason is that the effect exists: some earlier caller made it, under this
+                    // same idempotency key, so the two are one logical request. A replayed step
+                    // left off the stack would leave a real effect with nothing pointing at it
+                    // when a later step fails — which is the saga losing track of work it is
+                    // standing on.
+                    if (compensations is not null && step.IsCompensable)
+                    {
+                        context.RecordCompleted(
+                            step, ReferenceEquals(scope, context) ? null : scope, cursor.Scope);
+                    }
+
+                    i = SignalTargetOf(step) ?? i + 1;
+                    continue;
+                }
+
+                idempotencyKey = began.Key;
             }
 
             var attempt = 0;
@@ -1231,6 +1328,30 @@ public sealed class FlowEngine
                 await _clock.DelayAsync(backoff, ct).ConfigureAwait(false);
             }
 
+            // Stage 3 · Integrity, closing. After the retry rather than after each attempt, so
+            // the record describes the step's outcome rather than one attempt's, and so a step
+            // that failed twice and succeeded on the third records once.
+            //
+            // Before the `abandoned` check below on purpose: a node that lost its lease
+            // mid-step still holds an idempotency claim, and leaving it to lapse would refuse
+            // every repeat of that key until the in-flight lease ran out — for work this node
+            // has already stopped doing.
+            if (idempotencyKey is not null)
+            {
+                var recorded = await EndIdempotentAsync(
+                    idempotencyKey, policy, dispatcher, scope, capabilityId, i,
+                    stepFailure is null && !abandoned, ct).ConfigureAwait(false);
+
+                if (recorded is not null && stepFailure is null && !abandoned)
+                {
+                    // The step worked and the record could not be written honestly — ADR-0042's
+                    // guard, or a store that stopped answering. Reported rather than swallowed:
+                    // a policy that silently recorded nothing would leave the declaration
+                    // looking satisfied, which is the whole of what ADR-0025 rejects.
+                    stepFailure = recorded;
+                }
+            }
+
             if (abandoned)
             {
                 break;
@@ -1264,6 +1385,226 @@ public sealed class FlowEngine
 
         return new RangeOutcome(failure, completed, suspended, wake);
     }
+
+    /// <summary>
+    /// Stage 1: takes a permit for <paramref name="capabilityId"/>, or produces the refusal.
+    /// </summary>
+    /// <param name="policy">The resolved policy. <c>HasRateLimit</c> is true.</param>
+    /// <param name="context">The execution, for the tenant and principal the scope keys by.</param>
+    /// <param name="capabilityId">The dependency whose budget is being spent.</param>
+    /// <param name="ct">The caller's token.</param>
+    /// <returns><c>null</c> when the caller is admitted, otherwise the error the step fails with.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Three ways not to be admitted, and all three refuse.</strong> No store was
+    /// registered; the store answered no; the store did not answer. The first two are obvious.
+    /// The third is the one worth stating: a limiter that cannot reach its server does not know
+    /// whether this caller is inside the budget, and admitting on doubt turns an outage of the
+    /// limiter into an unbounded flood of whatever it was bounding — see
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>
+    /// §2.2.
+    /// </para>
+    /// <para>
+    /// The refusal error is the same one in all three cases only in the second; the other two
+    /// name the cause, because "the limiter is not wired up" and "you are going too fast" lead
+    /// to different repairs and an operator reading a `429` should not have to guess which.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<Error?> AdmitAsync(
+        StepPolicy policy,
+        FlowExecutionContext context,
+        string capabilityId,
+        CancellationToken ct)
+    {
+        if (_rateLimiter is null)
+        {
+            return FlowErrors.RateLimiterUnavailable(capabilityId);
+        }
+
+        var key = PolicyKeys.RateLimit(
+            capabilityId, policy.RateScope, context.TenantId, context.Principal?.Identity?.Name);
+
+        var verdict = await _rateLimiter
+            .TryAcquireAsync(key, policy.Permits, policy.RateWindow, ct)
+            .ConfigureAwait(false);
+
+        if (verdict.IsFailure)
+        {
+            return FlowErrors.RateLimiterUnavailable(capabilityId, verdict.Error);
+        }
+
+        if (verdict.Value.Admitted)
+        {
+            // Counted on admission as well as on refusal, for the reason the breaker is:
+            // docs/10 §9 labels flowx_policy_invocations_total by outcome, and a refusal rate
+            // needs the callers who got in as its denominator.
+            PolicyApplied(StepPolicy.RateLimitKind, AdmissionStage, capabilityId, PolicyMetrics.OkOutcome);
+
+            return null;
+        }
+
+        PolicyApplied(StepPolicy.RateLimitKind, AdmissionStage, capabilityId, PolicyMetrics.RejectedOutcome);
+        PolicyMetrics.RateLimitRefused(policy.RateScope.ToString(), context.TenantId);
+
+        return FlowErrors.RateLimited(capabilityId, verdict.Value.RetryAfter);
+    }
+
+    /// <summary>What <see cref="BeginIdempotentAsync"/> found.</summary>
+    /// <param name="Refusal">The error the step fails with, or <c>null</c>.</param>
+    /// <param name="Replayed">Whether a recorded result was restored and the dispatch skipped.</param>
+    /// <param name="Key">The claimed key, when this caller now holds it.</param>
+    private readonly record struct IdempotentBegin(Error? Refusal, bool Replayed, string? Key);
+
+    /// <summary>
+    /// Stage 3, opening: claims the key, or replays what a previous caller recorded under it.
+    /// </summary>
+    private async ValueTask<IdempotentBegin> BeginIdempotentAsync(
+        StepPolicy policy,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        FlowContext scope,
+        string capabilityId,
+        CancellationToken ct)
+    {
+        if (_idempotency is null)
+        {
+            return new IdempotentBegin(FlowErrors.IdempotencyStoreUnavailable(capabilityId), false, null);
+        }
+
+        var key = PolicyKeys.Idempotency(
+            context.IdempotencyKey, capabilityId, policy.IdempotencyScope, context.TenantId);
+
+        // The claim is bounded by the flow's own remaining budget rather than by the declared
+        // window. A node that takes a key and then dies must not wedge every repeat of it for a
+        // declared PT24H, and an execution that cannot outlive its deadline cannot legitimately
+        // hold a claim past it either.
+        var lease = context.Deadline - context.UtcNow;
+
+        if (lease <= TimeSpan.Zero)
+        {
+            lease = MinimumIdempotencyLease;
+        }
+
+        var began = await _idempotency
+            .BeginAsync(key, policy.IdempotencyWindow!.Value, lease, ct)
+            .ConfigureAwait(false);
+
+        if (began.IsFailure)
+        {
+            return new IdempotentBegin(
+                FlowErrors.IdempotencyStoreUnavailable(capabilityId, began.Error), false, null);
+        }
+
+        switch (began.Value.State)
+        {
+            case IdempotencyState.Completed:
+                // The one path that restores. RestoreState is the only call that turns stored
+                // JSON back into the typed values the steps after this one bind to, and only
+                // generated code can make it — the same reason DescribeStep wrote the document.
+                dispatcher.RestoreState(scope, began.Value.Record ?? string.Empty);
+
+                PolicyApplied(
+                    StepPolicy.IdempotencyKind, IntegrityStage, capabilityId, PolicyMetrics.ReplayedOutcome);
+                PolicyMetrics.IdempotencyReplayed(capabilityId, policy.IdempotencyScope.ToString());
+
+                return new IdempotentBegin(null, true, null);
+
+            case IdempotencyState.InFlight:
+                PolicyApplied(
+                    StepPolicy.IdempotencyKind, IntegrityStage, capabilityId, PolicyMetrics.RejectedOutcome);
+
+                return new IdempotentBegin(
+                    FlowErrors.IdempotencyInProgress(capabilityId, began.Value.RetryAfter), false, null);
+
+            default:
+                PolicyApplied(
+                    StepPolicy.IdempotencyKind, IntegrityStage, capabilityId, PolicyMetrics.OkOutcome);
+
+                return new IdempotentBegin(null, false, key);
+        }
+    }
+
+    /// <summary>
+    /// Stage 3, closing: records what the step produced, or gives the key back.
+    /// </summary>
+    /// <returns>
+    /// The error the step fails with, or <c>null</c>. Non-null only on the success path — a step
+    /// that already failed has nothing further to report, and its key is simply released.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Only a success is recorded</strong>
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md">ADR-0041</a>
+    /// §2.3). A recorded failure would be replayed for the whole declared window, so one
+    /// transient outage at the moment a key was first presented would make that key unusable
+    /// for as long as the author declared — and the caller's remedy, presenting it again, is
+    /// exactly what would keep failing. It is <c>docs/10</c> §8's "negative caching: off" one
+    /// stage earlier.
+    /// </para>
+    /// <para>
+    /// <strong>The document goes out through <c>TryToReplayableJson</c> and never through
+    /// <c>ToJson</c></strong>
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md">ADR-0042</a>).
+    /// A payload the redaction pass had to change is not what the step produced, and replaying
+    /// it would hand a later step the literal <c>[redacted]</c> as if it were the value. There
+    /// is no third option here: the record is honest or the step fails.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<Error?> EndIdempotentAsync(
+        string key,
+        StepPolicy policy,
+        IStepDispatcher dispatcher,
+        FlowContext scope,
+        string capabilityId,
+        int index,
+        bool succeeded,
+        CancellationToken ct)
+    {
+        if (_idempotency is null)
+        {
+            return null;
+        }
+
+        if (!succeeded)
+        {
+            await _idempotency.AbandonAsync(key, ct).ConfigureAwait(false);
+
+            return null;
+        }
+
+        var described = dispatcher.DescribeStep(index, scope).StateBag;
+
+        if (!described.TryToReplayableJson(out var record))
+        {
+            // Two causes, one refusal. Either the flow marks a member [Sensitive] and the
+            // document came back with a placeholder where a value was, or the dispatcher
+            // describes no state bag at all. Both mean the same thing to this policy: there is
+            // nothing here that could honestly be replayed, and recording it anyway is how the
+            // second caller gets a fabricated answer.
+            await _idempotency.AbandonAsync(key, ct).ConfigureAwait(false);
+
+            return FlowErrors.IdempotencyNotReplayable(capabilityId, described.IsEmpty);
+        }
+
+        var completed = await _idempotency
+            .CompleteAsync(key, record, policy.IdempotencyWindow!.Value, ct)
+            .ConfigureAwait(false);
+
+        return completed.IsFailure
+            ? FlowErrors.IdempotencyStoreUnavailable(capabilityId, completed.Error)
+            : null;
+    }
+
+    /// <summary>
+    /// The floor on an idempotency claim's lease, for an execution whose budget has already gone.
+    /// </summary>
+    /// <remarks>
+    /// A claim of zero would be released by the store before the step it stands for finished, so
+    /// two concurrent callers of an over-budget flow would both execute — which is the one thing
+    /// the in-flight state exists to prevent. Small, because such an execution is about to fail
+    /// its deadline check anyway.
+    /// </remarks>
+    private static readonly TimeSpan MinimumIdempotencyLease = TimeSpan.FromSeconds(5);
 
     /// <summary>
     /// Dispatches one attempt at a step through its declared stage-4 policies.
@@ -1428,18 +1769,27 @@ public sealed class FlowEngine
     /// <param name="capabilityId">The dependency the step invokes.</param>
     /// <param name="outcome">What the policy decided.</param>
     /// <remarks>
-    /// The <c>stage</c> label is a literal because every kind that reaches here is stage 4 —
-    /// which is the whole of what
-    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>
-    /// says this engine executes. A stage landing later adds its own call site with its own
-    /// name rather than making this one derive it, because deriving it would mean reading the
-    /// descriptor the resolved <c>StepPolicy</c> exists to avoid reading.
+    /// The stage-4 overload. Its <c>stage</c> label is a literal because every kind that reaches
+    /// it is stage 4; stage 1 and stage 3 call the four-argument form below with their own
+    /// names, which is what <c>ADR-0025</c>'s successor predicted a landing stage would do —
+    /// add its own call site rather than make this one derive a stage from the descriptor the
+    /// resolved <c>StepPolicy</c> exists to avoid reading.
     /// </remarks>
     private static void PolicyApplied(string kind, string capabilityId, string outcome) =>
         PolicyMetrics.Applied(kind, ResilienceStage, capabilityId, outcome);
 
-    /// <summary>The one stage this engine executes, as a metric label.</summary>
+    /// <summary>Counts one application of a policy in a named stage.</summary>
+    private static void PolicyApplied(string kind, string stage, string capabilityId, string outcome) =>
+        PolicyMetrics.Applied(kind, stage, capabilityId, outcome);
+
+    /// <summary>Stage 4, as a metric label.</summary>
     private static readonly string ResilienceStage = nameof(PolicyStage.Resilience);
+
+    /// <summary>Stage 1, as a metric label.</summary>
+    private static readonly string AdmissionStage = nameof(PolicyStage.Admission);
+
+    /// <summary>Stage 3, as a metric label.</summary>
+    private static readonly string IntegrityStage = nameof(PolicyStage.Integrity);
 
     /// <summary>This engine's breaker for one capability, created on first use.</summary>
     private CircuitBreakerState Breaker(string capabilityId) =>

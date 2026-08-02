@@ -304,6 +304,14 @@ public sealed class TransferEndpointTests
                         services.AddSingleton<ILeaseStore>(new InMemoryLeaseStore());
                     }
 
+                    // The first step declares a RateLimit, and a step declaring one with no
+                    // IRateLimiterStore registered is refused rather than admitted — so every
+                    // test in this file would answer 503 policy.ratelimit_unavailable without
+                    // this line, which is exactly the loudness ADR-0040 §2.2 asks for. The
+                    // budget is generous because these are tests about an endpoint, not about
+                    // admission; TransferPolicyTests is where a narrow one bites.
+                    services.AddSingleton<IRateLimiterStore>(new FixedBudgetLimiter(int.MaxValue));
+
                     services.AddSingleton<ILedger, InMemoryLedger>();
                     services.AddSingleton<ISanctionsScreening, InMemorySanctionsScreening>();
                     services.AddSingleton<ICorrespondentDirectory, InMemoryCorrespondentDirectory>();

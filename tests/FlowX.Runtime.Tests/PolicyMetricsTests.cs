@@ -254,6 +254,143 @@ public sealed class PolicyMetricsTests
     /// synchronously by the engine, so the callback fires as the measurement is taken and
     /// there is nothing to pump.
     /// </remarks>
+    /// <summary>A refused caller is counted, with the scope whose budget was spent.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The row <c>ADR-0026</c> declined to name.</strong> That record left
+    /// <c>flowx_ratelimit_rejected_total</c> out of <c>TelemetryNames</c> entirely — not
+    /// named-and-unemitted like <c>flowx_trigger_admitted_total</c>, but absent — because "a
+    /// rate-limit rejection counter describes a decision no code makes, so there is no name to
+    /// freeze until <c>PolicyStage.Admission</c> is executed and the shape of its <c>scope</c>
+    /// label is a decision somebody has made". Both halves are now true, and this is the
+    /// measurement.
+    /// </para>
+    /// <para>
+    /// The <c>scope</c> label carries the declared <c>RateLimitScope</c> by name, which is what
+    /// tells an operator which knob to turn: a <c>Tenant</c> refusal is one tenant's budget and
+    /// a <c>Global</c> one is the deployment's.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ARefusedCallerIsCountedWithTheScopeThatRefusedIt()
+    {
+        using var recorder = new MetricRecorder();
+
+        var limiter = new CountingRateLimiter(budget: 0);
+
+        await new FlowEngine(new FakeClock(T0), rateLimiter: limiter).ExecuteAsync(
+            Plan(Forward(PolicySet.Named("a")
+                .RateLimit(permits: 1, TimeSpan.FromHours(1), RateLimitScope.Tenant))),
+            new RecordingDispatcher(),
+            Plans.Invocation,
+            Ct);
+
+        var refusals = recorder.Counter(TelemetryNames.RateLimitRejectedTotal);
+
+        refusals.ShouldHaveSingleItem(
+            "one caller was refused, so an operator would have seen exactly one refusal. A " +
+            "counter that stayed at zero here is the empty series ADR-0026 refuses to publish.");
+
+        refusals[0].Tag(TelemetryNames.ScopeLabel).ShouldBe(
+            nameof(RateLimitScope.Tenant),
+            "the declared scope, so a dashboard can tell one tenant's exhausted budget from " +
+            "the deployment's.");
+
+        recorder.Counter(TelemetryNames.PolicyInvocationsTotal)
+            .ShouldContain(
+                m => m.Tag(TelemetryNames.PolicyLabel) == StepPolicy.RateLimitKind
+                     && m.Tag(TelemetryNames.StageLabel) == nameof(PolicyStage.Admission)
+                     && m.Tag(TelemetryNames.OutcomeLabel) == PolicyMetrics.RejectedOutcome,
+                "and the shared counter carries it too, under its own stage — so a refusal rate " +
+                "computed from one series has the admissions as its denominator.");
+    }
+
+    /// <summary>An admitted caller is counted as well, so the refusal rate has a denominator.</summary>
+    /// <remarks>
+    /// <c>flowx_ratelimit_rejected_total</c> counts refusals only and deliberately has no
+    /// denominator of its own — <c>flowx_policy_invocations_total</c> already carries both halves
+    /// for every policy, so a second series counting admissions would be one number under two
+    /// names. This asserts the half that would otherwise be invisible.
+    /// </remarks>
+    [Fact]
+    public async Task AnAdmittedCallerIsCountedByTheSharedInvocationCounterAndNotByTheRefusalOne()
+    {
+        using var recorder = new MetricRecorder();
+
+        await new FlowEngine(new FakeClock(T0), rateLimiter: new CountingRateLimiter(budget: 5)).ExecuteAsync(
+            Plan(Forward(PolicySet.Named("a")
+                .RateLimit(permits: 5, TimeSpan.FromHours(1), RateLimitScope.Global))),
+            new RecordingDispatcher(),
+            Plans.Invocation,
+            Ct);
+
+        recorder.Counter(TelemetryNames.RateLimitRejectedTotal).ShouldBeEmpty(
+            "nobody was refused, so the refusal counter must publish nothing rather than a zero.");
+
+        recorder.Counter(TelemetryNames.PolicyInvocationsTotal)
+            .ShouldContain(
+                m => m.Tag(TelemetryNames.PolicyLabel) == StepPolicy.RateLimitKind
+                     && m.Tag(TelemetryNames.OutcomeLabel) == PolicyMetrics.OkOutcome,
+                "and the admission is the denominator: 'this limit refused forty' means nothing " +
+                "without knowing whether it saw forty-five or forty-five thousand.");
+    }
+
+    /// <summary>A replayed step is counted, and a first presentation of a key is not.</summary>
+    /// <remarks>
+    /// <para>
+    /// <c>flowx_idempotency_replays_total</c> counts the duplicate work that did <em>not</em>
+    /// happen. Counting the first presentation too would put every policed step on a dashboard
+    /// whose number is meant to be the saving, and a flat line would then mean "the policy is
+    /// working" and "the policy is doing nothing" equally well.
+    /// </para>
+    /// <para>
+    /// Both runs are asserted from one recorder, so the test fails if the first execution
+    /// counted a replay it did not perform.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AReplayIsCountedAndAFirstPresentationIsNot()
+    {
+        using var recorder = new MetricRecorder();
+
+        var store = new RecordingIdempotencyStore();
+        var engine = new FlowEngine(new FakeClock(T0), idempotency: store);
+
+        var plan = Plan(Forward(PolicySet.Named("i")
+            .Idempotency(TimeSpan.FromHours(24), IdempotencyScope.Global)));
+
+        static StepJournalEntry Describe(int index, FlowContext ctx) =>
+            StepJournalEntry.Of(
+                null,
+                JournalPayload.OfState(
+                    [JournalMember.Of("validated", new Validated("iban", 1m), PolicyContracts.Default)],
+                    []));
+
+        await engine.ExecuteAsync(
+            plan, new RecordingDispatcher { Describe = Describe }, Plans.Invocation, Ct);
+
+        recorder.Counter(TelemetryNames.IdempotencyReplaysTotal).ShouldBeEmpty(
+            "the first caller presented the key and ran the step; nothing was replayed.");
+
+        await engine.ExecuteAsync(
+            plan, new RecordingDispatcher { Describe = Describe }, Plans.Invocation, Ct);
+
+        var replays = recorder.Counter(TelemetryNames.IdempotencyReplaysTotal);
+
+        replays.ShouldHaveSingleItem("the second caller was answered from the record.");
+
+        replays[0].Tag(TelemetryNames.CapabilityLabel).ShouldBe(Plans.Validate.Id);
+        replays[0].Tag(TelemetryNames.ScopeLabel).ShouldBe(nameof(IdempotencyScope.Global));
+
+        recorder.Counter(TelemetryNames.PolicyInvocationsTotal)
+            .ShouldContain(
+                m => m.Tag(TelemetryNames.PolicyLabel) == StepPolicy.IdempotencyKind
+                     && m.Tag(TelemetryNames.StageLabel) == nameof(PolicyStage.Integrity)
+                     && m.Tag(TelemetryNames.OutcomeLabel) == PolicyMetrics.ReplayedOutcome,
+                "and the shared counter distinguishes a replay from a fresh key, which is the " +
+                "only number that says whether the declaration is earning its store.");
+    }
+
     private sealed class MetricRecorder : IDisposable
     {
         private readonly MeterListener _listener;

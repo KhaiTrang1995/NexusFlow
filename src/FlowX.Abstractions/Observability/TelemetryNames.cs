@@ -165,16 +165,15 @@ public static class TelemetryNames
     /// Counter. Labels: <c>policy</c>, <c>stage</c>, <c>capability</c>, <c>outcome</c>.
     /// </summary>
     /// <remarks>
-    /// The four rows of <c>docs/10 §9</c> below are frozen on the same terms as §3's above, and
+    /// The six rows of <c>docs/10 §9</c> below are frozen on the same terms as §3's above, and
     /// for the same reason: an alert written against a breaker in one service must match the
-    /// breaker in every other. The three §9 rows that are <em>not</em> named here —
-    /// <c>flowx_ratelimit_rejected_total</c>, the cache hit/miss pair and
-    /// <c>flowx_idempotency_replays_total</c> — are omitted rather than named-and-unemitted,
-    /// which is the opposite of what was done for <see cref="TriggerAdmittedTotal"/> and
-    /// <see cref="StreamLagRecords"/>. The difference is that those two describe a subject that
-    /// exists and cannot be reached; a rate-limit rejection counter describes a decision no code
-    /// makes, so there is no name to freeze until <c>PolicyStage.Admission</c> is executed and
-    /// the shape of its <c>scope</c> label is a decision somebody has made.
+    /// breaker in every other. The one §9 row that is <em>not</em> named here — the cache
+    /// hit/miss pair — is omitted rather than named-and-unemitted, which is the opposite of what
+    /// was done for <see cref="TriggerAdmittedTotal"/> and <see cref="StreamLagRecords"/>. The
+    /// difference is that those two describe a subject that exists and cannot be reached; a
+    /// cache counter describes a decision no code makes, so there is no name to freeze until
+    /// <c>PolicyStage.Efficiency</c> is executed and the shape of its <c>scope</c> label is a
+    /// decision somebody has made.
     /// </remarks>
     public const string PolicyInvocationsTotal = "flowx_policy_invocations_total";
 
@@ -186,6 +185,33 @@ public static class TelemetryNames
 
     /// <summary>Gauge. Label: <c>capability</c>.</summary>
     public const string BulkheadQueueDepth = "flowx_bulkhead_queue_depth";
+
+    /// <summary>
+    /// Counter. Labels: <c>scope</c>, <c>tenant</c>.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The <c>scope</c> label is the decision <c>ADR-0026</c> said nobody had made.</strong>
+    /// It carries the declared <c>RateLimitScope</c> by name — <c>Global</c>, <c>Tenant</c> or
+    /// <c>Principal</c> — which is the value that decides what the exhausted budget belonged to
+    /// and is therefore the one an operator needs to know which knob to turn. It is bounded by
+    /// an enum with three members, so it is a label rather than a cardinality hazard.
+    /// <c>tenant</c> is bucketed by <see cref="FlowXTelemetry.TenantLabel"/> like every other
+    /// tenant label on a metric.
+    /// </remarks>
+    public const string RateLimitRejectedTotal = "flowx_ratelimit_rejected_total";
+
+    /// <summary>Counter. Labels: <c>capability</c>, <c>scope</c>.</summary>
+    /// <remarks>
+    /// Counted on the replay only — a key presented for the first time is not a replay, and
+    /// counting it would put every policed step on a dashboard whose number is meant to be the
+    /// duplicate work that did <em>not</em> happen. An in-flight refusal is not a replay either:
+    /// nothing was returned to the caller, so it is counted by
+    /// <see cref="PolicyInvocationsTotal"/>'s <c>rejected</c> outcome instead.
+    /// </remarks>
+    public const string IdempotencyReplaysTotal = "flowx_idempotency_replays_total";
+
+    /// <summary>The scope a rate limit's budget or an idempotency key's namespace belongs to.</summary>
+    public const string ScopeLabel = "scope";
 
     // ---- Metric label names ----
 

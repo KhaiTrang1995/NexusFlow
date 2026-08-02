@@ -156,9 +156,10 @@ public sealed class PolicyStageFitnessTests
     /// </para>
     /// <para>
     /// The real list is read off the two resolvers rather than typed out again: <c>StepPolicy</c>
-    /// publishes the four stage-4 descriptor kinds it reads as constants, and
-    /// <c>CompensationPolicy</c> publishes the one it reads. A fifth kind implemented without a
-    /// constant would slip past this — which is why they are constants.
+    /// publishes the six descriptor kinds it reads as constants — the four stage-4 ones plus the
+    /// stage-1 <c>RateLimit</c> and the stage-3 <c>Idempotency</c> — and <c>CompensationPolicy</c>
+    /// publishes the one it reads. A seventh kind implemented without a constant would slip past
+    /// this, which is why they are constants.
     /// </para>
     /// </remarks>
     [Fact]
@@ -166,6 +167,8 @@ public sealed class PolicyStageFitnessTests
     {
         string[] executed =
         [
+            StepPolicy.RateLimitKind,
+            StepPolicy.IdempotencyKind,
             StepPolicy.TimeoutKind,
             StepPolicy.RetryKind,
             StepPolicy.CircuitBreakerKind,
