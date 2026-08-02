@@ -484,12 +484,23 @@ internal sealed class FlowXOptionsValidator : IValidateOptions<FlowXOptions>
                 "leave the journal without an IRecoveryIndex for that.");
         }
 
-        // Refused at startup rather than downgraded at run time. A deployment that configured
-        // Schema or Database and silently received Row would believe it had bought separation
-        // it does not have — which is the "declared and inert" shape this work package exists
-        // to remove, arriving through the very option meant to remove it. A pod that never
-        // becomes ready is the cheaper failure, and it is this validator's whole purpose.
-        if (options.TenantIsolation is not (TenantIsolation.None or TenantIsolation.Row))
+        // Refused at startup rather than downgraded at run time. A deployment that configured a
+        // level and silently received a weaker one would believe it had bought separation it
+        // does not have — which is the "declared and inert" shape this work package exists to
+        // remove, arriving through the very option meant to remove it. A pod that never becomes
+        // ready is the cheaper failure, and it is this validator's whole purpose.
+        //
+        // Database stays here, and it is the one level whose absence is a decision rather than
+        // an omission: it names docs/16 §2's L3/L4, a deployment per tenant, which the pod
+        // serving it expresses as None against that tenant's own connection string. The
+        // in-process reading of it is L2, and that is what Schema is. TenantErrors makes the
+        // argument; this line is only where it is applied.
+        //
+        // What this validator CANNOT check is whether the store can serve the level — it sees
+        // options and no services. FlowHost's constructor does that, against
+        // FlowDurability.IsolationEnforced, and the two refusals are deliberately different
+        // errors because they are repaired differently.
+        if (options.TenantIsolation is TenantIsolation.Database)
         {
             failures.Add(TenantErrors.IsolationNotSupported(options.TenantIsolation).Message);
         }

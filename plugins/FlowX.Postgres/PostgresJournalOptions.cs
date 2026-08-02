@@ -91,4 +91,96 @@ public sealed record PostgresJournalOptions
     /// </para>
     /// </remarks>
     public bool RegisterTimerIndex { get; init; } = true;
+
+    /// <summary>
+    /// Whether each tenant's rows live in a schema of their own, and on what terms.
+    /// </summary>
+    /// <remarks>
+    /// Off by default, which is <see cref="TenantIsolation.Row"/> or no tenancy at all. A
+    /// deployment declaring <see cref="TenantIsolation.Schema"/> must turn this on, and a host
+    /// refuses to start when it did not — <c>FlowDurability.IsolationEnforced</c> is what
+    /// reports the mismatch, because a schema level served by a row store is precisely the
+    /// silent downgrade the level exists to prevent.
+    /// </remarks>
+    public TenantSchemaOptions TenantSchemas { get; init; } = new();
+}
+
+/// <summary>
+/// Where a tenant's own schema comes from, and what it is allowed to cost.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>A separate record from <see cref="PostgresJournalOptions"/> because it is a
+/// different decision with a different owner.</strong> Where the tables live is an operator's
+/// answer to "which schema"; this is an answer to "how many", and it carries a pool bound and a
+/// provisioning policy that only a deployment running schema-per-tenant has any opinion about.
+/// </para>
+/// </remarks>
+public sealed record TenantSchemaOptions
+{
+    /// <summary>The default prefix every tenant schema starts with.</summary>
+    public const string DefaultPrefix = "flowx_t_";
+
+    private readonly string _prefix = DefaultPrefix;
+
+    /// <summary>Whether a tenant's rows live in a schema of their own.</summary>
+    public bool IsEnabled { get; init; }
+
+    /// <summary>What every derived schema name begins with.</summary>
+    /// <exception cref="ArgumentException">
+    /// It is not a bare lower-case identifier, or it leaves no room for a fingerprint.
+    /// </exception>
+    /// <remarks>
+    /// Configurable so that a journal can share a database with an application that has its own
+    /// schemas and still be recognisable in <c>\dn</c>, and validated on the way in for
+    /// <see cref="PostgresJournalOptions.Schema"/>'s reason: it reaches SQL as an identifier,
+    /// and an identifier cannot be a parameter.
+    /// </remarks>
+    public string Prefix
+    {
+        get => _prefix;
+        init => _prefix = TenantSchemaName.RequirePrefix(value);
+    }
+
+    /// <summary>
+    /// How many connections one tenant may hold open, across this process.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is <c>docs/16 §9</c>'s "connection pool shared across L2 tenants" answered
+    /// rather than avoided.</strong> Each tenant gets its own pool, so a tenant that opens
+    /// connections faster than it closes them exhausts a bound that belongs to it and leaves
+    /// every other tenant's pool untouched — which is the entire reason the pools are separate
+    /// rather than one pool with a per-tenant <c>search_path</c>.
+    /// </para>
+    /// <para>
+    /// Ten rather than Npgsql's hundred, because the multiplier is the tenant count: a hundred
+    /// per tenant is a thousand connections at ten tenants, and PostgreSQL's own default
+    /// <c>max_connections</c> is a hundred for the whole server.
+    /// </para>
+    /// </remarks>
+    public int MaxPoolSizePerTenant { get; init; } = 10;
+
+    /// <summary>
+    /// Whether a tenant seen for the first time has its schema created and migrated here.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>On by default, because the alternative is a control plane this repository does
+    /// not ship.</strong> A tenant arriving at run time is the ordinary case for a SaaS
+    /// platform, and a runtime that refused every unprovisioned tenant would make
+    /// <see cref="TenantIsolation.Schema"/> unusable without an external provisioner — which is
+    /// exactly the "declared and inert" state the level is being built to leave.
+    /// </para>
+    /// <para>
+    /// <strong>And switchable, because DDL in the request path is a real objection.</strong> A
+    /// deployment whose database roles forbid runtime DDL, or that would rather pay the
+    /// migration cost at provisioning time than on one unlucky caller's first request, sets this
+    /// false and provisions out of band; a tenant whose schema is then absent is refused by name
+    /// rather than met with a missing-relation error. <see cref="PostgresJournalOptions.CreateSchemaIfMissing"/>
+    /// is the same switch for the control schema and is deliberately not reused: one of them is
+    /// applied once at deployment and the other on every new customer.
+    /// </para>
+    /// </remarks>
+    public bool ProvisionOnFirstUse { get; init; } = true;
 }

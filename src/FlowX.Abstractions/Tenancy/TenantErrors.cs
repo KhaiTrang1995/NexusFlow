@@ -229,11 +229,54 @@ public static class TenantErrors
     public static Error IsolationNotSupported(TenantIsolation isolation) =>
         new Error(
             IsolationNotSupportedCode,
-            $"TenantIsolation.{isolation} is declared and this runtime does not implement " +
-            "it. Only None and Row are enforceable today (docs/16-Multi-Tenant.md §5); the " +
-            "remaining levels need a per-tenant store resolver that no record has decided. " +
-            "The level is refused rather than downgraded, because a deployment that asked " +
-            "for more separation must not silently receive less.",
+            $"TenantIsolation.{isolation} is declared and this runtime does not implement it. " +
+            "None, Row and Schema are enforceable; Database is not, and the reason is that it " +
+            "is not a runtime mode at all. It is docs/16 §2's L3/L4 — a dedicated deployment " +
+            "per tenant — so the pod serving one tenant's database declares None and points " +
+            "its connection string at that tenant's store, and there is no second tenant in " +
+            "the process to be kept apart from. Inside a shared process, a database per tenant " +
+            "is L2 and TenantIsolation.Schema already serves it. The level is refused rather " +
+            "than downgraded, because a deployment that asked for more separation must not " +
+            "silently receive less.",
             ErrorCategory.Internal)
             .With("isolation", isolation.ToString());
+
+    /// <summary>The code <see cref="IsolationNotEnforceable"/> raises.</summary>
+    public const string IsolationNotEnforceableCode = "tenant.isolation_not_enforceable";
+
+    /// <summary>
+    /// The runtime implements the declared level and the store behind this host does not.
+    /// </summary>
+    /// <param name="declared">The level the deployment configured.</param>
+    /// <param name="enforced">The strongest level the journal reports it can serve.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Distinct from <see cref="IsolationNotSupported"/> because the repairs are
+    /// different.</strong> That one means "no build of FlowX does this"; this one means "this
+    /// one does, and the store you wired underneath it does not" — repaired by a registration,
+    /// typically <c>PostgresJournalOptions.TenantSchemas</c>, rather than by choosing a
+    /// different level.
+    /// </para>
+    /// <para>
+    /// <strong><see cref="TenantIsolation.Row"/> over a store that cannot scope is deliberately
+    /// not this error.</strong> That deployment still gets admission-time refusal and is told
+    /// what it is missing by <c>FlowDurability.CanIsolateTenants</c>; ADR-0046 §3 accepted it in
+    /// as many words. What is refused here is a store that isolates less <em>than the level
+    /// names</em> — Schema served by row filtering — because that one has no honest reading:
+    /// every tenant's rows would sit in one schema while the configuration said each had its
+    /// own.
+    /// </para>
+    /// </remarks>
+    public static Error IsolationNotEnforceable(TenantIsolation declared, TenantIsolation enforced) =>
+        new Error(
+            IsolationNotEnforceableCode,
+            $"TenantIsolation.{declared} is declared and the journal behind this host enforces " +
+            $"only TenantIsolation.{enforced}. The level is not downgraded: a deployment " +
+            "running schema-per-tenant against a store that keeps every tenant in one schema " +
+            "would be told it had separation it does not have. Wire a store that serves the " +
+            "declared level — on PostgreSQL that is PostgresJournalOptions.TenantSchemas — or " +
+            "declare the level the store enforces.",
+            ErrorCategory.Internal)
+            .With("declared", declared.ToString())
+            .With("enforced", enforced.ToString());
 }

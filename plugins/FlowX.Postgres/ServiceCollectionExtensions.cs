@@ -47,21 +47,43 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton(settings);
         services.AddSingleton(_ => BuildDataSource(connectionString, settings));
-        services.AddSingleton<IFlowJournal>(
-            provider => new PostgresFlowJournal(provider.GetRequiredService<NpgsqlDataSource>()));
+
+        // Schema-per-tenant changes three registrations and nothing else: the journal gains the
+        // pools it hands out, and both sweeps become fan-outs because they are the two things
+        // here that are node-wide rather than per-call. The lease store is deliberately not
+        // among them — a lease is taken before the instance row exists and holds no tenant data
+        // (ADR-0046 §2.6), so it stays in the control schema, node-wide and shared, which is
+        // also the only place a lease on an instance whose tenant is not yet known could live.
+        if (settings.TenantSchemas.IsEnabled)
+        {
+            services.AddSingleton(provider => new PostgresTenantStores(
+                provider.GetRequiredService<NpgsqlDataSource>(), connectionString, settings));
+
+            services.AddSingleton<IFlowJournal>(provider => new PostgresFlowJournal(
+                provider.GetRequiredService<NpgsqlDataSource>(),
+                provider.GetRequiredService<PostgresTenantStores>()));
+        }
+        else
+        {
+            services.AddSingleton<IFlowJournal>(
+                provider => new PostgresFlowJournal(provider.GetRequiredService<NpgsqlDataSource>()));
+        }
+
         services.AddSingleton<ILeaseStore>(
             provider => new PostgresLeaseStore(provider.GetRequiredService<NpgsqlDataSource>()));
 
         if (settings.RegisterRecoveryIndex)
         {
-            services.AddSingleton<IRecoveryIndex>(
-                provider => new PostgresRecoveryIndex(provider.GetRequiredService<NpgsqlDataSource>()));
+            services.AddSingleton<IRecoveryIndex>(provider => settings.TenantSchemas.IsEnabled
+                ? new PostgresTenantRecoveryIndex(provider.GetRequiredService<PostgresTenantStores>())
+                : new PostgresRecoveryIndex(provider.GetRequiredService<NpgsqlDataSource>()));
         }
 
         if (settings.RegisterTimerIndex)
         {
-            services.AddSingleton<ITimerIndex>(
-                provider => new PostgresTimerIndex(provider.GetRequiredService<NpgsqlDataSource>()));
+            services.AddSingleton<ITimerIndex>(provider => settings.TenantSchemas.IsEnabled
+                ? new PostgresTenantTimerIndex(provider.GetRequiredService<PostgresTenantStores>())
+                : new PostgresTimerIndex(provider.GetRequiredService<NpgsqlDataSource>()));
         }
 
         services.AddSingleton(
@@ -144,7 +166,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton(settings);
         services.AddSingleton(provider => new PostgresOutboxPublisher(
-            provider.GetRequiredService<NpgsqlDataSource>(),
+            RequiresOneSchema(provider, nameof(AddFlowXPostgresOutbox), "drains outbox_event"),
             provider.GetRequiredService<IEventPublisher>(),
             provider.GetRequiredService<PostgresOutboxOptions>()));
 
@@ -178,10 +200,49 @@ public static class ServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        services.AddSingleton<IChangeFeed>(
-            provider => new PostgresChangeFeed(provider.GetRequiredService<NpgsqlDataSource>()));
+        services.AddSingleton<IChangeFeed>(provider => new PostgresChangeFeed(
+            RequiresOneSchema(provider, nameof(AddFlowXPostgresChangeFeed), "reads outbox_event")));
 
         return services;
+    }
+
+    /// <summary>
+    /// Returns the control data source, or refuses a loop that would poll an empty table.
+    /// </summary>
+    /// <param name="provider">Where the options and the data source come from.</param>
+    /// <param name="registration">Which extension method is being refused.</param>
+    /// <param name="what">What that registration does with the table, for the message.</param>
+    /// <returns>The control schema's data source.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Each tenant has a schema of its own, so the control schema's table is empty.
+    /// </exception>
+    /// <remarks>
+    /// <strong>Refused rather than fanned out, and the difference from the two sweeps is the
+    /// point.</strong> A recovery scan and a timer sweep are stateless reads that merge cleanly
+    /// across schemas; the outbox publisher and the change feed both <em>claim</em> rows and
+    /// advance a position, so one of them per tenant is a different loop with a different
+    /// ordering guarantee, not the same loop asked twice. That is a design nobody has decided,
+    /// and a publisher that silently drained an empty table would be the "declared and inert"
+    /// failure these levels exist to remove.
+    /// </remarks>
+    private static NpgsqlDataSource RequiresOneSchema(
+        IServiceProvider provider,
+        string registration,
+        string what)
+    {
+        if (provider.GetRequiredService<PostgresJournalOptions>().TenantSchemas.IsEnabled)
+        {
+            throw new InvalidOperationException(
+                $"{registration} {what} in the control schema, and this deployment gives every " +
+                $"tenant a schema of its own ({nameof(PostgresJournalOptions)}." +
+                $"{nameof(PostgresJournalOptions.TenantSchemas)}), so that table is empty and " +
+                "always will be. Draining it would report success and publish nothing. " +
+                "Per-tenant publication is not built: the loop claims rows and advances a " +
+                "position, so one per tenant is a different contract rather than the same one " +
+                "fanned out.");
+        }
+
+        return provider.GetRequiredService<NpgsqlDataSource>();
     }
 
     /// <summary>

@@ -41,6 +41,7 @@ namespace FlowX.Postgres;
 public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
 {
     private readonly NpgsqlDataSource _dataSource;
+    private readonly PostgresTenantStores? _stores;
     private readonly TenantScope _scope;
 
     /// <summary>Creates a journal over a data source.</summary>
@@ -57,16 +58,50 @@ public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
     /// and never uses this instance to execute anything.
     /// </remarks>
     public PostgresFlowJournal(NpgsqlDataSource dataSource)
-        : this(dataSource, TenantScope.None)
+        : this(dataSource, stores: null, TenantScope.None)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
     }
 
-    private PostgresFlowJournal(NpgsqlDataSource dataSource, TenantScope scope)
+    /// <summary>Creates a journal that gives each tenant a schema of its own.</summary>
+    /// <param name="dataSource">
+    /// The control schema's data source. Still what an unscoped call reaches — the migration
+    /// ledger, the leases and the tenant registry live there — and still not owned here.
+    /// </param>
+    /// <param name="stores">The per-tenant pools, one schema each.</param>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <remarks>
+    /// <see cref="TenantIsolation.Schema"/>. <see cref="ForTenant"/> now selects a pool as well
+    /// as a policy, and the two are applied together rather than one instead of the other:
+    /// <see cref="PostgresTenantStores"/> says why both.
+    /// </remarks>
+    public PostgresFlowJournal(NpgsqlDataSource dataSource, PostgresTenantStores stores)
+        : this(dataSource, stores, TenantScope.None)
+    {
+        ArgumentNullException.ThrowIfNull(dataSource);
+        ArgumentNullException.ThrowIfNull(stores);
+    }
+
+    private PostgresFlowJournal(
+        NpgsqlDataSource dataSource,
+        PostgresTenantStores? stores,
+        TenantScope scope)
     {
         _dataSource = dataSource;
+        _stores = stores;
         _scope = scope;
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <see cref="TenantIsolation.Schema"/> when this journal was given per-tenant pools and
+    /// <see cref="TenantIsolation.Row"/> otherwise — a fact about how the adapter was wired,
+    /// not about how a deployment configured itself. It is what lets a host refuse to start when
+    /// it declares more separation than the store it was handed can deliver, instead of serving
+    /// the weaker level under the stronger name.
+    /// </remarks>
+    public TenantIsolation Isolation =>
+        _stores is null ? TenantIsolation.Row : TenantIsolation.Schema;
 
     /// <inheritdoc />
     public async ValueTask<Result<FlowInstanceRecord>> StartAsync(
@@ -373,21 +408,35 @@ public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
     /// sweeps to whichever tenant happened to execute last.
     /// </remarks>
     public IFlowJournal ForTenant(string? tenantId) =>
-        new PostgresFlowJournal(_dataSource, TenantScope.For(tenantId));
+        new PostgresFlowJournal(_dataSource, _stores, TenantScope.For(tenantId));
 
     /// <summary>
-    /// Opens a connection and binds it to this journal's tenant, if it has one.
+    /// Opens a connection into this journal's tenant's schema and binds it to its tenant, if it
+    /// has one.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The bind is inside the acquire so that no statement anywhere in this class can reach a
     /// connection that has not been through it — which is the property that makes the
     /// database, rather than this file's discipline, the thing enforcing isolation. An
     /// unscoped journal reaches <see cref="TenantScope.IsScoped"/> and returns, so a
     /// single-tenant deployment issues exactly the statements it always did.
+    /// </para>
+    /// <para>
+    /// <strong>Choosing the pool is the first half and it is not optional either.</strong> Under
+    /// schema isolation the connection has to come from that tenant's own data source, because
+    /// the schema it resolves to is fixed when the socket is opened and cannot be corrected
+    /// afterwards. Borrowing from the control pool and setting <c>search_path</c> here is the
+    /// arrangement <see cref="PostgresTenantStores"/> exists to avoid.
+    /// </para>
     /// </remarks>
     private async ValueTask<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken)
     {
-        var connection = await _dataSource.OpenConnectionAsync(cancellationToken)
+        var source = _stores is not null && _scope.TenantId is { Length: > 0 } tenant
+            ? await _stores.ForAsync(tenant, cancellationToken).ConfigureAwait(false)
+            : _dataSource;
+
+        var connection = await source.OpenConnectionAsync(cancellationToken)
             .ConfigureAwait(false);
 
         if (!_scope.IsScoped)

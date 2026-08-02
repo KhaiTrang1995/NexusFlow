@@ -54,4 +54,25 @@ public interface ITenantScopedJournal
     /// data instead of reaching all of it.
     /// </remarks>
     IFlowJournal ForTenant(string? tenantId);
+
+    /// <summary>The strongest isolation level this store actually enforces.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Declared by the store, so that a host can refuse a level the store cannot
+    /// serve.</strong> <see cref="ForTenant"/> alone cannot say how far apart the two journals
+    /// it returns are kept: a row-filtered store and a schema-per-tenant store present exactly
+    /// the same seam, and a deployment that configured <see cref="TenantIsolation.Schema"/> and
+    /// silently received <see cref="TenantIsolation.Row"/> would have been told nothing. This is
+    /// what <c>FlowDurability.IsolationEnforced</c> reports and what
+    /// <c>FlowHost</c> compares against <c>FlowXOptions.TenantIsolation</c> at construction.
+    /// </para>
+    /// <para>
+    /// <see cref="TenantIsolation.Row"/> is the floor rather than
+    /// <see cref="TenantIsolation.None"/>: a store implementing this interface at all can bind
+    /// itself to a tenant, which is what <see cref="TenantIsolation.Row"/> means. A store that
+    /// cannot does not implement it, and <c>FlowDurability</c> reports
+    /// <see cref="TenantIsolation.None"/> for it.
+    /// </para>
+    /// </remarks>
+    TenantIsolation Isolation => TenantIsolation.Row;
 }
