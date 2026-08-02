@@ -178,7 +178,8 @@ public sealed class FlowRecoveryScan
             }
 
             takeovers ??= new List<Task<Attempt>>(capacity);
-            takeovers.Add(TakeOverAsync(candidate.InstanceId, registration, ct));
+            takeovers.Add(
+                TakeOverAsync(candidate.InstanceId, registration, candidate.TenantId, ct));
         }
 
         if (takeovers is null)
@@ -262,12 +263,23 @@ public sealed class FlowRecoveryScan
     /// the switch below rather than falling into it.
     /// </para>
     /// </remarks>
+    /// <remarks>
+    /// <strong>The candidate's tenant is carried straight through to the resume</strong>, so a
+    /// takeover runs against a journal bound to the instance's own tenant rather than an
+    /// unscoped one. The value is on the row this sweep already fetched — <c>AbandonedInstance</c>
+    /// has carried it since it was written — which is why isolating a recovery costs no extra
+    /// query. A scan is node-wide platform work and legitimately recovers every tenant's
+    /// instances; what it must not do is run one tenant's instance on a connection that can see
+    /// another's rows, and this is what stops it.
+    /// </remarks>
     private async Task<Attempt> TakeOverAsync(
         Guid instanceId,
         FlowRegistration registration,
+        string? tenantId,
         CancellationToken ct)
     {
-        var result = await _host.ResumeAsync(instanceId, registration, ct).ConfigureAwait(false);
+        var result = await _host.ResumeAsync(instanceId, registration, tenantId, ct)
+            .ConfigureAwait(false);
 
         if (result.IsSuccess || result.IsSuspended)
         {

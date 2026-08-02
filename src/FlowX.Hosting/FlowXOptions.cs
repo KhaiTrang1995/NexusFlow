@@ -221,6 +221,34 @@ public sealed class FlowXOptions
     /// </para>
     /// </remarks>
     public int BusMaxDeliveries { get; set; } = 5;
+
+    /// <summary>
+    /// How far apart this deployment keeps its tenants' data.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><see cref="TenantIsolation.None"/> by default, and the default is the whole
+    /// cost argument.</strong> A single-tenant deployment reaches no resolver, walks no claim,
+    /// scopes no connection and issues no extra statement: the host reads this field once per
+    /// invocation and branches away, which is the same bargain
+    /// <c>ExecutionPlan.HasAuthorizedSteps</c> struck for the authorisation stage. Budget
+    /// <strong>B2</strong> is untouched, and <c>EngineAllocationTests</c> is what says so
+    /// rather than this paragraph.
+    /// </para>
+    /// <para>
+    /// <strong>Setting it to <see cref="TenantIsolation.Row"/> makes a tenant mandatory.</strong>
+    /// An invocation that names none is refused at admission with
+    /// <c>tenant.required</c> rather than defaulted — a default tenant being the precise shape
+    /// of a cross-tenant read (<c>docs/16 §9</c>) — and every journal connection is bound to
+    /// the resolved tenant so the database refuses what the runtime somehow did not.
+    /// </para>
+    /// <para>
+    /// <strong>It is a deployment setting, never a per-flow one.</strong> Tenancy does not
+    /// appear in flow or capability logic at any level, which is what lets a tenant move from
+    /// L1 to L3 without a code change — <c>docs/16 §2</c>'s main payoff.
+    /// </para>
+    /// </remarks>
+    public TenantIsolation TenantIsolation { get; set; } = TenantIsolation.None;
 }
 
 /// <summary>
@@ -399,6 +427,16 @@ internal sealed class FlowXOptionsValidator : IValidateOptions<FlowXOptions>
                 $"{nameof(FlowXOptions.MaxConcurrentRecoveries)} must be greater than zero; " +
                 $"it is {options.MaxConcurrentRecoveries}. Zero is not 'recovery disabled' — " +
                 "leave the journal without an IRecoveryIndex for that.");
+        }
+
+        // Refused at startup rather than downgraded at run time. A deployment that configured
+        // Schema or Database and silently received Row would believe it had bought separation
+        // it does not have — which is the "declared and inert" shape this work package exists
+        // to remove, arriving through the very option meant to remove it. A pod that never
+        // becomes ready is the cheaper failure, and it is this validator's whole purpose.
+        if (options.TenantIsolation is not (TenantIsolation.None or TenantIsolation.Row))
+        {
+            failures.Add(TenantErrors.IsolationNotSupported(options.TenantIsolation).Message);
         }
 
         return failures.Count == 0

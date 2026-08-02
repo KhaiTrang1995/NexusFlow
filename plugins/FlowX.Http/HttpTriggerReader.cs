@@ -30,16 +30,21 @@ public static class HttpTriggerReader
 {
     /// <summary>Claim types that may carry a tenant, in the order they are consulted.</summary>
     /// <remarks>
+    /// <para>
     /// Claims only. A tenant read from a header or a body field is a tenant the caller
     /// chooses, which is a cross-tenant read waiting to happen (OWASP A01/A07). There is
     /// deliberately no configuration hook to add a header source.
+    /// </para>
+    /// <para>
+    /// <strong>The list itself now lives in <see cref="ClaimTenantResolver"/>, and this is a
+    /// projection of it.</strong> Both this transport and the admission-time resolver derive a
+    /// tenant from the same claims, and until they shared a list they were two copies that
+    /// could drift — a transport that gained an entry the resolver lacked would produce
+    /// invocations the resolver then refused, and one that lost an entry would resolve a
+    /// caller to no tenant at all.
+    /// </para>
     /// </remarks>
-    public static readonly string[] TenantClaimTypes =
-    [
-        "tid",
-        "tenant_id",
-        "http://schemas.flowx.dev/claims/tenant",
-    ];
+    public static string[] TenantClaimTypes => ClaimTenantResolver.TenantClaimTypes;
 
     /// <summary>Reads the invocation, or explains why the request cannot produce one.</summary>
     /// <param name="context">The request.</param>
@@ -95,29 +100,20 @@ public static class HttpTriggerReader
     /// Resolves the tenant from validated claims, and from nothing else.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Returns <c>null</c> rather than falling back to a header or a default when no
     /// claim is present. A default tenant is the shape of a cross-tenant data leak: the
     /// request proceeds, reads succeed, and the wrong customer's data comes back.
+    /// </para>
+    /// <para>
+    /// <strong>The derivation is <see cref="ClaimTenantResolver"/>'s, and this delegates to
+    /// it.</strong> What this method produces is checked at admission against what that class
+    /// derives from the same principal, so two implementations of one rule would mean a
+    /// transport whose every request refused itself. One rule, one place, called twice.
+    /// </para>
     /// </remarks>
-    public static string? ReadTenant(ClaimsPrincipal? principal)
-    {
-        if (principal?.Identity?.IsAuthenticated != true)
-        {
-            return null;
-        }
-
-        foreach (var claimType in TenantClaimTypes)
-        {
-            var value = principal.FindFirst(claimType)?.Value;
-
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                return value;
-            }
-        }
-
-        return null;
-    }
+    public static string? ReadTenant(ClaimsPrincipal? principal) =>
+        ClaimTenantResolver.FromClaims(principal);
 
     /// <summary>
     /// Continues the caller's trace, or starts one.

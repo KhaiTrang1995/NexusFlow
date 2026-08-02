@@ -191,20 +191,25 @@ dotnet_diagnostic.S5034.severity = none   # reading ValueTask.IsCompleted then G
 dotnet_diagnostic.S3241.severity = none   # a test helper may return a value that only some callers use
 dotnet_diagnostic.S3878.severity = none   # explicit array in a params call, for readability in a table-driven test
 
-[plugins/FlowX.Http/{HttpTriggerReader,ProblemDetailsMapper}.cs]
-# Both constants are URIs that identify something rather than address something,
-# and both are contract surface that callers match on literally:
+[src/FlowX.Runtime/Tenancy/ClaimTenantResolver.cs]
+# "http://schemas.flowx.dev/claims/tenant" is a claim type, the same shape as the
+# WS-Federation claim URIs. Its scheme is part of its identity — changing it to
+# https would simply stop matching the claim in incoming tokens. It is never
+# dereferenced, so there is no request to secure.
 #
-#   "http://schemas.flowx.dev/claims/tenant" is a claim type, the same shape as
-#   the WS-Federation claim URIs. Its scheme is part of its identity — changing
-#   it to https would simply stop matching the claim in incoming tokens.
-#
-#   "https://flowx.dev/errors/" is the RFC 9457 Problem Details `type` prefix.
-#   The spec requires a stable URI, so it has to be written down somewhere, and
-#   it is already https.
-#
-# Neither is ever dereferenced by this code, so there is no request to secure.
+# The list used to live in plugins/FlowX.Http/HttpTriggerReader.cs and this
+# exemption with it. It moved here when admission-time tenant resolution landed:
+# both the transport and the resolver derive a tenant from the same claims, and
+# two copies of the list would eventually disagree — so there is one list, in the
+# layer both can reach, and the suppression follows the literal.
 dotnet_diagnostic.S5332.severity = none   # http:// is insecure
+dotnet_diagnostic.S1075.severity = none   # hardcoded URI
+
+[plugins/FlowX.Http/ProblemDetailsMapper.cs]
+# "https://flowx.dev/errors/" is the RFC 9457 Problem Details `type` prefix. The
+# spec requires a stable URI, so it has to be written down somewhere, and it is
+# already https. It identifies an error class rather than addressing a document,
+# and this code never dereferences it.
 dotnet_diagnostic.S1075.severity = none   # hardcoded URI
 
 # samples/workflow's FLOWX-DEBT(people-ops, 2026-12-31) suppression of FLOWX1032 was
