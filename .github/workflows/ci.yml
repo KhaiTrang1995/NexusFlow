@@ -308,6 +308,16 @@ jobs:
         #     --output samples/ecommerce/flowx.manifest.baseline.json
         run: |
           dotnet build samples/ecommerce/Ecommerce.csproj --configuration Release
+
+          # The CLI has to be built before it can be run with --no-build, and nothing else
+          # in this job builds it: it is deliberately not referenced by anything (see the
+          # comment in FlowX.Cli.csproj — CliLinksNoFlowXAssembly asserts the absence), so
+          # building the sample cannot drag it in. Without this line `dotnet run --no-build`
+          # looked for bin/Release/net10.0/flowx, which is the right path — AssemblyName is
+          # `flowx` — for a binary nothing had produced. The docs job already builds it this
+          # way before running `flowx graph`.
+          dotnet build src/FlowX.Cli --configuration Release
+
           dotnet run --project src/FlowX.Cli --configuration Release --no-build -- manifest \
             --assembly samples/ecommerce/bin/Release/net10.0/Ecommerce.dll \
             --output "$RUNNER_TEMP/candidate.manifest.json"
