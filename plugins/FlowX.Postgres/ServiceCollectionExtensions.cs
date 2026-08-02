@@ -152,6 +152,39 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers <see cref="PostgresChangeFeed"/> over the data source
+    /// <see cref="AddFlowXPostgres"/> built, so a <c>[ChangeTrigger]</c> flow is observed.
+    /// </summary>
+    /// <param name="services">The container being built.</param>
+    /// <returns>The same collection, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>Separate from <see cref="AddFlowXPostgres"/> for
+    /// <see cref="AddFlowXPostgresOutbox"/>'s reason</strong>, inverted: this one needs nothing
+    /// the journal does not already have, and registering it by default would still be wrong.
+    /// <c>FlowChangeScan</c> resolves <see cref="IChangeFeed"/> optionally, so wiring one turns
+    /// the change loop on for the whole host — and a deployment that runs PostgreSQL as a journal
+    /// and observes nothing should not acquire a background loop by upgrading.
+    /// </para>
+    /// <para>
+    /// <strong>It coexists with <see cref="AddFlowXPostgresOutbox"/> and does not replace
+    /// it.</strong> The feed reads <c>outbox_event</c> without writing it, so a host can drain
+    /// the outbox to a broker and observe the same rows from a change subscription at once
+    /// (<c>docs/adr/ADR-0047-a-change-trigger-observes-the-outbox.md</c>).
+    /// </para>
+    /// </remarks>
+    public static IServiceCollection AddFlowXPostgresChangeFeed(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddSingleton<IChangeFeed>(
+            provider => new PostgresChangeFeed(provider.GetRequiredService<NpgsqlDataSource>()));
+
+        return services;
+    }
+
+    /// <summary>
     /// Builds a data source whose connections already resolve to the configured schema.
     /// </summary>
     /// <param name="connectionString">How to reach PostgreSQL.</param>
