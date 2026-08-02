@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Security.Cryptography;
 using System.Text;
 
 namespace FlowX.Runtime;
@@ -42,9 +41,11 @@ public static class ScheduleOccurrence
     /// <remarks>
     /// A NUL cannot occur in a flow id, a version, a cron expression or an IANA zone, so
     /// concatenating on it is injective — where concatenating on nothing would make
-    /// <c>("ab", "c")</c> and <c>("a", "bc")</c> the same schedule.
+    /// <c>("ab", "c")</c> and <c>("a", "bc")</c> the same schedule. Shared with
+    /// <see cref="BusDeliveryIdentity"/> through <see cref="DerivedIdentity"/>, so the two
+    /// derivations cannot drift apart on the one property that makes either injective.
     /// </remarks>
-    private const char Separator = '\0';
+    private const char Separator = DerivedIdentity.Separator;
 
     /// <summary>The id the instance for one firing is started under.</summary>
     /// <param name="flowId">The flow's business identity.</param>
@@ -82,30 +83,6 @@ public static class ScheduleOccurrence
             .Append(occurrence.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture))
             .ToString();
 
-        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(material));
-
-        return AsVersion8(digest);
-    }
-
-    /// <summary>Lays the first sixteen bytes of a digest out as a UUID version 8.</summary>
-    /// <remarks>
-    /// <para>
-    /// Byte order is fixed here rather than left to <c>new Guid(byte[])</c>'s little-endian
-    /// reading of the first three groups, so the id a Postgres <c>uuid</c> column shows is a
-    /// prefix of the digest an operator can recompute. The version and variant nibbles are set
-    /// per RFC 9562 §4.2, which costs six of the digest's bits — the remaining 122 are far more
-    /// than the birthday bound any schedule will reach.
-    /// </para>
-    /// </remarks>
-    private static Guid AsVersion8(ReadOnlySpan<byte> digest)
-    {
-        Span<byte> bytes = stackalloc byte[16];
-
-        digest[..16].CopyTo(bytes);
-
-        bytes[6] = (byte)((bytes[6] & 0x0F) | 0x80);
-        bytes[8] = (byte)((bytes[8] & 0x3F) | 0x80);
-
-        return new Guid(bytes, bigEndian: true);
+        return DerivedIdentity.FromMaterial(material);
     }
 }

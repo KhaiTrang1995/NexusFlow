@@ -166,6 +166,61 @@ public sealed class FlowXOptions
     /// one. What is not taken this sweep is still inside the horizon on the next.
     /// </remarks>
     public int ScheduleFireBatchSize { get; set; } = 32;
+
+    /// <summary>
+    /// How often a node asks its brokers whether anything has arrived.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the worst-case latency from an event being published to its flow
+    /// starting</strong>, and it is a poll rather than a long-lived push read on purpose —
+    /// <see cref="FlowBusService"/> carries the argument. One second by default, which is a round
+    /// trip per subscription per second on an idle node.
+    /// </para>
+    /// <para>
+    /// It is not the interval a message is redelivered on. That is the broker's visibility
+    /// timeout, and it is the broker's to configure.
+    /// </para>
+    /// </remarks>
+    public TimeSpan BusScanInterval { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>How many messages one pass takes from each partition.</summary>
+    /// <remarks>
+    /// Entries within a partition are run one at a time and in order
+    /// (<c>docs/adr/ADR-0037-the-consumer-offers-per-key-order.md</c>), so this is how long one
+    /// node holds one partition's lease rather than how much it does at once. What is not taken
+    /// this pass is still pending on the next.
+    /// </remarks>
+    public int BusReceiveBatchSize { get; set; } = 16;
+
+    /// <summary>How many partitions one node serves concurrently, per subscription.</summary>
+    /// <remarks>
+    /// The concurrency partitioning exists to provide, and the whole of it: order is offered
+    /// within a partition and nothing is offered across partitions, so this number is free to
+    /// raise and cannot weaken a guarantee. It bounds flows in flight from one subscription per
+    /// pass.
+    /// </remarks>
+    public int BusMaxConcurrentPartitions { get; set; } = 8;
+
+    /// <summary>
+    /// How many times a message may be delivered without its flow reaching a recorded outcome
+    /// before it is dead-lettered.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The bound on head-of-line blocking</strong>
+    /// (<c>docs/adr/ADR-0038-a-poison-message-is-dead-lettered.md</c>). Without it, one message
+    /// nobody can process stops its partition for ever — which is a bug rather than a durability
+    /// strategy, as <c>KafkaTriggerAttribute.DeadLetter</c> has said since it was written.
+    /// </para>
+    /// <para>
+    /// It counts <em>deliveries</em>, which is what a broker knows, and not attempts. A node that
+    /// claimed a message and died before running anything has still spent one, so a flapping node
+    /// can exhaust the budget without the flow having been tried — which is why the default is
+    /// five rather than one or two.
+    /// </para>
+    /// </remarks>
+    public int BusMaxDeliveries { get; set; } = 5;
 }
 
 /// <summary>
@@ -304,6 +359,38 @@ internal sealed class FlowXOptionsValidator : IValidateOptions<FlowXOptions>
                 $"{nameof(FlowXOptions.ScheduleFireBatchSize)} must be greater than zero; it is " +
                 $"{options.ScheduleFireBatchSize}. Zero is not 'schedules disabled' — register " +
                 "no schedule for that.");
+        }
+
+        if (options.BusScanInterval <= TimeSpan.Zero)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.BusScanInterval)} must be positive; it is " +
+                $"{options.BusScanInterval}. A zero interval is a poll loop with no pause in it, " +
+                "which is a denial of service aimed at your own broker.");
+        }
+
+        if (options.BusReceiveBatchSize <= 0)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.BusReceiveBatchSize)} must be greater than zero; it is " +
+                $"{options.BusReceiveBatchSize}. Zero is not 'subscriptions disabled' — register " +
+                "no subscription for that.");
+        }
+
+        if (options.BusMaxConcurrentPartitions <= 0)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.BusMaxConcurrentPartitions)} must be greater than zero; " +
+                $"it is {options.BusMaxConcurrentPartitions}. Zero would serve no partition, " +
+                "which is a subscription that reads nothing and reports nothing.");
+        }
+
+        if (options.BusMaxDeliveries <= 0)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.BusMaxDeliveries)} must be greater than zero; it is " +
+                $"{options.BusMaxDeliveries}. Zero would dead-letter every message on its first " +
+                "delivery, before anything had a chance to run it.");
         }
 
         if (options.MaxConcurrentRecoveries <= 0)

@@ -311,6 +311,7 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1036](FLOWX1036.md) | Policy set cannot be read at compile time | **A whole policy set reaching no plan, no manifest and none of `FLOWX1014`, `FLOWX1018`, `FLOWX1019`, `FLOWX1032` or `FLOWX1033` — a shared library's `CompensationRetry` not running, and a duplicate-charge rule with nothing to read** |
 | [FLOWX1037](FLOWX1037.md) | Authorisation stance is not enforced by the runtime | **A capability published as policy-protected, diffed as policy-protected, and dispatched with nothing consulting the policy — the one stance of the five the engine cannot decide** |
 | [FLOWX1038](FLOWX1038.md) | Scheduled flow cannot be fired | **A published `cron` with no schedule registered behind it: a flow that cannot bind the occurrence and is never started, or an ephemeral one started by every node in the fleet on every occurrence — with no error, no duplicate row and nothing anywhere to count** |
+| [FLOWX1039](FLOWX1039.md) | Bus-triggered flow cannot be consumed | **A published `topic` with no subscription registered behind it: a flow that cannot bind the message and is never started, or an ephemeral one started again on every redelivery — with no error, no duplicate row and nothing anywhere to count** |
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -491,7 +492,19 @@ whether a trigger attribute declares a kind the compiler can read, and this one 
 it does and asks whether anything can serve the address. It is not `FLOWX1017` either — that
 rule requires `Durable` for a construct in the flow's *body*, where this reads an attribute and
 has a second reason that has nothing to do with the profile.
-The next is `FLOWX1039`. The range is `FLOWX1001`–`FLOWX1099`.
+
+**`FLOWX1039` is claimed** — *bus-triggered flow cannot be consumed*: a `[BusTrigger]` or
+`[KafkaTrigger]` the generator cannot turn into a subscription registration, because the flow's
+input contract is not `BusMessage` — a delivery has only the message to hand over, and it hands
+the body over undeserialised because turning it into a typed contract needs a `JsonTypeInfo` only
+generated code can name — or because the flow is not `Durable`, whose consequence is not that
+nothing runs but that *every redelivery* runs it, with nothing journalled to refuse the second.
+It is none of the reservations, and it is not `FLOWX1025`, for the reason `FLOWX1038` is not: that
+rule asks whether a trigger attribute declares a readable kind, and this one presupposes that it
+does. It is `FLOWX1038`'s rule one transport over and is deliberately a separate id rather than a
+widened one — the two name different input contracts and different failure modes, and a
+suppression of one must not silently suppress the other.
+The next is `FLOWX1040`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

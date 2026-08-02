@@ -201,7 +201,23 @@ purged — is otherwise invisible until the disk is.
   > The condition is spent; a second broker with genuinely different batching semantics —
   > Kafka's producer, which acknowledges asynchronously and out of order — is the next thing
   > that could unseat it, and would be its own record.
-- A deployment needs a dead-letter path, which changes the prefix contract from "stop" to
-  "divert and continue".
+- ~~A deployment needs a dead-letter path, which changes the prefix contract from "stop" to
+  "divert and continue".~~
+
+  > **Met on one side, and the prefix contract survived untouched.** Binding the `Bus`
+  > trigger needed a dead-letter path and got one — but on the **consumer**, where a
+  > message is acknowledged one at a time and diverting one is `XADD` then `XACK`.
+  > Publication never had to change, because the thing that would have forced it —
+  > "publish these five, skip the third" — is not a shape `IEventPublisher` can express
+  > and is not a shape the outbox needs. The condition therefore remains open for the
+  > publisher and is closed for the consumer, which is a narrower outcome than this line
+  > anticipated and worth stating rather than ticking.
+- Nothing consumed what this record published, and now something does.
+  [ADR-0037](ADR-0037-the-consumer-offers-per-key-order.md) is the consumer side of
+  decision 3 and it agrees with it: per `partition_key`, nothing across keys. What that
+  record adds is the mechanism — one stream per key is the *whole* of the ordering
+  design, and it holds across a fleet because a partition is read under a lease rather
+  than because a deployment runs one consumer. Decision 3 is unchanged; it is now
+  observable end to end.
 - The polling publisher becomes the latency bottleneck, at which point §5's CDC alternative
   stops being a row in a table.

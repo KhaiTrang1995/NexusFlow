@@ -997,33 +997,72 @@ Read this before you plan around FlowX rather than after you hit it. None of it 
 each item is stated where it is relevant — but a newcomer who discovers it by walking into
 it will discount everything else on this page.
 
-**One transport.** `plugins/` contains `FlowX.Http` and nothing else. `KafkaTriggerAttribute`,
-`CronTriggerAttribute`, `StreamTriggerAttribute` and `AgentTriggerAttribute` all compile and
-all reach the manifest's `triggers` block — and **nothing serves them.** Only
-`[HttpTrigger]` produces a registration for `app.MapFlowX()`. This block compiles, and this
-page's own test asserts that it raises no diagnostic at all:
+**Three trigger kinds of eight.** `[HttpTrigger]` produces a registration for
+`app.MapFlowX()`, `[CronTrigger]` one for `services.AddFlowXSchedules()`, and `[BusTrigger]` and
+`[KafkaTrigger]` one for `services.AddFlowXSubscriptions()`. `StreamTriggerAttribute`,
+`AgentTriggerAttribute` and the `Change` kind compile and reach the manifest's `triggers` block —
+and **nothing serves them.**
 
-<!-- verify: compiles -->
+*This paragraph said "one transport", and said that a Kafka trigger "will never receive a
+message" and that "no diagnostic reports a trigger that nothing serves". All three expired on
+2026-08-01.* A bus subscription is consumed by whichever `IBusConsumer` the host registers, and
+`FLOWX1039` now refuses the two bus declarations nothing could serve — which is what this block
+had to be changed to satisfy:
+
+<!-- verify: reports FLOWX1039 -->
 ```csharp
+// The step that turns the delivered body into your own contract. This is the layer with a
+// serialiser context in scope, and the layer whose failures are Results — the host hands the
+// body over undeserialised, because naming a JsonTypeInfo for your type is something only
+// generated code can do.
+[Capability("ticket.read", Version = "1.0.0",
+    Authorization = Authorization.Internal,
+    Idempotent = true)]
+public sealed class ReadRaisedTicket : ICapability<BusMessage, TicketOpened>
+{
+    public ValueTask<Result<TicketOpened>> ExecuteAsync(
+        BusMessage input,
+        CapabilityContext ctx,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(ctx);
+
+        return ValueTask.FromResult(input.Payload is { Length: > 0 } body
+            ? Result.Ok(new TicketOpened(ctx.IdempotencyKey, body))
+            : Result.Fail<TicketOpened>(TicketErrors.SubjectRequired()));
+    }
+}
+
 [Flow("ticket.import", Version = "1.0.0", Owner = "support")]
 [FlowDeadline("PT10S")]
-[KafkaTrigger("tickets.raised", Group = "ticket-import")]
-public sealed partial class ImportTicketFlow : Flow<OpenTicket, TicketOpened>
+[BusTrigger("tickets.raised", Group = "ticket-import")]
+public sealed partial class ImportTicketFlow : Flow<BusMessage, TicketOpened>
 {
-    protected override void Define(IFlowBuilder<OpenTicket, TicketOpened> flow)
+    protected override void Define(IFlowBuilder<BusMessage, TicketOpened> flow)
     {
         ArgumentNullException.ThrowIfNull(flow);
 
         flow
-            .Step<ValidateTicket>()
-            .Step<RecordTicket>()
+            .Step<ReadRaisedTicket>()
             .Return(ctx => ctx.Get<TicketOpened>());
     }
 }
 ```
 
-It publishes a Kafka trigger in its declared contract and will never receive a message. No
-plugin implements the consumer, and no diagnostic reports a trigger that nothing serves.
+**That block does not build**, and the diagnostic is the point:
+[`FLOWX1039`](diagnostics/FLOWX1039.md) refuses it because the flow is not `Durable`. A broker
+delivers at least once — that is its contract, not its defect — and the answer is that the
+delivery *derives* the instance id it starts, so the journal's primary key refuses the second
+one. Without a journal that id is inert and every redelivery would import the ticket again, with
+nothing anywhere recording that it had.
+
+Adding `Profile = ExecutionProfile.Durable` fixes it, and then a durable flow needs
+`[JsonSerializable(typeof(BusMessage))]` in one of your serialiser contexts, because it journals
+its input — [`FLOWX1006`](diagnostics/FLOWX1006.md) asks for exactly that one declaration.
+`samples/ecommerce/RepriceOrderFlow.cs` is the complete, compiled version, and
+`tests/Ecommerce.Tests/EmitStartsAFlowTests.cs` runs it against a real PostgreSQL and a real
+Redis.
 
 **No telemetry.** Not "partial", not "basic" — none. There is no `ActivitySource` and no
 `Meter` anywhere under `src/`. No spans, no metrics, no structured log scope.

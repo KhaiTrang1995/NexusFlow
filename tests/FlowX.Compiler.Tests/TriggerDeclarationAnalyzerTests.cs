@@ -254,8 +254,18 @@ public sealed class TriggerDeclarationAnalyzerTests
     /// (<a href="../../docs/adr/ADR-0033-a-scheduled-flows-input-is-its-occurrence.md">ADR-0028</a>),
     /// and an HTTP endpoint binds a request body into whatever the flow declares. So one flow
     /// cannot serve both — <c>09 §3</c>'s "four transports, zero changes to the flow body" holds
-    /// for the four whose payload the caller supplies, and stops at the one whose payload the
+    /// for the four whose payload the caller supplies, and stops at the ones whose payload the
     /// platform supplies. FLOWX1038 is what says so.
+    /// <para>
+    /// <strong>FLOWX1039 joined it when the bus trigger was bound, and it sharpens the same
+    /// finding rather than repeating it.</strong> A bus flow must take <c>BusMessage</c>, because
+    /// a delivery hands the body over undeserialised — the host has no <c>JsonTypeInfo</c> and
+    /// constraint C2 forbids it reflecting for one. So there are now <em>two</em> kinds whose
+    /// payload the platform supplies, and neither composes with the three whose payload a caller
+    /// supplies. That is the honest shape of ADR-0004's claim, and the reason these two ids are
+    /// separate: this flow is wrong for two different reasons, and an author fixing one still
+    /// has the other.
+    /// </para>
     /// </remarks>
     [Fact]
     public void AllFiveTogetherAreSilent()
@@ -268,7 +278,10 @@ public sealed class TriggerDeclarationAnalyzerTests
             [StreamTrigger("orders.stream", Window = "tumbling:1m")]
             [AgentTrigger(Description = "Place a customer order", Confirmation = ConfirmationMode.Always)]
             """))
-            .ShouldBe(["FLOWX1038"], "no trigger here fails to declare its kind");
+            .ShouldBe(
+                ["FLOWX1038", "FLOWX1039"],
+                "no trigger here fails to declare its kind; what is reported is that one flow " +
+                "cannot bind both a caller's payload and the platform's, twice over");
     }
 
     [Fact]
@@ -330,7 +343,7 @@ public sealed class TriggerDeclarationAnalyzerTests
     {
         new TriggerDeclarationAnalyzer().SupportedDiagnostics
             .Select(static d => d.Id)
-            .ShouldBe(["FLOWX1025", "FLOWX1038"]);
+            .ShouldBe(["FLOWX1025", "FLOWX1038", "FLOWX1039"]);
     }
 
     /// <summary>
