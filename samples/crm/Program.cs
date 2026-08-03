@@ -88,6 +88,18 @@ builder.Services.AddSingleton<ProcessStore>();
 builder.Services.AddSingleton<RunConfiguredTransition>();
 builder.Services.AddSingleton<RunWorkflowTransitionFlow.Dispatcher>();
 
+// Pipeline and sales — §5.2. The discount threshold is the sample's second authorisation
+// stance: a representative may ask for any discount and a manager is who signs it off.
+builder.Services.AddSingleton<SalesStore>();
+builder.Services.AddSingleton<IssueQuoteForOpportunity>();
+builder.Services.AddSingleton<ApproveQuoteDiscountCapability>();
+builder.Services.AddSingleton<PlaceOrderForQuote>();
+builder.Services.AddSingleton<ApplyOpportunityTrigger>();
+builder.Services.AddSingleton<IssueQuoteFlow.Dispatcher>();
+builder.Services.AddSingleton<ApproveDiscountFlow.Dispatcher>();
+builder.Services.AddSingleton<PlaceOrderFlow.Dispatcher>();
+builder.Services.AddSingleton<AdvanceOpportunityFlow.Dispatcher>();
+
 var app = builder.Build();
 
 // Migrating is a decision, not a consequence of building a container: AddFlowXPostgres
