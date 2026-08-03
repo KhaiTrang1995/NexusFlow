@@ -288,6 +288,16 @@ public abstract class PublisherConformance
     /// A publisher that required a key would strand every unkeyed event in the outbox for ever,
     /// and — because a refusal blocks the batch behind it — everything staged after one.
     /// </remarks>
+    /// <remarks>
+    /// <strong>The order is not asserted, and until 2026-08-03 it was.</strong> The message below
+    /// has always said that an unkeyed event's order is an accident of the transport; the
+    /// assertion beside it nonetheless demanded a sequence, and passed for three transports that
+    /// happen to preserve one — a Redis stream, a serial AMQP 0-9-1 channel, a single Service Bus
+    /// sender. Kafka spreads unkeyed records across partitions, which is exactly the freedom the
+    /// contract grants, and it failed here about one run in three. <strong>The suite was encoding
+    /// an accident of its first three implementations</strong>, which is the finding a fourth
+    /// implementation is commissioned to produce.
+    /// </remarks>
     [Fact]
     public async Task AnUnkeyedEventIsPublishedRatherThanRefused()
     {
@@ -304,8 +314,11 @@ public abstract class PublisherConformance
             .Select(static e => e.Type)
             .ShouldBe(
                 ["audit.first", "audit.second"],
-                "both arrived. Any order they happen to be in is an accident of the transport " +
-                "rather than a guarantee — nothing may be inferred from it.");
+                ignoreOrder: true,
+                customMessage:
+                    "both arrived. Any order they happen to be in is an accident of the transport " +
+                    "rather than a guarantee — nothing may be inferred from it, and this " +
+                    "assertion says so rather than merely remarking it.");
     }
 
     /// <summary>The same staged event, offered twice, is published twice.</summary>

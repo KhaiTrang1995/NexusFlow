@@ -83,6 +83,25 @@ jobs:
         with:
           global-json-file: global.json
 
+      # Kafka runs from the Apache release rather than a container, because Docker Hub is not
+      # reachable from every runner this repository is built on and the tarball is. KRaft mode,
+      # so there is no ZooKeeper to stand up beside it.
+      - name: Start Apache Kafka
+        run: |
+          curl -sS -O https://archive.apache.org/dist/kafka/4.1.2/kafka_2.13-4.1.2.tgz
+          tar -xzf kafka_2.13-4.1.2.tgz
+          cd kafka_2.13-4.1.2
+          KAFKA_CLUSTER_ID=$(bin/kafka-storage.sh random-uuid)
+          bin/kafka-storage.sh format -t "$KAFKA_CLUSTER_ID" -c config/server.properties --standalone
+          nohup bin/kafka-server-start.sh config/server.properties > "$RUNNER_TEMP/kafka.log" 2>&1 &
+          # The suite's own rule turns an unreachable broker into a failure rather than a skip, so
+          # the wait is what stops that firing on a broker that was merely still starting.
+          for _ in $(seq 1 30); do
+            bin/kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null 2>&1 && break
+            sleep 2
+          done
+          bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+
       # The Service Bus emulator is started as a step rather than as a service container,
       # because it needs a topology file mounted from the repository and a service container
       # is created before the checkout exists. ADR-0074 is why the file exists at all: this
@@ -158,6 +177,7 @@ jobs:
           FLOWX_REDIS_CONNECTION: "localhost:6379"
           FLOWX_RABBITMQ_CONNECTION: "amqp://guest:guest@localhost:5672/"
           FLOWX_SERVICEBUS_CONNECTION: "Endpoint=sb://localhost:5673;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+          FLOWX_KAFKA_BOOTSTRAP: "localhost:9092"
         run: |
           # pipefail explicitly: the default shell takes the exit status of the LAST
           # command in a pipeline, so without it a failing test suite would be reported as

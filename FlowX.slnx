@@ -14,6 +14,7 @@
   <Folder Name="/plugins/">
     <Project Path="plugins/FlowX.Http/FlowX.Http.csproj" />
     <Project Path="plugins/FlowX.Mcp/FlowX.Mcp.csproj" />
+    <Project Path="plugins/FlowX.Kafka/FlowX.Kafka.csproj" />
     <Project Path="plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
     <Project Path="plugins/FlowX.AzureServiceBus/FlowX.AzureServiceBus.csproj" />
     <Project Path="plugins/FlowX.RabbitMq/FlowX.RabbitMq.csproj" />
@@ -50,6 +51,7 @@
     <Project Path="tests/Healthcare.Tests/Healthcare.Tests.csproj" />
     <Project Path="tests/FlowX.Http.Tests/FlowX.Http.Tests.csproj" />
     <Project Path="tests/FlowX.Mcp.Tests/FlowX.Mcp.Tests.csproj" />
+    <Project Path="tests/FlowX.Kafka.Tests/FlowX.Kafka.Tests.csproj" />
     <Project Path="tests/FlowX.Logging.Tests/FlowX.Logging.Tests.csproj" />
     <Project Path="tests/FlowX.Postgres.Tests/FlowX.Postgres.Tests.csproj" />
     <Project Path="tests/Polling.Tests/Polling.Tests.csproj" />
