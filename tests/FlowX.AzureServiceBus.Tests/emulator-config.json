@@ -1,0 +1,147 @@
+{
+  "UserConfig": {
+    "Namespaces": [
+      {
+        "Name": "sbemulatorns",
+        "Queues": [],
+        "Topics": [
+          {
+            "Name": "flowx-events",
+            "Properties": {},
+            "Subscriptions": [
+              {
+                "Name": "conformance--all",
+                "Properties": {
+                  "MaxDeliveryCount": 10,
+                  "LockDuration": "PT30S"
+                },
+                "Rules": [
+                  {
+                    "Name": "all",
+                    "Properties": {
+                      "FilterType": "Sql",
+                      "SqlFilter": {
+                        "SqlExpression": "1=1"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "Name": "consumer--order.placed",
+                "Properties": {
+                  "MaxDeliveryCount": 10,
+                  "LockDuration": "PT30S"
+                },
+                "Rules": [
+                  {
+                    "Name": "type",
+                    "Properties": {
+                      "FilterType": "Correlation",
+                      "CorrelationFilter": {
+                        "Label": "order.placed"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "Name": "poison--order.placed",
+                "Properties": {
+                  "MaxDeliveryCount": 10,
+                  "LockDuration": "PT30S"
+                },
+                "Rules": [
+                  {
+                    "Name": "type",
+                    "Properties": {
+                      "FilterType": "Correlation",
+                      "CorrelationFilter": {
+                        "Label": "order.placed"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "Name": "scoring--lead.created",
+                "Properties": {
+                  "MaxDeliveryCount": 10,
+                  "LockDuration": "PT30S"
+                },
+                "Rules": [
+                  {
+                    "Name": "type",
+                    "Properties": {
+                      "FilterType": "Correlation",
+                      "CorrelationFilter": {
+                        "Label": "lead.created"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "Name": "assignment--lead.created",
+                "Properties": {
+                  "MaxDeliveryCount": 10,
+                  "LockDuration": "PT30S"
+                },
+                "Rules": [
+                  {
+                    "Name": "type",
+                    "Properties": {
+                      "FilterType": "Correlation",
+                      "CorrelationFilter": {
+                        "Label": "lead.created"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "Name": "enrichment--lead.created",
+                "Properties": {
+                  "MaxDeliveryCount": 10,
+                  "LockDuration": "PT30S"
+                },
+                "Rules": [
+                  {
+                    "Name": "type",
+                    "Properties": {
+                      "FilterType": "Correlation",
+                      "CorrelationFilter": {
+                        "Label": "lead.created"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "Name": "redelivery--order.placed",
+                "Properties": {
+                  "MaxDeliveryCount": 10,
+                  "LockDuration": "PT5S"
+                },
+                "Rules": [
+                  {
+                    "Name": "type",
+                    "Properties": {
+                      "FilterType": "Correlation",
+                      "CorrelationFilter": {
+                        "Label": "order.placed"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "Logging": {
+      "Type": "File"
+    }
+  }
+}

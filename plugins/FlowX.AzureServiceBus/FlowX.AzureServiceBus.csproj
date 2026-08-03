@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>
+      FlowX Azure Service Bus adapters: an event publisher that drains the transactional outbox
+      to one topic with the event type as the message subject, and a bus consumer serving one
+      subscription per group with peek-lock settlement and the broker's own dead-letter queue.
+    </Description>
+    <PackageTags>flowx;azure;servicebus;outbox;bus;durable-execution;dead-letter</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Pinned exactly, like every other dependency in this repository, and it is the only thing
+      this package needs beyond the contracts (ADR-0009).
+
+      The data-plane client only. Azure.Messaging.ServiceBus.Administration lives in the same
+      package and is deliberately unused: ADR-0074 decides that entity creation is a
+      management-plane operation a deployment performs, not something a consumer does on every
+      pass — so this package never asks for Manage rights and a deployment can grant it
+      Listen and Send alone.
+
+      MIT, which docs/DEPENDENCIES.md §1.1's gate reads and constraint C6 requires.
+    -->
+    <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      A plugin depends on the runtime; the runtime never depends on a plugin. This one depends
+      on less: IEventPublisher, IBusConsumer, OutboxRecord, BusMessage, Result and Error all
+      live in FlowX.Abstractions, so a broker adapter needs nothing from Core, Runtime or
+      Hosting — and nothing from plugins/FlowX.RabbitMq, which is the point of the package.
+    -->
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

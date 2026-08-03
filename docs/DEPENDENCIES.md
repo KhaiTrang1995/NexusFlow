@@ -184,6 +184,9 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 
 | Package | Licence | Determined | Evidence |
 |---|---|---|---|
+| `Azure.Core` | `MIT` | nuspec | — |
+| `Azure.Core.Amqp` | `MIT` | nuspec | — |
+| `Azure.Messaging.ServiceBus` | `MIT` | nuspec | — |
 | `BenchmarkDotNet` | `MIT` | nuspec | — |
 | `BenchmarkDotNet.Annotations` | `MIT` | nuspec | — |
 | `CommandLineParser` | `MIT` | read | `License.md` |
@@ -203,6 +206,7 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `JsonPointer.Net` | `MIT` | nuspec | — |
 | `JsonSchema.Net` | `MIT` | nuspec | — |
 | `Microsoft.AspNetCore.TestHost` | `MIT` | nuspec | — |
+| `Microsoft.Azure.Amqp` | `MIT` | nuspec | — |
 | `Microsoft.Bcl.AsyncInterfaces` | `MIT` | nuspec | — |
 | `Microsoft.CodeAnalysis.Analyzers` | `MIT` | nuspec | — |
 | `Microsoft.CodeAnalysis.Common` | `MIT` | nuspec | — |
@@ -266,6 +270,7 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `SonarAnalyzer.CSharp` | `SONAR-SOURCE-AVAILABLE-1.0` | read | `licenses/LICENSE.txt` |
 | `System.Buffers` | `MIT` | read | `LICENSE.TXT` |
 | `System.CodeDom` | `MIT` | nuspec | — |
+| `System.ClientModel` | `MIT` | nuspec | — |
 | `System.Collections.Immutable` | `MIT` | nuspec | — |
 | `System.Composition` | `MIT` | nuspec | — |
 | `System.Composition.AttributedModel` | `MIT` | nuspec | — |
@@ -277,6 +282,7 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `System.IO.Hashing` | `MIT` | nuspec | — |
 | `System.IO.Pipelines` | `MIT` | nuspec | — |
 | `System.Management` | `MIT` | nuspec | — |
+| `System.Memory.Data` | `MIT` | nuspec | — |
 | `System.Memory` | `MIT` | read | `LICENSE.TXT` |
 | `System.Numerics.Vectors` | `MIT` | read | `LICENSE.TXT` |
 | `System.Reflection.Metadata` | `MIT` | nuspec | — |
@@ -315,6 +321,7 @@ user's application — is much smaller, and every entry is permissive:
 | `FlowX.Compiler`, `FlowX.Compiler.CodeFixes` | none — both pack with an empty dependency group |
 | `FlowX.Postgres` | `Npgsql` (`PostgreSQL`), `Microsoft.Extensions.DependencyInjection.Abstractions` (`MIT`) |
 | `FlowX.RabbitMq` | `RabbitMQ.Client` (`Apache-2.0 OR MPL-2.0`, taken as Apache-2.0), which brings `System.Threading.RateLimiting` (`MIT`); `Microsoft.Extensions.DependencyInjection.Abstractions` (`MIT`) |
+| `FlowX.AzureServiceBus` | `Azure.Messaging.ServiceBus` (`MIT`), which brings `Azure.Core`, `Azure.Core.Amqp`, `Microsoft.Azure.Amqp`, `System.ClientModel` and `System.Memory.Data` — all `MIT`; `Microsoft.Extensions.DependencyInjection.Abstractions` (`MIT`) |
 | `flowx` (CLI tool) | bundles `System.Reflection.MetadataLoadContext.dll` (`MIT`) in `tools/` |
 
 **`RabbitMQ.Client` is the one row here whose licence a reader should not skim.** It

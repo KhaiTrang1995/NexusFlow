@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>FlowX.AzureServiceBus.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit.v3" Version="2.0.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.3" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <!--
+      The container implementation, not just its abstractions: the registration test builds a
+      provider and asks which service types AddFlowXAzureServiceBus actually produced. Asserting
+      on the ServiceDescriptor list instead would assert on what was written down rather than on
+      what a host resolves.
+    -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The topology the emulator serves. It is a committed file rather than something a fixture
+      creates, because ADR-0074 is precisely that entities are a deployment's: a suite that made
+      its own would be testing a code path this package does not have.
+    -->
+    <None Include="emulator-config.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../plugins/FlowX.AzureServiceBus/FlowX.AzureServiceBus.csproj" />
+
+    <!--
+      The conformance suite is referenced, not copied, and this project is the third derivation.
+      FlowX.Redis.Tests showed the suite is store-independent; FlowX.RabbitMq.Tests showed it is
+      transport-independent over a broker whose ordering mechanism has nothing in common with a
+      Redis stream. This is the third mechanism — AMQP 1.0 settlement rather than publisher
+      confirms — and nothing in tests/FlowX.Conformance.Tests changed to accept it.
+    -->
+    <ProjectReference Include="../FlowX.Conformance.Tests/FlowX.Conformance.Tests.csproj" />
+  </ItemGroup>
+
+</Project>
