@@ -4,6 +4,7 @@ using FlowX.Generated;
 using FlowX.Hosting;
 using FlowX.Mcp;
 using FlowX.Postgres;
+using FlowX.RabbitMq;
 using Microsoft.AspNetCore.Authentication;
 using Npgsql;
 
@@ -55,6 +56,28 @@ builder.Services
 // the first three are registered for the flows packages 4 to 12 add rather than for this one;
 // the data source is what CrmSchemaReader resolves.
 builder.Services.AddFlowXPostgres(connectionString);
+
+// The outbox and the change feed, over the same table. `.Emit<T>()` stages an event in the
+// step's own transaction; the outbox drains those rows to the broker for the three
+// subscriptions on `lead.created`, and the change feed offers the identical rows straight to
+// `crm.process.transition` with no broker in the path at all.
+builder.Services.AddFlowXPostgresOutbox();
+builder.Services.AddFlowXPostgresChangeFeed();
+builder.Services.AddHostedService<CrmOutboxPump>();
+
+// The broker — §9. Optional, and what it costs to leave it out is stated rather than hidden:
+// the configured process still runs, because it is driven by the change feed; the three
+// subscriptions on `lead.created` do not, because a [BusTrigger] with no IBusConsumer has
+// nothing to read. Nothing else moves, and no flow mentions RabbitMQ.
+var broker =
+    builder.Configuration["FlowX:RabbitMq"]
+    ?? Environment.GetEnvironmentVariable("FLOWX_RABBITMQ_CONNECTION");
+
+if (broker is { Length: > 0 })
+{
+    builder.Services.AddFlowXRabbitMq(broker);
+    builder.Services.AddFlowXRabbitMqConsumer(broker);
+}
 
 builder.Services.AddSingleton<CrmSchemaReader>();
 builder.Services.AddSingleton<CountCrmRows>();
@@ -162,5 +185,11 @@ app.MapFlowX();
 // The agent surface, served from the same manifest the HTTP routes are generated from — so the
 // tools a model can see are exactly the flows carrying [AgentTrigger] and nothing else.
 app.MapFlowXMcp("/mcp");
+
+// The three subscriptions on `lead.created` and the one on the change feed, registered from the
+// [BusTrigger] and [ChangeTrigger] the flows declare. Without this line the flows are compiled,
+// reachable and never started — which looks exactly like a broker that is not delivering.
+app.Services.AddFlowXSubscriptions();
+app.Services.AddFlowXChangeSubscriptions();
 
 await app.RunAsync().ConfigureAwait(false);
