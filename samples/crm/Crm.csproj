@@ -46,6 +46,9 @@
     <!-- The agent surface — §10 package 11. One flow is published to a model, and it reads. -->
     <ProjectReference Include="../../plugins/FlowX.Mcp/FlowX.Mcp.csproj" />
 
+    <!-- The broker, in both directions — §9. Two interfaces, not seven. -->
+    <ProjectReference Include="../../plugins/FlowX.RabbitMq/FlowX.RabbitMq.csproj" />
+
     <!-- The journal, and the data source every CRM statement is issued on. -->
     <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
 

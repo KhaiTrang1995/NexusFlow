@@ -14,9 +14,15 @@ FLOWX_POSTGRES_CONNECTION="Host=localhost;Port=5432;Database=postgres;Username=p
   dotnet run --project samples/crm
 ```
 
-It needs PostgreSQL. Everything below works without a broker: the fan-out over `lead.created`
-and the change feed behind the configured process both fall back to the outbox the platform
-already writes.
+It needs PostgreSQL. A broker is optional and what it costs to leave one out is stated rather
+than hidden: the configured process still runs, because it is driven by the change feed over the
+outbox, and the three subscriptions on `lead.created` do not, because a `[BusTrigger]` with no
+consumer has nothing to read. Add one and they do:
+
+```bash
+FLOWX_RABBITMQ_CONNECTION="amqp://guest:guest@localhost:5672/" \
+FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
+```
 
 ## What it is
 
