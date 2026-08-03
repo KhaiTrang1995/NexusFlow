@@ -29,6 +29,7 @@
     -->
     <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
     <ProjectReference Include="../../src/FlowX.Testing/FlowX.Testing.csproj" />
+    <ProjectReference Include="../../plugins/FlowX.Mcp/FlowX.Mcp.csproj" />
     <ProjectReference Include="../FlowX.Conformance.Tests/FlowX.Conformance.Tests.csproj" />
   </ItemGroup>
 

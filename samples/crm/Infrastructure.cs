@@ -82,6 +82,8 @@ namespace Crm;
 [JsonSerializable(typeof(EnrichmentWebhook))]
 [JsonSerializable(typeof(ApplyEnrichment))]
 [JsonSerializable(typeof(LeadEnriched))]
+[JsonSerializable(typeof(SummariseAccount))]
+[JsonSerializable(typeof(AccountSummary))]
 [JsonSerializable(typeof(CrmSchemaProbe))]
 [JsonSerializable(typeof(CrmSchemaReport))]
 [JsonSerializable(typeof(CrmTableRowCount))]

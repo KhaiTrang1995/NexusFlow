@@ -43,6 +43,9 @@
     <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
     <ProjectReference Include="../../plugins/FlowX.Http/FlowX.Http.csproj" />
 
+    <!-- The agent surface — §10 package 11. One flow is published to a model, and it reads. -->
+    <ProjectReference Include="../../plugins/FlowX.Mcp/FlowX.Mcp.csproj" />
+
     <!-- The journal, and the data source every CRM statement is issued on. -->
     <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
 

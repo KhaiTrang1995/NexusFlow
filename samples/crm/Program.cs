@@ -2,6 +2,7 @@ using Crm;
 using FlowX;
 using FlowX.Generated;
 using FlowX.Hosting;
+using FlowX.Mcp;
 using FlowX.Postgres;
 using Microsoft.AspNetCore.Authentication;
 using Npgsql;
@@ -120,6 +121,13 @@ builder.Services.AddSingleton<ApplyLeadEnrichment>();
 builder.Services.AddSingleton<AbandonLeadEnrichment>();
 builder.Services.AddSingleton<EnrichLeadFlow.Dispatcher>();
 
+// The assistant — §10 package 11. One flow reaches a model, it reads, and it meets the same
+// crm.read stance a person meets over HTTP.
+builder.Services.AddSingleton<AssistantStore>();
+builder.Services.AddSingleton<SummariseAccountForCaller>();
+builder.Services.AddSingleton<SummariseAccountFlow.Dispatcher>();
+builder.Services.AddFlowXAgentTools();
+
 var app = builder.Build();
 
 // Migrating is a decision, not a consequence of building a container: AddFlowXPostgres
@@ -150,5 +158,9 @@ app.MapHealthChecks("/health");
 // Every endpoint this application declares, generated from the [HttpTrigger] on the flow that
 // declares it. Nothing in this file mentions crm.schema.probe.
 app.MapFlowX();
+
+// The agent surface, served from the same manifest the HTTP routes are generated from — so the
+// tools a model can see are exactly the flows carrying [AgentTrigger] and nothing else.
+app.MapFlowXMcp("/mcp");
 
 await app.RunAsync().ConfigureAwait(false);
