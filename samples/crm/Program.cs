@@ -2,6 +2,7 @@ using Crm;
 using FlowX;
 using FlowX.Generated;
 using FlowX.Hosting;
+using FlowX.Mcp;
 using FlowX.Postgres;
 using Microsoft.AspNetCore.Authentication;
 using Npgsql;
@@ -82,6 +83,51 @@ builder.Services.AddSingleton<CaptureLeadFlow.Dispatcher>();
 builder.Services.AddSingleton<ScoreLeadFlow.Dispatcher>();
 builder.Services.AddSingleton<AssignLeadFlow.Dispatcher>();
 
+// The configurable process — §7. Five action kinds, a closed enumeration, and a definition an
+// administrator changes in the database without a deployment.
+builder.Services.AddSingleton<ProcessStore>();
+builder.Services.AddSingleton<RunConfiguredTransition>();
+builder.Services.AddSingleton<RunWorkflowTransitionFlow.Dispatcher>();
+
+// Pipeline and sales — §5.2. The discount threshold is the sample's second authorisation
+// stance: a representative may ask for any discount and a manager is who signs it off.
+builder.Services.AddSingleton<SalesStore>();
+builder.Services.AddSingleton<IssueQuoteForOpportunity>();
+builder.Services.AddSingleton<ApproveQuoteDiscountCapability>();
+builder.Services.AddSingleton<PlaceOrderForQuote>();
+builder.Services.AddSingleton<ApplyOpportunityTrigger>();
+builder.Services.AddSingleton<IssueQuoteFlow.Dispatcher>();
+builder.Services.AddSingleton<ApproveDiscountFlow.Dispatcher>();
+builder.Services.AddSingleton<PlaceOrderFlow.Dispatcher>();
+builder.Services.AddSingleton<AdvanceOpportunityFlow.Dispatcher>();
+
+// Tasks and the two sweeps — §5.3. The schedules are the platform's to run once across a
+// fleet; what is this sample's is when a task is due again and when a deal has gone quiet.
+builder.Services.AddSingleton<WorkStore>();
+builder.Services.AddSingleton<CreateTaskForSubject>();
+builder.Services.AddSingleton<EscalateOverdueTasks>();
+builder.Services.AddSingleton<SweepStaleOpportunities>();
+builder.Services.AddSingleton<CreateTaskFlow.Dispatcher>();
+builder.Services.AddSingleton<EscalateOverdueTasksFlow.Dispatcher>();
+builder.Services.AddSingleton<SweepStaleOpportunitiesFlow.Dispatcher>();
+
+// The enrichment wait — §8.2. One wait with two endings; between attempts the instance holds
+// no thread, no lease and no connection.
+builder.Services.AddSingleton<EnrichmentProvider>();
+builder.Services.AddSingleton<EnrichmentStore>();
+builder.Services.AddSingleton<RequestLeadEnrichment>();
+builder.Services.AddSingleton<CheckLeadEnrichment>();
+builder.Services.AddSingleton<ApplyLeadEnrichment>();
+builder.Services.AddSingleton<AbandonLeadEnrichment>();
+builder.Services.AddSingleton<EnrichLeadFlow.Dispatcher>();
+
+// The assistant — §10 package 11. One flow reaches a model, it reads, and it meets the same
+// crm.read stance a person meets over HTTP.
+builder.Services.AddSingleton<AssistantStore>();
+builder.Services.AddSingleton<SummariseAccountForCaller>();
+builder.Services.AddSingleton<SummariseAccountFlow.Dispatcher>();
+builder.Services.AddFlowXAgentTools();
+
 var app = builder.Build();
 
 // Migrating is a decision, not a consequence of building a container: AddFlowXPostgres
@@ -112,5 +158,9 @@ app.MapHealthChecks("/health");
 // Every endpoint this application declares, generated from the [HttpTrigger] on the flow that
 // declares it. Nothing in this file mentions crm.schema.probe.
 app.MapFlowX();
+
+// The agent surface, served from the same manifest the HTTP routes are generated from — so the
+// tools a model can see are exactly the flows carrying [AgentTrigger] and nothing else.
+app.MapFlowXMcp("/mcp");
 
 await app.RunAsync().ConfigureAwait(false);

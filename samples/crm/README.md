@@ -1,0 +1,172 @@
+# Sample — A CRM with a process an administrator can change
+
+**Claim proved:** the transitions, guards and actions of a sales process live in tables, an
+administrator rewrites them at run time, and the behaviour changes **with no rebuild and no
+deployment** — while the set of things the process can *do* stays closed at compile time.
+
+The design this is built from is [docs/26 — CRM Sample](../../docs/26-CRM-Sample.md): the C4
+views, the class and database diagrams, the sequences and the twelve-package plan.
+
+Run it:
+
+```bash
+FLOWX_POSTGRES_CONNECTION="Host=localhost;Port=5432;Database=postgres;Username=postgres" \
+  dotnet run --project samples/crm
+```
+
+It needs PostgreSQL. Everything below works without a broker: the fan-out over `lead.created`
+and the change feed behind the configured process both fall back to the outbox the platform
+already writes.
+
+## What it is
+
+Fourteen tables, fifteen flows and two authorisation stances, over the entities a CRM actually
+has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
+
+| Surface | Route or trigger | What it demonstrates |
+|---|---|---|
+| Capture a lead | `POST /api/v1/crm/leads` | one write and one event, staged in the same transaction |
+| Score, assign, enrich | `lead.created` ×3 | three subscriptions, one publish, independent redelivery |
+| Convert a lead | `POST /api/v1/crm/lead-conversions` | a saga whose compensations take the step's **input** |
+| Quote | `POST /api/v1/crm/quotes` | pure pricing; the discount threshold decides Draft or Issued |
+| Approve a discount | `POST /api/v1/crm/quotes/approvals` | `crm.discount.approve` — a manager holds it, a representative does not |
+| Order | `POST /api/v1/crm/orders` | the threshold asked again, where the money is committed |
+| Advance an opportunity | `POST /api/v1/crm/opportunities/triggers` | the seam: it announces, the configured process decides |
+| Create a task | `POST /api/v1/crm/tasks` | a polymorphic reference held up by a trigger, not a foreign key |
+| Escalation sweep | `[CronTrigger("0 * * * *")]` | one statement; an overdue task escalates once per window |
+| Stale sweep | `[CronTrigger("0 6 * * *")]` | counts, and leaves what to do about it to the process |
+| Summarise an account | `POST /api/v1/crm/account-summaries` + `[AgentTrigger]` | one stance, two transports |
+| Schema probe | `POST /api/v1/crm/schema-probes` | row-level security, demonstrated over HTTP |
+
+## The three tokens
+
+There is no OIDC here. `Authentication.cs` maps three constants to claims and a real deployment
+deletes it — everything downstream reads a `ClaimsPrincipal` and does not care who minted it.
+
+| Token | Tenant | Scopes |
+|---|---|---|
+| `rep-northwind-token` | `crm-northwind` | `crm.read crm.write` |
+| `manager-northwind-token` | `crm-northwind` | `crm.read crm.write crm.discount.approve` |
+| `rep-contoso-token` | `crm-contoso` | `crm.read crm.write` |
+
+The tenant comes off the `tid` claim and off nothing else — not a header, not the payload
+([ADR-0046](../../docs/adr/ADR-0046-a-tenant-is-resolved-at-admission.md)).
+
+## The sequence
+
+Capture a lead, and read the id back:
+
+```bash
+curl -sS -X POST http://localhost:5000/api/v1/crm/leads \
+  -H 'Authorization: Bearer rep-northwind-token' \
+  -H 'Idempotency-Key: lead-1' \
+  -H 'Content-Type: application/json' \
+  -d '{"company":"Northwind Traders","contactName":"Ada Rowe","email":"ada@northwind.test","source":0}'
+```
+
+Convert it into an account, a contact and an opportunity — one saga, three compensable steps:
+
+```bash
+curl -sS -X POST http://localhost:5000/api/v1/crm/lead-conversions \
+  -H 'Authorization: Bearer rep-northwind-token' \
+  -H 'Idempotency-Key: convert-1' \
+  -H 'Content-Type: application/json' \
+  -d '{"leadId":"<leadId>"}'
+```
+
+Quote it with a discount over the threshold — 300 off a subtotal of 1 000. The quote is written as a **Draft**;
+the representative is not refused, because asking is theirs to do:
+
+```bash
+curl -sS -X POST http://localhost:5000/api/v1/crm/quotes \
+  -H 'Authorization: Bearer rep-northwind-token' \
+  -H 'Idempotency-Key: quote-1' \
+  -H 'Content-Type: application/json' \
+  -d '{"opportunityId":"<opportunityId>","discount":300,"validForDays":30,
+       "lines":[{"sku":"SEAT","quantity":8,"unitPrice":{"amount":100,"currency":"EUR"}},
+                {"sku":"SUPPORT","quantity":1,"unitPrice":{"amount":200,"currency":"EUR"}}]}'
+```
+
+Now the same approval, twice. The first is refused and the second is not:
+
+```bash
+# 403 — a representative does not hold crm.discount.approve
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST http://localhost:5000/api/v1/crm/quotes/approvals \
+  -H 'Authorization: Bearer rep-northwind-token' \
+  -H 'Content-Type: application/json' -d '{"quoteId":"<quoteId>"}'
+
+# 200 — a manager does
+curl -sS -X POST http://localhost:5000/api/v1/crm/quotes/approvals \
+  -H 'Authorization: Bearer manager-northwind-token' \
+  -H 'Content-Type: application/json' -d '{"quoteId":"<quoteId>"}'
+```
+
+And the order, which asks the threshold a second time:
+
+```bash
+curl -sS -X POST http://localhost:5000/api/v1/crm/orders \
+  -H 'Authorization: Bearer rep-northwind-token' \
+  -H 'Idempotency-Key: order-1' \
+  -H 'Content-Type: application/json' -d '{"quoteId":"<quoteId>"}'
+```
+
+## The claim, in two `UPDATE`s
+
+This is the part [§7](../../docs/26-CRM-Sample.md#7-dynamic-workflow--where-configuration-stops) exists for. Insert
+a transition out of the opportunity's stage with a guard, and advance it:
+
+```sql
+INSERT INTO process_transition (transition_id, from_stage_id, to_stage_id, trigger, ordinal)
+VALUES ('...', '<fromStage>', '<toStage>', 'advance', 1);
+
+INSERT INTO transition_guard (guard_id, transition_id, field, operator, value)
+VALUES ('...', '<transition>', 'amount', 'GreaterThan', '100000');
+
+INSERT INTO transition_action (action_id, transition_id, kind, parameters, ordinal)
+VALUES ('...', '<transition>', 'RequestApproval', '{"subject":"Approve the discount"}'::jsonb, 1);
+```
+
+```bash
+curl -sS -X POST http://localhost:5000/api/v1/crm/opportunities/triggers \
+  -H 'Authorization: Bearer rep-northwind-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"opportunityId":"<opportunityId>","trigger":"advance"}'
+```
+
+A 50 000 opportunity does not move: the guard does not hold. Now lower the threshold — no
+restart, no deployment, the same process still running:
+
+```sql
+UPDATE transition_guard SET value = '40000' WHERE transition_id = '<transition>';
+```
+
+Advance it again. It moves, and the approval task appears. That is the whole claim, and
+`TransitionTests.AnAdministratorChangesBehaviourWithNoRebuild` is where it is asserted rather
+than described.
+
+**What it will not do is grow a sixth kind of action from the database.** `ActionKind` is a
+closed enumeration compiled into one `switch`; a kind outside it is refused at publish time with
+a message saying so. A new kind of side effect is a code change, a build and a deployment — that
+is the price of compile-time orchestration, and it is paid in the open.
+
+## Things to try that should fail
+
+1. Ask for a quote whose lines are priced in two currencies — `crm.quote_mixes_currencies`, and
+   nothing is written. Converting would need a rate, and a rate needs an instant.
+2. Order a quote whose discount nobody approved — `crm.discount_not_approved`. The threshold is
+   asked at the order too, so a quote issued before it moved cannot slip through.
+3. Read another tenant's account with `rep-contoso-token` — `crm.account_not_found`, over the
+   HTTP route and over the agent tool alike, with the same code.
+4. Publish a guard naming a field outside the whitelist — refused at publish time, with the list
+   of what a guard may name in the message.
+5. Run the escalation sweep twice inside an hour — the second escalates nothing. The window is
+   in the `WHERE` clause, not in how often the schedule fires.
+6. Point `[AgentTrigger]` at `IssueQuoteFlow` and re-read `tests/Crm.Tests/AssistantTests`: what
+   is published to a model is exactly what a model may do, and today that is one read.
+
+---
+
+**See also:** [26 — CRM Sample](../../docs/26-CRM-Sample.md) ·
+[samples/event-driven](../event-driven/README.md) ·
+[samples/polling](../polling/README.md) ·
+[samples/ai-agent](../ai-agent/README.md)

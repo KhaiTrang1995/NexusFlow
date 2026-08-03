@@ -59,6 +59,31 @@ namespace Crm;
 [JsonSerializable(typeof(Money))]
 [JsonSerializable(typeof(RelatedRef))]
 [JsonSerializable(typeof(BusMessage))]
+[JsonSerializable(typeof(OpportunityStageChanged))]
+[JsonSerializable(typeof(TransitionApplied))]
+[JsonSerializable(typeof(IssueQuote))]
+[JsonSerializable(typeof(QuoteIssued))]
+[JsonSerializable(typeof(QuoteRequestLine))]
+[JsonSerializable(typeof(ApproveDiscount))]
+[JsonSerializable(typeof(ApproveQuoteDiscount))]
+[JsonSerializable(typeof(DiscountApproved))]
+[JsonSerializable(typeof(PlaceOrder))]
+[JsonSerializable(typeof(OrderPlaced))]
+[JsonSerializable(typeof(AdvanceOpportunity))]
+[JsonSerializable(typeof(OpportunityAdvanced))]
+[JsonSerializable(typeof(CreateTask))]
+[JsonSerializable(typeof(TaskCreated))]
+[JsonSerializable(typeof(TasksEscalated))]
+[JsonSerializable(typeof(StaleOpportunitiesSwept))]
+[JsonSerializable(typeof(ScheduledFire))]
+[JsonSerializable(typeof(CompanyProfile))]
+[JsonSerializable(typeof(EnrichmentRequested))]
+[JsonSerializable(typeof(EnrichmentAttempt))]
+[JsonSerializable(typeof(EnrichmentWebhook))]
+[JsonSerializable(typeof(ApplyEnrichment))]
+[JsonSerializable(typeof(LeadEnriched))]
+[JsonSerializable(typeof(SummariseAccount))]
+[JsonSerializable(typeof(AccountSummary))]
 [JsonSerializable(typeof(CrmSchemaProbe))]
 [JsonSerializable(typeof(CrmSchemaReport))]
 [JsonSerializable(typeof(CrmTableRowCount))]
@@ -150,8 +175,8 @@ public sealed class CrmSchemaReader
     /// A row count per CRM table, taken on the caller's own scoped connection.
     /// </summary>
     /// <remarks>
-    /// Thirteen counts and one statement, so the answer is one round trip and one snapshot
-    /// rather than thirteen that can disagree with each other. Every count runs under the
+    /// One count per table and one statement, so the answer is one round trip and one snapshot
+    /// rather than fourteen that can disagree with each other. Every count runs under the
     /// policies of migration <c>0002</c>, including the five tables that reach their tenant
     /// through a foreign key — which is what makes this endpoint a demonstration of the
     /// isolation rather than a report about the schema.
@@ -162,6 +187,7 @@ public sealed class CrmSchemaReader
         UNION ALL   SELECT 'activity',              count(*)              FROM activity
         UNION ALL   SELECT 'contact',               count(*)              FROM contact
         UNION ALL   SELECT 'lead',                  count(*)              FROM lead
+        UNION ALL   SELECT 'lead_enrichment',       count(*)              FROM lead_enrichment
         UNION ALL   SELECT 'opportunity',           count(*)              FROM opportunity
         UNION ALL   SELECT 'process_definition',    count(*)              FROM process_definition
         UNION ALL   SELECT 'process_stage',         count(*)              FROM process_stage
