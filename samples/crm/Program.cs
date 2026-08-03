@@ -110,6 +110,16 @@ builder.Services.AddSingleton<CreateTaskFlow.Dispatcher>();
 builder.Services.AddSingleton<EscalateOverdueTasksFlow.Dispatcher>();
 builder.Services.AddSingleton<SweepStaleOpportunitiesFlow.Dispatcher>();
 
+// The enrichment wait — §8.2. One wait with two endings; between attempts the instance holds
+// no thread, no lease and no connection.
+builder.Services.AddSingleton<EnrichmentProvider>();
+builder.Services.AddSingleton<EnrichmentStore>();
+builder.Services.AddSingleton<RequestLeadEnrichment>();
+builder.Services.AddSingleton<CheckLeadEnrichment>();
+builder.Services.AddSingleton<ApplyLeadEnrichment>();
+builder.Services.AddSingleton<AbandonLeadEnrichment>();
+builder.Services.AddSingleton<EnrichLeadFlow.Dispatcher>();
+
 var app = builder.Build();
 
 // Migrating is a decision, not a consequence of building a container: AddFlowXPostgres
