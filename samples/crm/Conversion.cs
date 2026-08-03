@@ -126,7 +126,7 @@ public sealed record MarkLeadConvertedRequest(Guid LeadId, ConversionResult Resu
 /// <summary>The conversion is recorded.</summary>
 /// <param name="LeadId">The lead.</param>
 /// <param name="Result">What it became.</param>
-public sealed record LeadConverted(Guid LeadId, ConversionResult Result);
+public sealed record LeadConversionRecorded(Guid LeadId, ConversionResult Result);
 
 /// <summary>Derives the three row ids from the lead, without a clock or a random source.</summary>
 /// <remarks>

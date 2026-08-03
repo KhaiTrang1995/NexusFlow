@@ -73,6 +73,15 @@ builder.Services.AddSingleton<RemoveOpportunity>();
 builder.Services.AddSingleton<MarkLeadConverted>();
 builder.Services.AddSingleton<ConvertLeadFlow.Dispatcher>();
 
+// Intake — §8.5. One capture, one event, two subscriptions that do not know about each other.
+builder.Services.AddSingleton<IntakeStore>();
+builder.Services.AddSingleton<CaptureNewLead>();
+builder.Services.AddSingleton<ScoreLead>();
+builder.Services.AddSingleton<AssignLead>();
+builder.Services.AddSingleton<CaptureLeadFlow.Dispatcher>();
+builder.Services.AddSingleton<ScoreLeadFlow.Dispatcher>();
+builder.Services.AddSingleton<AssignLeadFlow.Dispatcher>();
+
 var app = builder.Build();
 
 // Migrating is a decision, not a consequence of building a container: AddFlowXPostgres

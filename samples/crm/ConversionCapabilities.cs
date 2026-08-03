@@ -310,7 +310,7 @@ public sealed class RemoveOpportunity : ICapability<CreateOpportunityRequest, Op
     Authorization = Authorization.Authenticated,
     Idempotent = true,
     SideEffects = ["crm.lead.converted"])]
-public sealed class MarkLeadConverted : ICapability<MarkLeadConvertedRequest, LeadConverted>
+public sealed class MarkLeadConverted : ICapability<MarkLeadConvertedRequest, LeadConversionRecorded>
 {
     private readonly ConversionStore _store;
 
@@ -325,7 +325,7 @@ public sealed class MarkLeadConverted : ICapability<MarkLeadConvertedRequest, Le
     }
 
     /// <inheritdoc />
-    public async ValueTask<Result<LeadConverted>> ExecuteAsync(
+    public async ValueTask<Result<LeadConversionRecorded>> ExecuteAsync(
         MarkLeadConvertedRequest input,
         CapabilityContext ctx,
         CancellationToken ct)
@@ -336,6 +336,6 @@ public sealed class MarkLeadConverted : ICapability<MarkLeadConvertedRequest, Le
         await _store.MarkConvertedAsync(ctx.TenantId, input.LeadId, input.Result, ctx.UtcNow, ct)
             .ConfigureAwait(false);
 
-        return Result.Ok(new LeadConverted(input.LeadId, input.Result));
+        return Result.Ok(new LeadConversionRecorded(input.LeadId, input.Result));
     }
 }

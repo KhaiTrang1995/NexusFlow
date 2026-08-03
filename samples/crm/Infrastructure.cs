@@ -1,3 +1,4 @@
+using FlowX;
 using System.Text.Json.Serialization;
 using Npgsql;
 using NpgsqlTypes;
@@ -24,6 +25,11 @@ namespace Crm;
 /// </para>
 /// </remarks>
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(CaptureLead))]
+[JsonSerializable(typeof(LeadCaptured))]
+[JsonSerializable(typeof(LeadCreated))]
+[JsonSerializable(typeof(LeadScored))]
+[JsonSerializable(typeof(LeadAssigned))]
 [JsonSerializable(typeof(ConvertLead))]
 [JsonSerializable(typeof(ConversionResult))]
 [JsonSerializable(typeof(LeadUnderConversion))]
@@ -34,8 +40,8 @@ namespace Crm;
 [JsonSerializable(typeof(CreateOpportunityRequest))]
 [JsonSerializable(typeof(OpportunityWritten))]
 [JsonSerializable(typeof(MarkLeadConvertedRequest))]
+[JsonSerializable(typeof(LeadConversionRecorded))]
 [JsonSerializable(typeof(LeadConverted))]
-[JsonSerializable(typeof(LeadConvertedEvent))]
 [JsonSerializable(typeof(Lead))]
 [JsonSerializable(typeof(Account))]
 [JsonSerializable(typeof(Contact))]
@@ -52,10 +58,11 @@ namespace Crm;
 [JsonSerializable(typeof(ConvertedTo))]
 [JsonSerializable(typeof(Money))]
 [JsonSerializable(typeof(RelatedRef))]
+[JsonSerializable(typeof(BusMessage))]
 [JsonSerializable(typeof(CrmSchemaProbe))]
 [JsonSerializable(typeof(CrmSchemaReport))]
 [JsonSerializable(typeof(CrmTableRowCount))]
-internal sealed partial class CrmJsonContext : JsonSerializerContext;
+public sealed partial class CrmJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// Narrows a connection to one tenant, and is the only place in this sample that does.

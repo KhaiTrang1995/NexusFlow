@@ -87,13 +87,13 @@ public sealed partial class ConvertLeadFlow : Flow<ConvertLead, ConversionResult
                     ConversionIds.Contact(ctx.Input.LeadId),
                     ConversionIds.Opportunity(ctx.Input.LeadId))))
 
-            .Emit<LeadConvertedEvent>(ctx => new LeadConvertedEvent(
+            .Emit<LeadConverted>(ctx => new LeadConverted(
                 ctx.Input.LeadId,
                 ConversionIds.Account(ctx.Input.LeadId),
                 ConversionIds.Contact(ctx.Input.LeadId),
                 ConversionIds.Opportunity(ctx.Input.LeadId)))
 
-            .Return(ctx => ctx.Get<LeadConverted>().Result);
+            .Return(ctx => ctx.Get<LeadConversionRecorded>().Result);
     }
 }
 
@@ -115,7 +115,7 @@ public sealed partial class ConvertLeadFlow : Flow<ConvertLead, ConversionResult
 /// <param name="AccountId">The account it became.</param>
 /// <param name="ContactId">The contact it became.</param>
 /// <param name="OpportunityId">The opportunity it became.</param>
-public sealed record LeadConvertedEvent(
+public sealed record LeadConverted(
     Guid LeadId,
     Guid AccountId,
     Guid ContactId,
