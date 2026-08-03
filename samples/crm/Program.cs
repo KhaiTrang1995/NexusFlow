@@ -100,6 +100,16 @@ builder.Services.AddSingleton<ApproveDiscountFlow.Dispatcher>();
 builder.Services.AddSingleton<PlaceOrderFlow.Dispatcher>();
 builder.Services.AddSingleton<AdvanceOpportunityFlow.Dispatcher>();
 
+// Tasks and the two sweeps — §5.3. The schedules are the platform's to run once across a
+// fleet; what is this sample's is when a task is due again and when a deal has gone quiet.
+builder.Services.AddSingleton<WorkStore>();
+builder.Services.AddSingleton<CreateTaskForSubject>();
+builder.Services.AddSingleton<EscalateOverdueTasks>();
+builder.Services.AddSingleton<SweepStaleOpportunities>();
+builder.Services.AddSingleton<CreateTaskFlow.Dispatcher>();
+builder.Services.AddSingleton<EscalateOverdueTasksFlow.Dispatcher>();
+builder.Services.AddSingleton<SweepStaleOpportunitiesFlow.Dispatcher>();
+
 var app = builder.Build();
 
 // Migrating is a decision, not a consequence of building a container: AddFlowXPostgres
