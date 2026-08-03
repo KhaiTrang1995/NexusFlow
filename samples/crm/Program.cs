@@ -82,6 +82,12 @@ builder.Services.AddSingleton<CaptureLeadFlow.Dispatcher>();
 builder.Services.AddSingleton<ScoreLeadFlow.Dispatcher>();
 builder.Services.AddSingleton<AssignLeadFlow.Dispatcher>();
 
+// The configurable process — §7. Five action kinds, a closed enumeration, and a definition an
+// administrator changes in the database without a deployment.
+builder.Services.AddSingleton<ProcessStore>();
+builder.Services.AddSingleton<RunConfiguredTransition>();
+builder.Services.AddSingleton<RunWorkflowTransitionFlow.Dispatcher>();
+
 var app = builder.Build();
 
 // Migrating is a decision, not a consequence of building a container: AddFlowXPostgres

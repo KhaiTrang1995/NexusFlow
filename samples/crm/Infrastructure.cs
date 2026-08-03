@@ -59,6 +59,8 @@ namespace Crm;
 [JsonSerializable(typeof(Money))]
 [JsonSerializable(typeof(RelatedRef))]
 [JsonSerializable(typeof(BusMessage))]
+[JsonSerializable(typeof(OpportunityStageChanged))]
+[JsonSerializable(typeof(TransitionApplied))]
 [JsonSerializable(typeof(CrmSchemaProbe))]
 [JsonSerializable(typeof(CrmSchemaReport))]
 [JsonSerializable(typeof(CrmTableRowCount))]
