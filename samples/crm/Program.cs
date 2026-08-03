@@ -59,6 +59,20 @@ builder.Services.AddSingleton<CrmSchemaReader>();
 builder.Services.AddSingleton<CountCrmRows>();
 builder.Services.AddSingleton<ProbeCrmSchemaFlow.Dispatcher>();
 
+// The conversion saga — §8.1. Each of the three writes and each of the three undos is a
+// capability the generated dispatcher takes by constructor, so a missing line here is a
+// start-up failure naming the type rather than a null on the first conversion.
+builder.Services.AddSingleton<ConversionStore>();
+builder.Services.AddSingleton<ReadLeadForConversion>();
+builder.Services.AddSingleton<CreateAccount>();
+builder.Services.AddSingleton<RemoveAccount>();
+builder.Services.AddSingleton<CreateContact>();
+builder.Services.AddSingleton<RemoveContact>();
+builder.Services.AddSingleton<CreateOpportunity>();
+builder.Services.AddSingleton<RemoveOpportunity>();
+builder.Services.AddSingleton<MarkLeadConverted>();
+builder.Services.AddSingleton<ConvertLeadFlow.Dispatcher>();
+
 var app = builder.Build();
 
 // Migrating is a decision, not a consequence of building a container: AddFlowXPostgres

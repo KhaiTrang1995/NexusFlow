@@ -28,6 +28,8 @@
       adapter's decision rather than this project's to restate.
     -->
     <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+    <ProjectReference Include="../../src/FlowX.Testing/FlowX.Testing.csproj" />
+    <ProjectReference Include="../FlowX.Conformance.Tests/FlowX.Conformance.Tests.csproj" />
   </ItemGroup>
 
 </Project>

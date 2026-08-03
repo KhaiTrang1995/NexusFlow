@@ -24,6 +24,18 @@ namespace Crm;
 /// </para>
 /// </remarks>
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(ConvertLead))]
+[JsonSerializable(typeof(ConversionResult))]
+[JsonSerializable(typeof(LeadUnderConversion))]
+[JsonSerializable(typeof(CreateAccountRequest))]
+[JsonSerializable(typeof(AccountWritten))]
+[JsonSerializable(typeof(CreateContactRequest))]
+[JsonSerializable(typeof(ContactWritten))]
+[JsonSerializable(typeof(CreateOpportunityRequest))]
+[JsonSerializable(typeof(OpportunityWritten))]
+[JsonSerializable(typeof(MarkLeadConvertedRequest))]
+[JsonSerializable(typeof(LeadConverted))]
+[JsonSerializable(typeof(LeadConvertedEvent))]
 [JsonSerializable(typeof(Lead))]
 [JsonSerializable(typeof(Account))]
 [JsonSerializable(typeof(Contact))]
