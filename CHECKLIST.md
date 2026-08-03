@@ -1624,7 +1624,7 @@ executes it, not when something publishes it.*
 | Durable timers | **runs** | `.Delay`, `.OnTimeout`, and the declared wait armed; `wake_at` on the instance row |
 | Compensation | **runs** | unwind rebuilt from the journal, with its own retry policy |
 | Transactional outbox | **runs** | staged in the step's transaction; `PostgresOutboxPublisher` drains it |
-| Broker publication | **runs** | `RedisStreamEventPublisher`, one stream per `partition_key`; `PublisherConformance` holds two implementations |
+| Broker publication | **runs** | four implementations — Redis Streams, RabbitMQ, Azure Service Bus, Kafka — held to one unmodified `PublisherConformance`, by four ordering mechanisms with nothing in common |
 | HTTP trigger | **runs** | `EndpointEmitter`; `202` for a flow that suspends; generated signal routes |
 | Schedule trigger | **runs** | `ScheduleEmitter`; one instance per occurrence across a fleet, no leader |
 | **Policy engine · all eight kinds** | **runs** | stage 4's four plus `RateLimit`, `Idempotency`, `Cache`, `Audit`. `FLOWX1032` deleted with the gap it reported |
@@ -1637,7 +1637,7 @@ executes it, not when something publishes it.*
 | **Stream engine** | **runs** | tumbling event-time windows, an observed watermark and a checkpointed source position; window state is not journaled because a closed window derives the instance id it starts ([ADR-0055](docs/adr/ADR-0055-a-window-names-the-instance-it-starts.md)). Sliding, session and global windows are refused by `FLOWX1042` |
 | **AI surface / MCP** | **runs** | `plugins/FlowX.Mcp`; `tools/list` is a projection of the manifest and `tools/call` meets the same authorisation stance HTTP does |
 | **Studio** | **absent** | sixteen one-line mentions and no design |
-| **Samples** | **nine of nine run** | every specification sample was built on 2026-08-02; each names the claims the platform refuses rather than lacks |
+| **Samples** | **ten of ten run** | every specification sample was built on 2026-08-02; each names the claims the platform refuses rather than lacks |
 
 **What is planned next.** Every subsystem above runs but Studio, which the roadmap cannot yet
 specify. What is left is narrower than a phase:

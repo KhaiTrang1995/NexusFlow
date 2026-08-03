@@ -53,7 +53,7 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
 
     private const string ScheduledFireName = "FlowX.ScheduledFire";
 
-    /// <summary>The two attributes a subscription is declared with, and the input one can give.</summary>
+    /// <summary>The attributes a subscription is declared with, and the input one can give.</summary>
     /// <remarks>
     /// Matched by name rather than by <c>[TriggerKind(TriggerKind.Bus)]</c>, and the difference
     /// matters. A third-party bus attribute reaching the manifest with its kind produces no
@@ -66,6 +66,8 @@ public sealed class TriggerDeclarationAnalyzer : DiagnosticAnalyzer
     [
         "FlowX.BusTriggerAttribute",
         "FlowX.KafkaTriggerAttribute",
+        "FlowX.RabbitMqTriggerAttribute",
+        "FlowX.ServiceBusTriggerAttribute",
     ];
 
     /// <summary>The attribute a change subscription is declared with.</summary>

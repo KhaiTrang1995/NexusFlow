@@ -134,6 +134,70 @@ public sealed class KafkaTriggerAttribute(string topic) : TriggerAttribute
     public string? DeadLetter { get; init; }
 }
 
+/// <summary>
+/// Consumes an event from RabbitMQ, naming the transport so a mis-wired host fails at start-up.
+/// </summary>
+/// <param name="topic">
+/// The event type consumed — the routing key a queue is bound to, and the same string
+/// <c>.Emit&lt;T&gt;()</c> stages.
+/// </param>
+/// <remarks>
+/// <strong>Identical to <see cref="BusTriggerAttribute"/> except that it names its
+/// transport.</strong> That is the whole of the difference and the whole of the point: a
+/// <see cref="BusTriggerAttribute"/> says "consume topic T as group G on whatever bus the host
+/// wired", and this says "on RabbitMQ, and refuse to start on anything else". The check is
+/// <c>IBusConsumer.Transport</c> at registration, and the failure is a pod that never becomes
+/// ready rather than a subscription quietly served by the wrong broker.
+/// </remarks>
+[TriggerKind(TriggerKind.Bus)]
+[AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
+public sealed class RabbitMqTriggerAttribute(string topic) : TriggerAttribute
+{
+    /// <summary>The broker family this attribute names, as the manifest publishes it.</summary>
+    public const string Transport = "rabbitmq";
+
+    /// <inheritdoc />
+    public override TriggerKind Kind => TriggerKind.Bus;
+
+    /// <summary>The event type consumed.</summary>
+    public string Topic { get; } = topic;
+
+    /// <summary>
+    /// The subscription group. Required, for <see cref="BusTriggerAttribute.Group"/>'s reason: two
+    /// flows sharing a group are competing consumers and each delivery reaches one of them.
+    /// </summary>
+    public required string Group { get; init; }
+}
+
+/// <summary>
+/// Consumes an event from Azure Service Bus, naming the transport so a mis-wired host fails at
+/// start-up.
+/// </summary>
+/// <param name="topic">The event type consumed — the message <c>Subject</c> a subscription filters on.</param>
+/// <remarks>
+/// <strong><see cref="RabbitMqTriggerAttribute"/>'s remarks, one transport over.</strong> The
+/// subscription this reads is <c>{group}--{topic}</c> and a deployment creates it, which is
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0074-service-bus-topology-is-created-by-a-deployment-not-by-a-consumer.md">ADR-0074</a>
+/// — so declaring this attribute is a statement about which broker, not a request to build
+/// anything on it.
+/// </remarks>
+[TriggerKind(TriggerKind.Bus)]
+[AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
+public sealed class ServiceBusTriggerAttribute(string topic) : TriggerAttribute
+{
+    /// <summary>The broker family this attribute names, as the manifest publishes it.</summary>
+    public const string Transport = "azure-servicebus";
+
+    /// <inheritdoc />
+    public override TriggerKind Kind => TriggerKind.Bus;
+
+    /// <summary>The event type consumed.</summary>
+    public string Topic { get; } = topic;
+
+    /// <summary>The subscription group.</summary>
+    public required string Group { get; init; }
+}
+
 /// <summary>What to do when the previous run of a schedule is still executing.</summary>
 public enum OverlapPolicy
 {
