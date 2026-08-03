@@ -1,10 +1,10 @@
 # FlowX Samples
 
-Nine directories, each named for a claim in the specification it is meant to prove
-— not to demonstrate syntax. **All nine contain an application.**
+Ten directories, each named for a claim in the specification it is meant to prove
+— not to demonstrate syntax. **All ten contain an application.**
 
 > [!NOTE]
-> **All nine have code, and every one of them runs.** This page opened by saying
+> **All ten have code, and every one of them runs.** This page opened by saying
 > *"three of the nine have code"* until 2026-08-02, and before that listed nine
 > applications as though they existed while eight directories held a `README.md`
 > and nothing else. `ecommerce` was the first, `banking` and `workflow` joined it
@@ -21,7 +21,7 @@ Nine directories, each named for a claim in the specification it is meant to pro
 > unmeasured is `realtime-stream`'s throughput, which is deferred with the rest of
 > the performance work.
 
-## The nine
+## The ten
 
 | Sample | Proves | Code? | What blocks it |
 |---|---|---|---|
@@ -33,6 +33,7 @@ Nine directories, each named for a claim in the specification it is meant to pro
 | [polling](polling/) | Waiting costs one database row: no thread, no lease, no compute | **Yes** | Nothing. Needs PostgreSQL. `PollUntil` is one suspension point re-entered once per attempt — the attempt number is the step scope and the wake instant is the existing timer triple, so a parked document holds **no lease and no thread**. `RaceUntil` was refused as specified: a fork's branches share one context and one `wake_at` ([ADR-0058](../docs/adr/ADR-0058-a-poll-is-one-wait-not-a-race-between-two.md)) |
 | [healthcare](healthcare/) | Consent, PII redaction and erasure by subject, at the isolation levels that exist | **Yes** | Nothing. Needs PostgreSQL. A `[Subject]` member is digested **inside** `JournalPayload` before the redaction pass, so a member can be both `[Sensitive]` and the erasure key without an accessor. **L3/L4 are refused, not missing** — [ADR-0051](../docs/adr/ADR-0051-database-isolation-is-a-topology-not-a-runtime-level.md) holds a database per tenant is a deployment topology; this runs at L1 and L2. A signed completion certificate and `flowx purge --subject` were both refused, with reasons on the page |
 | [realtime-stream](realtime-stream/) | Bounded memory under a slow sink, over tumbling event-time windows | **Yes** | Nothing. Needs PostgreSQL and Redis. Peak resident records follow the declared channel capacity — asserted as correctness, and the assertion fails when backpressure stops consulting the channel. **The 250 000 rec/s number is not measured**: B13 is deferred with the rest of the performance work, so no benchmark claims it. `.Window(…)`/`.Aggregate(…)` are still not builder members; the window is declared on the trigger and the fold is a capability |
+| [crm](crm/) | A sales process whose transitions, guards and actions are rows an administrator rewrites at run time — while the set of actions stays a closed enumeration the compiler sees the whole of | **Yes** | Nothing. Needs PostgreSQL. Fourteen tables under row-level security, a conversion saga, a discount stance a representative does not hold, an enrichment wait ended by a webhook, two cron sweeps, and one read published to a model. **Configuration cannot add an action kind** — [26 §7.3](../docs/26-CRM-Sample.md) is where that line is drawn and `ProcessPublishing.Validate` is where it is enforced |
 | [ai-agent](ai-agent/) | Capabilities as agent tools with real authorisation and no parallel permission system | **Yes** | Nothing. Serves real MCP JSON-RPC. Elicitation holds the flow until a human answers — **a decline never enters the flow**, which is a test that fails when the refusal is returned after the capability runs. Sampling borrows the caller's model; `resources/list` serves the manifest. Refused: naming a *magnitude* in a confirmation prompt, since computing it means running the flow the prompt gates |
 
 **Read the "What blocks it" column as what the sample costs.** It held, for most of
