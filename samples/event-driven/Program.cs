@@ -70,18 +70,8 @@ builder.Services.AddSingleton<IBillingCalendar>(
 // That is the sample's claim expressed as a container registration: there is one
 // `invoice.validate`, one `invoice.tax`, one `invoice.persist` and one `invoice.void`, and the
 // transport a flow was started by never reaches them.
-builder.Services.AddSingleton<ValidateInvoice>();
-builder.Services.AddSingleton<CalculateTax>();
-builder.Services.AddSingleton<PersistInvoice>();
-builder.Services.AddSingleton<VoidInvoice>();
-builder.Services.AddSingleton<ReadInvoiceRequest>();
-builder.Services.AddSingleton<DueInvoice>();
+builder.Services.AddFlowXCapabilities();
 
-builder.Services.AddSingleton<RequestInvoiceFlow.Dispatcher>();
-builder.Services.AddSingleton<IssueInvoiceOverHttpFlow.Dispatcher>();
-builder.Services.AddSingleton<IssueInvoiceOverBusFlow.Dispatcher>();
-builder.Services.AddSingleton<IssueInvoiceOverChangeFlow.Dispatcher>();
-builder.Services.AddSingleton<IssueInvoiceOverScheduleFlow.Dispatcher>();
 
 var app = builder.Build();
 
@@ -95,15 +85,14 @@ await app.Services.GetRequiredService<PostgresMigrator>()
 
 app.MapHealthChecks("/health");
 
-// Both HTTP routes, generated from the [HttpTrigger] on the flows that declare them.
-app.MapFlowX();
-
-// The bus subscription, the change subscription and the schedule, each generated from the one
-// attribute that declares it and from the same reading of that attribute which produced
-// `flowx.manifest.json`. Nothing in this file names `invoice.requested`, `billing` or 03:00.
-app.Services.AddFlowXSubscriptions();
-app.Services.AddFlowXChangeSubscriptions();
-app.Services.AddFlowXSchedules();
+// All four transports in one call: both HTTP routes, the bus subscription, the change
+// subscription and the schedule — each generated from the one attribute that declares it, and
+// from the same reading of that attribute which produced `flowx.manifest.json`. Nothing in this
+// file names `invoice.requested`, `billing` or 03:00.
+//
+// This sample is where the aggregate earns itself: four kinds means four calls to remember, and
+// the transport a flow was started by is the only thing that differs between them.
+app.UseFlowX();
 
 // A denser schedule beside the declared one, for watching the cron transport work.
 // `0 3 * * *` is the business number and is what the manifest publishes; overriding it would

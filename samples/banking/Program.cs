@@ -150,20 +150,7 @@ builder.Services.AddSingleton<IAuditSink>(sp => sp.GetRequiredService<InMemoryAu
 // The capabilities themselves. The generated dispatcher takes them as constructor
 // parameters, so a missing registration is a startup failure naming the type rather than a
 // null reference on the first request.
-//
-// These stay hand-written on purpose. The generator knows exactly which types the dispatcher
-// needs — it wrote that constructor — but nothing in the flow model declares a service
-// lifetime, so a generated AddSingleton would be the generator inventing a fact rather than
-// publishing one.
-builder.Services.AddSingleton<ValidateTransfer>();
-builder.Services.AddSingleton<ScreenSanctions>();
-builder.Services.AddSingleton<ResolveCorrespondent>();
-builder.Services.AddSingleton<PostDebit>();
-builder.Services.AddSingleton<PostCredit>();
-builder.Services.AddSingleton<ReverseDebit>();
-builder.Services.AddSingleton<ReverseCredit>();
-builder.Services.AddSingleton<RecordSettlement>();
-builder.Services.AddSingleton<ExecuteTransferFlow.Dispatcher>();
+builder.Services.AddFlowXCapabilities();
 
 var app = builder.Build();
 

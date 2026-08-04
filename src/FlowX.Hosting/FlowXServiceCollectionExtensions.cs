@@ -118,6 +118,18 @@ public static class FlowXServiceCollectionExtensions
             provider.GetService<IRateLimiterStore>(),
             provider.GetRequiredService<IClock>()));
 
+        // First in the list, so a node that declared an address nothing serves stops before the
+        // sweeps that would otherwise run happily around the hole. What it converts is the one
+        // failure mode this repository keeps finding: a declaration nothing executes, which is
+        // silent by construction.
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowXStartupValidation>(
+            static provider => new FlowXStartupValidation(
+                provider.GetService<FlowXDeclaredTriggers>(),
+                provider.GetRequiredService<FlowBusCatalog>(),
+                provider.GetRequiredService<FlowChangeCatalog>(),
+                provider.GetRequiredService<FlowScheduleCatalog>(),
+                provider.GetRequiredService<FlowStreamCatalog>())));
+
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowRecoveryService>(
             static provider => new FlowRecoveryService(
                 ResolveScan(provider),

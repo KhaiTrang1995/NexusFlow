@@ -32,21 +32,10 @@ builder.Services.AddSingleton<IPaymentGateway, AlwaysApprovesGateway>();
 // parameters, so a missing registration is a startup failure rather than a null
 // reference on the first request.
 //
-// These stay hand-written on purpose. The generator knows exactly which types the
-// dispatcher needs — it wrote that constructor — but nothing in the flow model declares
-// a service lifetime, so a generated AddSingleton would be the generator inventing a
-// fact rather than publishing one. A missing line here fails at start-up and names the
-// type; a wrong lifetime would be a captive dependency in a file nobody wrote.
-builder.Services.AddSingleton<ValidateOrder>();
-builder.Services.AddSingleton<ReserveInventory>();
-builder.Services.AddSingleton<ReleaseInventory>();
-builder.Services.AddSingleton<CapturePayment>();
-builder.Services.AddSingleton<RepriceBasket>();
-builder.Services.AddSingleton<ProjectOrder>();
-builder.Services.AddSingleton<PlaceOrderFlow.Dispatcher>();
-builder.Services.AddSingleton<ConfirmOrderFlow.Dispatcher>();
-builder.Services.AddSingleton<RepriceOrderFlow.Dispatcher>();
-builder.Services.AddSingleton<ProjectOrderFlow.Dispatcher>();
+// Generated, and singleton, because that is the only lifetime the runtime can honour: the
+// catalogues hold a resolved dispatcher for the life of the node. TryAdd, so a capability
+// registered above — behind an interface, or scoped on an HTTP-only path — still wins.
+builder.Services.AddFlowXCapabilities();
 
 // Spans to the console, metrics at /metrics. Hand-written rather than an OpenTelemetry SDK
 // reference because this is the repository's only NativeAOT-published assembly (constraint

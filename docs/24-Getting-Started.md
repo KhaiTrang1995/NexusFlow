@@ -225,16 +225,8 @@ write — see [§11](#11-the-five-diagnostics-you-will-meet-first).
     Authorization = Authorization.Permission, Permission = "ticket.write",
     Idempotent = true,
     SideEffects = ["ticket-store"])]
-public sealed class RecordTicket : ICapability<ValidatedTicket, TicketOpened>
+public sealed class RecordTicket(ITicketStore store) : ICapability<ValidatedTicket, TicketOpened>
 {
-    private readonly ITicketStore _store;
-
-    public RecordTicket(ITicketStore store)
-    {
-        ArgumentNullException.ThrowIfNull(store);
-        _store = store;
-    }
-
     public async ValueTask<Result<TicketOpened>> ExecuteAsync(
         ValidatedTicket input,
         CapabilityContext ctx,
@@ -245,7 +237,7 @@ public sealed class RecordTicket : ICapability<ValidatedTicket, TicketOpened>
 
         // The identity comes from the context. A new Guid would make the same request
         // produce a different ticket on every retry.
-        await _store.SaveAsync(ctx.IdempotencyKey, input.Subject, ct).ConfigureAwait(false);
+        await store.SaveAsync(ctx.IdempotencyKey, input.Subject, ct).ConfigureAwait(false);
 
         return new TicketOpened(ctx.IdempotencyKey, input.Subject);
     }
@@ -291,8 +283,8 @@ contract no earlier step produces — rather than throwing on the first request.
 
 ### Wiring it up
 
-`Program.cs` is the composition root, and it is deliberately the only place that names a
-service lifetime. This is the template's, verbatim:
+`Program.cs` is the composition root: your own types, and one call for everything the
+compiler already knows about. This is the template's, verbatim:
 
 <!-- verify: excerpt templates/FlowX.Templates/content/FlowX.Web/Program.cs -->
 ```csharp
@@ -320,17 +312,29 @@ broken token.
 
 <!-- verify: excerpt templates/FlowX.Templates/content/FlowX.Web/Program.cs -->
 ```csharp
-builder.Services.AddSingleton<ValidateTicket>();
-builder.Services.AddSingleton<RecordTicket>();
-builder.Services.AddSingleton<OpenTicketFlow.Dispatcher>();
+builder.Services.AddFlowXCapabilities();
 ```
 
-The generated `Dispatcher` takes each capability as a constructor parameter, so a missing
-registration is a start-up failure that names the type — not a null reference on the first
-request. There is no assembly scan.
+That one line registers every capability the flows step through and every generated
+`Dispatcher`, read off the constructors the generator wrote. There is no assembly scan, and
+the line does not grow when you add a capability.
+
+They are singletons because that is the only lifetime the runtime can honour everywhere: the
+catalogues hold a resolved dispatcher for the life of the node, and a recovery sweep resumes an
+instance long after the invocation that started it, with no scope left to resolve another from.
+Everything that varies per invocation — tenant, principal, idempotency key, deadline, clock, ids
+— arrives on `CapabilityContext` instead, which is also what lets a resumed instance replay
+identically. The registrations are `TryAdd`, so anything you register yourself wins.
 
 `app.MapFlowX()` registers every endpoint the flows declared. It names no method and no
 route, and `templates/verify.sh` asserts that it does not.
+
+Once an application declares more than one trigger kind there is an aggregate, `app.UseFlowX()`,
+which maps the routes and registers the subscriptions, change subscriptions, schedules and
+streams — every one this assembly declared, and only the ones it declared. A worker with no
+routes calls `app.Services.UseFlowX()` instead. Forgetting one of the individual calls used to be
+silent, which is why the host now refuses to start when a declared address has nothing serving
+it; `samples/event-driven` uses the aggregate over all four kinds.
 
 ---
 

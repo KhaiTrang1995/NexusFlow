@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>FlowXMinimal</RootNamespace>
+
+    <!-- A warning nobody fixes is a warning that hides the next one. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- The plan lands under obj/generated as ordinary C#, with line directives back to Define. -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/obj/generated</CompilerGeneratedFilesOutputPath>
+
+    <!-- One place to change when the platform moves. -->
+    <FlowXVersion>0.1.0</FlowXVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Contracts: ICapability, Flow<,>, Result<T>, the attributes. -->
+    <PackageReference Include="FlowX.Abstractions" Version="$(FlowXVersion)" />
+
+    <!-- AddFlowX and the health check. Brings FlowX.Core and FlowX.Runtime with it. -->
+    <PackageReference Include="FlowX.Hosting" Version="$(FlowXVersion)" />
+
+    <!-- MapFlow: the HTTP transport. Add a transport here, never in the flow. -->
+    <PackageReference Include="FlowX.Http" Version="$(FlowXVersion)" />
+
+    <!--
+      The compiler is an ANALYZER, not a library: it runs inside this build, reads Define
+      and emits the plan, the dispatcher, the registrations and the manifest.
+    -->
+    <PackageReference Include="FlowX.Compiler" Version="$(FlowXVersion)" PrivateAssets="all" />
+    <PackageReference Include="FlowX.Compiler.CodeFixes" Version="$(FlowXVersion)" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

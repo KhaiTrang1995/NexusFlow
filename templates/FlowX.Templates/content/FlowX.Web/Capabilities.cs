@@ -51,17 +51,8 @@ public sealed class ValidateTicket : ICapability<OpenTicket, ValidatedTicket>
     Authorization = Authorization.Permission, Permission = "ticket.write",
     Idempotent = true,
     SideEffects = ["ticket-store"])]
-public sealed class RecordTicket : ICapability<ValidatedTicket, TicketOpened>
+public sealed class RecordTicket(ITicketStore store) : ICapability<ValidatedTicket, TicketOpened>
 {
-    private readonly ITicketStore _store;
-
-    /// <summary>Creates the capability.</summary>
-    public RecordTicket(ITicketStore store)
-    {
-        ArgumentNullException.ThrowIfNull(store);
-        _store = store;
-    }
-
     /// <inheritdoc />
     public async ValueTask<Result<TicketOpened>> ExecuteAsync(
         ValidatedTicket input,
@@ -73,7 +64,7 @@ public sealed class RecordTicket : ICapability<ValidatedTicket, TicketOpened>
 
         // The identity comes from the context. A new Guid or the clock would make the
         // same request produce a different ticket on every retry.
-        await _store.SaveAsync(ctx.IdempotencyKey, input.Subject, ct).ConfigureAwait(false);
+        await store.SaveAsync(ctx.IdempotencyKey, input.Subject, ct).ConfigureAwait(false);
 
         return new TicketOpened(ctx.IdempotencyKey, input.Subject);
     }

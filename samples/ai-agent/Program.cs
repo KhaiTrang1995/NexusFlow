@@ -27,19 +27,23 @@ builder.Services.AddSingleton<IPaymentGateway, AlwaysRefundsGateway>();
 // over MCP and the reviewer running inside it are reading one document.
 builder.Services.AddSingleton<IApplicationReviewer>(new ManifestReviewer(FlowXManifest.Json));
 
-builder.Services.AddSingleton<LoadTicket>();
-builder.Services.AddSingleton<RefundPayment>();
-builder.Services.AddSingleton<SearchTicketDesk>();
-builder.Services.AddSingleton<IssueRefundFlow.Dispatcher>();
-builder.Services.AddSingleton<SearchTicketsFlow.Dispatcher>();
-
 // Scoped, where the other two are singletons, and the difference is the whole of what sampling
 // costs. ReviewApplication takes IAgentSampler — the channel back to *this call's* client — so
 // neither it nor the dispatcher that holds it may be captured by a singleton. A capability that
 // talks to its caller is a different kind of thing from one that talks to a database, and this is
 // where that shows up.
+//
+// It works because this flow is reached over HTTP — the MCP surface is a route, so the request's
+// scope is the call's. A capability behind a bus, change, schedule or stream trigger has no such
+// scope and cannot be registered this way; the catalogues hold a resolved dispatcher, and a
+// recovery sweep resumes an instance days later with nothing to resolve one from.
+//
+// Written *before* the generated registrations on purpose: those are TryAdd, so a service already
+// in the collection is left exactly as it is.
 builder.Services.AddScoped<ReviewApplication>();
 builder.Services.AddScoped<ReviewApplicationFlow.Dispatcher>();
+
+builder.Services.AddFlowXCapabilities();
 
 // Every flow declaring [AgentTrigger], bound to the tool the manifest publishes for it, plus the
 // compiled-in manifest the surface projects from. Generated. Nothing in this file names

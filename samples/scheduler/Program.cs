@@ -68,16 +68,9 @@ builder.Services.AddSingleton<ILedger>(p => p.GetRequiredService<InMemoryLedger>
 builder.Services.AddSingleton<IBank>(p => p.GetRequiredService<InMemoryBank>());
 builder.Services.AddSingleton<IReportDesk, InMemoryReportDesk>();
 
-// The capabilities. Hand-written for the reason every other sample gives: the generator knows
-// exactly which types the dispatcher needs — it wrote that constructor — but nothing in the
-// flow model declares a service lifetime, so a generated AddSingleton would be the generator
-// inventing a fact rather than publishing one.
-builder.Services.AddSingleton<LoadLedgerSnapshot>();
-builder.Services.AddSingleton<LoadBankStatement>();
-builder.Services.AddSingleton<MatchByReference>();
-builder.Services.AddSingleton<MatchByAmountAndDate>();
-builder.Services.AddSingleton<ProduceReport>();
-builder.Services.AddSingleton<DailyReconciliationFlow.Dispatcher>();
+// The capabilities, generated from the constructor the generator wrote — samples/ecommerce
+// gives the reason they are singletons.
+builder.Services.AddFlowXCapabilities();
 
 var app = builder.Build();
 

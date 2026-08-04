@@ -106,6 +106,22 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     /// </remarks>
     private const string AgentToolRegistrationName = "FlowX.Mcp.FlowAgentToolRegistration";
 
+    /// <summary>
+    /// What a generated capability registration needs to exist: the container's own extension
+    /// point.
+    /// </summary>
+    /// <remarks>
+    /// Looked up rather than assumed, for <see cref="HttpEndpointExtensionsName"/>'s reason. A
+    /// flow library that references only <c>FlowX.Abstractions</c> has no
+    /// <c>IServiceCollection</c>, and emitting an extension method over a type that is not there
+    /// would turn a working library into a build error for a convenience it never asked for.
+    /// </remarks>
+    private const string ServiceCollectionExtensionsName =
+        "Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions";
+
+    /// <summary>What a host that can refuse to start over an unserved address is called.</summary>
+    private const string TriggerDeclarationName = "FlowX.Hosting.FlowXTriggerDeclaration";
+
     /// <summary>The id whose reporting this class decides rather than passes through.</summary>
     private static readonly string EmitDiagnosticId = FlowXDiagnostics.EmitIsNotYetPublished.Id;
 
@@ -279,6 +295,53 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                 ProduceStreamSubscriptions(production, analysed, declared, available, assembly);
             });
 
+        // Whether this compilation has a container to register into, expressed as one bool for
+        // the reason httpAvailable is.
+        var containerAvailable = context.CompilationProvider.Select(
+            static (compilation, _) =>
+                compilation.GetTypeByMetadataName(ServiceCollectionExtensionsName) is not null);
+
+        // Whether the host can be told what was declared. Separate from containerAvailable: a
+        // project may have a container and not FlowX.Hosting, and a declaration it cannot check
+        // would not compile.
+        var declarationAvailable = context.CompilationProvider.Select(
+            static (compilation, _) =>
+                compilation.GetTypeByMetadataName(TriggerDeclarationName) is not null);
+
+        context.RegisterSourceOutput(
+            flows.Collect()
+                .Combine(triggers.Collect())
+                .Combine(containerAvailable)
+                .Combine(declarationAvailable)
+                .Combine(application),
+            static (production, data) =>
+            {
+                var ((((analysed, declared), container), checkable), assembly) = data;
+                ProduceCapabilityRegistrations(
+                    production, analysed, declared, container, checkable, assembly);
+            });
+
+        // The one call that starts everything this assembly declared. Emitted from the same
+        // predicates the individual registrations use, so it can never call one that was not
+        // emitted or skip one that was.
+        context.RegisterSourceOutput(
+            flows.Collect()
+                .Combine(triggers.Collect())
+                .Combine(jsonContexts.Collect())
+                .Combine(httpAvailable)
+                .Combine(busAvailable.Combine(changeAvailable))
+                .Combine(schedulingAvailable.Combine(streamAvailable))
+                .Combine(application),
+            static (production, data) =>
+            {
+                var ((((((analysed, declared), contexts), http), (bus, change)),
+                    (schedule, stream)), assembly) = data;
+
+                ProduceHostWiring(
+                    production, analysed, declared, contexts, http, bus, change, schedule, stream,
+                    assembly);
+            });
+
         // Whether this compilation can bind an agent tool at all, expressed as one bool for the
         // reason httpAvailable is.
         var agentToolsAvailable = context.CompilationProvider.Select(
@@ -406,6 +469,219 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
 
         return candidate;
     }
+
+    /// <summary>
+    /// Emits the container registration for every capability a dispatcher takes, or nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing at all when the compilation has no container — a flow library referencing only
+    /// <c>FlowX.Abstractions</c> is a legitimate shape and keeps compiling.
+    /// </para>
+    /// <para>
+    /// Every flow that analysed successfully contributes its dispatcher, including one no trigger
+    /// reaches: a composed sub-flow's dispatcher is a constructor parameter of its parent's, and a
+    /// test resolves one directly.
+    /// </para>
+    /// </remarks>
+    private static void ProduceCapabilityRegistrations(
+        SourceProductionContext production,
+        ImmutableArray<AnalysisResult?> results,
+        ImmutableArray<FlowTriggersModel?> triggers,
+        bool containerAvailable,
+        bool declarationAvailable,
+        string assemblyName)
+    {
+        if (!containerAvailable)
+        {
+            return;
+        }
+
+        var models = results
+            .Where(static r => r is { IsSuccess: true, Model: not null })
+            .Select(static r => r!.Model!)
+            .ToList();
+
+        var capabilities = models
+            .SelectMany(static m => m.ReferencedCapabilities)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToList();
+
+        var dispatchers = models
+            .Select(static m => m.FullTypeName)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToList();
+
+        if (capabilities.Count == 0 && dispatchers.Count == 0)
+        {
+            return;
+        }
+
+        production.AddSource(
+            CapabilityRegistrationEmitter.FileName,
+            SourceText.From(
+                CapabilityRegistrationEmitter.Emit(
+                    assemblyName,
+                    capabilities,
+                    dispatchers,
+                    declarationAvailable ? DeclarationsOf(models, triggers) : []),
+                Encoding.UTF8));
+    }
+
+    /// <summary>
+    /// The addresses the host is expected to serve, under exactly the predicates that decide
+    /// whether a registration is emitted for them.
+    /// </summary>
+    /// <remarks>
+    /// The predicates are shared with <see cref="ProduceSubscriptions"/> and its three siblings on
+    /// purpose. A declaration produced by a looser rule than the registration would refuse to
+    /// start a host over an address the generator itself had decided not to serve — a check that
+    /// fails on correct code, which is worse than the hole it was added to close.
+    /// </remarks>
+    private static List<DeclaredTriggerModel> DeclarationsOf(
+        List<FlowModel> models,
+        ImmutableArray<FlowTriggersModel?> triggers)
+    {
+        var declared = triggers
+            .Where(static t => t is not null)
+            .GroupBy(static t => t!.FlowId, StringComparer.Ordinal)
+            .ToDictionary(static g => g.Key, static g => g.First()!, StringComparer.Ordinal);
+
+        var declarations = new List<DeclaredTriggerModel>();
+
+        foreach (var flow in models.OrderBy(static m => m.FlowId, StringComparer.Ordinal))
+        {
+            if (!declared.TryGetValue(flow.FlowId, out var flowTriggers))
+            {
+                continue;
+            }
+
+            foreach (var trigger in flowTriggers.Triggers)
+            {
+                if (IsBusAddress(trigger) && CanBeConsumed(flow))
+                {
+                    declarations.Add(new DeclaredTriggerModel(
+                        flow.FlowId, flow.Version, "Bus", trigger.Topic!));
+                }
+                else if (IsChangeAddress(trigger) && CanBeConsumed(flow))
+                {
+                    declarations.Add(new DeclaredTriggerModel(
+                        flow.FlowId, flow.Version, "Change", trigger.Topic!));
+                }
+                else if (IsScheduleAddress(trigger) && CanBeFired(flow))
+                {
+                    declarations.Add(new DeclaredTriggerModel(
+                        flow.FlowId, flow.Version, "Schedule", trigger.Cron!));
+                }
+                else if (IsStreamAddress(trigger) && CanBeWindowed(flow)
+                    && WindowOf(flowTriggers, trigger) is { } window
+                    && IsWindowShapeThisEngineImplements(window))
+                {
+                    declarations.Add(new DeclaredTriggerModel(
+                        flow.FlowId, flow.Version, "Stream", trigger.Topic!));
+                }
+            }
+        }
+
+        return declarations;
+    }
+
+    /// <summary>
+    /// Emits the one call that starts everything this assembly declared, or nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing at all when the assembly declares no address the host has to be told about — a
+    /// library of flows other applications compose has no wiring of its own.
+    /// </para>
+    /// <para>
+    /// <strong>Both the declaration and the reference have to be true for a call to be
+    /// emitted.</strong> The individual registration classes are emitted only when the flows
+    /// declare that kind <em>and</em> the hosting type is referenced, so calling one under a
+    /// looser rule would not compile — which is why this recomputes both rather than assuming
+    /// either.
+    /// </para>
+    /// </remarks>
+    private static void ProduceHostWiring(
+        SourceProductionContext production,
+        ImmutableArray<AnalysisResult?> results,
+        ImmutableArray<FlowTriggersModel?> triggers,
+        ImmutableArray<JsonContextModel?> jsonContexts,
+        bool httpAvailable,
+        bool busAvailable,
+        bool changeAvailable,
+        bool scheduleAvailable,
+        bool streamAvailable,
+        string assemblyName)
+    {
+        var models = results
+            .Where(static r => r is { IsSuccess: true, Model: not null })
+            .Select(static r => r!.Model!)
+            .ToList();
+
+        var declared = DeclarationsOf(models, triggers);
+
+        var model = new HostWiringModel(
+            Endpoints: httpAvailable && HasMappableEndpoint(models, triggers, jsonContexts),
+            Bus: busAvailable && declared.Any(static d => d.Kind == "Bus"),
+            Change: changeAvailable && declared.Any(static d => d.Kind == "Change"),
+            Schedules: scheduleAvailable && declared.Any(static d => d.Kind == "Schedule"),
+            Streams: streamAvailable && declared.Any(static d => d.Kind == "Stream"));
+
+        if (!model.Any)
+        {
+            return;
+        }
+
+        production.AddSource(
+            HostWiringEmitter.FileName,
+            SourceText.From(HostWiringEmitter.Emit(assemblyName, model), Encoding.UTF8));
+    }
+
+    /// <summary>
+    /// Whether <c>MapFlowX()</c> — the form that takes no serialiser — exists to be called.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Both halves, and the second is the one that bites.</strong> The no-argument
+    /// overload is emitted only when <em>every</em> endpoint resolved a serialiser context of its
+    /// own; where one did not, the only overload takes a <c>JsonSerializerContext</c> the caller
+    /// has to name. An aggregate that assumed the first would emit a generated file that does not
+    /// compile — which is how a project with no <c>[JsonSerializable]</c> context found it.
+    /// </remarks>
+    private static bool HasMappableEndpoint(
+        List<FlowModel> models,
+        ImmutableArray<FlowTriggersModel?> triggers,
+        ImmutableArray<JsonContextModel?> jsonContexts)
+    {
+        var declared = triggers
+            .Where(static t => t is not null)
+            .GroupBy(static t => t!.FlowId, StringComparer.Ordinal)
+            .ToDictionary(static g => g.Key, static g => g.First()!, StringComparer.Ordinal);
+
+        var contexts = jsonContexts
+            .Where(static c => c is not null)
+            .Select(static c => c!)
+            .ToList();
+
+        var routed = models
+            .Where(flow =>
+                flow.ReturnProjection is not null
+                && declared.TryGetValue(flow.FlowId, out var flowTriggers)
+                && flowTriggers.Triggers.Any(IsHttpAddress))
+            .ToList();
+
+        return routed.Count > 0
+            && routed.All(flow =>
+                ContextFor(contexts, flow.InputTypeName, flow.OutputTypeName) is not null);
+    }
+
+    /// <summary>The window a stream trigger declared, or null when it named none.</summary>
+    private static string? WindowOf(FlowTriggersModel flowTriggers, TriggerModel trigger) =>
+        flowTriggers.Streams
+            .FirstOrDefault(s => string.Equals(s.Source, trigger.Topic, StringComparison.Ordinal))
+            ?.Window;
 
     /// <summary>
     /// Emits one registration per bus trigger the host could actually consume, or nothing at all.

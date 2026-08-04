@@ -103,15 +103,7 @@ builder.Services.AddSingleton<ILateReadingLog>(p => p.GetRequiredService<InMemor
 // The capabilities. The generated dispatcher takes them as constructor parameters, so a missing
 // registration is a startup failure that names the type rather than a null reference on the
 // first window.
-//
-// These stay hand-written for samples/ecommerce's reason: the generator knows exactly which
-// types the dispatcher needs — it wrote that constructor — but nothing in the flow model
-// declares a service lifetime, so a generated AddSingleton would be the generator inventing a
-// fact rather than publishing one.
-builder.Services.AddSingleton<FoldReadings>();
-builder.Services.AddSingleton<DetectAnomalies>();
-builder.Services.AddSingleton<PersistAggregate>();
-builder.Services.AddSingleton<AggregateTelemetryFlow.Dispatcher>();
+builder.Services.AddFlowXCapabilities();
 
 // The sample's own producer and reporter. Neither is part of the platform's story — see
 // TelemetryProducer for why a sample that needed a second process to show anything is a sample

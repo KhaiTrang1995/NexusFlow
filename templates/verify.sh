@@ -15,6 +15,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMPLATE_DIR="$ROOT/templates/FlowX.Templates"
 CONTENT="$TEMPLATE_DIR/content/FlowX.Web"
+MINIMAL="$TEMPLATE_DIR/content/FlowX.Minimal"
 WORK="$(mktemp -d)"
 PORT="${FLOWX_VERIFY_PORT:-5177}"
 APP_PID=""
@@ -44,6 +45,14 @@ if [[ "$pinned" == "$built" ]]; then
   pass "FlowXVersion $pinned matches VersionPrefix $built"
 else
   fail "template pins FlowX $pinned but the repository builds $built"
+fi
+
+minimal="$(property FlowXVersion "$MINIMAL/FlowXMinimal.csproj")"
+
+if [[ "$minimal" == "$built" ]]; then
+  pass "the minimal template pins $minimal too"
+else
+  fail "the minimal template pins FlowX $minimal but the repository builds $built"
 fi
 
 # ---------------------------------------------------------------------------
@@ -296,6 +305,41 @@ if [[ "$status" == "200" ]] && grep -q '"isError":false' "$WORK/rpc"; then
   pass "an authorised agent opens a ticket"
 else
   fail "tools/call did not run the flow, got $status $(cat "$WORK/rpc")"
+fi
+
+# ---------------------------------------------------------------------------
+log "The minimal template"
+
+# Generated and built, not run: what it adds over the template above is that it needs
+# nothing installed and that its Program.cs does not grow. Serving a request is already
+# proved by the one above, and the flow here is the same shape.
+dotnet new flowx-min -o "$WORK/Tiny" -n Tiny >/dev/null
+pass "dotnet new flowx-min -o Tiny -n Tiny"
+
+min_log="$WORK/build-min.log"
+if dotnet build "$WORK/Tiny" -c Release --nologo -p:TreatWarningsAsErrors=true > "$min_log" 2>&1; then
+  pass "build succeeded"
+else
+  fail "build failed"
+  sed 's/^/        /' "$min_log"
+fi
+
+grep -qE "^ +0 Warning\(s\)" "$min_log" \
+  && pass "0 warnings" \
+  || fail "the build produced warnings"
+
+# The claim the template is for: composition does not grow with the application. Three
+# registrations and one wiring call, and none of them names a capability or a route.
+wiring="$(grep -cE '^(builder\.Services|app)\.' "$WORK/Tiny/Program.cs")"
+[[ "$wiring" -le 6 ]] \
+  && pass "Program.cs composes in $wiring lines" \
+  || fail "Program.cs has grown to $wiring composition lines"
+
+if grep -qE '\.AddSingleton<[A-Za-z]*Capability>|\.Dispatcher>' "$WORK/Tiny/Program.cs"; then
+  fail "Program.cs registers a capability the generator already registers:"
+  grep -nE '\.AddSingleton<|\.Dispatcher>' "$WORK/Tiny/Program.cs" | sed 's/^/        /'
+else
+  pass "no capability or dispatcher is registered by hand"
 fi
 
 # ---------------------------------------------------------------------------

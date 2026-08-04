@@ -91,52 +91,17 @@ builder.Services.AddSingleton<IOfferDesk, InMemoryOfferDesk>();
 // The capabilities themselves. The generated dispatchers take them as constructor parameters,
 // so a missing registration is a startup failure that names the type rather than a null
 // reference on the first request.
-//
-// These stay hand-written for the reason samples/ecommerce gives: the generator knows exactly
-// which types each dispatcher needs — it wrote that constructor — but nothing in the flow
-// model declares a service lifetime, so a generated AddSingleton would be the generator
-// inventing a fact rather than publishing one.
-builder.Services.AddSingleton<ValidateOffer>();
-builder.Services.AddSingleton<OpenPayrollRecord>();
-builder.Services.AddSingleton<ClosePayrollRecord>();
-builder.Services.AddSingleton<SignSupplierAgreement>();
-builder.Services.AddSingleton<VoidSupplierAgreement>();
-builder.Services.AddSingleton<CreateIdentity>();
-builder.Services.AddSingleton<DisableIdentity>();
-builder.Services.AddSingleton<OrderLaptop>();
-builder.Services.AddSingleton<CancelLaptopOrder>();
-builder.Services.AddSingleton<GrantSystemAccess>();
-builder.Services.AddSingleton<RevokeSystemAccess>();
-builder.Services.AddSingleton<ScheduleInduction>();
-builder.Services.AddSingleton<RecordEquipmentApproval>();
-builder.Services.AddSingleton<AutoClearEquipment>();
-builder.Services.AddSingleton<AssignEquipment>();
-builder.Services.AddSingleton<ReturnEquipment>();
-builder.Services.AddSingleton<StartBackgroundCheck>();
-builder.Services.AddSingleton<WaiveBackgroundCheck>();
-builder.Services.AddSingleton<SendWelcomePack>();
-builder.Services.AddSingleton<AllocateDesk>();
-builder.Services.AddSingleton<ReleaseDesk>();
-builder.Services.AddSingleton<IssueBuildingPass>();
-builder.Services.AddSingleton<CancelBuildingPass>();
+builder.Services.AddFlowXCapabilities();
 
 // offer.accept's three. It is the flow that waits, and none of its capabilities knows that:
 // a suspension point is the engine's business, so `onboarding.start` simply binds the
 // contract the signal delivered, exactly as it would bind an earlier step's output.
-builder.Services.AddSingleton<SendOfferForSignature>();
-builder.Services.AddSingleton<WithdrawOffer>();
-builder.Services.AddSingleton<StartOnboarding>();
 
 // offer.window.close's one. Nothing calls it; a cron expression starts it.
-builder.Services.AddSingleton<CloseExpiredOffers>();
 
 // Both dispatchers. The parent's takes the child's, because composing a flow is a typed call
 // the generator emits into the parent's dispatcher — which is what keeps the engine free of
 // reflection even across a sub-flow boundary.
-builder.Services.AddSingleton<ProvisionWorkspaceFlow.Dispatcher>();
-builder.Services.AddSingleton<OnboardEmployeeFlow.Dispatcher>();
-builder.Services.AddSingleton<AcceptOfferFlow.Dispatcher>();
-builder.Services.AddSingleton<CloseOfferWindowFlow.Dispatcher>();
 
 var app = builder.Build();
 

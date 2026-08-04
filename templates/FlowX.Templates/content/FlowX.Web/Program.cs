@@ -31,18 +31,18 @@ builder.Services
 // Infrastructure. In memory here; the capabilities do not know or care.
 builder.Services.AddSingleton<ITicketStore, InMemoryTicketStore>();
 
-// The capabilities, and the dispatcher the generator emitted for the flow. The
-// dispatcher takes them as constructor parameters, so a missing registration is a
-// start-up failure rather than a null reference on the first request. There is no
-// assembly scan.
+// The capabilities the flow steps through, and the dispatcher the generator emitted for
+// it — generated from the constructor the generator itself wrote, so a capability cannot
+// be missing from the container. There is no assembly scan.
 //
-// These three lines are the only wiring the generator does not write, and deliberately:
-// it knows which types the dispatcher needs, but nothing in the flow declares a service
-// lifetime, so choosing one for you would be inventing a fact. Forgetting a line here
-// fails at start-up and names the type.
-builder.Services.AddSingleton<ValidateTicket>();
-builder.Services.AddSingleton<RecordTicket>();
-builder.Services.AddSingleton<OpenTicketFlow.Dispatcher>();
+// Singleton, because that is the only lifetime the runtime can honour: the catalogues hold
+// a resolved dispatcher for the life of the node, and a recovery sweep resumes an instance
+// with no scope to resolve another from. Everything that varies per invocation — tenant,
+// principal, idempotency key, deadline, clock, ids — arrives on CapabilityContext instead,
+// which is also what lets a resumed instance replay identically.
+//
+// TryAdd, so registering a capability yourself — behind an interface, or decorated — wins.
+builder.Services.AddFlowXCapabilities();
 
 // Every flow carrying an [AgentTrigger], bound to the tool the manifest publishes for it.
 // Generated, like the endpoint below — and like it, nothing here names the flow, its
