@@ -130,14 +130,26 @@ internal sealed class ServiceBusBrokerUnderTest : BrokerUnderTest
 
     /// <summary>Takes everything the subscription holds and appends it to what was taken before.</summary>
     /// <remarks>
+    /// <para>
     /// <c>ReceiveAndDelete</c>, because the harness is the only consumer and a suite that left
     /// messages locked would answer the same question twice on the second call. The order is the
     /// subscription's, which is the order the topic filled it in, which is the order the publisher
     /// sent — the chain the suite is actually asserting on.
+    /// </para>
+    /// <para>
+    /// <strong>Two empty polls, not one, and the difference is a false green.</strong> A send is
+    /// acknowledged when the topic accepts it; a receiver already polling can still answer empty
+    /// once before the message is fetchable. Stopping at the first empty batch therefore reports
+    /// "what reached the broker" before all of it has — which failed
+    /// <c>AnEventOfferedAgainIsPublishedAgainRatherThanSuppressed</c> about one run in thirty, and
+    /// would just as happily have passed a publisher that genuinely dropped a message.
+    /// </para>
     /// </remarks>
     private async ValueTask DrainAsync(CancellationToken cancellationToken)
     {
-        while (true)
+        var quiet = 0;
+
+        while (quiet < 2)
         {
             var batch = await _receiver
                 .ReceiveMessagesAsync(64, TimeSpan.FromMilliseconds(500), cancellationToken)
@@ -145,8 +157,12 @@ internal sealed class ServiceBusBrokerUnderTest : BrokerUnderTest
 
             if (batch.Count == 0)
             {
-                return;
+                quiet++;
+
+                continue;
             }
+
+            quiet = 0;
 
             foreach (var message in batch)
             {
