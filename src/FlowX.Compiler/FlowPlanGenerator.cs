@@ -321,6 +321,25 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                     production, analysed, declared, container, checkable, assembly);
             });
 
+        // The one call that starts everything this assembly declared. Emitted from the same
+        // predicates the individual registrations use, so it can never call one that was not
+        // emitted or skip one that was.
+        context.RegisterSourceOutput(
+            flows.Collect()
+                .Combine(triggers.Collect())
+                .Combine(httpAvailable)
+                .Combine(busAvailable.Combine(changeAvailable))
+                .Combine(schedulingAvailable.Combine(streamAvailable))
+                .Combine(application),
+            static (production, data) =>
+            {
+                var (((((analysed, declared), http), (bus, change)), (schedule, stream)), assembly) =
+                    data;
+
+                ProduceHostWiring(
+                    production, analysed, declared, http, bus, change, schedule, stream, assembly);
+            });
+
         // Whether this compilation can bind an agent tool at all, expressed as one bool for the
         // reason httpAvailable is.
         var agentToolsAvailable = context.CompilationProvider.Select(
@@ -565,6 +584,72 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
         }
 
         return declarations;
+    }
+
+    /// <summary>
+    /// Emits the one call that starts everything this assembly declared, or nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing at all when the assembly declares no address the host has to be told about — a
+    /// library of flows other applications compose has no wiring of its own.
+    /// </para>
+    /// <para>
+    /// <strong>Both the declaration and the reference have to be true for a call to be
+    /// emitted.</strong> The individual registration classes are emitted only when the flows
+    /// declare that kind <em>and</em> the hosting type is referenced, so calling one under a
+    /// looser rule would not compile — which is why this recomputes both rather than assuming
+    /// either.
+    /// </para>
+    /// </remarks>
+    private static void ProduceHostWiring(
+        SourceProductionContext production,
+        ImmutableArray<AnalysisResult?> results,
+        ImmutableArray<FlowTriggersModel?> triggers,
+        bool httpAvailable,
+        bool busAvailable,
+        bool changeAvailable,
+        bool scheduleAvailable,
+        bool streamAvailable,
+        string assemblyName)
+    {
+        var models = results
+            .Where(static r => r is { IsSuccess: true, Model: not null })
+            .Select(static r => r!.Model!)
+            .ToList();
+
+        var declared = DeclarationsOf(models, triggers);
+
+        var model = new HostWiringModel(
+            Endpoints: httpAvailable && HasEndpoint(models, triggers),
+            Bus: busAvailable && declared.Any(static d => d.Kind == "Bus"),
+            Change: changeAvailable && declared.Any(static d => d.Kind == "Change"),
+            Schedules: scheduleAvailable && declared.Any(static d => d.Kind == "Schedule"),
+            Streams: streamAvailable && declared.Any(static d => d.Kind == "Stream"));
+
+        if (!model.Any)
+        {
+            return;
+        }
+
+        production.AddSource(
+            HostWiringEmitter.FileName,
+            SourceText.From(HostWiringEmitter.Emit(assemblyName, model), Encoding.UTF8));
+    }
+
+    /// <summary>Whether any flow would produce an HTTP route, under <see cref="ProduceEndpoints"/>'s rule.</summary>
+    private static bool HasEndpoint(
+        List<FlowModel> models, ImmutableArray<FlowTriggersModel?> triggers)
+    {
+        var declared = triggers
+            .Where(static t => t is not null)
+            .GroupBy(static t => t!.FlowId, StringComparer.Ordinal)
+            .ToDictionary(static g => g.Key, static g => g.First()!, StringComparer.Ordinal);
+
+        return models.Any(flow =>
+            flow.ReturnProjection is not null
+            && declared.TryGetValue(flow.FlowId, out var flowTriggers)
+            && flowTriggers.Triggers.Any(IsHttpAddress));
     }
 
     /// <summary>The window a stream trigger declared, or null when it named none.</summary>

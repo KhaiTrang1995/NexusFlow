@@ -337,6 +337,13 @@ identically. The registrations are `TryAdd`, so anything you register yourself w
 `app.MapFlowX()` registers every endpoint the flows declared. It names no method and no
 route, and `templates/verify.sh` asserts that it does not.
 
+Once an application declares more than one trigger kind there is an aggregate, `app.UseFlowX()`,
+which maps the routes and registers the subscriptions, change subscriptions, schedules and
+streams — every one this assembly declared, and only the ones it declared. A worker with no
+routes calls `app.Services.UseFlowX()` instead. Forgetting one of the individual calls used to be
+silent, which is why the host now refuses to start when a declared address has nothing serving
+it; `samples/event-driven` uses the aggregate over all four kinds.
+
 ---
 
 ## 4. The manifest

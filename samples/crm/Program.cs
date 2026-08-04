@@ -131,24 +131,18 @@ app.UseAuthentication();
 
 app.MapHealthChecks("/health");
 
-// Every endpoint this application declares, generated from the [HttpTrigger] on the flow that
-// declares it. Nothing in this file mentions crm.schema.probe.
-app.MapFlowX();
+// Everything this application declared, in one call: the routes from each [HttpTrigger], the
+// three subscriptions on `lead.created`, the change subscription that drives the configured
+// process, and the two sweeps. Nothing in this file names a route, a topic or a cron expression
+// — they are read off the attributes the manifest was written from.
+//
+// The two sweeps are why this is one call and not six. They were declared, published, listed in
+// the README's table of surfaces, and registered by nothing, because AddFlowXSchedules() was the
+// one line of six that nobody wrote.
+app.UseFlowX();
 
 // The agent surface, served from the same manifest the HTTP routes are generated from — so the
 // tools a model can see are exactly the flows carrying [AgentTrigger] and nothing else.
 app.MapFlowXMcp("/mcp");
-
-// The three subscriptions on `lead.created` and the one on the change feed, registered from the
-// [BusTrigger] and [ChangeTrigger] the flows declare. Without this line the flows are compiled,
-// reachable and never started — which looks exactly like a broker that is not delivering.
-app.Services.AddFlowXSubscriptions();
-app.Services.AddFlowXChangeSubscriptions();
-
-// The two sweeps — `crm.task.escalation` hourly and `crm.opportunity.stale_sweep` daily. This
-// line was missing until FlowXStartupValidation refused to start the host without it: both
-// schedules were declared, published in the manifest, documented in the README's surface table,
-// and fired by nothing at all. The sweeps are the reason that check exists.
-app.Services.AddFlowXSchedules();
 
 await app.RunAsync().ConfigureAwait(false);
