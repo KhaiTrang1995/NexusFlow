@@ -173,6 +173,7 @@ is the price of compile-time orchestration, and it is paid in the open.
 ---
 
 **See also:** [26 — CRM Sample](../../docs/26-CRM-Sample.md) ·
+[27 — CRM Reference Architecture](../../docs/27-CRM-Reference-Architecture.md) ·
 [samples/event-driven](../event-driven/README.md) ·
 [samples/polling](../polling/README.md) ·
 [samples/ai-agent](../ai-agent/README.md)
