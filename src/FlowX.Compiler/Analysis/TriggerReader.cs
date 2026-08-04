@@ -151,6 +151,8 @@ public static class TriggerReader
         "FlowX.CronTriggerAttribute",
         "FlowX.HttpTriggerAttribute",
         "FlowX.KafkaTriggerAttribute",
+        "FlowX.RabbitMqTriggerAttribute",
+        "FlowX.ServiceBusTriggerAttribute",
         "FlowX.StreamTriggerAttribute",
     ];
 
@@ -501,6 +503,22 @@ public static class TriggerReader
             "FlowX.KafkaTriggerAttribute" => new TriggerModel(
                 kind,
                 transport: "kafka",
+                topic: Positional(attribute, 0),
+                group: Named(attribute, "Group")),
+
+            // The other two transport-named declarations. Same shape as Kafka's and the same
+            // reason for existing: the transport reaches the manifest and FlowBusCatalog refuses
+            // a host whose IBusConsumer answers a different family, so a subscription is never
+            // quietly served by the wrong broker.
+            "FlowX.RabbitMqTriggerAttribute" => new TriggerModel(
+                kind,
+                transport: "rabbitmq",
+                topic: Positional(attribute, 0),
+                group: Named(attribute, "Group")),
+
+            "FlowX.ServiceBusTriggerAttribute" => new TriggerModel(
+                kind,
+                transport: "azure-servicebus",
                 topic: Positional(attribute, 0),
                 group: Named(attribute, "Group")),
 

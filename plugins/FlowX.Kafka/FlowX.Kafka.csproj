@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>
+      FlowX Apache Kafka adapters: an event publisher that drains the transactional outbox to a
+      topic with the partition key as the record key, and a bus consumer serving one consumer
+      group per subscription with offsets committed only behind a contiguous run of settled
+      records.
+    </Description>
+    <PackageTags>flowx;kafka;outbox;bus;durable-execution;dead-letter</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Pinned exactly, like every other dependency in this repository, and the only thing this
+      package needs beyond the contracts (ADR-0009).
+
+      Confluent.Kafka wraps librdkafka, which is the C client every other language binds to as
+      well; there is no managed Kafka client with comparable coverage of the protocol. It brings
+      librdkafka.redist, which carries the native binaries.
+
+      Apache-2.0 for the wrapper; librdkafka.redist is BSD-2-Clause with an OpenSSL/zlib
+      dependency chain — docs/DEPENDENCIES.md §1.1's gate reads each one and constraint C6
+      requires it.
+    -->
+    <PackageReference Include="Confluent.Kafka" Version="2.11.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      A plugin depends on the runtime; the runtime never depends on a plugin. This one depends
+      on less: IEventPublisher, IBusConsumer, OutboxRecord, BusMessage, Result and Error all
+      live in FlowX.Abstractions.
+    -->
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

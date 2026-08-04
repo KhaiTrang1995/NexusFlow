@@ -105,6 +105,52 @@ public sealed class ManifestTriggerAndErrorTests
         trigger.GetProperty("idempotent").GetBoolean().ShouldBeTrue();
     }
 
+    /// <summary>
+    /// Every transport-named bus attribute publishes its own family, and they are three.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The transport is the whole of what these attributes add over
+    /// <c>[BusTrigger]</c>.</strong> <c>FlowBusCatalog</c> compares it against the registered
+    /// <c>IBusConsumer.Transport</c> at start-up, so a flow declaring one broker on a host wired
+    /// for another is a pod that never becomes ready. A value that did not reach the manifest
+    /// would leave that check with nothing to compare.
+    /// </remarks>
+    [Theory]
+    [InlineData("KafkaTrigger", "kafka")]
+    [InlineData("RabbitMqTrigger", "rabbitmq")]
+    [InlineData("ServiceBusTrigger", "azure-servicebus")]
+    public void ATransportNamedBusTriggerPublishesItsFamily(string attribute, string transport)
+    {
+        using var manifest = ManifestOf(FlowWith(
+            $"""[{attribute}("orders.requested", Group = "order-placement")]"""));
+
+        var trigger = Flow(manifest).GetProperty("triggers")[0];
+
+        trigger.GetProperty("kind").GetString().ShouldBe("Bus");
+        trigger.GetProperty("transport").GetString().ShouldBe(transport);
+        trigger.GetProperty("topic").GetString().ShouldBe("orders.requested");
+        trigger.GetProperty("group").GetString().ShouldBe("order-placement");
+    }
+
+    /// <summary>
+    /// The transport-neutral declaration still publishes no transport, and that is the point of
+    /// having both.
+    /// </summary>
+    [Fact]
+    public void ABusTriggerNamingNoTransportPublishesNone()
+    {
+        using var manifest = ManifestOf(FlowWith(
+            """[BusTrigger("orders.requested", Group = "order-placement")]"""));
+
+        var trigger = Flow(manifest).GetProperty("triggers")[0];
+
+        trigger.GetProperty("kind").GetString().ShouldBe("Bus");
+
+        trigger.TryGetProperty("transport", out _).ShouldBeFalse(
+            "\"on whatever bus the host wired\" is a real declaration, and ADR-0039 keeps it " +
+            "out of the manifest rather than inventing a value for it.");
+    }
+
     [Fact]
     public void EveryTriggerKindTheAbstractionShipsIsRecognised()
     {

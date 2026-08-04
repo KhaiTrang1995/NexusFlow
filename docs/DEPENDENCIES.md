@@ -189,6 +189,7 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `Azure.Messaging.ServiceBus` | `MIT` | nuspec | — |
 | `BenchmarkDotNet` | `MIT` | nuspec | — |
 | `BenchmarkDotNet.Annotations` | `MIT` | nuspec | — |
+| `Confluent.Kafka` | `Apache-2.0` | nuspec | — |
 | `CommandLineParser` | `MIT` | read | `License.md` |
 | `coverlet.collector` | `MIT` | nuspec | — |
 | `DiffEngine` | `MIT` | nuspec | — |
@@ -206,6 +207,7 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `JsonPointer.Net` | `MIT` | nuspec | — |
 | `JsonSchema.Net` | `MIT` | nuspec | — |
 | `Microsoft.AspNetCore.TestHost` | `MIT` | nuspec | — |
+| `librdkafka.redist` | `BSD-2-Clause` | read | `LICENSES.txt` |
 | `Microsoft.Azure.Amqp` | `MIT` | nuspec | — |
 | `Microsoft.Bcl.AsyncInterfaces` | `MIT` | nuspec | — |
 | `Microsoft.CodeAnalysis.Analyzers` | `MIT` | nuspec | — |
@@ -320,6 +322,7 @@ user's application — is much smaller, and every entry is permissive:
 | `FlowX.Testing` | none |
 | `FlowX.Compiler`, `FlowX.Compiler.CodeFixes` | none — both pack with an empty dependency group |
 | `FlowX.Postgres` | `Npgsql` (`PostgreSQL`), `Microsoft.Extensions.DependencyInjection.Abstractions` (`MIT`) |
+| `FlowX.Kafka` | `Confluent.Kafka` (`Apache-2.0`), which brings `librdkafka.redist` (`BSD-2-Clause`); `Microsoft.Extensions.DependencyInjection.Abstractions` (`MIT`) |
 | `FlowX.RabbitMq` | `RabbitMQ.Client` (`Apache-2.0 OR MPL-2.0`, taken as Apache-2.0), which brings `System.Threading.RateLimiting` (`MIT`); `Microsoft.Extensions.DependencyInjection.Abstractions` (`MIT`) |
 | `FlowX.AzureServiceBus` | `Azure.Messaging.ServiceBus` (`MIT`), which brings `Azure.Core`, `Azure.Core.Amqp`, `Microsoft.Azure.Amqp`, `System.ClientModel` and `System.Memory.Data` — all `MIT`; `Microsoft.Extensions.DependencyInjection.Abstractions` (`MIT`) |
 | `flowx` (CLI tool) | bundles `System.Reflection.MetadataLoadContext.dll` (`MIT`) in `tools/` |
