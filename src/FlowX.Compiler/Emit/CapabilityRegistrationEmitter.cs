@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using FlowX.Compiler.Model;
 
 namespace FlowX.Compiler.Emit;
 
@@ -40,15 +41,24 @@ public static class CapabilityRegistrationEmitter
     private const string TryAdd =
         "global::Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions";
 
+    private const string Declaration = "global::FlowX.Hosting.FlowXTriggerDeclaration";
+
     /// <summary>Emits the capability and dispatcher registrations for this compilation.</summary>
     /// <param name="assemblyName">The compilation's assembly name, which names the class.</param>
     /// <param name="capabilities">Every capability type a dispatcher takes, ordinally sorted.</param>
     /// <param name="dispatchers">Every flow whose dispatcher this application can run, ordinally sorted.</param>
-    /// <exception cref="System.ArgumentNullException">Either list is null.</exception>
+    /// <param name="declarations">
+    /// Every address a flow declared, or empty when the host cannot check them. Emitted here
+    /// rather than in a file of its own because this method is the one call every application
+    /// makes before <c>Build()</c>, and a declaration recorded anywhere later would be recorded
+    /// after the check that reads it.
+    /// </param>
+    /// <exception cref="System.ArgumentNullException">Any list is null.</exception>
     public static string Emit(
         string assemblyName,
         IReadOnlyList<string> capabilities,
-        IReadOnlyList<string> dispatchers)
+        IReadOnlyList<string> dispatchers,
+        IReadOnlyList<DeclaredTriggerModel> declarations)
     {
         if (capabilities is null)
         {
@@ -60,6 +70,11 @@ public static class CapabilityRegistrationEmitter
             throw new System.ArgumentNullException(nameof(dispatchers));
         }
 
+        if (declarations is null)
+        {
+            throw new System.ArgumentNullException(nameof(declarations));
+        }
+
         var writer = new SourceWriter();
 
         writer.Line(FlowEmitter.Header.TrimEnd('\n'));
@@ -68,7 +83,7 @@ public static class CapabilityRegistrationEmitter
         writer.Line("namespace FlowX.Generated");
         writer.OpenBrace();
 
-        EmitClass(writer, ClassNameFor(assemblyName), capabilities, dispatchers);
+        EmitClass(writer, ClassNameFor(assemblyName), capabilities, dispatchers, declarations);
 
         writer.CloseBrace();
 
@@ -102,11 +117,15 @@ public static class CapabilityRegistrationEmitter
         return identifier.Append("Capabilities").ToString();
     }
 
+    private static string Quote(string value) =>
+        "\"" + (value ?? string.Empty).Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+
     private static void EmitClass(
         SourceWriter writer,
         string className,
         IReadOnlyList<string> capabilities,
-        IReadOnlyList<string> dispatchers)
+        IReadOnlyList<string> dispatchers,
+        IReadOnlyList<DeclaredTriggerModel> declarations)
     {
         writer.Line("/// <summary>The capabilities this application's flows invoke.</summary>");
         writer.Line("/// <remarks>");
@@ -138,6 +157,22 @@ public static class CapabilityRegistrationEmitter
         foreach (var dispatcher in dispatchers)
         {
             writer.Line(TryAdd + ".TryAddSingleton<global::" + dispatcher + ".Dispatcher>(services);");
+        }
+
+        if (declarations.Count > 0)
+        {
+            writer.Line();
+            writer.Line("// What each flow declared, so the host can refuse to start when nothing serves it.");
+
+            foreach (var declaration in declarations)
+            {
+                writer.Line(
+                    Declaration + ".Declare(services, " +
+                    Quote(declaration.FlowId) + ", " +
+                    Quote(declaration.Version) + ", " +
+                    Quote(declaration.Kind) + ", " +
+                    Quote(declaration.Address) + ");");
+            }
         }
 
         writer.Line();

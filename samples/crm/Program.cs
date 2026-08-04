@@ -145,4 +145,10 @@ app.MapFlowXMcp("/mcp");
 app.Services.AddFlowXSubscriptions();
 app.Services.AddFlowXChangeSubscriptions();
 
+// The two sweeps — `crm.task.escalation` hourly and `crm.opportunity.stale_sweep` daily. This
+// line was missing until FlowXStartupValidation refused to start the host without it: both
+// schedules were declared, published in the manifest, documented in the README's surface table,
+// and fired by nothing at all. The sweeps are the reason that check exists.
+app.Services.AddFlowXSchedules();
+
 await app.RunAsync().ConfigureAwait(false);

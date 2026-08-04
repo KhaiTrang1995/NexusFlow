@@ -119,6 +119,9 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     private const string ServiceCollectionExtensionsName =
         "Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions";
 
+    /// <summary>What a host that can refuse to start over an unserved address is called.</summary>
+    private const string TriggerDeclarationName = "FlowX.Hosting.FlowXTriggerDeclaration";
+
     /// <summary>The id whose reporting this class decides rather than passes through.</summary>
     private static readonly string EmitDiagnosticId = FlowXDiagnostics.EmitIsNotYetPublished.Id;
 
@@ -298,14 +301,24 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
             static (compilation, _) =>
                 compilation.GetTypeByMetadataName(ServiceCollectionExtensionsName) is not null);
 
+        // Whether the host can be told what was declared. Separate from containerAvailable: a
+        // project may have a container and not FlowX.Hosting, and a declaration it cannot check
+        // would not compile.
+        var declarationAvailable = context.CompilationProvider.Select(
+            static (compilation, _) =>
+                compilation.GetTypeByMetadataName(TriggerDeclarationName) is not null);
+
         context.RegisterSourceOutput(
             flows.Collect()
+                .Combine(triggers.Collect())
                 .Combine(containerAvailable)
+                .Combine(declarationAvailable)
                 .Combine(application),
             static (production, data) =>
             {
-                var ((analysed, available), assembly) = data;
-                ProduceCapabilityRegistrations(production, analysed, available, assembly);
+                var ((((analysed, declared), container), checkable), assembly) = data;
+                ProduceCapabilityRegistrations(
+                    production, analysed, declared, container, checkable, assembly);
             });
 
         // Whether this compilation can bind an agent tool at all, expressed as one bool for the
@@ -453,7 +466,9 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     private static void ProduceCapabilityRegistrations(
         SourceProductionContext production,
         ImmutableArray<AnalysisResult?> results,
+        ImmutableArray<FlowTriggersModel?> triggers,
         bool containerAvailable,
+        bool declarationAvailable,
         string assemblyName)
     {
         if (!containerAvailable)
@@ -486,9 +501,77 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
         production.AddSource(
             CapabilityRegistrationEmitter.FileName,
             SourceText.From(
-                CapabilityRegistrationEmitter.Emit(assemblyName, capabilities, dispatchers),
+                CapabilityRegistrationEmitter.Emit(
+                    assemblyName,
+                    capabilities,
+                    dispatchers,
+                    declarationAvailable ? DeclarationsOf(models, triggers) : []),
                 Encoding.UTF8));
     }
+
+    /// <summary>
+    /// The addresses the host is expected to serve, under exactly the predicates that decide
+    /// whether a registration is emitted for them.
+    /// </summary>
+    /// <remarks>
+    /// The predicates are shared with <see cref="ProduceSubscriptions"/> and its three siblings on
+    /// purpose. A declaration produced by a looser rule than the registration would refuse to
+    /// start a host over an address the generator itself had decided not to serve — a check that
+    /// fails on correct code, which is worse than the hole it was added to close.
+    /// </remarks>
+    private static List<DeclaredTriggerModel> DeclarationsOf(
+        List<FlowModel> models,
+        ImmutableArray<FlowTriggersModel?> triggers)
+    {
+        var declared = triggers
+            .Where(static t => t is not null)
+            .GroupBy(static t => t!.FlowId, StringComparer.Ordinal)
+            .ToDictionary(static g => g.Key, static g => g.First()!, StringComparer.Ordinal);
+
+        var declarations = new List<DeclaredTriggerModel>();
+
+        foreach (var flow in models.OrderBy(static m => m.FlowId, StringComparer.Ordinal))
+        {
+            if (!declared.TryGetValue(flow.FlowId, out var flowTriggers))
+            {
+                continue;
+            }
+
+            foreach (var trigger in flowTriggers.Triggers)
+            {
+                if (IsBusAddress(trigger) && CanBeConsumed(flow))
+                {
+                    declarations.Add(new DeclaredTriggerModel(
+                        flow.FlowId, flow.Version, "Bus", trigger.Topic!));
+                }
+                else if (IsChangeAddress(trigger) && CanBeConsumed(flow))
+                {
+                    declarations.Add(new DeclaredTriggerModel(
+                        flow.FlowId, flow.Version, "Change", trigger.Topic!));
+                }
+                else if (IsScheduleAddress(trigger) && CanBeFired(flow))
+                {
+                    declarations.Add(new DeclaredTriggerModel(
+                        flow.FlowId, flow.Version, "Schedule", trigger.Cron!));
+                }
+                else if (IsStreamAddress(trigger) && CanBeWindowed(flow)
+                    && WindowOf(flowTriggers, trigger) is { } window
+                    && IsWindowShapeThisEngineImplements(window))
+                {
+                    declarations.Add(new DeclaredTriggerModel(
+                        flow.FlowId, flow.Version, "Stream", trigger.Topic!));
+                }
+            }
+        }
+
+        return declarations;
+    }
+
+    /// <summary>The window a stream trigger declared, or null when it named none.</summary>
+    private static string? WindowOf(FlowTriggersModel flowTriggers, TriggerModel trigger) =>
+        flowTriggers.Streams
+            .FirstOrDefault(s => string.Equals(s.Source, trigger.Topic, StringComparison.Ordinal))
+            ?.Window;
 
     /// <summary>
     /// Emits one registration per bus trigger the host could actually consume, or nothing at all.

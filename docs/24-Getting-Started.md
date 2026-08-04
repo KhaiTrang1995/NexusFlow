@@ -320,14 +320,19 @@ broken token.
 
 <!-- verify: excerpt templates/FlowX.Templates/content/FlowX.Web/Program.cs -->
 ```csharp
-builder.Services.AddSingleton<ValidateTicket>();
-builder.Services.AddSingleton<RecordTicket>();
-builder.Services.AddSingleton<OpenTicketFlow.Dispatcher>();
+builder.Services.AddFlowXCapabilities();
 ```
 
-The generated `Dispatcher` takes each capability as a constructor parameter, so a missing
-registration is a start-up failure that names the type — not a null reference on the first
-request. There is no assembly scan.
+That one line registers every capability the flows step through and every generated
+`Dispatcher`, read off the constructors the generator wrote. There is no assembly scan, and
+the line does not grow when you add a capability.
+
+They are singletons because that is the only lifetime the runtime can honour everywhere: the
+catalogues hold a resolved dispatcher for the life of the node, and a recovery sweep resumes an
+instance long after the invocation that started it, with no scope left to resolve another from.
+Everything that varies per invocation — tenant, principal, idempotency key, deadline, clock, ids
+— arrives on `CapabilityContext` instead, which is also what lets a resumed instance replay
+identically. The registrations are `TryAdd`, so anything you register yourself wins.
 
 `app.MapFlowX()` registers every endpoint the flows declared. It names no method and no
 route, and `templates/verify.sh` asserts that it does not.
