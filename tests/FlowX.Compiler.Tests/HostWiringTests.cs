@@ -84,6 +84,28 @@ public sealed class HostWiringTests
         WiringIn(RunOn(Declaring(string.Empty), HostingStub)).ShouldBeNull(
             "a library of flows other applications compose has no wiring of its own.");
 
+    /// <summary>
+    /// A route whose contracts no serialiser context declares is mapped through an overload that
+    /// takes one, so the aggregate must not call the form that takes none.
+    /// </summary>
+    /// <remarks>
+    /// Found by the minimal template, which had no <c>[JsonSerializable]</c> context at all: the
+    /// aggregate called <c>MapFlowX(endpoints)</c>, the only overload emitted required a
+    /// <c>JsonSerializerContext</c>, and the generated file did not compile. A generator that
+    /// emits code which cannot build is worse than one that emits nothing.
+    /// </remarks>
+    [Fact]
+    public void AnUnserialisableRouteProducesNoEndpointAggregate()
+    {
+        var generated = WiringIn(RunOn(
+            Declaring("[HttpTrigger(\"POST\", \"/api/v1/orders\")]"), HostingStub));
+
+        (generated is null || !generated.Contains("MapFlowX", System.StringComparison.Ordinal))
+            .ShouldBeTrue(
+                "no serialiser context is declared here, so the no-argument MapFlowX does not " +
+                "exist and calling it would not compile.");
+    }
+
     private static string Declaring(string trigger) => $$"""
         using System.Threading;
         using System.Threading.Tasks;

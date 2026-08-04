@@ -327,17 +327,19 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
         context.RegisterSourceOutput(
             flows.Collect()
                 .Combine(triggers.Collect())
+                .Combine(jsonContexts.Collect())
                 .Combine(httpAvailable)
                 .Combine(busAvailable.Combine(changeAvailable))
                 .Combine(schedulingAvailable.Combine(streamAvailable))
                 .Combine(application),
             static (production, data) =>
             {
-                var (((((analysed, declared), http), (bus, change)), (schedule, stream)), assembly) =
-                    data;
+                var ((((((analysed, declared), contexts), http), (bus, change)),
+                    (schedule, stream)), assembly) = data;
 
                 ProduceHostWiring(
-                    production, analysed, declared, http, bus, change, schedule, stream, assembly);
+                    production, analysed, declared, contexts, http, bus, change, schedule, stream,
+                    assembly);
             });
 
         // Whether this compilation can bind an agent tool at all, expressed as one bool for the
@@ -606,6 +608,7 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
         SourceProductionContext production,
         ImmutableArray<AnalysisResult?> results,
         ImmutableArray<FlowTriggersModel?> triggers,
+        ImmutableArray<JsonContextModel?> jsonContexts,
         bool httpAvailable,
         bool busAvailable,
         bool changeAvailable,
@@ -621,7 +624,7 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
         var declared = DeclarationsOf(models, triggers);
 
         var model = new HostWiringModel(
-            Endpoints: httpAvailable && HasEndpoint(models, triggers),
+            Endpoints: httpAvailable && HasMappableEndpoint(models, triggers, jsonContexts),
             Bus: busAvailable && declared.Any(static d => d.Kind == "Bus"),
             Change: changeAvailable && declared.Any(static d => d.Kind == "Change"),
             Schedules: scheduleAvailable && declared.Any(static d => d.Kind == "Schedule"),
@@ -637,19 +640,41 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
             SourceText.From(HostWiringEmitter.Emit(assemblyName, model), Encoding.UTF8));
     }
 
-    /// <summary>Whether any flow would produce an HTTP route, under <see cref="ProduceEndpoints"/>'s rule.</summary>
-    private static bool HasEndpoint(
-        List<FlowModel> models, ImmutableArray<FlowTriggersModel?> triggers)
+    /// <summary>
+    /// Whether <c>MapFlowX()</c> — the form that takes no serialiser — exists to be called.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Both halves, and the second is the one that bites.</strong> The no-argument
+    /// overload is emitted only when <em>every</em> endpoint resolved a serialiser context of its
+    /// own; where one did not, the only overload takes a <c>JsonSerializerContext</c> the caller
+    /// has to name. An aggregate that assumed the first would emit a generated file that does not
+    /// compile — which is how a project with no <c>[JsonSerializable]</c> context found it.
+    /// </remarks>
+    private static bool HasMappableEndpoint(
+        List<FlowModel> models,
+        ImmutableArray<FlowTriggersModel?> triggers,
+        ImmutableArray<JsonContextModel?> jsonContexts)
     {
         var declared = triggers
             .Where(static t => t is not null)
             .GroupBy(static t => t!.FlowId, StringComparer.Ordinal)
             .ToDictionary(static g => g.Key, static g => g.First()!, StringComparer.Ordinal);
 
-        return models.Any(flow =>
-            flow.ReturnProjection is not null
-            && declared.TryGetValue(flow.FlowId, out var flowTriggers)
-            && flowTriggers.Triggers.Any(IsHttpAddress));
+        var contexts = jsonContexts
+            .Where(static c => c is not null)
+            .Select(static c => c!)
+            .ToList();
+
+        var routed = models
+            .Where(flow =>
+                flow.ReturnProjection is not null
+                && declared.TryGetValue(flow.FlowId, out var flowTriggers)
+                && flowTriggers.Triggers.Any(IsHttpAddress))
+            .ToList();
+
+        return routed.Count > 0
+            && routed.All(flow =>
+                ContextFor(contexts, flow.InputTypeName, flow.OutputTypeName) is not null);
     }
 
     /// <summary>The window a stream trigger declared, or null when it named none.</summary>
