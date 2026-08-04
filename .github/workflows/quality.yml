@@ -119,11 +119,40 @@ jobs:
           FLOWX_RABBITMQ_CONNECTION: "amqp://guest:guest@localhost:5672/"
           FLOWX_KAFKA_BOOTSTRAP: "localhost:9092"
           FLOWX_SERVICEBUS_CONNECTION: "Endpoint=sb://localhost:5673;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+        # `--logger trx` and the summary below exist because this step has been failing
+        # without naming a test. The job's conclusion said "Coverage thresholds", the
+        # thresholds step was skipped because this one failed first, and the console output
+        # is buried under a thousand lines of RabbitMQ service-container log. A gate whose
+        # failure a reader cannot attribute is a gate nobody acts on, and this one has been
+        # red for days for exactly that reason.
         run: >
           dotnet test FlowX.slnx --configuration Release --no-build
           --settings coverlet.runsettings
           --collect:"XPlat Code Coverage"
+          --logger "trx;LogFileName=quality.trx"
           --results-directory ./TestResults
+
+      - name: Which test failed
+        if: failure()
+        # The one thing the log does not make findable. Reads the trx files rather than the
+        # console, so the answer is the same whichever assembly drowned it.
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
+          found = 0
+          for path in glob.glob('TestResults/**/*.trx', recursive=True):
+              for result in ET.parse(path).getroot().iter(f'{{{ns["t"]}}}UnitTestResult'):
+                  if result.get('outcome') != 'Failed':
+                      continue
+                  found += 1
+                  print(f'::error::{result.get("testName")}')
+                  message = result.find(f'.//{{{ns["t"]}}}Message')
+                  if message is not None and message.text:
+                      print(message.text[:2000])
+          print(f'{found} failed test(s) named' if found
+                else 'No failed test in any trx: the run died before or between assemblies.')
+          PY
 
       - name: Enforce thresholds
         # Thresholds from docs/21-Quality-Gates.md §2.1. Measured on the whole
