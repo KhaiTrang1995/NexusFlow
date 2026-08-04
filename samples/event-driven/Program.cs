@@ -70,18 +70,8 @@ builder.Services.AddSingleton<IBillingCalendar>(
 // That is the sample's claim expressed as a container registration: there is one
 // `invoice.validate`, one `invoice.tax`, one `invoice.persist` and one `invoice.void`, and the
 // transport a flow was started by never reaches them.
-builder.Services.AddSingleton<ValidateInvoice>();
-builder.Services.AddSingleton<CalculateTax>();
-builder.Services.AddSingleton<PersistInvoice>();
-builder.Services.AddSingleton<VoidInvoice>();
-builder.Services.AddSingleton<ReadInvoiceRequest>();
-builder.Services.AddSingleton<DueInvoice>();
+builder.Services.AddFlowXCapabilities();
 
-builder.Services.AddSingleton<RequestInvoiceFlow.Dispatcher>();
-builder.Services.AddSingleton<IssueInvoiceOverHttpFlow.Dispatcher>();
-builder.Services.AddSingleton<IssueInvoiceOverBusFlow.Dispatcher>();
-builder.Services.AddSingleton<IssueInvoiceOverChangeFlow.Dispatcher>();
-builder.Services.AddSingleton<IssueInvoiceOverScheduleFlow.Dispatcher>();
 
 var app = builder.Build();
 

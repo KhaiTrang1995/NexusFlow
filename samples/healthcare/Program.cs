@@ -144,12 +144,7 @@ builder.Services.AddSingleton<IAuditSink>(sp => sp.GetRequiredService<InMemoryCl
 // The capabilities. The generated dispatcher takes them as constructor parameters, so a missing
 // registration is a startup failure naming the type rather than a null reference on the first
 // request.
-builder.Services.AddSingleton<ValidateIntake>();
-builder.Services.AddSingleton<VerifyConsent>();
-builder.Services.AddSingleton<DeduplicatePatient>();
-builder.Services.AddSingleton<StoreRecord>();
-builder.Services.AddSingleton<PurgeRecord>();
-builder.Services.AddSingleton<PatientIntakeFlow.Dispatcher>();
+builder.Services.AddFlowXCapabilities();
 
 var app = builder.Build();
 

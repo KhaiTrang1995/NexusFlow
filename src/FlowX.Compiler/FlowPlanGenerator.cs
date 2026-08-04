@@ -106,6 +106,19 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
     /// </remarks>
     private const string AgentToolRegistrationName = "FlowX.Mcp.FlowAgentToolRegistration";
 
+    /// <summary>
+    /// What a generated capability registration needs to exist: the container's own extension
+    /// point.
+    /// </summary>
+    /// <remarks>
+    /// Looked up rather than assumed, for <see cref="HttpEndpointExtensionsName"/>'s reason. A
+    /// flow library that references only <c>FlowX.Abstractions</c> has no
+    /// <c>IServiceCollection</c>, and emitting an extension method over a type that is not there
+    /// would turn a working library into a build error for a convenience it never asked for.
+    /// </remarks>
+    private const string ServiceCollectionExtensionsName =
+        "Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions";
+
     /// <summary>The id whose reporting this class decides rather than passes through.</summary>
     private static readonly string EmitDiagnosticId = FlowXDiagnostics.EmitIsNotYetPublished.Id;
 
@@ -279,6 +292,22 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                 ProduceStreamSubscriptions(production, analysed, declared, available, assembly);
             });
 
+        // Whether this compilation has a container to register into, expressed as one bool for
+        // the reason httpAvailable is.
+        var containerAvailable = context.CompilationProvider.Select(
+            static (compilation, _) =>
+                compilation.GetTypeByMetadataName(ServiceCollectionExtensionsName) is not null);
+
+        context.RegisterSourceOutput(
+            flows.Collect()
+                .Combine(containerAvailable)
+                .Combine(application),
+            static (production, data) =>
+            {
+                var ((analysed, available), assembly) = data;
+                ProduceCapabilityRegistrations(production, analysed, available, assembly);
+            });
+
         // Whether this compilation can bind an agent tool at all, expressed as one bool for the
         // reason httpAvailable is.
         var agentToolsAvailable = context.CompilationProvider.Select(
@@ -405,6 +434,60 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
         }
 
         return candidate;
+    }
+
+    /// <summary>
+    /// Emits the container registration for every capability a dispatcher takes, or nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing at all when the compilation has no container — a flow library referencing only
+    /// <c>FlowX.Abstractions</c> is a legitimate shape and keeps compiling.
+    /// </para>
+    /// <para>
+    /// Every flow that analysed successfully contributes its dispatcher, including one no trigger
+    /// reaches: a composed sub-flow's dispatcher is a constructor parameter of its parent's, and a
+    /// test resolves one directly.
+    /// </para>
+    /// </remarks>
+    private static void ProduceCapabilityRegistrations(
+        SourceProductionContext production,
+        ImmutableArray<AnalysisResult?> results,
+        bool containerAvailable,
+        string assemblyName)
+    {
+        if (!containerAvailable)
+        {
+            return;
+        }
+
+        var models = results
+            .Where(static r => r is { IsSuccess: true, Model: not null })
+            .Select(static r => r!.Model!)
+            .ToList();
+
+        var capabilities = models
+            .SelectMany(static m => m.ReferencedCapabilities)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToList();
+
+        var dispatchers = models
+            .Select(static m => m.FullTypeName)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToList();
+
+        if (capabilities.Count == 0 && dispatchers.Count == 0)
+        {
+            return;
+        }
+
+        production.AddSource(
+            CapabilityRegistrationEmitter.FileName,
+            SourceText.From(
+                CapabilityRegistrationEmitter.Emit(assemblyName, capabilities, dispatchers),
+                Encoding.UTF8));
     }
 
     /// <summary>
