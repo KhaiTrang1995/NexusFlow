@@ -225,16 +225,8 @@ write — see [§11](#11-the-five-diagnostics-you-will-meet-first).
     Authorization = Authorization.Permission, Permission = "ticket.write",
     Idempotent = true,
     SideEffects = ["ticket-store"])]
-public sealed class RecordTicket : ICapability<ValidatedTicket, TicketOpened>
+public sealed class RecordTicket(ITicketStore store) : ICapability<ValidatedTicket, TicketOpened>
 {
-    private readonly ITicketStore _store;
-
-    public RecordTicket(ITicketStore store)
-    {
-        ArgumentNullException.ThrowIfNull(store);
-        _store = store;
-    }
-
     public async ValueTask<Result<TicketOpened>> ExecuteAsync(
         ValidatedTicket input,
         CapabilityContext ctx,
@@ -245,7 +237,7 @@ public sealed class RecordTicket : ICapability<ValidatedTicket, TicketOpened>
 
         // The identity comes from the context. A new Guid would make the same request
         // produce a different ticket on every retry.
-        await _store.SaveAsync(ctx.IdempotencyKey, input.Subject, ct).ConfigureAwait(false);
+        await store.SaveAsync(ctx.IdempotencyKey, input.Subject, ct).ConfigureAwait(false);
 
         return new TicketOpened(ctx.IdempotencyKey, input.Subject);
     }
@@ -291,8 +283,8 @@ contract no earlier step produces — rather than throwing on the first request.
 
 ### Wiring it up
 
-`Program.cs` is the composition root, and it is deliberately the only place that names a
-service lifetime. This is the template's, verbatim:
+`Program.cs` is the composition root: your own types, and one call for everything the
+compiler already knows about. This is the template's, verbatim:
 
 <!-- verify: excerpt templates/FlowX.Templates/content/FlowX.Web/Program.cs -->
 ```csharp

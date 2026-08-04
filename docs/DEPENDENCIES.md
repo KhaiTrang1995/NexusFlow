@@ -354,6 +354,7 @@ checked against §4; what those references drag in behind them is not.
 | `scripts/generator-cost-probe/GeneratorCostProbe.csproj` | a measurement harness, not a build target | `Microsoft.CodeAnalysis.CSharp` |
 | `templates/FlowX.Templates/FlowX.Templates.csproj` | a template pack: it carries files, not code | none |
 | `templates/FlowX.Templates/content/FlowX.Web/FlowXStarter.csproj` | template *input*, not repository source | five first-party `FlowX.*` packages |
+| `templates/FlowX.Templates/content/FlowX.Minimal/FlowXMinimal.csproj` | template *input*, not repository source | four first-party `FlowX.*` packages |
 
 `ci.yml` restores the first of these before running the architecture gates, so in CI its
 closure *is* vetted. The template's cannot be restored at all until the packages it names
