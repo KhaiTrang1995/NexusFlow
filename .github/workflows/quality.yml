@@ -17,7 +17,7 @@ jobs:
   coverage:
     name: Coverage thresholds
     runs-on: ubuntu-latest
-    # The same two servers ci.yml's build job runs, for the same reason one commit later:
+    # The same servers ci.yml's build job runs, for the same reason one commit later:
     # without them the durability, tenancy and sample suites skip, and every line they
     # would have covered is counted as uncovered. A coverage number measured with a third
     # of the suite absent is not a smaller number, it is a wrong one.
@@ -52,11 +52,55 @@ jobs:
           --health-interval 5s
           --health-timeout 10s
           --health-retries 30
+      # The Service Bus emulator's own dependency, as a service container so the emulator
+      # step below can reach it across the bridge. ci.yml §sqledge says the rest.
+      sqledge:
+        image: mcr.microsoft.com/azure-sql-edge:latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
+        ports:
+          - 1433:1433
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+
+      # Kafka and Service Bus, which ci.yml has had since the two plugins landed and this job
+      # did not. Their absence here did not lower the coverage number, it made it wrong: every
+      # line in plugins/FlowX.Kafka and plugins/FlowX.AzureServiceBus was counted as coverable
+      # and uncovered while the only tests that reach them were skipping for want of a broker.
+      # That is the exact reading this job's own comment above rejects for PostgreSQL and Redis.
+      - name: Start Apache Kafka
+        run: |
+          curl -sS -O https://archive.apache.org/dist/kafka/4.1.2/kafka_2.13-4.1.2.tgz
+          tar -xzf kafka_2.13-4.1.2.tgz
+          cd kafka_2.13-4.1.2
+          KAFKA_CLUSTER_ID=$(bin/kafka-storage.sh random-uuid)
+          bin/kafka-storage.sh format -t "$KAFKA_CLUSTER_ID" -c config/server.properties --standalone
+          nohup bin/kafka-server-start.sh config/server.properties > "$RUNNER_TEMP/kafka.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            bin/kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null 2>&1 && break
+            sleep 2
+          done
+          bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+
+      - name: Start the Service Bus emulator
+        run: |
+          docker run -d --name flowx-sbemulator \
+            --add-host host.docker.internal:host-gateway \
+            -p 5673:5672 \
+            -v "$GITHUB_WORKSPACE/tests/FlowX.AzureServiceBus.Tests/emulator-config.json:/ServiceBus_Emulator/ConfigFiles/Config.json" \
+            -e ACCEPT_EULA=Y \
+            -e SQL_SERVER=host.docker.internal \
+            -e MSSQL_SA_PASSWORD='Str0ng!Passw0rd' \
+            mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+          for _ in $(seq 1 30); do
+            docker logs flowx-sbemulator 2>&1 | grep -q "Emulator Service is Successfully Up" && break
+            sleep 5
+          done
+          docker logs flowx-sbemulator 2>&1 | tail -5
 
       - name: Build
         # Separately, and before the tests. The architecture gates scan the Release
@@ -73,6 +117,8 @@ jobs:
           FLOWX_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres"
           FLOWX_REDIS_CONNECTION: "localhost:6379"
           FLOWX_RABBITMQ_CONNECTION: "amqp://guest:guest@localhost:5672/"
+          FLOWX_KAFKA_BOOTSTRAP: "localhost:9092"
+          FLOWX_SERVICEBUS_CONNECTION: "Endpoint=sb://localhost:5673;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
         run: >
           dotnet test FlowX.slnx --configuration Release --no-build
           --settings coverlet.runsettings
