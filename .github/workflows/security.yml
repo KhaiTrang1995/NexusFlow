@@ -223,3 +223,65 @@ jobs:
           # A DAST finding against a sample is a platform defect until proven
           # otherwise — the HTTP surface under test is generated code.
           fail_action: true
+
+  backlog:
+    name: Code scanning backlog
+    runs-on: ubuntu-latest
+    # Runs after CodeQL, because the count it reads is the one CodeQL just uploaded.
+    needs: codeql
+    permissions:
+      contents: read
+      security-events: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The backlog has not grown
+        # WHAT THIS EXISTS FOR. `github/codeql-action/analyze` uploads every alert the
+        # security-and-quality suite raises and fails on none of them, so the Security
+        # workflow has been green over a page nobody reads. Semgrep is the mirror image —
+        # it fails the job and uploads nothing — which means the only findings anybody has
+        # ever had to act on are Semgrep's, and CodeQL's have accumulated unread.
+        #
+        # A count with a committed ceiling is the smallest thing that changes that: a new
+        # alert is a red job on the pull request that introduced it, and the backlog can
+        # only be argued upward in writing.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          gh api --paginate \
+            "/repos/${GITHUB_REPOSITORY}/code-scanning/alerts?state=open&per_page=100" \
+            > alerts.json
+
+          python3 - <<'PY'
+          import json, os, sys
+          from collections import Counter
+
+          alerts = json.load(open('alerts.json'))
+          counts = Counter(a['rule'].get('security_severity_level')
+                           or a['rule'].get('severity') or 'unknown' for a in alerts)
+          total = len(alerts)
+
+          print(f'open alerts: {total}')
+          for level, n in sorted(counts.items()):
+              print(f'  {level}: {n}')
+
+          for a in sorted(alerts, key=lambda a: a['rule']['id'])[:40]:
+              location = a.get('most_recent_instance', {}).get('location', {})
+              print(f"  {a['rule']['id']}  {location.get('path','?')}:{location.get('start_line','?')}")
+
+          baseline = json.load(open('.github/code-scanning-baseline.json'))
+          ceiling = baseline['total']
+
+          if ceiling is None:
+              print('::warning title=Code scanning backlog is not yet gated::'
+                    f'{total} open alerts. Record this number as `total` in '
+                    '.github/code-scanning-baseline.json to turn this job into a gate.')
+              sys.exit(0)
+
+          if total > ceiling:
+              print(f'::error::{total} open alerts, above the committed ceiling of {ceiling}.')
+              sys.exit(1)
+
+          print(f'{total} open alerts, at or below the ceiling of {ceiling}.')
+          PY

@@ -1,0 +1,37 @@
+{
+  "$comment": [
+    "The committed size of the code-scanning backlog, and the only thing that reads it is",
+    "the `Code scanning backlog` job in security.yml.",
+    "",
+    "WHY A NUMBER AND NOT ZERO. `github/codeql-action/analyze` fails on nothing: it uploads",
+    "every alert the security-and-quality suite raises and reports success either way. So the",
+    "page has been accumulating findings that no gate has ever read, and demanding zero on the",
+    "first run would red every pull request over a backlog none of them created — the failure",
+    "mode the allocation gate exists to avoid, and the one that made the Semgrep job worthless",
+    "for months.",
+    "",
+    "SO IT IS A RATCHET. The job fails when the open count exceeds `total`, which makes a new",
+    "alert a failure today. Lowering the number is the work; raising it is a decision that has",
+    "to be argued in the pull request that raises it, because nothing else here can move.",
+    "",
+    "HOW TO RE-RECORD. Read the count the job prints, fix alerts until it drops, and set",
+    "`total` to what remains. Never set it to what the run reported without looking at the",
+    "difference: a count that rose because a query pack was updated is a different fact from",
+    "one that rose because somebody wrote a defect.",
+    "",
+    "`bySeverity` is not enforced. It is here so a re-recording says which way the backlog",
+    "moved, rather than only that it did.",
+    "",
+    "SEEDED, NOT MEASURED. The first run prints the real numbers; this file was written",
+    "before it, so `total` is null and the job reports the count and passes exactly once.",
+    "The commit that fills it in is the commit that turns this into a gate."
+  ],
+  "total": null,
+  "bySeverity": {
+    "error": null,
+    "warning": null,
+    "note": null
+  },
+  "recordedAt": null,
+  "recordedFrom": null
+}
