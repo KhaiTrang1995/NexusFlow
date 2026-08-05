@@ -35,3 +35,7 @@ docker-compose.override.yml
 # dump.rdb in whatever directory the server was started from.
 dump.rdb
 *.rdb
+
+# reportgenerator writes its report here; a 53k-line Cobertura.xml reached a
+# branch through `git add -A` before this line existed.
+coverage/

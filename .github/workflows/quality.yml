@@ -17,7 +17,13 @@ jobs:
   coverage:
     name: Coverage thresholds
     runs-on: ubuntu-latest
-    # The same two servers ci.yml's build job runs, for the same reason one commit later:
+    # `pull-requests: write` for the reporting step below, granted on the job because that
+    # is the only scope Actions accepts it at — a `permissions:` key on a step is a workflow
+    # validation error, not an ignored one.
+    permissions:
+      contents: read
+      pull-requests: write
+    # The same servers ci.yml's build job runs, for the same reason one commit later:
     # without them the durability, tenancy and sample suites skip, and every line they
     # would have covered is counted as uncovered. A coverage number measured with a third
     # of the suite absent is not a smaller number, it is a wrong one.
@@ -52,11 +58,55 @@ jobs:
           --health-interval 5s
           --health-timeout 10s
           --health-retries 30
+      # The Service Bus emulator's own dependency, as a service container so the emulator
+      # step below can reach it across the bridge. ci.yml §sqledge says the rest.
+      sqledge:
+        image: mcr.microsoft.com/azure-sql-edge:latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
+        ports:
+          - 1433:1433
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+
+      # Kafka and Service Bus, which ci.yml has had since the two plugins landed and this job
+      # did not. Their absence here did not lower the coverage number, it made it wrong: every
+      # line in plugins/FlowX.Kafka and plugins/FlowX.AzureServiceBus was counted as coverable
+      # and uncovered while the only tests that reach them were skipping for want of a broker.
+      # That is the exact reading this job's own comment above rejects for PostgreSQL and Redis.
+      - name: Start Apache Kafka
+        run: |
+          curl -sS -O https://archive.apache.org/dist/kafka/4.1.2/kafka_2.13-4.1.2.tgz
+          tar -xzf kafka_2.13-4.1.2.tgz
+          cd kafka_2.13-4.1.2
+          KAFKA_CLUSTER_ID=$(bin/kafka-storage.sh random-uuid)
+          bin/kafka-storage.sh format -t "$KAFKA_CLUSTER_ID" -c config/server.properties --standalone
+          nohup bin/kafka-server-start.sh config/server.properties > "$RUNNER_TEMP/kafka.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            bin/kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null 2>&1 && break
+            sleep 2
+          done
+          bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+
+      - name: Start the Service Bus emulator
+        run: |
+          docker run -d --name flowx-sbemulator \
+            --add-host host.docker.internal:host-gateway \
+            -p 5673:5672 \
+            -v "$GITHUB_WORKSPACE/tests/FlowX.AzureServiceBus.Tests/emulator-config.json:/ServiceBus_Emulator/ConfigFiles/Config.json" \
+            -e ACCEPT_EULA=Y \
+            -e SQL_SERVER=host.docker.internal \
+            -e MSSQL_SA_PASSWORD='Str0ng!Passw0rd' \
+            mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+          for _ in $(seq 1 30); do
+            docker logs flowx-sbemulator 2>&1 | grep -q "Emulator Service is Successfully Up" && break
+            sleep 5
+          done
+          docker logs flowx-sbemulator 2>&1 | tail -5
 
       - name: Build
         # Separately, and before the tests. The architecture gates scan the Release
@@ -73,11 +123,79 @@ jobs:
           FLOWX_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres"
           FLOWX_REDIS_CONNECTION: "localhost:6379"
           FLOWX_RABBITMQ_CONNECTION: "amqp://guest:guest@localhost:5672/"
+          FLOWX_KAFKA_BOOTSTRAP: "localhost:9092"
+          FLOWX_SERVICEBUS_CONNECTION: "Endpoint=sb://localhost:5673;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+        # `--logger trx` and the summary below exist because this step has been failing
+        # without naming a test. The job's conclusion said "Coverage thresholds", the
+        # thresholds step was skipped because this one failed first, and the console output
+        # is buried under a thousand lines of RabbitMQ service-container log. A gate whose
+        # failure a reader cannot attribute is a gate nobody acts on, and this one has been
+        # red for days for exactly that reason.
         run: >
           dotnet test FlowX.slnx --configuration Release --no-build
           --settings coverlet.runsettings
           --collect:"XPlat Code Coverage"
+          --logger trx
           --results-directory ./TestResults
+
+      - name: Which test failed
+        if: failure()
+        # The one thing the log does not make findable. Reads the trx files rather than the
+        # console, so the answer is the same whichever assembly drowned it.
+        #
+        # Written to the step summary and to a file the next step posts on the pull request,
+        # because this job cannot report through its log at all. Four service containers dump
+        # their logs at teardown, and the dump is longer than any tail worth reading: the last
+        # twelve hundred lines of a failing run are Redis and RabbitMQ starting up, and the
+        # name of the test that failed is somewhere above them. That is why this job spent
+        # days reporting "Coverage thresholds" for a failure that was never about coverage.
+        run: |
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY" | tee failing-tests.txt
+          import glob, xml.etree.ElementTree as ET
+          ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
+          found = 0
+          for path in glob.glob('TestResults/**/*.trx', recursive=True):
+              for result in ET.parse(path).getroot().iter(f'{{{ns["t"]}}}UnitTestResult'):
+                  if result.get('outcome') != 'Failed':
+                      continue
+                  found += 1
+                  print(f'::error::{result.get("testName")}')
+                  message = result.find(f'.//{{{ns["t"]}}}Message')
+                  if message is not None and message.text:
+                      print(message.text[:2000])
+          trx = glob.glob('TestResults/**/*.trx', recursive=True)
+
+          if found:
+              print(f'{found} failed test(s) named across {len(trx)} trx file(s).')
+          else:
+              # Not "nothing failed" — `dotnet test` exited non-zero. Either an assembly
+              # never wrote a trx because its test host died, or it wrote one and the run
+              # ended before the failure was recorded. Naming the count and the assemblies
+              # is what separates those two, and the first shape is the one that presents
+              # as "no failed test" while the job is red.
+              print(f'No failed test in {len(trx)} trx file(s); dotnet test still exited non-zero.')
+              print('An assembly whose test host died writes no trx at all. Present:')
+              for path in sorted(trx):
+                  print(f'  {path}')
+          PY
+
+      - name: Say so on the pull request
+        if: failure() && github.event_name == 'pull_request'
+        # The only channel this job has that a reader can reach in one click. The log is
+        # unreadable by construction (see above) and an Actions job summary is not exposed
+        # on the check, so a failure that names its cause has to say so here or nowhere.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [ -s failing-tests.txt ] || exit 0
+          {
+            echo "**Coverage thresholds — the test step failed, not the thresholds.**"
+            echo
+            echo '```'
+            cat failing-tests.txt
+            echo '```'
+          } > comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md
 
       - name: Enforce thresholds
         # Thresholds from docs/21-Quality-Gates.md §2.1. Measured on the whole

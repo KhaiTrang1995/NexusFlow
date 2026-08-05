@@ -372,9 +372,20 @@ public sealed class KafkaBusConsumerTests
 
         /// <summary>Receives until the expected count arrives, or gives up.</summary>
         /// <remarks>
+        /// <para>
         /// A produce is acknowledged before the record is fetchable by a consumer that is already
         /// polling, so a single pass can legitimately return nothing. The bound is what makes a
         /// broker that never delivers a failed test rather than a hung one.
+        /// </para>
+        /// <para>
+        /// <strong>The bound covers a consumer group's first join, not only a delivery, and that
+        /// is why it is not thirty seconds.</strong> The first group in a cold cluster waits for
+        /// <c>__consumer_offsets</c> to be created — fifty partitions by default — and for a
+        /// coordinator to be elected for its own. That took thirty-eight seconds on the run that
+        /// found this, so the first test of a freshly started broker failed while every later one
+        /// passed: a flake whose message said "the broker delivered nothing" and whose cause was
+        /// that nobody had asked it yet.
+        /// </para>
         /// </remarks>
         public async ValueTask<IReadOnlyList<BusDelivery>> ReceiveUntilAsync(
             int expecting = 1, BusSubscription? subscription = null)
@@ -388,7 +399,7 @@ public sealed class KafkaBusConsumerTests
             int expecting = 1, BusSubscription? subscription = null)
         {
             var target = subscription ?? Subscription;
-            var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(90);
             var collected = new List<BusPartitionBatch>();
             var count = 0;
 

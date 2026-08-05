@@ -28,6 +28,13 @@ jobs:
         with:
           global-json-file: global.json
 
+      # No config-file, and specifically no `paths-ignore`. One was added here to keep the
+      # 638 generated files under obj/generated out of the analysis; it changed nothing,
+      # because paths-ignore applies to interpreted languages and to compiled ones analysed
+      # without a build, and this job builds C#. What CodeQL analyses is what the build
+      # compiled, so the only way to narrow it here is to compile less — which would mean
+      # not analysing the platform. Generated alerts are separated where they can be: in
+      # the backlog job below, which gates on the ones somebody wrote.
       - uses: github/codeql-action/init@v3
         with:
           languages: csharp
@@ -148,6 +155,13 @@ jobs:
     name: "DAST: OWASP ZAP"
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule'
+    # The action opens an issue for the alerts it finds, and the workflow's default grant is
+    # `contents: read` — so every failing run also logged `Resource not accessible by
+    # integration` from the issues API. A gate that cannot report its own findings reports
+    # them to nobody.
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
 
@@ -182,11 +196,166 @@ jobs:
             sleep 2
           done
 
+      - name: The scan has a subject
+        if: steps.guard.outputs.ready == 'true'
+        # This job was scanning a 404 and calling it 66 passes.
+        #
+        # The target was http://localhost:5000, the sample serves nothing at `/`, and the
+        # automation log said so — `spider error accessing URL http://localhost:5000 status
+        # code returned : 404 expected 200`. Sixty-six passive rules then ran over an error
+        # page, none of them touching a generated endpoint, and the one warning they raised
+        # was about the caching headers on the 404. A DAST gate whose subject is absent is
+        # the shape this repository keeps finding; asserting the target answers is what
+        # turns "scanned nothing" into a failure instead of a green tick with a note.
+        run: |
+          status="$(curl -sS -o /dev/null -w '%{http_code}' http://localhost:5000/health)"
+          if [ "$status" != "200" ]; then
+            echo "::error::/health answered $status, so ZAP would scan an error page."
+            exit 1
+          fi
+          echo "/health answers 200; the scan has something to read."
+
       - name: ZAP baseline scan
         if: steps.guard.outputs.ready == 'true'
         uses: zaproxy/action-baseline@v0.12.0
         with:
-          target: http://localhost:5000
+          # /health rather than `/`, because that is a URL this application has. What the
+          # spider can reach from it is one GET: the rest of the surface is POST-only, and
+          # a baseline spider cannot exercise a POST. That limit is stated rather than
+          # papered over — the generated endpoints' behaviour is asserted by
+          # tests/FlowX.Http.Tests, and closing it here means an API scan driven by the
+          # manifest, which is its own work item.
+          target: http://localhost:5000/health
+          rules_file_name: .zap/rules.tsv
           # A DAST finding against a sample is a platform defect until proven
           # otherwise — the HTTP surface under test is generated code.
           fail_action: true
+
+  backlog:
+    name: Code scanning backlog
+    runs-on: ubuntu-latest
+    # Runs after CodeQL, because the count it reads is the one CodeQL just uploaded.
+    needs: codeql
+    permissions:
+      contents: read
+      security-events: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The backlog has not grown
+        # WHAT THIS EXISTS FOR. `github/codeql-action/analyze` uploads every alert the
+        # security-and-quality suite raises and fails on none of them, so the Security
+        # workflow has been green over a page nobody reads. Semgrep is the mirror image —
+        # it fails the job and uploads nothing — which means the only findings anybody has
+        # ever had to act on are Semgrep's, and CodeQL's have accumulated unread.
+        #
+        # A count with a committed ceiling is the smallest thing that changes that: a new
+        # alert is a red job on the pull request that introduced it, and the backlog can
+        # only be argued upward in writing.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # WHICH REF IS COUNTED, AND WHY IT IS NOT ALWAYS THIS RUN'S.
+          #
+          # With no `ref` at all the endpoint answers for the default branch, which is how
+          # this job reported the same 988 on four consecutive commits — it was never
+          # reading the tree under test, so a pull request could not move the number it
+          # gates on. Naming the ref fixed that for pushes and exposed the other half:
+          # `refs/pull/19/merge` came back with zero alerts three seconds after CodeQL
+          # finished analysing it. A pull request analysis is diffed against its base and
+          # surfaced as annotations on the pull request; it is not persisted as a set of
+          # open alerts the way a branch's is, so there is nothing here to count.
+          #
+          # So the ceiling is enforced where alerts persist — on pushes to master and dev,
+          # which is where a regression has to be caught before a release. On a pull
+          # request the same numbers are printed for the BASE branch as context, and the
+          # job cannot fail: gating a pull request on its base's backlog would fail it for
+          # something it did not do. The pull-request-time signal is CodeQL's own check,
+          # which annotates alerts this branch introduced.
+          REF: ${{ github.event_name == 'pull_request' && format('refs/heads/{0}', github.base_ref) || github.ref }}
+          GATED: ${{ github.event_name != 'pull_request' }}
+        run: |
+          set -o pipefail
+
+          # Three attempts, because alert ingestion can lag the analysis that produced it
+          # and an empty first answer is not evidence of an empty backlog.
+          for attempt in 1 2 3; do
+            gh api --paginate \
+              "/repos/${GITHUB_REPOSITORY}/code-scanning/alerts?state=open&per_page=100&ref=${REF}" \
+              > alerts.json
+            [ "$(jq 'length' alerts.json)" != "0" ] && break
+            echo "No alerts for ${REF} on attempt ${attempt}; waiting for ingestion."
+            sleep 20
+          done
+
+          python3 - <<'PY'
+          import json, os, sys
+          from collections import Counter
+
+          alerts = json.load(open('alerts.json'))
+          ref = os.environ['REF']
+          gated = os.environ['GATED'] == 'true'
+
+          if not alerts:
+              # CodeQL analysed this ref minutes ago, so zero is a ref that holds no
+              # persisted alerts, never a clean tree. Reporting it as clean would be the
+              # one kind of green this repository refuses to print.
+              print(f'::error::No alerts at all for {ref} after three attempts. That is a '
+                    'ref this endpoint does not answer for, not an empty backlog.')
+              sys.exit(1)
+
+          def path_of(alert):
+              return alert.get('most_recent_instance', {}).get('location', {}).get('path', '?')
+
+          def generated(path):
+              return '/obj/' in path or path.endswith('.g.cs')
+
+          def tree(path):
+              return path.split('/', 1)[0] if '/' in path else '(root)'
+
+          # THE SPLIT IS THE GATE. 748 of the 988 alerts on this repository are raised
+          # against files under obj/generated — System.Text.Json's serialisers, FlowX's own
+          # plans and dispatchers, the regex matchers. Nobody can act on those: fixing one
+          # means changing a generator that emits the same shape deliberately, and CodeQL
+          # cannot be told to skip them, because paths-ignore does not apply to a compiled
+          # language that is built (see the init step above). So they are counted and shown
+          # and not gated, and the ceiling is over what somebody actually wrote.
+          authored = [a for a in alerts if not generated(path_of(a))]
+          total = len(authored)
+
+          print(f'open alerts: {len(alerts)} on {ref} '
+                f'({total} authored, {len(alerts) - total} generated)')
+
+          counts = Counter(a['rule'].get('security_severity_level')
+                           or a['rule'].get('severity') or 'unknown' for a in authored)
+          for level, n in sorted(counts.items()):
+              print(f'  {level}: {n}')
+
+          by_rule = Counter(a['rule']['id'] for a in authored)
+          print('\nauthored, by rule (top 15 of %d):' % len(by_rule))
+          for rule, n in by_rule.most_common(15):
+              print(f'  {n:5}  {rule}')
+
+          print('\nauthored, by tree:')
+          for name, n in Counter(tree(path_of(a)) for a in authored).most_common():
+              print(f'  {n:5}  {name}')
+
+          baseline = json.load(open('.github/code-scanning-baseline.json'))
+          ceiling = baseline['total']
+
+          if not gated:
+              print(f'\nContext only: {ref} is this pull request\'s base, and the ceiling is '
+                    'enforced when the merge lands on it.')
+              sys.exit(0)
+
+          if ceiling is None:
+              print('::warning title=Code scanning backlog is not yet gated::'
+                    f'{total} authored alerts. Record this number as `total` in '
+                    '.github/code-scanning-baseline.json to turn this job into a gate.')
+              sys.exit(0)
+
+          if total > ceiling:
+              print(f'::error::{total} authored alerts, above the committed ceiling of {ceiling}.')
+              sys.exit(1)
+
+          print(f'{total} authored alerts, at or below the ceiling of {ceiling}.')
+          PY
