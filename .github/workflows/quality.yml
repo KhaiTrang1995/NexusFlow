@@ -137,12 +137,14 @@ jobs:
         # The one thing the log does not make findable. Reads the trx files rather than the
         # console, so the answer is the same whichever assembly drowned it.
         #
-        # Written to the step summary as well as to stdout, and that is the half that
-        # matters. `::error::` annotations and console output both land in a log whose last
-        # thousand lines are the RabbitMQ service container's, so reading them costs a
-        # download of the whole run; the step summary is on the check itself.
+        # Written to the step summary and to a file the next step posts on the pull request,
+        # because this job cannot report through its log at all. Four service containers dump
+        # their logs at teardown, and the dump is longer than any tail worth reading: the last
+        # twelve hundred lines of a failing run are Redis and RabbitMQ starting up, and the
+        # name of the test that failed is somewhere above them. That is why this job spent
+        # days reporting "Coverage thresholds" for a failure that was never about coverage.
         run: |
-          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY" | tee failing-tests.txt
           import glob, xml.etree.ElementTree as ET
           ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
           found = 0
@@ -158,6 +160,26 @@ jobs:
           print(f'{found} failed test(s) named' if found
                 else 'No failed test in any trx: the run died before or between assemblies.')
           PY
+
+      - name: Say so on the pull request
+        if: failure() && github.event_name == 'pull_request'
+        # The only channel this job has that a reader can reach in one click. The log is
+        # unreadable by construction (see above) and an Actions job summary is not exposed
+        # on the check, so a failure that names its cause has to say so here or nowhere.
+        permissions:
+          pull-requests: write
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [ -s failing-tests.txt ] || exit 0
+          {
+            echo "**Coverage thresholds — the test step failed, not the thresholds.**"
+            echo
+            echo '```'
+            cat failing-tests.txt
+            echo '```'
+          } > comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md
 
       - name: Enforce thresholds
         # Thresholds from docs/21-Quality-Gates.md §2.1. Measured on the whole
