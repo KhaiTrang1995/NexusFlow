@@ -30,16 +30,22 @@
     "generator that emits the same shape on purpose. The job prints both numbers and gates",
     "on this one.",
     "",
-    "SEEDED, NOT MEASURED. The first run prints the real numbers; this file was written",
-    "before it, so `total` is null and the job reports the count and passes exactly once.",
-    "The commit that fills it in is the commit that turns this into a gate."
+    "MEASURED, AND WHAT IT DOES NOT COVER. 235 of the 240 fall in six rules:",
+    "cs/linq/missed-where 79, cs/path-combine 49, cs/catch-of-all-exceptions 35,",
+    "cs/local-not-disposed 18, cs/linq/missed-select 18, cs/call-to-gc 9. The 35 are the",
+    "justified CA1031 sites in FlowEngine, DurableLease and the hosted services and will",
+    "not go to zero; the 9 are the allocation tests calling GC.Collect deliberately.",
+    "Lowering this number means the LINQ and Path.Combine families, not those two.",
+    "",
+    "The ceiling binds on pushes to master and dev only, because a pull request analysis is",
+    "annotated rather than persisted and has no alerts to count. See the backlog job."
   ],
-  "total": null,
+  "total": 240,
   "bySeverity": {
-    "error": null,
-    "warning": null,
-    "note": null
+    "error": 0,
+    "warning": 46,
+    "note": 194
   },
-  "recordedAt": null,
-  "recordedFrom": null
+  "recordedAt": "2026-08-05",
+  "recordedFrom": "refs/heads/dev, run 30982534985"
 }
