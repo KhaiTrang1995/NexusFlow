@@ -28,11 +28,17 @@ jobs:
         with:
           global-json-file: global.json
 
+      # No config-file, and specifically no `paths-ignore`. One was added here to keep the
+      # 638 generated files under obj/generated out of the analysis; it changed nothing,
+      # because paths-ignore applies to interpreted languages and to compiled ones analysed
+      # without a build, and this job builds C#. What CodeQL analyses is what the build
+      # compiled, so the only way to narrow it here is to compile less — which would mean
+      # not analysing the platform. Generated alerts are separated where they can be: in
+      # the backlog job below, which gates on the ones somebody wrote.
       - uses: github/codeql-action/init@v3
         with:
           languages: csharp
           queries: security-and-quality
-          config-file: ./.github/codeql/codeql-config.yml
 
       - run: dotnet build FlowX.slnx --configuration Release
 
@@ -248,44 +254,66 @@ jobs:
         # only be argued upward in writing.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The ref this run analysed. Without it the endpoint answers for the default
+          # branch, which is how this job reported the same 988 on four consecutive
+          # commits: it was never reading the tree under test, so a pull request could
+          # not have moved the number it is gated on.
+          REF: ${{ github.ref }}
         run: |
           set -o pipefail
           gh api --paginate \
-            "/repos/${GITHUB_REPOSITORY}/code-scanning/alerts?state=open&per_page=100" \
+            "/repos/${GITHUB_REPOSITORY}/code-scanning/alerts?state=open&per_page=100&ref=${REF}" \
             > alerts.json
 
           python3 - <<'PY'
-          import json, sys
+          import json, os, sys
           from collections import Counter
 
           alerts = json.load(open('alerts.json'))
-          counts = Counter(a['rule'].get('security_severity_level')
-                           or a['rule'].get('severity') or 'unknown' for a in alerts)
-          total = len(alerts)
+          ref = os.environ['REF']
 
-          print(f'open alerts: {total}')
-          for level, n in sorted(counts.items()):
-              print(f'  {level}: {n}')
+          if not alerts:
+              # CodeQL uploaded to this ref in the job before this one, so an empty answer
+              # is an upload that has not finished processing, not a clean tree. Reporting
+              # zero would be the only kind of green this repository refuses to print.
+              print(f'::error::No alerts at all for {ref}. CodeQL analysed it moments ago, '
+                    'so this is an unprocessed upload rather than an empty backlog.')
+              sys.exit(1)
 
-          # By rule and by tree, not the first forty sorted by id — that ordering said
-          # nothing about the distribution and made two rules beginning with `c` look like
-          # the whole backlog. What a reader needs is which rules dominate and where they
-          # land, because that is what decides whether the next move is a fix or a filter.
           def path_of(alert):
               return alert.get('most_recent_instance', {}).get('location', {}).get('path', '?')
 
-          by_rule = Counter(a['rule']['id'] for a in alerts)
-          print('\nby rule (top 15 of %d):' % len(by_rule))
+          def generated(path):
+              return '/obj/' in path or path.endswith('.g.cs')
+
+          def tree(path):
+              return path.split('/', 1)[0] if '/' in path else '(root)'
+
+          # THE SPLIT IS THE GATE. 748 of the 988 alerts on this repository are raised
+          # against files under obj/generated — System.Text.Json's serialisers, FlowX's own
+          # plans and dispatchers, the regex matchers. Nobody can act on those: fixing one
+          # means changing a generator that emits the same shape deliberately, and CodeQL
+          # cannot be told to skip them, because paths-ignore does not apply to a compiled
+          # language that is built (see the init step above). So they are counted and shown
+          # and not gated, and the ceiling is over what somebody actually wrote.
+          authored = [a for a in alerts if not generated(path_of(a))]
+          total = len(authored)
+
+          print(f'open alerts: {len(alerts)} on {ref} '
+                f'({total} authored, {len(alerts) - total} generated)')
+
+          counts = Counter(a['rule'].get('security_severity_level')
+                           or a['rule'].get('severity') or 'unknown' for a in authored)
+          for level, n in sorted(counts.items()):
+              print(f'  {level}: {n}')
+
+          by_rule = Counter(a['rule']['id'] for a in authored)
+          print('\nauthored, by rule (top 15 of %d):' % len(by_rule))
           for rule, n in by_rule.most_common(15):
               print(f'  {n:5}  {rule}')
 
-          def tree(path):
-              if '/obj/' in path or path.endswith('.g.cs'):
-                  return 'generated'
-              return path.split('/', 1)[0] if '/' in path else '(root)'
-
-          print('\nby tree:')
-          for name, n in Counter(tree(path_of(a)) for a in alerts).most_common():
+          print('\nauthored, by tree:')
+          for name, n in Counter(tree(path_of(a)) for a in authored).most_common():
               print(f'  {n:5}  {name}')
 
           baseline = json.load(open('.github/code-scanning-baseline.json'))
@@ -293,13 +321,13 @@ jobs:
 
           if ceiling is None:
               print('::warning title=Code scanning backlog is not yet gated::'
-                    f'{total} open alerts. Record this number as `total` in '
+                    f'{total} authored alerts. Record this number as `total` in '
                     '.github/code-scanning-baseline.json to turn this job into a gate.')
               sys.exit(0)
 
           if total > ceiling:
-              print(f'::error::{total} open alerts, above the committed ceiling of {ceiling}.')
+              print(f'::error::{total} authored alerts, above the committed ceiling of {ceiling}.')
               sys.exit(1)
 
-          print(f'{total} open alerts, at or below the ceiling of {ceiling}.')
+          print(f'{total} authored alerts, at or below the ceiling of {ceiling}.')
           PY
