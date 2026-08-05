@@ -1832,14 +1832,27 @@ Controls from [21-Quality-Gates §3](docs/21-Quality-Gates.md#3-owasp-top-10-map
 |---|---|---|
 | A01 Broken access control | [x] required `Authorization` member | [x] `FLOWX1010` raised and tested; the sample's four capabilities all declare a stance |
 | A02 Cryptographic failures | [x] `[Sensitive]` + generated redaction | [~] **enforced on both sinks that exist.** Secrets are stripped from Problem Details bodies, tested end to end, and from journal payloads since WP-52 — structurally, since `JournalPayload.ToJson()` is the only exit and it redacts. *This row said the journal does not exist yet.* Logs, traces and replay output still do not, and redaction is not applied by a **generated** serialiser anywhere, so the "no code path can forget it" claim is still not met |
-| A03 Injection | [x] compile-time graph, no `Do(lambda)` | [~] structurally true; CodeQL + Semgrep wired, unrun |
+| A03 Injection | [x] compile-time graph, no `Do(lambda)` | [x] structurally true; CodeQL and Semgrep **run and pass on every push**. *This row said "wired, unrun".* Semgrep fails the job on any ERROR-severity finding; CodeQL uploads to code scanning and **fails on nothing**, which is [§7.1](#71-code-scanning-has-no-gate)'s row rather than this one |
 | A04 Insecure design | [x] STRIDE per boundary, 12 ADRs | [x] ADR review in CONTRIBUTING |
 | A05 Security misconfiguration | [x] no permissive defaults | [x] startup validation, 8 tests |
 | A06 Vulnerable components | [x] zero-dependency abstractions | [x] Dependabot + SCA gate |
 | A07 Auth failures | [x] claims-only tenant resolution | [x] 5 tests, incl. headers ignored |
 | A08 Integrity failures | [x] deterministic builds configured | [ ] needs signing + SBOM (WP-0) |
-| A09 Logging failures | [x] `Audit` policy at `Consistency` stage | [ ] needs the policy engine (P4) |
+| A09 Logging failures | [x] `Audit` policy at `Consistency` stage | [x] the policy engine runs all eight kinds, `Audit` among them ([§5e2](#5e2-platform-subsystems--what-runs-what-is-declared-what-is-absent)). *This row said "needs the policy engine (P4)".* |
 | A10 SSRF | [x] `FLOWX1003` forbids transport refs | [~] **raised** by `CapabilityAnalyzer`, against a list of transport namespaces rather than a proof — the limit is stated on the diagnostic's page |
+
+### 7.1 Code scanning has no gate
+
+`github/codeql-action/analyze` uploads every alert the `security-and-quality` suite raises and
+**fails on none of them**: the job's conclusion is `success` whether the page holds zero alerts
+or a hundred. Semgrep is the opposite — it fails the job and uploads nothing, so its findings
+never reach the page. Checkov scans nothing, because `deploy/` and `charts/` do not exist.
+
+So `/security/code-scanning` is CodeQL's output alone, no gate reads it, and its size is
+unknown to anyone who has not opened the page. **Closing this is a number in a committed
+baseline and a job that fails when the open-alert count exceeds it**, ratcheted down — the
+shape `docs/benchmarks/baseline.json` already uses for allocations. Until that exists, no row
+above may be read as covering what CodeQL finds.
 
 ---
 
