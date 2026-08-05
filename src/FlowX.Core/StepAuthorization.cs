@@ -289,11 +289,11 @@ public sealed class StepAuthorization
                 continue;
             }
 
-            var granted = claim.Value.AsSpan();
+            var granted = claim.Value;
 
-            foreach (var range in granted.Split(' '))
+            foreach (var token in granted.Split(' ', StringSplitOptions.RemoveEmptyEntries))
             {
-                if (granted[range].SequenceEqual(permission))
+                if (string.Equals(token, permission, StringComparison.Ordinal))
                 {
                     return true;
                 }
