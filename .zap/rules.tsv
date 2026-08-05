@@ -1,0 +1,12 @@
+# ZAP baseline rule configuration. Tab-separated: rule id, action, comment.
+#
+# One entry, and it is a decision rather than a convenience. Everything absent from this
+# file keeps ZAP's default action, so a new alert turns the job red — which is the only
+# reason the job is worth running.
+#
+# 10049 Storable and Cacheable Content, against /health. The health probe answers a public,
+# constant document that carries no session and no tenant, so "this response may be stored
+# and re-served" describes it accurately and is not a finding. The rule stays active for
+# every other URL: the generated [HttpTrigger] endpoints return per-tenant data, and a
+# cacheable answer from one of those would be a real defect in FlowX.Http.
+10049	IGNORE	(Storable and Cacheable Content — /health is public and constant)

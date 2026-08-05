@@ -148,6 +148,13 @@ jobs:
     name: "DAST: OWASP ZAP"
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule'
+    # The action opens an issue for the alerts it finds, and the workflow's default grant is
+    # `contents: read` — so every failing run also logged `Resource not accessible by
+    # integration` from the issues API. A gate that cannot report its own findings reports
+    # them to nobody.
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
 
@@ -182,11 +189,37 @@ jobs:
             sleep 2
           done
 
+      - name: The scan has a subject
+        if: steps.guard.outputs.ready == 'true'
+        # This job was scanning a 404 and calling it 66 passes.
+        #
+        # The target was http://localhost:5000, the sample serves nothing at `/`, and the
+        # automation log said so — `spider error accessing URL http://localhost:5000 status
+        # code returned : 404 expected 200`. Sixty-six passive rules then ran over an error
+        # page, none of them touching a generated endpoint, and the one warning they raised
+        # was about the caching headers on the 404. A DAST gate whose subject is absent is
+        # the shape this repository keeps finding; asserting the target answers is what
+        # turns "scanned nothing" into a failure instead of a green tick with a note.
+        run: |
+          status="$(curl -sS -o /dev/null -w '%{http_code}' http://localhost:5000/health)"
+          if [ "$status" != "200" ]; then
+            echo "::error::/health answered $status, so ZAP would scan an error page."
+            exit 1
+          fi
+          echo "/health answers 200; the scan has something to read."
+
       - name: ZAP baseline scan
         if: steps.guard.outputs.ready == 'true'
         uses: zaproxy/action-baseline@v0.12.0
         with:
-          target: http://localhost:5000
+          # /health rather than `/`, because that is a URL this application has. What the
+          # spider can reach from it is one GET: the rest of the surface is POST-only, and
+          # a baseline spider cannot exercise a POST. That limit is stated rather than
+          # papered over — the generated endpoints' behaviour is asserted by
+          # tests/FlowX.Http.Tests, and closing it here means an API scan driven by the
+          # manifest, which is its own work item.
+          target: http://localhost:5000/health
+          rules_file_name: .zap/rules.tsv
           # A DAST finding against a sample is a platform defect until proven
           # otherwise — the HTTP surface under test is generated code.
           fail_action: true
