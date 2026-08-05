@@ -136,8 +136,13 @@ jobs:
         if: failure()
         # The one thing the log does not make findable. Reads the trx files rather than the
         # console, so the answer is the same whichever assembly drowned it.
+        #
+        # Written to the step summary as well as to stdout, and that is the half that
+        # matters. `::error::` annotations and console output both land in a log whose last
+        # thousand lines are the RabbitMQ service container's, so reading them costs a
+        # download of the whole run; the step summary is on the check itself.
         run: |
-          python3 - <<'PY'
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
           import glob, xml.etree.ElementTree as ET
           ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
           found = 0
