@@ -254,16 +254,38 @@ jobs:
         # only be argued upward in writing.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # The ref this run analysed. Without it the endpoint answers for the default
-          # branch, which is how this job reported the same 988 on four consecutive
-          # commits: it was never reading the tree under test, so a pull request could
-          # not have moved the number it is gated on.
-          REF: ${{ github.ref }}
+          # WHICH REF IS COUNTED, AND WHY IT IS NOT ALWAYS THIS RUN'S.
+          #
+          # With no `ref` at all the endpoint answers for the default branch, which is how
+          # this job reported the same 988 on four consecutive commits — it was never
+          # reading the tree under test, so a pull request could not move the number it
+          # gates on. Naming the ref fixed that for pushes and exposed the other half:
+          # `refs/pull/19/merge` came back with zero alerts three seconds after CodeQL
+          # finished analysing it. A pull request analysis is diffed against its base and
+          # surfaced as annotations on the pull request; it is not persisted as a set of
+          # open alerts the way a branch's is, so there is nothing here to count.
+          #
+          # So the ceiling is enforced where alerts persist — on pushes to master and dev,
+          # which is where a regression has to be caught before a release. On a pull
+          # request the same numbers are printed for the BASE branch as context, and the
+          # job cannot fail: gating a pull request on its base's backlog would fail it for
+          # something it did not do. The pull-request-time signal is CodeQL's own check,
+          # which annotates alerts this branch introduced.
+          REF: ${{ github.event_name == 'pull_request' && format('refs/heads/{0}', github.base_ref) || github.ref }}
+          GATED: ${{ github.event_name != 'pull_request' }}
         run: |
           set -o pipefail
-          gh api --paginate \
-            "/repos/${GITHUB_REPOSITORY}/code-scanning/alerts?state=open&per_page=100&ref=${REF}" \
-            > alerts.json
+
+          # Three attempts, because alert ingestion can lag the analysis that produced it
+          # and an empty first answer is not evidence of an empty backlog.
+          for attempt in 1 2 3; do
+            gh api --paginate \
+              "/repos/${GITHUB_REPOSITORY}/code-scanning/alerts?state=open&per_page=100&ref=${REF}" \
+              > alerts.json
+            [ "$(jq 'length' alerts.json)" != "0" ] && break
+            echo "No alerts for ${REF} on attempt ${attempt}; waiting for ingestion."
+            sleep 20
+          done
 
           python3 - <<'PY'
           import json, os, sys
@@ -271,13 +293,14 @@ jobs:
 
           alerts = json.load(open('alerts.json'))
           ref = os.environ['REF']
+          gated = os.environ['GATED'] == 'true'
 
           if not alerts:
-              # CodeQL uploaded to this ref in the job before this one, so an empty answer
-              # is an upload that has not finished processing, not a clean tree. Reporting
-              # zero would be the only kind of green this repository refuses to print.
-              print(f'::error::No alerts at all for {ref}. CodeQL analysed it moments ago, '
-                    'so this is an unprocessed upload rather than an empty backlog.')
+              # CodeQL analysed this ref minutes ago, so zero is a ref that holds no
+              # persisted alerts, never a clean tree. Reporting it as clean would be the
+              # one kind of green this repository refuses to print.
+              print(f'::error::No alerts at all for {ref} after three attempts. That is a '
+                    'ref this endpoint does not answer for, not an empty backlog.')
               sys.exit(1)
 
           def path_of(alert):
@@ -318,6 +341,11 @@ jobs:
 
           baseline = json.load(open('.github/code-scanning-baseline.json'))
           ceiling = baseline['total']
+
+          if not gated:
+              print(f'\nContext only: {ref} is this pull request\'s base, and the ceiling is '
+                    'enforced when the merge lands on it.')
+              sys.exit(0)
 
           if ceiling is None:
               print('::warning title=Code scanning backlog is not yet gated::'
