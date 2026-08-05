@@ -92,8 +92,16 @@ public sealed partial class SecretAllowlistTests
             "a stopword excuses every finding containing it, not the finding it was added for.");
     }
 
+    /// <summary>The scanner's configuration, read from the repository root.</summary>
+    /// <remarks>
+    /// <c>Path.Join</c> rather than <c>Path.Combine</c>, here and in <see cref="Declared"/>:
+    /// <c>Combine</c> discards everything before a rooted segment, so a second argument that
+    /// began with a separator would silently read from the filesystem root instead. Both
+    /// arguments are literals today and neither is rooted — but the two forms differ in what
+    /// they promise, and this one promises concatenation, which is what is meant.
+    /// </remarks>
     private static string Configuration() =>
-        File.ReadAllText(Path.Combine(RepositoryLayout.Root.FullName, ".gitleaks.toml"));
+        File.ReadAllText(Path.Join(RepositoryLayout.Root.FullName, ".gitleaks.toml"));
 
     /// <summary>The literal strings the allowlist excuses, read out of its anchored regexes.</summary>
     private static IEnumerable<string> Allowlisted() => AnchoredLiteral()
@@ -103,7 +111,7 @@ public sealed partial class SecretAllowlistTests
 
     /// <summary>Every token literal a stand-in declares.</summary>
     private static IEnumerable<string> Declared() => StandIns
-        .Select(path => Path.Combine(RepositoryLayout.Root.FullName, path))
+        .Select(path => Path.Join(RepositoryLayout.Root.FullName, path))
         .Where(File.Exists)
         .SelectMany(path => TokenLiteral().Matches(File.ReadAllText(path)))
         .Select(static m => m.Groups["token"].Value)
