@@ -32,6 +32,7 @@ jobs:
         with:
           languages: csharp
           queries: security-and-quality
+          config-file: ./.github/codeql/codeql-config.yml
 
       - run: dotnet build FlowX.slnx --configuration Release
 
@@ -254,7 +255,7 @@ jobs:
             > alerts.json
 
           python3 - <<'PY'
-          import json, os, sys
+          import json, sys
           from collections import Counter
 
           alerts = json.load(open('alerts.json'))
@@ -266,9 +267,26 @@ jobs:
           for level, n in sorted(counts.items()):
               print(f'  {level}: {n}')
 
-          for a in sorted(alerts, key=lambda a: a['rule']['id'])[:40]:
-              location = a.get('most_recent_instance', {}).get('location', {})
-              print(f"  {a['rule']['id']}  {location.get('path','?')}:{location.get('start_line','?')}")
+          # By rule and by tree, not the first forty sorted by id — that ordering said
+          # nothing about the distribution and made two rules beginning with `c` look like
+          # the whole backlog. What a reader needs is which rules dominate and where they
+          # land, because that is what decides whether the next move is a fix or a filter.
+          def path_of(alert):
+              return alert.get('most_recent_instance', {}).get('location', {}).get('path', '?')
+
+          by_rule = Counter(a['rule']['id'] for a in alerts)
+          print('\nby rule (top 15 of %d):' % len(by_rule))
+          for rule, n in by_rule.most_common(15):
+              print(f'  {n:5}  {rule}')
+
+          def tree(path):
+              if '/obj/' in path or path.endswith('.g.cs'):
+                  return 'generated'
+              return path.split('/', 1)[0] if '/' in path else '(root)'
+
+          print('\nby tree:')
+          for name, n in Counter(tree(path_of(a)) for a in alerts).most_common():
+              print(f'  {n:5}  {name}')
 
           baseline = json.load(open('.github/code-scanning-baseline.json'))
           ceiling = baseline['total']
