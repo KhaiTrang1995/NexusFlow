@@ -135,7 +135,7 @@ jobs:
           dotnet test FlowX.slnx --configuration Release --no-build
           --settings coverlet.runsettings
           --collect:"XPlat Code Coverage"
-          --logger "trx;LogFileName=quality.trx"
+          --logger trx
           --results-directory ./TestResults
 
       - name: Which test failed
@@ -163,8 +163,20 @@ jobs:
                   message = result.find(f'.//{{{ns["t"]}}}Message')
                   if message is not None and message.text:
                       print(message.text[:2000])
-          print(f'{found} failed test(s) named' if found
-                else 'No failed test in any trx: the run died before or between assemblies.')
+          trx = glob.glob('TestResults/**/*.trx', recursive=True)
+
+          if found:
+              print(f'{found} failed test(s) named across {len(trx)} trx file(s).')
+          else:
+              # Not "nothing failed" — `dotnet test` exited non-zero. Either an assembly
+              # never wrote a trx because its test host died, or it wrote one and the run
+              # ended before the failure was recorded. Naming the count and the assemblies
+              # is what separates those two, and the first shape is the one that presents
+              # as "no failed test" while the job is red.
+              print(f'No failed test in {len(trx)} trx file(s); dotnet test still exited non-zero.')
+              print('An assembly whose test host died writes no trx at all. Present:')
+              for path in sorted(trx):
+                  print(f'  {path}')
           PY
 
       - name: Say so on the pull request
