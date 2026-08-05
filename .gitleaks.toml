@@ -1,0 +1,49 @@
+# Secret-scanning configuration.
+#
+# The gate was red on thirteen findings, every one of them a `curl -H 'Authorization:
+# Bearer …'` line in a sample's README quoting a demonstration token that the sample's own
+# Authentication.cs declares as a stand-in for an identity provider. None was a secret, none
+# was ever going to become one, and none had been triaged — so a real leak arriving tomorrow
+# would have landed in a gate that was already red. That is the condition the Semgrep fix
+# removed in `57c31af`, arriving through a different scanner.
+#
+# WHAT THIS FILE DOES NOT DO: it does not exclude the sample directories, and it does not
+# exclude the `curl-auth-header` rule. Either would blind the scanner to a genuine bearer
+# token committed into exactly the files most likely to carry one — a README is where a
+# developer pastes a working request. It excludes nineteen literal strings and nothing else.
+#
+# The list is held to its subject by `DemonstrationTokensAreDeclared` in
+# tests/FlowX.Architecture.Tests: every string below must be a literal in a sample's or the
+# template's authentication stand-in, and every such literal must appear below. Adding a
+# demonstration token is therefore a deliberate edit here rather than a silent widening, and
+# deleting a sample deletes its entry with it.
+
+title = "FlowX"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Demonstration bearer tokens, declared in the samples' authentication stand-ins."
+regexTarget = "secret"
+regexes = [
+  '''^agent-token$''',
+  '''^cashier-token$''',
+  '''^clerk-de-token$''',
+  '''^clinician-berlin-token$''',
+  '''^clinician-dublin-token$''',
+  '''^clinician-munich-token$''',
+  '''^intake-token$''',
+  '''^manager-northwind-token$''',
+  '''^operator-de-token$''',
+  '''^operator-token$''',
+  '''^operator-uk-token$''',
+  '''^people-ops-token$''',
+  '''^reader-token$''',
+  '''^receptionist-berlin-token$''',
+  '''^recruiter-token$''',
+  '''^rep-contoso-token$''',
+  '''^rep-northwind-token$''',
+  '''^shopper-token$''',
+  '''^support-token$''',
+]
