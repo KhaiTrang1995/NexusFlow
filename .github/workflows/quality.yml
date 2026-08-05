@@ -17,6 +17,12 @@ jobs:
   coverage:
     name: Coverage thresholds
     runs-on: ubuntu-latest
+    # `pull-requests: write` for the reporting step below, granted on the job because that
+    # is the only scope Actions accepts it at — a `permissions:` key on a step is a workflow
+    # validation error, not an ignored one.
+    permissions:
+      contents: read
+      pull-requests: write
     # The same servers ci.yml's build job runs, for the same reason one commit later:
     # without them the durability, tenancy and sample suites skip, and every line they
     # would have covered is counted as uncovered. A coverage number measured with a third
@@ -166,8 +172,6 @@ jobs:
         # The only channel this job has that a reader can reach in one click. The log is
         # unreadable by construction (see above) and an Actions job summary is not exposed
         # on the check, so a failure that names its cause has to say so here or nowhere.
-        permissions:
-          pull-requests: write
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
