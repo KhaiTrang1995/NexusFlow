@@ -26,7 +26,7 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 
 ## What it is
 
-Thirty-two tables, thirty-eight flows and three authorisation stances, over the entities a CRM actually
+Thirty-five tables, forty-two flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -66,6 +66,10 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Bulk export | `POST /api/v1/crm/bulk/exports` | redacted for who submitted it, never for who ran it |
 | Job status | `POST /api/v1/crm/bulk/jobs` | durable progress, so a resumed job continues rather than restarts |
 | Job sweep | `[CronTrigger("* * * * *")]` | one chunk per pass, with derived ids so a re-run writes no duplicates |
+| Build a report | `POST /api/v1/crm/reports` | a closed vocabulary, so the dimension is a bound value and not SQL |
+| Run a report | `POST /api/v1/crm/reports/runs` | `crm.read` — building one is administrative, reading it is not |
+| Build a dashboard | `POST /api/v1/crm/dashboards` | tiles name reports; deleting a report in use is refused |
+| Run a dashboard | `POST /api/v1/crm/dashboards/runs` | every tile in one request, not twelve round trips |
 
 ## The three tokens
 

@@ -152,6 +152,15 @@ namespace Crm;
 [JsonSerializable(typeof(JobStatus))]
 [JsonSerializable(typeof(JobsSwept))]
 [JsonSerializable(typeof(List<RecordView>))]
+[JsonSerializable(typeof(DefineReport))]
+[JsonSerializable(typeof(ReportDefined))]
+[JsonSerializable(typeof(RunReport))]
+[JsonSerializable(typeof(ReportGroup))]
+[JsonSerializable(typeof(ReportResult))]
+[JsonSerializable(typeof(DefineDashboard))]
+[JsonSerializable(typeof(DashboardDefined))]
+[JsonSerializable(typeof(RunDashboard))]
+[JsonSerializable(typeof(DashboardResult))]
 
 // The connector registry, its queue and what goes on the wire.
 [JsonSerializable(typeof(DefineConnector))]
