@@ -271,18 +271,31 @@ public static class ProcessRules
         ArgumentNullException.ThrowIfNull(guard);
         ArgumentNullException.ThrowIfNull(facts);
 
-        var actual = facts.Read(guard.Field);
-
-        return guard.Operator switch
-        {
-            GuardOperator.IsSet => IsTrue(guard.Value) == (actual is not null),
-            GuardOperator.Equals => actual is not null && string.Equals(actual, guard.Value, StringComparison.Ordinal),
-            GuardOperator.NotEquals => !string.Equals(actual, guard.Value, StringComparison.Ordinal),
-            GuardOperator.GreaterThan => Compare(actual, guard.Value) > 0,
-            GuardOperator.LessThan => Compare(actual, guard.Value) < 0,
-            _ => false,
-        };
+        return Holds(guard.Operator, guard.Value, facts.Read(guard.Field));
     }
+
+    /// <summary>
+    /// Whether one comparison holds — the whole of the operator vocabulary, over two strings.
+    /// </summary>
+    /// <param name="op">How to compare.</param>
+    /// <param name="expected">What the administrator wrote.</param>
+    /// <param name="actual">What the entity holds, or null when it holds nothing.</param>
+    /// <returns>Whether it holds.</returns>
+    /// <remarks>
+    /// <strong>Extracted so a validation rule and a transition guard cannot mean different things
+    /// by <c>GreaterThan</c>.</strong> They are the same five operators over the same text, asked
+    /// at two moments — one before a write and one after a stage change — and two copies of this
+    /// switch would drift the first time somebody fixed one of them.
+    /// </remarks>
+    public static bool Holds(GuardOperator op, string expected, string? actual) => op switch
+    {
+        GuardOperator.IsSet => IsTrue(expected) == (actual is not null),
+        GuardOperator.Equals => actual is not null && string.Equals(actual, expected, StringComparison.Ordinal),
+        GuardOperator.NotEquals => !string.Equals(actual, expected, StringComparison.Ordinal),
+        GuardOperator.GreaterThan => Compare(actual, expected) > 0,
+        GuardOperator.LessThan => Compare(actual, expected) < 0,
+        _ => false,
+    };
 
     /// <summary>Whether an operator compares numbers rather than text.</summary>
     /// <param name="op">The operator.</param>

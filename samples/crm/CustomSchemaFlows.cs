@@ -70,8 +70,15 @@ public sealed partial class CreateRecordFlow : Flow<CreateRecord, RecordCreated>
     {
         ArgumentNullException.ThrowIfNull(flow);
 
+        // Projected, not passed straight through. The scopes come off the principal the trigger
+        // authenticated; a `scopes` field on the request would let anybody claim any grant, which
+        // is the argument ADR-0046 makes about the tenant.
         flow
-            .Step<CreateCustomRecord>()
+            .Step<CreateCustomRecord, WriteObjectRecord>(
+                ctx => new WriteObjectRecord(
+                    ctx.Input.Target,
+                    ctx.Input.Values,
+                    CustomFieldPolicy.Scopes(ctx.Principal)))
             .Return(ctx => ctx.Get<RecordCreated>());
     }
 }
@@ -105,7 +112,31 @@ public sealed partial class SetCustomFieldsFlow : Flow<SetCustomFields, CustomFi
         ArgumentNullException.ThrowIfNull(flow);
 
         flow
-            .Step<SetEntityCustomFields>()
+            .Step<SetEntityCustomFields, WriteEntityFields>(
+                ctx => new WriteEntityFields(
+                    ctx.Input.Kind,
+                    ctx.Input.Id,
+                    ctx.Input.Values,
+                    CustomFieldPolicy.Scopes(ctx.Principal),
+                    Approvers.Of(ctx.Principal)))
             .Return(ctx => ctx.Get<CustomFieldsSet>());
+    }
+}
+
+/// <summary>Declares a rule that refuses a record.</summary>
+[Flow("crm.custom.validation_rule", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "crm-platform")]
+[FlowDeadline("PT15S")]
+[HttpTrigger("POST", "/api/v1/crm/custom/validation-rules", Idempotent = true)]
+public sealed partial class DefineValidationRuleFlow
+    : Flow<DefineValidationRule, ValidationRuleDefined>
+{
+    /// <inheritdoc />
+    protected override void Define(IFlowBuilder<DefineValidationRule, ValidationRuleDefined> flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+
+        flow
+            .Step<DefineCustomValidationRule>()
+            .Return(ctx => ctx.Get<ValidationRuleDefined>());
     }
 }

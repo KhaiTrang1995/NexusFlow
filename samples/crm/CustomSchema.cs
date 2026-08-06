@@ -75,6 +75,15 @@ public enum CustomCardinality
 /// <param name="References">
 /// The object a <see cref="CustomFieldType.Reference"/> points at. Null for every other type.
 /// </param>
+/// <param name="RequiredPermission">
+/// The scope a caller must hold to write this field, or null when <c>crm.write</c> is enough.
+/// Field-level security, and it restricts the write rather than the read — see
+/// <see cref="CustomFieldPolicy.FirstForbiddenField"/> for why.
+/// </param>
+/// <param name="IsUnique">
+/// Whether two records of this owner may hold the same value. Enforced by a claimed-value row
+/// rather than by an index, because an index per declared field is DDL at run time.
+/// </param>
 public sealed record DefineField(
     EntityKind? AppliesTo,
     Guid? Target,
@@ -83,7 +92,9 @@ public sealed record DefineField(
     CustomFieldType Type,
     bool IsRequired,
     IReadOnlyList<CustomFieldOption>? Options = null,
-    Guid? References = null);
+    Guid? References = null,
+    string? RequiredPermission = null,
+    bool IsUnique = false);
 
 /// <summary>One allowed value of a picklist.</summary>
 /// <param name="Value">What is stored. Named like a field, because a guard compares it as text.</param>
@@ -130,6 +141,24 @@ public sealed record CreateRecord(Guid Target, IReadOnlyDictionary<string, strin
 /// <param name="RecordId">Its id.</param>
 public sealed record RecordCreated(Guid RecordId);
 
+/// <summary>What the record-writing capability is given, once the flow has read the caller.</summary>
+/// <param name="Target">Which object.</param>
+/// <param name="Values">Its values, by field name.</param>
+/// <param name="Scopes">
+/// The grants the caller holds, from their claims and never from the body. What
+/// <see cref="CustomFieldRow.RequiredPermission"/> is checked against.
+/// </param>
+/// <remarks>
+/// <strong>A projection for the same reason <see cref="ApproveQuoteDiscount"/> is one.</strong> A
+/// capability is handed what the flow read off the caller; a <c>scopes</c> field on the request
+/// would let anybody claim any grant, which is the shape ADR-0046 makes the same argument about
+/// for the tenant.
+/// </remarks>
+public sealed record WriteObjectRecord(
+    Guid Target,
+    IReadOnlyDictionary<string, string?> Values,
+    IReadOnlyList<string> Scopes);
+
 /// <summary>Joins two records along a declared relationship.</summary>
 /// <param name="Relationship">Which edge.</param>
 /// <param name="From">The record it starts at.</param>
@@ -154,6 +183,22 @@ public sealed record SetCustomFields(
 /// <param name="Values">Every custom value it holds.</param>
 public sealed record CustomFieldsSet(Guid Id, IReadOnlyDictionary<string, string?> Values);
 
+/// <summary>What the field-setting capability is given, once the flow has read the caller.</summary>
+/// <param name="Kind">Which kind of entity.</param>
+/// <param name="Id">Which row.</param>
+/// <param name="Values">The values to set. Absent keys are left alone.</param>
+/// <param name="Scopes">The grants the caller holds, from their claims and never from the body.</param>
+/// <param name="ChangedBy">
+/// Who is writing, derived from the caller's subject exactly as an approver is. What lands in
+/// <c>custom_field_history.changed_by</c>.
+/// </param>
+public sealed record WriteEntityFields(
+    EntityKind Kind,
+    Guid Id,
+    IReadOnlyDictionary<string, string?> Values,
+    IReadOnlyList<string> Scopes,
+    Guid ChangedBy);
+
 // ------------------------------------------------------------------------------- what was read
 
 /// <summary>A declared field, as much of it as anything downstream needs.</summary>
@@ -166,13 +211,19 @@ public sealed record CustomFieldsSet(Guid Id, IReadOnlyDictionary<string, string
 /// value is checked, so one read of the declarations answers every question about them.
 /// </param>
 /// <param name="References">The object a reference points at, or null.</param>
+/// <param name="RequiredPermission">
+/// The scope a caller must hold to write it, or null when <c>crm.write</c> is enough.
+/// </param>
+/// <param name="IsUnique">Whether two records of this owner may hold the same value.</param>
 public sealed record CustomFieldRow(
     Guid Id,
     string Name,
     CustomFieldType Type,
     bool IsRequired,
     IReadOnlyList<string>? Options = null,
-    Guid? References = null);
+    Guid? References = null,
+    string? RequiredPermission = null,
+    bool IsUnique = false);
 
 // ------------------------------------------------------------------------------- what can go wrong
 

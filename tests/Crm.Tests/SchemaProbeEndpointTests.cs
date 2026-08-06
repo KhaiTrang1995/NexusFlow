@@ -53,7 +53,7 @@ public sealed class SchemaProbeEndpointTests
         var report = await ReadAsync(response);
 
         report.SchemaVersion.ShouldBe(CrmMigrator.TargetVersion);
-        report.Tables.Count.ShouldBe(22, "one row per CRM table.");
+        report.Tables.Count.ShouldBe(25, "one row per CRM table.");
         report.Tables.ShouldAllBe(static table => table.Rows == 0);
     }
 

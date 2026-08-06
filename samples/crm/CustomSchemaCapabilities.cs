@@ -207,23 +207,27 @@ public sealed class DefineCustomRelationship : ICapability<DefineRelationship, R
 [Capability("crm.custom.create_record", Version = "1.0.0",
     Authorization = Authorization.Permission, Permission = "crm.write",
     Idempotent = true)]
-public sealed class CreateCustomRecord : ICapability<CreateRecord, RecordCreated>
+public sealed class CreateCustomRecord : ICapability<WriteObjectRecord, RecordCreated>
 {
     private readonly CustomSchemaStore _store;
+    private readonly FieldPolicyStore _policy;
 
     /// <summary>Creates the capability.</summary>
     /// <param name="store">Reads the declarations and writes the row.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="store"/> is null.</exception>
-    public CreateCustomRecord(CustomSchemaStore store)
+    /// <param name="policy">Reads the rules, and claims the unique values.</param>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    public CreateCustomRecord(CustomSchemaStore store, FieldPolicyStore policy)
     {
         ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(policy);
 
         _store = store;
+        _policy = policy;
     }
 
     /// <inheritdoc />
     public async ValueTask<Result<RecordCreated>> ExecuteAsync(
-        CreateRecord input,
+        WriteObjectRecord input,
         CapabilityContext ctx,
         CancellationToken ct)
     {
@@ -257,12 +261,48 @@ public sealed class CreateCustomRecord : ICapability<CreateRecord, RecordCreated
             return Result.Fail<RecordCreated>(dangling);
         }
 
+        // Field-level security before the rules, because "you may not write this" is a better
+        // answer than "what you wrote is wrong" to somebody who was never allowed to write it.
+        if (CustomFieldPolicy.FirstForbiddenField(declared, input.Values, input.Scopes) is { } forbidden)
+        {
+            return Result.Fail<RecordCreated>(forbidden);
+        }
+
+        var rules = await _policy.RulesForAsync(ctx.TenantId, input.Target, ct).ConfigureAwait(false);
+
+        if (CustomFieldPolicy.FirstViolation(rules, input.Values) is { } refused)
+        {
+            return Result.Fail<RecordCreated>(refused);
+        }
+
         var id = ctx.NewId();
 
-        await _store
-            .WriteRecordAsync(
-                ctx.TenantId, id, input.Target, CustomValues.ToJson(declared, input.Values), ctx.UtcNow, ct)
-            .ConfigureAwait(false);
+        // Claimed before the record is written, because the other order lets two writers both see
+        // a free value. A claim left behind by a failed write refuses a later writer, which is the
+        // safe direction — hence the release below rather than nothing.
+        if (await _policy.ClaimAsync(ctx.TenantId, id, declared, input.Values, ct).ConfigureAwait(false)
+            is { } taken)
+        {
+            await _policy.ReleaseAsync(ctx.TenantId, id, ct).ConfigureAwait(false);
+
+            return Result.Fail<RecordCreated>(
+                FieldPolicyErrors.ValueIsNotUnique(taken, input.Values[taken]!));
+        }
+
+        try
+        {
+            await _store
+                .WriteRecordAsync(
+                    ctx.TenantId, id, input.Target, CustomValues.ToJson(declared, input.Values),
+                    ctx.UtcNow, ct)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            await _policy.ReleaseAsync(ctx.TenantId, id, ct).ConfigureAwait(false);
+
+            throw;
+        }
 
         return Result.Ok(new RecordCreated(id));
     }
@@ -342,23 +382,27 @@ public sealed class LinkCustomRecords : ICapability<LinkRecords, RecordsLinked>
 [Capability("crm.custom.set_fields", Version = "1.0.0",
     Authorization = Authorization.Permission, Permission = "crm.write",
     Idempotent = true)]
-public sealed class SetEntityCustomFields : ICapability<SetCustomFields, CustomFieldsSet>
+public sealed class SetEntityCustomFields : ICapability<WriteEntityFields, CustomFieldsSet>
 {
     private readonly CustomSchemaStore _store;
+    private readonly FieldPolicyStore _policy;
 
     /// <summary>Creates the capability.</summary>
     /// <param name="store">Reads the declarations and merges the values.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="store"/> is null.</exception>
-    public SetEntityCustomFields(CustomSchemaStore store)
+    /// <param name="policy">Reads the rules and records what changed.</param>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    public SetEntityCustomFields(CustomSchemaStore store, FieldPolicyStore policy)
     {
         ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(policy);
 
         _store = store;
+        _policy = policy;
     }
 
     /// <inheritdoc />
     public async ValueTask<Result<CustomFieldsSet>> ExecuteAsync(
-        SetCustomFields input,
+        WriteEntityFields input,
         CapabilityContext ctx,
         CancellationToken ct)
     {
@@ -381,14 +425,46 @@ public sealed class SetEntityCustomFields : ICapability<SetCustomFields, CustomF
             return Result.Fail<CustomFieldsSet>(dangling);
         }
 
+        if (CustomFieldPolicy.FirstForbiddenField(declared, input.Values, input.Scopes) is { } forbidden)
+        {
+            return Result.Fail<CustomFieldsSet>(forbidden);
+        }
+
+        // Read before the merge, for two reasons that happen to want the same call: a rule over a
+        // field this update did not mention has to be evaluated against what is already there,
+        // and the history needs to know what it used to be.
+        if (await _store.ReadCustomFieldsAsync(ctx.TenantId, input.Kind, input.Id, ct)
+                .ConfigureAwait(false) is not { } before)
+        {
+            return Result.Fail<CustomFieldsSet>(
+                CustomSchemaErrors.EntityNotFound(input.Kind, input.Id));
+        }
+
+        var rules = await _policy.RulesForAsync(ctx.TenantId, input.Kind, ct).ConfigureAwait(false);
+
+        if (CustomFieldPolicy.FirstViolation(rules, input.Values, before) is { } refused)
+        {
+            return Result.Fail<CustomFieldsSet>(refused);
+        }
+
         var merged = await _store
             .MergeCustomFieldsAsync(
                 ctx.TenantId, input.Kind, input.Id, CustomValues.ToJson(declared, input.Values), ct)
             .ConfigureAwait(false);
 
-        return merged is null
-            ? Result.Fail<CustomFieldsSet>(CustomSchemaErrors.EntityNotFound(input.Kind, input.Id))
-            : Result.Ok(new CustomFieldsSet(input.Id, merged));
+        if (merged is null)
+        {
+            return Result.Fail<CustomFieldsSet>(
+                CustomSchemaErrors.EntityNotFound(input.Kind, input.Id));
+        }
+
+        await _policy
+            .RecordAsync(
+                ctx.TenantId, input.Kind, input.Id, before, merged,
+                input.ChangedBy, ctx.UtcNow, ct)
+            .ConfigureAwait(false);
+
+        return Result.Ok(new CustomFieldsSet(input.Id, merged));
     }
 }
 

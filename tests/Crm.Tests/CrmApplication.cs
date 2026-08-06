@@ -237,6 +237,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<WorkStore>();
         services.AddSingleton<CustomSchemaStore>();
         services.AddSingleton<ConnectorStore>();
+        services.AddSingleton<FieldPolicyStore>();
 
         // The far end, recorded rather than reached. Every other claim in these tests is checked
         // against a real PostgreSQL; a connector's far end is a network somebody else owns, and a
@@ -264,6 +265,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<SetCrmConnectorEnabled>();
         services.AddSingleton<PublishToCrmConnector>();
         services.AddSingleton<SweepConnectorDeliveries>();
+        services.AddSingleton<DefineCustomValidationRule>();
 
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
@@ -280,5 +282,6 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<DefineConnectorFlow.Dispatcher>();
         services.AddSingleton<SetConnectorEnabledFlow.Dispatcher>();
         services.AddSingleton<PublishToConnectorFlow.Dispatcher>();
+        services.AddSingleton<DefineValidationRuleFlow.Dispatcher>();
     }
 }

@@ -86,6 +86,7 @@ public sealed class CrmMigrator
         new(4, "crm_lead_enrichment", "0004_crm_lead_enrichment.sql"),
         new(5, "crm_dynamic_schema", "0005_crm_dynamic_schema.sql"),
         new(6, "crm_picklists_and_connectors", "0006_crm_picklists_and_connectors.sql"),
+        new(7, "crm_validation_and_field_policy", "0007_crm_validation_and_field_policy.sql"),
     ];
 
     /// <summary>The schema version this build of the sample reads and writes.</summary>
