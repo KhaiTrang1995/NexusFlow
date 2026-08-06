@@ -28,10 +28,12 @@ public sealed class QueryStore
         INSERT INTO custom_list_view (
             view_id, tenant_id, object_id, name, label,
             filter_field, filter_operator, filter_value, order_by, row_limit, match_mode,
-            order_descending, order_numeric, created_at)
+            order_descending, order_numeric, created_at,
+            kind, group_by, lanes, wip_limit, title_field, subtitle_field, display_columns)
         VALUES (@id, @tenant, @object, @name, @label,
             @filterField, @filterOperator, @filterValue, @orderBy, @limit, @match,
-            @descending, @numeric, @now)
+            @descending, @numeric, @now,
+            @kind, @groupBy, @lanes, @wipLimit, @titleField, @subtitleField, @columns)
         ON CONFLICT (tenant_id, name) DO NOTHING
         RETURNING view_id
         """;
@@ -50,7 +52,9 @@ public sealed class QueryStore
         """;
 
     private const string ViewsForObject = """
-        SELECT name, label FROM custom_list_view WHERE object_id = @object ORDER BY name
+        SELECT name, label, kind, group_by, lanes, wip_limit,
+               title_field, subtitle_field, display_columns
+        FROM custom_list_view WHERE object_id = @object ORDER BY name
         """;
 
     private const string CriteriaForView = """
@@ -225,6 +229,20 @@ public sealed class QueryStore
         Add(command, "limit", NpgsqlDbType.Integer, request.Limit);
         Add(command, "now", NpgsqlDbType.TimestampTz, now);
 
+        var layout = request.Layout ?? new ViewLayout(ViewKind.List);
+
+        Add(command, "kind", NpgsqlDbType.Text, layout.Kind.ToString());
+        Add(command, "groupBy", NpgsqlDbType.Text, (object?)layout.GroupBy ?? DBNull.Value);
+        Add(command, "titleField", NpgsqlDbType.Text, (object?)layout.TitleField ?? DBNull.Value);
+        Add(command, "subtitleField", NpgsqlDbType.Text,
+            (object?)layout.SubtitleField ?? DBNull.Value);
+        Add(command, "wipLimit", NpgsqlDbType.Integer, (object?)layout.WipLimit ?? DBNull.Value);
+
+        // Null and not an empty array, because the column's meaning of "unset" is null: an empty
+        // array of columns is a table with no columns, which is not what leaving it out means.
+        AddTextArrayOrNull(command, "lanes", layout.Lanes);
+        AddTextArrayOrNull(command, "columns", layout.Columns);
+
         if (await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not Guid written)
         {
             return null;
@@ -380,7 +398,18 @@ public sealed class QueryStore
 
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            views.Add(new DescribedView(reader.GetString(0), reader.GetString(1)));
+            views.Add(new DescribedView(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                await TextOrNullAsync(reader, 3, cancellationToken).ConfigureAwait(false),
+                await ArrayOrEmptyAsync(reader, 4, cancellationToken).ConfigureAwait(false),
+                await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false)
+                    ? null
+                    : reader.GetInt32(5),
+                await TextOrNullAsync(reader, 6, cancellationToken).ConfigureAwait(false),
+                await TextOrNullAsync(reader, 7, cancellationToken).ConfigureAwait(false),
+                await ArrayOrEmptyAsync(reader, 8, cancellationToken).ConfigureAwait(false)));
         }
 
         return views;
@@ -515,6 +544,25 @@ public sealed class QueryStore
     /// </remarks>
     private static void AddTextArray(NpgsqlCommand command, string name, string[] values) =>
         command.Parameters.Add(new NpgsqlParameter<string[]>(name, values));
+
+    private static void AddTextArrayOrNull(
+        NpgsqlCommand command, string name, IReadOnlyList<string>? values) =>
+        command.Parameters.Add(new NpgsqlParameter<string[]?>(
+            name, values is { Count: > 0 } ? [.. values] : null));
+
+    private static async ValueTask<string?> TextOrNullAsync(
+        NpgsqlDataReader reader, int ordinal, CancellationToken cancellationToken) =>
+        await reader.IsDBNullAsync(ordinal, cancellationToken).ConfigureAwait(false)
+            ? null
+            : reader.GetString(ordinal);
+
+    private static async ValueTask<IReadOnlyList<string>> ArrayOrEmptyAsync(
+        NpgsqlDataReader reader, int ordinal, CancellationToken cancellationToken) =>
+        await reader.IsDBNullAsync(ordinal, cancellationToken).ConfigureAwait(false)
+            ? []
+            : await reader
+                .GetFieldValueAsync<string[]>(ordinal, cancellationToken)
+                .ConfigureAwait(false);
 
     private static void Add(NpgsqlCommand command, string name, NpgsqlDbType type, object value) =>
         command.Parameters.Add(new NpgsqlParameter(name, type) { Value = value });

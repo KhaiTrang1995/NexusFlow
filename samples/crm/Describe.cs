@@ -52,10 +52,30 @@ public sealed record DescribedField(
     IReadOnlyList<string> Options,
     Guid? References);
 
-/// <summary>One saved view, as a client needs to offer it.</summary>
+/// <summary>One saved view, as a client needs to offer it <em>and draw it</em>.</summary>
 /// <param name="Name">What to ask for it by.</param>
 /// <param name="Label">What to show a person.</param>
-public sealed record DescribedView(string Name, string Label);
+/// <param name="Kind"><c>List</c>, <c>Kanban</c> or <c>Card</c>.</param>
+/// <param name="GroupBy">The lane field, for a board.</param>
+/// <param name="Lanes">The lane order, for a board. Empty for whatever order the values arrive in.</param>
+/// <param name="WipLimit">
+/// What counts as too many cards in a lane, or null. <strong>Reported, never enforced:</strong> a
+/// limit that refused a write would turn a layout setting into a business rule, and whoever set it
+/// was arranging a screen.
+/// </param>
+/// <param name="TitleField">A card's first line.</param>
+/// <param name="SubtitleField">A card's second line, or null.</param>
+/// <param name="Columns">A table's columns in order. Empty means every field the caller may read.</param>
+public sealed record DescribedView(
+    string Name,
+    string Label,
+    string Kind,
+    string? GroupBy,
+    IReadOnlyList<string> Lanes,
+    int? WipLimit,
+    string? TitleField,
+    string? SubtitleField,
+    IReadOnlyList<string> Columns);
 
 /// <summary>One object an administrator invented.</summary>
 /// <param name="Id">Its id, for a query.</param>
@@ -70,10 +90,24 @@ public sealed record DescribedObject(
     IReadOnlyList<DescribedField> Fields,
     IReadOnlyList<DescribedView> Views);
 
-/// <summary>The custom fields of one built-in entity kind.</summary>
-/// <param name="Kind">Which kind.</param>
+/// <summary>One built-in entity kind: what this tenant calls it, and what is on it.</summary>
+/// <param name="Kind">Which kind. The identifier, which never changes.</param>
+/// <param name="Label">
+/// What this tenant calls it. Defaults to the kind — a tenant who calls a Lead an "Enquiry" says
+/// so here, and every screen follows without a deployment.
+/// </param>
+/// <param name="Columns">Its built-in columns, with whatever this tenant calls them.</param>
 /// <param name="Fields">What an administrator added to it.</param>
-public sealed record DescribedEntity(string Kind, IReadOnlyList<DescribedField> Fields);
+public sealed record DescribedEntity(
+    string Kind,
+    string Label,
+    IReadOnlyList<DescribedColumn> Columns,
+    IReadOnlyList<DescribedField> Fields);
+
+/// <summary>One built-in column of a built-in entity.</summary>
+/// <param name="Name">The column. What a client sends and receives it as.</param>
+/// <param name="Label">What this tenant calls it. Defaults to the column name.</param>
+public sealed record DescribedColumn(string Name, string Label);
 
 /// <summary>What this tenant's schema looks like to this caller.</summary>
 /// <param name="Objects">The custom objects.</param>

@@ -26,7 +26,7 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 
 ## What it is
 
-Thirty-five tables, forty-two flows and three authorisation stances, over the entities a CRM actually
+Thirty-six tables, forty-three flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -70,6 +70,7 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Run a report | `POST /api/v1/crm/reports/runs` | `crm.read` — building one is administrative, reading it is not |
 | Build a dashboard | `POST /api/v1/crm/dashboards` | tiles name reports; deleting a report in use is refused |
 | Run a dashboard | `POST /api/v1/crm/dashboards/runs` | every tile in one request, not twelve round trips |
+| Rename anything | `POST /api/v1/crm/labels` | the label moves, the identifier never does |
 
 ## The three tokens
 

@@ -106,7 +106,10 @@ public sealed class DefineCustomField : ICapability<DefineField, FieldDefined>
 
         // A picklist with no values accepts nothing, so declaring one is a mistake worth naming
         // rather than a field somebody discovers is unusable on the first write.
-        if (input.Type == CustomFieldType.Picklist && input.Options is not { Count: > 0 })
+        // Both closed types, and both useless without their set: a multi-select with no options
+        // is a form control with nothing in it.
+        if (input.Type is CustomFieldType.Picklist or CustomFieldType.MultiPicklist
+            && input.Options is not { Count: > 0 })
         {
             return Result.Fail<FieldDefined>(CustomSchemaErrors.PicklistHasNoOptions(input.Name));
         }

@@ -161,6 +161,10 @@ namespace Crm;
 [JsonSerializable(typeof(DashboardDefined))]
 [JsonSerializable(typeof(RunDashboard))]
 [JsonSerializable(typeof(DashboardResult))]
+[JsonSerializable(typeof(SetLabel))]
+[JsonSerializable(typeof(LabelSet))]
+[JsonSerializable(typeof(DescribedColumn))]
+[JsonSerializable(typeof(ViewLayout))]
 
 // The connector registry, its queue and what goes on the wire.
 [JsonSerializable(typeof(DefineConnector))]

@@ -177,7 +177,7 @@ public sealed class DynamicFieldWorkflowTests
         string name, CustomFieldType type) =>
         new Dictionary<string, CustomFieldRow>(StringComparer.Ordinal)
         {
-            [name] = new(Guid.NewGuid(), name, type, IsRequired: false),
+            [name] = new(Guid.NewGuid(), name, name, type, IsRequired: false),
         };
 
     private static TransitionGuard Guard(string field, GuardOperator op, string value) =>

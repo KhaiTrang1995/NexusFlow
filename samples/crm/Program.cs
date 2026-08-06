@@ -125,6 +125,7 @@ builder.Services.AddSingleton<FormulaStore>();
 builder.Services.AddSingleton<SyncStore>();
 builder.Services.AddSingleton<BulkJobStore>();
 builder.Services.AddSingleton<ReportStore>();
+builder.Services.AddSingleton<LabelStore>();
 
 // The one thing in this application that talks to somebody else's system. Registered under the
 // interface, so a deployment with a vault or a real Slack renderer replaces this line and

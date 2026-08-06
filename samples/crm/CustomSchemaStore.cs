@@ -74,7 +74,7 @@ public sealed class CustomSchemaStore
     private const string FieldsForEntity = """
         SELECT f.field_id, f.name, f.data_type, f.is_required, f.references_object_id,
                array_remove(array_agg(o.value ORDER BY o.ordinal), NULL),
-               f.required_permission, f.is_unique, f.is_computed, f.read_permission
+               f.required_permission, f.is_unique, f.is_computed, f.read_permission, f.label
         FROM custom_field f
         LEFT JOIN custom_field_option o ON o.field_id = f.field_id
         WHERE f.applies_to = @appliesTo
@@ -84,7 +84,7 @@ public sealed class CustomSchemaStore
     private const string FieldsForObject = """
         SELECT f.field_id, f.name, f.data_type, f.is_required, f.references_object_id,
                array_remove(array_agg(o.value ORDER BY o.ordinal), NULL),
-               f.required_permission, f.is_unique, f.is_computed, f.read_permission
+               f.required_permission, f.is_unique, f.is_computed, f.read_permission, f.label
         FROM custom_field f
         LEFT JOIN custom_field_option o ON o.field_id = f.field_id
         WHERE f.object_id = @object
@@ -631,6 +631,7 @@ public sealed class CustomSchemaStore
             fields[name] = new CustomFieldRow(
                 reader.GetGuid(0),
                 name,
+                reader.GetString(10),
                 Enum.Parse<CustomFieldType>(reader.GetString(2)),
                 reader.GetBoolean(3),
                 options,
