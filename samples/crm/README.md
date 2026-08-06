@@ -26,7 +26,7 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 
 ## What it is
 
-Fifty-six tables, sixty-nine flows and three authorisation stances, over the entities a CRM actually
+Sixty tables, seventy-four flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -97,6 +97,11 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Submit for approval | `POST /api/v1/crm/approvals/requests` | "no approval needed" is a real answer and is said out loud |
 | Decide | `POST /api/v1/crm/approvals/decisions` | a submitter cannot approve their own request; a rejection ends it |
 | Approval inbox | `POST /api/v1/crm/approvals/inbox` | filtered by who is asking, never by a user id in the body |
+| Declare the week the desk is open | `POST /api/v1/crm/service/hours` | said back in minutes, because a typo in a week is invisible |
+| Declare what the desk promises | `POST /api/v1/crm/service/policies` | one live promise per priority; a second retires the first |
+| Raise a case | `POST /api/v1/crm/service/cases` | the promise is stamped once, in the hours the desk is open |
+| Say something on a case | `POST /api/v1/crm/service/comments` | only a public reply from somebody else stops the response clock |
+| The live queue | `POST /api/v1/crm/service/queue` | breach computed as of the read, not swept up by a job |
 | API description | `GET /openapi.json`, `GET /openapi` | generated from the manifest, so it cannot drift from the routes |
 
 ## The three tokens

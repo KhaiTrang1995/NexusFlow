@@ -244,6 +244,21 @@ namespace Crm;
 [JsonSerializable(typeof(WaitingApproval))]
 [JsonSerializable(typeof(ApprovalInbox))]
 
+// The service desk: the week it is open, what it promises, and the cases it promises about.
+[JsonSerializable(typeof(SetBusinessHours))]
+[JsonSerializable(typeof(OpeningHoursOfDay))]
+[JsonSerializable(typeof(BusinessHoursSet))]
+[JsonSerializable(typeof(DefineSlaPolicy))]
+[JsonSerializable(typeof(SlaPolicyDefined))]
+[JsonSerializable(typeof(OpenCase))]
+[JsonSerializable(typeof(CaseOpened))]
+[JsonSerializable(typeof(CommentOnCase))]
+[JsonSerializable(typeof(CaseCommented))]
+[JsonSerializable(typeof(ServiceBy))]
+[JsonSerializable(typeof(ReadCaseWorklist))]
+[JsonSerializable(typeof(QueuedCase))]
+[JsonSerializable(typeof(CaseWorklist))]
+
 // The connector registry, its queue and what goes on the wire.
 [JsonSerializable(typeof(DefineConnector))]
 [JsonSerializable(typeof(ConnectorDefined))]
