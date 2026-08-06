@@ -59,6 +59,7 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Query records | `POST /api/v1/crm/custom/queries` | the one projection of custom values, and where reads are masked |
 | Search everything | `POST /api/v1/crm/search` | one statement over five tables; a hit is an identity, not a row |
 | Declare a formula | `POST /api/v1/crm/custom/formulas` | computed from the same record, one operation, no nesting |
+| Describe the schema | `POST /api/v1/crm/describe` | what a client renders from; permissions resolved, not reported as rules |
 
 ## The three tokens
 

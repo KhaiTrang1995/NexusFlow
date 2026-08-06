@@ -129,6 +129,13 @@ namespace Crm;
 [JsonSerializable(typeof(DefineFormula))]
 [JsonSerializable(typeof(FormulaDefined))]
 [JsonSerializable(typeof(RecordOrder))]
+[JsonSerializable(typeof(DescribeSchema))]
+[JsonSerializable(typeof(DescribeFor))]
+[JsonSerializable(typeof(DescribedField))]
+[JsonSerializable(typeof(DescribedView))]
+[JsonSerializable(typeof(DescribedObject))]
+[JsonSerializable(typeof(DescribedEntity))]
+[JsonSerializable(typeof(SchemaDescription))]
 
 // The connector registry, its queue and what goes on the wire.
 [JsonSerializable(typeof(DefineConnector))]

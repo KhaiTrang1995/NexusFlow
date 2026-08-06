@@ -93,6 +93,14 @@ public sealed class CustomSchemaStore
 
     private const string ObjectExists = "SELECT count(*) FROM custom_object WHERE object_id = @id";
 
+    private const string AllObjects = """
+        SELECT object_id, name, label FROM custom_object ORDER BY name
+        """;
+
+    private const string OneObject = """
+        SELECT object_id, name, label FROM custom_object WHERE object_id = @id
+        """;
+
     private const string RelationshipEnds = """
         SELECT cardinality, from_object_id, to_object_id
         FROM custom_relationship
@@ -411,6 +419,45 @@ public sealed class CustomSchemaStore
         Add(command, "id", NpgsqlDbType.Uuid, objectId);
 
         return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is long and > 0;
+    }
+
+    /// <summary>Every object this tenant declared, or one of them.</summary>
+    /// <param name="tenantId">The caller's tenant.</param>
+    /// <param name="objectId">One object, or null for all of them.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The objects, by name.</returns>
+    public async ValueTask<IReadOnlyList<(Guid Id, string Name, string Label)>> ObjectsAsync(
+        string? tenantId,
+        Guid? objectId,
+        CancellationToken cancellationToken)
+    {
+        var connection = await OpenAsync(tenantId, cancellationToken).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
+
+        var command = connection.CreateCommand();
+        await using var closingCommand = command.ConfigureAwait(false);
+
+        // Two constants rather than a predicate built from whether the argument is null. The
+        // difference is one WHERE clause and the rule this file states is that a statement is
+        // fixed at build time.
+        command.CommandText = objectId is null ? AllObjects : OneObject;
+
+        if (objectId is { } id)
+        {
+            Add(command, "id", NpgsqlDbType.Uuid, id);
+        }
+
+        var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await using var closingReader = reader.ConfigureAwait(false);
+
+        var objects = new List<(Guid, string, string)>();
+
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            objects.Add((reader.GetGuid(0), reader.GetString(1), reader.GetString(2)));
+        }
+
+        return objects;
     }
 
     /// <summary>What a relationship joins, and how many of each it allows.</summary>

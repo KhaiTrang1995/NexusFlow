@@ -237,3 +237,25 @@ public sealed partial class DefineFormulaFlow : Flow<DefineFormula, FormulaDefin
             .Return(ctx => ctx.Get<FormulaDefined>());
     }
 }
+
+/// <summary>Tells a client what this tenant's schema looks like.</summary>
+/// <remarks>
+/// <c>Ephemeral</c>, like the query and the search: it writes nothing, and journaling it would
+/// put a durable row behind every screen a client opens.
+/// </remarks>
+[Flow("crm.custom.describe", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral, Owner = "crm-platform")]
+[FlowDeadline("PT15S")]
+[HttpTrigger("POST", "/api/v1/crm/describe")]
+public sealed partial class DescribeSchemaFlow : Flow<DescribeSchema, SchemaDescription>
+{
+    /// <inheritdoc />
+    protected override void Define(IFlowBuilder<DescribeSchema, SchemaDescription> flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+
+        flow
+            .Step<DescribeCrmSchema, DescribeFor>(
+                ctx => new DescribeFor(ctx.Input, CustomFieldPolicy.Scopes(ctx.Principal)))
+            .Return(ctx => ctx.Get<SchemaDescription>());
+    }
+}

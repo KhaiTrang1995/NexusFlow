@@ -274,6 +274,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<QueryCustomRecords>();
         services.AddSingleton<SearchCrm>();
         services.AddSingleton<DefineCustomFormula>();
+        services.AddSingleton<DescribeCrmSchema>();
 
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
@@ -296,5 +297,6 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<QueryRecordsFlow.Dispatcher>();
         services.AddSingleton<SearchFlow.Dispatcher>();
         services.AddSingleton<DefineFormulaFlow.Dispatcher>();
+        services.AddSingleton<DescribeSchemaFlow.Dispatcher>();
     }
 }
