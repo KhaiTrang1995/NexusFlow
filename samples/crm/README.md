@@ -26,7 +26,7 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 
 ## What it is
 
-Fourteen tables, fifteen flows and two authorisation stances, over the entities a CRM actually
+Twenty-nine tables, thirty-one flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -43,6 +43,22 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Stale sweep | `[CronTrigger("0 6 * * *")]` | counts, and leaves what to do about it to the process |
 | Summarise an account | `POST /api/v1/crm/account-summaries` + `[AgentTrigger]` | one stance, two transports |
 | Schema probe | `POST /api/v1/crm/schema-probes` | row-level security, demonstrated over HTTP |
+| Declare an object | `POST /api/v1/crm/custom/objects` | an entity this build has never heard of, at run time |
+| Declare a field | `POST /api/v1/crm/custom/fields` | a column on a built-in entity or on a custom object |
+| Declare a relationship | `POST /api/v1/crm/custom/relationships` | a named edge, with a cardinality the database keeps |
+| Write a record | `POST /api/v1/crm/custom/records` | `crm.write` — declaring the shape is a different grant |
+| Link two records | `POST /api/v1/crm/custom/links` | the cardinality asked where the link is made |
+| Set custom fields | `POST /api/v1/crm/custom/entity-fields` | a merge, so two clients editing different fields do not collide |
+| Register a connector | `POST /api/v1/crm/connectors` | `crm.admin` — an address this server will later send to |
+| Enable a connector | `POST /api/v1/crm/connectors/enablement` | off without losing what it already sent |
+| Publish to a connector | `POST /api/v1/crm/connectors/deliveries` | queued, not sent; the response says `Pending` and means it |
+| Delivery sweep | `[CronTrigger("* * * * *")]` | `FOR UPDATE SKIP LOCKED`, so two replicas do not double-send |
+| Declare a validation rule | `POST /api/v1/crm/custom/validation-rules` | refuses when it holds, in the administrator's own words |
+| Declare a roll-up | `POST /api/v1/crm/custom/rollups` | an aggregate over a parent's children, recomputed on link |
+| Save a list view | `POST /api/v1/crm/custom/list-views` | a named query, its fields checked when it is saved |
+| Query records | `POST /api/v1/crm/custom/queries` | the one projection of custom values, and where reads are masked |
+| Search everything | `POST /api/v1/crm/search` | one statement over five tables; a hit is an identity, not a row |
+| Declare a formula | `POST /api/v1/crm/custom/formulas` | computed from the same record, one operation, no nesting |
 
 ## The three tokens
 
@@ -52,7 +68,7 @@ deletes it — everything downstream reads a `ClaimsPrincipal` and does not care
 | Token | Tenant | Scopes |
 |---|---|---|
 | `rep-northwind-token` | `crm-northwind` | `crm.read crm.write` |
-| `manager-northwind-token` | `crm-northwind` | `crm.read crm.write crm.discount.approve` |
+| `manager-northwind-token` | `crm-northwind` | `crm.read crm.write crm.discount.approve crm.admin` |
 | `rep-contoso-token` | `crm-contoso` | `crm.read crm.write` |
 
 The tenant comes off the `tid` claim and off nothing else — not a header, not the payload

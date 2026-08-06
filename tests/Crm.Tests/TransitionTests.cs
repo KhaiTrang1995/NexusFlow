@@ -151,10 +151,16 @@ public sealed class TransitionTests
     }
 
     /// <summary>
-    /// The two kinds this sample does not wire report that they ran nothing.
+    /// A notification naming no connector reports that it ran nothing.
     /// </summary>
+    /// <remarks>
+    /// <c>SendNotification</c> is wired now — it queues against a connector the tenant
+    /// registered — and this is the case where the administrator named none. Still false, and
+    /// still not an error: a transition must not start failing because an integration is
+    /// unconfigured. <c>ConnectorNotificationTests</c> is the wired half.
+    /// </remarks>
     [Fact]
-    public async Task AnUnwiredActionKindReportsThatItDidNothing()
+    public async Task AnUnconfiguredNotificationReportsThatItDidNothing()
     {
         await using var crm = await CrmSchemaHarness.CreateAsync(Cancellation);
         var world = await WorldAsync(crm);
@@ -302,7 +308,8 @@ public sealed class TransitionTests
         return host.RunAsync(
             RunWorkflowTransitionFlow.Plan,
             new RunWorkflowTransitionFlow.Dispatcher(
-                runConfiguredTransition: new RunConfiguredTransition(new ProcessStore(crm.DataSource))),
+                runConfiguredTransition: new RunConfiguredTransition(
+                    new ProcessStore(crm.DataSource), new ConnectorStore(crm.DataSource))),
             new FlowInvocation(
                 "corr-" + opportunity,
                 opportunity.ToString(),

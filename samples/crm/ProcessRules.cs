@@ -45,12 +45,49 @@ public static class ProcessFields
     /// <summary>Who holds it.</summary>
     public const string Owner = "owner";
 
-    /// <summary>Every field a guard may name.</summary>
+    /// <summary>Every field a guard may name without an administrator having declared it.</summary>
     public static IReadOnlySet<string> All { get; } =
         new HashSet<string>(StringComparer.Ordinal)
         {
             Amount, Currency, Probability, Region, Industry, Owner,
         };
+
+    /// <summary>Every field a guard may name, given what this tenant has declared.</summary>
+    /// <param name="declared">The custom fields declared for the entity, by name.</param>
+    /// <returns>The built-in fields and the declared ones.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="declared"/> is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the one place the closed list above became open, and what it gave up is
+    /// narrower than it looks.</strong> The remarks on this class argue against an expression
+    /// language, and every word of that still holds: the operators are still five, the
+    /// comparison is still text or number, guard evaluation is still a pure function of a
+    /// snapshot, and nothing here evaluates anything. What is now data is the <em>catalogue</em>
+    /// — which names are legal — and not the language.
+    /// </para>
+    /// <para>
+    /// <strong>The property that mattered is kept, which is when a bad guard is caught.</strong>
+    /// A guard naming a field nobody declared is still refused by
+    /// <see cref="ProcessPublishing.Validate"/> when the administrator publishes, not at three
+    /// in the morning when an opportunity happens to reach that stage. The difference is that
+    /// the set it is checked against is now read from <c>custom_field</c> instead of compiled in
+    /// — so adding a field stopped being a deployment, and naming one that does not exist did
+    /// not stop being an error.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlySet<string> Including(IReadOnlyDictionary<string, CustomFieldRow> declared)
+    {
+        ArgumentNullException.ThrowIfNull(declared);
+
+        var fields = new HashSet<string>(All, StringComparer.Ordinal);
+
+        foreach (var name in declared.Keys)
+        {
+            fields.Add(name);
+        }
+
+        return fields;
+    }
 }
 
 /// <summary>
@@ -69,13 +106,19 @@ public static class ProcessFields
 /// <param name="Region">The account's region.</param>
 /// <param name="Industry">The account's industry.</param>
 /// <param name="Owner">Who holds it.</param>
+/// <param name="Custom">
+/// The opportunity's custom values, by field name, or null when it has none. Read last, so a
+/// declared field can never shadow a built-in one — the same precedence
+/// <see cref="ProcessFields.Including"/> gives, stated in the two places it has to hold.
+/// </param>
 public sealed record ProcessFacts(
     decimal? Amount,
     string? Currency,
     int? Probability,
     string? Region,
     string? Industry,
-    Guid? Owner)
+    Guid? Owner,
+    IReadOnlyDictionary<string, string?>? Custom = null)
 {
     /// <summary>Reads one whitelisted field, or null when it is not set.</summary>
     /// <param name="field">One of <see cref="ProcessFields.All"/>.</param>
@@ -94,7 +137,7 @@ public sealed record ProcessFacts(
         ProcessFields.Region => Region,
         ProcessFields.Industry => Industry,
         ProcessFields.Owner => Owner?.ToString(),
-        _ => null,
+        _ => Custom is not null && Custom.TryGetValue(field, out var value) ? value : null,
     };
 }
 
@@ -228,18 +271,31 @@ public static class ProcessRules
         ArgumentNullException.ThrowIfNull(guard);
         ArgumentNullException.ThrowIfNull(facts);
 
-        var actual = facts.Read(guard.Field);
-
-        return guard.Operator switch
-        {
-            GuardOperator.IsSet => IsTrue(guard.Value) == (actual is not null),
-            GuardOperator.Equals => actual is not null && string.Equals(actual, guard.Value, StringComparison.Ordinal),
-            GuardOperator.NotEquals => !string.Equals(actual, guard.Value, StringComparison.Ordinal),
-            GuardOperator.GreaterThan => Compare(actual, guard.Value) > 0,
-            GuardOperator.LessThan => Compare(actual, guard.Value) < 0,
-            _ => false,
-        };
+        return Holds(guard.Operator, guard.Value, facts.Read(guard.Field));
     }
+
+    /// <summary>
+    /// Whether one comparison holds — the whole of the operator vocabulary, over two strings.
+    /// </summary>
+    /// <param name="op">How to compare.</param>
+    /// <param name="expected">What the administrator wrote.</param>
+    /// <param name="actual">What the entity holds, or null when it holds nothing.</param>
+    /// <returns>Whether it holds.</returns>
+    /// <remarks>
+    /// <strong>Extracted so a validation rule and a transition guard cannot mean different things
+    /// by <c>GreaterThan</c>.</strong> They are the same five operators over the same text, asked
+    /// at two moments — one before a write and one after a stage change — and two copies of this
+    /// switch would drift the first time somebody fixed one of them.
+    /// </remarks>
+    public static bool Holds(GuardOperator op, string expected, string? actual) => op switch
+    {
+        GuardOperator.IsSet => IsTrue(expected) == (actual is not null),
+        GuardOperator.Equals => actual is not null && string.Equals(actual, expected, StringComparison.Ordinal),
+        GuardOperator.NotEquals => !string.Equals(actual, expected, StringComparison.Ordinal),
+        GuardOperator.GreaterThan => Compare(actual, expected) > 0,
+        GuardOperator.LessThan => Compare(actual, expected) < 0,
+        _ => false,
+    };
 
     /// <summary>Whether an operator compares numbers rather than text.</summary>
     /// <param name="op">The operator.</param>
@@ -280,15 +336,27 @@ public static class ProcessPublishing
     /// <summary>Every reason this definition cannot be published.</summary>
     /// <param name="stages">Its stages.</param>
     /// <param name="candidates">Its transitions, with their guards and actions.</param>
+    /// <param name="fields">
+    /// Every field a guard may name. Defaults to the built-in ones; pass
+    /// <see cref="ProcessFields.Including"/> to let guards name what this tenant declared.
+    /// </param>
     /// <returns>The faults, empty when it may be published.</returns>
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    /// <remarks>
+    /// <strong>The catalogue is a parameter and not a lookup, which is what keeps this a pure
+    /// function.</strong> Reading <c>custom_field</c> in here would put a database call inside
+    /// the one part of the configurable process that has never needed one, and would make the
+    /// answer depend on when it was asked.
+    /// </remarks>
     public static IReadOnlyList<ProcessFault> Validate(
         IReadOnlyList<ProcessStage> stages,
-        IReadOnlyList<TransitionCandidate> candidates)
+        IReadOnlyList<TransitionCandidate> candidates,
+        IReadOnlySet<string>? fields = null)
     {
         ArgumentNullException.ThrowIfNull(stages);
         ArgumentNullException.ThrowIfNull(candidates);
 
+        var nameable = fields ?? ProcessFields.All;
         var faults = new List<ProcessFault>();
         var known = new HashSet<Guid>(stages.Select(static stage => stage.Id));
 
@@ -313,12 +381,12 @@ public static class ProcessPublishing
 
             foreach (var guard in candidate.Guards)
             {
-                if (!ProcessFields.All.Contains(guard.Field))
+                if (!nameable.Contains(guard.Field))
                 {
                     faults.Add(new ProcessFault(
                         id,
                         $"'{guard.Field}' is not a field a guard may name. The fields are: " +
-                        string.Join(", ", ProcessFields.All.Order(StringComparer.Ordinal)) + "."));
+                        string.Join(", ", nameable.Order(StringComparer.Ordinal)) + "."));
                 }
 
                 if (!Enum.IsDefined(guard.Operator))

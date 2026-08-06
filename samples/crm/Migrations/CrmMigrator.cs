@@ -84,6 +84,13 @@ public sealed class CrmMigrator
         new(2, "crm_row_level_security", "0002_crm_row_level_security.sql"),
         new(3, "crm_activity_integrity", "0003_crm_activity_integrity.sql"),
         new(4, "crm_lead_enrichment", "0004_crm_lead_enrichment.sql"),
+        new(5, "crm_dynamic_schema", "0005_crm_dynamic_schema.sql"),
+        new(6, "crm_picklists_and_connectors", "0006_crm_picklists_and_connectors.sql"),
+        new(7, "crm_validation_and_field_policy", "0007_crm_validation_and_field_policy.sql"),
+        new(8, "crm_rollups", "0008_crm_rollups.sql"),
+        new(9, "crm_queries_and_read_policy", "0009_crm_queries_and_read_policy.sql"),
+        new(10, "crm_search_and_compound_filters", "0010_crm_search_and_compound_filters.sql"),
+        new(11, "crm_formulas_and_ordering", "0011_crm_formulas_and_ordering.sql"),
     ];
 
     /// <summary>The schema version this build of the sample reads and writes.</summary>

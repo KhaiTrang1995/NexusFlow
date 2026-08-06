@@ -132,7 +132,11 @@ public static class CrmTokens
             [
                 new Claim(ClaimTypes.NameIdentifier, "manager-northwind-1"),
                 new Claim("tid", NorthwindTenant),
-                new Claim("scope", "crm.read crm.write crm.discount.approve"),
+                // crm.admin is the grant that changes the shape of the data rather than the data:
+                // declaring a custom field, an object or a relationship. It is separate from
+                // crm.write because a representative who may write a lead must not be able to
+                // add a required field that every future lead has to carry.
+                new Claim("scope", "crm.read crm.write crm.discount.approve crm.admin"),
             ],
         };
 }
