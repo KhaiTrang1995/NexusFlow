@@ -26,7 +26,7 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 
 ## What it is
 
-Thirty-six tables, forty-three flows and three authorisation stances, over the entities a CRM actually
+Forty-one tables, forty-nine flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -71,6 +71,12 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Build a dashboard | `POST /api/v1/crm/dashboards` | tiles name reports; deleting a report in use is refused |
 | Run a dashboard | `POST /api/v1/crm/dashboards/runs` | every tile in one request, not twelve round trips |
 | Rename anything | `POST /api/v1/crm/labels` | the label moves, the identifier never does |
+| Declare a period | `POST /api/v1/crm/planning/periods` | a quarter that sticks out of its year is refused |
+| Set the number | `POST /api/v1/crm/planning/strategies` | `crm.admin` — one per period, and the vision beside it |
+| Commit a plan | `POST /api/v1/crm/planning/plans` | account, deal or demand; each carries only what its kind needs |
+| Qualify a deal | `POST /api/v1/crm/planning/qualifications` | eight elements, answered or not — never a self-scored rating |
+| Agree a step | `POST /api/v1/crm/planning/steps` | the mutual action plan; an overdue step is the earliest signal |
+| Roll a period up | `POST /api/v1/crm/planning/roll-ups` | target, committed, and the gap — reported, never closed |
 
 ## The three tokens
 
