@@ -33,10 +33,17 @@ public sealed class CustomSchemaStore
 
     private const string InsertField = """
         INSERT INTO custom_field (
-            field_id, tenant_id, applies_to, object_id, name, label, data_type, is_required, created_at)
-        VALUES (@id, @tenant, @appliesTo, @object, @name, @label, @type, @required, @now)
+            field_id, tenant_id, applies_to, object_id, name, label, data_type, is_required,
+            references_object_id, created_at)
+        VALUES (@id, @tenant, @appliesTo, @object, @name, @label, @type, @required, @references, @now)
         ON CONFLICT DO NOTHING
         RETURNING field_id
+        """;
+
+    private const string InsertOption = """
+        INSERT INTO custom_field_option (option_id, tenant_id, field_id, value, label, ordinal)
+        VALUES (@id, @tenant, @field, @value, @label, @ordinal)
+        ON CONFLICT (field_id, value) DO NOTHING
         """;
 
     private const string InsertRelationship = """
@@ -60,16 +67,25 @@ public sealed class CustomSchemaStore
         ON CONFLICT (relationship_id, from_record_id, to_record_id) DO NOTHING
         """;
 
+    // The options come back as an aggregate rather than as a second query, so one read answers
+    // every question about a field. A left join and array_agg keeps a field with no options a
+    // row rather than dropping it, which an inner join would.
     private const string FieldsForEntity = """
-        SELECT field_id, name, data_type, is_required
-        FROM custom_field
-        WHERE applies_to = @appliesTo
+        SELECT f.field_id, f.name, f.data_type, f.is_required, f.references_object_id,
+               array_remove(array_agg(o.value ORDER BY o.ordinal), NULL)
+        FROM custom_field f
+        LEFT JOIN custom_field_option o ON o.field_id = f.field_id
+        WHERE f.applies_to = @appliesTo
+        GROUP BY f.field_id
         """;
 
     private const string FieldsForObject = """
-        SELECT field_id, name, data_type, is_required
-        FROM custom_field
-        WHERE object_id = @object
+        SELECT f.field_id, f.name, f.data_type, f.is_required, f.references_object_id,
+               array_remove(array_agg(o.value ORDER BY o.ordinal), NULL)
+        FROM custom_field f
+        LEFT JOIN custom_field_option o ON o.field_id = f.field_id
+        WHERE f.object_id = @object
+        GROUP BY f.field_id
         """;
 
     private const string ObjectExists = "SELECT count(*) FROM custom_object WHERE object_id = @id";
@@ -200,9 +216,37 @@ public sealed class CustomSchemaStore
         Add(command, "label", NpgsqlDbType.Text, request.Label);
         Add(command, "type", NpgsqlDbType.Text, request.Type.ToString());
         Add(command, "required", NpgsqlDbType.Boolean, request.IsRequired);
+        Add(command, "references", NpgsqlDbType.Uuid, (object?)request.References ?? DBNull.Value);
         Add(command, "now", NpgsqlDbType.TimestampTz, now);
 
-        return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as Guid?;
+        if (await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not Guid written)
+        {
+            return null;
+        }
+
+        // The options, on the same connection. Not the same transaction: a field written without
+        // its options is a picklist that accepts nothing, which CustomValues.Validate reports as
+        // an error naming the field — visible and fixable, where a half-open transaction would
+        // not be. Widening this to a transaction is right and is a change to every writer here.
+        var ordinal = 0;
+
+        foreach (var option in request.Options ?? [])
+        {
+            var write = connection.CreateCommand();
+            await using var closingWrite = write.ConfigureAwait(false);
+
+            write.CommandText = InsertOption;
+            Add(write, "id", NpgsqlDbType.Uuid, Guid.NewGuid());
+            Add(write, "tenant", NpgsqlDbType.Text, tenantId ?? string.Empty);
+            Add(write, "field", NpgsqlDbType.Uuid, written);
+            Add(write, "value", NpgsqlDbType.Text, option.Value);
+            Add(write, "label", NpgsqlDbType.Text, option.Label);
+            Add(write, "ordinal", NpgsqlDbType.Integer, ordinal++);
+
+            await write.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return written;
     }
 
     /// <summary>Declares a relationship, or reports that the name is taken.</summary>
@@ -519,11 +563,20 @@ public sealed class CustomSchemaStore
         {
             var name = reader.GetString(1);
 
+            var references = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false)
+                ? (Guid?)null
+                : reader.GetGuid(4);
+
+            var options = await reader.GetFieldValueAsync<string[]>(5, cancellationToken)
+                .ConfigureAwait(false);
+
             fields[name] = new CustomFieldRow(
                 reader.GetGuid(0),
                 name,
                 Enum.Parse<CustomFieldType>(reader.GetString(2)),
-                reader.GetBoolean(3));
+                reader.GetBoolean(3),
+                options,
+                references);
         }
 
         return fields;

@@ -66,15 +66,22 @@ public static class TransitionErrors
 public sealed class RunConfiguredTransition : ICapability<BusMessage, TransitionApplied>
 {
     private readonly ProcessStore _store;
+    private readonly ConnectorStore _connectors;
 
     /// <summary>Creates the capability.</summary>
     /// <param name="store">Reads the definition and writes what the actions do.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="store"/> is null.</exception>
-    public RunConfiguredTransition(ProcessStore store)
+    /// <param name="connectors">
+    /// Resolves the connector a <see cref="ActionKind.SendNotification"/> names, and queues what
+    /// it sends.
+    /// </param>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    public RunConfiguredTransition(ProcessStore store, ConnectorStore connectors)
     {
         ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(connectors);
 
         _store = store;
+        _connectors = connectors;
     }
 
     /// <inheritdoc />
@@ -199,11 +206,23 @@ public sealed class RunConfiguredTransition : ICapability<BusMessage, Transition
                 return true;
 
             case ActionKind.SendNotification:
+                // The one action that leaves this system, and the reason the connector registry
+                // exists. The administrator names a connector they registered; this queues what
+                // it is to send and the sweep delivers it. Nothing is posted here: a transition
+                // that made an outbound request inline would hold its transaction open across
+                // somebody else's gateway and fail the transition when they are slow.
+                //
+                // A connector that is not registered, or is switched off, leaves this returning
+                // false — the same answer the whole action gave before, and the honest one. It
+                // is not an error: an administrator turning an integration off must not start
+                // failing every transition that mentions it.
+                return await NotifyAsync(ctx, opportunityId, action, ct).ConfigureAwait(false);
+
             case ActionKind.EmitEvent:
-                // Both reach a system this sample does not wire: a mail provider and a broker
-                // the deployment chooses. They are in the enumeration because the manifest
-                // publishes all five and an administrator may configure them; what they do here
-                // is nothing, and saying so is better than a stub that looks like it worked.
+                // Reaches a broker the deployment chooses, and this sample wires none for the
+                // configured process. In the enumeration because the manifest publishes all five
+                // and an administrator may configure it; what it does here is nothing, and
+                // saying so is better than a stub that looks like it worked.
                 return false;
 
             default:
@@ -211,6 +230,46 @@ public sealed class RunConfiguredTransition : ICapability<BusMessage, Transition
                 // before it can be stored, and the enumeration is closed at build time.
                 return false;
         }
+    }
+
+    /// <summary>Queues what a configured notification sends, if its connector is usable.</summary>
+    /// <remarks>
+    /// The payload is what an administrator can act on without joining anything: which
+    /// opportunity, and the trigger that moved it. Widening it is a decision about what leaves
+    /// the tenant, which is why it is written here rather than assembled from the action's
+    /// parameters.
+    /// </remarks>
+    private async ValueTask<bool> NotifyAsync(
+        CapabilityContext ctx,
+        Guid opportunityId,
+        TransitionAction action,
+        CancellationToken ct)
+    {
+        var name = ActionParameters.Text(action.Parameters, "connector", string.Empty);
+
+        if (name.Length == 0 ||
+            await _connectors.ReadByNameAsync(ctx.TenantId, name, ct).ConfigureAwait(false)
+                is not { IsEnabled: true } registered)
+        {
+            return false;
+        }
+
+        await _connectors
+            .QueueAsync(
+                ctx.TenantId,
+                ActionIds.Delivery(opportunityId, action.Id),
+                registered.Connector.Id,
+                ActionParameters.Text(action.Parameters, "subject", "An opportunity moved"),
+                ConnectorPayload.ToJson(new Dictionary<string, string?>(StringComparer.Ordinal)
+                {
+                    ["opportunityId"] = opportunityId.ToString(),
+                    ["subject"] = ActionParameters.Text(action.Parameters, "subject", string.Empty),
+                }),
+                ctx.UtcNow,
+                ct)
+            .ConfigureAwait(false);
+
+        return true;
     }
 }
 
@@ -222,16 +281,35 @@ public sealed class RunConfiguredTransition : ICapability<BusMessage, Transition
 /// </remarks>
 public static class ActionIds
 {
+    /// <summary>
+    /// The delivery a given <see cref="ActionKind.SendNotification"/> on a given opportunity
+    /// queues.
+    /// </summary>
+    /// <param name="opportunityId">The opportunity.</param>
+    /// <param name="actionId">The configured action.</param>
+    /// <returns>The derived id.</returns>
+    public static Guid Delivery(Guid opportunityId, Guid actionId) =>
+        Derive(opportunityId, actionId, salt: 1);
+
     /// <summary>The activity a given action on a given opportunity creates.</summary>
     /// <param name="opportunityId">The opportunity.</param>
     /// <param name="actionId">The configured action.</param>
     /// <returns>The derived id.</returns>
-    public static Guid Task(Guid opportunityId, Guid actionId)
+    public static Guid Task(Guid opportunityId, Guid actionId) =>
+        Derive(opportunityId, actionId, salt: 0);
+
+    /// <remarks>
+    /// Salted, so one action that both creates a task and notifies cannot derive the same id for
+    /// the two — they are different rows in different tables and a collision would be invisible
+    /// until one of them was missing.
+    /// </remarks>
+    private static Guid Derive(Guid opportunityId, Guid actionId, byte salt)
     {
-        Span<byte> seed = stackalloc byte[32];
+        Span<byte> seed = stackalloc byte[33];
 
         opportunityId.TryWriteBytes(seed);
         actionId.TryWriteBytes(seed[16..]);
+        seed[32] = salt;
 
         Span<byte> hash = stackalloc byte[32];
 

@@ -251,7 +251,7 @@ public sealed class TenantIsolationTests
             Cancellation);
 
         policies.ShouldBe(
-            19,
+            22,
             "one policy per table. A table with ENABLE and FORCE and no policy " +
             "denies everything, which passes the assertion above and breaks the application.");
     }

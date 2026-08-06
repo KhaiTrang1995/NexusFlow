@@ -104,6 +104,37 @@ public sealed class DefineCustomField : ICapability<DefineField, FieldDefined>
             return Result.Fail<FieldDefined>(CustomSchemaErrors.ObjectNotFound(objectId));
         }
 
+        // A picklist with no values accepts nothing, so declaring one is a mistake worth naming
+        // rather than a field somebody discovers is unusable on the first write.
+        if (input.Type == CustomFieldType.Picklist && input.Options is not { Count: > 0 })
+        {
+            return Result.Fail<FieldDefined>(CustomSchemaErrors.PicklistHasNoOptions(input.Name));
+        }
+
+        foreach (var option in input.Options ?? [])
+        {
+            if (!CustomValues.IsUsableName(option.Value))
+            {
+                return Result.Fail<FieldDefined>(
+                    CustomSchemaErrors.NameIsNotUsable(option.Value));
+            }
+        }
+
+        // The CHECK of migration 0006 makes a Reference with no target impossible; this is what
+        // turns it into an error naming the field, and what checks the target is this tenant's.
+        if (input.Type == CustomFieldType.Reference)
+        {
+            if (input.References is not { } target)
+            {
+                return Result.Fail<FieldDefined>(CustomSchemaErrors.FieldHasNoOwner());
+            }
+
+            if (!await _store.HasObjectAsync(ctx.TenantId, target, ct).ConfigureAwait(false))
+            {
+                return Result.Fail<FieldDefined>(CustomSchemaErrors.ObjectNotFound(target));
+            }
+        }
+
         var id = await _store
             .DeclareFieldAsync(ctx.TenantId, ctx.NewId(), input, ctx.UtcNow, ct)
             .ConfigureAwait(false);
@@ -216,6 +247,16 @@ public sealed class CreateCustomRecord : ICapability<CreateRecord, RecordCreated
             return Result.Fail<RecordCreated>(faults[0]);
         }
 
+        // The half Validate cannot answer: whether a reference points at a record this tenant
+        // has, of the object the field names. It needs a read, and putting one behind a pure
+        // function would make the whole of it depend on when it was asked.
+        if (await CustomReferences
+                .UnresolvableAsync(_store, declared, input.Values, ctx, ct)
+                .ConfigureAwait(false) is { } dangling)
+        {
+            return Result.Fail<RecordCreated>(dangling);
+        }
+
         var id = ctx.NewId();
 
         await _store
@@ -225,6 +266,7 @@ public sealed class CreateCustomRecord : ICapability<CreateRecord, RecordCreated
 
         return Result.Ok(new RecordCreated(id));
     }
+
 }
 
 /// <summary>
@@ -332,6 +374,13 @@ public sealed class SetEntityCustomFields : ICapability<SetCustomFields, CustomF
             return Result.Fail<CustomFieldsSet>(faults[0]);
         }
 
+        if (await CustomReferences
+                .UnresolvableAsync(_store, declared, input.Values, ctx, ct)
+                .ConfigureAwait(false) is { } dangling)
+        {
+            return Result.Fail<CustomFieldsSet>(dangling);
+        }
+
         var merged = await _store
             .MergeCustomFieldsAsync(
                 ctx.TenantId, input.Kind, input.Id, CustomValues.ToJson(declared, input.Values), ct)
@@ -340,5 +389,61 @@ public sealed class SetEntityCustomFields : ICapability<SetCustomFields, CustomF
         return merged is null
             ? Result.Fail<CustomFieldsSet>(CustomSchemaErrors.EntityNotFound(input.Kind, input.Id))
             : Result.Ok(new CustomFieldsSet(input.Id, merged));
+    }
+}
+
+/// <summary>
+/// Whether the references in a set of values point at anything.
+/// </summary>
+/// <remarks>
+/// <strong>A helper both capabilities compose, and not a call between them.</strong>
+/// <c>CapabilitiesDoNotCallCapabilities</c> is an architecture gate and it is right: a capability
+/// reaching into another is a dependency the manifest does not describe and the engine cannot
+/// authorise. <c>LeadDeliveries</c> in <c>Intake.cs</c> exists for the same reason.
+/// </remarks>
+public static class CustomReferences
+{
+    /// <summary>The first reference that points at nothing, or null when they all resolve.</summary>
+    /// <param name="store">Reads which object a record belongs to.</param>
+    /// <param name="declared">The fields declared for the entity, by name.</param>
+    /// <param name="values">What was sent.</param>
+    /// <param name="ctx">The invocation, for its tenant.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>The error, or null.</returns>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    /// <remarks>
+    /// The half <see cref="CustomValues.Validate"/> cannot answer. It needs a read, and putting
+    /// one behind a pure function would make the whole of it depend on when it was asked.
+    /// </remarks>
+    public static async ValueTask<Error?> UnresolvableAsync(
+        CustomSchemaStore store,
+        IReadOnlyDictionary<string, CustomFieldRow> declared,
+        IReadOnlyDictionary<string, string?> values,
+        CapabilityContext ctx,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(declared);
+        ArgumentNullException.ThrowIfNull(values);
+        ArgumentNullException.ThrowIfNull(ctx);
+
+        foreach (var (name, value) in values)
+        {
+            if (value is null ||
+                !declared.TryGetValue(name, out var field) ||
+                field.Type != CustomFieldType.Reference ||
+                field.References is not { } target)
+            {
+                continue;
+            }
+
+            if (await store.ObjectOfAsync(ctx.TenantId, Guid.Parse(value), ct).ConfigureAwait(false)
+                != target)
+            {
+                return CustomSchemaErrors.ReferenceIsNotResolvable(name, value);
+            }
+        }
+
+        return null;
     }
 }

@@ -26,7 +26,7 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 
 ## What it is
 
-Nineteen tables, twenty-one flows and three authorisation stances, over the entities a CRM actually
+Twenty-two tables, twenty-five flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -49,6 +49,10 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Write a record | `POST /api/v1/crm/custom/records` | `crm.write` — declaring the shape is a different grant |
 | Link two records | `POST /api/v1/crm/custom/links` | the cardinality asked where the link is made |
 | Set custom fields | `POST /api/v1/crm/custom/entity-fields` | a merge, so two clients editing different fields do not collide |
+| Register a connector | `POST /api/v1/crm/connectors` | `crm.admin` — an address this server will later send to |
+| Enable a connector | `POST /api/v1/crm/connectors/enablement` | off without losing what it already sent |
+| Publish to a connector | `POST /api/v1/crm/connectors/deliveries` | queued, not sent; the response says `Pending` and means it |
+| Delivery sweep | `[CronTrigger("* * * * *")]` | `FOR UPDATE SKIP LOCKED`, so two replicas do not double-send |
 
 ## The three tokens
 

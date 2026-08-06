@@ -26,6 +26,24 @@ public enum CustomFieldType
 
     /// <summary>An ISO-8601 instant.</summary>
     Date = 3,
+
+    /// <summary>One of a closed, ordered, labelled set of values.</summary>
+    /// <remarks>
+    /// <strong>The most-used custom field type there is, and not for fashion.</strong> A field
+    /// whose values are closed is the only kind an administrator can build a guard or a report on
+    /// and be sure of the answer; free text with a convention is the same field with the closure
+    /// removed, and the first misspelling is a row nothing matches.
+    /// </remarks>
+    Picklist = 4,
+
+    /// <summary>The id of a record of another custom object.</summary>
+    /// <remarks>
+    /// The other shape of a relationship. <c>custom_relationship</c> models an edge as a row of
+    /// its own, which is what many-to-many needs and what an edge with its own attributes needs;
+    /// this is one value on the record, resolved by reading it. Collapsing the two would mean a
+    /// link table for every lookup or a jsonb key for every many-to-many.
+    /// </remarks>
+    Reference = 5,
 }
 
 /// <summary>How many rows may sit on each end of a relationship.</summary>
@@ -50,13 +68,27 @@ public enum CustomCardinality
 /// <param name="Label">What a person sees.</param>
 /// <param name="Type">What it holds.</param>
 /// <param name="IsRequired">Whether a record without it is refused.</param>
+/// <param name="Options">
+/// The allowed values, for <see cref="CustomFieldType.Picklist"/>. Empty for every other type,
+/// and a picklist with none is refused — a closed set of nothing accepts nothing.
+/// </param>
+/// <param name="References">
+/// The object a <see cref="CustomFieldType.Reference"/> points at. Null for every other type.
+/// </param>
 public sealed record DefineField(
     EntityKind? AppliesTo,
     Guid? Target,
     string Name,
     string Label,
     CustomFieldType Type,
-    bool IsRequired);
+    bool IsRequired,
+    IReadOnlyList<CustomFieldOption>? Options = null,
+    Guid? References = null);
+
+/// <summary>One allowed value of a picklist.</summary>
+/// <param name="Value">What is stored. Named like a field, because a guard compares it as text.</param>
+/// <param name="Label">What a person sees. Free text, because nothing compares it.</param>
+public sealed record CustomFieldOption(string Value, string Label);
 
 /// <summary>The field that was declared.</summary>
 /// <param name="FieldId">Its id.</param>
@@ -129,7 +161,18 @@ public sealed record CustomFieldsSet(Guid Id, IReadOnlyDictionary<string, string
 /// <param name="Name">Its name.</param>
 /// <param name="Type">What it holds.</param>
 /// <param name="IsRequired">Whether a record without it is refused.</param>
-public sealed record CustomFieldRow(Guid Id, string Name, CustomFieldType Type, bool IsRequired);
+/// <param name="Options">
+/// The allowed values of a picklist, or empty. Carried on the row rather than fetched when a
+/// value is checked, so one read of the declarations answers every question about them.
+/// </param>
+/// <param name="References">The object a reference points at, or null.</param>
+public sealed record CustomFieldRow(
+    Guid Id,
+    string Name,
+    CustomFieldType Type,
+    bool IsRequired,
+    IReadOnlyList<string>? Options = null,
+    Guid? References = null);
 
 // ------------------------------------------------------------------------------- what can go wrong
 
@@ -227,6 +270,41 @@ public static class CustomSchemaErrors
             .With("type", type.ToString())
             .With("value", value);
 
+    /// <summary>A picklist was declared with no values, so nothing could ever be stored in it.</summary>
+    /// <param name="name">The field.</param>
+    public static Error PicklistHasNoOptions(string name) =>
+        new Error(
+            "crm.custom_picklist_has_no_options",
+            $"'{name}' is a Picklist and no allowed values were given. A closed set of nothing " +
+            "accepts nothing.",
+            ErrorCategory.Validation)
+            .With("field", name);
+
+    /// <summary>A value is not one of the picklist's allowed values.</summary>
+    /// <param name="name">The field.</param>
+    /// <param name="value">What was sent.</param>
+    /// <param name="allowed">What may be sent.</param>
+    public static Error ValueIsNotAnOption(string name, string value, IEnumerable<string> allowed) =>
+        new Error(
+            "crm.custom_value_not_an_option",
+            $"'{value}' is not one of the values '{name}' allows.",
+            ErrorCategory.Validation)
+            .With("field", name)
+            .With("value", value)
+            .With("allowed", string.Join(", ", allowed));
+
+    /// <summary>A reference field points at nothing this tenant has.</summary>
+    /// <param name="name">The field.</param>
+    /// <param name="value">What was sent.</param>
+    public static Error ReferenceIsNotResolvable(string name, string value) =>
+        new Error(
+            "crm.custom_reference_not_resolvable",
+            $"'{name}' points at a record of another object, and nothing this tenant has is at " +
+            "that id.",
+            ErrorCategory.Validation)
+            .With("field", name)
+            .With("value", value);
+
     /// <summary>A required field has no value.</summary>
     /// <param name="name">The field.</param>
     public static Error ValueIsRequired(string name) =>
@@ -313,6 +391,18 @@ public static class CustomValues
             if (!Parses(field.Type, value))
             {
                 faults.Add(CustomSchemaErrors.ValueIsNotOfType(name, field.Type, value));
+
+                continue;
+            }
+
+            // The closure, which is the whole point of the type. Checked here and not by the
+            // column, because the allowed set is a tenant's rows rather than a CHECK — so this
+            // is the only thing between a misspelt option and a value no report will ever match.
+            if (field.Type == CustomFieldType.Picklist &&
+                field.Options is { Count: > 0 } options &&
+                !options.Contains(value, StringComparer.Ordinal))
+            {
+                faults.Add(CustomSchemaErrors.ValueIsNotAnOption(name, value, options));
             }
         }
 
@@ -444,6 +534,11 @@ public static class CustomValues
         CustomFieldType.Date =>
             DateTimeOffset.TryParse(
                 value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out _),
+
+        // A reference is an id here and a resolvable record in the capability. Parsing is what
+        // this pure function can answer; whether the row exists needs a read, and putting one
+        // behind Validate would make the whole of it depend on when it was asked.
+        CustomFieldType.Reference => Guid.TryParse(value, out _),
         _ => true,
     };
 }

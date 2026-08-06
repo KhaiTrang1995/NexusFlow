@@ -68,6 +68,26 @@ internal sealed class CrmApplication : IAsyncDisposable
     /// <summary>The schema, for seeding rows and for reading them back.</summary>
     public CrmSchemaHarness Crm { get; }
 
+    /// <summary>What a connector delivery actually reached, and what the far end was told to say.</summary>
+    public RecordingConnectorTransport Transport =>
+        _host.Services.GetRequiredService<RecordingConnectorTransport>();
+
+    /// <summary>Runs one sweep of the outbound queue, as the schedule would.</summary>
+    /// <param name="tenantId">The tenant the occurrence fires for.</param>
+    /// <returns>How many were delivered and how many failed.</returns>
+    /// <remarks>
+    /// The capability rather than the flow, because what a cron trigger does with an occurrence
+    /// is the platform's contract and <c>FlowX.Hosting.Tests</c> holds it; what this sample owes
+    /// is what one sweep does to the rows.
+    /// </remarks>
+    public ValueTask<(int Delivered, int Failed)> SweepAsync(string tenantId) =>
+        _host.Services.GetRequiredService<ConnectorStore>().SweepAsync(
+            tenantId,
+            Transport,
+            SweepConnectorDeliveries.Batch,
+            DateTimeOffset.UtcNow,
+            TestContext.Current.CancellationToken);
+
     /// <summary>Stands the schema up, migrates it, and starts the sample over a test server.</summary>
     /// <param name="cancellationToken">Cancels the setup.</param>
     /// <returns>The running application.</returns>
@@ -216,6 +236,14 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<SalesStore>();
         services.AddSingleton<WorkStore>();
         services.AddSingleton<CustomSchemaStore>();
+        services.AddSingleton<ConnectorStore>();
+
+        // The far end, recorded rather than reached. Every other claim in these tests is checked
+        // against a real PostgreSQL; a connector's far end is a network somebody else owns, and a
+        // test that needed one would fail when their gateway is slow.
+        services.AddSingleton<RecordingConnectorTransport>();
+        services.AddSingleton<IConnectorTransport>(
+            static provider => provider.GetRequiredService<RecordingConnectorTransport>());
 
         // The capabilities behind the five routes exercised here, and their dispatchers. Named
         // one by one so that a route whose capability nobody registered fails as a missing
@@ -232,6 +260,10 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<CreateCustomRecord>();
         services.AddSingleton<LinkCustomRecords>();
         services.AddSingleton<SetEntityCustomFields>();
+        services.AddSingleton<DefineCrmConnector>();
+        services.AddSingleton<SetCrmConnectorEnabled>();
+        services.AddSingleton<PublishToCrmConnector>();
+        services.AddSingleton<SweepConnectorDeliveries>();
 
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
@@ -245,5 +277,8 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<CreateRecordFlow.Dispatcher>();
         services.AddSingleton<LinkRecordsFlow.Dispatcher>();
         services.AddSingleton<SetCustomFieldsFlow.Dispatcher>();
+        services.AddSingleton<DefineConnectorFlow.Dispatcher>();
+        services.AddSingleton<SetConnectorEnabledFlow.Dispatcher>();
+        services.AddSingleton<PublishToConnectorFlow.Dispatcher>();
     }
 }

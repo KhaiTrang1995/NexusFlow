@@ -92,6 +92,13 @@ builder.Services.AddSingleton<EnrichmentProvider>();
 builder.Services.AddSingleton<EnrichmentStore>();
 builder.Services.AddSingleton<AssistantStore>();
 builder.Services.AddSingleton<CustomSchemaStore>();
+builder.Services.AddSingleton<ConnectorStore>();
+
+// The one thing in this application that talks to somebody else's system. Registered under the
+// interface, so a deployment with a vault or a real Slack renderer replaces this line and
+// nothing else; the registry, the queue and the sweep do not know which one they got.
+builder.Services.AddHttpClient<IConnectorTransport, HttpConnectorTransport>(
+    static client => client.Timeout = TimeSpan.FromSeconds(10));
 
 // Every capability the twenty-five steps invoke, and every flow's dispatcher — generated from
 // the constructors the generator itself wrote. Forty hand-written lines stood here until the
