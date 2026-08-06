@@ -12,6 +12,7 @@ import {
   StatGrid,
   StatTile,
   Tag,
+  TextField,
 } from '@/design/primitives'
 import { ShareBar } from '@/design/charts'
 import { useCampaignPerformance, useDealAttribution } from '@/api/queries/hooks'
@@ -46,10 +47,19 @@ const MODELS: readonly { id: AttributionModel; label: string; note: string }[] =
 export function CampaignScreen() {
   const [model, setModel] = useState<AttributionModel>('Linear')
   const [deal, setDeal] = useState<string | null>(null)
+  const [dealInput, setDealInput] = useState('')
 
   const report = useCampaignPerformance(model)
   const attribution = useDealAttribution(deal, model)
 
+  /**
+   * The deals this screen can offer.
+   *
+   * FROM THE MODEL, WHICH MEANS THE SERVER HAS NEVER HEARD OF THEM. There is no endpoint that
+   * lists decided deals — `/campaigns/performance` answers with a count and not with ids — so
+   * every id here is a fixture, and asking the API about one gets a not-found. Rather than
+   * offering a list that fails on click, the picker takes an id and says where to get one.
+   */
   const decided = (OBJECT_MODELS['opportunity']?.records ?? []).filter((row) =>
     String(row['stage']).startsWith('Closed'),
   )
@@ -188,27 +198,38 @@ export function CampaignScreen() {
 
               <Columns layout="split">
                 <Panel padding="flush">
-                  <PanelHeader title="Who influenced one deal" note="pick a decided deal" />
-                  <div>
-                    {decided.map((row) => (
-                      <button
-                        key={row.id}
-                        type="button"
-                        className={styles.reportRow}
-                        aria-pressed={deal === row.id}
-                        onClick={() => setDeal(row.id)}
+                  <PanelHeader
+                    title="Who influenced one deal"
+                    note={`${data.dealsConsidered} decided in this window`}
+                  />
+                  <div style={{ padding: '14px 17px 16px', display: 'grid', gap: 10 }}>
+                    <TextField
+                      label="Opportunity id"
+                      placeholder="00000000-0000-0000-0000-000000000000"
+                      hint="From the opportunity's URL, or from the row a report links to."
+                      value={dealInput}
+                      onChange={(event) => setDealInput(event.target.value)}
+                    />
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <Button
+                        tone="primary"
+                        disabled={dealInput.trim() === ''}
+                        onClick={() => setDeal(dealInput.trim())}
                       >
-                        <span className={styles.reportName}>{row['name']}</span>
-                        <span className={styles.sub} style={{ marginLeft: 'auto' }}>
-                          {row['stage']} · {fullMoney(Number(row['amount']))}
-                        </span>
-                      </button>
-                    ))}
-                    {decided.length === 0 ? (
-                      <div style={{ padding: 17 }} className={styles.sub}>
-                        Nothing has been decided yet, so there is nothing to share out.
+                        Share it out
+                      </Button>
+                      {deal ? <Button onClick={() => setDeal(null)}>Clear</Button> : null}
+                    </div>
+                    <p className={styles.sub}>
+                      There is no endpoint that lists decided deals — this report answers with a
+                      count, not with ids — so the deals below are examples from the object model
+                      and the server has never heard of them.
+                    </p>
+                    {decided.map((row) => (
+                      <div key={row.id} className={styles.sub}>
+                        {row['name']} · {row['stage']} · {fullMoney(Number(row['amount']))}
                       </div>
-                    ) : null}
+                    ))}
                   </div>
                 </Panel>
 

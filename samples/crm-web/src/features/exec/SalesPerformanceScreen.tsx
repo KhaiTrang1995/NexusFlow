@@ -12,7 +12,7 @@ import {
 } from '@/design/primitives'
 import { useQuotaAttainment, useSalesPerformance } from '@/api/queries/hooks'
 import type { QuotaAttainment, SellerPerformance } from '@/api/contracts'
-import { fullMoney, money, percent } from '@/lib/format'
+import { fullMoney, money, pct, percent } from '@/lib/format'
 import { PERIODS, PERIOD_LABEL, usePeriod } from './period'
 import styles from './exec.module.css'
 
@@ -117,8 +117,8 @@ export function SalesPerformanceScreen() {
                         row.attainment === null ? (
                           <span className={styles.sub}>no number</span>
                         ) : (
-                          <span className={row.attainment >= 1 ? styles.positive : undefined}>
-                            {percent(row.attainment)}
+                          <span className={row.attainment >= 100 ? styles.positive : undefined}>
+                            {pct(row.attainment, 1)}
                           </span>
                         ),
                       sortValue: (row: QuotaAttainment) => row.attainment ?? -1,
