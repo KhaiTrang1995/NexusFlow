@@ -43,15 +43,31 @@ public sealed class PlanningStore
         INSERT INTO plan (
             plan_id, tenant_id, period_id, kind, name, label, owner_id,
             account_id, opportunity_id, channel, segment,
-            target_amount, currency, target_leads, created_at)
+            target_amount, currency, target_leads, created_at,
+            activity_kind, target_activities, parent_plan_id)
         VALUES (@id, @tenant, @period, @kind, @name, @label, @owner,
             @account, @opportunity, @channel, @segment,
-            @targetAmount, @currency, @targetLeads, @now)
+            @targetAmount, @currency, @targetLeads, @now,
+            @activityKind, @targetActivities, @parent)
         ON CONFLICT (tenant_id, name) DO NOTHING
         RETURNING plan_id
         """;
 
     private const string ReadPlan = "SELECT plan_id FROM plan WHERE name = @name";
+
+    // Upwards from a proposed parent. If the plan being committed appears in it, rolling it up
+    // there closes a loop — the same shape, and the same reasoning, as the reporting line's.
+    private const string PlanTreeAbove = """
+        WITH RECURSIVE up AS (
+            SELECT plan_id, parent_plan_id, name, 1 AS depth FROM plan WHERE plan_id = @parent
+            UNION ALL
+            SELECT p.plan_id, p.parent_plan_id, p.name, up.depth + 1
+            FROM plan p
+            JOIN up ON p.plan_id = up.parent_plan_id
+            WHERE up.depth < @maxDepth
+        )
+        SELECT count(*) FROM up WHERE name = @name
+        """;
 
     private const string UpsertQualification = """
         INSERT INTO plan_qualification (plan_id, tenant_id, element, is_answered, note)
@@ -257,6 +273,7 @@ public sealed class PlanningStore
         Guid id,
         Guid period,
         DefinePlan request,
+        Guid? parent,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
@@ -286,6 +303,11 @@ public sealed class PlanningStore
         Add(command, "currency", NpgsqlDbType.Text, (object?)request.Currency ?? DBNull.Value);
         Add(command, "targetLeads", NpgsqlDbType.Integer,
             (object?)request.TargetLeads ?? DBNull.Value);
+        Add(command, "activityKind", NpgsqlDbType.Text,
+            (object?)request.ActivityKind ?? DBNull.Value);
+        Add(command, "targetActivities", NpgsqlDbType.Integer,
+            (object?)request.TargetActivities ?? DBNull.Value);
+        Add(command, "parent", NpgsqlDbType.Uuid, (object?)parent ?? DBNull.Value);
         Add(command, "now", NpgsqlDbType.TimestampTz, now);
 
         return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as Guid?;
@@ -512,6 +534,49 @@ public sealed class PlanningStore
         return new PeriodRollUp(
             period.Name, vision, target, currency, committed, target - committed,
             accounts, deals, marketing);
+    }
+
+    /// <summary>Whether rolling a plan up to a parent would close a loop in the tree.</summary>
+    /// <param name="tenantId">The caller's tenant.</param>
+    /// <param name="name">The plan being committed.</param>
+    /// <param name="parent">Where it would roll up to.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>Whether the tree would loop.</returns>
+    public async ValueTask<bool> TreeWouldLoopAsync(
+        string? tenantId,
+        string name,
+        Guid parent,
+        CancellationToken cancellationToken)
+    {
+        var connection = await OpenAsync(tenantId, cancellationToken).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
+
+        var command = connection.CreateCommand();
+        await using var closingCommand = command.ConfigureAwait(false);
+
+        command.CommandText = PlanTreeAbove;
+
+        Add(command, "parent", NpgsqlDbType.Uuid, parent);
+        Add(command, "name", NpgsqlDbType.Text, name);
+        Add(command, "maxDepth", NpgsqlDbType.Integer, PlanningLimits.MaxDepth);
+
+        return (long)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))! > 0;
+    }
+
+    /// <summary>Finds a plan's id by name.</summary>
+    /// <param name="tenantId">The caller's tenant.</param>
+    /// <param name="name">Which plan.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The id, or null.</returns>
+    public async ValueTask<Guid?> PlanIdAsync(
+        string? tenantId,
+        string name,
+        CancellationToken cancellationToken)
+    {
+        var connection = await OpenAsync(tenantId, cancellationToken).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
+
+        return await PlanIdAsync(connection, name, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<StoredPeriod?> PeriodOnAsync(

@@ -286,6 +286,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<LabelStore>();
         services.AddSingleton<PlanningStore>();
         services.AddSingleton<ManagementStore>();
+        services.AddSingleton<PerformanceStore>();
 
         // The far end, recorded rather than reached. Every other claim in these tests is checked
         // against a real PostgreSQL; a connector's far end is a network somebody else owns, and a
@@ -343,6 +344,10 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<DefineCrmKpi>();
         services.AddSingleton<ReadCrmScorecard>();
         services.AddSingleton<RecordKpiReview>();
+        services.AddSingleton<ReadCrmPlanTree>();
+        services.AddSingleton<ReadCrmSalesPerformance>();
+        services.AddSingleton<ReadCrmDealPerformance>();
+        services.AddSingleton<ReadExecutiveBoard>();
 
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
@@ -390,5 +395,9 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<DefineKpiFlow.Dispatcher>();
         services.AddSingleton<ScorecardFlow.Dispatcher>();
         services.AddSingleton<ReviewKpiFlow.Dispatcher>();
+        services.AddSingleton<PlanTreeFlow.Dispatcher>();
+        services.AddSingleton<SalesPerformanceFlow.Dispatcher>();
+        services.AddSingleton<DealPerformanceFlow.Dispatcher>();
+        services.AddSingleton<BoardFlow.Dispatcher>();
     }
 }

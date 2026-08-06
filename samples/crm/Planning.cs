@@ -15,6 +15,27 @@ public enum PlanKind
 
     /// <summary>How much demand one channel is expected to produce.</summary>
     MarketingLead,
+
+    /// <summary>
+    /// A set of plans, and a number of its own. A division, a region, a segment — whatever a group
+    /// slices itself by.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The level that makes the gap arithmetic recursive.</strong> A portfolio's children
+    /// are plans, so "does the sum of my children add up to my number" is asked at every level
+    /// rather than only at the top — which is the difference between a company with one sales team
+    /// and a group with divisions.
+    /// </remarks>
+    Portfolio,
+
+    /// <summary>
+    /// What an operations team commits to doing, counted in activities.
+    /// </summary>
+    /// <remarks>
+    /// Measured in one of the four activity kinds the schema already records. An operations plan
+    /// measured in anything else is a plan nothing can report against.
+    /// </remarks>
+    Operation,
 }
 
 /// <summary>What has to be known about a deal before anybody should believe its date.</summary>
@@ -112,6 +133,13 @@ public sealed record StrategySet(Guid StrategyId);
 /// <param name="TargetAmount">Account and Opportunity: what it is expected to be worth.</param>
 /// <param name="Currency">In what.</param>
 /// <param name="TargetLeads">MarketingLead: how many.</param>
+/// <param name="ActivityKind">Operation: which activity is counted.</param>
+/// <param name="TargetActivities">Operation: how many of them.</param>
+/// <param name="Parent">
+/// The plan this one rolls into, or null at the top. <strong>A name and not an id</strong>, for
+/// the same reason a period is: a client committing a plan under a portfolio knows what the
+/// portfolio is called and would otherwise have to fetch its id first.
+/// </param>
 public sealed record DefinePlan(
     PlanKind Kind,
     string Period,
@@ -124,7 +152,10 @@ public sealed record DefinePlan(
     string? Segment = null,
     decimal? TargetAmount = null,
     string? Currency = null,
-    int? TargetLeads = null);
+    int? TargetLeads = null,
+    string? ActivityKind = null,
+    int? TargetActivities = null,
+    string? Parent = null);
 
 /// <summary>The plan was committed.</summary>
 /// <param name="PlanId">Its id.</param>
@@ -327,6 +358,25 @@ public static class PlanningErrors
             "against it. It is one of: " + string.Join(", ", PlanningLimits.Channels) + ".",
             ErrorCategory.Validation);
 
+    /// <summary>The activity kind is not one the schema records.</summary>
+    /// <param name="kind">What was asked for.</param>
+    /// <returns>The refusal.</returns>
+    public static Error ActivityKindIsUnknown(string kind) =>
+        new(
+            "crm.plan_activity_unknown",
+            $"'{kind}' is not an activity this schema records, so nothing would ever report " +
+            "against it. It is one of: " + string.Join(", ", PlanningLimits.Activities) + ".",
+            ErrorCategory.Validation);
+
+    /// <summary>Rolling this plan into that one would make the tree loop.</summary>
+    /// <param name="name">The plan being committed.</param>
+    /// <returns>The refusal.</returns>
+    public static Error PlanTreeWouldLoop(string name) =>
+        new(
+            "crm.plan_tree_would_loop",
+            $"Rolling '{name}' up there would make the plan tree loop back on itself.",
+            ErrorCategory.Conflict);
+
     /// <summary>The target was negative.</summary>
     public static Error TargetIsNegative() =>
         new(
@@ -349,4 +399,18 @@ public static class PlanningLimits
 
     /// <summary>How many qualification elements there are.</summary>
     public static int Elements => Enum.GetValues<QualificationElement>().Length;
+
+    /// <summary>The activity kinds an operations plan may be counted in.</summary>
+    /// <remarks>
+    /// The same four as <c>activity.kind</c>'s <c>CHECK</c>, stated here because this is where the
+    /// refusal is written.
+    /// </remarks>
+    public static IReadOnlyList<string> Activities { get; } = ["Task", "Call", "Meeting", "Note"];
+
+    /// <summary>How deep a plan tree is walked.</summary>
+    /// <remarks>
+    /// A cycle between two plans is two individually legal rows, so the recursive read is bounded
+    /// as well as the write being refused — the same pair of defences the reporting line has.
+    /// </remarks>
+    public const int MaxDepth = 20;
 }

@@ -182,8 +182,29 @@ public sealed class DefineCrmPlan : ICapability<DefinePlan, PlanDefined>
             return Result.Fail<PlanDefined>(PlanningErrors.PeriodNotFound(input.Period));
         }
 
+        Guid? parent = null;
+
+        if (input.Parent is { Length: > 0 } named)
+        {
+            if (await _planning.PlanIdAsync(ctx.TenantId, named, ct).ConfigureAwait(false)
+                is not { } above)
+            {
+                return Result.Fail<PlanDefined>(PlanningErrors.PlanNotFound(named));
+            }
+
+            // A plan that rolls up into its own descendant makes every total above it either wrong
+            // or non-terminating, and a reorganisation is exactly where that gets typed in.
+            if (await _planning.TreeWouldLoopAsync(ctx.TenantId, input.Name, above, ct)
+                .ConfigureAwait(false))
+            {
+                return Result.Fail<PlanDefined>(PlanningErrors.PlanTreeWouldLoop(input.Name));
+            }
+
+            parent = above;
+        }
+
         var id = await _planning
-            .SavePlanAsync(ctx.TenantId, ctx.NewId(), period.PeriodId, input, ctx.UtcNow, ct)
+            .SavePlanAsync(ctx.TenantId, ctx.NewId(), period.PeriodId, input, parent, ctx.UtcNow, ct)
             .ConfigureAwait(false);
 
         return id is { } saved
@@ -193,7 +214,8 @@ public sealed class DefineCrmPlan : ICapability<DefinePlan, PlanDefined>
 
     private static Error? Shape(DefinePlan input)
     {
-        var money = input.Kind is PlanKind.Account or PlanKind.Opportunity;
+        var money = input.Kind
+            is PlanKind.Account or PlanKind.Opportunity or PlanKind.Portfolio;
 
         if ((input.Account is not null) != (input.Kind == PlanKind.Account))
         {
@@ -225,13 +247,30 @@ public sealed class DefineCrmPlan : ICapability<DefinePlan, PlanDefined>
             return PlanningErrors.KindAndFieldsDisagree(input.Kind, nameof(DefinePlan.Currency));
         }
 
+        if ((input.ActivityKind is not null) != (input.Kind == PlanKind.Operation))
+        {
+            return PlanningErrors.KindAndFieldsDisagree(input.Kind, nameof(DefinePlan.ActivityKind));
+        }
+
+        if ((input.TargetActivities is not null) != (input.Kind == PlanKind.Operation))
+        {
+            return PlanningErrors.KindAndFieldsDisagree(
+                input.Kind, nameof(DefinePlan.TargetActivities));
+        }
+
         if (input.Channel is { } channel
             && !PlanningLimits.Channels.Contains(channel, StringComparer.Ordinal))
         {
             return PlanningErrors.ChannelIsNotALeadSource(channel);
         }
 
-        return input.TargetAmount < 0 || input.TargetLeads < 0
+        if (input.ActivityKind is { } activity
+            && !PlanningLimits.Activities.Contains(activity, StringComparer.Ordinal))
+        {
+            return PlanningErrors.ActivityKindIsUnknown(activity);
+        }
+
+        return input.TargetAmount < 0 || input.TargetLeads < 0 || input.TargetActivities < 0
             ? PlanningErrors.TargetIsNegative()
             : null;
     }
