@@ -44,6 +44,26 @@ public enum CustomFieldType
     /// link table for every lookup or a jsonb key for every many-to-many.
     /// </remarks>
     Reference = 5,
+
+    /// <summary>Several of a closed, ordered, labelled set of values.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Stored as a jsonb array, and carried as that array's JSON text.</strong> The value
+    /// model is a flat map of text — which is what keeps it serialisable without reflection — so a
+    /// multi-select's value is <c>["gold","silver"]</c>. That is what a caller sends, what comes
+    /// back, and what a guard compares, and it is the same string in all three. An array in the
+    /// column rather than a delimited string, because the GIN index over <c>values</c> then
+    /// already answers which records chose an option.
+    /// </para>
+    /// <para>
+    /// <strong>What this deliberately does not add is a "contains" operator.</strong> The five
+    /// operators are shared by transition guards, validation rules, roll-up filters and list-view
+    /// criteria; a sixth that means something for one field type is a sixth all four have to
+    /// explain. A guard over a multi-select compares whole values. Asking "does it include gold"
+    /// is a real gap, and saying so beats half an operator.
+    /// </para>
+    /// </remarks>
+    MultiPicklist = 6,
 }
 
 /// <summary>How many rows may sit on each end of a relationship.</summary>
@@ -228,6 +248,7 @@ public sealed record WriteEntityFields(
 public sealed record CustomFieldRow(
     Guid Id,
     string Name,
+    string Label,
     CustomFieldType Type,
     bool IsRequired,
     IReadOnlyList<string>? Options = null,
@@ -467,6 +488,17 @@ public static class CustomValues
             {
                 faults.Add(CustomSchemaErrors.ValueIsNotAnOption(name, value, options));
             }
+
+            // Every element of a multi-select, for the same reason: one misspelt option in an
+            // array of five is a value no report will ever match, and it is the four beside it
+            // that make it look like it worked.
+            if (field.Type == CustomFieldType.MultiPicklist &&
+                field.Options is { Count: > 0 } allowed &&
+                Chosen(value).FirstOrDefault(chosen => !allowed.Contains(chosen, StringComparer.Ordinal))
+                    is { } stray)
+            {
+                faults.Add(CustomSchemaErrors.ValueIsNotAnOption(name, stray, allowed));
+            }
         }
 
         if (requireComplete)
@@ -543,6 +575,21 @@ public static class CustomValues
                         writer.WriteBoolean(name, bool.Parse(value));
                         break;
 
+                    // A real jsonb array, not the text of one. Stored as text it would need
+                    // parsing in every statement that touched it, and the GIN index over `values`
+                    // would be no use for asking which records chose an option.
+                    case CustomFieldType.MultiPicklist:
+                        writer.WritePropertyName(name);
+                        writer.WriteStartArray();
+
+                        foreach (var chosen in Chosen(value))
+                        {
+                            writer.WriteStringValue(chosen);
+                        }
+
+                        writer.WriteEndArray();
+                        break;
+
                     default:
                         writer.WriteString(name, value);
                         break;
@@ -582,6 +629,13 @@ public static class CustomValues
                 JsonValueKind.True => "true",
                 JsonValueKind.False => "false",
                 JsonValueKind.Number => property.Value.GetDecimal().ToString(CultureInfo.InvariantCulture),
+
+                // The array's JSON, re-written compactly. PostgreSQL renders jsonb with a space
+                // after each comma, so the raw text would come back differing from what was sent
+                // by whitespace alone — and a guard written `["gold","silver"]` would then never
+                // match a stored `["gold", "silver"]`. One canonical form, so the comparison is
+                // between two values rather than between two spellings.
+                JsonValueKind.Array => Compact(property.Value),
                 _ => property.Value.GetString(),
             };
         }
@@ -602,6 +656,51 @@ public static class CustomValues
         // this pure function can answer; whether the row exists needs a read, and putting one
         // behind Validate would make the whole of it depend on when it was asked.
         CustomFieldType.Reference => Guid.TryParse(value, out _),
+        CustomFieldType.MultiPicklist => IsArrayOfStrings(value),
         _ => true,
     };
+
+    /// <summary>The options a multi-select value chose, or empty when it is not an array.</summary>
+    private static IReadOnlyList<string> Chosen(string value)
+    {
+        if (!IsArrayOfStrings(value))
+        {
+            return [];
+        }
+
+        using var document = JsonDocument.Parse(value);
+
+        return [.. document.RootElement.EnumerateArray().Select(static element => element.GetString()!)];
+    }
+
+    /// <summary>The canonical, space-free JSON of an array.</summary>
+    private static string Compact(JsonElement array)
+    {
+        using var buffer = new MemoryStream();
+
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            array.WriteTo(writer);
+        }
+
+        return System.Text.Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    private static bool IsArrayOfStrings(string value)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(value);
+
+            return document.RootElement.ValueKind == JsonValueKind.Array
+                && document.RootElement.EnumerateArray()
+                    .All(static element => element.ValueKind == JsonValueKind.String);
+        }
+        catch (JsonException)
+        {
+            // Not JSON at all is not an array of strings, which is what the caller asked. A throw
+            // here would make a bad value a 500 instead of the refusal Validate is there to give.
+            return false;
+        }
+    }
 }

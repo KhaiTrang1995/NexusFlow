@@ -33,18 +33,22 @@ public sealed class DescribeCrmSchema : ICapability<DescribeFor, SchemaDescripti
 {
     private readonly CustomSchemaStore _schema;
     private readonly QueryStore _queries;
+    private readonly LabelStore _labels;
 
     /// <summary>Creates the capability.</summary>
     /// <param name="schema">Reads the objects and their fields.</param>
     /// <param name="queries">Reads the saved views.</param>
+    /// <param name="labels">Reads what this tenant calls the built-in entities.</param>
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
-    public DescribeCrmSchema(CustomSchemaStore schema, QueryStore queries)
+    public DescribeCrmSchema(CustomSchemaStore schema, QueryStore queries, LabelStore labels)
     {
         ArgumentNullException.ThrowIfNull(schema);
         ArgumentNullException.ThrowIfNull(queries);
+        ArgumentNullException.ThrowIfNull(labels);
 
         _schema = schema;
         _queries = queries;
+        _labels = labels;
     }
 
     /// <inheritdoc />
@@ -83,14 +87,26 @@ public sealed class DescribeCrmSchema : ICapability<DescribeFor, SchemaDescripti
         // if somebody remembers they are.
         var entities = new List<DescribedEntity>();
 
+        // One read for every label this tenant has set. A read per entity would be four round
+        // trips to build one screen, and the whole table is a handful of rows.
+        var labels = await _labels.LabelsAsync(ctx.TenantId, ct).ConfigureAwait(false);
+
         foreach (var kind in new[]
                  {
                      EntityKind.Lead, EntityKind.Account, EntityKind.Contact, EntityKind.Opportunity,
                  })
         {
             var fields = await _schema.FieldsForAsync(ctx.TenantId, kind, ct).ConfigureAwait(false);
+            var name = kind.ToString();
 
-            entities.Add(new DescribedEntity(kind.ToString(), Describe(fields, held)));
+            entities.Add(new DescribedEntity(
+                name,
+                Called(labels, name, LabelLimits.TheEntityItself, name),
+                [
+                    .. EntityColumns.Of(kind).Select(column => new DescribedColumn(
+                        column, Called(labels, name, column, column))),
+                ],
+                Describe(fields, held)));
         }
 
         return Result.Ok(new SchemaDescription(described, entities, CrmMigrator.TargetVersion));
@@ -104,7 +120,11 @@ public sealed class DescribeCrmSchema : ICapability<DescribeFor, SchemaDescripti
             .OrderBy(static field => field.Name, StringComparer.Ordinal)
             .Select(field => new DescribedField(
                 field.Name,
-                field.Name,
+
+                // The label an administrator typed, which has been stored since 0005 and read back
+                // by nothing: describe returned the identifier twice, so every client drew
+                // `floor_area` where somebody had written "Floor area".
+                field.Label,
                 field.Type.ToString(),
                 field.IsRequired,
                 field.IsComputed,
@@ -117,6 +137,13 @@ public sealed class DescribeCrmSchema : ICapability<DescribeFor, SchemaDescripti
                 field.Options ?? [],
                 field.References)),
     ];
+
+    private static string Called(
+        IReadOnlyDictionary<(string Kind, string Field), string> labels,
+        string kind,
+        string field,
+        string otherwise) =>
+        labels.TryGetValue((kind, field), out var label) ? label : otherwise;
 
     private static bool Allows(string? permission, HashSet<string> held) =>
         permission is not { Length: > 0 } || held.Contains(permission);

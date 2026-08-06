@@ -26,7 +26,7 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 
 ## What it is
 
-Thirty tables, thirty-four flows and three authorisation stances, over the entities a CRM actually
+Forty-one tables, forty-nine flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -62,6 +62,21 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Describe the schema | `POST /api/v1/crm/describe` | what a client renders from; permissions resolved, not reported as rules |
 | Sync what changed | `POST /api/v1/crm/custom/changes` | tombstones included, and a cursor that is not a clock |
 | Delete a record | `POST /api/v1/crm/custom/record-deletions` | leaves a tombstone, so an offline client learns it is gone |
+| Bulk import | `POST /api/v1/crm/bulk/imports` | queued; a bad row is reported by position and the rest still land |
+| Bulk export | `POST /api/v1/crm/bulk/exports` | redacted for who submitted it, never for who ran it |
+| Job status | `POST /api/v1/crm/bulk/jobs` | durable progress, so a resumed job continues rather than restarts |
+| Job sweep | `[CronTrigger("* * * * *")]` | one chunk per pass, with derived ids so a re-run writes no duplicates |
+| Build a report | `POST /api/v1/crm/reports` | a closed vocabulary, so the dimension is a bound value and not SQL |
+| Run a report | `POST /api/v1/crm/reports/runs` | `crm.read` — building one is administrative, reading it is not |
+| Build a dashboard | `POST /api/v1/crm/dashboards` | tiles name reports; deleting a report in use is refused |
+| Run a dashboard | `POST /api/v1/crm/dashboards/runs` | every tile in one request, not twelve round trips |
+| Rename anything | `POST /api/v1/crm/labels` | the label moves, the identifier never does |
+| Declare a period | `POST /api/v1/crm/planning/periods` | a quarter that sticks out of its year is refused |
+| Set the number | `POST /api/v1/crm/planning/strategies` | `crm.admin` — one per period, and the vision beside it |
+| Commit a plan | `POST /api/v1/crm/planning/plans` | account, deal or demand; each carries only what its kind needs |
+| Qualify a deal | `POST /api/v1/crm/planning/qualifications` | eight elements, answered or not — never a self-scored rating |
+| Agree a step | `POST /api/v1/crm/planning/steps` | the mutual action plan; an overdue step is the earliest signal |
+| Roll a period up | `POST /api/v1/crm/planning/roll-ups` | target, committed, and the gap — reported, never closed |
 
 ## The three tokens
 

@@ -79,6 +79,11 @@ public sealed class DefineCrmListView : ICapability<DefineListView, ListViewDefi
             }
         }
 
+        if (Layout(input.Layout, declared) is { } badLayout)
+        {
+            return Result.Fail<ListViewDefined>(badLayout);
+        }
+
         var id = await _queries
             .SaveViewAsync(ctx.TenantId, ctx.NewId(), input, ctx.UtcNow, ct)
             .ConfigureAwait(false);
@@ -86,6 +91,81 @@ public sealed class DefineCrmListView : ICapability<DefineListView, ListViewDefi
         return id is null
             ? Result.Fail<ListViewDefined>(CustomSchemaErrors.NameIsTaken(input.Name))
             : Result.Ok(new ListViewDefined(id.Value, input.Name));
+    }
+
+    /// <summary>What a shape has to have, and what it must not.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A setting for the wrong shape is refused, not ignored.</strong> A stored setting
+    /// nothing reads is a setting somebody changes, saves and watches do nothing — and the next
+    /// person spends an afternoon finding out why.
+    /// </para>
+    /// <para>
+    /// <strong>Every field a layout names is checked against the declarations</strong>, for the
+    /// same reason the filter's fields are: a board grouped by a field nobody declared is one
+    /// empty lane, every morning, and whoever built it would believe the answer.
+    /// </para>
+    /// </remarks>
+    private static Error? Layout(
+        ViewLayout? layout,
+        IReadOnlyDictionary<string, CustomFieldRow> declared)
+    {
+        if (layout is null)
+        {
+            return null;
+        }
+
+        var kanban = layout.Kind == ViewKind.Kanban;
+        var card = layout.Kind == ViewKind.Card;
+
+        if (kanban != (layout.GroupBy is not null))
+        {
+            return kanban
+                ? QueryErrors.KindNeedsItsSetting(layout.Kind, nameof(ViewLayout.GroupBy))
+                : QueryErrors.SettingIsNotOfKind(layout.Kind, nameof(ViewLayout.GroupBy));
+        }
+
+        if (card != (layout.TitleField is not null))
+        {
+            return card
+                ? QueryErrors.KindNeedsItsSetting(layout.Kind, nameof(ViewLayout.TitleField))
+                : QueryErrors.SettingIsNotOfKind(layout.Kind, nameof(ViewLayout.TitleField));
+        }
+
+        if (!card && layout.SubtitleField is not null)
+        {
+            return QueryErrors.SettingIsNotOfKind(layout.Kind, nameof(ViewLayout.SubtitleField));
+        }
+
+        if (!kanban && (layout.Lanes is { Count: > 0 } || layout.WipLimit is not null))
+        {
+            return QueryErrors.SettingIsNotOfKind(
+                layout.Kind,
+                layout.WipLimit is not null ? nameof(ViewLayout.WipLimit) : nameof(ViewLayout.Lanes));
+        }
+
+        if (layout.Kind != ViewKind.List && layout.Columns is { Count: > 0 })
+        {
+            return QueryErrors.SettingIsNotOfKind(layout.Kind, nameof(ViewLayout.Columns));
+        }
+
+        if (layout.WipLimit is { } limit and < 1)
+        {
+            return QueryErrors.WipLimitIsNotUsable(limit);
+        }
+
+        foreach (var field in (layout.Columns ?? [])
+                     .Append(layout.GroupBy)
+                     .Append(layout.TitleField)
+                     .Append(layout.SubtitleField))
+        {
+            if (field is { Length: > 0 } && !declared.ContainsKey(field))
+            {
+                return FieldPolicyErrors.RuleNamesNoField(field, declared.Keys);
+            }
+        }
+
+        return null;
     }
 }
 

@@ -58,6 +58,56 @@ public sealed record SearchResults(IReadOnlyList<SearchHit> Hits);
 
 // -------------------------------------------------------------------------------- what is asked
 
+/// <summary>How a saved view is drawn.</summary>
+/// <remarks>
+/// <strong>The view says, rather than each client deciding.</strong> A client that receives a
+/// query and nothing else has to choose between a table, a board and a stack of cards by itself —
+/// so the choice gets made once per client, differently, and the same saved view looks like three
+/// different features. Three shapes and no more: adding a fourth is a code change, which is what
+/// stops the settings screen from growing a layout engine.
+/// </remarks>
+public enum ViewKind
+{
+    /// <summary>A table. The default, and what every view saved before this meant.</summary>
+    List = 0,
+
+    /// <summary>A board of lanes, grouped by one field's value.</summary>
+    Kanban = 1,
+
+    /// <summary>A stack of cards, each showing a title and optionally a second line.</summary>
+    Card = 2,
+}
+
+/// <summary>How a view is drawn, and what that shape needs to know.</summary>
+/// <param name="Kind">Which shape.</param>
+/// <param name="GroupBy">
+/// <see cref="ViewKind.Kanban"/>: the field whose value is the lane. Required for a board — a
+/// board with nothing to group by cannot be drawn at all — and refused for the other two.
+/// </param>
+/// <param name="Lanes">
+/// <see cref="ViewKind.Kanban"/>: the order the lanes appear in. Empty means whatever order the
+/// values come back in, which is fine for a board of two and unreadable for a board of nine.
+/// </param>
+/// <param name="WipLimit">
+/// <see cref="ViewKind.Kanban"/>: what counts as too many cards in one lane, or null for no limit.
+/// Reported, never enforced: a limit that refused a write would make a layout setting a business
+/// rule, and the person who set it was arranging a screen.
+/// </param>
+/// <param name="TitleField"><see cref="ViewKind.Card"/>: the card's first line. Required.</param>
+/// <param name="SubtitleField"><see cref="ViewKind.Card"/>: its second line, or null.</param>
+/// <param name="Columns">
+/// <see cref="ViewKind.List"/>: which fields are columns, in order. Empty means every declared
+/// field, which is what a view saved before this meant and still means.
+/// </param>
+public sealed record ViewLayout(
+    ViewKind Kind,
+    string? GroupBy = null,
+    IReadOnlyList<string>? Lanes = null,
+    int? WipLimit = null,
+    string? TitleField = null,
+    string? SubtitleField = null,
+    IReadOnlyList<string>? Columns = null);
+
 /// <summary>Saves a named query over a custom object.</summary>
 /// <param name="Target">Which object.</param>
 /// <param name="Name">The identifier a caller asks for. Lower case, snake case.</param>
@@ -65,13 +115,15 @@ public sealed record SearchResults(IReadOnlyList<SearchHit> Hits);
 /// <param name="Filter">Which records, or null for all of them.</param>
 /// <param name="Order">How to sort, or null for insertion order.</param>
 /// <param name="Limit">How many rows at most.</param>
+/// <param name="Layout">How it is drawn, or null for a plain table of every field.</param>
 public sealed record DefineListView(
     Guid Target,
     string Name,
     string Label,
     RecordFilter? Filter,
     RecordOrder? Order,
-    int Limit);
+    int Limit,
+    ViewLayout? Layout = null);
 
 /// <summary>The view that was saved.</summary>
 /// <param name="ViewId">Its id.</param>
@@ -136,6 +188,39 @@ public sealed record RecordPage(
 /// <summary>Refusals the query surface can produce.</summary>
 public static class QueryErrors
 {
+    /// <summary>A layout setting was given for a shape that has no use for it.</summary>
+    /// <param name="kind">Which shape.</param>
+    /// <param name="setting">What was set.</param>
+    /// <returns>The refusal.</returns>
+    /// <remarks>
+    /// Refused rather than ignored. A stored setting nothing reads is a setting somebody changes,
+    /// saves and watches do nothing — and the next person spends an afternoon on it.
+    /// </remarks>
+    public static Error SettingIsNotOfKind(ViewKind kind, string setting) =>
+        new(
+            "crm.view_setting_not_of_kind",
+            $"A {kind} view has no '{setting}'.",
+            ErrorCategory.Validation);
+
+    /// <summary>A shape was saved without what it cannot be drawn without.</summary>
+    /// <param name="kind">Which shape.</param>
+    /// <param name="setting">What is missing.</param>
+    /// <returns>The refusal.</returns>
+    public static Error KindNeedsItsSetting(ViewKind kind, string setting) =>
+        new(
+            "crm.view_setting_missing",
+            $"A {kind} view cannot be drawn without '{setting}'.",
+            ErrorCategory.Validation);
+
+    /// <summary>The work-in-progress limit was zero or negative.</summary>
+    /// <param name="limit">What was asked for.</param>
+    /// <returns>The refusal.</returns>
+    public static Error WipLimitIsNotUsable(int limit) =>
+        new(
+            "crm.view_wip_limit_not_usable",
+            $"A lane limit is at least one, and {limit} was set. Leave it out for no limit.",
+            ErrorCategory.Validation);
+
     /// <summary>The request named a saved view and an object, or neither.</summary>
     public static Error AskForOneOrTheOther() =>
         new(

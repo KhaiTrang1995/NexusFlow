@@ -106,7 +106,10 @@ public sealed class DefineCustomField : ICapability<DefineField, FieldDefined>
 
         // A picklist with no values accepts nothing, so declaring one is a mistake worth naming
         // rather than a field somebody discovers is unusable on the first write.
-        if (input.Type == CustomFieldType.Picklist && input.Options is not { Count: > 0 })
+        // Both closed types, and both useless without their set: a multi-select with no options
+        // is a form control with nothing in it.
+        if (input.Type is CustomFieldType.Picklist or CustomFieldType.MultiPicklist
+            && input.Options is not { Count: > 0 })
         {
             return Result.Fail<FieldDefined>(CustomSchemaErrors.PicklistHasNoOptions(input.Name));
         }
@@ -250,80 +253,18 @@ public sealed class CreateCustomRecord : ICapability<WriteObjectRecord, RecordCr
             .FieldsForAsync(ctx.TenantId, input.Target, ct)
             .ConfigureAwait(false);
 
-        // A whole record, so a required field with no value is a fault. Reported one at a time:
-        // the first is what the caller has to fix, and a list of every fault would still be
-        // read top-down.
-        if (CustomValues.Validate(declared, input.Values, requireComplete: true) is { Count: > 0 } faults)
-        {
-            return Result.Fail<RecordCreated>(faults[0]);
-        }
-
-        // The half Validate cannot answer: whether a reference points at a record this tenant
-        // has, of the object the field names. It needs a read, and putting one behind a pure
-        // function would make the whole of it depend on when it was asked.
-        if (await CustomReferences
-                .UnresolvableAsync(_store, declared, input.Values, ctx, ct)
-                .ConfigureAwait(false) is { } dangling)
-        {
-            return Result.Fail<RecordCreated>(dangling);
-        }
-
-        // Field-level security before the rules, because "you may not write this" is a better
-        // answer than "what you wrote is wrong" to somebody who was never allowed to write it.
-        if (CustomFieldPolicy.FirstComputedField(declared, input.Values) is { } computed)
-        {
-            return Result.Fail<RecordCreated>(computed);
-        }
-
-        if (CustomFieldPolicy.FirstForbiddenField(declared, input.Values, input.Scopes) is { } forbidden)
-        {
-            return Result.Fail<RecordCreated>(forbidden);
-        }
-
-        // Computed before the rules and after the type check, which is the only order that works:
-        // a formula reads values that have been checked, and a rule must be able to refuse what a
-        // formula produced — an administrator who guards on a total wants the total that will be
-        // stored, not the one before it existed.
-        var formulas = await _formulas
-            .FormulasForAsync(ctx.TenantId, input.Target, ct)
-            .ConfigureAwait(false);
-
-        var written = Formulas.Apply(formulas, input.Values);
-
-        var rules = await _policy.RulesForAsync(ctx.TenantId, input.Target, ct).ConfigureAwait(false);
-
-        if (CustomFieldPolicy.FirstViolation(rules, written) is { } refused)
-        {
-            return Result.Fail<RecordCreated>(refused);
-        }
-
         var id = ctx.NewId();
 
-        // Claimed before the record is written, because the other order lets two writers both see
-        // a free value. A claim left behind by a failed write refuses a later writer, which is the
-        // safe direction — hence the release below rather than nothing.
-        if (await _policy.ClaimAsync(ctx.TenantId, id, declared, written, ct).ConfigureAwait(false)
-            is { } taken)
+        // Minted here rather than derived, because a request that arrives twice is two records
+        // unless the caller said otherwise with an idempotency key. The bulk import derives its
+        // ids instead, for the opposite reason.
+        if (await RecordWriter
+                .WriteAsync(
+                    _store, _policy, _formulas, id, input.Target,
+                    declared, input.Values, input.Scopes, ctx, ct)
+                .ConfigureAwait(false) is { } refused)
         {
-            await _policy.ReleaseAsync(ctx.TenantId, id, ct).ConfigureAwait(false);
-
-            return Result.Fail<RecordCreated>(
-                FieldPolicyErrors.ValueIsNotUnique(taken, written[taken]!));
-        }
-
-        try
-        {
-            await _store
-                .WriteRecordAsync(
-                    ctx.TenantId, id, input.Target, CustomValues.ToJson(declared, written),
-                    ctx.UtcNow, ct)
-                .ConfigureAwait(false);
-        }
-        catch
-        {
-            await _policy.ReleaseAsync(ctx.TenantId, id, ct).ConfigureAwait(false);
-
-            throw;
+            return Result.Fail<RecordCreated>(refused);
         }
 
         return Result.Ok(new RecordCreated(id));
