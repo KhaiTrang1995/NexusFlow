@@ -1,0 +1,50 @@
+.lines {
+  width: 100%;
+}
+
+.totals {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px 24px;
+  padding: 14px 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+.totalLabel {
+  color: var(--color-neutral-700);
+}
+
+.grand {
+  font-family: var(--font-heading);
+  font-size: 22px;
+  border-top: 1px solid var(--color-divider);
+  padding-top: 9px;
+}
+
+.grandLabel {
+  border-top: 1px solid var(--color-divider);
+  padding-top: 9px;
+}
+
+.warn {
+  margin: 0 17px 14px;
+  padding: 11px 13px;
+  border: 1px solid var(--color-warning);
+  border-radius: 9px;
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  font-size: 14px;
+}
+
+.discountInput {
+  width: 96px;
+}
+
+.lineInput {
+  width: 100%;
+}
+
+.sub {
+  font-size: 13px;
+  color: var(--color-neutral-600);
+}

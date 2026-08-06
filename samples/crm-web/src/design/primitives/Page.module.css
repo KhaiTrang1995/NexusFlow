@@ -1,0 +1,139 @@
+.page {
+  padding: 21px 23.5px 36.5px;
+}
+
+.full {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+}
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  gap: 15.5px;
+  margin-bottom: 17px;
+}
+
+.headerBar {
+  flex: none;
+  padding: 15.5px 21px 11.5px;
+  border-bottom: 1px solid var(--color-divider);
+  margin-bottom: 0;
+}
+
+.eyebrow {
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-neutral-600);
+}
+
+.title {
+  font-family: var(--font-heading);
+  font-size: 30px;
+  line-height: 1.12;
+  letter-spacing: -0.022em;
+}
+
+.titleSmall {
+  font-size: 24px;
+}
+
+.actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.filterBar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 11px 15px;
+  border: 1px solid var(--color-neutral-400);
+  border-radius: 10px;
+  background: var(--color-surface);
+  margin-bottom: 14.5px;
+}
+
+.filterGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filterLabel {
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-neutral-600);
+}
+
+.filterOptions {
+  display: flex;
+  gap: 6px;
+}
+
+.filterEnd {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: 13px;
+  color: var(--color-neutral-700);
+}
+
+.chip {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--color-neutral-400);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  font-size: 13px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.chip:hover {
+  background: var(--color-neutral-200);
+}
+
+.chip[aria-pressed='true'] {
+  background: var(--color-accent-700);
+  border-color: var(--color-accent-700);
+  color: var(--color-neutral-100);
+}
+
+.columns {
+  display: grid;
+  gap: var(--section-gap);
+  margin-bottom: 14.5px;
+}
+
+.split {
+  grid-template-columns: 1.55fr 1fr;
+}
+
+.halves {
+  grid-template-columns: 1fr 1fr;
+}
+
+.thirds {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.wide {
+  grid-template-columns: 1fr 1.25fr;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--section-gap);
+}

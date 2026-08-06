@@ -1,0 +1,47 @@
+.meter {
+  height: 11.5px;
+  border: 1px solid var(--color-divider);
+  border-radius: 3px;
+  background: var(--color-neutral-200);
+  overflow: hidden;
+}
+
+.thin {
+  height: 5px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--color-neutral-300);
+}
+
+.fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-accent);
+  transition: width 0.24s ease;
+}
+
+.positive {
+  background: var(--color-positive);
+}
+
+.warning {
+  background: var(--color-warning);
+}
+
+.critical {
+  background: var(--color-critical);
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14.5px;
+  margin-bottom: 3.5px;
+}
+
+.rowValue {
+  font-family: var(--font-heading);
+  color: var(--color-neutral-700);
+}

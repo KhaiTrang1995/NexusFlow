@@ -1,0 +1,237 @@
+.sub {
+  font-size: 13px;
+  color: var(--color-neutral-600);
+}
+
+.link {
+  color: var(--color-accent-700);
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.tiles {
+  display: grid;
+  gap: var(--section-gap);
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.tileTitle {
+  font-family: var(--font-heading);
+  font-size: 17px;
+}
+
+.objectStrip {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 11px 17px;
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-neutral-100);
+}
+
+.layoutSection {
+  border: 1px dashed var(--color-neutral-400);
+  border-radius: 10px;
+  padding: 11px 13px;
+  margin-bottom: 12px;
+  background: var(--color-neutral-200);
+}
+
+.layoutTitle {
+  font-family: var(--font-heading);
+  font-size: 15px;
+  margin-bottom: 9px;
+}
+
+.layoutFields {
+  display: grid;
+  gap: 8px;
+}
+
+.layoutField {
+  border: 1px solid var(--color-neutral-400);
+  border-radius: 8px;
+  background: var(--color-surface);
+  padding: 7px 10px;
+  font-size: 14px;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 13px 17px;
+}
+
+.paletteChip {
+  border: 1px dashed var(--color-neutral-400);
+  border-radius: 8px;
+  background: var(--color-neutral-100);
+  padding: 5px 10px;
+  font-size: 13px;
+  cursor: grab;
+}
+
+.stageRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 17px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.stageHandle {
+  cursor: grab;
+  color: var(--color-neutral-500);
+}
+
+.stageName {
+  flex: 1;
+  min-width: 0;
+}
+
+.schema {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  padding: 17px;
+}
+
+.entity {
+  border: 1px solid var(--color-neutral-400);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.entityHead {
+  padding: 8px 11px;
+  background: var(--color-accent-100);
+  color: var(--color-accent-900);
+  font-family: var(--font-heading);
+  font-size: 15px;
+  border-bottom: 1px solid var(--color-accent-300);
+}
+
+.entityField {
+  display: flex;
+  gap: 8px;
+  padding: 4px 11px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.entityType {
+  margin-left: auto;
+  color: var(--color-neutral-600);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.matrix th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-neutral-200);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-neutral-600);
+}
+
+.matrix td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--color-divider);
+  text-align: center;
+}
+
+.matrix td:first-child {
+  text-align: left;
+}
+
+.flowRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 17px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.flowStep {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--color-neutral-400);
+  border-radius: var(--radius-pill);
+  font-size: 12.5px;
+  background: var(--color-surface);
+  white-space: nowrap;
+}
+
+.arrow {
+  color: var(--color-accent);
+}
+
+.wizard {
+  display: flex;
+  gap: 0;
+  padding: 0 17px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.wizardStep {
+  flex: 1;
+  padding: 12px 10px;
+  border-bottom: 3px solid transparent;
+  text-align: center;
+  cursor: pointer;
+  background: transparent;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  font: inherit;
+  color: var(--color-neutral-700);
+}
+
+.wizardStep[aria-current='step'] {
+  border-bottom-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.wizardDone {
+  color: var(--color-positive);
+}
+
+.qualityBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 17px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.qualityName {
+  width: 220px;
+  flex: none;
+}
+
+.qualityMeter {
+  flex: 1;
+}

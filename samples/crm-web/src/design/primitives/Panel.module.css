@@ -1,0 +1,70 @@
+/*
+ * The "blueprint" card the handoff uses for every framed region: hairline border, soft radius,
+ * a faint shadow, and registration corners the Apple layer switches off. Kept as one component
+ * because the prototype draws it thirty-odd times and a card that is 12px on one screen and 10px
+ * on another is a card nobody chose.
+ */
+.panel {
+  position: relative;
+  border: 1px solid var(--color-neutral-400);
+  border-radius: 12px;
+  background: var(--color-surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+}
+
+.flush {
+  padding: 0;
+}
+
+.padded {
+  padding: 15.5px 17px 18px;
+}
+
+.tight {
+  padding: 14.5px 15.5px 15.5px;
+}
+
+.interactive {
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.interactive:hover {
+  border-color: var(--color-accent-400);
+  box-shadow: var(--shadow-sm);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 11.5px;
+  padding: 14.5px 17px 11.5px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.headTitle {
+  font-family: var(--font-heading);
+  font-size: 19px;
+  letter-spacing: -0.012em;
+}
+
+.headNote {
+  font-size: 13px;
+  color: var(--color-neutral-600);
+}
+
+.headActions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.body {
+  padding: 14px 17px 16px;
+}

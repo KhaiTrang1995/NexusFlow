@@ -1,0 +1,118 @@
+/*
+ * The design system's token contract, as the handoff defines it.
+ *
+ * TWO LAYERS, ON PURPOSE. The Industry system supplies the contract — the names, the ramp
+ * structure, the spacing scale. The Apple layer supplies the values. The handoff does exactly
+ * this, and keeping the split means a re-theme touches values here and nothing anywhere else:
+ * no component in this application names a colour that is not a token.
+ *
+ * The ramps are one shared lightness scale, so step 400 of any role sits at the same visual
+ * value as step 400 of every other. That is what makes a border and a fill picked from different
+ * ramps look deliberate rather than accidental.
+ */
+
+:root {
+  /* — ground — */
+  --color-bg: #f5f5f7;
+  --color-surface: #ffffff;
+  --color-text: #1d1d1f;
+  --color-divider: #e2e2e7;
+
+  /* — neutral ramp — */
+  --color-neutral-100: #ffffff;
+  --color-neutral-200: #f5f5f7;
+  --color-neutral-300: #ebebef;
+  --color-neutral-400: #d2d2d7;
+  --color-neutral-500: #b0b0b6;
+  --color-neutral-600: #86868b;
+  --color-neutral-700: #6e6e73;
+  --color-neutral-800: #424245;
+  --color-neutral-900: #1d1d1f;
+
+  /* — accent ramp — */
+  --color-accent: #0071e3;
+  --color-accent-2: #0071e3;
+  --color-accent-100: #f0f7ff;
+  --color-accent-200: #dceeff;
+  --color-accent-300: #b6dcff;
+  --color-accent-400: #7cbdfb;
+  --color-accent-500: #2b93f0;
+  --color-accent-600: #0071e3;
+  --color-accent-700: #0058b8;
+  --color-accent-800: #00408a;
+  --color-accent-900: #002a5c;
+  --color-accent-2-100: #f0f7ff;
+  --color-accent-2-200: #dceeff;
+  --color-accent-2-700: #0058b8;
+  --color-accent-2-900: #002a5c;
+
+  /*
+   * — status —
+   *
+   * Not in the handoff's token block, which spells these as literals at each use. Named here
+   * because "late" and "at risk" appear on eleven screens, and eleven literals is eleven places
+   * for one of them to drift. The values are the ones the prototype uses.
+   */
+  --color-positive: #1d7a4c;
+  --color-warning: #9a6700;
+  --color-critical: #b3261e;
+  --color-positive-bg: #eaf6ef;
+  --color-warning-bg: #fdf6e3;
+  --color-critical-bg: #fdecea;
+
+  /* — type — */
+  --font-heading: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Helvetica,
+    Arial, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial,
+    sans-serif;
+  --font-mono: ui-monospace, Menlo, Monaco, 'Cascadia Mono', monospace;
+  --font-heading-weight: 600;
+
+  /* — space — */
+  --space-1: 3.4px;
+  --space-2: 6.8px;
+  --space-3: 10.2px;
+  --space-4: 13.6px;
+  --space-6: 20.4px;
+  --space-8: 27.2px;
+
+  /* — geometry — */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* — elevation — */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.09);
+  --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.14);
+
+  /* — chrome — */
+  --shell-topbar-h: 57.5px;
+  --shell-rail-w: 72px;
+  --shell-tabs-h: 42.5px;
+}
+
+/*
+ * Density. The handoff exposes it as a prototype prop with three settings; here it is a data
+ * attribute on the root so a table row's height is a token rather than a prop threaded through
+ * every table in the application.
+ */
+:root,
+:root[data-density='dense'] {
+  --row-h: 34px;
+  --row-pad-y: 6px;
+  --section-gap: 15.5px;
+}
+
+:root[data-density='cozy'] {
+  --row-h: 40px;
+  --row-pad-y: 9px;
+  --section-gap: 18px;
+}
+
+:root[data-density='airy'] {
+  --row-h: 48px;
+  --row-pad-y: 13px;
+  --section-gap: 22px;
+}
