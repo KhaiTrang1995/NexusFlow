@@ -26,7 +26,7 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 
 ## What it is
 
-Forty-one tables, forty-nine flows and three authorisation stances, over the entities a CRM actually
+Forty-seven tables, fifty-six flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -76,7 +76,14 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Commit a plan | `POST /api/v1/crm/planning/plans` | account, deal or demand; each carries only what its kind needs |
 | Qualify a deal | `POST /api/v1/crm/planning/qualifications` | eight elements, answered or not — never a self-scored rating |
 | Agree a step | `POST /api/v1/crm/planning/steps` | the mutual action plan; an overdue step is the earliest signal |
-| Roll a period up | `POST /api/v1/crm/planning/roll-ups` | target, committed, and the gap — reported, never closed |
+| Roll a period up | `POST /api/v1/crm/planning/roll-ups` | target, committed, and the gap — scoped by who is asking |
+| Place somebody | `POST /api/v1/crm/org/members` | the reporting line; a placement that would loop it is refused |
+| Set an objective | `POST /api/v1/crm/planning/objectives` | what an account plan is for, beyond a number |
+| Map a stakeholder | `POST /api/v1/crm/planning/stakeholders` | who has not agreed yet, which is what loses B2B deals |
+| Raise a risk | `POST /api/v1/crm/planning/risks` | closed ones stay on the register as evidence |
+| Declare a KPI | `POST /api/v1/crm/kpis` | a source, a target and a direction — never a stored figure |
+| Read the scorecard | `POST /api/v1/crm/kpis/scorecards` | computed live, off-track first |
+| Review a KPI | `POST /api/v1/crm/kpis/reviews` | a minute of a meeting, so this one *does* keep the number |
 
 ## The three tokens
 

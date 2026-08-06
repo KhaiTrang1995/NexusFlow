@@ -32,6 +32,10 @@ public sealed class PlanningApiTests
     private const string Qualifications = "/api/v1/crm/planning/qualifications";
     private const string Steps = "/api/v1/crm/planning/steps";
     private const string RollUps = "/api/v1/crm/planning/roll-ups";
+    private const string Members = "/api/v1/crm/org/members";
+
+    /// <summary>The subject the representative token carries.</summary>
+    private const string Rep = "rep-northwind-1";
 
     private static CancellationToken Cancellation => TestContext.Current.CancellationToken;
 
@@ -326,7 +330,7 @@ public sealed class PlanningApiTests
         DateOnly.FromDateTime(DateTime.UtcNow.AddDays(offset));
 
     private static DefinePlan AccountPlan(string name, Guid account, decimal target) =>
-        new(PlanKind.Account, "fy26", name, name, Guid.Empty,
+        new(PlanKind.Account, "fy26", name, name, Rep,
             Account: account, TargetAmount: target, Currency: "EUR");
 
     private static async Task<PeriodRollUp> RollUpAsync(CrmApplication app, string period)
@@ -363,7 +367,7 @@ public sealed class PlanningApiTests
     }
 
     private static async Task StepAsync(
-        CrmApplication app, string plan, int ordinal, string what, Guid owner,
+        CrmApplication app, string plan, int ordinal, string what, string owner,
         DateOnly due, bool complete)
     {
         (await app.PostAsync(
@@ -393,7 +397,16 @@ public sealed class PlanningApiTests
             Cancellation,
             ("id", (object?)account));
 
-        return new World(account, contact, stage, Guid.NewGuid());
+        // The roll-up is scoped by who is asking, so the caller has to exist in the organisation.
+        // A director here, so these tests are about the arithmetic rather than about the scope —
+        // ManagementApiTests is where the scope is asserted.
+        (await app.PostAsync(
+            Members,
+            new SetOrgMember(Rep, "Ada Rowe", OrgRole.Director, null),
+            CrmTokens.NorthwindManager))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        return new World(account, contact, stage, Rep);
     }
 
     private static async Task<Guid> OpportunityAsync(
@@ -417,7 +430,7 @@ public sealed class PlanningApiTests
             ("contact", world.Contact),
             ("amount", amount),
             ("stage", world.Stage),
-            ("owner", world.Owner),
+            ("owner", Guid.NewGuid()),
             ("outcome", outcome));
 
         return id;
@@ -445,5 +458,5 @@ public sealed class PlanningApiTests
         return JsonDocument.Parse(body).RootElement.Clone();
     }
 
-    private sealed record World(Guid Account, Guid Contact, Guid Stage, Guid Owner);
+    private sealed record World(Guid Account, Guid Contact, Guid Stage, string Owner);
 }

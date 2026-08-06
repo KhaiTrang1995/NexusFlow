@@ -100,7 +100,8 @@ public sealed partial class RollUpFlow : Flow<ReadRollUp, PeriodRollUp>
         ArgumentNullException.ThrowIfNull(flow);
 
         flow
-            .Step<ReadPeriodRollUp>()
+            .Step<ReadPeriodRollUp, ForViewer>(
+                ctx => new ForViewer(ctx.Input.Period, Caller.Subject(ctx.Principal)))
             .Return(ctx => ctx.Get<PeriodRollUp>());
     }
 }

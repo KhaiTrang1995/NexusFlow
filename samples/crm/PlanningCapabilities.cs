@@ -332,23 +332,27 @@ public sealed class SetCrmPlanStep : ICapability<SetPlanStep, PlanStepSet>
 [Capability("crm.planning.rollup", Version = "1.0.0",
     Authorization = Authorization.Permission, Permission = "crm.read",
     Idempotent = true)]
-public sealed class ReadPeriodRollUp : ICapability<ReadRollUp, PeriodRollUp>
+public sealed class ReadPeriodRollUp : ICapability<ForViewer, PeriodRollUp>
 {
     private readonly PlanningStore _planning;
+    private readonly ManagementStore _org;
 
     /// <summary>Creates the capability.</summary>
     /// <param name="planning">Reads the plans and the live actuals.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="planning"/> is null.</exception>
-    public ReadPeriodRollUp(PlanningStore planning)
+    /// <param name="org">Says whose plans this caller sees.</param>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    public ReadPeriodRollUp(PlanningStore planning, ManagementStore org)
     {
         ArgumentNullException.ThrowIfNull(planning);
+        ArgumentNullException.ThrowIfNull(org);
 
         _planning = planning;
+        _org = org;
     }
 
     /// <inheritdoc />
     public async ValueTask<Result<PeriodRollUp>> ExecuteAsync(
-        ReadRollUp input,
+        ForViewer input,
         CapabilityContext ctx,
         CancellationToken ct)
     {
@@ -361,8 +365,19 @@ public sealed class ReadPeriodRollUp : ICapability<ReadRollUp, PeriodRollUp>
             return Result.Fail<PeriodRollUp>(PlanningErrors.PeriodNotFound(input.Period));
         }
 
+        // Whose plans are in the total. Refused when the caller has not been placed, rather than
+        // defaulted to their own: a director whose row was never written would otherwise see one
+        // plan and conclude their organisation had stopped selling.
+        if (await _org.ScopeAsync(ctx.TenantId, input.UserId, ct).ConfigureAwait(false)
+            is not { } viewer)
+        {
+            return Result.Fail<PeriodRollUp>(ManagementErrors.CallerIsNotInTheOrganisation());
+        }
+
         var rollUp = await _planning
-            .RollUpAsync(ctx.TenantId, period, DateOnly.FromDateTime(ctx.UtcNow.UtcDateTime), ct)
+            .RollUpAsync(
+                ctx.TenantId, period, DateOnly.FromDateTime(ctx.UtcNow.UtcDateTime),
+                viewer.Scope, ct)
             .ConfigureAwait(false);
 
         return rollUp is { } found

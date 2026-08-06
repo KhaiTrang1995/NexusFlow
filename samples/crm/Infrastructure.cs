@@ -180,6 +180,25 @@ namespace Crm;
 [JsonSerializable(typeof(OpportunityReadiness))]
 [JsonSerializable(typeof(LeadAttainment))]
 [JsonSerializable(typeof(PeriodRollUp))]
+[JsonSerializable(typeof(ForViewer))]
+
+// The reporting line, the depth an account plan actually has, and the numbers reviewed.
+[JsonSerializable(typeof(SetOrgMember))]
+[JsonSerializable(typeof(OrgMemberSet))]
+[JsonSerializable(typeof(SetObjective))]
+[JsonSerializable(typeof(ObjectiveSet))]
+[JsonSerializable(typeof(SetStakeholder))]
+[JsonSerializable(typeof(StakeholderSet))]
+[JsonSerializable(typeof(SetRisk))]
+[JsonSerializable(typeof(RiskSet))]
+[JsonSerializable(typeof(DefineKpi))]
+[JsonSerializable(typeof(KpiDefined))]
+[JsonSerializable(typeof(ReviewKpi))]
+[JsonSerializable(typeof(ForReview))]
+[JsonSerializable(typeof(KpiReviewed))]
+[JsonSerializable(typeof(ReadScorecard))]
+[JsonSerializable(typeof(KpiResult))]
+[JsonSerializable(typeof(Scorecard))]
 
 // The connector registry, its queue and what goes on the wire.
 [JsonSerializable(typeof(DefineConnector))]

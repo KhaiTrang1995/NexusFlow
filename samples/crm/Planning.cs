@@ -94,7 +94,11 @@ public sealed record StrategySet(Guid StrategyId);
 /// <param name="Period">Which period.</param>
 /// <param name="Name">What to ask for it by.</param>
 /// <param name="Label">What to show a person.</param>
-/// <param name="Owner">Who is committing.</param>
+/// <param name="Owner">
+/// Who is committing, as their subject claim. <strong>Text and not a uuid:</strong> the only
+/// identity this system has for a person is the subject their token carries, so a uuid owner is a
+/// field that resolves to nobody.
+/// </param>
 /// <param name="Account"><see cref="PlanKind.Account"/>: which account.</param>
 /// <param name="Opportunity"><see cref="PlanKind.Opportunity"/>: which deal.</param>
 /// <param name="Channel">
@@ -113,7 +117,7 @@ public sealed record DefinePlan(
     string Period,
     string Name,
     string Label,
-    Guid Owner,
+    string Owner,
     Guid? Account = null,
     Guid? Opportunity = null,
     string? Channel = null,
@@ -146,14 +150,14 @@ public sealed record QualificationRecorded(int Answered, int OutOf);
 /// <param name="Plan">Which plan.</param>
 /// <param name="Ordinal">Where it sits in the sequence.</param>
 /// <param name="Description">What is to be done.</param>
-/// <param name="Owner">Who does it.</param>
+/// <param name="Owner">Who does it, as their subject claim.</param>
 /// <param name="DueOn">By when.</param>
 /// <param name="IsComplete">Whether it is done.</param>
 public sealed record SetPlanStep(
     string Plan,
     int Ordinal,
     string Description,
-    Guid Owner,
+    string Owner,
     DateOnly DueOn,
     bool IsComplete);
 
