@@ -23,8 +23,18 @@ namespace Crm;
 /// which would be in another branch, against another author, for a reason belonging to this
 /// one.
 /// </para>
+/// <para>
+/// <strong>Enums cross the wire as their names, not as their ordinals.</strong> The default
+/// writes <c>CasePriority.Urgent</c> as <c>3</c>, and the number is a promise this sample cannot
+/// keep: <c>CaseStatus</c> already gained <c>Escalated</c>, and had that member been inserted
+/// rather than appended, every stored and in-flight <c>3</c> would have quietly changed meaning.
+/// A name cannot be reordered. It also makes the generated OpenAPI document say what a caller may
+/// actually send, rather than an integer with no vocabulary attached.
+/// </para>
 /// </remarks>
-[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    UseStringEnumConverter = true)]
 [JsonSerializable(typeof(CaptureLead))]
 [JsonSerializable(typeof(LeadCaptured))]
 [JsonSerializable(typeof(LeadCreated))]

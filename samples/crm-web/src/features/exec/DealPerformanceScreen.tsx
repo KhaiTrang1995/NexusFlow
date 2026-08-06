@@ -12,7 +12,7 @@ import {
 } from '@/design/primitives'
 import { ShareBar, StackedBars } from '@/design/charts'
 import { useDealPerformance } from '@/api/queries/hooks'
-import { money, percent } from '@/lib/format'
+import { money, pct } from '@/lib/format'
 import { PERIODS, PERIOD_LABEL, usePeriod } from './period'
 import styles from './exec.module.css'
 
@@ -53,7 +53,7 @@ export function DealPerformanceScreen() {
                 value={data.won}
                 note={money(data.wonValue)}
                 direction="up"
-                delta={percent(data.winRate)}
+                delta={pct(data.winRate, 1)}
               />
               <StatTile label="Lost" value={data.lost} note={money(data.lostValue)} direction="down" />
               <StatTile
@@ -123,7 +123,7 @@ export function DealPerformanceScreen() {
                     />
                   </div>
                   <p className={styles.sub}>
-                    Win rate is {percent(data.winRate)} and is null rather than nought when nothing
+                    Win rate is {pct(data.winRate, 1)} and is null rather than nought when nothing
                     has been decided — a quarter with no closed deals has no win rate, and showing
                     0% would make it look like the worst one on record.
                   </p>

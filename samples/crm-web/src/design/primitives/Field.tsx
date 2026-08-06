@@ -10,6 +10,13 @@ import styles from './Field.module.css'
 
 interface FieldShellProps {
   label: string
+  /**
+   * Hides the label visually and keeps it for a screen reader.
+   *
+   * For a control in a table cell, where the column header already names it on screen. Removing
+   * the label outright would leave the input nameless to anybody not looking at the header.
+   */
+  hideLabel?: boolean | undefined
   /** Marked with an asterisk and passed to the control. */
   required?: boolean | undefined
   /** What the value is for. */
@@ -33,13 +40,16 @@ interface FieldShellProps {
  * invisible to a screen reader unless `aria-describedby` points at it, and an error message a
  * user cannot hear is an error message that stops them dead.
  */
-function FieldShell({ label, required = false, hint, error, className, children }: FieldShellProps) {
+function FieldShell({ label, hideLabel = false, required = false, hint, error, className, children }: FieldShellProps) {
   const id = useId()
   const describedBy = error ? `${id}-error` : hint ? `${id}-hint` : undefined
 
   return (
     <div className={cx(styles.field, className)}>
-      <label htmlFor={id} className={cx(styles.label, required && styles.required)}>
+      <label
+        htmlFor={id}
+        className={cx(hideLabel ? 'sr-only' : styles.label, required && styles.required)}
+      >
         {label}
       </label>
       {children({
@@ -65,16 +75,18 @@ function FieldShell({ label, required = false, hint, error, className, children 
 export interface TextFieldProps
   extends Omit<InputHTMLAttributes<HTMLInputElement>, 'id' | 'className' | 'required'> {
   label: string
+  hideLabel?: boolean | undefined
   required?: boolean | undefined
   hint?: string | undefined
   error?: string | undefined
   className?: string | undefined
 }
 
-export function TextField({ label, required, hint, error, className, ...rest }: TextFieldProps) {
+export function TextField({ label, hideLabel, required, hint, error, className, ...rest }: TextFieldProps) {
   return (
     <FieldShell
       label={label}
+      {...(hideLabel !== undefined ? { hideLabel } : {})}
       {...(required !== undefined ? { required } : {})}
       {...(hint !== undefined ? { hint } : {})}
       {...(error !== undefined ? { error } : {})}
@@ -88,6 +100,7 @@ export function TextField({ label, required, hint, error, className, ...rest }: 
 export interface TextAreaFieldProps
   extends Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'id' | 'className' | 'required'> {
   label: string
+  hideLabel?: boolean | undefined
   required?: boolean | undefined
   hint?: string | undefined
   error?: string | undefined
@@ -96,6 +109,7 @@ export interface TextAreaFieldProps
 
 export function TextAreaField({
   label,
+  hideLabel,
   required,
   hint,
   error,
@@ -105,6 +119,7 @@ export function TextAreaField({
   return (
     <FieldShell
       label={label}
+      {...(hideLabel !== undefined ? { hideLabel } : {})}
       {...(required !== undefined ? { required } : {})}
       {...(hint !== undefined ? { hint } : {})}
       {...(error !== undefined ? { error } : {})}
@@ -118,6 +133,7 @@ export function TextAreaField({
 export interface SelectFieldProps
   extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'id' | 'className' | 'required'> {
   label: string
+  hideLabel?: boolean | undefined
   required?: boolean | undefined
   hint?: string | undefined
   error?: string | undefined
@@ -129,6 +145,7 @@ export interface SelectFieldProps
 
 export function SelectField({
   label,
+  hideLabel,
   required,
   hint,
   error,
@@ -140,6 +157,7 @@ export function SelectField({
   return (
     <FieldShell
       label={label}
+      {...(hideLabel !== undefined ? { hideLabel } : {})}
       {...(required !== undefined ? { required } : {})}
       {...(hint !== undefined ? { hint } : {})}
       {...(error !== undefined ? { error } : {})}

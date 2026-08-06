@@ -146,6 +146,7 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
                 cell: (row) => (
                   <TextField
                     label="Product"
+                    hideLabel
                     className={styles.lineInput}
                     value={row.product}
                     onChange={(event) => patch(row.id, { product: event.target.value })}
@@ -159,6 +160,7 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
                 cell: (row) => (
                   <TextField
                     label="Quantity"
+                    hideLabel
                     type="number"
                     min={1}
                     className={styles.discountInput}
@@ -174,6 +176,7 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
                 cell: (row) => (
                   <TextField
                     label="Unit price"
+                    hideLabel
                     type="number"
                     min={0}
                     className={styles.discountInput}
@@ -189,6 +192,7 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
                 cell: (row) => (
                   <TextField
                     label="Discount"
+                    hideLabel
                     type="number"
                     min={0}
                     max={100}

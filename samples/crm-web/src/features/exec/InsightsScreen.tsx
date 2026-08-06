@@ -1,7 +1,7 @@
 import { AsyncBoundary, Columns, Page, PageHeader, Panel, PanelHeader, Tag } from '@/design/primitives'
 import { Sparkline } from '@/design/charts'
 import { useExecutiveBoard } from '@/api/queries/hooks'
-import { money, percent } from '@/lib/format'
+import { money, pct } from '@/lib/format'
 import { PERIOD_LABEL, usePeriod } from './period'
 import styles from './exec.module.css'
 
@@ -41,8 +41,8 @@ export function InsightsScreen() {
                   detail="A deal nobody has moved is not a deal going slowly. They are worth more attention than the ones losing on price."
                 />
                 <Insight
-                  tone={(data.deals.winRate ?? 0) < 0.5 ? 'warn' : 'ok'}
-                  title={`Win rate is ${percent(data.deals.winRate)}`}
+                  tone={(data.deals.winRate ?? 0) < 50 ? 'warn' : 'ok'}
+                  title={`Win rate is ${pct(data.deals.winRate, 1)}`}
                   detail={`${data.deals.won} won against ${data.deals.lost} lost, ${money(data.deals.wonValue)} of value.`}
                 />
                 <Insight

@@ -1,5 +1,7 @@
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using FlowX;
 using FlowX.Generated;
 using FlowX.Conformance.InMemory;
@@ -57,7 +59,19 @@ namespace Crm.Tests;
 /// </remarks>
 internal sealed class CrmApplication : IAsyncDisposable
 {
-    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
+    /// <summary>
+    /// How this test client reads and writes JSON.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The converter is here because the server has one.</strong> A test client is a
+    /// client, and one whose options quietly differ from the server's is a client that agrees with
+    /// nothing a real caller would see — it would keep passing while every browser in the world
+    /// got an enum it could not parse.
+    /// </remarks>
+    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() },
+    };
 
     private readonly IHost _host;
 
@@ -202,6 +216,30 @@ internal sealed class CrmApplication : IAsyncDisposable
                 "Idempotency-Key",
                 idempotencyKey.Length == 0 ? Guid.NewGuid().ToString("n") : idempotencyKey);
         }
+
+        return _host.GetTestClient().SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Posts a body this test wrote by hand.</summary>
+    /// <param name="route">Where.</param>
+    /// <param name="json">The body, verbatim.</param>
+    /// <param name="token">Who.</param>
+    /// <returns>What came back.</returns>
+    /// <remarks>
+    /// <strong>The only way to say anything about the wire format.</strong> <see cref="PostAsync"/>
+    /// serialises a C# record with the same options the server deserialises it with, so both ends
+    /// move together and no assertion made through it can notice that the JSON changed shape. A
+    /// client written in another language is represented only here.
+    /// </remarks>
+    public Task<HttpResponseMessage> PostRawAsync(string route, string json, string token)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, route)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
+
+        request.Headers.Add("Authorization", "Bearer " + token);
+        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("n"));
 
         return _host.GetTestClient().SendAsync(request, TestContext.Current.CancellationToken);
     }

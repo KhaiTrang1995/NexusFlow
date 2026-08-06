@@ -206,3 +206,16 @@ describe('DataTable', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
 })
+
+describe('TextField, label hidden', () => {
+  it('keeps the name for a screen reader when the column header carries it on screen', () => {
+    // A control in a table cell: the header names it visually, so repeating the label under every
+    // input is noise. Removing it outright would leave the input nameless to anybody not looking
+    // at the header, which is the trade this prop exists to refuse.
+    render(<TextField label="Quantity" hideLabel defaultValue="120" />)
+
+    const input = screen.getByRole('textbox', { name: 'Quantity' })
+    expect(input).toBeInTheDocument()
+    expect(screen.getByText('Quantity')).toHaveClass('sr-only')
+  })
+})

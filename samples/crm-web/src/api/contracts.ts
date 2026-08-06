@@ -1,6 +1,17 @@
 /**
  * The backend's contracts, in TypeScript.
  *
+ * READ THE UNIT BEFORE YOU FORMAT A RATE. This API expresses "a rate" two ways, and nothing but
+ * the C# doc comment says which is which:
+ *
+ * - **Percentage, 0–100** — `DealPerformance.winRate`, `SellerPerformance.attainment`,
+ *   `QuotaAttainment.attainment`, and every `KpiResult` figure. Format with `pct`.
+ * - **Fraction, 0–1** — `CampaignPerformance.responseRate` and `AttributedCredit.share`.
+ *   Format with `percent`.
+ *
+ * Getting it wrong is not a crash: it renders a win rate of 10,000% on a board, which is what it
+ * did before this note existed. Each field below carries its unit.
+ *
  * MIRRORED BY HAND, AND THAT IS A KNOWN COST. The C# records in `samples/crm` are the source of
  * truth; these are a transcription of them. The right fix is generation from the OpenAPI document
  * the backend already serves at `/openapi.json` — `plugins/FlowX.Http/OpenApi.cs` emits it — and
@@ -257,6 +268,7 @@ export interface CampaignPerformance {
   channel: string
   people: number
   responses: number
+  /** Responses over people, as a fraction 0–1. Null when it touched nobody. */
   responseRate: number | null
   influencedDeals: number
   attributedAmount: number
@@ -283,6 +295,7 @@ export interface AttributedCredit {
   campaignId: string
   campaign: string
   amount: number
+  /** What fraction of the deal this campaign was given, 0–1. */
   share: number
 }
 
@@ -308,6 +321,7 @@ export interface QuotaAttainment {
   quota: number
   committed: number
   actual: number
+  /** Actual over quota, as a percentage 0–100. Null when they carry no number. */
   attainment: number | null
   /**
    * Quota less committed. A different number from the gap on a roll-up: a quota is assigned
@@ -411,6 +425,7 @@ export interface SellerPerformance {
   committed: number
   openPipeline: number
   won: number
+  /** Won over committed, as a percentage 0–100. Null when they committed nothing. */
   attainment: number | null
 }
 
@@ -427,6 +442,7 @@ export interface DealPerformance {
   wonValue: number
   lost: number
   lostValue: number
+  /** A percentage, 0–100. Null when nothing was decided. Format with `pct`. */
   winRate: number | null
   averageWonValue: number | null
   /** Open deals that have not changed stage in sixty days. */

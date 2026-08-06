@@ -10,17 +10,24 @@ import { useState } from 'react'
  * numbers under the new heading.
  */
 
-export const PERIODS = ['fy26-q3', 'fy26-q2', 'fy26-q1'] as const
+/**
+ * The period names, as the backend will accept them.
+ *
+ * UNDERSCORES AND NOT HYPHENS. Every name in this API is checked against
+ * `^[a-z][a-z0-9_]{0,62}$`, so a period called `fy26-q3` is one that can never be declared — and
+ * a client that asked for it would get a not-found for a period the reader can see on the screen.
+ */
+export const PERIODS = ['fy26_q3', 'fy26_q2', 'fy26_q1'] as const
 
 export type Period = (typeof PERIODS)[number]
 
 export const PERIOD_LABEL: Readonly<Record<Period, string>> = {
-  'fy26-q3': 'Q3 FY26',
-  'fy26-q2': 'Q2 FY26',
-  'fy26-q1': 'Q1 FY26',
+  'fy26_q3': 'Q3 FY26',
+  'fy26_q2': 'Q2 FY26',
+  'fy26_q1': 'Q1 FY26',
 }
 
 export function usePeriod(): [Period, (period: Period) => void] {
-  const [period, setPeriod] = useState<Period>('fy26-q3')
+  const [period, setPeriod] = useState<Period>('fy26_q3')
   return [period, setPeriod]
 }

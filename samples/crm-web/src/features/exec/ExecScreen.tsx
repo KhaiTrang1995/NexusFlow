@@ -15,7 +15,7 @@ import {
 } from '@/design/primitives'
 import { Funnel, ShareBar } from '@/design/charts'
 import { useExecutiveBoard } from '@/api/queries/hooks'
-import { money, percent } from '@/lib/format'
+import { money, pct, percent } from '@/lib/format'
 import { PERIODS, PERIOD_LABEL, usePeriod } from './period'
 import styles from './exec.module.css'
 
@@ -79,7 +79,7 @@ export function ExecScreen() {
                 />
                 <StatTile
                   label="Win rate"
-                  value={percent(data.deals.winRate)}
+                  value={pct(data.deals.winRate, 1)}
                   note={`${data.deals.won} won · ${data.deals.lost} lost`}
                   onActivate={() => void navigate({ to: '/exec/deal-performance' })}
                   drillLabel="deal performance"

@@ -98,3 +98,28 @@ describe('count', () => {
     expect(count(null)).toBe('—')
   })
 })
+
+/**
+ * The two units this API uses for a rate, and why they cannot share a formatter.
+ *
+ * FOUND BY LOOKING AT THE SCREEN, NOT BY A TYPE. `winRate` and `responseRate` are both
+ * `number | null` and both mean "a rate"; one is 0–100 and the other is 0–1. Passing the first to
+ * `percent` renders a win rate of 10,000% on a board, which is exactly what it did. The compiler
+ * cannot see it, so these are here.
+ */
+describe('the two rate units', () => {
+  it('pct is for the 0-100 fields: winRate, attainment, every KPI figure', () => {
+    expect(pct(58.3, 1)).toBe('58.3%')
+    expect(pct(100)).toBe('100%')
+  })
+
+  it('percent is for the 0-1 fields: responseRate and an attributed share', () => {
+    expect(percent(0.583, 1)).toBe('58.3%')
+    expect(percent(1)).toBe('100%')
+  })
+
+  it('and the wrong one is off by two orders of magnitude', () => {
+    expect(percent(100)).toBe('10000%')
+    expect(pct(1)).toBe('1%')
+  })
+})

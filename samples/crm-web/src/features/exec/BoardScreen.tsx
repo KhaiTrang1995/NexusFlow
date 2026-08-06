@@ -85,7 +85,7 @@ export function BoardScreen() {
                 label="Won"
                 value={money(data.deals.wonValue)}
                 delta={`${data.deals.won} deals`}
-                note={`win rate ${percent(data.deals.winRate)}`}
+                note={`win rate ${pct(data.deals.winRate, 1)}`}
               />
             </StatGrid>
 
@@ -162,8 +162,8 @@ export function BoardScreen() {
                         row.attainment === null ? (
                           <span className={styles.sub}>no number</span>
                         ) : (
-                          <span className={row.attainment >= 1 ? styles.positive : undefined}>
-                            {percent(row.attainment)}
+                          <span className={row.attainment >= 100 ? styles.positive : undefined}>
+                            {pct(row.attainment, 1)}
                           </span>
                         ),
                       sortValue: (row: SellerPerformance) => row.attainment ?? -1,
