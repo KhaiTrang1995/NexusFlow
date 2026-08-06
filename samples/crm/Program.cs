@@ -2,6 +2,7 @@ using Crm;
 using FlowX;
 using FlowX.Generated;
 using FlowX.Hosting;
+using FlowX.Http;
 using FlowX.Mcp;
 using FlowX.Postgres;
 using FlowX.RabbitMq;
@@ -194,5 +195,25 @@ app.UseFlowX();
 // The agent surface, served from the same manifest the HTTP routes are generated from — so the
 // tools a model can see are exactly the flows carrying [AgentTrigger] and nothing else.
 app.MapFlowXMcp("/mcp");
+
+// The application's own description, generated from the manifest the compiler wrote — so it
+// cannot drift from the routes, the contracts or the error codes, because all three came from the
+// same source. Anonymous: it names routes and codes, never data, and a description that needs a
+// credential is one no client generator or gateway can read.
+#pragma warning disable IL2026 // The manifest names contracts as strings; see the note below.
+app.MapFlowXOpenApi(FlowXManifest.Json, CrmJsonContext.Default);
+#pragma warning restore IL2026
+
+// WHY THE SUPPRESSION, AND WHAT WOULD REMOVE IT. Turning a manifest's type *name* back into a
+// type searches the loaded assemblies, which the trimmer cannot follow — so the API is annotated
+// and warns here rather than producing a quietly emptier document in a trimmed build. Two things
+// make it safe in this application: it is marked IsTrimmable but is not published trimmed (it
+// carries an Npgsql data source, which is why there is no PublishAot either), and a contract the
+// search fails to find is described as opaque with a note saying so, never with a guessed shape.
+//
+// The real fix is for the compiler to emit the contract types alongside the manifest it already
+// writes — it has the symbols — and hand them to the overload that takes them. That is a change to
+// the generator rather than to this line.
+app.MapFlowXOpenApiUi();
 
 await app.RunAsync().ConfigureAwait(false);

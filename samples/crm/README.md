@@ -93,6 +93,7 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Territory coverage | `POST /api/v1/crm/territories/coverage` | the accounts in no territory — unaskable against a list |
 | Assign a quota | `POST /api/v1/crm/quotas` | with a ramp, so a part-year seller is not reported as failing |
 | Quota attainment | `POST /api/v1/crm/quotas/attainment` | assigned, committed and achieved side by side |
+| API description | `GET /openapi.json`, `GET /openapi` | generated from the manifest, so it cannot drift from the routes |
 
 ## The three tokens
 
