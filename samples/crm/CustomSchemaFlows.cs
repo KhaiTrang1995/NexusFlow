@@ -220,3 +220,20 @@ public sealed partial class SearchFlow : Flow<SearchEverything, SearchResults>
             .Return(ctx => ctx.Get<SearchResults>());
     }
 }
+
+/// <summary>Declares a field computed from other fields of the same record.</summary>
+[Flow("crm.custom.formula", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "crm-platform")]
+[FlowDeadline("PT15S")]
+[HttpTrigger("POST", "/api/v1/crm/custom/formulas", Idempotent = true)]
+public sealed partial class DefineFormulaFlow : Flow<DefineFormula, FormulaDefined>
+{
+    /// <inheritdoc />
+    protected override void Define(IFlowBuilder<DefineFormula, FormulaDefined> flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+
+        flow
+            .Step<DefineCustomFormula>()
+            .Return(ctx => ctx.Get<FormulaDefined>());
+    }
+}

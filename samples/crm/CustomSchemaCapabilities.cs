@@ -211,18 +211,25 @@ public sealed class CreateCustomRecord : ICapability<WriteObjectRecord, RecordCr
 {
     private readonly CustomSchemaStore _store;
     private readonly FieldPolicyStore _policy;
+    private readonly FormulaStore _formulas;
 
     /// <summary>Creates the capability.</summary>
     /// <param name="store">Reads the declarations and writes the row.</param>
     /// <param name="policy">Reads the rules, and claims the unique values.</param>
+    /// <param name="formulas">Reads the formulas whose answers this write computes.</param>
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
-    public CreateCustomRecord(CustomSchemaStore store, FieldPolicyStore policy)
+    public CreateCustomRecord(
+        CustomSchemaStore store,
+        FieldPolicyStore policy,
+        FormulaStore formulas)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(policy);
+        ArgumentNullException.ThrowIfNull(formulas);
 
         _store = store;
         _policy = policy;
+        _formulas = formulas;
     }
 
     /// <inheritdoc />
@@ -273,9 +280,19 @@ public sealed class CreateCustomRecord : ICapability<WriteObjectRecord, RecordCr
             return Result.Fail<RecordCreated>(forbidden);
         }
 
+        // Computed before the rules and after the type check, which is the only order that works:
+        // a formula reads values that have been checked, and a rule must be able to refuse what a
+        // formula produced — an administrator who guards on a total wants the total that will be
+        // stored, not the one before it existed.
+        var formulas = await _formulas
+            .FormulasForAsync(ctx.TenantId, input.Target, ct)
+            .ConfigureAwait(false);
+
+        var written = Formulas.Apply(formulas, input.Values);
+
         var rules = await _policy.RulesForAsync(ctx.TenantId, input.Target, ct).ConfigureAwait(false);
 
-        if (CustomFieldPolicy.FirstViolation(rules, input.Values) is { } refused)
+        if (CustomFieldPolicy.FirstViolation(rules, written) is { } refused)
         {
             return Result.Fail<RecordCreated>(refused);
         }
@@ -285,20 +302,20 @@ public sealed class CreateCustomRecord : ICapability<WriteObjectRecord, RecordCr
         // Claimed before the record is written, because the other order lets two writers both see
         // a free value. A claim left behind by a failed write refuses a later writer, which is the
         // safe direction — hence the release below rather than nothing.
-        if (await _policy.ClaimAsync(ctx.TenantId, id, declared, input.Values, ct).ConfigureAwait(false)
+        if (await _policy.ClaimAsync(ctx.TenantId, id, declared, written, ct).ConfigureAwait(false)
             is { } taken)
         {
             await _policy.ReleaseAsync(ctx.TenantId, id, ct).ConfigureAwait(false);
 
             return Result.Fail<RecordCreated>(
-                FieldPolicyErrors.ValueIsNotUnique(taken, input.Values[taken]!));
+                FieldPolicyErrors.ValueIsNotUnique(taken, written[taken]!));
         }
 
         try
         {
             await _store
                 .WriteRecordAsync(
-                    ctx.TenantId, id, input.Target, CustomValues.ToJson(declared, input.Values),
+                    ctx.TenantId, id, input.Target, CustomValues.ToJson(declared, written),
                     ctx.UtcNow, ct)
                 .ConfigureAwait(false);
         }

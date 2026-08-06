@@ -126,6 +126,9 @@ namespace Crm;
 [JsonSerializable(typeof(SearchEverything))]
 [JsonSerializable(typeof(SearchHit))]
 [JsonSerializable(typeof(SearchResults))]
+[JsonSerializable(typeof(DefineFormula))]
+[JsonSerializable(typeof(FormulaDefined))]
+[JsonSerializable(typeof(RecordOrder))]
 
 // The connector registry, its queue and what goes on the wire.
 [JsonSerializable(typeof(DefineConnector))]
@@ -225,7 +228,7 @@ public sealed class CrmSchemaReader
     /// </summary>
     /// <remarks>
     /// One count per table and one statement, so the answer is one round trip and one snapshot
-    /// rather than twenty-eight that can disagree with each other. Every count runs under the
+    /// rather than twenty-nine that can disagree with each other. Every count runs under the
     /// policies of migrations <c>0002</c> and <c>0005</c>, including the five tables that reach their tenant
     /// through a foreign key — which is what makes this endpoint a demonstration of the
     /// isolation rather than a report about the schema.
@@ -241,6 +244,7 @@ public sealed class CrmSchemaReader
         UNION ALL   SELECT 'custom_filter_criterion', count(*)            FROM custom_filter_criterion
         UNION ALL   SELECT 'custom_field_history',  count(*)              FROM custom_field_history
         UNION ALL   SELECT 'custom_field_option',   count(*)              FROM custom_field_option
+        UNION ALL   SELECT 'custom_formula',        count(*)              FROM custom_formula
         UNION ALL   SELECT 'custom_link',           count(*)              FROM custom_link
         UNION ALL   SELECT 'custom_list_view',      count(*)              FROM custom_list_view
         UNION ALL   SELECT 'custom_object',         count(*)              FROM custom_object

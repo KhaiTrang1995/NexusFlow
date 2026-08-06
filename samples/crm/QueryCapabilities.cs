@@ -68,7 +68,7 @@ public sealed class DefineCrmListView : ICapability<DefineListView, ListViewDefi
         // whoever pressed the button would believe the answer.
         var named = (input.Filter?.Criteria ?? [])
             .Select(static criterion => criterion.Field)
-            .Append(input.OrderBy);
+            .Append(input.Order?.Field);
 
         foreach (var field in named)
         {
@@ -145,7 +145,7 @@ public sealed class QueryCustomRecords : ICapability<ReadObjectRecords, RecordPa
 
         var resolved = query.View is { Length: > 0 } name
             ? await _queries.ReadViewAsync(ctx.TenantId, name, ct).ConfigureAwait(false)
-            : (query.Target!.Value, query.Filter, null, query.Limit);
+            : (query.Target!.Value, query.Filter, (RecordOrder?)null, query.Limit);
 
         if (resolved is not { } plan)
         {
@@ -170,7 +170,7 @@ public sealed class QueryCustomRecords : ICapability<ReadObjectRecords, RecordPa
         var declared = await _schema.FieldsForAsync(ctx.TenantId, plan.Target, ct).ConfigureAwait(false);
 
         var rows = await _queries
-            .RecordsAsync(ctx.TenantId, plan.Target, plan.Filter, plan.OrderBy, plan.Limit, ct)
+            .RecordsAsync(ctx.TenantId, plan.Target, plan.Filter, plan.Order, plan.Limit, ct)
             .ConfigureAwait(false);
 
         var redacted = new SortedSet<string>(StringComparer.Ordinal);

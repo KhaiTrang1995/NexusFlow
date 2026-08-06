@@ -27,16 +27,18 @@ public sealed class QueryStore
     private const string InsertView = """
         INSERT INTO custom_list_view (
             view_id, tenant_id, object_id, name, label,
-            filter_field, filter_operator, filter_value, order_by, row_limit, match_mode, created_at)
+            filter_field, filter_operator, filter_value, order_by, row_limit, match_mode,
+            order_descending, order_numeric, created_at)
         VALUES (@id, @tenant, @object, @name, @label,
-            @filterField, @filterOperator, @filterValue, @orderBy, @limit, @match, @now)
+            @filterField, @filterOperator, @filterValue, @orderBy, @limit, @match,
+            @descending, @numeric, @now)
         ON CONFLICT (tenant_id, name) DO NOTHING
         RETURNING view_id
         """;
 
     private const string ReadView = """
         SELECT view_id, object_id, filter_field, filter_operator, filter_value,
-               order_by, row_limit, match_mode
+               order_by, row_limit, match_mode, order_descending, order_numeric
         FROM custom_list_view
         WHERE name = @name
         """;
@@ -80,25 +82,43 @@ public sealed class QueryStore
                   END AS held) AS evaluated), false))
         """;
 
-    private const string RecordsInOrder = """
+    // Four orderings and not a built clause. `ORDER BY` takes an expression, and the two axes an
+    // administrator picks — text or numeric, ascending or descending — are two bits, so they are
+    // four constants rather than a string somebody assembles. The field itself is still a bound
+    // value inside `values->>@orderBy`.
+    //
+    // The numeric ones cast defensively. A row whose value will not parse would otherwise throw
+    // and fail the whole page; NULLS LAST puts it at the end instead, which is what a blank cell
+    // means in a sorted list.
+    private const string OrderText = "\n        ORDER BY r.values->>@orderBy, r.created_at\n        LIMIT @limit";
+
+    private const string OrderTextDescending =
+        "\n        ORDER BY r.values->>@orderBy DESC NULLS LAST, r.created_at\n        LIMIT @limit";
+
+    private const string OrderNumeric =
+        "\n        ORDER BY nullif(regexp_replace(r.values->>@orderBy, '[^0-9.eE+-]', '', 'g'), '')::numeric\n" +
+        "                 NULLS LAST, r.created_at\n        LIMIT @limit";
+
+    private const string OrderNumericDescending =
+        "\n        ORDER BY nullif(regexp_replace(r.values->>@orderBy, '[^0-9.eE+-]', '', 'g'), '')::numeric\n" +
+        "                 DESC NULLS LAST, r.created_at\n        LIMIT @limit";
+
+    private const string RecordsBody = """
         SELECT r.record_id, r.values::text
         FROM custom_record r
         WHERE r.object_id = @object
-        """ + Predicate + """
+        """ + Predicate;
 
-        ORDER BY r.values->>@orderBy, r.created_at
-        LIMIT @limit
-        """;
+    private const string RecordsInOrder = RecordsBody + OrderText;
 
-    private const string RecordsInsertionOrder = """
-        SELECT r.record_id, r.values::text
-        FROM custom_record r
-        WHERE r.object_id = @object
-        """ + Predicate + """
+    private const string RecordsInOrderDescending = RecordsBody + OrderTextDescending;
 
-        ORDER BY r.created_at
-        LIMIT @limit
-        """;
+    private const string RecordsInNumericOrder = RecordsBody + OrderNumeric;
+
+    private const string RecordsInNumericOrderDescending = RecordsBody + OrderNumericDescending;
+
+    private const string RecordsInsertionOrder =
+        RecordsBody + "\n        ORDER BY r.created_at\n        LIMIT @limit";
 
     // Every entity a person would type a name into a box to find, and the custom objects an
     // administrator invented, in one statement.
@@ -186,7 +206,9 @@ public sealed class QueryStore
         Add(command, "filterValue", NpgsqlDbType.Text, DBNull.Value);
         Add(command, "match", NpgsqlDbType.Text,
             (request.Filter?.Match ?? FilterMatch.All).ToString());
-        Add(command, "orderBy", NpgsqlDbType.Text, (object?)request.OrderBy ?? DBNull.Value);
+        Add(command, "orderBy", NpgsqlDbType.Text, (object?)request.Order?.Field ?? DBNull.Value);
+        Add(command, "descending", NpgsqlDbType.Boolean, request.Order?.Descending ?? false);
+        Add(command, "numeric", NpgsqlDbType.Boolean, request.Order?.Numeric ?? false);
         Add(command, "limit", NpgsqlDbType.Integer, request.Limit);
         Add(command, "now", NpgsqlDbType.TimestampTz, now);
 
@@ -222,7 +244,7 @@ public sealed class QueryStore
     /// <param name="name">The view's name.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>The query it stands for, or null when this tenant has no such view.</returns>
-    public async ValueTask<(Guid Target, RecordFilter? Filter, string? OrderBy, int Limit)?> ReadViewAsync(
+    public async ValueTask<(Guid Target, RecordFilter? Filter, RecordOrder? Order, int Limit)?> ReadViewAsync(
         string? tenantId,
         string name,
         CancellationToken cancellationToken)
@@ -236,6 +258,8 @@ public sealed class QueryStore
         string? orderBy;
         int limit;
         FilterMatch match;
+        bool descending;
+        bool numeric;
 
         var command = connection.CreateCommand();
         await using var closingCommand = command.ConfigureAwait(false);
@@ -268,6 +292,8 @@ public sealed class QueryStore
 
             limit = reader.GetInt32(6);
             match = Enum.Parse<FilterMatch>(reader.GetString(7));
+            descending = reader.GetBoolean(8);
+            numeric = reader.GetBoolean(9);
         }
 
         // The criteria table first, and the three columns of migration 0009 as the fallback. A
@@ -281,7 +307,11 @@ public sealed class QueryStore
                 ? null
                 : new RecordFilter(FilterMatch.All, [legacy]);
 
-        return (target, filter, orderBy, limit);
+        return (
+            target,
+            filter,
+            orderBy is { Length: > 0 } ? new RecordOrder(orderBy, descending, numeric) : null,
+            limit);
     }
 
     private static async ValueTask<List<RollupFilter>> CriteriaAsync(
@@ -328,7 +358,7 @@ public sealed class QueryStore
         string? tenantId,
         Guid target,
         RecordFilter? filter,
-        string? orderBy,
+        RecordOrder? order,
         int limit,
         CancellationToken cancellationToken)
     {
@@ -341,7 +371,14 @@ public sealed class QueryStore
         // Two constants, chosen by whether an ordering was asked for. The field itself is bound
         // as a value into `values->>@orderBy`; putting it into the identifier position is the
         // shape SqlFitnessTests exists to refuse, and it would be right to.
-        command.CommandText = orderBy is { Length: > 0 } ? RecordsInOrder : RecordsInsertionOrder;
+        command.CommandText = order switch
+        {
+            null => RecordsInsertionOrder,
+            { Numeric: true, Descending: true } => RecordsInNumericOrderDescending,
+            { Numeric: true } => RecordsInNumericOrder,
+            { Descending: true } => RecordsInOrderDescending,
+            _ => RecordsInOrder,
+        };
 
         var criteria = filter?.Criteria ?? [];
 
@@ -353,9 +390,9 @@ public sealed class QueryStore
             filter is null || filter.Match == FilterMatch.All);
         Add(command, "limit", NpgsqlDbType.Integer, limit);
 
-        if (orderBy is { Length: > 0 })
+        if (order is not null)
         {
-            Add(command, "orderBy", NpgsqlDbType.Text, orderBy);
+            Add(command, "orderBy", NpgsqlDbType.Text, order.Field);
         }
 
         var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);

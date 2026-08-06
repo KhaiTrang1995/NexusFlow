@@ -150,7 +150,7 @@ public sealed class SearchAndFilterApiTests
                     new RollupFilter("floor_area", GuardOperator.GreaterThan, "500"),
                     new RollupFilter("status", GuardOperator.Equals, "open"),
                 ]),
-                OrderBy: "label",
+                Order: new RecordOrder("label", Descending: false, Numeric: false),
                 Limit: 50),
             CrmTokens.NorthwindManager))
             .StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -183,7 +183,7 @@ public sealed class SearchAndFilterApiTests
                     new RollupFilter("status", GuardOperator.Equals, "open"),
                     new RollupFilter("stauts", GuardOperator.Equals, "open"),
                 ]),
-                OrderBy: null,
+                Order: null,
                 Limit: 10),
             CrmTokens.NorthwindManager);
 

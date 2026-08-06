@@ -95,7 +95,7 @@ public sealed class QueryApiTests
                 new RecordFilter(
                     FilterMatch.All,
                     [new RollupFilter("floor_area", GuardOperator.GreaterThan, "200")]),
-                OrderBy: "label",
+                Order: new RecordOrder("label", Descending: false, Numeric: false),
                 Limit: 50),
             CrmTokens.NorthwindManager))
             .StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -119,7 +119,7 @@ public sealed class QueryApiTests
 
         var response = await app.PostAsync(
             Views,
-            new DefineListView(site, "typo", "Typo", null, OrderBy: "flooor_area", Limit: 10),
+            new DefineListView(site, "typo", "Typo", null, Order: new RecordOrder("flooor_area", false, false), Limit: 10),
             CrmTokens.NorthwindManager);
 
         response.StatusCode.ShouldBe(

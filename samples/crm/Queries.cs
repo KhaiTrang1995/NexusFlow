@@ -27,6 +27,16 @@ public enum FilterMatch
 /// </param>
 public sealed record RecordFilter(FilterMatch Match, IReadOnlyList<RollupFilter> Criteria);
 
+/// <summary>How a query sorts.</summary>
+/// <param name="Field">Which field to order by.</param>
+/// <param name="Descending">Largest first.</param>
+/// <param name="Numeric">
+/// Whether to sort as numbers. Stored rather than derived from the field's declared type, because
+/// a row whose value will not cast would otherwise throw and fail the whole page; the numeric
+/// orderings strip what will not parse and sort those last.
+/// </param>
+public sealed record RecordOrder(string Field, bool Descending, bool Numeric);
+
 /// <summary>Searches every entity this tenant has for a phrase.</summary>
 /// <param name="Phrase">What to look for. Parsed by <c>websearch_to_tsquery</c>.</param>
 /// <param name="Limit">How many hits at most.</param>
@@ -53,14 +63,14 @@ public sealed record SearchResults(IReadOnlyList<SearchHit> Hits);
 /// <param name="Name">The identifier a caller asks for. Lower case, snake case.</param>
 /// <param name="Label">What a person sees.</param>
 /// <param name="Filter">Which records, or null for all of them.</param>
-/// <param name="OrderBy">Which field to order by, or null for insertion order.</param>
+/// <param name="Order">How to sort, or null for insertion order.</param>
 /// <param name="Limit">How many rows at most.</param>
 public sealed record DefineListView(
     Guid Target,
     string Name,
     string Label,
     RecordFilter? Filter,
-    string? OrderBy,
+    RecordOrder? Order,
     int Limit);
 
 /// <summary>The view that was saved.</summary>
