@@ -25,6 +25,31 @@ var connectionString =
         "string, e.g. \"Host=localhost;Port=5432;Database=postgres;Username=postgres\".");
 
 builder.Services.AddRouting();
+
+// What a browser needs before it can call any of this at all.
+//
+// ORIGINS ARE CONFIGURED, NEVER WILDCARDED. `AllowAnyOrigin` with credentials is refused by every
+// browser, and without credentials it invites any page on the internet to spend a user's session
+// on their behalf. FLOWX_CORS_ORIGINS is a comma-separated list; with none set no origin is
+// allowed and a browser client is a deployment step somebody has to take deliberately.
+//
+// A native mobile client needs none of this — CORS is a browser rule and an app is not a browser
+// — which is why the absence of the variable does not break one.
+var origins = (builder.Configuration["FlowX:CorsOrigins"]
+        ?? Environment.GetEnvironmentVariable("FLOWX_CORS_ORIGINS")
+        ?? string.Empty)
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+builder.Services.AddCors(cors => cors.AddDefaultPolicy(policy => policy
+    .WithOrigins(origins)
+    .WithHeaders("Authorization", "Content-Type", "Idempotency-Key")
+    .WithMethods("POST")
+
+    // The preflight answer is cacheable, and a client that revalidates every write is a client
+    // making two requests for every one. Ten minutes is short enough that changing the list above
+    // takes effect within a deployment.
+    .SetPreflightMaxAge(TimeSpan.FromMinutes(10))));
+
 builder.Services.AddFlowX(options =>
 {
     options.ApplicationName = "Crm";
@@ -139,6 +164,11 @@ await new CrmMigrator(app.Services.GetRequiredService<NpgsqlDataSource>())
 // the time the generated endpoint reads them. Without this line every request is anonymous and
 // `crm.schema.count`, which admits any authenticated caller and no anonymous one, refuses them
 // all — which looks exactly like a broken token.
+// Before authentication, so a preflight — which carries no Authorization header by definition —
+// is answered rather than refused. A browser that gets a 401 on the preflight never sends the
+// real request, and the failure looks like the endpoint being down.
+app.UseCors();
+
 app.UseAuthentication();
 
 app.MapHealthChecks("/health");

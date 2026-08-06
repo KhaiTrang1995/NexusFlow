@@ -162,6 +162,23 @@ public sealed class QueryCustomRecords : ICapability<ReadObjectRecords, RecordPa
             return Result.Fail<RecordPage>(QueryErrors.TooManyCriteria(tooMany.Criteria.Count));
         }
 
+        (DateTimeOffset CreatedAt, Guid RecordId)? after = null;
+
+        if (query.After is { Length: > 0 } cursor)
+        {
+            if (plan.Order is not null)
+            {
+                return Result.Fail<RecordPage>(QueryErrors.CursorNeedsInsertionOrder());
+            }
+
+            after = RecordCursor.Read(cursor);
+
+            if (after is null)
+            {
+                return Result.Fail<RecordPage>(QueryErrors.CursorIsNotUsable(cursor));
+            }
+        }
+
         if (!await _schema.HasObjectAsync(ctx.TenantId, plan.Target, ct).ConfigureAwait(false))
         {
             return Result.Fail<RecordPage>(CustomSchemaErrors.ObjectNotFound(plan.Target));
@@ -170,7 +187,7 @@ public sealed class QueryCustomRecords : ICapability<ReadObjectRecords, RecordPa
         var declared = await _schema.FieldsForAsync(ctx.TenantId, plan.Target, ct).ConfigureAwait(false);
 
         var rows = await _queries
-            .RecordsAsync(ctx.TenantId, plan.Target, plan.Filter, plan.Order, plan.Limit, ct)
+            .RecordsAsync(ctx.TenantId, plan.Target, plan.Filter, plan.Order, plan.Limit, after, ct)
             .ConfigureAwait(false);
 
         var redacted = new SortedSet<string>(StringComparer.Ordinal);
@@ -182,7 +199,14 @@ public sealed class QueryCustomRecords : ICapability<ReadObjectRecords, RecordPa
                     declared, CustomValues.FromJson(row.Values), input.Scopes, redacted)))
             .ToList();
 
-        return Result.Ok(new RecordPage(records, [.. redacted]));
+        // A cursor only when a full page came back. Deciding it that way means a caller never
+        // makes a request that returns nothing, at the cost of one extra request when the last
+        // page happens to be exactly full — which is the cheaper of the two mistakes.
+        var next = rows.Count == plan.Limit && plan.Order is null
+            ? RecordCursor.For(rows[^1].CreatedAt, rows[^1].Id)
+            : null;
+
+        return Result.Ok(new RecordPage(records, [.. redacted], next));
     }
 }
 

@@ -49,6 +49,10 @@ public sealed class QueryStore
         VALUES (@id, @tenant, @view, @ordinal, @field, @operator, @value)
         """;
 
+    private const string ViewsForObject = """
+        SELECT name, label FROM custom_list_view WHERE object_id = @object ORDER BY name
+        """;
+
     private const string CriteriaForView = """
         SELECT field, operator, value
         FROM custom_filter_criterion
@@ -104,10 +108,16 @@ public sealed class QueryStore
         "                 DESC NULLS LAST, r.created_at\n        LIMIT @limit";
 
     private const string RecordsBody = """
-        SELECT r.record_id, r.values::text
+        SELECT r.record_id, r.values::text, r.created_at
         FROM custom_record r
         WHERE r.object_id = @object
         """ + Predicate;
+
+    // The keyset. (created_at, record_id) is unique and is exactly the insertion ordering, so a
+    // row-value comparison resumes from the last row of the previous page — no OFFSET, no
+    // re-reading, and a row inserted meanwhile cannot shift a later page.
+    private const string AfterCursor =
+        "\n          AND (r.created_at, r.record_id) > (@afterAt, @afterId)";
 
     private const string RecordsInOrder = RecordsBody + OrderText;
 
@@ -118,7 +128,10 @@ public sealed class QueryStore
     private const string RecordsInNumericOrderDescending = RecordsBody + OrderNumericDescending;
 
     private const string RecordsInsertionOrder =
-        RecordsBody + "\n        ORDER BY r.created_at\n        LIMIT @limit";
+        RecordsBody + "\n        ORDER BY r.created_at, r.record_id\n        LIMIT @limit";
+
+    private const string RecordsAfterCursor =
+        RecordsBody + AfterCursor + "\n        ORDER BY r.created_at, r.record_id\n        LIMIT @limit";
 
     // Every entity a person would type a name into a box to find, and the custom objects an
     // administrator invented, in one statement.
@@ -341,6 +354,38 @@ public sealed class QueryStore
         return criteria;
     }
 
+    /// <summary>Every saved view over one object.</summary>
+    /// <param name="tenantId">The caller's tenant.</param>
+    /// <param name="objectId">Which object.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The views, by name.</returns>
+    public async ValueTask<IReadOnlyList<DescribedView>> ViewsForAsync(
+        string? tenantId,
+        Guid objectId,
+        CancellationToken cancellationToken)
+    {
+        var connection = await OpenAsync(tenantId, cancellationToken).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
+
+        var command = connection.CreateCommand();
+        await using var closingCommand = command.ConfigureAwait(false);
+
+        command.CommandText = ViewsForObject;
+        Add(command, "object", NpgsqlDbType.Uuid, objectId);
+
+        var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await using var closingReader = reader.ConfigureAwait(false);
+
+        var views = new List<DescribedView>();
+
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            views.Add(new DescribedView(reader.GetString(0), reader.GetString(1)));
+        }
+
+        return views;
+    }
+
     /// <summary>The records of an object that a filter admits.</summary>
     /// <param name="tenantId">The caller's tenant.</param>
     /// <param name="target">Which object.</param>
@@ -354,12 +399,13 @@ public sealed class QueryStore
     /// rule lived, and the two would drift; it would also make the rows unusable to anything that
     /// has to decide on them rather than show them.
     /// </remarks>
-    public async ValueTask<IReadOnlyList<(Guid Id, string Values)>> RecordsAsync(
+    public async ValueTask<IReadOnlyList<(Guid Id, string Values, DateTimeOffset CreatedAt)>> RecordsAsync(
         string? tenantId,
         Guid target,
         RecordFilter? filter,
         RecordOrder? order,
         int limit,
+        (DateTimeOffset CreatedAt, Guid RecordId)? after,
         CancellationToken cancellationToken)
     {
         var connection = await OpenAsync(tenantId, cancellationToken).ConfigureAwait(false);
@@ -371,12 +417,13 @@ public sealed class QueryStore
         // Two constants, chosen by whether an ordering was asked for. The field itself is bound
         // as a value into `values->>@orderBy`; putting it into the identifier position is the
         // shape SqlFitnessTests exists to refuse, and it would be right to.
-        command.CommandText = order switch
+        command.CommandText = (order, after) switch
         {
-            null => RecordsInsertionOrder,
-            { Numeric: true, Descending: true } => RecordsInNumericOrderDescending,
-            { Numeric: true } => RecordsInNumericOrder,
-            { Descending: true } => RecordsInOrderDescending,
+            (null, not null) => RecordsAfterCursor,
+            (null, null) => RecordsInsertionOrder,
+            ({ Numeric: true, Descending: true }, _) => RecordsInNumericOrderDescending,
+            ({ Numeric: true }, _) => RecordsInNumericOrder,
+            ({ Descending: true }, _) => RecordsInOrderDescending,
             _ => RecordsInOrder,
         };
 
@@ -395,14 +442,24 @@ public sealed class QueryStore
             Add(command, "orderBy", NpgsqlDbType.Text, order.Field);
         }
 
+        if (after is { } resume)
+        {
+            Add(command, "afterAt", NpgsqlDbType.TimestampTz, resume.CreatedAt);
+            Add(command, "afterId", NpgsqlDbType.Uuid, resume.RecordId);
+        }
+
         var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         await using var closingReader = reader.ConfigureAwait(false);
 
-        var rows = new List<(Guid, string)>();
+        var rows = new List<(Guid, string, DateTimeOffset)>();
 
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            rows.Add((reader.GetGuid(0), reader.GetString(1)));
+            rows.Add((
+                reader.GetGuid(0),
+                reader.GetString(1),
+                await reader.GetFieldValueAsync<DateTimeOffset>(2, cancellationToken)
+                    .ConfigureAwait(false)));
         }
 
         return rows;

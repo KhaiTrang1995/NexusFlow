@@ -88,11 +88,18 @@ public sealed record ListViewDefined(Guid ViewId, string Name);
 /// that named a saved view and an ad-hoc filter would have two answers about which wins, and
 /// whichever this build picked would surprise half its callers.
 /// </remarks>
+/// <param name="After">
+/// The cursor a previous page returned, or null for the first page. Keyset rather than an offset:
+/// an <c>OFFSET</c> re-reads and re-skips every row before it, so page 50 costs fifty times page
+/// 1 and a row inserted meanwhile shifts every later page by one — which a scrolling list shows
+/// as a duplicate.
+/// </param>
 public sealed record QueryRecords(
     Guid? Target,
     string? View,
     RecordFilter? Filter,
-    int Limit);
+    int Limit,
+    string? After = null);
 
 /// <summary>What the query capability is given, once the flow has read the caller.</summary>
 /// <param name="Query">What was asked for.</param>
@@ -114,9 +121,15 @@ public sealed record RecordView(Guid RecordId, IReadOnlyDictionary<string, strin
 /// a caller who cannot tell a redacted field from an absent one cannot tell a permissions problem
 /// from a data problem, and will open a ticket about the wrong one.
 /// </param>
+/// <param name="NextCursor">
+/// What to send as <c>After</c> for the next page, or null when this was the last one. Null is
+/// decided by having fetched fewer rows than were asked for, so a caller never makes a request
+/// that returns nothing.
+/// </param>
 public sealed record RecordPage(
     IReadOnlyList<RecordView> Records,
-    IReadOnlyList<string> Redacted);
+    IReadOnlyList<string> Redacted,
+    string? NextCursor = null);
 
 // ------------------------------------------------------------------------------- what can go wrong
 
@@ -156,6 +169,31 @@ public static class QueryErrors
             "A search needs something to look for.",
             ErrorCategory.Validation);
 
+    /// <summary>A cursor was sent with an ordering that cannot be resumed from one.</summary>
+    /// <remarks>
+    /// <strong>Refused rather than ignored.</strong> Keyset pagination resumes from the last row's
+    /// sort key, and this build stores a cursor of <c>(created_at, record_id)</c> — which resumes
+    /// insertion order exactly and any other order not at all. Ignoring the cursor would restart
+    /// an ordered list at the top on every scroll; honouring it against the wrong key would skip
+    /// and repeat rows. Ordered pagination needs the sort value in the cursor and a comparison per
+    /// ordering, which is four more statements and is not built.
+    /// </remarks>
+    public static Error CursorNeedsInsertionOrder() =>
+        new(
+            "crm.query_cursor_needs_insertion_order",
+            "A cursor resumes insertion order, and this query is sorted. Ask for the sorted page " +
+            "without a cursor, or drop the ordering.",
+            ErrorCategory.Validation);
+
+    /// <summary>The cursor is not one this build issued.</summary>
+    /// <param name="cursor">What was sent.</param>
+    public static Error CursorIsNotUsable(string cursor) =>
+        new Error(
+            "crm.query_cursor_not_usable",
+            "That cursor is not one this API issued.",
+            ErrorCategory.Validation)
+            .With("cursor", cursor);
+
     /// <summary>The limit is outside what this build will serve.</summary>
     /// <param name="limit">What was asked for.</param>
     /// <remarks>
@@ -190,4 +228,58 @@ public static class QueryLimits
     /// answer past this and it is not built; a bounded honest answer beats an unbounded one.
     /// </remarks>
     public const int Max = 500;
+}
+
+
+/// <summary>
+/// The cursor a page hands back, and what it resumes from.
+/// </summary>
+/// <remarks>
+/// <strong>Opaque to the caller and cheap to parse.</strong> A client that took the cursor apart
+/// would depend on the keyset this build happens to use, which is exactly the thing that changes
+/// when ordered pagination arrives. It is base64 so it survives a URL and reads as an opaque
+/// token; it is not encrypted, and it carries nothing a caller could not already see.
+/// </remarks>
+public static class RecordCursor
+{
+    /// <summary>The cursor for a row.</summary>
+    /// <param name="createdAt">When the row was written.</param>
+    /// <param name="recordId">Which row.</param>
+    /// <returns>The token.</returns>
+    public static string For(DateTimeOffset createdAt, Guid recordId) =>
+        Convert.ToBase64String(
+            System.Text.Encoding.UTF8.GetBytes(
+                createdAt.UtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + ":" + recordId.ToString("n")));
+
+    /// <summary>Reads a cursor, or reports that it is not one of ours.</summary>
+    /// <param name="cursor">The token.</param>
+    /// <returns>What it resumes from, or null when it is unreadable.</returns>
+    public static (DateTimeOffset CreatedAt, Guid RecordId)? Read(string cursor)
+    {
+        ArgumentNullException.ThrowIfNull(cursor);
+
+        try
+        {
+            var parts = System.Text.Encoding.UTF8
+                .GetString(Convert.FromBase64String(cursor))
+                .Split(':');
+
+            if (parts.Length != 2 ||
+                !long.TryParse(parts[0], System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var ticks) ||
+                !Guid.TryParseExact(parts[1], "N", out var id))
+            {
+                return null;
+            }
+
+            return (new DateTimeOffset(ticks, TimeSpan.Zero), id);
+        }
+        catch (FormatException)
+        {
+            // Not base64. A caller's mistake rather than a fault, and the capability turns it
+            // into an error naming the cursor.
+            return null;
+        }
+    }
 }
