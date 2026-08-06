@@ -26,7 +26,7 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 
 ## What it is
 
-Twenty-six tables, twenty-seven flows and three authorisation stances, over the entities a CRM actually
+Twenty-seven tables, twenty-nine flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -55,6 +55,8 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Delivery sweep | `[CronTrigger("* * * * *")]` | `FOR UPDATE SKIP LOCKED`, so two replicas do not double-send |
 | Declare a validation rule | `POST /api/v1/crm/custom/validation-rules` | refuses when it holds, in the administrator's own words |
 | Declare a roll-up | `POST /api/v1/crm/custom/rollups` | an aggregate over a parent's children, recomputed on link |
+| Save a list view | `POST /api/v1/crm/custom/list-views` | a named query, its fields checked when it is saved |
+| Query records | `POST /api/v1/crm/custom/queries` | the one projection of custom values, and where reads are masked |
 
 ## The three tokens
 

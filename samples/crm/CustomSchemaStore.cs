@@ -34,9 +34,9 @@ public sealed class CustomSchemaStore
     private const string InsertField = """
         INSERT INTO custom_field (
             field_id, tenant_id, applies_to, object_id, name, label, data_type, is_required,
-            references_object_id, required_permission, is_unique, created_at)
+            references_object_id, required_permission, is_unique, read_permission, created_at)
         VALUES (@id, @tenant, @appliesTo, @object, @name, @label, @type, @required, @references,
-            @permission, @unique, @now)
+            @permission, @unique, @readPermission, @now)
         ON CONFLICT DO NOTHING
         RETURNING field_id
         """;
@@ -74,7 +74,7 @@ public sealed class CustomSchemaStore
     private const string FieldsForEntity = """
         SELECT f.field_id, f.name, f.data_type, f.is_required, f.references_object_id,
                array_remove(array_agg(o.value ORDER BY o.ordinal), NULL),
-               f.required_permission, f.is_unique, f.is_computed
+               f.required_permission, f.is_unique, f.is_computed, f.read_permission
         FROM custom_field f
         LEFT JOIN custom_field_option o ON o.field_id = f.field_id
         WHERE f.applies_to = @appliesTo
@@ -84,7 +84,7 @@ public sealed class CustomSchemaStore
     private const string FieldsForObject = """
         SELECT f.field_id, f.name, f.data_type, f.is_required, f.references_object_id,
                array_remove(array_agg(o.value ORDER BY o.ordinal), NULL),
-               f.required_permission, f.is_unique, f.is_computed
+               f.required_permission, f.is_unique, f.is_computed, f.read_permission
         FROM custom_field f
         LEFT JOIN custom_field_option o ON o.field_id = f.field_id
         WHERE f.object_id = @object
@@ -222,6 +222,8 @@ public sealed class CustomSchemaStore
         Add(command, "references", NpgsqlDbType.Uuid, (object?)request.References ?? DBNull.Value);
         Add(command, "permission", NpgsqlDbType.Text, (object?)request.RequiredPermission ?? DBNull.Value);
         Add(command, "unique", NpgsqlDbType.Boolean, request.IsUnique);
+        Add(command, "readPermission", NpgsqlDbType.Text,
+            (object?)request.ReadPermission ?? DBNull.Value);
         Add(command, "now", NpgsqlDbType.TimestampTz, now);
 
         if (await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not Guid written)
@@ -588,7 +590,10 @@ public sealed class CustomSchemaStore
                 references,
                 permission,
                 reader.GetBoolean(7),
-                reader.GetBoolean(8));
+                reader.GetBoolean(8),
+                await reader.IsDBNullAsync(9, cancellationToken).ConfigureAwait(false)
+                    ? null
+                    : reader.GetString(9));
         }
 
         return fields;

@@ -84,6 +84,9 @@ public enum CustomCardinality
 /// Whether two records of this owner may hold the same value. Enforced by a claimed-value row
 /// rather than by an index, because an index per declared field is DDL at run time.
 /// </param>
+/// <param name="ReadPermission">
+/// The scope a caller must hold to see this field, or null when <c>crm.read</c> is enough.
+/// </param>
 public sealed record DefineField(
     EntityKind? AppliesTo,
     Guid? Target,
@@ -94,7 +97,8 @@ public sealed record DefineField(
     IReadOnlyList<CustomFieldOption>? Options = null,
     Guid? References = null,
     string? RequiredPermission = null,
-    bool IsUnique = false);
+    bool IsUnique = false,
+    string? ReadPermission = null);
 
 /// <summary>One allowed value of a picklist.</summary>
 /// <param name="Value">What is stored. Named like a field, because a guard compares it as text.</param>
@@ -216,6 +220,11 @@ public sealed record WriteEntityFields(
 /// </param>
 /// <param name="IsUnique">Whether two records of this owner may hold the same value.</param>
 /// <param name="IsComputed">Whether a roll-up writes it, in which case no caller may.</param>
+/// <param name="ReadPermission">
+/// The scope a caller must hold to see it, or null when <c>crm.read</c> is enough. Separate from
+/// <paramref name="RequiredPermission"/> because "may change it" and "may see it" are different
+/// questions with different answers.
+/// </param>
 public sealed record CustomFieldRow(
     Guid Id,
     string Name,
@@ -225,7 +234,8 @@ public sealed record CustomFieldRow(
     Guid? References = null,
     string? RequiredPermission = null,
     bool IsUnique = false,
-    bool IsComputed = false);
+    bool IsComputed = false,
+    string? ReadPermission = null);
 
 // ------------------------------------------------------------------------------- what can go wrong
 

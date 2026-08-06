@@ -257,6 +257,71 @@ public static class CustomFieldPolicy
         return null;
     }
 
+    /// <summary>What a redacted value is replaced with.</summary>
+    /// <remarks>
+    /// A placeholder rather than an omitted key, and <c>ProblemDetailsMapper.Redacted</c> makes
+    /// the same choice for the same reason: a caller who cannot tell a withheld field from an
+    /// unset one cannot tell a permissions problem from a data problem, and will chase the wrong
+    /// one. The key is present, the value says why it is not.
+    /// </remarks>
+    public const string Redacted = "[redacted]";
+
+    /// <summary>
+    /// One record's values, with anything this caller may not read replaced.
+    /// </summary>
+    /// <param name="declared">The fields declared for the object, by name.</param>
+    /// <param name="values">What the row holds.</param>
+    /// <param name="scopes">The grants the caller holds.</param>
+    /// <param name="redacted">Collects the names withheld, so the caller can be told which.</param>
+    /// <returns>What the caller may see.</returns>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the only door.</strong> Migration <c>0007</c> argued that a read rule not
+    /// applied to every projection is a read rule that leaks, and it was right — the answer is
+    /// that there is one projection of custom values and this is it. A second one masks by
+    /// calling this or it leaks; there is no third option, and that is why this is a function
+    /// rather than three lines inside the query capability.
+    /// </para>
+    /// <para>
+    /// <strong>It is not applied where a rule is evaluated.</strong>
+    /// <c>CustomFieldPolicy.FirstViolation</c> reads the row as it is, because a validation rule
+    /// that could be defeated by not holding a grant would be a rule anybody could switch off.
+    /// Masking is what a caller sees, never what the application decides on.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyDictionary<string, string?> Mask(
+        IReadOnlyDictionary<string, CustomFieldRow> declared,
+        IReadOnlyDictionary<string, string?> values,
+        IReadOnlyList<string> scopes,
+        ISet<string> redacted)
+    {
+        ArgumentNullException.ThrowIfNull(declared);
+        ArgumentNullException.ThrowIfNull(values);
+        ArgumentNullException.ThrowIfNull(scopes);
+        ArgumentNullException.ThrowIfNull(redacted);
+
+        var held = new HashSet<string>(scopes, StringComparer.Ordinal);
+        var visible = new Dictionary<string, string?>(StringComparer.Ordinal);
+
+        foreach (var (name, value) in values)
+        {
+            if (declared.TryGetValue(name, out var field) &&
+                field.ReadPermission is { Length: > 0 } permission &&
+                !held.Contains(permission))
+            {
+                visible[name] = Redacted;
+                redacted.Add(name);
+
+                continue;
+            }
+
+            visible[name] = value;
+        }
+
+        return visible;
+    }
+
     /// <summary>The scopes a caller holds, for a flow to project onto a capability's input.</summary>
     /// <param name="principal">Whoever the trigger authenticated, or null.</param>
     /// <returns>The scopes, empty when nobody is calling.</returns>

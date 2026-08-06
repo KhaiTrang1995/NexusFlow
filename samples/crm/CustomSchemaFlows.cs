@@ -157,3 +157,45 @@ public sealed partial class DefineRollupFlow : Flow<DefineRollup, RollupDefined>
             .Return(ctx => ctx.Get<RollupDefined>());
     }
 }
+
+/// <summary>Saves a named query over a custom object.</summary>
+[Flow("crm.custom.list_view", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "crm-platform")]
+[FlowDeadline("PT15S")]
+[HttpTrigger("POST", "/api/v1/crm/custom/list-views", Idempotent = true)]
+public sealed partial class DefineListViewFlow : Flow<DefineListView, ListViewDefined>
+{
+    /// <inheritdoc />
+    protected override void Define(IFlowBuilder<DefineListView, ListViewDefined> flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+
+        flow
+            .Step<DefineCrmListView>()
+            .Return(ctx => ctx.Get<ListViewDefined>());
+    }
+}
+
+/// <summary>Reads records of a custom object.</summary>
+/// <remarks>
+/// <strong><c>Ephemeral</c>, unlike every other flow here, because it writes nothing.</strong> A
+/// read journaled into <c>flow_instance</c> would put a row in the durable store for every list
+/// anybody opened, and a replay of a read has nothing to make idempotent.
+/// </remarks>
+[Flow("crm.custom.query", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral, Owner = "crm-platform")]
+[FlowDeadline("PT15S")]
+[HttpTrigger("POST", "/api/v1/crm/custom/queries")]
+public sealed partial class QueryRecordsFlow : Flow<QueryRecords, RecordPage>
+{
+    /// <inheritdoc />
+    protected override void Define(IFlowBuilder<QueryRecords, RecordPage> flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+
+        // Projected, so the grants come off the principal the trigger authenticated. A `scopes`
+        // field on the request would let anybody read anything.
+        flow
+            .Step<QueryCustomRecords, ReadObjectRecords>(
+                ctx => new ReadObjectRecords(ctx.Input, CustomFieldPolicy.Scopes(ctx.Principal)))
+            .Return(ctx => ctx.Get<RecordPage>());
+    }
+}
