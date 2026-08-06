@@ -259,6 +259,21 @@ namespace Crm;
 [JsonSerializable(typeof(QueuedCase))]
 [JsonSerializable(typeof(CaseWorklist))]
 
+// Campaigns, what they touched, what they cost, and who gets the credit.
+[JsonSerializable(typeof(DefineCampaign))]
+[JsonSerializable(typeof(CampaignDefined))]
+[JsonSerializable(typeof(RecordTouch))]
+[JsonSerializable(typeof(TouchRecorded))]
+[JsonSerializable(typeof(RecordCampaignCost))]
+[JsonSerializable(typeof(CampaignCostRecorded))]
+[JsonSerializable(typeof(ReadCampaignPerformance))]
+[JsonSerializable(typeof(CampaignPerformance))]
+[JsonSerializable(typeof(CampaignReport))]
+[JsonSerializable(typeof(ReadDealAttribution))]
+[JsonSerializable(typeof(AttributedCredit))]
+[JsonSerializable(typeof(DealAttribution))]
+[JsonSerializable(typeof(CampaignBy))]
+
 // The connector registry, its queue and what goes on the wire.
 [JsonSerializable(typeof(DefineConnector))]
 [JsonSerializable(typeof(ConnectorDefined))]

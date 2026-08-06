@@ -26,7 +26,7 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 
 ## What it is
 
-Sixty tables, seventy-four flows and three authorisation stances, over the entities a CRM actually
+Sixty-three tables, seventy-nine flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -102,6 +102,11 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Raise a case | `POST /api/v1/crm/service/cases` | the promise is stamped once, in the hours the desk is open |
 | Say something on a case | `POST /api/v1/crm/service/comments` | only a public reply from somebody else stops the response clock |
 | The live queue | `POST /api/v1/crm/service/queue` | breach computed as of the read, not swept up by a job |
+| Declare a campaign | `POST /api/v1/crm/campaigns` | a budget and a window; the spend is a separate ledger |
+| Record a touch | `POST /api/v1/crm/campaigns/touches` | a replayed batch is told it is a replay, not counted twice |
+| Record a spend | `POST /api/v1/crm/campaigns/costs` | append-only; over budget is reported, never refused |
+| Campaign performance | `POST /api/v1/crm/campaigns/performance` | the model is named in the answer, and the gap is shown |
+| Who influenced a deal | `POST /api/v1/crm/campaigns/attribution` | four models over one set of touches, with a cutoff at the decision |
 | API description | `GET /openapi.json`, `GET /openapi` | generated from the manifest, so it cannot drift from the routes |
 
 ## The three tokens

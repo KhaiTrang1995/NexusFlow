@@ -299,6 +299,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<ApprovalStore>();
         services.AddSingleton<ApproverResolver>();
         services.AddSingleton<ServiceStore>();
+        services.AddSingleton<CampaignStore>();
 
         // The far end, recorded rather than reached. Every other claim in these tests is checked
         // against a real PostgreSQL; a connector's far end is a network somebody else owns, and a
@@ -374,6 +375,11 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<OpenCrmCase>();
         services.AddSingleton<CommentOnCrmCase>();
         services.AddSingleton<ReadCrmCaseWorklist>();
+        services.AddSingleton<DefineCrmCampaign>();
+        services.AddSingleton<RecordCrmCampaignTouch>();
+        services.AddSingleton<RecordCrmCampaignCost>();
+        services.AddSingleton<ReadCrmCampaignPerformance>();
+        services.AddSingleton<ReadCrmDealAttribution>();
 
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
@@ -439,5 +445,10 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<OpenCaseFlow.Dispatcher>();
         services.AddSingleton<CommentOnCaseFlow.Dispatcher>();
         services.AddSingleton<CaseWorklistFlow.Dispatcher>();
+        services.AddSingleton<DefineCampaignFlow.Dispatcher>();
+        services.AddSingleton<RecordTouchFlow.Dispatcher>();
+        services.AddSingleton<RecordCampaignCostFlow.Dispatcher>();
+        services.AddSingleton<CampaignPerformanceFlow.Dispatcher>();
+        services.AddSingleton<DealAttributionFlow.Dispatcher>();
     }
 }
