@@ -288,6 +288,8 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<ManagementStore>();
         services.AddSingleton<PerformanceStore>();
         services.AddSingleton<TerritoryStore>();
+        services.AddSingleton<ApprovalStore>();
+        services.AddSingleton<ApproverResolver>();
 
         // The far end, recorded rather than reached. Every other claim in these tests is checked
         // against a real PostgreSQL; a connector's far end is a network somebody else owns, and a
@@ -354,6 +356,10 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<ReadTerritoryCoverage>();
         services.AddSingleton<SetCrmQuota>();
         services.AddSingleton<ReadCrmQuotaAttainment>();
+        services.AddSingleton<DefineCrmApprovalProcess>();
+        services.AddSingleton<SubmitCrmApproval>();
+        services.AddSingleton<DecideCrmApproval>();
+        services.AddSingleton<ReadCrmApprovalInbox>();
 
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
@@ -410,5 +416,9 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<CoverageFlow.Dispatcher>();
         services.AddSingleton<SetQuotaFlow.Dispatcher>();
         services.AddSingleton<QuotaAttainmentFlow.Dispatcher>();
+        services.AddSingleton<DefineApprovalProcessFlow.Dispatcher>();
+        services.AddSingleton<SubmitApprovalFlow.Dispatcher>();
+        services.AddSingleton<DecideApprovalFlow.Dispatcher>();
+        services.AddSingleton<ApprovalInboxFlow.Dispatcher>();
     }
 }

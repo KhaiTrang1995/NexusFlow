@@ -230,6 +230,20 @@ namespace Crm;
 [JsonSerializable(typeof(QuotaAttainment))]
 [JsonSerializable(typeof(QuotaAttainmentReport))]
 
+// Approvals an administrator configures, and the register of what was said.
+[JsonSerializable(typeof(ApprovalCriterion))]
+[JsonSerializable(typeof(ApprovalStepDefinition))]
+[JsonSerializable(typeof(DefineApprovalProcess))]
+[JsonSerializable(typeof(ApprovalProcessDefined))]
+[JsonSerializable(typeof(SubmitForApproval))]
+[JsonSerializable(typeof(ApprovalBy))]
+[JsonSerializable(typeof(ApprovalSubmitted))]
+[JsonSerializable(typeof(DecideApproval))]
+[JsonSerializable(typeof(ApprovalDecided))]
+[JsonSerializable(typeof(ReadApprovalInbox))]
+[JsonSerializable(typeof(WaitingApproval))]
+[JsonSerializable(typeof(ApprovalInbox))]
+
 // The connector registry, its queue and what goes on the wire.
 [JsonSerializable(typeof(DefineConnector))]
 [JsonSerializable(typeof(ConnectorDefined))]

@@ -26,7 +26,7 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 
 ## What it is
 
-Fifty-one tables, sixty-five flows and three authorisation stances, over the entities a CRM actually
+Fifty-six tables, sixty-nine flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -93,6 +93,10 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Territory coverage | `POST /api/v1/crm/territories/coverage` | the accounts in no territory — unaskable against a list |
 | Assign a quota | `POST /api/v1/crm/quotas` | with a ramp, so a part-year seller is not reported as failing |
 | Quota attainment | `POST /api/v1/crm/quotas/attainment` | assigned, committed and achieved side by side |
+| Declare an approval process | `POST /api/v1/crm/approvals/processes` | criteria and steps an administrator changes without a deployment |
+| Submit for approval | `POST /api/v1/crm/approvals/requests` | "no approval needed" is a real answer and is said out loud |
+| Decide | `POST /api/v1/crm/approvals/decisions` | a submitter cannot approve their own request; a rejection ends it |
+| Approval inbox | `POST /api/v1/crm/approvals/inbox` | filtered by who is asking, never by a user id in the body |
 | API description | `GET /openapi.json`, `GET /openapi` | generated from the manifest, so it cannot drift from the routes |
 
 ## The three tokens

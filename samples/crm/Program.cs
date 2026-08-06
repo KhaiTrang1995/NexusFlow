@@ -131,6 +131,8 @@ builder.Services.AddSingleton<PlanningStore>();
 builder.Services.AddSingleton<ManagementStore>();
 builder.Services.AddSingleton<PerformanceStore>();
 builder.Services.AddSingleton<TerritoryStore>();
+builder.Services.AddSingleton<ApprovalStore>();
+builder.Services.AddSingleton<ApproverResolver>();
 
 // The one thing in this application that talks to somebody else's system. Registered under the
 // interface, so a deployment with a vault or a real Slack renderer replaces this line and
