@@ -140,3 +140,20 @@ public sealed partial class DefineValidationRuleFlow
             .Return(ctx => ctx.Get<ValidationRuleDefined>());
     }
 }
+
+/// <summary>Declares a field whose value is an aggregate over a parent's children.</summary>
+[Flow("crm.custom.rollup", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "crm-platform")]
+[FlowDeadline("PT15S")]
+[HttpTrigger("POST", "/api/v1/crm/custom/rollups", Idempotent = true)]
+public sealed partial class DefineRollupFlow : Flow<DefineRollup, RollupDefined>
+{
+    /// <inheritdoc />
+    protected override void Define(IFlowBuilder<DefineRollup, RollupDefined> flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+
+        flow
+            .Step<DefineCustomRollup>()
+            .Return(ctx => ctx.Get<RollupDefined>());
+    }
+}

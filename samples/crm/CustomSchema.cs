@@ -215,6 +215,7 @@ public sealed record WriteEntityFields(
 /// The scope a caller must hold to write it, or null when <c>crm.write</c> is enough.
 /// </param>
 /// <param name="IsUnique">Whether two records of this owner may hold the same value.</param>
+/// <param name="IsComputed">Whether a roll-up writes it, in which case no caller may.</param>
 public sealed record CustomFieldRow(
     Guid Id,
     string Name,
@@ -223,7 +224,8 @@ public sealed record CustomFieldRow(
     IReadOnlyList<string>? Options = null,
     Guid? References = null,
     string? RequiredPermission = null,
-    bool IsUnique = false);
+    bool IsUnique = false,
+    bool IsComputed = false);
 
 // ------------------------------------------------------------------------------- what can go wrong
 

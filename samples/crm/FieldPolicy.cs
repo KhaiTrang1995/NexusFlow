@@ -185,6 +185,35 @@ public static class CustomFieldPolicy
         return null;
     }
 
+    /// <summary>The first field this build computes, or null when none of them is computed.</summary>
+    /// <param name="declared">The fields declared for the entity, by name.</param>
+    /// <param name="values">What is being written.</param>
+    /// <returns>The error, or null.</returns>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    /// <remarks>
+    /// <strong>Refused rather than ignored, and checked before the grants.</strong> A computed
+    /// field a caller may write is a lie — the next recompute overwrites it, so the write appears
+    /// to succeed and silently does nothing. "Nothing may write this" is also a better answer
+    /// than "you may not" to somebody nobody could have permitted.
+    /// </remarks>
+    public static Error? FirstComputedField(
+        IReadOnlyDictionary<string, CustomFieldRow> declared,
+        IReadOnlyDictionary<string, string?> values)
+    {
+        ArgumentNullException.ThrowIfNull(declared);
+        ArgumentNullException.ThrowIfNull(values);
+
+        foreach (var name in values.Keys)
+        {
+            if (declared.TryGetValue(name, out var field) && field.IsComputed)
+            {
+                return RollupErrors.FieldIsComputed(name);
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>The first field this caller may not write, or null when they may write them all.</summary>
     /// <param name="declared">The fields declared for the entity, by name.</param>
     /// <param name="values">What is being written.</param>

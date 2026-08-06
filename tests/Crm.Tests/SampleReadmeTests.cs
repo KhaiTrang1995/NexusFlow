@@ -80,11 +80,11 @@ public sealed partial class SampleReadmeTests
     public void TheSchemaVersionTheReadmeImpliesIsTheOneThisBuildWrites()
     {
         Readme.ShouldContain(
-            "Twenty-five tables",
+            "Twenty-six tables",
             Case.Sensitive,
             "the count is the one CrmSchemaReader emits and TenantIsolationTests counts policies for.");
 
-        CrmMigrator.TargetVersion.ShouldBe(7);
+        CrmMigrator.TargetVersion.ShouldBe(8);
     }
 
     [GeneratedRegex(@"http://localhost:5000(/api/[^\s\\']+)")]

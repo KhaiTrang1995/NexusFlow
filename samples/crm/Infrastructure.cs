@@ -113,6 +113,9 @@ namespace Crm;
 [JsonSerializable(typeof(WriteEntityFields))]
 [JsonSerializable(typeof(DefineValidationRule))]
 [JsonSerializable(typeof(ValidationRuleDefined))]
+[JsonSerializable(typeof(DefineRollup))]
+[JsonSerializable(typeof(RollupFilter))]
+[JsonSerializable(typeof(RollupDefined))]
 
 // The connector registry, its queue and what goes on the wire.
 [JsonSerializable(typeof(DefineConnector))]
@@ -212,7 +215,7 @@ public sealed class CrmSchemaReader
     /// </summary>
     /// <remarks>
     /// One count per table and one statement, so the answer is one round trip and one snapshot
-    /// rather than twenty-five that can disagree with each other. Every count runs under the
+    /// rather than twenty-six that can disagree with each other. Every count runs under the
     /// policies of migrations <c>0002</c> and <c>0005</c>, including the five tables that reach their tenant
     /// through a foreign key — which is what makes this endpoint a demonstration of the
     /// isolation rather than a report about the schema.
@@ -231,6 +234,7 @@ public sealed class CrmSchemaReader
         UNION ALL   SELECT 'custom_object',         count(*)              FROM custom_object
         UNION ALL   SELECT 'custom_record',         count(*)              FROM custom_record
         UNION ALL   SELECT 'custom_relationship',   count(*)              FROM custom_relationship
+        UNION ALL   SELECT 'custom_rollup',         count(*)              FROM custom_rollup
         UNION ALL   SELECT 'custom_unique_value',   count(*)              FROM custom_unique_value
         UNION ALL   SELECT 'custom_validation_rule', count(*)             FROM custom_validation_rule
         UNION ALL   SELECT 'lead',                  count(*)              FROM lead

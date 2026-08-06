@@ -263,6 +263,11 @@ public sealed class CreateCustomRecord : ICapability<WriteObjectRecord, RecordCr
 
         // Field-level security before the rules, because "you may not write this" is a better
         // answer than "what you wrote is wrong" to somebody who was never allowed to write it.
+        if (CustomFieldPolicy.FirstComputedField(declared, input.Values) is { } computed)
+        {
+            return Result.Fail<RecordCreated>(computed);
+        }
+
         if (CustomFieldPolicy.FirstForbiddenField(declared, input.Values, input.Scopes) is { } forbidden)
         {
             return Result.Fail<RecordCreated>(forbidden);
@@ -324,15 +329,19 @@ public sealed class CreateCustomRecord : ICapability<WriteObjectRecord, RecordCr
 public sealed class LinkCustomRecords : ICapability<LinkRecords, RecordsLinked>
 {
     private readonly CustomSchemaStore _store;
+    private readonly RollupStore _rollups;
 
     /// <summary>Creates the capability.</summary>
     /// <param name="store">Reads the relationship and writes the link.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="store"/> is null.</exception>
-    public LinkCustomRecords(CustomSchemaStore store)
+    /// <param name="rollups">Recomputes what the new child changed.</param>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    public LinkCustomRecords(CustomSchemaStore store, RollupStore rollups)
     {
         ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(rollups);
 
         _store = store;
+        _rollups = rollups;
     }
 
     /// <inheritdoc />
@@ -363,10 +372,19 @@ public sealed class LinkCustomRecords : ICapability<LinkRecords, RecordsLinked>
 
         var id = ctx.NewId();
 
-        return await _store.LinkAsync(ctx.TenantId, id, input, ctx.UtcNow, ct).ConfigureAwait(false)
-            ? Result.Ok(new RecordsLinked(id))
-            : Result.Fail<RecordsLinked>(
+        if (!await _store.LinkAsync(ctx.TenantId, id, input, ctx.UtcNow, ct).ConfigureAwait(false))
+        {
+            return Result.Fail<RecordsLinked>(
                 CustomSchemaErrors.CardinalityWouldBreak(edge.Cardinality));
+        }
+
+        // The parent gained a child, so every roll-up over this edge is now stale. Recomputed
+        // here rather than on read, because a transition guard reads `custom_fields` out of the
+        // row and a value computed at read time would not be there for it.
+        await _rollups.RecomputeAsync(ctx.TenantId, input.Relationship, input.From, ct)
+            .ConfigureAwait(false);
+
+        return Result.Ok(new RecordsLinked(id));
     }
 }
 
@@ -423,6 +441,11 @@ public sealed class SetEntityCustomFields : ICapability<WriteEntityFields, Custo
                 .ConfigureAwait(false) is { } dangling)
         {
             return Result.Fail<CustomFieldsSet>(dangling);
+        }
+
+        if (CustomFieldPolicy.FirstComputedField(declared, input.Values) is { } computed)
+        {
+            return Result.Fail<CustomFieldsSet>(computed);
         }
 
         if (CustomFieldPolicy.FirstForbiddenField(declared, input.Values, input.Scopes) is { } forbidden)

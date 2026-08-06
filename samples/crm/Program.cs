@@ -94,6 +94,7 @@ builder.Services.AddSingleton<AssistantStore>();
 builder.Services.AddSingleton<CustomSchemaStore>();
 builder.Services.AddSingleton<ConnectorStore>();
 builder.Services.AddSingleton<FieldPolicyStore>();
+builder.Services.AddSingleton<RollupStore>();
 
 // The one thing in this application that talks to somebody else's system. Registered under the
 // interface, so a deployment with a vault or a real Slack renderer replaces this line and
