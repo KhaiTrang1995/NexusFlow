@@ -87,6 +87,27 @@ namespace Crm;
 [JsonSerializable(typeof(CrmSchemaProbe))]
 [JsonSerializable(typeof(CrmSchemaReport))]
 [JsonSerializable(typeof(CrmTableRowCount))]
+
+// The run-time schema. Every one of these is a contract of a Durable flow, so FLOWX1006 is what
+// requires them here — the journal has to record the state bag without reflection.
+//
+// IReadOnlyDictionary<string, string?> is the shape a caller sends values in, and it is declared
+// once. A jsonb column's contents cannot be a generated contract, because the whole point is
+// that an administrator decides what is in it; a dictionary of text is the widest thing that
+// still has a JsonTypeInfo, and CustomValues is what gives it a type on the way in.
+[JsonSerializable(typeof(DefineObject))]
+[JsonSerializable(typeof(ObjectDefined))]
+[JsonSerializable(typeof(DefineField))]
+[JsonSerializable(typeof(FieldDefined))]
+[JsonSerializable(typeof(DefineRelationship))]
+[JsonSerializable(typeof(RelationshipDefined))]
+[JsonSerializable(typeof(CreateRecord))]
+[JsonSerializable(typeof(RecordCreated))]
+[JsonSerializable(typeof(LinkRecords))]
+[JsonSerializable(typeof(RecordsLinked))]
+[JsonSerializable(typeof(SetCustomFields))]
+[JsonSerializable(typeof(CustomFieldsSet))]
+[JsonSerializable(typeof(IReadOnlyDictionary<string, string?>))]
 public sealed partial class CrmJsonContext : JsonSerializerContext;
 
 /// <summary>
@@ -176,8 +197,8 @@ public sealed class CrmSchemaReader
     /// </summary>
     /// <remarks>
     /// One count per table and one statement, so the answer is one round trip and one snapshot
-    /// rather than fourteen that can disagree with each other. Every count runs under the
-    /// policies of migration <c>0002</c>, including the five tables that reach their tenant
+    /// rather than nineteen that can disagree with each other. Every count runs under the
+    /// policies of migrations <c>0002</c> and <c>0005</c>, including the five tables that reach their tenant
     /// through a foreign key — which is what makes this endpoint a demonstration of the
     /// isolation rather than a report about the schema.
     /// </remarks>
@@ -186,6 +207,11 @@ public sealed class CrmSchemaReader
                     SELECT 'account' AS table_name, count(*) AS row_count FROM account
         UNION ALL   SELECT 'activity',              count(*)              FROM activity
         UNION ALL   SELECT 'contact',               count(*)              FROM contact
+        UNION ALL   SELECT 'custom_field',          count(*)              FROM custom_field
+        UNION ALL   SELECT 'custom_link',           count(*)              FROM custom_link
+        UNION ALL   SELECT 'custom_object',         count(*)              FROM custom_object
+        UNION ALL   SELECT 'custom_record',         count(*)              FROM custom_record
+        UNION ALL   SELECT 'custom_relationship',   count(*)              FROM custom_relationship
         UNION ALL   SELECT 'lead',                  count(*)              FROM lead
         UNION ALL   SELECT 'lead_enrichment',       count(*)              FROM lead_enrichment
         UNION ALL   SELECT 'opportunity',           count(*)              FROM opportunity

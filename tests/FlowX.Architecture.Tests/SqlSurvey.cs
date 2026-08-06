@@ -99,6 +99,18 @@ internal static class SqlSurvey
             LiteralExpressionSyntax literal when literal.IsKind(SyntaxKind.StringLiteralExpression) => null,
             ConditionalExpressionSyntax choice =>
                 WhyNotFixed(choice.WhenTrue, owner, hops) ?? WhyNotFixed(choice.WhenFalse, owner, hops),
+
+            // A switch over constants is as fixed as the ternary above, and it is the shape a
+            // choice between more than two statements actually takes. Every arm is resolved by
+            // the same rules, so nothing is accepted here that a nest of ternaries would not
+            // already have been; a single arm carrying an interpolation still fails the whole
+            // expression. Arms that throw carry no SQL and are skipped rather than resolved —
+            // `_ => throw new ArgumentOutOfRangeException(...)` is the usual last one.
+            SwitchExpressionSyntax choice => choice.Arms
+                .Select(arm => arm.Expression)
+                .Where(static arm => arm is not ThrowExpressionSyntax)
+                .Select(arm => WhyNotFixed(arm, owner, hops))
+                .FirstOrDefault(static why => why is not null),
             InvocationExpressionSyntax call when IsBuildTimeScriptReader(call) => null,
             MemberAccessExpressionSyntax member => WhyNotAConstant(
                 $"{Simple(member.Expression)}.{member.Name.Identifier.ValueText}", member.ToString()),

@@ -26,7 +26,7 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 
 ## What it is
 
-Fourteen tables, fifteen flows and two authorisation stances, over the entities a CRM actually
+Nineteen tables, twenty-one flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -43,6 +43,12 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Stale sweep | `[CronTrigger("0 6 * * *")]` | counts, and leaves what to do about it to the process |
 | Summarise an account | `POST /api/v1/crm/account-summaries` + `[AgentTrigger]` | one stance, two transports |
 | Schema probe | `POST /api/v1/crm/schema-probes` | row-level security, demonstrated over HTTP |
+| Declare an object | `POST /api/v1/crm/custom/objects` | an entity this build has never heard of, at run time |
+| Declare a field | `POST /api/v1/crm/custom/fields` | a column on a built-in entity or on a custom object |
+| Declare a relationship | `POST /api/v1/crm/custom/relationships` | a named edge, with a cardinality the database keeps |
+| Write a record | `POST /api/v1/crm/custom/records` | `crm.write` — declaring the shape is a different grant |
+| Link two records | `POST /api/v1/crm/custom/links` | the cardinality asked where the link is made |
+| Set custom fields | `POST /api/v1/crm/custom/entity-fields` | a merge, so two clients editing different fields do not collide |
 
 ## The three tokens
 
@@ -52,7 +58,7 @@ deletes it — everything downstream reads a `ClaimsPrincipal` and does not care
 | Token | Tenant | Scopes |
 |---|---|---|
 | `rep-northwind-token` | `crm-northwind` | `crm.read crm.write` |
-| `manager-northwind-token` | `crm-northwind` | `crm.read crm.write crm.discount.approve` |
+| `manager-northwind-token` | `crm-northwind` | `crm.read crm.write crm.discount.approve crm.admin` |
 | `rep-contoso-token` | `crm-contoso` | `crm.read crm.write` |
 
 The tenant comes off the `tid` claim and off nothing else — not a header, not the payload

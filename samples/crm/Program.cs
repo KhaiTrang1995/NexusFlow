@@ -91,6 +91,7 @@ builder.Services.AddSingleton<WorkStore>();
 builder.Services.AddSingleton<EnrichmentProvider>();
 builder.Services.AddSingleton<EnrichmentStore>();
 builder.Services.AddSingleton<AssistantStore>();
+builder.Services.AddSingleton<CustomSchemaStore>();
 
 // Every capability the twenty-five steps invoke, and every flow's dispatcher — generated from
 // the constructors the generator itself wrote. Forty hand-written lines stood here until the

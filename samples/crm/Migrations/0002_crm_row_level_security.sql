@@ -33,11 +33,34 @@
 -- Cluster-wide, so this is written to be safe when a second schema on the same server has
 -- already run it or the platform's own 0008. Every test in tests/Crm.Tests gets its own schema
 -- and migrates it from nothing, which is not a hypothetical arrangement.
+--
+-- The existence check alone was not enough, and the way it failed is worth stating. CrmMigrator
+-- takes pg_advisory_xact_lock(namespace, hashtext(current_schema())) — one lock per schema,
+-- which is right for everything else in this file and wrong for exactly this statement, because
+-- a role is not in a schema. Two test schemas migrating at once therefore hold different locks,
+-- both see no role, and both issue CREATE ROLE; the loser gets 42710. That is a first run
+-- against a fresh cluster failing three tests and every run afterwards passing, which is the
+-- shape of a flake nobody can reproduce.
+--
+-- Catching the exception rather than widening the lock: the check is still worth making, since
+-- the common case is that the role is already there, and the handler is what makes the window
+-- between the check and the CREATE harmless.
+--
+-- BOTH SQLSTATES, and the second is the one that actually fires. `duplicate_object` (42710) is
+-- what CREATE ROLE raises when the role is already committed and visible — which this block's
+-- own IF has just ruled out. What a genuine race produces is `unique_violation` (23505) on
+-- pg_authid_rolname_index, because the losing transaction gets as far as inserting into the
+-- catalogue before the index refuses it. A handler for 42710 alone reads like a fix and leaves
+-- the flake exactly where it was; this was written that way first and the fresh-cluster run
+-- still failed three tests.
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowx_tenant') THEN
         CREATE ROLE flowx_tenant NOLOGIN NOBYPASSRLS;
     END IF;
+EXCEPTION
+    WHEN duplicate_object OR unique_violation THEN
+        NULL;
 END
 $$;
 

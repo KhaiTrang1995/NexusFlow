@@ -63,7 +63,8 @@ public sealed class ProcessStore
         """;
 
     private const string SelectFacts = """
-        SELECT o.amount, o.currency, o.probability, a.region, a.industry, o.owner_id
+        SELECT o.amount, o.currency, o.probability, a.region, a.industry, o.owner_id,
+               o.custom_fields::text
         FROM opportunity o
         JOIN account a ON a.account_id = o.account_id
         WHERE o.opportunity_id = @opportunity
@@ -176,7 +177,12 @@ public sealed class ProcessStore
             reader.GetInt32(2),
             reader.GetString(3),
             reader.GetString(4),
-            reader.GetGuid(5));
+            reader.GetGuid(5),
+
+            // The dynamic half of the same snapshot, read in the same statement as the six
+            // built-in fields. A second query would let a guard on `amount` and a guard on a
+            // custom field disagree about which version of the opportunity they saw.
+            CustomValues.FromJson(reader.GetString(6)));
     }
 
     /// <summary>The stage an opportunity is in.</summary>

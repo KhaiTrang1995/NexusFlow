@@ -84,6 +84,7 @@ public sealed class CrmMigrator
         new(2, "crm_row_level_security", "0002_crm_row_level_security.sql"),
         new(3, "crm_activity_integrity", "0003_crm_activity_integrity.sql"),
         new(4, "crm_lead_enrichment", "0004_crm_lead_enrichment.sql"),
+        new(5, "crm_dynamic_schema", "0005_crm_dynamic_schema.sql"),
     ];
 
     /// <summary>The schema version this build of the sample reads and writes.</summary>

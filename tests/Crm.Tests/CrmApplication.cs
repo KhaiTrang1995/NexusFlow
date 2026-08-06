@@ -215,6 +215,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<IntakeStore>();
         services.AddSingleton<SalesStore>();
         services.AddSingleton<WorkStore>();
+        services.AddSingleton<CustomSchemaStore>();
 
         // The capabilities behind the five routes exercised here, and their dispatchers. Named
         // one by one so that a route whose capability nobody registered fails as a missing
@@ -225,6 +226,12 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<PlaceOrderForQuote>();
         services.AddSingleton<ApplyOpportunityTrigger>();
         services.AddSingleton<CreateTaskForSubject>();
+        services.AddSingleton<DefineCustomObject>();
+        services.AddSingleton<DefineCustomField>();
+        services.AddSingleton<DefineCustomRelationship>();
+        services.AddSingleton<CreateCustomRecord>();
+        services.AddSingleton<LinkCustomRecords>();
+        services.AddSingleton<SetEntityCustomFields>();
 
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
@@ -232,5 +239,11 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<PlaceOrderFlow.Dispatcher>();
         services.AddSingleton<AdvanceOpportunityFlow.Dispatcher>();
         services.AddSingleton<CreateTaskFlow.Dispatcher>();
+        services.AddSingleton<DefineObjectFlow.Dispatcher>();
+        services.AddSingleton<DefineFieldFlow.Dispatcher>();
+        services.AddSingleton<DefineRelationshipFlow.Dispatcher>();
+        services.AddSingleton<CreateRecordFlow.Dispatcher>();
+        services.AddSingleton<LinkRecordsFlow.Dispatcher>();
+        services.AddSingleton<SetCustomFieldsFlow.Dispatcher>();
     }
 }
