@@ -215,6 +215,21 @@ namespace Crm;
 [JsonSerializable(typeof(ViewerScope))]
 [JsonSerializable(typeof(ExecutiveBoard))]
 
+// Who owns which accounts, what number each person carries, and what a part-year seller carries.
+[JsonSerializable(typeof(RoutingRule))]
+[JsonSerializable(typeof(DefineTerritory))]
+[JsonSerializable(typeof(TerritoryDefined))]
+[JsonSerializable(typeof(RouteSubject))]
+[JsonSerializable(typeof(RoutedTo))]
+[JsonSerializable(typeof(ReadCoverage))]
+[JsonSerializable(typeof(TerritoryCoverage))]
+[JsonSerializable(typeof(Coverage))]
+[JsonSerializable(typeof(SetQuota))]
+[JsonSerializable(typeof(QuotaSet))]
+[JsonSerializable(typeof(ReadQuotaAttainment))]
+[JsonSerializable(typeof(QuotaAttainment))]
+[JsonSerializable(typeof(QuotaAttainmentReport))]
+
 // The connector registry, its queue and what goes on the wire.
 [JsonSerializable(typeof(DefineConnector))]
 [JsonSerializable(typeof(ConnectorDefined))]

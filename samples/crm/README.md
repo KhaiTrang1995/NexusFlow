@@ -26,7 +26,7 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 
 ## What it is
 
-Forty-seven tables, sixty flows and three authorisation stances, over the entities a CRM actually
+Fifty-one tables, sixty-five flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -88,6 +88,11 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Sales performance | `POST /api/v1/crm/performance/sales` | attainment per person; null, not nought, for no number |
 | Deal performance | `POST /api/v1/crm/performance/deals` | win rate, average size, and what has stalled |
 | Executive board | `POST /api/v1/crm/board` | all five in one request, so two numbers cannot disagree |
+| Declare a territory | `POST /api/v1/crm/territories` | rules, not a list — so a new account routes the moment it exists |
+| Route something | `POST /api/v1/crm/territories/routes` | first match by priority, and it says how many it looked at |
+| Territory coverage | `POST /api/v1/crm/territories/coverage` | the accounts in no territory — unaskable against a list |
+| Assign a quota | `POST /api/v1/crm/quotas` | with a ramp, so a part-year seller is not reported as failing |
+| Quota attainment | `POST /api/v1/crm/quotas/attainment` | assigned, committed and achieved side by side |
 
 ## The three tokens
 
