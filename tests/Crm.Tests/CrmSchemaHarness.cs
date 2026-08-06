@@ -50,6 +50,16 @@ internal sealed class CrmSchemaHarness : IAsyncDisposable
     /// <summary>The data source, with <c>search_path</c> already pointing at this schema.</summary>
     public NpgsqlDataSource DataSource { get; }
 
+    /// <summary>
+    /// The schema this harness owns, for a second data source that has to reach the same tables.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="CrmApplication"/> is the only caller: a host composed over
+    /// <c>AddFlowXPostgres</c> builds its own pool and needs the same <c>search_path</c>, or the
+    /// application would write its journal into <c>public</c> while the tests read tables here.
+    /// </remarks>
+    public string Schema => _schema;
+
     /// <summary>Creates a schema, migrates the CRM tables into it, and hands it back.</summary>
     /// <param name="cancellationToken">Cancels the setup.</param>
     /// <param name="throughVersion">
@@ -157,6 +167,33 @@ internal sealed class CrmSchemaHarness : IAsyncDisposable
         using var command = Command(connection, sql, []);
 
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Reads one value as the role that created the schema, under no tenant scope.</summary>
+    /// <typeparam name="T">What the statement returns.</typeparam>
+    /// <param name="sql">The statement.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <param name="parameters">Bound values, by name.</param>
+    /// <returns>The scalar, or the type's default when the statement produced no row.</returns>
+    /// <remarks>
+    /// For the platform's tables rather than the CRM's. <c>outbox_event</c> carries no
+    /// <c>tenant_id</c> and migration <c>0002</c> grants <c>flowx_tenant</c> the CRM tables and
+    /// nothing else, so a scoped connection cannot read it — which is correct, and leaves this
+    /// as the only way to assert that an emitted event was staged.
+    /// </remarks>
+    public async ValueTask<T?> ScalarAsOwnerAsync<T>(
+        string sql,
+        CancellationToken cancellationToken,
+        params (string Name, object? Value)[] parameters)
+    {
+        var connection = await DataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
+
+        using var command = Command(connection, sql, parameters);
+
+        var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+
+        return value is null or DBNull ? default : (T)value;
     }
 
     /// <summary>The <c>PostgresException</c> a statement raised, or null when it did not.</summary>
