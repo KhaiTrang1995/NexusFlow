@@ -199,3 +199,24 @@ public sealed partial class QueryRecordsFlow : Flow<QueryRecords, RecordPage>
             .Return(ctx => ctx.Get<RecordPage>());
     }
 }
+
+/// <summary>Searches every entity this tenant has.</summary>
+/// <remarks>
+/// <c>Ephemeral</c> for the reason the query route is: a search writes nothing, and journaling
+/// one would put a durable row behind every keystroke somebody typed into a search box.
+/// </remarks>
+[Flow("crm.search", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral, Owner = "crm-platform")]
+[FlowDeadline("PT15S")]
+[HttpTrigger("POST", "/api/v1/crm/search")]
+public sealed partial class SearchFlow : Flow<SearchEverything, SearchResults>
+{
+    /// <inheritdoc />
+    protected override void Define(IFlowBuilder<SearchEverything, SearchResults> flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+
+        flow
+            .Step<SearchCrm>()
+            .Return(ctx => ctx.Get<SearchResults>());
+    }
+}

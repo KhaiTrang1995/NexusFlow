@@ -27,50 +27,116 @@ public sealed class QueryStore
     private const string InsertView = """
         INSERT INTO custom_list_view (
             view_id, tenant_id, object_id, name, label,
-            filter_field, filter_operator, filter_value, order_by, row_limit, created_at)
+            filter_field, filter_operator, filter_value, order_by, row_limit, match_mode, created_at)
         VALUES (@id, @tenant, @object, @name, @label,
-            @filterField, @filterOperator, @filterValue, @orderBy, @limit, @now)
+            @filterField, @filterOperator, @filterValue, @orderBy, @limit, @match, @now)
         ON CONFLICT (tenant_id, name) DO NOTHING
         RETURNING view_id
         """;
 
     private const string ReadView = """
-        SELECT object_id, filter_field, filter_operator, filter_value, order_by, row_limit
+        SELECT view_id, object_id, filter_field, filter_operator, filter_value,
+               order_by, row_limit, match_mode
         FROM custom_list_view
         WHERE name = @name
         """;
 
+    private const string InsertCriterion = """
+        INSERT INTO custom_filter_criterion (
+            criterion_id, tenant_id, view_id, ordinal, field, operator, value)
+        VALUES (@id, @tenant, @view, @ordinal, @field, @operator, @value)
+        """;
+
+    private const string CriteriaForView = """
+        SELECT field, operator, value
+        FROM custom_filter_criterion
+        WHERE view_id = @view
+        ORDER BY ordinal
+        """;
+
+    // HOW N CRITERIA ARE EVALUATED WITHOUT BUILDING N PREDICATES.
+    //
+    // A filter with an unknown number of criteria is the case that makes people concatenate SQL,
+    // and it does not have to be. The three arrays are bound as parameters and `unnest` turns
+    // them back into rows inside the statement; the correlated subquery evaluates each against
+    // the outer record and folds them with bool_and or bool_or. So the statement is a constant,
+    // the criteria are values, and a filter of one criterion and a filter of twelve run the same
+    // plan shape.
+    //
+    // `cardinality(...) = 0` is the no-filter case, which has to come first: bool_and over an
+    // empty set is NULL, not true, and a WHERE of NULL returns nothing.
+    private const string Predicate = """
+              AND (cardinality(@fields::text[]) = 0 OR coalesce((
+                  SELECT CASE WHEN @matchAll THEN bool_and(held) ELSE bool_or(held) END
+                  FROM unnest(@fields::text[], @operators::text[], @values::text[])
+                       AS criterion(f, o, v)
+                  CROSS JOIN LATERAL (SELECT CASE o
+                      WHEN 'Equals'      THEN r.values->>f = v
+                      WHEN 'NotEquals'   THEN r.values->>f IS DISTINCT FROM v
+                      WHEN 'GreaterThan' THEN (r.values->>f)::numeric > v::numeric
+                      WHEN 'LessThan'    THEN (r.values->>f)::numeric < v::numeric
+                      WHEN 'IsSet'       THEN (r.values->>f IS NOT NULL) = (v = 'true')
+                      ELSE false
+                  END AS held) AS evaluated), false))
+        """;
+
     private const string RecordsInOrder = """
-        SELECT record_id, values::text
-        FROM custom_record
-        WHERE object_id = @object
-          AND (@filterField IS NULL OR (
-              CASE @filterOperator
-                  WHEN 'Equals'      THEN values->>@filterField = @filterValue
-                  WHEN 'NotEquals'   THEN values->>@filterField IS DISTINCT FROM @filterValue
-                  WHEN 'GreaterThan' THEN (values->>@filterField)::numeric > @filterValue::numeric
-                  WHEN 'LessThan'    THEN (values->>@filterField)::numeric < @filterValue::numeric
-                  WHEN 'IsSet'       THEN (values->>@filterField IS NOT NULL) = (@filterValue = 'true')
-                  ELSE false
-              END))
-        ORDER BY values->>@orderBy, created_at
+        SELECT r.record_id, r.values::text
+        FROM custom_record r
+        WHERE r.object_id = @object
+        """ + Predicate + """
+
+        ORDER BY r.values->>@orderBy, r.created_at
         LIMIT @limit
         """;
 
     private const string RecordsInsertionOrder = """
-        SELECT record_id, values::text
-        FROM custom_record
-        WHERE object_id = @object
-          AND (@filterField IS NULL OR (
-              CASE @filterOperator
-                  WHEN 'Equals'      THEN values->>@filterField = @filterValue
-                  WHEN 'NotEquals'   THEN values->>@filterField IS DISTINCT FROM @filterValue
-                  WHEN 'GreaterThan' THEN (values->>@filterField)::numeric > @filterValue::numeric
-                  WHEN 'LessThan'    THEN (values->>@filterField)::numeric < @filterValue::numeric
-                  WHEN 'IsSet'       THEN (values->>@filterField IS NOT NULL) = (@filterValue = 'true')
-                  ELSE false
-              END))
-        ORDER BY created_at
+        SELECT r.record_id, r.values::text
+        FROM custom_record r
+        WHERE r.object_id = @object
+        """ + Predicate + """
+
+        ORDER BY r.created_at
+        LIMIT @limit
+        """;
+
+    // Every entity a person would type a name into a box to find, and the custom objects an
+    // administrator invented, in one statement.
+    //
+    // WHAT A HIT CARRIES, AND WHY IT IS NOT THE ROW. A title from the entity's own columns and an
+    // id — never a custom field. A custom record's values are read-secured per field, and a search
+    // that returned them would be a second projection of custom values with no masking, which is
+    // exactly the leak the masking function exists to prevent. A hit says what to go and read,
+    // and the query surface is what decides how much of it may be seen.
+    //
+    // The tenant does not appear in the predicate. Row-level security is what scopes this, on all
+    // five tables at once, which is the whole argument for the scope being a connection setting
+    // rather than a WHERE clause somebody has to remember to write in a sixth place.
+    private const string SearchEverything = """
+        SELECT kind, id, title, rank FROM (
+            SELECT 'Lead' AS kind, lead_id AS id, company AS title,
+                   ts_rank(search_document, websearch_to_tsquery('simple', @phrase)) AS rank
+            FROM lead WHERE search_document @@ websearch_to_tsquery('simple', @phrase)
+            UNION ALL
+            SELECT 'Account', account_id, name,
+                   ts_rank(search_document, websearch_to_tsquery('simple', @phrase))
+            FROM account WHERE search_document @@ websearch_to_tsquery('simple', @phrase)
+            UNION ALL
+            SELECT 'Contact', contact_id, full_name,
+                   ts_rank(search_document, websearch_to_tsquery('simple', @phrase))
+            FROM contact WHERE search_document @@ websearch_to_tsquery('simple', @phrase)
+            UNION ALL
+            SELECT 'Opportunity', opportunity_id, name,
+                   ts_rank(search_document, websearch_to_tsquery('simple', @phrase))
+            FROM opportunity WHERE search_document @@ websearch_to_tsquery('simple', @phrase)
+            UNION ALL
+            SELECT 'CustomRecord', r.record_id, o.label,
+                   ts_rank(r.search_document, websearch_to_tsquery('simple', @phrase))
+            FROM custom_record r
+            JOIN custom_object o ON o.object_id = r.object_id
+            WHERE r.search_document @@ websearch_to_tsquery('simple', @phrase)
+        ) AS hits
+        ORDER BY rank DESC, title
         LIMIT @limit
         """;
 
@@ -115,15 +181,40 @@ public sealed class QueryStore
         Add(command, "object", NpgsqlDbType.Uuid, request.Target);
         Add(command, "name", NpgsqlDbType.Text, request.Name);
         Add(command, "label", NpgsqlDbType.Text, request.Label);
-        Add(command, "filterField", NpgsqlDbType.Text, (object?)request.Filter?.Field ?? DBNull.Value);
-        Add(command, "filterOperator", NpgsqlDbType.Text,
-            (object?)request.Filter?.Operator.ToString() ?? DBNull.Value);
-        Add(command, "filterValue", NpgsqlDbType.Text, (object?)request.Filter?.Value ?? DBNull.Value);
+        Add(command, "filterField", NpgsqlDbType.Text, DBNull.Value);
+        Add(command, "filterOperator", NpgsqlDbType.Text, DBNull.Value);
+        Add(command, "filterValue", NpgsqlDbType.Text, DBNull.Value);
+        Add(command, "match", NpgsqlDbType.Text,
+            (request.Filter?.Match ?? FilterMatch.All).ToString());
         Add(command, "orderBy", NpgsqlDbType.Text, (object?)request.OrderBy ?? DBNull.Value);
         Add(command, "limit", NpgsqlDbType.Integer, request.Limit);
         Add(command, "now", NpgsqlDbType.TimestampTz, now);
 
-        return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as Guid?;
+        if (await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not Guid written)
+        {
+            return null;
+        }
+
+        var ordinal = 0;
+
+        foreach (var criterion in request.Filter?.Criteria ?? [])
+        {
+            var write = connection.CreateCommand();
+            await using var closingWrite = write.ConfigureAwait(false);
+
+            write.CommandText = InsertCriterion;
+            Add(write, "id", NpgsqlDbType.Uuid, Guid.NewGuid());
+            Add(write, "tenant", NpgsqlDbType.Text, tenantId ?? string.Empty);
+            Add(write, "view", NpgsqlDbType.Uuid, written);
+            Add(write, "ordinal", NpgsqlDbType.Integer, ordinal++);
+            Add(write, "field", NpgsqlDbType.Text, criterion.Field);
+            Add(write, "operator", NpgsqlDbType.Text, criterion.Operator.ToString());
+            Add(write, "value", NpgsqlDbType.Text, criterion.Value);
+
+            await write.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return written;
     }
 
     /// <summary>What a saved view asks for.</summary>
@@ -131,13 +222,20 @@ public sealed class QueryStore
     /// <param name="name">The view's name.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>The query it stands for, or null when this tenant has no such view.</returns>
-    public async ValueTask<(Guid Target, RollupFilter? Filter, string? OrderBy, int Limit)?> ReadViewAsync(
+    public async ValueTask<(Guid Target, RecordFilter? Filter, string? OrderBy, int Limit)?> ReadViewAsync(
         string? tenantId,
         string name,
         CancellationToken cancellationToken)
     {
         var connection = await OpenAsync(tenantId, cancellationToken).ConfigureAwait(false);
         await using var closing = connection.ConfigureAwait(false);
+
+        Guid viewId;
+        Guid target;
+        RollupFilter? legacy;
+        string? orderBy;
+        int limit;
+        FilterMatch match;
 
         var command = connection.CreateCommand();
         await using var closingCommand = command.ConfigureAwait(false);
@@ -146,31 +244,71 @@ public sealed class QueryStore
         Add(command, "name", NpgsqlDbType.Text, name);
 
         var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        await using var closingReader = reader.ConfigureAwait(false);
 
-        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        await using (reader.ConfigureAwait(false))
         {
-            return null;
-        }
+            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return null;
+            }
 
-        var filterField = await reader.IsDBNullAsync(1, cancellationToken).ConfigureAwait(false)
-            ? null
-            : reader.GetString(1);
+            viewId = reader.GetGuid(0);
+            target = reader.GetGuid(1);
 
-        var orderBy = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false)
-            ? null
-            : reader.GetString(4);
-
-        return (
-            reader.GetGuid(0),
-            filterField is null
+            legacy = await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false)
                 ? null
                 : new RollupFilter(
-                    filterField,
-                    Enum.Parse<GuardOperator>(reader.GetString(2)),
-                    reader.GetString(3)),
-            orderBy,
-            reader.GetInt32(5));
+                    reader.GetString(2),
+                    Enum.Parse<GuardOperator>(reader.GetString(3)),
+                    reader.GetString(4));
+
+            orderBy = await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false)
+                ? null
+                : reader.GetString(5);
+
+            limit = reader.GetInt32(6);
+            match = Enum.Parse<FilterMatch>(reader.GetString(7));
+        }
+
+        // The criteria table first, and the three columns of migration 0009 as the fallback. A
+        // view saved before that migration keeps working; one saved after it has no legacy row,
+        // so the two cannot both answer and there is no rule needed about which wins.
+        var criteria = await CriteriaAsync(connection, viewId, cancellationToken).ConfigureAwait(false);
+
+        var filter = criteria.Count > 0
+            ? new RecordFilter(match, criteria)
+            : legacy is null
+                ? null
+                : new RecordFilter(FilterMatch.All, [legacy]);
+
+        return (target, filter, orderBy, limit);
+    }
+
+    private static async ValueTask<List<RollupFilter>> CriteriaAsync(
+        NpgsqlConnection connection,
+        Guid viewId,
+        CancellationToken cancellationToken)
+    {
+        var command = connection.CreateCommand();
+        await using var closingCommand = command.ConfigureAwait(false);
+
+        command.CommandText = CriteriaForView;
+        Add(command, "view", NpgsqlDbType.Uuid, viewId);
+
+        var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await using var closingReader = reader.ConfigureAwait(false);
+
+        var criteria = new List<RollupFilter>();
+
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            criteria.Add(new RollupFilter(
+                reader.GetString(0),
+                Enum.Parse<GuardOperator>(reader.GetString(1)),
+                reader.GetString(2)));
+        }
+
+        return criteria;
     }
 
     /// <summary>The records of an object that a filter admits.</summary>
@@ -189,7 +327,7 @@ public sealed class QueryStore
     public async ValueTask<IReadOnlyList<(Guid Id, string Values)>> RecordsAsync(
         string? tenantId,
         Guid target,
-        RollupFilter? filter,
+        RecordFilter? filter,
         string? orderBy,
         int limit,
         CancellationToken cancellationToken)
@@ -205,11 +343,14 @@ public sealed class QueryStore
         // shape SqlFitnessTests exists to refuse, and it would be right to.
         command.CommandText = orderBy is { Length: > 0 } ? RecordsInOrder : RecordsInsertionOrder;
 
+        var criteria = filter?.Criteria ?? [];
+
         Add(command, "object", NpgsqlDbType.Uuid, target);
-        Add(command, "filterField", NpgsqlDbType.Text, (object?)filter?.Field ?? DBNull.Value);
-        Add(command, "filterOperator", NpgsqlDbType.Text,
-            (object?)filter?.Operator.ToString() ?? DBNull.Value);
-        Add(command, "filterValue", NpgsqlDbType.Text, (object?)filter?.Value ?? DBNull.Value);
+        AddTextArray(command, "fields", [.. criteria.Select(static c => c.Field)]);
+        AddTextArray(command, "operators", [.. criteria.Select(static c => c.Operator.ToString())]);
+        AddTextArray(command, "values", [.. criteria.Select(static c => c.Value)]);
+        Add(command, "matchAll", NpgsqlDbType.Boolean,
+            filter is null || filter.Match == FilterMatch.All);
         Add(command, "limit", NpgsqlDbType.Integer, limit);
 
         if (orderBy is { Length: > 0 })
@@ -229,6 +370,57 @@ public sealed class QueryStore
 
         return rows;
     }
+
+    /// <summary>Every entity this tenant has whose search document matches a phrase.</summary>
+    /// <param name="tenantId">The caller's tenant.</param>
+    /// <param name="phrase">What to look for.</param>
+    /// <param name="limit">How many hits at most.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The hits, most relevant first.</returns>
+    /// <remarks>
+    /// <strong>A hit carries a title and an id, and never a custom field.</strong> A search that
+    /// returned values would be a second projection of them with no masking, which is the leak
+    /// <see cref="CustomFieldPolicy.Mask"/> exists to prevent. This says what to go and read; the
+    /// query surface decides what may be seen of it.
+    /// </remarks>
+    public async ValueTask<IReadOnlyList<SearchHit>> SearchAsync(
+        string? tenantId,
+        string phrase,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var connection = await OpenAsync(tenantId, cancellationToken).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
+
+        var command = connection.CreateCommand();
+        await using var closingCommand = command.ConfigureAwait(false);
+
+        command.CommandText = SearchEverything;
+        Add(command, "phrase", NpgsqlDbType.Text, phrase);
+        Add(command, "limit", NpgsqlDbType.Integer, limit);
+
+        var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await using var closingReader = reader.ConfigureAwait(false);
+
+        var hits = new List<SearchHit>();
+
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            hits.Add(new SearchHit(reader.GetString(0), reader.GetGuid(1), reader.GetString(2)));
+        }
+
+        return hits;
+    }
+
+    /// <summary>Binds one of the three criterion arrays.</summary>
+    /// <remarks>
+    /// A separate helper because a text array is <c>NpgsqlDbType.Text</c> with
+    /// <c>NpgsqlDbType.Array</c>, and combining them with <c>|</c> is a bitwise operation on an
+    /// enumeration that is not <c>[Flags]</c> — which the analyser refuses, correctly. The
+    /// parameter's element type is inferred from the value instead.
+    /// </remarks>
+    private static void AddTextArray(NpgsqlCommand command, string name, string[] values) =>
+        command.Parameters.Add(new NpgsqlParameter<string[]>(name, values));
 
     private static void Add(NpgsqlCommand command, string name, NpgsqlDbType type, object value) =>
         command.Parameters.Add(new NpgsqlParameter(name, type) { Value = value });

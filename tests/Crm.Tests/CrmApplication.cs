@@ -271,6 +271,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<DefineCustomRollup>();
         services.AddSingleton<DefineCrmListView>();
         services.AddSingleton<QueryCustomRecords>();
+        services.AddSingleton<SearchCrm>();
 
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
@@ -291,5 +292,6 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<DefineRollupFlow.Dispatcher>();
         services.AddSingleton<DefineListViewFlow.Dispatcher>();
         services.AddSingleton<QueryRecordsFlow.Dispatcher>();
+        services.AddSingleton<SearchFlow.Dispatcher>();
     }
 }

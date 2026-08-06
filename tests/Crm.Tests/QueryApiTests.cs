@@ -60,7 +60,13 @@ public sealed class QueryApiTests
 
         var page = await QueryAsync(
             app,
-            new QueryRecords(site, null, new RollupFilter("floor_area", GuardOperator.GreaterThan, "200"), 10),
+            new QueryRecords(
+                site,
+                null,
+                new RecordFilter(
+                    FilterMatch.All,
+                    [new RollupFilter("floor_area", GuardOperator.GreaterThan, "200")]),
+                10),
             CrmTokens.Northwind);
 
         page.Records.ShouldHaveSingleItem().Values["label"].ShouldBe("par");
@@ -86,7 +92,9 @@ public sealed class QueryApiTests
             Views,
             new DefineListView(
                 site, "large_sites", "Large sites",
-                new RollupFilter("floor_area", GuardOperator.GreaterThan, "200"),
+                new RecordFilter(
+                    FilterMatch.All,
+                    [new RollupFilter("floor_area", GuardOperator.GreaterThan, "200")]),
                 OrderBy: "label",
                 Limit: 50),
             CrmTokens.NorthwindManager))

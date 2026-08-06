@@ -57,15 +57,25 @@ public sealed class DefineCrmListView : ICapability<DefineListView, ListViewDefi
 
         var declared = await _schema.FieldsForAsync(ctx.TenantId, input.Target, ct).ConfigureAwait(false);
 
-        // Both the filter's field and the ordering's, checked when the view is saved. A saved
+        if (input.Filter is { Criteria.Count: > QueryLimits.MaxCriteria } tooMany)
+        {
+            return Result.Fail<ListViewDefined>(
+                QueryErrors.TooManyCriteria(tooMany.Criteria.Count));
+        }
+
+        // Every criterion's field and the ordering's, checked when the view is saved. A saved
         // view naming a field nobody declared would return everything or nothing for ever, and
         // whoever pressed the button would believe the answer.
-        foreach (var named in new[] { input.Filter?.Field, input.OrderBy })
+        var named = (input.Filter?.Criteria ?? [])
+            .Select(static criterion => criterion.Field)
+            .Append(input.OrderBy);
+
+        foreach (var field in named)
         {
-            if (named is { Length: > 0 } && !declared.ContainsKey(named))
+            if (field is { Length: > 0 } && !declared.ContainsKey(field))
             {
                 return Result.Fail<ListViewDefined>(
-                    FieldPolicyErrors.RuleNamesNoField(named, declared.Keys));
+                    FieldPolicyErrors.RuleNamesNoField(field, declared.Keys));
             }
         }
 
@@ -147,6 +157,11 @@ public sealed class QueryCustomRecords : ICapability<ReadObjectRecords, RecordPa
             return Result.Fail<RecordPage>(QueryErrors.LimitIsOutOfRange(plan.Limit));
         }
 
+        if (plan.Filter is { Criteria.Count: > QueryLimits.MaxCriteria } tooMany)
+        {
+            return Result.Fail<RecordPage>(QueryErrors.TooManyCriteria(tooMany.Criteria.Count));
+        }
+
         if (!await _schema.HasObjectAsync(ctx.TenantId, plan.Target, ct).ConfigureAwait(false))
         {
             return Result.Fail<RecordPage>(CustomSchemaErrors.ObjectNotFound(plan.Target));
@@ -168,5 +183,66 @@ public sealed class QueryCustomRecords : ICapability<ReadObjectRecords, RecordPa
             .ToList();
 
         return Result.Ok(new RecordPage(records, [.. redacted]));
+    }
+}
+
+/// <summary>
+/// Searches every entity this tenant has for a phrase.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>One statement over five tables, and the tenant is in none of its predicates.</strong>
+/// Row-level security scopes all five at once, which is the whole argument for the tenant being
+/// a connection setting rather than a <c>WHERE</c> clause somebody has to remember to write in
+/// a sixth place.
+/// </para>
+/// <para>
+/// <strong>A hit is an identity, not a row.</strong> It carries the kind, the id and a title
+/// taken from the entity's own columns — never a custom field, because those are read-secured per
+/// field and a search returning them would be a second unmasked projection of them. A caller
+/// follows a hit to the query surface, which decides what they may see.
+/// </para>
+/// </remarks>
+[Capability("crm.search", Version = "1.0.0",
+    Authorization = Authorization.Permission, Permission = "crm.read",
+    Idempotent = true)]
+public sealed class SearchCrm : ICapability<SearchEverything, SearchResults>
+{
+    private readonly QueryStore _queries;
+
+    /// <summary>Creates the capability.</summary>
+    /// <param name="queries">Runs the search.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="queries"/> is null.</exception>
+    public SearchCrm(QueryStore queries)
+    {
+        ArgumentNullException.ThrowIfNull(queries);
+
+        _queries = queries;
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<Result<SearchResults>> ExecuteAsync(
+        SearchEverything input,
+        CapabilityContext ctx,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(ctx);
+
+        if (string.IsNullOrWhiteSpace(input.Phrase))
+        {
+            return Result.Fail<SearchResults>(QueryErrors.PhraseIsEmpty());
+        }
+
+        if (input.Limit is < 1 or > QueryLimits.Max)
+        {
+            return Result.Fail<SearchResults>(QueryErrors.LimitIsOutOfRange(input.Limit));
+        }
+
+        var hits = await _queries
+            .SearchAsync(ctx.TenantId, input.Phrase, input.Limit, ct)
+            .ConfigureAwait(false);
+
+        return Result.Ok(new SearchResults(hits));
     }
 }
