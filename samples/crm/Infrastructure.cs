@@ -136,6 +136,12 @@ namespace Crm;
 [JsonSerializable(typeof(DescribedObject))]
 [JsonSerializable(typeof(DescribedEntity))]
 [JsonSerializable(typeof(SchemaDescription))]
+[JsonSerializable(typeof(SyncChanges))]
+[JsonSerializable(typeof(ReadChanges))]
+[JsonSerializable(typeof(RecordChange))]
+[JsonSerializable(typeof(ChangePage))]
+[JsonSerializable(typeof(DeleteRecord))]
+[JsonSerializable(typeof(RecordDeleted))]
 
 // The connector registry, its queue and what goes on the wire.
 [JsonSerializable(typeof(DefineConnector))]

@@ -91,6 +91,7 @@ public sealed class CrmMigrator
         new(9, "crm_queries_and_read_policy", "0009_crm_queries_and_read_policy.sql"),
         new(10, "crm_search_and_compound_filters", "0010_crm_search_and_compound_filters.sql"),
         new(11, "crm_formulas_and_ordering", "0011_crm_formulas_and_ordering.sql"),
+        new(12, "crm_change_feed", "0012_crm_change_feed.sql"),
     ];
 
     /// <summary>The schema version this build of the sample reads and writes.</summary>

@@ -259,3 +259,46 @@ public sealed partial class DescribeSchemaFlow : Flow<DescribeSchema, SchemaDesc
             .Return(ctx => ctx.Get<SchemaDescription>());
     }
 }
+
+/// <summary>Tells a client what changed since it last looked.</summary>
+/// <remarks>
+/// <c>Ephemeral</c>, like the describe and the query: a client polls this, and journaling a poll
+/// would put a durable row behind every phone in the field waking up.
+/// </remarks>
+[Flow("crm.custom.sync", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral, Owner = "crm-platform")]
+[FlowDeadline("PT15S")]
+[HttpTrigger("POST", "/api/v1/crm/custom/changes")]
+public sealed partial class SyncChangesFlow : Flow<SyncChanges, ChangePage>
+{
+    /// <inheritdoc />
+    protected override void Define(IFlowBuilder<SyncChanges, ChangePage> flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+
+        flow
+            .Step<ReadRecordChanges, ReadChanges>(
+                ctx => new ReadChanges(ctx.Input, CustomFieldPolicy.Scopes(ctx.Principal)))
+            .Return(ctx => ctx.Get<ChangePage>());
+    }
+}
+
+/// <summary>Deletes a record, and leaves a tombstone the sync feed serves.</summary>
+/// <remarks>
+/// <c>Durable</c> and journalled, unlike the reads above: this is the only route in the sample
+/// that destroys something a caller cannot reconstruct.
+/// </remarks>
+[Flow("crm.custom.record.delete", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "crm-platform")]
+[FlowDeadline("PT15S")]
+[HttpTrigger("POST", "/api/v1/crm/custom/record-deletions", Idempotent = true)]
+public sealed partial class DeleteRecordFlow : Flow<DeleteRecord, RecordDeleted>
+{
+    /// <inheritdoc />
+    protected override void Define(IFlowBuilder<DeleteRecord, RecordDeleted> flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+
+        flow
+            .Step<DeleteCustomRecord>()
+            .Return(ctx => ctx.Get<RecordDeleted>());
+    }
+}

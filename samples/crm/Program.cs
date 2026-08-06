@@ -122,6 +122,7 @@ builder.Services.AddSingleton<FieldPolicyStore>();
 builder.Services.AddSingleton<RollupStore>();
 builder.Services.AddSingleton<QueryStore>();
 builder.Services.AddSingleton<FormulaStore>();
+builder.Services.AddSingleton<SyncStore>();
 
 // The one thing in this application that talks to somebody else's system. Registered under the
 // interface, so a deployment with a vault or a real Slack renderer replaces this line and
