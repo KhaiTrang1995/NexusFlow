@@ -182,8 +182,29 @@ public sealed class DefineCrmPlan : ICapability<DefinePlan, PlanDefined>
             return Result.Fail<PlanDefined>(PlanningErrors.PeriodNotFound(input.Period));
         }
 
+        Guid? parent = null;
+
+        if (input.Parent is { Length: > 0 } named)
+        {
+            if (await _planning.PlanIdAsync(ctx.TenantId, named, ct).ConfigureAwait(false)
+                is not { } above)
+            {
+                return Result.Fail<PlanDefined>(PlanningErrors.PlanNotFound(named));
+            }
+
+            // A plan that rolls up into its own descendant makes every total above it either wrong
+            // or non-terminating, and a reorganisation is exactly where that gets typed in.
+            if (await _planning.TreeWouldLoopAsync(ctx.TenantId, input.Name, above, ct)
+                .ConfigureAwait(false))
+            {
+                return Result.Fail<PlanDefined>(PlanningErrors.PlanTreeWouldLoop(input.Name));
+            }
+
+            parent = above;
+        }
+
         var id = await _planning
-            .SavePlanAsync(ctx.TenantId, ctx.NewId(), period.PeriodId, input, ctx.UtcNow, ct)
+            .SavePlanAsync(ctx.TenantId, ctx.NewId(), period.PeriodId, input, parent, ctx.UtcNow, ct)
             .ConfigureAwait(false);
 
         return id is { } saved
@@ -193,7 +214,8 @@ public sealed class DefineCrmPlan : ICapability<DefinePlan, PlanDefined>
 
     private static Error? Shape(DefinePlan input)
     {
-        var money = input.Kind is PlanKind.Account or PlanKind.Opportunity;
+        var money = input.Kind
+            is PlanKind.Account or PlanKind.Opportunity or PlanKind.Portfolio;
 
         if ((input.Account is not null) != (input.Kind == PlanKind.Account))
         {
@@ -225,13 +247,30 @@ public sealed class DefineCrmPlan : ICapability<DefinePlan, PlanDefined>
             return PlanningErrors.KindAndFieldsDisagree(input.Kind, nameof(DefinePlan.Currency));
         }
 
+        if ((input.ActivityKind is not null) != (input.Kind == PlanKind.Operation))
+        {
+            return PlanningErrors.KindAndFieldsDisagree(input.Kind, nameof(DefinePlan.ActivityKind));
+        }
+
+        if ((input.TargetActivities is not null) != (input.Kind == PlanKind.Operation))
+        {
+            return PlanningErrors.KindAndFieldsDisagree(
+                input.Kind, nameof(DefinePlan.TargetActivities));
+        }
+
         if (input.Channel is { } channel
             && !PlanningLimits.Channels.Contains(channel, StringComparer.Ordinal))
         {
             return PlanningErrors.ChannelIsNotALeadSource(channel);
         }
 
-        return input.TargetAmount < 0 || input.TargetLeads < 0
+        if (input.ActivityKind is { } activity
+            && !PlanningLimits.Activities.Contains(activity, StringComparer.Ordinal))
+        {
+            return PlanningErrors.ActivityKindIsUnknown(activity);
+        }
+
+        return input.TargetAmount < 0 || input.TargetLeads < 0 || input.TargetActivities < 0
             ? PlanningErrors.TargetIsNegative()
             : null;
     }
@@ -332,23 +371,27 @@ public sealed class SetCrmPlanStep : ICapability<SetPlanStep, PlanStepSet>
 [Capability("crm.planning.rollup", Version = "1.0.0",
     Authorization = Authorization.Permission, Permission = "crm.read",
     Idempotent = true)]
-public sealed class ReadPeriodRollUp : ICapability<ReadRollUp, PeriodRollUp>
+public sealed class ReadPeriodRollUp : ICapability<ForViewer, PeriodRollUp>
 {
     private readonly PlanningStore _planning;
+    private readonly ManagementStore _org;
 
     /// <summary>Creates the capability.</summary>
     /// <param name="planning">Reads the plans and the live actuals.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="planning"/> is null.</exception>
-    public ReadPeriodRollUp(PlanningStore planning)
+    /// <param name="org">Says whose plans this caller sees.</param>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    public ReadPeriodRollUp(PlanningStore planning, ManagementStore org)
     {
         ArgumentNullException.ThrowIfNull(planning);
+        ArgumentNullException.ThrowIfNull(org);
 
         _planning = planning;
+        _org = org;
     }
 
     /// <inheritdoc />
     public async ValueTask<Result<PeriodRollUp>> ExecuteAsync(
-        ReadRollUp input,
+        ForViewer input,
         CapabilityContext ctx,
         CancellationToken ct)
     {
@@ -361,8 +404,19 @@ public sealed class ReadPeriodRollUp : ICapability<ReadRollUp, PeriodRollUp>
             return Result.Fail<PeriodRollUp>(PlanningErrors.PeriodNotFound(input.Period));
         }
 
+        // Whose plans are in the total. Refused when the caller has not been placed, rather than
+        // defaulted to their own: a director whose row was never written would otherwise see one
+        // plan and conclude their organisation had stopped selling.
+        if (await _org.ScopeAsync(ctx.TenantId, input.UserId, ct).ConfigureAwait(false)
+            is not { } viewer)
+        {
+            return Result.Fail<PeriodRollUp>(ManagementErrors.CallerIsNotInTheOrganisation());
+        }
+
         var rollUp = await _planning
-            .RollUpAsync(ctx.TenantId, period, DateOnly.FromDateTime(ctx.UtcNow.UtcDateTime), ct)
+            .RollUpAsync(
+                ctx.TenantId, period, DateOnly.FromDateTime(ctx.UtcNow.UtcDateTime),
+                viewer.Scope, ct)
             .ConfigureAwait(false);
 
         return rollUp is { } found

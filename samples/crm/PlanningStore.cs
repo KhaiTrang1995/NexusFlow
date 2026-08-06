@@ -43,15 +43,31 @@ public sealed class PlanningStore
         INSERT INTO plan (
             plan_id, tenant_id, period_id, kind, name, label, owner_id,
             account_id, opportunity_id, channel, segment,
-            target_amount, currency, target_leads, created_at)
+            target_amount, currency, target_leads, created_at,
+            activity_kind, target_activities, parent_plan_id)
         VALUES (@id, @tenant, @period, @kind, @name, @label, @owner,
             @account, @opportunity, @channel, @segment,
-            @targetAmount, @currency, @targetLeads, @now)
+            @targetAmount, @currency, @targetLeads, @now,
+            @activityKind, @targetActivities, @parent)
         ON CONFLICT (tenant_id, name) DO NOTHING
         RETURNING plan_id
         """;
 
     private const string ReadPlan = "SELECT plan_id FROM plan WHERE name = @name";
+
+    // Upwards from a proposed parent. If the plan being committed appears in it, rolling it up
+    // there closes a loop — the same shape, and the same reasoning, as the reporting line's.
+    private const string PlanTreeAbove = """
+        WITH RECURSIVE up AS (
+            SELECT plan_id, parent_plan_id, name, 1 AS depth FROM plan WHERE plan_id = @parent
+            UNION ALL
+            SELECT p.plan_id, p.parent_plan_id, p.name, up.depth + 1
+            FROM plan p
+            JOIN up ON p.plan_id = up.parent_plan_id
+            WHERE up.depth < @maxDepth
+        )
+        SELECT count(*) FROM up WHERE name = @name
+        """;
 
     private const string UpsertQualification = """
         INSERT INTO plan_qualification (plan_id, tenant_id, element, is_answered, note)
@@ -80,10 +96,19 @@ public sealed class PlanningStore
     // The number and what was committed against it, in one statement. Two reads would leave a
     // commitment able to land between them, and a gap that never quite reconciles with the list
     // below it is a gap nobody believes.
+    // WHOSE PLANS ARE IN THE TOTAL. A director reads without restriction, a manager reads their
+    // line, a representative reads their own — and all three run this statement. The scope is an
+    // array parameter and a flag rather than a clause the application assembles, so the statement
+    // stays a constant and the difference between the three is a value.
+    private const string InScope =
+        "\n              AND (@unrestricted OR p.owner_id = ANY(@scope))";
+
     private const string StrategyAndCommitted = """
         SELECT s.vision, s.target_amount, s.currency,
                coalesce((SELECT sum(p.target_amount) FROM plan p
-                         WHERE p.period_id = s.period_id AND p.target_amount IS NOT NULL), 0)
+                         WHERE p.period_id = s.period_id AND p.target_amount IS NOT NULL
+        """ + InScope + """
+        ), 0)
         FROM sales_strategy s
         WHERE s.period_id = @period
         """;
@@ -97,6 +122,7 @@ public sealed class PlanningStore
         FROM plan p
         JOIN account a ON a.account_id = p.account_id
         WHERE p.period_id = @period AND p.kind = 'Account'
+        """ + InScope + """
         ORDER BY p.name
         """;
 
@@ -109,6 +135,7 @@ public sealed class PlanningStore
                 WHERE s.plan_id = p.plan_id AND s.completed_at IS NULL AND s.due_on < @today)
         FROM plan p
         WHERE p.period_id = @period AND p.kind = 'Opportunity'
+        """ + InScope + """
         ORDER BY p.name
         """;
 
@@ -123,6 +150,7 @@ public sealed class PlanningStore
                   AND l.captured_at < @to)
         FROM plan p
         WHERE p.period_id = @period AND p.kind = 'MarketingLead'
+        """ + InScope + """
         ORDER BY p.name
         """;
 
@@ -245,6 +273,7 @@ public sealed class PlanningStore
         Guid id,
         Guid period,
         DefinePlan request,
+        Guid? parent,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
@@ -264,7 +293,7 @@ public sealed class PlanningStore
         Add(command, "kind", NpgsqlDbType.Text, request.Kind.ToString());
         Add(command, "name", NpgsqlDbType.Text, request.Name);
         Add(command, "label", NpgsqlDbType.Text, request.Label);
-        Add(command, "owner", NpgsqlDbType.Uuid, request.Owner);
+        Add(command, "owner", NpgsqlDbType.Text, request.Owner);
         Add(command, "account", NpgsqlDbType.Uuid, (object?)request.Account ?? DBNull.Value);
         Add(command, "opportunity", NpgsqlDbType.Uuid, (object?)request.Opportunity ?? DBNull.Value);
         Add(command, "channel", NpgsqlDbType.Text, (object?)request.Channel ?? DBNull.Value);
@@ -274,6 +303,11 @@ public sealed class PlanningStore
         Add(command, "currency", NpgsqlDbType.Text, (object?)request.Currency ?? DBNull.Value);
         Add(command, "targetLeads", NpgsqlDbType.Integer,
             (object?)request.TargetLeads ?? DBNull.Value);
+        Add(command, "activityKind", NpgsqlDbType.Text,
+            (object?)request.ActivityKind ?? DBNull.Value);
+        Add(command, "targetActivities", NpgsqlDbType.Integer,
+            (object?)request.TargetActivities ?? DBNull.Value);
+        Add(command, "parent", NpgsqlDbType.Uuid, (object?)parent ?? DBNull.Value);
         Add(command, "now", NpgsqlDbType.TimestampTz, now);
 
         return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as Guid?;
@@ -353,7 +387,7 @@ public sealed class PlanningStore
         Add(command, "tenant", NpgsqlDbType.Text, tenantId ?? string.Empty);
         Add(command, "ordinal", NpgsqlDbType.Integer, request.Ordinal);
         Add(command, "description", NpgsqlDbType.Text, request.Description);
-        Add(command, "owner", NpgsqlDbType.Uuid, request.Owner);
+        Add(command, "owner", NpgsqlDbType.Text, request.Owner);
         Add(command, "due", NpgsqlDbType.Date, request.DueOn);
         Add(command, "completed", NpgsqlDbType.TimestampTz,
             request.IsComplete ? now : (object)DBNull.Value);
@@ -375,9 +409,11 @@ public sealed class PlanningStore
         string? tenantId,
         StoredPeriod period,
         DateOnly today,
+        IReadOnlyList<string> scope,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(period);
+        ArgumentNullException.ThrowIfNull(scope);
 
         var connection = await OpenAsync(tenantId, cancellationToken).ConfigureAwait(false);
         await using var closing = connection.ConfigureAwait(false);
@@ -392,6 +428,7 @@ public sealed class PlanningStore
 
         head.CommandText = StrategyAndCommitted;
         Add(head, "period", NpgsqlDbType.Uuid, period.PeriodId);
+        AddScope(head, scope);
 
         var reader = await head.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         await using (reader.ConfigureAwait(false))
@@ -416,6 +453,7 @@ public sealed class PlanningStore
 
         coverage.CommandText = AccountCoverageForPeriod;
         Add(coverage, "period", NpgsqlDbType.Uuid, period.PeriodId);
+        AddScope(coverage, scope);
 
         var coverageReader = await coverage
             .ExecuteReaderAsync(cancellationToken)
@@ -439,6 +477,7 @@ public sealed class PlanningStore
 
         readiness.CommandText = OpportunityReadinessForPeriod;
         Add(readiness, "period", NpgsqlDbType.Uuid, period.PeriodId);
+        AddScope(readiness, scope);
         Add(readiness, "today", NpgsqlDbType.Date, today);
 
         var readinessReader = await readiness
@@ -465,6 +504,7 @@ public sealed class PlanningStore
 
         attainment.CommandText = LeadAttainmentForPeriod;
         Add(attainment, "period", NpgsqlDbType.Uuid, period.PeriodId);
+        AddScope(attainment, scope);
         Add(attainment, "from", NpgsqlDbType.TimestampTz,
             new DateTimeOffset(period.StartsOn.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero));
 
@@ -494,6 +534,49 @@ public sealed class PlanningStore
         return new PeriodRollUp(
             period.Name, vision, target, currency, committed, target - committed,
             accounts, deals, marketing);
+    }
+
+    /// <summary>Whether rolling a plan up to a parent would close a loop in the tree.</summary>
+    /// <param name="tenantId">The caller's tenant.</param>
+    /// <param name="name">The plan being committed.</param>
+    /// <param name="parent">Where it would roll up to.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>Whether the tree would loop.</returns>
+    public async ValueTask<bool> TreeWouldLoopAsync(
+        string? tenantId,
+        string name,
+        Guid parent,
+        CancellationToken cancellationToken)
+    {
+        var connection = await OpenAsync(tenantId, cancellationToken).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
+
+        var command = connection.CreateCommand();
+        await using var closingCommand = command.ConfigureAwait(false);
+
+        command.CommandText = PlanTreeAbove;
+
+        Add(command, "parent", NpgsqlDbType.Uuid, parent);
+        Add(command, "name", NpgsqlDbType.Text, name);
+        Add(command, "maxDepth", NpgsqlDbType.Integer, PlanningLimits.MaxDepth);
+
+        return (long)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))! > 0;
+    }
+
+    /// <summary>Finds a plan's id by name.</summary>
+    /// <param name="tenantId">The caller's tenant.</param>
+    /// <param name="name">Which plan.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The id, or null.</returns>
+    public async ValueTask<Guid?> PlanIdAsync(
+        string? tenantId,
+        string name,
+        CancellationToken cancellationToken)
+    {
+        var connection = await OpenAsync(tenantId, cancellationToken).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
+
+        return await PlanIdAsync(connection, name, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<StoredPeriod?> PeriodOnAsync(
@@ -547,6 +630,17 @@ public sealed class PlanningStore
         Add(command, "plan", NpgsqlDbType.Uuid, planId);
 
         return (int)(long)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+    }
+
+    // An empty scope means a director: no restriction, rather than nothing. Getting that the wrong
+    // way round would show a director a roll-up of zero and read as an organisation that had
+    // stopped selling.
+    private static void AddScope(NpgsqlCommand command, IReadOnlyList<string> scope)
+    {
+        command.Parameters.Add(
+            new NpgsqlParameter("unrestricted", NpgsqlDbType.Boolean) { Value = scope.Count == 0 });
+
+        command.Parameters.Add(new NpgsqlParameter<string[]>("scope", [.. scope]));
     }
 
     private static void Add(NpgsqlCommand command, string name, NpgsqlDbType type, object value) =>

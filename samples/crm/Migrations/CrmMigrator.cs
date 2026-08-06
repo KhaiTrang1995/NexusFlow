@@ -96,6 +96,8 @@ public sealed class CrmMigrator
         new(14, "crm_reports_and_dashboards", "0014_crm_reports_and_dashboards.sql"),
         new(15, "crm_tenant_ui_settings", "0015_crm_tenant_ui_settings.sql"),
         new(16, "crm_planning", "0016_crm_planning.sql"),
+        new(17, "crm_management", "0017_crm_management.sql"),
+        new(18, "crm_portfolio_and_performance", "0018_crm_portfolio_and_performance.sql"),
     ];
 
     /// <summary>The schema version this build of the sample reads and writes.</summary>

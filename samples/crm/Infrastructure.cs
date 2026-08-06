@@ -180,6 +180,40 @@ namespace Crm;
 [JsonSerializable(typeof(OpportunityReadiness))]
 [JsonSerializable(typeof(LeadAttainment))]
 [JsonSerializable(typeof(PeriodRollUp))]
+[JsonSerializable(typeof(ForViewer))]
+
+// The reporting line, the depth an account plan actually has, and the numbers reviewed.
+[JsonSerializable(typeof(SetOrgMember))]
+[JsonSerializable(typeof(OrgMemberSet))]
+[JsonSerializable(typeof(SetObjective))]
+[JsonSerializable(typeof(ObjectiveSet))]
+[JsonSerializable(typeof(SetStakeholder))]
+[JsonSerializable(typeof(StakeholderSet))]
+[JsonSerializable(typeof(SetRisk))]
+[JsonSerializable(typeof(RiskSet))]
+[JsonSerializable(typeof(DefineKpi))]
+[JsonSerializable(typeof(KpiDefined))]
+[JsonSerializable(typeof(ReviewKpi))]
+[JsonSerializable(typeof(ForReview))]
+[JsonSerializable(typeof(KpiReviewed))]
+[JsonSerializable(typeof(ReadScorecard))]
+[JsonSerializable(typeof(KpiResult))]
+[JsonSerializable(typeof(Scorecard))]
+
+// The plan tree at any level, how the people and the deals are doing, and the board that
+// assembles them in one request.
+[JsonSerializable(typeof(ReadPlanTree))]
+[JsonSerializable(typeof(PlanNode))]
+[JsonSerializable(typeof(PlanTree))]
+[JsonSerializable(typeof(ReadSalesPerformance))]
+[JsonSerializable(typeof(SellerPerformance))]
+[JsonSerializable(typeof(SalesPerformance))]
+[JsonSerializable(typeof(ReadDealPerformance))]
+[JsonSerializable(typeof(DealPerformance))]
+[JsonSerializable(typeof(ReadBoard))]
+[JsonSerializable(typeof(ForPerformance))]
+[JsonSerializable(typeof(ViewerScope))]
+[JsonSerializable(typeof(ExecutiveBoard))]
 
 // The connector registry, its queue and what goes on the wire.
 [JsonSerializable(typeof(DefineConnector))]

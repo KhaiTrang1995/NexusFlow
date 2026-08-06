@@ -285,6 +285,8 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<ReportStore>();
         services.AddSingleton<LabelStore>();
         services.AddSingleton<PlanningStore>();
+        services.AddSingleton<ManagementStore>();
+        services.AddSingleton<PerformanceStore>();
 
         // The far end, recorded rather than reached. Every other claim in these tests is checked
         // against a real PostgreSQL; a connector's far end is a network somebody else owns, and a
@@ -335,6 +337,17 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<RecordQualification>();
         services.AddSingleton<SetCrmPlanStep>();
         services.AddSingleton<ReadPeriodRollUp>();
+        services.AddSingleton<PlaceOrgMember>();
+        services.AddSingleton<SetPlanObjective>();
+        services.AddSingleton<SetPlanStakeholder>();
+        services.AddSingleton<SetPlanRisk>();
+        services.AddSingleton<DefineCrmKpi>();
+        services.AddSingleton<ReadCrmScorecard>();
+        services.AddSingleton<RecordKpiReview>();
+        services.AddSingleton<ReadCrmPlanTree>();
+        services.AddSingleton<ReadCrmSalesPerformance>();
+        services.AddSingleton<ReadCrmDealPerformance>();
+        services.AddSingleton<ReadExecutiveBoard>();
 
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
@@ -375,5 +388,16 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<AnswerQualificationFlow.Dispatcher>();
         services.AddSingleton<SetPlanStepFlow.Dispatcher>();
         services.AddSingleton<RollUpFlow.Dispatcher>();
+        services.AddSingleton<SetOrgMemberFlow.Dispatcher>();
+        services.AddSingleton<SetObjectiveFlow.Dispatcher>();
+        services.AddSingleton<SetStakeholderFlow.Dispatcher>();
+        services.AddSingleton<SetRiskFlow.Dispatcher>();
+        services.AddSingleton<DefineKpiFlow.Dispatcher>();
+        services.AddSingleton<ScorecardFlow.Dispatcher>();
+        services.AddSingleton<ReviewKpiFlow.Dispatcher>();
+        services.AddSingleton<PlanTreeFlow.Dispatcher>();
+        services.AddSingleton<SalesPerformanceFlow.Dispatcher>();
+        services.AddSingleton<DealPerformanceFlow.Dispatcher>();
+        services.AddSingleton<BoardFlow.Dispatcher>();
     }
 }
