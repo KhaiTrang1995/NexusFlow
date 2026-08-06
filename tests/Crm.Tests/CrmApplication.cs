@@ -2,8 +2,10 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using FlowX;
 using FlowX.Generated;
+using FlowX.Conformance.InMemory;
 using FlowX.Hosting;
 using FlowX.Postgres;
+using FlowX.Runtime;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -87,6 +89,43 @@ internal sealed class CrmApplication : IAsyncDisposable
             SweepConnectorDeliveries.Batch,
             DateTimeOffset.UtcNow,
             TestContext.Current.CancellationToken);
+
+    /// <summary>Runs one pass of the bulk-job sweep, as the schedule would.</summary>
+    /// <param name="tenantId">The tenant the occurrence fires for.</param>
+    /// <returns>What the pass did.</returns>
+    /// <remarks>
+    /// The whole flow rather than the capability alone, because a chunk that advances a job and a
+    /// chunk that crashes have to leave the same row readable — and the projection is where a
+    /// sweep's answer becomes something a test can assert on.
+    /// </remarks>
+    public ValueTask<FlowExecutionResult<JobsSwept>> SweepJobsAsync(string tenantId)
+    {
+        var host = new FlowHost(
+            new FlowEngine(FlowX.Runtime.SystemClock.Instance),
+            new FlowXOptions
+            {
+                ApplicationName = "Crm",
+                NodeName = "test-node",
+                TenantIsolation = TenantIsolation.Row,
+            },
+            new FlowDurability(new InMemoryFlowJournal(), new InMemoryLeaseStore()));
+
+        return host.RunAsync(
+            SweepJobsFlow.Plan,
+            new SweepJobsFlow.Dispatcher(
+                sweepBulkJobs: _host.Services.GetRequiredService<SweepBulkJobs>()),
+            new FlowInvocation(
+                "corr-" + Guid.NewGuid(),
+                tenantId,
+                tenantId,
+                Deadline: null,
+                Principal: null,
+                IsContinuation: true,
+                TenantAttested: true),
+            new ScheduledFire(DateTimeOffset.UtcNow, "* * * * *", "UTC"),
+            SweepJobsFlow.Projection,
+            TestContext.Current.CancellationToken);
+    }
 
     /// <summary>Stands the schema up, migrates it, and starts the sample over a test server.</summary>
     /// <param name="cancellationToken">Cancels the setup.</param>
@@ -242,6 +281,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<QueryStore>();
         services.AddSingleton<FormulaStore>();
         services.AddSingleton<SyncStore>();
+        services.AddSingleton<BulkJobStore>();
 
         // The far end, recorded rather than reached. Every other claim in these tests is checked
         // against a real PostgreSQL; a connector's far end is a network somebody else owns, and a
@@ -278,6 +318,9 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<DescribeCrmSchema>();
         services.AddSingleton<ReadRecordChanges>();
         services.AddSingleton<DeleteCustomRecord>();
+        services.AddSingleton<SubmitBulkJob>();
+        services.AddSingleton<ReadBulkJob>();
+        services.AddSingleton<SweepBulkJobs>();
 
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
@@ -303,5 +346,9 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<DescribeSchemaFlow.Dispatcher>();
         services.AddSingleton<SyncChangesFlow.Dispatcher>();
         services.AddSingleton<DeleteRecordFlow.Dispatcher>();
+        services.AddSingleton<SubmitImportFlow.Dispatcher>();
+        services.AddSingleton<SubmitExportFlow.Dispatcher>();
+        services.AddSingleton<ReadJobFlow.Dispatcher>();
+        services.AddSingleton<SweepJobsFlow.Dispatcher>();
     }
 }
