@@ -287,6 +287,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<PlanningStore>();
         services.AddSingleton<ManagementStore>();
         services.AddSingleton<PerformanceStore>();
+        services.AddSingleton<TerritoryStore>();
 
         // The far end, recorded rather than reached. Every other claim in these tests is checked
         // against a real PostgreSQL; a connector's far end is a network somebody else owns, and a
@@ -348,6 +349,11 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<ReadCrmSalesPerformance>();
         services.AddSingleton<ReadCrmDealPerformance>();
         services.AddSingleton<ReadExecutiveBoard>();
+        services.AddSingleton<DefineCrmTerritory>();
+        services.AddSingleton<RouteToTerritory>();
+        services.AddSingleton<ReadTerritoryCoverage>();
+        services.AddSingleton<SetCrmQuota>();
+        services.AddSingleton<ReadCrmQuotaAttainment>();
 
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
@@ -399,5 +405,10 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<SalesPerformanceFlow.Dispatcher>();
         services.AddSingleton<DealPerformanceFlow.Dispatcher>();
         services.AddSingleton<BoardFlow.Dispatcher>();
+        services.AddSingleton<DefineTerritoryFlow.Dispatcher>();
+        services.AddSingleton<RouteFlow.Dispatcher>();
+        services.AddSingleton<CoverageFlow.Dispatcher>();
+        services.AddSingleton<SetQuotaFlow.Dispatcher>();
+        services.AddSingleton<QuotaAttainmentFlow.Dispatcher>();
     }
 }
