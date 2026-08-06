@@ -70,6 +70,14 @@ internal sealed class CrmApplication : IAsyncDisposable
     /// <summary>The schema, for seeding rows and for reading them back.</summary>
     public CrmSchemaHarness Crm { get; }
 
+    /// <summary>The service desk's store.</summary>
+    /// <remarks>
+    /// Reached directly by one test, which drives two writes at once. The HTTP surface cannot
+    /// reproduce that race reliably — a durable flow's own overhead is long enough that the first
+    /// request finishes before the second reads — and the defences under test are the store's.
+    /// </remarks>
+    public ServiceStore Service => _host.Services.GetRequiredService<ServiceStore>();
+
     /// <summary>What a connector delivery actually reached, and what the far end was told to say.</summary>
     public RecordingConnectorTransport Transport =>
         _host.Services.GetRequiredService<RecordingConnectorTransport>();
@@ -290,6 +298,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<TerritoryStore>();
         services.AddSingleton<ApprovalStore>();
         services.AddSingleton<ApproverResolver>();
+        services.AddSingleton<ServiceStore>();
 
         // The far end, recorded rather than reached. Every other claim in these tests is checked
         // against a real PostgreSQL; a connector's far end is a network somebody else owns, and a
@@ -360,6 +369,11 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<SubmitCrmApproval>();
         services.AddSingleton<DecideCrmApproval>();
         services.AddSingleton<ReadCrmApprovalInbox>();
+        services.AddSingleton<SetCrmBusinessHours>();
+        services.AddSingleton<DefineCrmSlaPolicy>();
+        services.AddSingleton<OpenCrmCase>();
+        services.AddSingleton<CommentOnCrmCase>();
+        services.AddSingleton<ReadCrmCaseWorklist>();
 
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
@@ -420,5 +434,10 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<SubmitApprovalFlow.Dispatcher>();
         services.AddSingleton<DecideApprovalFlow.Dispatcher>();
         services.AddSingleton<ApprovalInboxFlow.Dispatcher>();
+        services.AddSingleton<SetBusinessHoursFlow.Dispatcher>();
+        services.AddSingleton<DefineSlaPolicyFlow.Dispatcher>();
+        services.AddSingleton<OpenCaseFlow.Dispatcher>();
+        services.AddSingleton<CommentOnCaseFlow.Dispatcher>();
+        services.AddSingleton<CaseWorklistFlow.Dispatcher>();
     }
 }
