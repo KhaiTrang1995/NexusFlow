@@ -1,0 +1,132 @@
+/*
+ * Element defaults, from the handoff's own reset and theme layer.
+ *
+ * Everything here is an unclassed element or a design-system class the handoff defines
+ * (`.btn`, `.tag`, `.table`, `.input`, `.card`, `.blueprint`). Application layout lives in the
+ * component that owns it, as a CSS module — never here.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 15.5px;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+#root {
+  height: 100%;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  line-height: 1.12;
+  letter-spacing: -0.021em;
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--color-accent-700);
+  text-decoration: none;
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  color: var(--color-accent-800);
+  text-decoration: underline;
+}
+
+button {
+  font: inherit;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+}
+
+table {
+  border-collapse: collapse;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+:focus {
+  outline: none;
+}
+
+/*
+ * Visible focus is not a preference. Every interactive surface in this application is reachable
+ * by keyboard, and the prototype's `:focus { outline: none }` alone would make half of them
+ * invisible while using them.
+ */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+*::-webkit-scrollbar {
+  width: 11px;
+  height: 11.5px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--color-neutral-400);
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--color-neutral-200);
+}
+
+/* Respect the setting rather than animating regardless. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Screen-reader-only, for labels a sighted user reads from position alone. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

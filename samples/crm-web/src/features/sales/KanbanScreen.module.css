@@ -1,0 +1,112 @@
+.board {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 12px;
+  padding: 15px 21px 21px;
+  overflow-x: auto;
+}
+
+.column {
+  width: 268px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--color-neutral-400);
+  border-radius: 12px;
+  background: var(--color-neutral-200);
+  overflow: hidden;
+}
+
+.columnOver {
+  border-color: var(--color-accent);
+  background: var(--color-accent-100);
+}
+
+.columnHead {
+  flex: none;
+  padding: 10px 13px 9px;
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-neutral-100);
+}
+
+.columnName {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-heading);
+  font-size: 15.5px;
+}
+
+.columnCount {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--color-neutral-600);
+  font-variant-numeric: tabular-nums;
+}
+
+.columnSum {
+  font-size: 13px;
+  color: var(--color-neutral-700);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.overLimit {
+  color: var(--color-critical);
+}
+
+.cards {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  padding: 10px 11px;
+  border: 1px solid var(--color-neutral-400);
+  border-radius: 9px;
+  background: var(--color-surface);
+  cursor: grab;
+  box-shadow: var(--shadow-sm);
+}
+
+.card:hover {
+  border-color: var(--color-accent-400);
+}
+
+.cardDragging {
+  opacity: 0.45;
+}
+
+.cardName {
+  font-size: 14.5px;
+  line-height: 1.25;
+}
+
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 7px;
+  font-size: 12.5px;
+  color: var(--color-neutral-600);
+}
+
+.cardAmount {
+  margin-left: auto;
+  font-family: var(--font-heading);
+  font-size: 14px;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}

@@ -1,0 +1,203 @@
+.link {
+  color: var(--color-accent-700);
+}
+
+.sub {
+  font-size: 13px;
+  color: var(--color-neutral-600);
+}
+
+.amount {
+  font-family: var(--font-heading);
+  font-size: 16px;
+}
+
+.rhythm {
+  margin-bottom: 14.5px;
+}
+
+.rhythmBody {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr;
+  border-top: 1px solid var(--color-divider);
+}
+
+.rhythmCharts {
+  padding: 14px 17px 16px;
+  border-right: 1px solid var(--color-divider);
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.rhythmList {
+  padding: 14px 17px 16px;
+  min-width: 0;
+}
+
+.chartLabel {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-neutral-600);
+  margin-bottom: 9px;
+}
+
+.chartNote {
+  margin-left: auto;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.movement {
+  border-top: 1px solid var(--color-divider);
+  padding-top: 12px;
+}
+
+.movementHead {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin: 0 0 7px;
+}
+
+.movementNet {
+  font-family: var(--font-heading);
+  font-size: 24px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-positive);
+}
+
+.movementNote {
+  font-size: 12.5px;
+  color: var(--color-neutral-600);
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.timelineRow {
+  display: flex;
+  gap: 12px;
+}
+
+.timelineChip {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--color-accent-100);
+  border: 1px solid var(--color-accent-300);
+  color: var(--color-accent-800);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+}
+
+.timelineBody {
+  min-width: 0;
+  flex: 1;
+  padding-bottom: 13px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.timelineHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.timelineName {
+  font-size: 14.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timelineWhen {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--color-neutral-600);
+  white-space: nowrap;
+}
+
+.timelineTags {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.panelHead {
+  display: flex;
+  align-items: baseline;
+  gap: 11.5px;
+  margin-bottom: 14.5px;
+}
+
+.panelTitle {
+  font-family: var(--font-heading);
+  font-size: 19px;
+  letter-spacing: -0.012em;
+}
+
+.panelLink {
+  margin-left: auto;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.attainment {
+  display: flex;
+  flex-direction: column;
+  gap: 11.5px;
+}
+
+.attainRow {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14.5px;
+  margin-bottom: 3.5px;
+}
+
+.attainValue {
+  font-family: var(--font-heading);
+  color: var(--color-neutral-700);
+}
+
+.todoBody {
+  padding: 0;
+}
+
+.todo {
+  display: flex;
+  gap: 11.5px;
+  padding: 11.5px 17px;
+  border-bottom: 1px solid var(--color-divider);
+  font-size: 15px;
+}
+
+.todoBox {
+  width: 15.5px;
+  height: 16.5px;
+  border: 1px solid var(--color-neutral-500);
+  border-radius: 4px;
+  margin-top: 2.5px;
+  flex: none;
+}
+
+.todoTag {
+  margin-left: auto;
+  flex: none;
+}

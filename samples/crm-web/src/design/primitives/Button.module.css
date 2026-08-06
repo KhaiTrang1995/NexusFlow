@@ -1,0 +1,134 @@
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  font-family: var(--font-body);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  padding: 0 14px;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn svg {
+  display: block;
+}
+
+/* — size — */
+.sm {
+  height: 28px;
+  font-size: 13px;
+  padding: 0 12px;
+}
+
+.md {
+  height: 32px;
+  font-size: 14.5px;
+}
+
+.lg {
+  height: 35px;
+  font-size: 15px;
+}
+
+/* — tone — */
+.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+.primary:hover:not(:disabled) {
+  background: #0077ed;
+}
+
+.primary:active:not(:disabled) {
+  background: var(--color-accent-700);
+}
+
+.secondary {
+  background: #fff;
+  border-color: var(--color-neutral-400);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--color-neutral-200);
+}
+
+.ghost {
+  color: var(--color-accent-700);
+  padding-inline: 8px;
+}
+
+.ghost:hover:not(:disabled) {
+  background: var(--color-accent-100);
+}
+
+.danger {
+  background: var(--color-critical);
+  border-color: var(--color-critical);
+  color: #fff;
+}
+
+.danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+/* — shape — */
+.icon {
+  width: 32px;
+  padding: 0;
+}
+
+.pill {
+  border-radius: var(--radius-pill);
+}
+
+.block {
+  width: 100%;
+}
+
+/*
+ * A run of buttons that reads as one control. The handoff draws these with a -1px margin so the
+ * borders collapse into a single hairline; done here once rather than at each of the six places
+ * the prototype repeats it.
+ */
+.group {
+  display: inline-flex;
+}
+
+.group > .btn {
+  border-radius: 0;
+}
+
+.group > .btn + .btn {
+  margin-left: -1px;
+}
+
+.group > .btn:first-child {
+  border-top-left-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+.group > .btn:last-child {
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
+.group > .btn[aria-pressed='true'] {
+  background: var(--color-accent-700);
+  border-color: var(--color-accent-700);
+  color: var(--color-neutral-100);
+  z-index: 1;
+}

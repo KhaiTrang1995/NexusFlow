@@ -1,0 +1,177 @@
+.link {
+  color: var(--color-accent-700);
+}
+
+.sub {
+  font-size: 13px;
+  color: var(--color-neutral-600);
+}
+
+.late {
+  color: var(--color-critical);
+  font-variant-numeric: tabular-nums;
+}
+
+.decide {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.decideHead {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.decideSubject {
+  font-family: var(--font-heading);
+  font-size: 18px;
+}
+
+.decideActions {
+  display: flex;
+  gap: 9px;
+}
+
+/* — calendar — */
+.calendar {
+  display: grid;
+  grid-template-columns: 64px repeat(5, minmax(0, 1fr));
+  border: 1px solid var(--color-neutral-400);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+.calendarHead {
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--color-divider);
+  border-right: 1px solid var(--color-divider);
+  background: var(--color-neutral-200);
+  font-family: var(--font-heading);
+  font-size: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.calendarGutter {
+  border-right: 1px solid var(--color-divider);
+  border-bottom: 1px solid var(--color-divider);
+  padding: 4px 8px;
+  font-size: 11.5px;
+  color: var(--color-neutral-600);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  height: 52px;
+}
+
+.calendarCell {
+  border-right: 1px solid var(--color-divider);
+  border-bottom: 1px solid var(--color-divider);
+  padding: 3px;
+  height: 52px;
+  position: relative;
+}
+
+.event {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  border: 1px solid var(--color-accent-300);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 6px;
+  background: var(--color-accent-100);
+  color: var(--color-accent-900);
+  padding: 3px 7px;
+  font-size: 12.5px;
+  line-height: 1.25;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.eventTask {
+  border-color: var(--color-neutral-400);
+  border-left-color: var(--color-neutral-600);
+  background: var(--color-neutral-200);
+  color: var(--color-text);
+}
+
+.eventTime {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+/* — mobile — */
+.phone {
+  width: 372px;
+  margin: 0 auto;
+  border: 1px solid var(--color-neutral-400);
+  border-radius: 34px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 720px;
+}
+
+.phoneBar {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 22px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-neutral-700);
+  background: var(--color-neutral-200);
+}
+
+.phoneBody {
+  flex: 1;
+  overflow: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.phoneTabs {
+  height: 62px;
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--color-divider);
+  background: var(--color-neutral-100);
+}
+
+.phoneTab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--color-neutral-600);
+}
+
+.phoneTab[aria-pressed='true'] {
+  color: var(--color-accent-700);
+}
+
+.phoneCard {
+  border: 1px solid var(--color-neutral-400);
+  border-radius: 12px;
+  padding: 11px 13px;
+  background: var(--color-surface);
+}
+
+.phoneTitle {
+  font-family: var(--font-heading);
+  font-size: 16px;
+}

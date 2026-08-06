@@ -1,0 +1,192 @@
+/*
+ * The four chart shapes the handoff draws, as layout rather than as a charting library.
+ *
+ * NO CHART DEPENDENCY, AND THAT IS THE POINT. Every chart in the prototype is bars in a flex row
+ * or absolutely-positioned blocks over a baseline — a library would render them differently,
+ * pull in a canvas, and make the one thing these screens must do (line up with the tokens) the
+ * hardest thing to control.
+ */
+
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 9px;
+  height: var(--chart-height, 118px);
+}
+
+.barCol {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  height: 100%;
+}
+
+.barValue {
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-neutral-700);
+  font-variant-numeric: tabular-nums;
+}
+
+.barStack {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 5px 5px 0 0;
+  overflow: hidden;
+}
+
+.barLabel {
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-neutral-700);
+  margin-top: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 9px;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--color-neutral-700);
+}
+
+.swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.legendShare {
+  color: var(--color-neutral-600);
+  font-variant-numeric: tabular-nums;
+}
+
+/* — waterfall — */
+.waterfall {
+  position: relative;
+  height: var(--chart-height, 104px);
+}
+
+.baseline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--color-neutral-300);
+}
+
+.wfTrack {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  gap: 9px;
+}
+
+.wfCol {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.wfValue {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.wfBlock {
+  position: absolute;
+  left: 9%;
+  right: 9%;
+  border-radius: 3px;
+}
+
+.wfAxis {
+  display: flex;
+  gap: 9px;
+  margin-top: 6px;
+}
+
+.wfAxisLabel {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* — funnel — */
+.funnel {
+  display: flex;
+  align-items: flex-end;
+  gap: 13px;
+  height: var(--chart-height, 210px);
+}
+
+.funnelCol {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+  height: 100%;
+}
+
+.funnelAmount {
+  font-family: var(--font-heading);
+  font-size: 17px;
+  text-align: center;
+}
+
+.funnelBlock {
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent-700);
+  border-radius: 4px 4px 0 0;
+}
+
+.funnelFoot {
+  border-top: 1px solid var(--color-divider);
+  padding-top: 6px;
+  text-align: center;
+}
+
+.funnelName {
+  font-family: var(--font-heading);
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.funnelMeta {
+  font-size: 12.5px;
+  color: var(--color-neutral-600);
+}
+
+/* — sparkline — */
+.spark {
+  display: block;
+  width: 100%;
+  height: var(--chart-height, 38px);
+  overflow: visible;
+}

@@ -1,0 +1,284 @@
+.shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 15.5px;
+  line-height: 1.5;
+}
+
+.middle {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.content {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+/* — top bar — */
+.topbar {
+  height: var(--shell-topbar-h);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 21px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-neutral-100);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11.5px;
+}
+
+.mark {
+  width: 32px;
+  height: 27px;
+  border: 1px solid var(--color-accent-700);
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-heading);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: var(--color-accent-800);
+}
+
+.brandRule {
+  width: 1px;
+  height: 22.5px;
+  background: var(--color-divider);
+}
+
+.appLabel {
+  font-family: var(--font-heading);
+  font-size: 17px;
+  color: var(--color-neutral-700);
+  white-space: nowrap;
+}
+
+.search {
+  flex: 1;
+  max-width: 744px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 35px;
+  padding: 0 13px;
+  border: 1px solid var(--color-neutral-400);
+  border-radius: var(--radius-md);
+  background: var(--color-neutral-200);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  color: var(--color-neutral-600);
+  font-size: 15px;
+}
+
+.search:hover {
+  background: var(--color-neutral-300);
+}
+
+.searchGlyph {
+  font-size: 14.5px;
+  color: var(--color-neutral-500);
+}
+
+.kbd {
+  margin-left: auto;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--color-neutral-500);
+  border: 1px solid var(--color-divider);
+  border-radius: 4px;
+  padding: 1.5px 5px;
+}
+
+.personas {
+  margin-left: auto;
+}
+
+.avatar {
+  width: 29px;
+  height: 30px;
+  border-radius: 7px;
+  background: var(--color-accent-700);
+  color: var(--color-neutral-100);
+  display: grid;
+  place-items: center;
+  font-family: var(--font-heading);
+  font-size: 13px;
+}
+
+.topbarEnd {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  color: var(--color-neutral-700);
+  font-size: 15.5px;
+}
+
+/* — app rail — */
+.rail {
+  width: var(--shell-rail-w);
+  flex: none;
+  border-right: 1px solid var(--color-divider);
+  background: var(--color-neutral-100);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 12px 0;
+}
+
+.railButton {
+  position: relative;
+  width: 56px;
+  height: 47px;
+  border: 0;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--color-neutral-700);
+  font-family: var(--font-heading);
+  text-decoration: none;
+  transition: background 0.14s ease;
+}
+
+.railButton:hover {
+  background: var(--color-neutral-200);
+  text-decoration: none;
+}
+
+.railButton[aria-current='page'] {
+  background: var(--color-accent-100);
+  color: var(--color-accent-800);
+}
+
+.railLabel {
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  opacity: 0.85;
+  line-height: 1.2;
+  margin-top: 2px;
+}
+
+.railFoot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.railRule {
+  width: 31px;
+  height: 1px;
+  background: var(--color-divider);
+}
+
+.railAvatar {
+  width: 29px;
+  height: 29px;
+  border-radius: 50%;
+  background: var(--color-accent-700);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-heading);
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+/* — tab strip — */
+.tabs {
+  height: var(--shell-tabs-h);
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-bg);
+  padding-left: 2.5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 17px;
+  border: 0;
+  border-bottom: 2.5px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: var(--font-heading);
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  color: var(--color-neutral-700);
+  text-decoration: none;
+}
+
+.tab:hover {
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.tab[aria-current='page'] {
+  background: var(--color-neutral-200);
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}
+
+.org {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10.5px;
+  padding: 0 15.5px;
+  font-size: 14px;
+  color: var(--color-neutral-600);
+  white-space: nowrap;
+}
+
+.orgName {
+  font-family: var(--font-mono);
+}
+
+.orgBadge {
+  border: 1px solid var(--color-divider);
+  border-radius: 4px;
+  padding: 1.5px 6.5px;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
