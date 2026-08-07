@@ -106,6 +106,17 @@ public static class CrmTokens
     /// </remarks>
     public const string NorthwindManager = "manager-northwind-token";
 
+    /// <summary>A director of the same tenant.</summary>
+    /// <remarks>
+    /// <strong>A fourth token, because the third could not answer the question.</strong>
+    /// <c>ManagementStore</c> resolves a director's scope to the empty list — meaning every
+    /// seller rather than a named few — and until this existed there was no way to reach that
+    /// path: the client's director rode the manager's token and saw a manager's two reports.
+    /// A role whose whole behaviour is "sees more than a manager" cannot be demonstrated by
+    /// borrowing a manager's credentials.
+    /// </remarks>
+    public const string NorthwindDirector = "director-northwind-token";
+
     /// <summary>The claims each token carries.</summary>
     /// <remarks>
     /// <c>scope</c> is a space-delimited list because that is what an OAuth 2.0 access token
@@ -127,6 +138,16 @@ public static class CrmTokens
                 new Claim(ClaimTypes.NameIdentifier, "rep-contoso-1"),
                 new Claim("tid", ContosoTenant),
                 new Claim("scope", "crm.read crm.write"),
+            ],
+            [NorthwindDirector] =
+            [
+                new Claim(ClaimTypes.NameIdentifier, "director-northwind-1"),
+                new Claim("tid", NorthwindTenant),
+
+                // No `crm.discount.approve`. A director is not in the approval chain for a
+                // discount — the manager is — and a token that held every grant would make the
+                // three personas indistinguishable, which is the opposite of what they exist for.
+                new Claim("scope", "crm.read crm.write crm.admin"),
             ],
             [NorthwindManager] =
             [

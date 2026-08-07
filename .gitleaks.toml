@@ -33,6 +33,7 @@ regexes = [
   '''^clinician-berlin-token$''',
   '''^clinician-dublin-token$''',
   '''^clinician-munich-token$''',
+  '''^director-northwind-token$''',
   '''^intake-token$''',
   '''^manager-northwind-token$''',
   '''^operator-de-token$''',

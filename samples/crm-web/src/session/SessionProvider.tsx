@@ -49,7 +49,7 @@ const APPROVE = 'crm.discount.approve'
 /**
  * The sample's three tokens, and the four personas that use them.
  *
- * Director and admin both ride the manager token because that is what the sample mints — said
+ * Admin rides the manager token because that is what the sample mints for it — said
  * here rather than hidden, so nobody reads this as four separate identities on the server.
  */
 const PEOPLE: Record<Persona, SessionUser> = {
@@ -75,13 +75,17 @@ const PEOPLE: Record<Persona, SessionUser> = {
   },
   director: {
     persona: 'director',
-    displayName: 'B. Vance',
-    initials: 'BV',
-    token: 'manager-northwind-token',
+    displayName: 'P. Almeida',
+    initials: 'PA',
+    token: 'director-northwind-token',
     tenantId: 'crm-northwind',
-    userId: 'manager-northwind-1',
+    userId: 'director-northwind-1',
     ownerId: '33333333-3333-3333-3333-333333333333',
-    permissions: [READ, WRITE, ADMIN, APPROVE],
+
+    // No APPROVE. A director is senior to the manager and is not in the discount chain — the
+    // manager is the control. Giving the director every grant would make the personas
+    // indistinguishable, which is the opposite of what they exist to show.
+    permissions: [READ, WRITE, ADMIN],
   },
   admin: {
     persona: 'admin',
