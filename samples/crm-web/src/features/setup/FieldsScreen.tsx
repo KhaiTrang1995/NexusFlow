@@ -13,8 +13,9 @@ import {
   TextField,
 } from '@/design/primitives'
 import { useToast } from '@/app/ToastProvider'
-import { modelFor } from '@/fixtures/objects'
-import type { FieldDefinition } from '@/fixtures/objects'
+import { useSchema } from '@/api/queries/hooks'
+import { schemaRowOf } from './schemaModel'
+import type { SchemaFieldRow } from './schemaModel'
 import { ObjectSwitcher } from './ObjectSwitcher'
 import styles from './setup.module.css'
 
@@ -29,13 +30,18 @@ const TYPES = ['text', 'email', 'phone', 'number', 'currency', 'percent', 'date'
  */
 export function FieldsScreen() {
   const toast = useToast()
-  const [objectKey, setObjectKey] = useState('opportunity')
+  const [objectKey, setObjectKey] = useState('Opportunity')
   const [name, setName] = useState('')
   const [label, setLabel] = useState('')
   const [type, setType] = useState<(typeof TYPES)[number]>('text')
   const [options, setOptions] = useState('')
 
-  const model = modelFor(objectKey)
+  const schema = useSchema()
+
+  // An empty stand-in rather than an early return: the object switcher above is what changes
+  // `objectKey`, and a screen that unmounted it while the description loaded would take the
+  // control away from under the administrator's cursor.
+  const model = schemaRowOf(schema.data, objectKey) ?? { label: objectKey, fields: [] }
   const needsOptions = type === 'picklist'
   const optionList = options.split(',').map((entry) => entry.trim()).filter(Boolean)
 
@@ -58,30 +64,30 @@ export function FieldsScreen() {
               {
                 id: 'label',
                 header: 'Field',
-                cell: (row: FieldDefinition) => (
+                cell: (row: SchemaFieldRow) => (
                   <>
                     <span className={styles.link}>{row.label}</span>
                     <div className={styles.mono}>{row.name}</div>
                   </>
                 ),
-                sortValue: (row: FieldDefinition) => row.label,
+                sortValue: (row: SchemaFieldRow) => row.label,
               },
               {
                 id: 'type',
                 header: 'Type',
-                cell: (row: FieldDefinition) => <Tag tone="outline">{row.type}</Tag>,
-                sortValue: (row: FieldDefinition) => row.type,
+                cell: (row: SchemaFieldRow) => <Tag tone="outline">{row.type}</Tag>,
+                sortValue: (row: SchemaFieldRow) => row.type,
               },
               {
                 id: 'detail',
                 header: 'Detail',
-                cell: (row: FieldDefinition) =>
-                  row.options ? (
+                cell: (row: SchemaFieldRow) =>
+                  row.options.length > 0 ? (
                     <span className={styles.sub}>{row.options.join(' · ')}</span>
-                  ) : row.to ? (
-                    <span className={styles.sub}>→ {row.to}</span>
-                  ) : row.formula ? (
-                    <span className={styles.sub}>ƒ {row.formula}</span>
+                  ) : row.computed ? (
+                    <span className={styles.sub}>ƒ computed by the server</span>
+                  ) : !row.declared ? (
+                    <span className={styles.sub}>a column of the table</span>
                   ) : (
                     <span className={styles.sub}>—</span>
                   ),
@@ -89,14 +95,14 @@ export function FieldsScreen() {
               {
                 id: 'required',
                 header: 'Required',
-                cell: (row: FieldDefinition) => (row.required ? <Tag tone="accent">yes</Tag> : '—'),
+                cell: (row: SchemaFieldRow) => (row.required ? <Tag tone="accent">yes</Tag> : '—'),
               },
             ]}
           />
         </Panel>
 
         <Panel padding="flush">
-          <PanelHeader title="Declare a field" note={`on ${model.plural.toLowerCase()}`} />
+          <PanelHeader title="Declare a field" note={`on ${model.label.toLowerCase()}`} />
           <PanelBody>
             <form
               style={{ display: 'grid', gap: 12 }}

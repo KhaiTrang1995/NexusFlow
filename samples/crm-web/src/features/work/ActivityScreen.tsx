@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import {
   Button,
@@ -8,24 +8,19 @@ import {
   FieldRow,
   Page,
   PageHeader,
+  Panel,
+  PanelHeader,
   Tag,
 } from '@/design/primitives'
-import { OBJECT_MODELS } from '@/fixtures/objects'
+import { useEntityPage } from '@/api/queries/hooks'
+import { offGrid, weekEvents, weekOf } from './week'
+import type { WeekEvent } from './week'
 import styles from './work.module.css'
 
-const DAYS = ['Mon 3', 'Tue 4', 'Wed 5', 'Thu 6', 'Fri 7'] as const
+
 const HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17] as const
 
-interface CalendarEvent {
-  id: string
-  title: string
-  day: number
-  hour: number
-  minutes: number
-  kind: 'meeting' | 'task'
-  related: string
-  attendees?: string
-}
+
 
 /**
  * The week, with what is on it.
@@ -37,14 +32,26 @@ interface CalendarEvent {
 export function ActivityScreen() {
   const navigate = useNavigate()
   const [scope, setScope] = useState<'mine' | 'team'>('mine')
-  const [selected, setSelected] = useState<CalendarEvent | null>(null)
+  const [selected, setSelected] = useState<WeekEvent | null>(null)
 
-  const events = scope === 'mine' ? EVENTS.filter((event) => event.kind !== 'task' || event.day < 4) : EVENTS
+  // The week the reader is actually in, not the week the prototype was drawn in. A calendar
+  // headed "week of 3 August" in October is one nobody looks at twice.
+  const { labels: DAYS, monday } = useMemo(() => weekOf(new Date()), [])
+
+  const page = useEntityPage('Activity')
+
+  const all = useMemo(
+    () => weekEvents(page.data?.records ?? [], monday),
+    [page.data, monday],
+  )
+
+  const events = scope === 'mine' ? all.filter((event) => event.status === 'Open') : all
+  const elsewhere = offGrid(events)
 
   return (
     <Page>
       <PageHeader
-        eyebrow="My work · week of 3 August"
+        eyebrow={`My work · week of ${DAYS[0] ?? ""}`}
         title="Activity calendar"
         actions={
           <>
@@ -95,6 +102,28 @@ export function ActivityScreen() {
         ))}
       </div>
 
+      {elsewhere.length > 0 ? (
+        <Panel padding="flush" style={{ marginTop: 'var(--section-gap)' }}>
+          <PanelHeader
+            title="Not on this week"
+            note={`${elsewhere.length} · overdue, later, or with no date`}
+          />
+          <div>
+            {elsewhere.map((event) => (
+              <div key={event.id} className={styles.offGridRow}>
+                <Tag tone={event.kind === 'task' ? 'neutral' : 'accent'}>{event.kind}</Tag>
+                <button type="button" className={styles.offGridTitle} onClick={() => setSelected(event)}>
+                  {event.title}
+                </button>
+                <span style={{ marginLeft: 'auto' }}>
+                  <Tag tone={event.status === 'Open' ? 'outline' : 'positive'}>{event.status}</Tag>
+                </span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
+
       {selected ? (
         <Drawer
           eyebrow={selected.kind === 'task' ? 'Task' : 'Meeting'}
@@ -110,14 +139,19 @@ export function ActivityScreen() {
         >
           <DrawerSection label="Details" />
           <FieldRow label="When">
-            {DAYS[selected.day]} at {String(selected.hour).padStart(2, '0')}:
-            {String(selected.minutes).padStart(2, '0')}
+            {selected.day < 0
+              ? 'not in this week'
+              : `${DAYS[selected.day]} at ${String(selected.hour).padStart(2, '0')}:${String(
+                  selected.minutes,
+                ).padStart(2, '0')}`}
           </FieldRow>
           <FieldRow label="Related to">{selected.related}</FieldRow>
           <FieldRow label="Kind">
             <Tag tone={selected.kind === 'task' ? 'neutral' : 'accent'}>{selected.kind}</Tag>
           </FieldRow>
-          {selected.attendees ? <FieldRow label="Attendees">{selected.attendees}</FieldRow> : null}
+          <FieldRow label="Status">
+            <Tag tone={selected.status === 'Open' ? 'outline' : 'positive'}>{selected.status}</Tag>
+          </FieldRow>
         </Drawer>
       ) : null}
     </Page>
@@ -132,24 +166,3 @@ function FragmentRow({ hour, children }: { hour: number; children: React.ReactNo
     </>
   )
 }
-
-/** The week's events. Tasks are the fixture tasks, placed on their due dates. */
-const TASKS = OBJECT_MODELS['task']?.records ?? []
-
-const EVENTS: readonly CalendarEvent[] = [
-  { id: 'm1', title: 'Discovery — Perimeter ops', day: 0, hour: 9, minutes: 30, kind: 'meeting', related: 'Perimeter — Fleet Rollout', attendees: 'D. Whitfield, A. Ruiz' },
-  { id: 'm2', title: 'Pipeline review', day: 0, hour: 15, minutes: 0, kind: 'meeting', related: 'Q3 FY26', attendees: 'The team' },
-  { id: 'm3', title: 'Legal — MSA redlines', day: 1, hour: 11, minutes: 0, kind: 'meeting', related: 'Northwind — Platform Expansion', attendees: 'R. Petrov, legal' },
-  { id: 'm4', title: 'Security questionnaire walkthrough', day: 2, hour: 10, minutes: 0, kind: 'meeting', related: 'Cardinal — Enterprise Pilot', attendees: 'P. Raman, J. Park' },
-  { id: 'm5', title: 'Churn risk — Baltic', day: 3, hour: 14, minutes: 0, kind: 'meeting', related: 'Baltic Freight — Renewal FY27', attendees: 'CS, K. Osei' },
-  { id: 'm6', title: 'Pricing workshop', day: 4, hour: 9, minutes: 0, kind: 'meeting', related: 'Perimeter — Fleet Rollout', attendees: 'Ops, A. Ruiz' },
-  ...TASKS.map((task, index) => ({
-    id: task.id,
-    title: String(task['subject']),
-    day: index % 5,
-    hour: 12 + (index % 4),
-    minutes: 0,
-    kind: 'task' as const,
-    related: String(task['related']),
-  })),
-]
