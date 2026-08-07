@@ -284,6 +284,11 @@ namespace Crm;
 [JsonSerializable(typeof(DealAttribution))]
 [JsonSerializable(typeof(CampaignBy))]
 
+// A page of a built-in entity. RecordPage and RecordView are already here for the custom query,
+// which this surface deliberately reuses rather than answering in a second shape.
+[JsonSerializable(typeof(ReadEntityPage))]
+[JsonSerializable(typeof(ReadEntityRecords))]
+
 // The connector registry, its queue and what goes on the wire.
 [JsonSerializable(typeof(DefineConnector))]
 [JsonSerializable(typeof(ConnectorDefined))]
