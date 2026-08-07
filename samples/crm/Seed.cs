@@ -53,6 +53,7 @@ public sealed record SeedDocument(
 /// <param name="BusinessHours">When the desk is open. The SLA clock stops outside these.</param>
 /// <param name="SlaPolicies">What a case of each priority is promised.</param>
 /// <param name="Campaigns">What marketing is running.</param>
+/// <param name="ApprovalProcesses">Who has to agree to what, and in what order.</param>
 public sealed record SeedMetadata(
     IReadOnlyList<SeedObject> Objects,
     IReadOnlyList<SeedField> Fields,
@@ -66,7 +67,8 @@ public sealed record SeedMetadata(
     IReadOnlyList<SeedQuota> Quotas,
     IReadOnlyList<SeedBusinessHours> BusinessHours,
     IReadOnlyList<SeedSlaPolicy> SlaPolicies,
-    IReadOnlyList<SeedCampaign> Campaigns);
+    IReadOnlyList<SeedCampaign> Campaigns,
+    IReadOnlyList<SeedApprovalProcess> ApprovalProcesses);
 
 /// <summary>Rows.</summary>
 /// <param name="Accounts">Applied first: contacts and opportunities reference them.</param>
@@ -283,6 +285,47 @@ public sealed record SeedCampaign(
     DateOnly StartsOn,
     DateOnly EndsOn,
     decimal Budget);
+
+/// <summary>Declares an approval process.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Name">The identifier.</param>
+/// <param name="Label">What a person sees.</param>
+/// <param name="Subject">What it governs.</param>
+/// <param name="Priority">Which process wins when two would both claim a subject. Lower is stronger.</param>
+/// <param name="Criteria">
+/// When it applies, all of it. A process with no criteria governs every subject of its kind —
+/// which is a decision, and a loud one, so it is written rather than defaulted.
+/// </param>
+/// <param name="Steps">Who has to agree, in order.</param>
+/// <remarks>
+/// <strong>Without one of these the approval feature reads as dead.</strong>
+/// <c>/approvals/requests</c> answers <c>required: false</c> when nothing governs the subject, so
+/// a tenant with no process has an inbox that is permanently empty and a setup screen with
+/// nothing on it — indistinguishable from a feature that does not work.
+/// </remarks>
+public sealed record SeedApprovalProcess(
+    string Alias,
+    string Name,
+    string Label,
+    ApprovalSubject Subject,
+    int Priority,
+    IReadOnlyList<SeedApprovalCriterion> Criteria,
+    IReadOnlyList<SeedApprovalStep> Steps);
+
+/// <summary>When an approval process applies.</summary>
+/// <param name="Attribute">Which fact about the subject.</param>
+/// <param name="Operator">How it is compared.</param>
+/// <param name="Value">What it is compared against.</param>
+public sealed record SeedApprovalCriterion(string Attribute, GuardOperator Operator, string Value);
+
+/// <summary>One step of an approval.</summary>
+/// <param name="Label">What a person sees.</param>
+/// <param name="Kind">Named, the submitter's manager, or whoever holds a role.</param>
+/// <param name="Approver">
+/// The user or role, or null for <c>SubmittersManager</c> — which needs no name because the
+/// reporting line already knows who it is.
+/// </param>
+public sealed record SeedApprovalStep(string Label, ApproverKind Kind, string? Approver);
 
 // -------------------------------------------------------------------------------- data items
 
