@@ -97,6 +97,7 @@ public static class SeedReader
                 Activities = data.Activities ?? [],
                 Quotes = data.Quotes ?? [],
                 Orders = data.Orders ?? [],
+                Plans = data.Plans ?? [],
             },
         };
     }
@@ -107,7 +108,7 @@ public static class SeedReader
         public static readonly SeedMetadata Metadata =
             new([], [], [], [], [], [], [], [], [], [], [], [], []);
 
-        public static readonly SeedData Data = new([], [], [], [], [], [], [], []);
+        public static readonly SeedData Data = new([], [], [], [], [], [], [], [], []);
     }
 
     /// <summary>Checks a document against the limits and against itself.</summary>
@@ -175,7 +176,8 @@ public static class SeedReader
             ?? Collect("campaigns", metadata.Campaigns, item => item.Alias, [])
             ?? Collect("activities", data.Activities, item => item.Alias, [])
             ?? Collect("quotes", data.Quotes, item => item.Alias, quotes)
-            ?? Collect("orders", data.Orders, item => item.Alias, []);
+            ?? Collect("orders", data.Orders, item => item.Alias, [])
+            ?? Collect("plans", data.Plans, item => item.Alias, []);
 
         if (unreferenced is { } bad)
         {
@@ -549,6 +551,31 @@ public static class SeedReader
             {
                 return Result.Fail<SeedDocument>(
                     SeedErrors.UnknownReference("order " + order.Alias, order.Account));
+            }
+        }
+
+        foreach (var plan in data.Plans)
+        {
+            if (!CustomValues.IsUsableName(plan.Name))
+            {
+                return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("plan", plan.Name));
+            }
+
+            if (!periods.Contains(plan.Period))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.UnknownReference("plan " + plan.Alias, plan.Period));
+            }
+
+            // The subject is looked for in the collection its kind names — the schema's own
+            // CHECK ties the two together, and a plan about an account that is really an
+            // opportunity is a foreign-key violation rather than a sentence about the file.
+            var subjects = plan.Kind is PlanKind.Account ? accounts : deals;
+
+            if (!subjects.Contains(plan.Subject))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.UnknownReference("plan " + plan.Alias, plan.Subject));
             }
         }
 

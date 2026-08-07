@@ -3,6 +3,7 @@ import { Button, Meter, Page, PageHeader, Panel, PanelHeader, Tag } from '@/desi
 import { useToast } from '@/app/ToastProvider'
 import { modelFor } from '@/fixtures/objects'
 import { ObjectSwitcher } from './ObjectSwitcher'
+import { PublishedProcess } from './PublishedProcess'
 import styles from './setup.module.css'
 
 /**
@@ -24,6 +25,12 @@ export function StagesScreen() {
   return (
     <Page>
       <PageHeader eyebrow="Setup" title="Stages" />
+
+      {/*
+        What is actually published, read back from the tables an administrator rewrites. The
+        editor below it is the prototype's: it reorders a list and says so.
+      */}
+      <PublishedProcess />
 
       <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
         <ObjectSwitcher

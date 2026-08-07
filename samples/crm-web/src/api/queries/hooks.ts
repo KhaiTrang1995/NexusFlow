@@ -493,3 +493,24 @@ export function usePlan(name: string | null): UseQueryResult<C.PlanDetail> {
     staleTime: 15_000,
   })
 }
+
+// ─────────────────────────────────────────────────────────────── the configured process
+
+/**
+ * The active process for one entity kind: its stages, and what may follow what.
+ *
+ * THE CLAIM THIS SAMPLE PROVES, READ BACK. The stages an administrator published, with the
+ * guards that have to hold and the actions each transition takes — none of which this client
+ * knows anything about, and all of which change without a deployment.
+ */
+export function useProcess(appliesTo: C.EntityKind): UseQueryResult<C.ProcessView> {
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useQuery({
+    queryKey: keys.processes.of(tenantId, appliesTo),
+    queryFn: ({ signal }) =>
+      call.read<C.ProcessView, C.ReadProcess>('/processes', { appliesTo }, signal),
+    staleTime: 60_000,
+  })
+}

@@ -167,6 +167,33 @@ public sealed class SeedStore
         ON CONFLICT (order_id) DO NOTHING
         """;
 
+    private const string InsertPlan = """
+        INSERT INTO plan (
+            plan_id, tenant_id, period_id, kind, name, label, owner_id, account_id,
+            opportunity_id, target_amount, currency, created_at)
+        VALUES (@id, @tenant, @period, @kind, @name, @label, @owner, @account, @opportunity,
+            @target, @currency, @now)
+        ON CONFLICT (plan_id) DO NOTHING
+        """;
+
+    private const string InsertObjective = """
+        INSERT INTO plan_objective (plan_id, tenant_id, ordinal, description, measure, target, status)
+        VALUES (@plan, @tenant, @ordinal, @description, @measure, @target, @status)
+        ON CONFLICT (plan_id, ordinal) DO NOTHING
+        """;
+
+    private const string InsertPlanStep = """
+        INSERT INTO plan_step (plan_id, tenant_id, ordinal, description, owner_id, due_on, completed_at)
+        VALUES (@plan, @tenant, @ordinal, @description, @owner, @due, NULL)
+        ON CONFLICT (plan_id, ordinal) DO NOTHING
+        """;
+
+    private const string InsertPlanRisk = """
+        INSERT INTO plan_risk (plan_id, tenant_id, ordinal, description, severity, mitigation, is_open)
+        VALUES (@plan, @tenant, @ordinal, @description, @severity, @mitigation, true)
+        ON CONFLICT (plan_id, ordinal) DO NOTHING
+        """;
+
     private readonly NpgsqlDataSource _source;
 
     /// <summary>Builds the store over the application's data source.</summary>
@@ -748,6 +775,100 @@ public sealed class SeedStore
             Add(command, "status", NpgsqlDbType.Text, order.Status.ToString());
             Add(command, "now", NpgsqlDbType.TimestampTz, now);
         }, ct);
+    }
+
+    /// <summary>Writes a plan and everything under it.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="plan">What to write.</param>
+    /// <param name="now">The instant it was committed; step dates are counted from it.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>Whether the plan itself was inserted rather than already there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="plan"/> is null.</exception>
+    /// <remarks>
+    /// One transaction, for <c>WriteProcessAsync</c>'s reason: a plan with half its steps is a
+    /// mutual action plan the customer never agreed to.
+    /// </remarks>
+    public async ValueTask<bool> WritePlanAsync(
+        string tenant, SeedPlan plan, DateTimeOffset now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+
+        var connection = await OpenAsync(tenant, ct).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
+
+        var transaction = await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+        await using var closingTransaction = transaction.ConfigureAwait(false);
+
+        var id = SeedIds.For(tenant, "plan", plan.Alias);
+        var isAccount = plan.Kind is PlanKind.Account;
+        var subject = SeedIds.For(tenant, isAccount ? "account" : "opportunity", plan.Subject);
+
+        var written = await ExecuteAsync(connection, InsertPlan, command =>
+        {
+            Add(command, "id", NpgsqlDbType.Uuid, id);
+            Add(command, "tenant", NpgsqlDbType.Text, tenant);
+            Add(command, "period", NpgsqlDbType.Uuid, SeedIds.For(tenant, "period", plan.Period));
+            Add(command, "kind", NpgsqlDbType.Text, plan.Kind.ToString());
+            Add(command, "name", NpgsqlDbType.Text, plan.Name);
+            Add(command, "label", NpgsqlDbType.Text, plan.Label);
+            Add(command, "owner", NpgsqlDbType.Text, plan.Owner);
+            Add(command, "account", NpgsqlDbType.Uuid, isAccount ? subject : DBNull.Value);
+            Add(command, "opportunity", NpgsqlDbType.Uuid, isAccount ? DBNull.Value : subject);
+            Add(command, "target", NpgsqlDbType.Numeric, plan.TargetAmount);
+            Add(command, "currency", NpgsqlDbType.Text, plan.Currency);
+            Add(command, "now", NpgsqlDbType.TimestampTz, now);
+        }, ct).ConfigureAwait(false);
+
+        for (var ordinal = 0; ordinal < plan.Objectives.Count; ordinal++)
+        {
+            var objective = plan.Objectives[ordinal]!;
+
+            await ExecuteAsync(connection, InsertObjective, command =>
+            {
+                Add(command, "plan", NpgsqlDbType.Uuid, id);
+                Add(command, "tenant", NpgsqlDbType.Text, tenant);
+                Add(command, "ordinal", NpgsqlDbType.Integer, ordinal);
+                Add(command, "description", NpgsqlDbType.Text, objective.Description);
+                Add(command, "measure", NpgsqlDbType.Text, objective.Measure.ToString());
+                Add(command, "target", NpgsqlDbType.Numeric, objective.Target);
+                Add(command, "status", NpgsqlDbType.Text, objective.Status.ToString());
+            }, ct).ConfigureAwait(false);
+        }
+
+        for (var ordinal = 0; ordinal < plan.Steps.Count; ordinal++)
+        {
+            var step = plan.Steps[ordinal]!;
+
+            await ExecuteAsync(connection, InsertPlanStep, command =>
+            {
+                Add(command, "plan", NpgsqlDbType.Uuid, id);
+                Add(command, "tenant", NpgsqlDbType.Text, tenant);
+                Add(command, "ordinal", NpgsqlDbType.Integer, ordinal);
+                Add(command, "description", NpgsqlDbType.Text, step.Description);
+                Add(command, "owner", NpgsqlDbType.Text, step.Owner);
+                Add(command, "due", NpgsqlDbType.Date, DateOnly.FromDateTime(
+                    now.AddDays(step.DueInDays).UtcDateTime));
+            }, ct).ConfigureAwait(false);
+        }
+
+        for (var ordinal = 0; ordinal < plan.Risks.Count; ordinal++)
+        {
+            var risk = plan.Risks[ordinal]!;
+
+            await ExecuteAsync(connection, InsertPlanRisk, command =>
+            {
+                Add(command, "plan", NpgsqlDbType.Uuid, id);
+                Add(command, "tenant", NpgsqlDbType.Text, tenant);
+                Add(command, "ordinal", NpgsqlDbType.Integer, ordinal);
+                Add(command, "description", NpgsqlDbType.Text, risk.Description);
+                Add(command, "severity", NpgsqlDbType.Text, risk.Severity.ToString());
+                Add(command, "mitigation", NpgsqlDbType.Text, risk.Mitigation);
+            }, ct).ConfigureAwait(false);
+        }
+
+        await transaction.CommitAsync(ct).ConfigureAwait(false);
+
+        return written;
     }
 
     /// <summary>Opens a scoped connection, runs one statement, and reports whether it wrote.</summary>

@@ -155,6 +155,7 @@ builder.Services.AddSingleton<CampaignStore>();
 builder.Services.AddSingleton<EntityQueryStore>();
 builder.Services.AddSingleton<ConfigStore>();
 builder.Services.AddSingleton<PlanDetailStore>();
+builder.Services.AddSingleton<ProcessViewStore>();
 builder.Services.AddSingleton<SeedStore>();
 builder.Services.AddSingleton<CrmSchemaHealthCheck>();
 

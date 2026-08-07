@@ -77,6 +77,7 @@ public sealed record SeedMetadata(
 /// <param name="Activities">Tasks, calls, meetings and notes against the rows above.</param>
 /// <param name="Quotes">Priced offers against an opportunity.</param>
 /// <param name="Orders">What a quote became once somebody committed.</param>
+/// <param name="Plans">Account and deal plans, with what is under them.</param>
 public sealed record SeedData(
     IReadOnlyList<SeedAccount> Accounts,
     IReadOnlyList<SeedContact> Contacts,
@@ -85,7 +86,8 @@ public sealed record SeedData(
     IReadOnlyList<SeedRecord> Records,
     IReadOnlyList<SeedActivity> Activities,
     IReadOnlyList<SeedQuote> Quotes,
-    IReadOnlyList<SeedOrder> Orders);
+    IReadOnlyList<SeedOrder> Orders,
+    IReadOnlyList<SeedPlan> Plans);
 
 // -------------------------------------------------------------------------------- metadata items
 
@@ -408,6 +410,63 @@ public sealed record SeedOrder(
     string Quote,
     string Account,
     OrderStatus Status);
+
+/// <summary>A plan, and everything under it.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Name">The identifier the API takes.</param>
+/// <param name="Label">What a person sees.</param>
+/// <param name="Kind">Account or opportunity. A demand plan needs neither and is not seeded.</param>
+/// <param name="Period">The alias of the period it belongs to.</param>
+/// <param name="Owner">Whose it is, as a user identifier.</param>
+/// <param name="Subject">
+/// The alias of the account or opportunity it is about. The schema requires one for each kind —
+/// <c>CHECK ((kind = 'Account') = (account_id IS NOT NULL))</c> — which is what stops a plan
+/// about nothing.
+/// </param>
+/// <param name="TargetAmount">What it commits.</param>
+/// <param name="Currency">The unit of that.</param>
+/// <param name="Objectives">What it is trying to achieve.</param>
+/// <param name="Steps">The mutual action plan.</param>
+/// <param name="Risks">What could stop it.</param>
+public sealed record SeedPlan(
+    string Alias,
+    string Name,
+    string Label,
+    PlanKind Kind,
+    string Period,
+    string Owner,
+    string Subject,
+    decimal TargetAmount,
+    string Currency,
+    IReadOnlyList<SeedObjective> Objectives,
+    IReadOnlyList<SeedPlanStep> Steps,
+    IReadOnlyList<SeedPlanRisk> Risks);
+
+/// <summary>One thing a plan is trying to achieve.</summary>
+/// <param name="Description">What it is.</param>
+/// <param name="Measure">What it is counted in.</param>
+/// <param name="Target">How much.</param>
+/// <param name="Status">Where it has got to.</param>
+public sealed record SeedObjective(
+    string Description,
+    ObjectiveMeasure Measure,
+    decimal Target,
+    ObjectiveStatus Status);
+
+/// <summary>One agreed step.</summary>
+/// <param name="Description">What was agreed.</param>
+/// <param name="Owner">Whose it is.</param>
+/// <param name="DueInDays">
+/// When, counted from the moment the seed is applied — so a demo does not open on a plan whose
+/// every step went overdue before anybody looked at it. Negative for one that deliberately has.
+/// </param>
+public sealed record SeedPlanStep(string Description, string Owner, int DueInDays);
+
+/// <summary>One risk.</summary>
+/// <param name="Description">What could stop it.</param>
+/// <param name="Severity">How bad it would be.</param>
+/// <param name="Mitigation">What is being done.</param>
+public sealed record SeedPlanRisk(string Description, RiskSeverity Severity, string Mitigation);
 
 /// <summary>A row of a custom object.</summary>
 /// <param name="Alias">Its name in this file.</param>

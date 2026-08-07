@@ -40,7 +40,7 @@ one compose mounts.
 
 ## What it is
 
-Sixty-three tables, eighty-two flows and three authorisation stances, over the entities a CRM actually
+Sixty-three tables, eighty-three flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -72,6 +72,7 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Save a list view | `POST /api/v1/crm/custom/list-views` | a named query, its fields checked when it is saved |
 | Query records | `POST /api/v1/crm/custom/queries` | the one projection of custom values, and where reads are masked |
 | Search everything | `POST /api/v1/crm/search` | one statement over five tables; a hit is an identity, not a row |
+| Read the process | `POST /api/v1/crm/processes` | the stages, guards and actions an administrator published, with how many deals sit in each |
 | Read one plan | `POST /api/v1/crm/planning/plan` | objectives, steps, risks, qualification and stakeholders in one read; overdue is the server's answer |
 | List what is declared | `POST /api/v1/crm/config` | twelve tables, one route; each row carries a sentence saying what it does |
 | Page an entity | `POST /api/v1/crm/entities` | a filter of unknown size, bound as three arrays rather than built; what may be read is a superset of what may be declared on |
