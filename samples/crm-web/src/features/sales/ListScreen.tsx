@@ -107,7 +107,9 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
               ? 'reading…'
               : page.isError
                 ? 'sample data — the server did not answer'
-                : `live ${entity.toLowerCase()}s`)
+                // The object's own plural, not the server's kind with an "s" on it: the entity is
+              // `Activity` and the screen is Tasks, and "live activitys" is neither.
+              : `live ${model.plural.toLowerCase()}`)
         }
         title={model.plural}
         actions={

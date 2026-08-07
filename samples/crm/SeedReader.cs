@@ -95,6 +95,8 @@ public static class SeedReader
                 Leads = data.Leads ?? [],
                 Records = data.Records ?? [],
                 Activities = data.Activities ?? [],
+                Quotes = data.Quotes ?? [],
+                Orders = data.Orders ?? [],
             },
         };
     }
@@ -105,7 +107,7 @@ public static class SeedReader
         public static readonly SeedMetadata Metadata =
             new([], [], [], [], [], [], [], [], [], [], [], [], []);
 
-        public static readonly SeedData Data = new([], [], [], [], [], []);
+        public static readonly SeedData Data = new([], [], [], [], [], [], [], []);
     }
 
     /// <summary>Checks a document against the limits and against itself.</summary>
@@ -132,6 +134,7 @@ public static class SeedReader
         var stages = new HashSet<string>(StringComparer.Ordinal);
         var periods = new HashSet<string>(StringComparer.Ordinal);
         var people = new HashSet<string>(StringComparer.Ordinal);
+        var quotes = new HashSet<string>(StringComparer.Ordinal);
 
         if (Collect("objects", metadata.Objects, item => item.Alias, objects) is { } badObject)
         {
@@ -170,7 +173,9 @@ public static class SeedReader
             ?? Collect("territories", metadata.Territories, item => item.Alias, [])
             ?? Collect("slaPolicies", metadata.SlaPolicies, item => item.Alias, [])
             ?? Collect("campaigns", metadata.Campaigns, item => item.Alias, [])
-            ?? Collect("activities", data.Activities, item => item.Alias, []);
+            ?? Collect("activities", data.Activities, item => item.Alias, [])
+            ?? Collect("quotes", data.Quotes, item => item.Alias, quotes)
+            ?? Collect("orders", data.Orders, item => item.Alias, []);
 
         if (unreferenced is { } bad)
         {
@@ -511,6 +516,39 @@ public static class SeedReader
             {
                 return Result.Fail<SeedDocument>(SeedErrors.OutOfRange(
                     activity.Alias, "status", "anything but Completed; a seed starts work, it does not finish it"));
+            }
+        }
+
+        var deals = new HashSet<string>(
+            data.Opportunities.Select(opportunity => opportunity.Alias), StringComparer.Ordinal);
+
+        foreach (var quote in data.Quotes)
+        {
+            if (!deals.Contains(quote.Opportunity))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.UnknownReference("quote " + quote.Alias, quote.Opportunity));
+            }
+
+            if (quote.Discount > quote.Subtotal)
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.OutOfRange(quote.Alias, "discount", "no more than the subtotal"));
+            }
+        }
+
+        foreach (var order in data.Orders)
+        {
+            if (!quotes.Contains(order.Quote))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.UnknownReference("order " + order.Alias, order.Quote));
+            }
+
+            if (!accounts.Contains(order.Account))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.UnknownReference("order " + order.Alias, order.Account));
             }
         }
 

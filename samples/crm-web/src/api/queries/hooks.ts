@@ -347,7 +347,7 @@ export function useSearch(phrase: string, limit = 25): UseQueryResult<C.SearchRe
  * a list too long for one page — and that is the caller's decision, not this hook's.
  */
 export function useEntityPage(
-  entity: C.EntityKind | null,
+  entity: C.ReadableEntity | null,
   limit = 200,
 ): UseQueryResult<C.RecordPage> {
   const { tenantId } = useSession()
@@ -375,7 +375,7 @@ export function useEntityPage(
  * step with.
  */
 export function useEntityRecord(
-  entity: C.EntityKind | null,
+  entity: C.ReadableEntity | null,
   keyColumn: string | null,
   id: string | null,
 ): UseQueryResult<C.RecordPage> {

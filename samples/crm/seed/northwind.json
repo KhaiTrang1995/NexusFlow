@@ -559,6 +559,34 @@
         "dueInDays": 30,
         "status": "Open"
       }
+    ],
+    "quotes": [
+      {
+        "alias": "northwind_q1",
+        "opportunity": "northwind_expansion",
+        "status": "Issued",
+        "subtotal": 200000,
+        "discount": 16000,
+        "currency": "EUR",
+        "validForDays": 21
+      },
+      {
+        "alias": "meridian_q1",
+        "opportunity": "meridian_pilot",
+        "status": "Draft",
+        "subtotal": 45000,
+        "discount": 3000,
+        "currency": "EUR",
+        "validForDays": 30
+      }
+    ],
+    "orders": [
+      {
+        "alias": "northwind_o1",
+        "quote": "northwind_q1",
+        "account": "northwind",
+        "status": "Placed"
+      }
     ]
   }
 }

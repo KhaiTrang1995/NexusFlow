@@ -4,6 +4,45 @@ namespace Crm;
 
 // -------------------------------------------------------------------------------- what is asked
 
+/// <summary>What a page can be asked for.</summary>
+/// <remarks>
+/// <para>
+/// <strong>A vocabulary of its own, and not <see cref="EntityKind"/> widened.</strong>
+/// <c>EntityKind</c> is what a validation rule, a custom field and a field policy are declared
+/// against, and every one of those is a <c>CHECK (applies_to IN (…))</c> in a migration. Adding
+/// <c>Quote</c> to it would mean somebody could declare a rule on an entity that has never had
+/// one, in three migrations, to make a list screen work.
+/// </para>
+/// <para>
+/// So what may be <em>read</em> is a superset of what may be <em>declared on</em>, said once,
+/// here. The four that overlap map straight across; the three that do not are read-only and
+/// stay that way until somebody has a reason for them not to be.
+/// </para>
+/// </remarks>
+public enum ReadableEntity
+{
+    /// <summary>A lead.</summary>
+    Lead = 0,
+
+    /// <summary>An account.</summary>
+    Account = 1,
+
+    /// <summary>A contact.</summary>
+    Contact = 2,
+
+    /// <summary>An opportunity.</summary>
+    Opportunity = 3,
+
+    /// <summary>A quote.</summary>
+    Quote = 4,
+
+    /// <summary>An order.</summary>
+    Order = 5,
+
+    /// <summary>A task, call, meeting or note.</summary>
+    Activity = 6,
+}
+
 /// <summary>Reads a page of a built-in entity.</summary>
 /// <param name="Entity">Which one.</param>
 /// <param name="Filter">
@@ -26,15 +65,13 @@ namespace Crm;
 /// which answers with a group and not a record. A list view had nothing to read.
 /// </para>
 /// <para>
-/// <strong>Four entities and not seven, deliberately.</strong> <see cref="EntityKind"/> is the
-/// closed vocabulary the validation rules and the field policy already speak, and it names four.
-/// Quotes, orders and activities would need it widened — which means the <c>applies_to</c> check
-/// constraints in three migrations, and a rule written against an entity that had no rules
-/// yesterday. That is a change worth making on its own, not as a side effect of adding a list.
+/// <strong>Seven, through a vocabulary of the read surface's own.</strong> See
+/// <see cref="ReadableEntity"/>: quotes, orders and activities are readable without being
+/// declarable, which is what stops a list screen turning into three migrations.
 /// </para>
 /// </remarks>
 public sealed record ReadEntityPage(
-    EntityKind Entity,
+    ReadableEntity Entity,
     RecordFilter? Filter,
     int Limit,
     string? After = null);
@@ -62,7 +99,7 @@ public static class EntityQueryErrors
     /// the entity's own closed column list means the name is either one of a handful of constants
     /// or it never reaches the database at all.
     /// </remarks>
-    public static Error FieldIsNotOfEntity(EntityKind entity, string field) =>
+    public static Error FieldIsNotOfEntity(ReadableEntity entity, string field) =>
         new(
             "crm.entity_field_unknown",
             $"'{field}' is not a field of {entity}. It has: " +
