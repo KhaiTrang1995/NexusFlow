@@ -126,6 +126,31 @@ test.describe('a seller', () => {
 
     await expect(quotes.locator('tbody tr')).toHaveCount(before + 1)
   })
+
+  /**
+   * Nothing on the record page is a click that does nothing.
+   *
+   * Seven buttons in this client had no handler at all — Clone, Preview, Reschedule, Escalate and
+   * three more. A disabled button with a title is a different fact from a live one, and both are
+   * different from a button that looks live and is not; the third is the only one a reader cannot
+   * diagnose, so it is the one this asserts against.
+   */
+  test('finds no button that looks live and is not', async ({ page }) => {
+    await signIn(page, 'rep')
+
+    await openFirstRecord(page, '/records/opportunity')
+
+    // Clone has no capability behind it, so it is disabled and says why rather than swallowing
+    // the click.
+    const clone = page.getByRole('button', { name: 'Clone' })
+
+    await expect(clone).toBeDisabled()
+    await expect(clone).toHaveAttribute('title', /no duplicate-record capability/)
+
+    // And the Files tab says the build stores none, rather than listing three that cannot open.
+    await page.getByRole('tab', { name: /Files/ }).click()
+    await expect(page.getByText('This build stores no files')).toBeVisible()
+  })
 })
 
 test.describe('a manager', () => {

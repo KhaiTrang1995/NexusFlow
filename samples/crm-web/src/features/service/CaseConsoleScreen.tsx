@@ -217,8 +217,16 @@ export function CaseConsoleScreen() {
           onClose={() => setPeek(null)}
           actions={
             <>
-              <Button tone="primary">Open in console</Button>
-              <Button>Escalate</Button>
+              {/*
+                This screen is the console, so "open in" it is where the reader already is. An
+                escalation is a capability the server does not carry.
+              */}
+              <Button tone="primary" onClick={() => setPeek(null)}>
+                Close
+              </Button>
+              <Button disabled title="This build has no escalation capability.">
+                Escalate
+              </Button>
             </>
           }
         >

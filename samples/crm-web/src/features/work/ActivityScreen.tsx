@@ -132,8 +132,17 @@ export function ActivityScreen() {
           onClose={() => setSelected(null)}
           actions={
             <>
-              <Button tone="primary">Open record</Button>
-              <Button>Reschedule</Button>
+              {/*
+                The calendar's events are the prototype's, carrying a related record as a name
+                rather than an id — so there is nothing to navigate to and no activity to move.
+                Both said so by doing nothing at all until now.
+              */}
+              <Button disabled title="This calendar's events carry a name, not a record to open.">
+                Open record
+              </Button>
+              <Button disabled title="This build has no reschedule capability.">
+                Reschedule
+              </Button>
             </>
           }
         >

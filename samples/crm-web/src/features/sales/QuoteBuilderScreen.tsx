@@ -73,7 +73,9 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
         title={String(quote?.['opportunity'] ?? 'Quote builder')}
         actions={
           <>
-            <Button>Preview</Button>
+            <Button disabled title="This build renders no document for a quote.">
+              Preview
+            </Button>
             <Button
               tone="primary"
               disabled={submit.isPending}

@@ -142,7 +142,14 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
             >
               Edit
             </Button>
-            <Button>Clone</Button>
+            {/*
+              Disabled, not removed. The design has a Clone and this build has no capability
+              behind it; a button that silently does nothing is read as a broken button, and the
+              reader retries it. Saying why is the whole difference.
+            */}
+            <Button disabled title="This build has no duplicate-record capability.">
+              Clone
+            </Button>
 
             {/*
               The seller's loop, one entity at a time: a lead converts, an opportunity moves
@@ -280,24 +287,20 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
 
         {tab === 'files' ? (
           <Panel padding="flush">
-            <PanelHeader title="Files" note="3" />
+            <PanelHeader title="Files" />
             <PanelBody>
-              <div className={styles.feed}>
-                {FILES.map((file) => (
-                  <div key={file.name} className={styles.feedRow}>
-                    <span className={styles.feedIcon} aria-hidden="true">
-                      ▤
-                    </span>
-                    <div style={{ minWidth: 0 }}>
-                      <div>{file.name}</div>
-                      <div className={styles.sub}>
-                        {file.size} · uploaded by {file.by}
-                      </div>
-                    </div>
-                    <span className={styles.feedWhen}>{file.when}</span>
-                  </div>
-                ))}
-              </div>
+              {/*
+                THREE INVENTED DOCUMENTS USED TO LIVE HERE — the same redlined MSA and the same
+                security questionnaire on every record in the tenant, with sizes and uploaders.
+                This build has no file storage at all, and a tab listing files that cannot be
+                opened is worse than one that says there are none: somebody goes looking for the
+                download that never appears, and concludes the link is broken rather than that the
+                feature is absent.
+              */}
+              <EmptyState
+                title="This build stores no files"
+                detail="There is no attachment surface on the server, so there is nothing to list. The tab is here because the design has it, not because it is waiting for data."
+              />
             </PanelBody>
           </Panel>
         ) : null}
@@ -333,9 +336,3 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
     </Page>
   )
 }
-
-const FILES = [
-  { name: 'MSA — redlined v4.pdf', size: '412 KB', by: 'A. Ruiz', when: '2 days ago' },
-  { name: 'Security questionnaire.xlsx', size: '88 KB', by: 'J. Park', when: '9 days ago' },
-  { name: 'Solution overview.pdf', size: '1.2 MB', by: 'M. Chen', when: '3 weeks ago' },
-]
