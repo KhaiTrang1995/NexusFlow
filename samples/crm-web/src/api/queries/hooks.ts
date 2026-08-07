@@ -597,3 +597,72 @@ export function useIssueQuote(): UseMutationResult<C.QuoteIssued, Error, C.Issue
     onSuccess: () => client.invalidateQueries({ queryKey: keys.entities.all(tenantId) }),
   })
 }
+
+/**
+ * Converts a lead into an account, a contact and an opportunity.
+ *
+ * ONE CALL, NOT THREE. The server runs it as a saga: a failure at the opportunity unwinds the
+ * contact and then the account, so a conversion either happened or did not. A client that made
+ * the three writes itself would leave an account and a contact behind whenever the third failed,
+ * and nobody would ever find them.
+ *
+ * Every list is invalidated because a conversion writes into four of them at once.
+ */
+export function useConvertLead(): UseMutationResult<C.ConversionResult, Error, C.ConvertLead> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.ConvertLead) =>
+      call.write<C.ConversionResult, C.ConvertLead>('/lead-conversions', input),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.entities.all(tenantId) }),
+  })
+}
+
+/**
+ * Applies a trigger to an opportunity and lets the published process decide where it lands.
+ *
+ * THE DESTINATION IS NOT SENT. A trigger the process has no transition for is refused, and a
+ * guard that does not hold refuses it too — which is the whole point of configuring the process
+ * rather than writing the stage from a drop-down.
+ */
+export function useAdvanceOpportunity(): UseMutationResult<
+  C.OpportunityAdvanced,
+  Error,
+  C.AdvanceOpportunity
+> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.AdvanceOpportunity) =>
+      call.write<C.OpportunityAdvanced, C.AdvanceOpportunity>('/opportunities/triggers', input),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: keys.entities.all(tenantId) })
+
+      // The stage counts on the process view move with it, and a board still showing the old
+      // occupancy is the screen somebody plans the week from.
+      client.invalidateQueries({ queryKey: keys.processes.all(tenantId) })
+    },
+  })
+}
+
+/**
+ * Accepts a quote and commits the money.
+ *
+ * REFUSED WHILE THE QUOTE IS A DRAFT, and that refusal is the control. A discount past the
+ * threshold leaves the quote in Draft until somebody senior agrees; ordering against it anyway
+ * would make the approval decorative.
+ */
+export function usePlaceOrder(): UseMutationResult<C.OrderPlaced, Error, C.PlaceOrder> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.PlaceOrder) => call.write<C.OrderPlaced, C.PlaceOrder>('/orders', input),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.entities.all(tenantId) }),
+  })
+}

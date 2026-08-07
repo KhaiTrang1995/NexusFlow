@@ -317,6 +317,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddFlowXPostgresOutbox();
 
         services.AddSingleton<CrmSchemaReader>();
+        services.AddSingleton<ConversionStore>();
         services.AddSingleton<IntakeStore>();
         services.AddSingleton<SalesStore>();
         services.AddSingleton<WorkStore>();
@@ -426,6 +427,19 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<ReadCrmConfig>();
         services.AddSingleton<ReadCrmPlan>();
         services.AddSingleton<ReadCrmProcess>();
+
+        // The conversion saga and the eight capabilities it unwinds through. Registered here
+        // because the endpoint is one a seller reaches every day, and a harness that could not
+        // reach it left the whole path to a test that composes its own host.
+        services.AddSingleton<CreateAccount>();
+        services.AddSingleton<CreateContact>();
+        services.AddSingleton<CreateOpportunity>();
+        services.AddSingleton<MarkLeadConverted>();
+        services.AddSingleton<ReadLeadForConversion>();
+        services.AddSingleton<RemoveAccount>();
+        services.AddSingleton<RemoveContact>();
+        services.AddSingleton<RemoveOpportunity>();
+        services.AddSingleton<ConvertLeadFlow.Dispatcher>();
 
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();

@@ -36,6 +36,13 @@ public sealed record ProcessView(
     IReadOnlyList<ProcessTransitionView> Transitions);
 
 /// <summary>One stage.</summary>
+/// <param name="StageId">
+/// Its id. <strong>A converting client has nowhere else to read this.</strong>
+/// <see cref="ConvertLead"/> names the stage the new opportunity starts in by id, because a name
+/// is not unique across superseded definitions — and without it here, a client would have to
+/// carry a stage id it was compiled with, which is the contradiction this whole view exists to
+/// remove.
+/// </param>
 /// <param name="Name">What it is called, which is what an opportunity carries.</param>
 /// <param name="Ordinal">Where it sits.</param>
 /// <param name="IsTerminal">Whether anything follows it.</param>
@@ -44,7 +51,8 @@ public sealed record ProcessView(
 /// opening</strong>: a stage nothing has ever entered is either new or a mistake, and a stage
 /// holding half the pipeline is where deals go to be forgotten.
 /// </param>
-public sealed record ProcessStageView(string Name, int Ordinal, bool IsTerminal, int Occupants);
+public sealed record ProcessStageView(
+    Guid StageId, string Name, int Ordinal, bool IsTerminal, int Occupants);
 
 /// <summary>One move between two stages.</summary>
 /// <param name="From">The stage left.</param>

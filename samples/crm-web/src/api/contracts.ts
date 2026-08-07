@@ -712,6 +712,8 @@ export interface ReadProcess {
 }
 
 export interface ProcessStageView {
+  /** The id a conversion starts an opportunity in. There is nowhere else to read it. */
+  stageId: string
   name: string
   ordinal: number
   isTerminal: boolean
@@ -816,4 +818,57 @@ export interface QuoteIssued {
   status: QuoteStatus
   /** True when the discount crossed the threshold, so it is Draft until a manager approves. */
   needsApproval: boolean
+}
+
+/**
+ * Turns a qualified lead into an account, a contact and an opportunity.
+ *
+ * `stage` is an id the caller reads from the published process — the server refuses a stage
+ * belonging to no active definition, and a client that named a stage by string would be a second
+ * place the process is written.
+ */
+export interface ConvertLead {
+  leadId: string
+  industry: string
+  region: string
+  owner: string
+  opportunityName: string
+  amount: number
+  currency: string
+  stage: string
+  expectedClose: string
+}
+
+/** The three rows a conversion left behind, or none of them. */
+export interface ConversionResult {
+  account: string
+  contact: string
+  opportunity: string
+}
+
+/**
+ * Applies a trigger to an opportunity.
+ *
+ * The trigger is the administrator's word, not a stage. Which stage it lands in is the published
+ * process's answer, and a client that sent a destination would be deciding it.
+ */
+export interface AdvanceOpportunity {
+  opportunityId: string
+  trigger: string
+}
+
+export interface OpportunityAdvanced {
+  opportunityId: string
+  trigger: string
+}
+
+/** Accepts a quote and commits the money. Refused while the quote is still a Draft. */
+export interface PlaceOrder {
+  quoteId: string
+}
+
+export interface OrderPlaced {
+  orderId: string
+  quoteId: string
+  total: Money
 }
