@@ -75,13 +75,17 @@ public sealed record SeedMetadata(
 /// <param name="Leads">Independent of the three, and applied last so a failure above stops sooner.</param>
 /// <param name="Records">Rows of a custom object declared in <see cref="SeedMetadata.Objects"/>.</param>
 /// <param name="Activities">Tasks, calls, meetings and notes against the rows above.</param>
+/// <param name="Quotes">Priced offers against an opportunity.</param>
+/// <param name="Orders">What a quote became once somebody committed.</param>
 public sealed record SeedData(
     IReadOnlyList<SeedAccount> Accounts,
     IReadOnlyList<SeedContact> Contacts,
     IReadOnlyList<SeedOpportunity> Opportunities,
     IReadOnlyList<SeedLead> Leads,
     IReadOnlyList<SeedRecord> Records,
-    IReadOnlyList<SeedActivity> Activities);
+    IReadOnlyList<SeedActivity> Activities,
+    IReadOnlyList<SeedQuote> Quotes,
+    IReadOnlyList<SeedOrder> Orders);
 
 // -------------------------------------------------------------------------------- metadata items
 
@@ -373,6 +377,37 @@ public sealed record SeedActivity(
     Guid Owner,
     int DueInDays,
     ActivityStatus Status);
+
+/// <summary>A priced offer against an opportunity.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Opportunity">The alias of the opportunity it prices.</param>
+/// <param name="Status">Where it has got to.</param>
+/// <param name="Subtotal">Before the discount.</param>
+/// <param name="Discount">What came off.</param>
+/// <param name="Currency">The unit of both.</param>
+/// <param name="ValidForDays">
+/// How long it stands, counted from when the seed is applied — so a demo does not open on a
+/// quote that expired before anybody looked at it.
+/// </param>
+public sealed record SeedQuote(
+    string Alias,
+    string Opportunity,
+    QuoteStatus Status,
+    decimal Subtotal,
+    decimal Discount,
+    string Currency,
+    int ValidForDays);
+
+/// <summary>What a quote became once somebody committed.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Quote">The alias of the quote it was placed from.</param>
+/// <param name="Account">The alias of the account it belongs to.</param>
+/// <param name="Status">Where it has got to.</param>
+public sealed record SeedOrder(
+    string Alias,
+    string Quote,
+    string Account,
+    OrderStatus Status);
 
 /// <summary>A row of a custom object.</summary>
 /// <param name="Alias">Its name in this file.</param>

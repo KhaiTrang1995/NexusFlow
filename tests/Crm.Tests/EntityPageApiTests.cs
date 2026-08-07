@@ -33,7 +33,7 @@ public sealed class EntityPageApiTests
         await using var app = await CrmApplication.StartAsync(Cancellation);
         await app.Crm.AccountAsync(CrmTokens.NorthwindTenant, Lifecycle.Customer, Cancellation);
 
-        var page = await PageAsync(app, new ReadEntityPage(EntityKind.Account, null, 50));
+        var page = await PageAsync(app, new ReadEntityPage(ReadableEntity.Account, null, 50));
 
         page.Records.Count.ShouldBeGreaterThan(0);
 
@@ -57,7 +57,7 @@ public sealed class EntityPageApiTests
         var response = await app.PostAsync(
             Entities,
             new ReadEntityPage(
-                EntityKind.Account,
+                ReadableEntity.Account,
                 new RecordFilter(
                     FilterMatch.All,
                     [new RollupFilter("name; DROP TABLE account", GuardOperator.Equals, "x")]),
@@ -84,7 +84,7 @@ public sealed class EntityPageApiTests
         var customers = await PageAsync(
             app,
             new ReadEntityPage(
-                EntityKind.Account,
+                ReadableEntity.Account,
                 new RecordFilter(
                     FilterMatch.All,
                     [new RollupFilter("lifecycle", GuardOperator.Equals, "Customer")]),
@@ -109,7 +109,7 @@ public sealed class EntityPageApiTests
         var either = await PageAsync(
             app,
             new ReadEntityPage(
-                EntityKind.Account,
+                ReadableEntity.Account,
                 new RecordFilter(
                     FilterMatch.Any,
                     [
@@ -121,7 +121,7 @@ public sealed class EntityPageApiTests
         var neither = await PageAsync(
             app,
             new ReadEntityPage(
-                EntityKind.Account,
+                ReadableEntity.Account,
                 new RecordFilter(
                     FilterMatch.All,
                     [
@@ -154,7 +154,7 @@ public sealed class EntityPageApiTests
 
         for (var page = 0; page < 10; page++)
         {
-            var answer = await PageAsync(app, new ReadEntityPage(EntityKind.Account, null, 2, cursor));
+            var answer = await PageAsync(app, new ReadEntityPage(ReadableEntity.Account, null, 2, cursor));
 
             seen.AddRange(answer.Records.Select(record => record.RecordId));
             cursor = answer.NextCursor;
@@ -182,7 +182,7 @@ public sealed class EntityPageApiTests
 
         var response = await app.PostAsync(
             Entities,
-            new ReadEntityPage(EntityKind.Account, null, 25, "page-2"),
+            new ReadEntityPage(ReadableEntity.Account, null, 25, "page-2"),
             CrmTokens.Northwind,
             idempotencyKey: null);
 
@@ -219,7 +219,7 @@ public sealed class EntityPageApiTests
             Cancellation,
             ("stage", process.Stage));
 
-        var page = await PageAsync(app, new ReadEntityPage(EntityKind.Opportunity, null, 50));
+        var page = await PageAsync(app, new ReadEntityPage(ReadableEntity.Opportunity, null, 50));
 
         page.Records.Count.ShouldBeGreaterThan(0);
         page.Records[0]!.Values["stage"].ShouldBe(named);
@@ -227,11 +227,71 @@ public sealed class EntityPageApiTests
         var filtered = await PageAsync(
             app,
             new ReadEntityPage(
-                EntityKind.Opportunity,
+                ReadableEntity.Opportunity,
                 new RecordFilter(FilterMatch.All, [new RollupFilter("stage", GuardOperator.Equals, named!)]),
                 50));
 
         filtered.Records.Count.ShouldBeGreaterThan(0, "the stage is filterable, not merely visible.");
+    }
+
+    /// <summary>
+    /// Quotes, orders and activities are readable without being declarable.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Why a vocabulary of the read surface's own.</strong> <c>EntityKind</c> is what a
+    /// validation rule, a custom field and a field policy are declared against, and each of those
+    /// is a <c>CHECK (applies_to IN (…))</c> in a migration. Widening it so a list screen could
+    /// show quotes would also let somebody declare a rule on an entity that has never had one.
+    /// <c>ReadableEntity</c> says the two sets are different and names both.
+    /// </remarks>
+    [Fact]
+    public async Task TheThreeReadOnlyKindsComeBackWithTheirOwnColumns()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+
+        var process = await app.Crm.ProcessAsync(CrmTokens.NorthwindTenant, 1, true, Cancellation);
+        var account = await app.Crm.AccountAsync(
+            CrmTokens.NorthwindTenant, Lifecycle.Customer, Cancellation);
+        var contact = await app.Crm.ContactAsync(CrmTokens.NorthwindTenant, account, Cancellation);
+        var opportunity = await app.Crm.OpportunityAsync(
+            CrmTokens.NorthwindTenant, account, contact, process.Stage, Cancellation);
+
+        await app.Crm.QuoteAsync(CrmTokens.NorthwindTenant, opportunity, Cancellation);
+
+        var quotes = await PageAsync(app, new ReadEntityPage(ReadableEntity.Quote, null, 25));
+
+        quotes.Records.Count.ShouldBeGreaterThan(0);
+        quotes.Records[0]!.Values.Keys.ShouldContain("total");
+        quotes.Records[0]!.Values.Keys.ShouldNotContain(
+            "tenant_id", "the projection is the list, not the row.");
+
+        // Empty is the right answer for these two here, and the assertion is that they answer at
+        // all: an unmapped kind falls through the store's switch to the opportunity statement,
+        // which would come back with an opportunity's columns rather than a refusal.
+        (await PageAsync(app, new ReadEntityPage(ReadableEntity.Order, null, 25)))
+            .Records.ShouldBeEmpty();
+
+        (await PageAsync(app, new ReadEntityPage(ReadableEntity.Activity, null, 25)))
+            .Records.ShouldBeEmpty();
+    }
+
+    /// <summary>A column of one read-only kind is not a column of another.</summary>
+    [Fact]
+    public async Task AQuotesColumnIsNotAnActivitys()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+
+        var response = await app.PostAsync(
+            Entities,
+            new ReadEntityPage(
+                ReadableEntity.Activity,
+                new RecordFilter(FilterMatch.All, [new RollupFilter("total", GuardOperator.Equals, "1")]),
+                25),
+            CrmTokens.Northwind,
+            idempotencyKey: null);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await Problem(response)).GetProperty("code").GetString().ShouldBe("crm.entity_field_unknown");
     }
 
     /// <summary>One tenant's page never contains another tenant's rows.</summary>
@@ -243,9 +303,9 @@ public sealed class EntityPageApiTests
         await app.Crm.AccountAsync(CrmTokens.NorthwindTenant, Lifecycle.Customer, Cancellation);
         await app.Crm.AccountAsync(CrmTokens.ContosoTenant, Lifecycle.Customer, Cancellation);
 
-        var northwind = await PageAsync(app, new ReadEntityPage(EntityKind.Account, null, 100));
+        var northwind = await PageAsync(app, new ReadEntityPage(ReadableEntity.Account, null, 100));
         var contoso = await PageAsync(
-            app, new ReadEntityPage(EntityKind.Account, null, 100), CrmTokens.Contoso);
+            app, new ReadEntityPage(ReadableEntity.Account, null, 100), CrmTokens.Contoso);
 
         var shared = northwind.Records
             .Select(record => record.RecordId)
@@ -262,7 +322,7 @@ public sealed class EntityPageApiTests
 
         (await app.PostAsync(
             Entities,
-            new ReadEntityPage(EntityKind.Lead, null, 10),
+            new ReadEntityPage(ReadableEntity.Lead, null, 10),
             CrmTokens.Northwind,
             idempotencyKey: null))
             .StatusCode.ShouldBe(HttpStatusCode.OK, "a representative reads their own leads.");

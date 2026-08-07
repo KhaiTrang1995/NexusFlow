@@ -49,15 +49,23 @@ public static class EntityColumns
     /// exists, which is not the same as a name this surface offers.
     /// </para>
     /// </remarks>
-    public static IReadOnlyList<string> Readable(EntityKind kind) => kind switch
+    public static IReadOnlyList<string> Readable(ReadableEntity kind) => kind switch
     {
-        EntityKind.Lead =>
+        ReadableEntity.Lead =>
             ["lead_id", "company", "contact_name", "email", "source", "status", "score",
              "owner_id", "captured_at"],
-        EntityKind.Account =>
+        ReadableEntity.Account =>
             ["account_id", "name", "industry", "lifecycle", "region", "owner_id"],
-        EntityKind.Contact =>
+        ReadableEntity.Contact =>
             ["contact_id", "account_id", "full_name", "email", "phone", "is_primary"],
+        ReadableEntity.Quote =>
+            ["quote_id", "opportunity_id", "status", "subtotal", "discount", "total", "currency",
+             "valid_until", "approved_by"],
+        ReadableEntity.Order =>
+            ["order_id", "quote_id", "account_id", "status", "total", "currency", "placed_at"],
+        ReadableEntity.Activity =>
+            ["activity_id", "kind", "subject", "relates_to_kind", "relates_to_id", "owner_id",
+             "due_at", "status", "completed_at", "escalation_count"],
         _ =>
             ["opportunity_id", "account_id", "primary_contact_id", "name", "amount", "currency",
              "probability", "expected_close", "outcome", "owner_id", "stage_entered_at",
@@ -71,13 +79,13 @@ public static class EntityColumns
     /// <summary>Which column identifies a row, and therefore orders the keyset.</summary>
     /// <param name="kind">Which entity.</param>
     /// <returns>The primary key's name.</returns>
-    public static string KeyOf(EntityKind kind) => Readable(kind)[0]!;
+    public static string KeyOf(ReadableEntity kind) => Readable(kind)[0]!;
 
     /// <summary>Whether a read of this entity offers a column by that name.</summary>
     /// <param name="kind">Which entity.</param>
     /// <param name="field">What was asked for.</param>
     /// <returns>Whether it is offered.</returns>
-    public static bool HasReadable(EntityKind kind, string field) =>
+    public static bool HasReadable(ReadableEntity kind, string field) =>
         Readable(kind).Contains(field, StringComparer.Ordinal);
 }
 

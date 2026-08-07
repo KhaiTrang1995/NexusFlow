@@ -10,9 +10,14 @@ describe('entityOf', () => {
     expect(entityOf('opportunity')).toBe('Opportunity')
   })
 
-  it('is null for an object the server has no page for', () => {
-    expect(entityOf('quote')).toBeNull()
-    expect(entityOf('task')).toBeNull()
+  it('names the three the server reads without letting anything be declared on them', () => {
+    expect(entityOf('quote')).toBe('Quote')
+    expect(entityOf('workorder')).toBe('Order')
+    expect(entityOf('task')).toBe('Activity')
+  })
+
+  it('is null for an object that is the prototype\'s alone', () => {
+    expect(entityOf('invented')).toBeNull()
   })
 })
 
@@ -26,7 +31,10 @@ describe('keyColumnOf', () => {
     expect(keyColumnOf('contact')).toBe('contact_id')
     expect(keyColumnOf('lead')).toBe('lead_id')
     expect(keyColumnOf('opportunity')).toBe('opportunity_id')
-    expect(keyColumnOf('quote')).toBeNull()
+    expect(keyColumnOf('quote')).toBe('quote_id')
+    expect(keyColumnOf('workorder')).toBe('order_id')
+    expect(keyColumnOf('task')).toBe('activity_id')
+    expect(keyColumnOf('invented')).toBeNull()
   })
 })
 
@@ -90,6 +98,6 @@ describe('toRows', () => {
   })
 
   it('is empty for an object the server does not page', () => {
-    expect(toRows('quote', modelFor('quote'), [{ recordId: 'q', values: {} }])).toEqual([])
+    expect(toRows('invented', modelFor('quote'), [{ recordId: 'q', values: {} }])).toEqual([])
   })
 })

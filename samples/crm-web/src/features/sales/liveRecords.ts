@@ -1,4 +1,4 @@
-import type { EntityKind, RecordView } from '@/api/contracts'
+import type { ReadableEntity, RecordView } from '@/api/contracts'
 import type { ObjectModel, RecordRow } from '@/fixtures/objects'
 
 /**
@@ -19,7 +19,7 @@ import type { ObjectModel, RecordRow } from '@/fixtures/objects'
  * A column headed "Owner" showing `33333333-3333-…` is worse than an empty one: the reader has
  * to work out that it is an identifier rather than a person before they can ignore it.
  */
-const MAPPINGS: Readonly<Record<string, { entity: EntityKind; columns: Record<string, string> }>> = {
+const MAPPINGS: Readonly<Record<string, { entity: ReadableEntity; columns: Record<string, string> }>> = {
   lead: {
     entity: 'Lead',
     columns: {
@@ -65,6 +65,37 @@ const MAPPINGS: Readonly<Record<string, { entity: EntityKind; columns: Record<st
       stage: 'stage',
     },
   },
+  quote: {
+    entity: 'Quote',
+    columns: {
+      quote_id: 'id',
+      status: 'status',
+      total: 'total',
+      discount: 'discount',
+      valid_until: 'expires',
+    },
+  },
+  // The prototype's "Work Order" is the closest thing this schema has to `sales_order`, and the
+  // mapping says so rather than pretending they are the same idea: an order carries a total and
+  // a status, and it does not carry an engineer, a schedule or estimated hours.
+  workorder: {
+    entity: 'Order',
+    columns: {
+      order_id: 'id',
+      status: 'status',
+      total: 'hours',
+    },
+  },
+  task: {
+    entity: 'Activity',
+    columns: {
+      activity_id: 'id',
+      subject: 'subject',
+      kind: 'type',
+      status: 'status',
+      due_at: 'due',
+    },
+  },
 }
 
 /**
@@ -81,7 +112,7 @@ export function keyColumnOf(objectKey: string): string | null {
 }
 
 /** Which built-in entity this object is, or null when the server has no page for it. */
-export function entityOf(objectKey: string): EntityKind | null {
+export function entityOf(objectKey: string): ReadableEntity | null {
   return MAPPINGS[objectKey]?.entity ?? null
 }
 

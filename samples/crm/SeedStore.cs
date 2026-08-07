@@ -150,6 +150,23 @@ public sealed class SeedStore
         ON CONFLICT (activity_id) DO NOTHING
         """;
 
+    private const string InsertQuote = """
+        INSERT INTO quote (
+            quote_id, tenant_id, opportunity_id, status, subtotal, discount, total, currency,
+            valid_until, approved_by)
+        VALUES (@id, @tenant, @opportunity, @status, @subtotal, @discount, @total, @currency,
+            @valid, NULL)
+        ON CONFLICT (quote_id) DO NOTHING
+        """;
+
+    private const string InsertOrder = """
+        INSERT INTO sales_order (
+            order_id, tenant_id, quote_id, account_id, status, total, currency, placed_at)
+        SELECT @id, @tenant, q.quote_id, @account, @status, q.total, q.currency, @now
+        FROM quote q WHERE q.quote_id = @quote
+        ON CONFLICT (order_id) DO NOTHING
+        """;
+
     private readonly NpgsqlDataSource _source;
 
     /// <summary>Builds the store over the application's data source.</summary>
@@ -673,6 +690,63 @@ public sealed class SeedStore
             Add(command, "owner", NpgsqlDbType.Uuid, activity.Owner);
             Add(command, "due", NpgsqlDbType.TimestampTz, now.AddDays(activity.DueInDays));
             Add(command, "status", NpgsqlDbType.Text, activity.Status.ToString());
+        }, ct);
+    }
+
+    /// <summary>Writes a quote.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="quote">What to write.</param>
+    /// <param name="now">The instant it was priced; the validity runs from it.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>Whether a row was inserted rather than already there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="quote"/> is null.</exception>
+    public ValueTask<bool> WriteQuoteAsync(
+        string tenant, SeedQuote quote, DateTimeOffset now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(quote);
+
+        return WriteAsync(tenant, InsertQuote, command =>
+        {
+            Add(command, "id", NpgsqlDbType.Uuid, SeedIds.For(tenant, "quote", quote.Alias));
+            Add(command, "tenant", NpgsqlDbType.Text, tenant);
+            Add(command, "opportunity", NpgsqlDbType.Uuid,
+                SeedIds.For(tenant, "opportunity", quote.Opportunity));
+            Add(command, "status", NpgsqlDbType.Text, quote.Status.ToString());
+            Add(command, "subtotal", NpgsqlDbType.Numeric, quote.Subtotal);
+            Add(command, "discount", NpgsqlDbType.Numeric, quote.Discount);
+
+            // Computed rather than carried. A file that stated all three could state a total that
+            // is not the subtotal less the discount, and nothing downstream would ever say so.
+            Add(command, "total", NpgsqlDbType.Numeric, quote.Subtotal - quote.Discount);
+            Add(command, "currency", NpgsqlDbType.Text, quote.Currency);
+            Add(command, "valid", NpgsqlDbType.TimestampTz, now.AddDays(quote.ValidForDays));
+        }, ct);
+    }
+
+    /// <summary>Writes an order, taking its money from the quote it was placed from.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="order">What to write.</param>
+    /// <param name="now">When it was placed.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>Whether a row was inserted rather than already there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="order"/> is null.</exception>
+    /// <remarks>
+    /// The total is selected from the quote rather than restated. An order whose money disagrees
+    /// with the quote it came from is the one inconsistency in this sample that would be believed.
+    /// </remarks>
+    public ValueTask<bool> WriteOrderAsync(
+        string tenant, SeedOrder order, DateTimeOffset now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+
+        return WriteAsync(tenant, InsertOrder, command =>
+        {
+            Add(command, "id", NpgsqlDbType.Uuid, SeedIds.For(tenant, "order", order.Alias));
+            Add(command, "tenant", NpgsqlDbType.Text, tenant);
+            Add(command, "quote", NpgsqlDbType.Uuid, SeedIds.For(tenant, "quote", order.Quote));
+            Add(command, "account", NpgsqlDbType.Uuid, SeedIds.For(tenant, "account", order.Account));
+            Add(command, "status", NpgsqlDbType.Text, order.Status.ToString());
+            Add(command, "now", NpgsqlDbType.TimestampTz, now);
         }, ct);
     }
 

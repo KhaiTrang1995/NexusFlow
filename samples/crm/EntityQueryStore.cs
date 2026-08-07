@@ -96,6 +96,36 @@ public sealed class EntityQueryStore
         LIMIT @limit
         """;
 
+    private const string QuotePage = """
+        SELECT quote_id, to_jsonb(q) AS body
+        FROM quote q, LATERAL (SELECT to_jsonb(q) AS body) AS projected
+        WHERE (@after IS NULL OR quote_id > @after)
+        """ + Predicate + """
+
+        ORDER BY quote_id
+        LIMIT @limit
+        """;
+
+    private const string OrderPage = """
+        SELECT order_id, to_jsonb(o) AS body
+        FROM sales_order o, LATERAL (SELECT to_jsonb(o) AS body) AS projected
+        WHERE (@after IS NULL OR order_id > @after)
+        """ + Predicate + """
+
+        ORDER BY order_id
+        LIMIT @limit
+        """;
+
+    private const string ActivityPage = """
+        SELECT activity_id, to_jsonb(a) AS body
+        FROM activity a, LATERAL (SELECT to_jsonb(a) AS body) AS projected
+        WHERE (@after IS NULL OR activity_id > @after)
+        """ + Predicate + """
+
+        ORDER BY activity_id
+        LIMIT @limit
+        """;
+
     private readonly NpgsqlDataSource _source;
 
     /// <summary>Builds the store over the application's data source.</summary>
@@ -131,9 +161,12 @@ public sealed class EntityQueryStore
         // one from a caller's value is the shape SqlFitnessTests exists to refuse.
         command.CommandText = query.Entity switch
         {
-            EntityKind.Lead => LeadPage,
-            EntityKind.Account => AccountPage,
-            EntityKind.Contact => ContactPage,
+            ReadableEntity.Lead => LeadPage,
+            ReadableEntity.Account => AccountPage,
+            ReadableEntity.Contact => ContactPage,
+            ReadableEntity.Quote => QuotePage,
+            ReadableEntity.Order => OrderPage,
+            ReadableEntity.Activity => ActivityPage,
             _ => OpportunityPage,
         };
 

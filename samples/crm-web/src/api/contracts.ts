@@ -487,7 +487,20 @@ export interface ExecutiveBoard {
 
 // ─────────────────────────────────────────────────────────────── built-in entity pages
 
+/**
+ * What may be declared on: a validation rule, a custom field, a field policy.
+ *
+ * Four, because each of those is a check constraint in a migration on the server.
+ */
 export type EntityKind = 'Lead' | 'Account' | 'Contact' | 'Opportunity'
+
+/**
+ * What may be read.
+ *
+ * A superset of {@link EntityKind}, and the server says so with a vocabulary of its own —
+ * quotes, orders and activities are readable without being declarable.
+ */
+export type ReadableEntity = EntityKind | 'Quote' | 'Order' | 'Activity'
 export type FilterMatch = 'All' | 'Any'
 
 export interface RecordCriterion {
@@ -502,7 +515,7 @@ export interface RecordFilter {
 }
 
 export interface ReadEntityPage {
-  entity: EntityKind
+  entity: ReadableEntity
   filter: RecordFilter | null
   limit: number
   after: string | null

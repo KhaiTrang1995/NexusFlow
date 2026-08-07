@@ -222,6 +222,18 @@ public sealed class SeedApplier
                 tenant, SeedIds.For(tenant, "lead", lead.Alias), lead, now, ct).ConfigureAwait(false));
         }
 
+        foreach (var quote in document.Data.Quotes)
+        {
+            outcome = outcome.And(
+                await _seeds.WriteQuoteAsync(tenant, quote, now, ct).ConfigureAwait(false));
+        }
+
+        foreach (var order in document.Data.Orders)
+        {
+            outcome = outcome.And(
+                await _seeds.WriteOrderAsync(tenant, order, now, ct).ConfigureAwait(false));
+        }
+
         foreach (var activity in document.Data.Activities)
         {
             var kind = activity.RelatesToKind switch
