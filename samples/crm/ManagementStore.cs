@@ -34,6 +34,26 @@ public sealed class ManagementStore
     private const string ReadMember =
         "SELECT display_name, role, reports_to FROM org_member WHERE user_id = @user";
 
+    // Managers before their reports, so a client can draw the tree in one pass: `reports_to` is
+    // a foreign key into this same table, and a row whose parent has not been seen yet has to be
+    // held aside. Ordering by depth removes the holding aside.
+    private const string Chart = """
+        WITH RECURSIVE line AS (
+            SELECT user_id, display_name, role, reports_to, 0 AS depth
+            FROM org_member WHERE reports_to IS NULL
+            UNION ALL
+            SELECT m.user_id, m.display_name, m.role, m.reports_to, line.depth + 1
+            FROM org_member m
+            JOIN line ON m.reports_to = line.user_id
+            WHERE line.depth < @maxDepth
+        )
+        SELECT DISTINCT ON (l.user_id)
+               l.user_id, l.display_name, l.role, l.reports_to, l.depth,
+               (SELECT count(*) FROM org_member d WHERE d.reports_to = l.user_id)
+        FROM line l
+        ORDER BY l.user_id, l.depth
+        """;
+
     // Downwards: this person and everybody below them, at any depth. DISTINCT because a cycle
     // created outside this API would otherwise repeat rows for ever inside the cap; the cap is
     // what stops it running for ever at all.
@@ -241,6 +261,54 @@ public sealed class ManagementStore
 
         return await WouldLoopAsync(connection, userId, manager, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>The whole reporting line, managers before their reports.</summary>
+    /// <param name="tenantId">The caller's tenant.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>Everybody, managers before their reports.</returns>
+    public async ValueTask<OrgChart> ChartAsync(
+        string? tenantId,
+        CancellationToken cancellationToken)
+    {
+        var connection = await OpenAsync(tenantId, cancellationToken).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
+
+        var command = connection.CreateCommand();
+        await using var closingCommand = command.ConfigureAwait(false);
+
+        command.CommandText = Chart;
+        Add(command, "maxDepth", NpgsqlDbType.Integer, ManagementLimits.MaxDepth);
+
+        var members = new List<(int Depth, OrgChartMember Member)>();
+
+        var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await using (reader.ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                members.Add((
+                    reader.GetInt32(4),
+                    new OrgChartMember(
+                        reader.GetString(0),
+                        reader.GetString(1),
+                        Enum.Parse<OrgRole>(reader.GetString(2)),
+                        await reader.IsDBNullAsync(3, cancellationToken).ConfigureAwait(false)
+                            ? null
+                            : reader.GetString(3),
+                        (int)reader.GetInt64(5))));
+            }
+        }
+
+        // DISTINCT ON needed its own order, so the depth ordering is applied here rather than in
+        // the statement. Ordered by name inside a depth so the tree does not shuffle between reads.
+        return new OrgChart(
+            [
+                .. members
+                    .OrderBy(static row => row.Depth)
+                    .ThenBy(static row => row.Member.DisplayName, StringComparer.Ordinal)
+                    .Select(static row => row.Member),
+            ]);
     }
 
     /// <summary>Who a caller is, and whose plans they therefore see.</summary>

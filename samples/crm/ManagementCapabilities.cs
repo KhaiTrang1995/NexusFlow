@@ -389,3 +389,49 @@ public sealed class RecordKpiReview : ICapability<ForReview, KpiReviewed>
         return Result.Ok(new KpiReviewed(result.Name, result.Actual, result.Status));
     }
 }
+
+/// <summary>
+/// Reads the reporting line, which is what every scoped read in this sample is scoped by.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong><c>crm.read</c>, not <c>crm.admin</c>.</strong> Placing somebody is administrative;
+/// seeing who reports to whom is how anybody checks that their own scope is the one they expect.
+/// A chart only an administrator could open is a chart nobody looks at until something is already
+/// wrong.
+/// </para>
+/// <para>
+/// <strong>Not scoped by the line it describes.</strong> Every other read here is narrowed to the
+/// caller's branch; this one is not, because a manager who saw only their own branch could not
+/// tell somebody missing from somebody placed under a different manager — and those two mistakes
+/// have opposite fixes.
+/// </para>
+/// </remarks>
+[Capability("crm.org.chart", Version = "1.0.0",
+    Authorization = Authorization.Permission, Permission = "crm.read",
+    Idempotent = true)]
+public sealed class ReadCrmOrgChart : ICapability<ReadOrgChart, OrgChart>
+{
+    private readonly ManagementStore _org;
+
+    /// <summary>Creates the capability.</summary>
+    /// <param name="org">Reads the line.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="org"/> is null.</exception>
+    public ReadCrmOrgChart(ManagementStore org)
+    {
+        ArgumentNullException.ThrowIfNull(org);
+
+        _org = org;
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<Result<OrgChart>> ExecuteAsync(
+        ReadOrgChart input,
+        CapabilityContext ctx,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(ctx);
+
+        return Result.Ok(await _org.ChartAsync(ctx.TenantId, ct).ConfigureAwait(false));
+    }
+}

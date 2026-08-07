@@ -125,3 +125,21 @@ public sealed partial class ReviewKpiFlow : Flow<ReviewKpi, KpiReviewed>
             .Return(ctx => ctx.Get<KpiReviewed>());
     }
 }
+
+/// <summary>Reads the reporting line.</summary>
+/// <remarks><c>Ephemeral</c>: it writes nothing, and a settings screen polls it.</remarks>
+[Flow("crm.org.chart", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral, Owner = "crm-platform")]
+[FlowDeadline("PT15S")]
+[HttpTrigger("POST", "/api/v1/crm/org/chart")]
+public sealed partial class OrgChartFlow : Flow<ReadOrgChart, OrgChart>
+{
+    /// <inheritdoc />
+    protected override void Define(IFlowBuilder<ReadOrgChart, OrgChart> flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+
+        flow
+            .Step<ReadCrmOrgChart>()
+            .Return(ctx => ctx.Get<OrgChart>());
+    }
+}

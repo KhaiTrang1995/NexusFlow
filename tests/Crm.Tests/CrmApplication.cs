@@ -427,6 +427,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<ReadCrmConfig>();
         services.AddSingleton<ReadCrmPlan>();
         services.AddSingleton<ReadCrmProcess>();
+        services.AddSingleton<ReadCrmOrgChart>();
 
         // The conversion saga and the eight capabilities it unwinds through. Registered here
         // because the endpoint is one a seller reaches every day, and a harness that could not
@@ -441,6 +442,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<RemoveOpportunity>();
         services.AddSingleton<ConvertLeadFlow.Dispatcher>();
 
+        services.AddSingleton<OrgChartFlow.Dispatcher>();
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
         services.AddSingleton<ApproveDiscountFlow.Dispatcher>();

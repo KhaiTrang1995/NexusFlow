@@ -12,11 +12,10 @@ import {
   SelectField,
   Tag,
   TextAreaField,
-  TextField,
 } from '@/design/primitives'
-import { useScorecard } from '@/api/queries/hooks'
+import { useReviewKpi, useScorecard } from '@/api/queries/hooks'
 import { useToast } from '@/app/ToastProvider'
-import { pct } from '@/lib/format'
+import { kpiValue } from './kpiUnits'
 import { PERIOD_LABEL, usePeriod } from './period'
 import styles from './exec.module.css'
 
@@ -32,9 +31,9 @@ export function ReviewScreen() {
   const toast = useToast()
   const [period] = usePeriod()
   const scorecard = useScorecard(period)
+  const record = useReviewKpi()
 
   const [kpi, setKpi] = useState('')
-  const [actual, setActual] = useState('')
   const [commentary, setCommentary] = useState('')
 
   return (
@@ -43,25 +42,54 @@ export function ReviewScreen() {
 
       <Columns layout="split">
         <Panel padding="flush">
-          <PanelHeader title="What has been said" note="newest first" />
+          {/*
+            THE TENANT'S OWN COMMENTARY, NOT A SPECIMEN. This panel used to hold four written-out
+            minutes beside a form that saved nothing, and once the form started saving the two
+            together were worse than either: a reader would take the invented entries for the
+            record their own review had just joined.
+
+            The scorecard already carries each KPI's last commentary, so there is no second read
+            here — and no dates, because that is what the data has. A column of plausible
+            timestamps would be the same mistake in a smaller font.
+          */}
+          <PanelHeader title="What was last said" note="one per KPI" />
           <PanelBody style={{ padding: 0 }}>
-            {MINUTES.map((entry) => (
-              <div key={entry.when + entry.kpi} className={styles.reviewRow}>
-                <span className={styles.reviewWhen}>{entry.when}</span>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-                    <span className={styles.kpiName} style={{ fontSize: 15 }}>
-                      {entry.kpi}
-                    </span>
-                    <Tag tone={entry.tone}>{entry.reading}</Tag>
-                  </div>
-                  <p className={styles.commentary} style={{ borderTop: 0, marginTop: 4, paddingTop: 0 }}>
-                    {entry.commentary}
-                  </p>
-                  <div className={styles.sub}>{entry.by}</div>
-                </div>
-              </div>
-            ))}
+            <AsyncBoundary query={scorecard} skeletonRows={3}>
+              {(data) => {
+                const said = data.kpis.filter((row) => row.lastCommentary !== null)
+
+                return said.length === 0 ? (
+                  <EmptyState
+                    title="Nothing has been said about these numbers yet"
+                    detail="A review recorded on the right appears here — this is the tenant's register, not an example of one."
+                  />
+                ) : (
+                  <>
+                    {said.map((row) => (
+                      <div key={row.name} className={styles.reviewRow}>
+                        <span className={styles.reviewWhen}>{row.status === 'OnTrack' ? 'on' : 'off'}</span>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                            <span className={styles.kpiName} style={{ fontSize: 15 }}>
+                              {row.label}
+                            </span>
+                            <Tag tone={row.status === 'OnTrack' ? 'positive' : 'warning'}>
+                              {kpiValue(row.source, Number(row.actual))}
+                            </Tag>
+                          </div>
+                          <p
+                            className={styles.commentary}
+                            style={{ borderTop: 0, marginTop: 4, paddingTop: 0 }}
+                          >
+                            {row.lastCommentary}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )
+              }}
+            </AsyncBoundary>
           </PanelBody>
         </Panel>
 
@@ -80,11 +108,29 @@ export function ReviewScreen() {
                     style={{ display: 'grid', gap: 12 }}
                     onSubmit={(event) => {
                       event.preventDefault()
-                      // The sample exposes `/kpis/reviews`; wiring the write is the same shape as
-                      // every other mutation here. Left to the reader rather than faked: a form
-                      // that pretended to save would be worse than one that says what it does.
-                      toast.saved(`Review noted for ${kpi || data.kpis[0]?.label}.`)
-                      setCommentary('')
+
+                      record.mutate(
+                        {
+                          kpi: kpi.length > 0 ? kpi : (data.kpis[0]?.name ?? ''),
+                          period,
+                          commentary: commentary.trim(),
+                        },
+                        {
+                          onSuccess: (result) => {
+                            // The stored figure, said back. It is the server's reading at the
+                            // instant of recording, and a toast repeating what the screen already
+                            // showed would hide the one number this write exists to fix.
+                            toast.saved(
+                              `Recorded at ${kpiValue(
+                                data.kpis.find((row) => row.name === result.kpi)?.source ?? '',
+                                Number(result.actual),
+                              )} — ${result.status}.`,
+                            )
+                            setCommentary('')
+                          },
+                          onError: (error) => toast.failed(error),
+                        },
+                      )
                     }}
                   >
                     <SelectField
@@ -94,14 +140,11 @@ export function ReviewScreen() {
                       placeholder="Choose one"
                       options={data.kpis.map((row) => ({ value: row.name, label: row.label }))}
                     />
-                    <TextField
-                      label="What it read at the time"
-                      type="number"
-                      step="0.01"
-                      hint="The figure as of the meeting, not as of now."
-                      value={actual}
-                      onChange={(event) => setActual(event.target.value)}
-                    />
+                    <p className={styles.sub}>
+                      The reading is not typed here. The server takes it at the moment the review
+                      is recorded and keeps that — which is what makes this a minute rather than a
+                      figure somebody remembered.
+                    </p>
                     <TextAreaField
                       label="Commentary"
                       required
@@ -109,12 +152,18 @@ export function ReviewScreen() {
                       value={commentary}
                       onChange={(event) => setCommentary(event.target.value)}
                     />
-                    <Button type="submit" tone="primary" disabled={commentary.trim() === ''}>
-                      Record the review
+                    <Button
+                      type="submit"
+                      tone="primary"
+                      disabled={commentary.trim() === '' || record.isPending}
+                    >
+                      {record.isPending ? 'Recording…' : 'Record the review'}
                     </Button>
                     <p className={styles.sub}>
                       Current readings:{' '}
-                      {data.kpis.map((row) => `${row.label} ${pct(Number(row.actual))}`).join(' · ')}
+                      {data.kpis
+                        .map((row) => `${row.label} ${kpiValue(row.source, Number(row.actual))}`)
+                        .join(' · ')}
                     </p>
                   </form>
                 )
@@ -126,33 +175,3 @@ export function ReviewScreen() {
     </Page>
   )
 }
-
-const MINUTES = [
-  {
-    when: '02 Aug',
-    kpi: 'Win rate',
-    reading: '58%',
-    tone: 'warning' as const,
-    commentary:
-      'Down three points on the quarter. Two of the five losses were on price against the same competitor; pricing is looking at the mid-market band.',
-    by: 'B. Vance · quarterly review',
-  },
-  {
-    when: '28 Jul',
-    kpi: 'Pipeline coverage',
-    reading: '2.4×',
-    tone: 'critical' as const,
-    commentary:
-      'Below the 3× we run to. Marketing has been asked for an additional 900k of qualified pipeline by the end of the month.',
-    by: 'B. Vance · pipeline council',
-  },
-  {
-    when: '21 Jul',
-    kpi: 'Average cycle',
-    reading: '74d',
-    tone: 'positive' as const,
-    commentary:
-      'Five days better than last quarter, entirely from the security-review step being run in parallel rather than after legal.',
-    by: 'A. Ruiz · operations review',
-  },
-]

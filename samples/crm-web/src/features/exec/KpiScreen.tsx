@@ -10,7 +10,7 @@ import {
   Tag,
 } from '@/design/primitives'
 import { useScorecard } from '@/api/queries/hooks'
-import { pct } from '@/lib/format'
+import { kpiValue } from './kpiUnits'
 import { PERIODS, PERIOD_LABEL, usePeriod } from './period'
 import styles from './exec.module.css'
 
@@ -59,9 +59,9 @@ export function KpiScreen() {
                       {good ? 'On track' : 'Off track'}
                     </Tag>
                   </div>
-                  <div className={styles.kpiValue}>{pct(Number(kpi.actual))}</div>
+                  <div className={styles.kpiValue}>{kpiValue(kpi.source, Number(kpi.actual))}</div>
                   <div className={styles.sub}>
-                    target {pct(Number(kpi.target))} ·{' '}
+                    target {kpiValue(kpi.source, Number(kpi.target))} ·{' '}
                     {kpi.direction === 'Up' ? 'higher is better' : 'lower is better'}
                   </div>
                   <div style={{ marginTop: 9 }}>
