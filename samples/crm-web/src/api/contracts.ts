@@ -739,3 +739,39 @@ export interface ProcessView {
   stages: ProcessStageView[]
   transitions: ProcessTransitionView[]
 }
+
+// ─────────────────────────────────────────────────────────────── capturing work
+
+export type LeadSource = 'Web' | 'Referral' | 'Event' | 'Outbound' | 'Partner'
+
+export interface CaptureLead {
+  company: string
+  contactName: string
+  email: string | null
+  source: LeadSource
+}
+
+export interface LeadCaptured {
+  leadId: string
+}
+
+export type ActivityKind = 'Task' | 'Call' | 'Meeting' | 'Note'
+
+/** What an activity hangs off: a kind and an id, never one without the other. */
+export interface RelatedRef {
+  kind: EntityKind
+  id: string
+}
+
+export interface CreateTask {
+  kind: ActivityKind
+  subject: string
+  relatesTo: RelatedRef
+  owner: string
+  dueAt: string | null
+}
+
+export interface TaskCreated {
+  activityId: string
+  dueAt: string | null
+}

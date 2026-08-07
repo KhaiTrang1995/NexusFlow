@@ -18,7 +18,12 @@ import { modelFor, optionsFor } from '@/fixtures/objects'
 import type { RecordRow } from '@/fixtures/objects'
 import { isNumeric, renderCell } from './RecordCell'
 import { entityOf, toRows } from './liveRecords'
+import { NewLeadDrawer } from './NewLeadDrawer'
+import { NewTaskDrawer } from './NewTaskDrawer'
 import styles from './ListScreen.module.css'
+
+/** The objects this build has a write for. Everything else says so rather than pretending. */
+const CAN_CREATE: readonly string[] = ['lead', 'task']
 
 /**
  * The list view — one screen for every object, driven by the object's own model.
@@ -37,6 +42,7 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
   const [peek, setPeek] = useState<RecordRow | null>(null)
   const [hidden, setHidden] = useState<readonly string[]>([])
   const [showColumns, setShowColumns] = useState(false)
+  const [creating, setCreating] = useState(false)
 
   const stages = model.stageField ? optionsFor(model, model.stageField) : []
 
@@ -127,7 +133,23 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
             {model.stageField ? (
               <Button onClick={() => void navigate({ to: '/kanban' })}>Kanban</Button>
             ) : null}
-            <Button tone="primary">New {model.label.toLowerCase()}</Button>
+            {/*
+              Only the two this build can actually write. A button that opened a form the server
+              would refuse is worse than one that says it is not wired: the first wastes the
+              reader's typing to tell them, the second tells them before they start.
+            */}
+            <Button
+              tone="primary"
+              disabled={!CAN_CREATE.includes(objectKey)}
+              title={
+                CAN_CREATE.includes(objectKey)
+                  ? undefined
+                  : `Creating a ${model.label.toLowerCase()} is not wired yet.`
+              }
+              onClick={() => setCreating(true)}
+            >
+              New {model.label.toLowerCase()}
+            </Button>
           </>
         }
       />
@@ -192,6 +214,14 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
           }
         />
       </div>
+
+      {creating && objectKey === 'lead' ? (
+        <NewLeadDrawer onClose={() => setCreating(false)} />
+      ) : null}
+
+      {creating && objectKey === 'task' ? (
+        <NewTaskDrawer onClose={() => setCreating(false)} />
+      ) : null}
 
       {peek ? (
         <Drawer

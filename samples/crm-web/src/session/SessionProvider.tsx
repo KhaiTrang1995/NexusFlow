@@ -29,6 +29,15 @@ export interface SessionUser {
   tenantId: string
   /** The subject claim, which is what an inbox or a worklist filters by. */
   userId: string
+  /**
+   * The uuid rows are owned by, which is not the same thing as {@link userId}.
+   *
+   * `owner_id` on an account, an opportunity and an activity is a uuid; a token's subject is a
+   * string a directory chose. A real deployment resolves one from the other; this sample states
+   * both, because pretending they are the same value is how a write ends up with a uuid parsed
+   * out of somebody's login name.
+   */
+  ownerId: string
   permissions: readonly string[]
 }
 
@@ -51,6 +60,7 @@ const PEOPLE: Record<Persona, SessionUser> = {
     token: 'rep-northwind-token',
     tenantId: 'crm-northwind',
     userId: 'rep-northwind-1',
+    ownerId: '33333333-3333-3333-3333-333333333333',
     permissions: [READ, WRITE],
   },
   manager: {
@@ -60,6 +70,7 @@ const PEOPLE: Record<Persona, SessionUser> = {
     token: 'manager-northwind-token',
     tenantId: 'crm-northwind',
     userId: 'manager-northwind-1',
+    ownerId: '33333333-3333-3333-3333-333333333333',
     permissions: [READ, WRITE, ADMIN, APPROVE],
   },
   director: {
@@ -69,6 +80,7 @@ const PEOPLE: Record<Persona, SessionUser> = {
     token: 'manager-northwind-token',
     tenantId: 'crm-northwind',
     userId: 'manager-northwind-1',
+    ownerId: '33333333-3333-3333-3333-333333333333',
     permissions: [READ, WRITE, ADMIN, APPROVE],
   },
   admin: {
@@ -78,6 +90,7 @@ const PEOPLE: Record<Persona, SessionUser> = {
     token: 'manager-northwind-token',
     tenantId: 'crm-northwind',
     userId: 'manager-northwind-1',
+    ownerId: '33333333-3333-3333-3333-333333333333',
     permissions: [READ, WRITE, ADMIN, APPROVE],
   },
 }
