@@ -587,6 +587,100 @@
         "account": "northwind",
         "status": "Placed"
       }
+    ],
+    "plans": [
+      {
+        "alias": "northwind_account_plan",
+        "name": "northwind_fy26_q3",
+        "label": "Northwind — FY26 Q3",
+        "kind": "Account",
+        "period": "fy26_q3",
+        "owner": "rep-northwind-1",
+        "subject": "northwind",
+        "targetAmount": 500000,
+        "currency": "EUR",
+        "objectives": [
+          {
+            "description": "Land the platform team",
+            "measure": "Revenue",
+            "target": 300000,
+            "status": "InProgress"
+          },
+          {
+            "description": "Two reference calls with their auditors",
+            "measure": "Meetings",
+            "target": 2,
+            "status": "NotStarted"
+          }
+        ],
+        "steps": [
+          {
+            "description": "Agree the security review date",
+            "owner": "rep-northwind-1",
+            "dueInDays": -6
+          },
+          {
+            "description": "Walk the platform team through the migration",
+            "owner": "rep-northwind-1",
+            "dueInDays": 8
+          },
+          {
+            "description": "Sign the order form",
+            "owner": "rep-northwind-1",
+            "dueInDays": 24
+          }
+        ],
+        "risks": [
+          {
+            "description": "Security review could slip past the quote's validity",
+            "severity": "High",
+            "mitigation": "Book it before the quote expires"
+          },
+          {
+            "description": "Their platform lead is on leave in August",
+            "severity": "Medium",
+            "mitigation": "Get the deputy into the migration walkthrough"
+          }
+        ]
+      },
+      {
+        "alias": "meridian_deal_plan",
+        "name": "meridian_pilot_fy26_q3",
+        "label": "Meridian — Compliance Pilot",
+        "kind": "Opportunity",
+        "period": "fy26_q3",
+        "owner": "rep-northwind-1",
+        "subject": "meridian_pilot",
+        "targetAmount": 42000,
+        "currency": "EUR",
+        "objectives": [
+          {
+            "description": "Prove the audit trail against their regulator's checklist",
+            "measure": "Deals",
+            "target": 1,
+            "status": "InProgress"
+          }
+        ],
+        "steps": [
+          {
+            "description": "Send the compliance questionnaire",
+            "owner": "rep-northwind-1",
+            "dueInDays": 3
+          },
+          {
+            "description": "Pilot review with their compliance officer",
+            "owner": "rep-northwind-1",
+            "dueInDays": 17
+          }
+        ],
+        "risks": [
+          {
+            "description": "The regulator's checklist changes in October",
+            "severity": "Low",
+            "mitigation": "Confirm the version in writing before the pilot"
+          }
+        ]
+      }
     ]
   }
 }

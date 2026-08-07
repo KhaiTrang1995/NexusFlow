@@ -58,6 +58,10 @@ export const keys = {
     all: (tenant: string) => ['territories', tenant] as const,
     coverage: (tenant: string) => ['territories', tenant, 'coverage'] as const,
   },
+  processes: {
+    all: (tenant: string) => ['processes', tenant] as const,
+    of: (tenant: string, kind: string) => ['processes', tenant, kind] as const,
+  },
   config: {
     all: (tenant: string) => ['config', tenant] as const,
     kind: (tenant: string, kind: string) => ['config', tenant, kind] as const,

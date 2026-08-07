@@ -234,6 +234,13 @@ public sealed class SeedApplier
                 await _seeds.WriteOrderAsync(tenant, order, now, ct).ConfigureAwait(false));
         }
 
+        // After the accounts and opportunities it is about, and after the periods it belongs to.
+        foreach (var plan in document.Data.Plans)
+        {
+            outcome = outcome.And(
+                await _seeds.WritePlanAsync(tenant, plan, now, ct).ConfigureAwait(false));
+        }
+
         foreach (var activity in document.Data.Activities)
         {
             var kind = activity.RelatesToKind switch

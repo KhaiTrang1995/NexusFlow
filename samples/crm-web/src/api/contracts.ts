@@ -704,3 +704,38 @@ export interface PlanDetail {
   qualification: PlanQualificationRow[]
   stakeholders: PlanStakeholderRow[]
 }
+
+// ─────────────────────────────────────────────────────────────── the configured process
+
+export interface ReadProcess {
+  appliesTo: EntityKind
+}
+
+export interface ProcessStageView {
+  name: string
+  ordinal: number
+  isTerminal: boolean
+  /** How many opportunities are sitting in it. */
+  occupants: number
+}
+
+export interface ProcessGuardView {
+  field: string
+  operator: GuardOperator
+  value: string
+}
+
+export interface ProcessTransitionView {
+  from: string
+  to: string
+  trigger: string
+  guards: ProcessGuardView[]
+  actions: string[]
+}
+
+export interface ProcessView {
+  appliesTo: string
+  version: number
+  stages: ProcessStageView[]
+  transitions: ProcessTransitionView[]
+}
