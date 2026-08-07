@@ -514,3 +514,43 @@ export function useProcess(appliesTo: C.EntityKind): UseQueryResult<C.ProcessVie
     staleTime: 60_000,
   })
 }
+
+// ─────────────────────────────────────────────────────────────── capturing work
+
+/**
+ * Captures a lead.
+ *
+ * INVALIDATES THE LEAD PAGE AND NOTHING ELSE. A mutation that invalidated the world would
+ * refetch six panels that could not have changed, and the reader would watch the whole page
+ * flicker for one row.
+ *
+ * The idempotency key is per attempt, from `useCall().write` — so a double click is one lead and
+ * a retry after a timeout is the same lead rather than a second one.
+ */
+export function useCaptureLead(): UseMutationResult<C.LeadCaptured, Error, C.CaptureLead> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.CaptureLead) => call.write<C.LeadCaptured, C.CaptureLead>('/leads', input),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.entities.all(tenantId) }),
+  })
+}
+
+/**
+ * Creates a task, call, meeting or note against a record.
+ *
+ * `relatesTo` is a kind and an id together, which is what the server's polymorphic trigger
+ * checks — an id without its kind is a reference nothing can verify.
+ */
+export function useCreateTask(): UseMutationResult<C.TaskCreated, Error, C.CreateTask> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.CreateTask) => call.write<C.TaskCreated, C.CreateTask>('/tasks', input),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.entities.all(tenantId) }),
+  })
+}
