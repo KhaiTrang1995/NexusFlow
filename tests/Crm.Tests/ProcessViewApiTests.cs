@@ -64,6 +64,47 @@ public sealed class ProcessViewApiTests
     }
 
     /// <summary>
+    /// A stage's id is the one a conversion may be started in.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The view is where a client reads it, and there is nowhere else.</strong>
+    /// <see cref="ConvertLead"/> names the starting stage by id; a client that carried one it was
+    /// compiled with would be a second place the process is written, which is the contradiction
+    /// this view exists to remove. Asserted by converting into it rather than by comparing two
+    /// guids, because a guid that is well-formed and belongs to a retired definition looks
+    /// exactly the same.
+    /// </remarks>
+    [Fact]
+    public async Task AStageIdFromTheViewIsOneAConversionAccepts()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+
+        await app.Crm.ProcessAsync(CrmTokens.NorthwindTenant, 1, true, Cancellation);
+
+        var lead = await app.Crm.LeadAsync(CrmTokens.NorthwindTenant, Cancellation);
+        var first = (await ReadAsync(app)).Stages[0];
+
+        first.ShouldNotBeNull();
+
+        var response = await app.PostAsync(
+            "/api/v1/crm/lead-conversions",
+            new ConvertLead(
+                lead,
+                "SaaS",
+                "NA",
+                Guid.Parse("33333333-3333-3333-3333-333333333333"),
+                "Northwind — expansion",
+                120_000m,
+                "EUR",
+                first.StageId,
+                new DateOnly(2026, 9, 30)),
+            CrmTokens.Northwind);
+
+        response.StatusCode.ShouldBe(
+            HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Cancellation));
+    }
+
+    /// <summary>
     /// A tenant with no published process is told so, rather than shown an empty one.
     /// </summary>
     /// <remarks>

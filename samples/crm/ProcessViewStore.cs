@@ -28,7 +28,7 @@ public sealed class ProcessViewStore
         """;
 
     private const string Stages = """
-        SELECT s.name, s.ordinal, s.is_terminal, count(o.opportunity_id)
+        SELECT s.stage_id, s.name, s.ordinal, s.is_terminal, count(o.opportunity_id)
         FROM process_stage s
         LEFT JOIN opportunity o ON o.stage_id = s.stage_id
         WHERE s.process_id = @process
@@ -138,10 +138,11 @@ public sealed class ProcessViewStore
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             stages.Add(new ProcessStageView(
-                reader.GetString(0),
-                reader.GetInt32(1),
-                reader.GetBoolean(2),
-                (int)reader.GetInt64(3)));
+                reader.GetGuid(0),
+                reader.GetString(1),
+                reader.GetInt32(2),
+                reader.GetBoolean(3),
+                (int)reader.GetInt64(4)));
         }
 
         return stages;

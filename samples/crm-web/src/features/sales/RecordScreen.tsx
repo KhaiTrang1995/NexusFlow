@@ -18,9 +18,12 @@ import { modelFor, OBJECT_MODELS } from '@/fixtures/objects'
 import type { RecordRow } from '@/fixtures/objects'
 import { renderCell } from './RecordCell'
 import { entityOf, keyColumnOf, toRows } from './liveRecords'
+import { AdvanceOpportunity } from './AdvanceOpportunity'
+import { ConvertLeadDrawer } from './ConvertLeadDrawer'
 import { EditFieldsDrawer } from './EditFieldsDrawer'
 import { IssueQuoteDrawer } from './IssueQuoteDrawer'
 import { NewTaskDrawer } from './NewTaskDrawer'
+import { QuoteActions } from './QuoteActions'
 import styles from './RecordScreen.module.css'
 
 type RecordTab = 'details' | 'related' | 'activity' | 'files'
@@ -43,6 +46,7 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
   const [editing, setEditing] = useState(false)
   const [quoting, setQuoting] = useState(false)
   const [addingTask, setAddingTask] = useState(false)
+  const [converting, setConverting] = useState(false)
 
   // The record comes from the server for the four entities it can page, and from the
   // prototype's fixtures for the other three. Before this, it came from the fixtures always —
@@ -137,13 +141,39 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
               Edit
             </Button>
             <Button>Clone</Button>
+
+            {/*
+              The seller's loop, one entity at a time: a lead converts, an opportunity moves
+              through the published process and takes a quote, and a quote is submitted and
+              ordered. Everything else gets the one action that always applies.
+            */}
+            {entity === 'Opportunity' ? (
+              <AdvanceOpportunity opportunityId={id} stage={stageName} />
+            ) : null}
+
             {model.key === 'quote' ? (
-              <Button tone="primary" onClick={() => void navigate({ to: '/quote/$id', params: { id: record.id } })}>
-                Open builder
-              </Button>
+              <>
+                <QuoteActions quoteId={record.id} status={stageName ?? String(record['status'] ?? '')} />
+                <Button onClick={() => void navigate({ to: '/quote/$id', params: { id: record.id } })}>
+                  Open builder
+                </Button>
+              </>
             ) : entity === 'Opportunity' ? (
               <Button tone="primary" onClick={() => setQuoting(true)}>
                 New quote
+              </Button>
+            ) : entity === 'Lead' ? (
+              <Button
+                tone="primary"
+                disabled={String(record['status'] ?? '') === 'Converted'}
+                title={
+                  String(record['status'] ?? '') === 'Converted'
+                    ? 'This lead has already been converted.'
+                    : undefined
+                }
+                onClick={() => setConverting(true)}
+              >
+                Convert
               </Button>
             ) : (
               <Button tone="primary" onClick={() => setAddingTask(true)}>
@@ -314,6 +344,14 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
       ) : null}
 
       {addingTask ? <NewTaskDrawer onClose={() => setAddingTask(false)} /> : null}
+
+      {converting ? (
+        <ConvertLeadDrawer
+          leadId={id}
+          company={String(record['company'] ?? record[titleField] ?? id)}
+          onClose={() => setConverting(false)}
+        />
+      ) : null}
 
       {editing && entity !== null ? (
         <EditFieldsDrawer

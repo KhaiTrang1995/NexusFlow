@@ -351,7 +351,10 @@ export const OBJECT_MODELS: Readonly<Record<string, ObjectModel>> = {
         options: ['Draft', 'In Review', 'Sent', 'Accepted', 'Rejected'],
       }),
       field('total', 'Total', 'currency'),
-      field('discount', 'Discount', 'percent'),
+      // An amount off, not a percentage off. `quote.discount` is `numeric(19,4)` in the schema,
+      // and typing it as a percent rendered a 16,000-euro discount as "16000%" — which reads as a
+      // broken screen rather than as the wrong unit, so nobody looks for the mapping.
+      field('discount', 'Discount', 'currency'),
       field('expires', 'Expires', 'date'),
       field('owner', 'Owner', 'lookup', { to: 'User' }),
     ],
@@ -369,9 +372,9 @@ export const OBJECT_MODELS: Readonly<Record<string, ObjectModel>> = {
       { name: 'Rejected', pct: 0, lost: true },
     ],
     records: [
-      { id: 'Q-9001', number: 'Q-9001', opportunity: 'Northwind — Platform Expansion', status: 'Sent', total: 184000, discount: 8, expires: '2026-08-20', owner: 'A. Ruiz' },
-      { id: 'Q-9002', number: 'Q-9002', opportunity: 'Cardinal — Enterprise Pilot', status: 'In Review', total: 415000, discount: 12, expires: '2026-08-30', owner: 'J. Park' },
-      { id: 'Q-9003', number: 'Q-9003', opportunity: 'Baltic Freight — Renewal FY27', status: 'Accepted', total: 128000, discount: 4, expires: '2026-08-10', owner: 'K. Osei' },
+      { id: 'Q-9001', number: 'Q-9001', opportunity: 'Northwind — Platform Expansion', status: 'Sent', total: 184000, discount: 14720, expires: '2026-08-20', owner: 'A. Ruiz' },
+      { id: 'Q-9002', number: 'Q-9002', opportunity: 'Cardinal — Enterprise Pilot', status: 'In Review', total: 415000, discount: 49800, expires: '2026-08-30', owner: 'J. Park' },
+      { id: 'Q-9003', number: 'Q-9003', opportunity: 'Baltic Freight — Renewal FY27', status: 'Accepted', total: 128000, discount: 5120, expires: '2026-08-10', owner: 'K. Osei' },
       { id: 'Q-9004', number: 'Q-9004', opportunity: 'Perimeter — Fleet Rollout', status: 'Draft', total: 246000, discount: 0, expires: '2026-09-05', owner: 'A. Ruiz' },
     ],
   },
