@@ -78,9 +78,20 @@ same shape as a query hook, so wiring one up later is a change to one import.
 
 ```bash
 npm run typecheck    # strict, with noUncheckedIndexedAccess and exactOptionalPropertyTypes
-npm test             # 34 tests
+npm test             # the pure pieces, no processes behind them
 npm run build
 ```
+
+And the browser suite, which needs a client, an API and a seeded database to point at:
+
+```bash
+CRM_E2E_BASE_URL=http://localhost:5173 npm run test:e2e
+```
+
+It walks one path per role — the seller from an opportunity to a refused order, the manager
+through the inbox and the discount, the director through the reporting line and a KPI review —
+and asserts on the sentences the server sent back. Unset the variable and it skips; point it at
+somewhere nothing is listening and it fails, which is the distinction that matters.
 
 The tests cover the two places a defect would be invisible: the formatters, where a null that
 renders as `0%` puts a campaign that reached nobody below one that converted one in a thousand;
