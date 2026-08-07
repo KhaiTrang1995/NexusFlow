@@ -92,9 +92,13 @@ public sealed class TerritoryStore
     private const string Attainment = """
         SELECT q.user_id, m.display_name, q.measure,
                q.target * q.ramp_factor,
-               coalesce((SELECT sum(p.target_amount) FROM plan p
-                         WHERE p.period_id = q.period_id AND p.owner_id = q.user_id
-                           AND p.target_amount IS NOT NULL), 0),
+               -- Null, not zero, on a quota that is not measured in money: a plan commits an
+               -- amount, so there is nothing to compare a leads target against, and the money
+               -- figure beside forty leads is a gap of minus half a million.
+               CASE q.measure WHEN 'Revenue' THEN coalesce((
+                   SELECT sum(p.target_amount) FROM plan p
+                   WHERE p.period_id = q.period_id AND p.owner_id = q.user_id
+                     AND p.target_amount IS NOT NULL), 0) END,
                CASE q.measure
                    WHEN 'Revenue' THEN coalesce((
                        SELECT sum(o.amount) FROM opportunity o
@@ -441,8 +445,11 @@ public sealed class TerritoryStore
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             var quota = reader.GetDecimal(3);
-            var committed = reader.GetDecimal(4);
             var actual = reader.GetDecimal(5);
+
+            decimal? committed = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false)
+                ? null
+                : reader.GetDecimal(4);
 
             rows.Add(new QuotaAttainment(
                 reader.GetString(0),
@@ -452,7 +459,7 @@ public sealed class TerritoryStore
                 committed,
                 actual,
                 quota == 0 ? null : Math.Round(actual / quota * 100m, 1),
-                quota - committed));
+                committed is { } offered ? quota - offered : null));
         }
 
         return

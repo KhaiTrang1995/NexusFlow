@@ -1,5 +1,6 @@
 import { Button } from '@/design/primitives'
-import { usePlaceOrder, useSubmitForApproval } from '@/api/queries/hooks'
+import { useApproveDiscount, usePlaceOrder, useSubmitForApproval } from '@/api/queries/hooks'
+import { useSession } from '@/session/SessionProvider'
 import { useToast } from '@/app/ToastProvider'
 import { fullMoney } from '@/lib/format'
 
@@ -9,8 +10,13 @@ import { fullMoney } from '@/lib/format'
  * TWO DIFFERENT APPROVALS, AND THEY ARE NOT THE SAME THING. `crm.discount.approve` is the grant
  * that lets somebody clear a discounted quote at all; the configured process is which named
  * people have to say yes, in what order, for this particular one. Submitting here starts the
- * second. A screen that conflated them would let a manager's grant stand in for a director's
- * signature.
+ * second, and "Approve the discount" is the first. A screen that conflated them would let a
+ * manager's grant stand in for a director's signature — and deciding a request in the inbox does
+ * not move the quote out of Draft, which is why both actions exist on this one header.
+ *
+ * THE APPROVAL BUTTON IS HIDDEN WITHOUT THE GRANT, and that is the one place hiding beats
+ * disabling: it is not a field somebody goes looking for, it is an act they are not party to. A
+ * director sees no button here because a director is not in the discount chain.
  *
  * "NOTHING NEEDS APPROVING" IS AN ANSWER, NOT A FAILURE. Most quotes are under every threshold
  * anybody configured, and the server says so out loud — so the toast says so too, rather than
@@ -29,6 +35,8 @@ import { fullMoney } from '@/lib/format'
 export function QuoteActions({ quoteId, status }: { quoteId: string; status: string | null }) {
   const submit = useSubmitForApproval()
   const order = usePlaceOrder()
+  const approve = useApproveDiscount()
+  const session = useSession()
   const toast = useToast()
 
   function ask() {
@@ -56,11 +64,27 @@ export function QuoteActions({ quoteId, status }: { quoteId: string; status: str
     )
   }
 
+  function clear() {
+    approve.mutate(
+      { quoteId },
+      {
+        onSuccess: () => toast.saved('Discount approved — the quote is Issued.'),
+        onError: (error) => toast.failed(error, 'That approval was refused.'),
+      },
+    )
+  }
+
   return (
     <>
       <Button disabled={submit.isPending} onClick={ask}>
         {submit.isPending ? 'Submitting…' : 'Submit for approval'}
       </Button>
+
+      {session.can('crm.discount.approve') ? (
+        <Button disabled={approve.isPending} onClick={clear}>
+          {approve.isPending ? 'Approving…' : 'Approve the discount'}
+        </Button>
+      ) : null}
       <Button
         tone="primary"
         disabled={order.isPending}
