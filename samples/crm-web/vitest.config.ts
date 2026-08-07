@@ -15,6 +15,12 @@ export default defineConfig({
   plugins: [react()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   test: {
+    // Only the unit tests. `e2e/` is Playwright's, and Vitest collected it happily — importing
+    // `@playwright/test` into a jsdom worker, where `test.skip(condition, reason)` is a different
+    // function with a different signature. A red suite for the right reason is still the wrong
+    // runner reporting it.
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],

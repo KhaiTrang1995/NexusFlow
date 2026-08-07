@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import {
   Button,
-  DataTable,
   EmptyState,
   FieldGrid,
   Page,
@@ -12,18 +11,19 @@ import {
   Skeleton,
   Tabs,
 } from '@/design/primitives'
-import { fullMoney } from '@/lib/format'
 import { useEntityPage, useEntityRecord } from '@/api/queries/hooks'
-import { modelFor, OBJECT_MODELS } from '@/fixtures/objects'
-import type { RecordRow } from '@/fixtures/objects'
+import { modelFor } from '@/fixtures/objects'
 import { renderCell } from './RecordCell'
 import { entityOf, keyColumnOf, toRows } from './liveRecords'
+import { ActivityFeed } from './ActivityFeed'
 import { AdvanceOpportunity } from './AdvanceOpportunity'
 import { ConvertLeadDrawer } from './ConvertLeadDrawer'
 import { EditFieldsDrawer } from './EditFieldsDrawer'
 import { IssueQuoteDrawer } from './IssueQuoteDrawer'
 import { NewTaskDrawer } from './NewTaskDrawer'
 import { QuoteActions } from './QuoteActions'
+import { RelatedList } from './RelatedList'
+import { relatedLinksOf } from './related'
 import styles from './RecordScreen.module.css'
 
 type RecordTab = 'details' | 'related' | 'activity' | 'files'
@@ -109,7 +109,9 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
   const stageName = model.stageField ? String(record[model.stageField]) : null
   const stageIndex = model.stages?.findIndex((stage) => stage.name === stageName) ?? -1
 
-  const related = relatedRecords(model.key, record)
+  // What points at this record, by foreign key. The counts are not known until each list has
+  // been read, so the tab carries no badge rather than one this screen guessed.
+  const related = relatedLinksOf(model.key)
 
   return (
     <Page layout="full">
@@ -221,8 +223,11 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
           onSelect={setTab}
           items={[
             { id: 'details', label: 'Details' },
-            { id: 'related', label: 'Related', badge: related.length },
-            { id: 'activity', label: 'Activity', badge: 4 },
+            { id: 'related', label: 'Related' },
+
+            // No badge. It was hard-coded to four on every record in the tenant, which is a
+            // count of nothing dressed as a count of something.
+            { id: 'activity', label: 'Activity' },
             { id: 'files', label: 'Files' },
           ]}
         />
@@ -255,33 +260,12 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
           <div className={styles.related}>
             {related.length === 0 ? (
               <EmptyState
-                title="Nothing points at this record yet"
-                detail="Related lists appear here once a contact, an opportunity or a quote refers to it."
+                title="Nothing points at this kind of record"
+                detail="A lead has no children until it is converted, and then it becomes an account, a contact and an opportunity that point at each other."
               />
             ) : (
-              related.map((group) => (
-                <Panel key={group.title} padding="flush">
-                  <PanelHeader title={group.title} note={`${group.rows.length}`} />
-                  <DataTable
-                    caption={group.title}
-                    columns={group.columns.map((name) => ({
-                      id: name,
-                      header:
-                        OBJECT_MODELS[group.objectKey]?.fields.find((field) => field.name === name)
-                          ?.label ?? name,
-                      cell: (row: RecordRow) =>
-                        renderCell(modelFor(group.objectKey), row, name),
-                    }))}
-                    rows={group.rows}
-                    rowKey={(row) => row.id}
-                    onRowClick={(row) =>
-                      void navigate({
-                        to: '/records/$object/$id',
-                        params: { object: group.objectKey, id: row.id },
-                      })
-                    }
-                  />
-                </Panel>
+              related.map((link) => (
+                <RelatedList key={link.title} link={link} parentId={record.id} />
               ))
             )}
           </div>
@@ -289,23 +273,8 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
 
         {tab === 'activity' ? (
           <Panel padding="flush">
-            <PanelHeader title="Activity" note="newest first" />
-            <PanelBody>
-              <div className={styles.feed}>
-                {ACTIVITY.map((entry) => (
-                  <div key={entry.title} className={styles.feedRow}>
-                    <span className={styles.feedIcon} aria-hidden="true">
-                      {entry.glyph}
-                    </span>
-                    <div style={{ minWidth: 0 }}>
-                      <div>{entry.title}</div>
-                      <div className={styles.sub}>{entry.detail}</div>
-                    </div>
-                    <span className={styles.feedWhen}>{entry.when}</span>
-                  </div>
-                ))}
-              </div>
-            </PanelBody>
+            <PanelHeader title="Activity" note="against this record" />
+            <ActivityFeed recordId={record.id} />
           </Panel>
         ) : null}
 
@@ -364,51 +333,6 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
     </Page>
   )
 }
-
-interface RelatedGroup {
-  title: string
-  objectKey: string
-  columns: readonly string[]
-  rows: readonly RecordRow[]
-}
-
-/**
- * What points at this record.
- *
- * Matched on the display value because that is what the design's fixtures carry — a real client
- * follows an id. Written as one table rather than as a branch per object so an object added to
- * the model gets its related lists without a code change here.
- */
-function relatedRecords(objectKey: string, record: RecordRow): readonly RelatedGroup[] {
-  const links: Readonly<Record<string, readonly { child: string; via: string; columns: string[] }[]>> = {
-    account: [
-      { child: 'contact', via: 'account', columns: ['name', 'title', 'role', 'email'] },
-      { child: 'opportunity', via: 'account', columns: ['name', 'stage', 'amount', 'closeDate'] },
-      { child: 'workorder', via: 'account', columns: ['number', 'subject', 'status', 'scheduled'] },
-    ],
-    opportunity: [
-      { child: 'quote', via: 'opportunity', columns: ['number', 'status', 'total', 'discount'] },
-      { child: 'task', via: 'related', columns: ['subject', 'type', 'status', 'due'] },
-    ],
-  }
-
-  const name = String(record['name'] ?? record['number'] ?? '')
-
-  return (links[objectKey] ?? [])
-    .map((link) => {
-      const model = modelFor(link.child)
-      const rows = model.records.filter((row) => row[link.via] === name)
-      return { title: model.plural, objectKey: link.child, columns: link.columns, rows }
-    })
-    .filter((group) => group.rows.length > 0)
-}
-
-const ACTIVITY = [
-  { glyph: '✉', title: 'Sent the redlined MSA', detail: 'To Ron Petrov, cc legal', when: '2 days ago' },
-  { glyph: '☎', title: 'Discovery call', detail: '38 minutes · Elena Vargas, Ron Petrov', when: '5 days ago' },
-  { glyph: '◆', title: 'Stage moved to Negotiation', detail: 'From Proposal, by A. Ruiz', when: '8 days ago' },
-  { glyph: '✎', title: 'Amount raised to ' + fullMoney(184_000), detail: 'Was $164,000', when: '12 days ago' },
-]
 
 const FILES = [
   { name: 'MSA — redlined v4.pdf', size: '412 KB', by: 'A. Ruiz', when: '2 days ago' },

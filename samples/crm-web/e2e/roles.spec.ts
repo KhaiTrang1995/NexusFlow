@@ -89,6 +89,43 @@ test.describe('a seller', () => {
     await page.getByRole('button', { name: 'Place order' }).click()
     await expect(toast(page)).toContainText('Draft')
   })
+
+  /**
+   * The related list and the activity feed are the record's own, not a specimen.
+   *
+   * Both panels held written-out examples on every record in the tenant — the same redlined MSA
+   * against every account, four activities whatever the record. What replaced them is a filter on
+   * a foreign key, and a wrong column name there is refused by the server rather than silently
+   * matching nothing. Only a browser sees the difference, which is why this assertion is here and
+   * not in a unit test.
+   */
+  test('sees its own quotes under Related', async ({ page }) => {
+    await signIn(page, 'rep')
+
+    await openFirstRecord(page, '/records/opportunity')
+
+    await page.getByRole('tab', { name: /Related/ }).click()
+
+    const quotes = page.getByRole('table', { name: 'Quotes' })
+
+    await expect(quotes).toBeVisible()
+
+    const before = await quotes.locator('tbody tr').count()
+
+    await page.getByRole('tab', { name: /Details/ }).click()
+    await page.getByRole('button', { name: 'New quote' }).click()
+    await page.getByLabel('Item 1').fill('PLAT')
+    await page.getByLabel('Quantity').fill('1')
+    await page.getByLabel(/Unit price/).fill('12000')
+    await page.getByRole('button', { name: 'Issue quote' }).click()
+
+    await expect(page).toHaveURL(/\/records\/quote\//)
+
+    await page.goBack()
+    await page.getByRole('tab', { name: /Related/ }).click()
+
+    await expect(quotes.locator('tbody tr')).toHaveCount(before + 1)
+  })
 })
 
 test.describe('a manager', () => {
