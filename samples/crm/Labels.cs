@@ -30,6 +30,50 @@ public static class EntityColumns
             ["name", "amount", "currency", "probability", "expected_close", "outcome"],
         _ => [],
     };
+
+    /// <summary>The columns a read of this entity answers with, and may be filtered on.</summary>
+    /// <param name="kind">Which entity.</param>
+    /// <returns>The column names, in the order a list shows them.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>A different list from <see cref="Of"/>, and deliberately so.</strong> That one is
+    /// what a person may rename — no keys, no foreign keys, no timestamps, because offering to
+    /// rename <c>tenant_id</c> is offering to rename something nobody sees. This one is what a
+    /// list view reads, and a list without the identifier it links by, the owner it filters on
+    /// and the date it sorts by is not a list anybody can use.
+    /// </para>
+    /// <para>
+    /// <strong>Both are closed, for the same reason.</strong> A field name in a filter is a
+    /// caller's value; membership of this array is the whole check that keeps it out of a
+    /// statement. A name that came back from <c>information_schema</c> would be a name that
+    /// exists, which is not the same as a name this surface offers.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> Readable(EntityKind kind) => kind switch
+    {
+        EntityKind.Lead =>
+            ["lead_id", "company", "contact_name", "email", "source", "status", "score",
+             "owner_id", "captured_at"],
+        EntityKind.Account =>
+            ["account_id", "name", "industry", "lifecycle", "region", "owner_id"],
+        EntityKind.Contact =>
+            ["contact_id", "account_id", "full_name", "email", "phone", "is_primary"],
+        _ =>
+            ["opportunity_id", "account_id", "primary_contact_id", "name", "amount", "currency",
+             "probability", "expected_close", "outcome", "owner_id", "stage_entered_at"],
+    };
+
+    /// <summary>Which column identifies a row, and therefore orders the keyset.</summary>
+    /// <param name="kind">Which entity.</param>
+    /// <returns>The primary key's name.</returns>
+    public static string KeyOf(EntityKind kind) => Readable(kind)[0]!;
+
+    /// <summary>Whether a read of this entity offers a column by that name.</summary>
+    /// <param name="kind">Which entity.</param>
+    /// <param name="field">What was asked for.</param>
+    /// <returns>Whether it is offered.</returns>
+    public static bool HasReadable(EntityKind kind, string field) =>
+        Readable(kind).Contains(field, StringComparer.Ordinal);
 }
 
 // -------------------------------------------------------------------------------- what is asked

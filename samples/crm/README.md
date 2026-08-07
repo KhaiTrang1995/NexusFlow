@@ -26,7 +26,7 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 
 ## What it is
 
-Sixty-three tables, seventy-nine flows and three authorisation stances, over the entities a CRM actually
+Sixty-three tables, eighty flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |
@@ -58,6 +58,7 @@ has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a confi
 | Save a list view | `POST /api/v1/crm/custom/list-views` | a named query, its fields checked when it is saved |
 | Query records | `POST /api/v1/crm/custom/queries` | the one projection of custom values, and where reads are masked |
 | Search everything | `POST /api/v1/crm/search` | one statement over five tables; a hit is an identity, not a row |
+| Page an entity | `POST /api/v1/crm/entities` | a filter of unknown size, bound as three arrays rather than built |
 | Declare a formula | `POST /api/v1/crm/custom/formulas` | computed from the same record, one operation, no nesting |
 | Describe the schema | `POST /api/v1/crm/describe` | what a client renders from; permissions resolved, not reported as rules |
 | Sync what changed | `POST /api/v1/crm/custom/changes` | tombstones included, and a cursor that is not a clock |

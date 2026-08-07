@@ -104,6 +104,14 @@ if (broker is { Length: > 0 })
     builder.Services.AddFlowXRabbitMq(broker);
     builder.Services.AddFlowXRabbitMqConsumer(broker);
 }
+else
+{
+    // The half the "optional" claim above needs to be true. AddFlowXPostgresOutbox resolves an
+    // IEventPublisher when the host starts, so without this the process died on StartAsync with
+    // a service-not-registered exception — the sentence above, CrmOutboxPump's own remarks and
+    // the README all described a deployment that could not start.
+    builder.Services.AddSingleton<IEventPublisher, UnpublishedOutbox>();
+}
 
 // What the capabilities are built out of. These are this sample's own types — the stores that
 // issue the SQL, the schema reader, the stand-in enrichment provider — and nothing generated
@@ -135,6 +143,7 @@ builder.Services.AddSingleton<ApprovalStore>();
 builder.Services.AddSingleton<ApproverResolver>();
 builder.Services.AddSingleton<ServiceStore>();
 builder.Services.AddSingleton<CampaignStore>();
+builder.Services.AddSingleton<EntityQueryStore>();
 
 // The one thing in this application that talks to somebody else's system. Registered under the
 // interface, so a deployment with a vault or a real Slack renderer replaces this line and
