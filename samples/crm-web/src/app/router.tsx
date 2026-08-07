@@ -19,6 +19,7 @@ import { InsightsScreen } from '@/features/exec/InsightsScreen'
 import { BoardScreen } from '@/features/exec/BoardScreen'
 import { SalesPerformanceScreen } from '@/features/exec/SalesPerformanceScreen'
 import { DealPerformanceScreen } from '@/features/exec/DealPerformanceScreen'
+import { OrgScreen } from '@/features/exec/OrgScreen'
 import { PortfolioScreen } from '@/features/planning/PortfolioScreen'
 import { AccountPlanScreen } from '@/features/planning/AccountPlanScreen'
 import { OpportunityPlanScreen } from '@/features/planning/OpportunityPlanScreen'
@@ -122,6 +123,7 @@ export const routeTree = rootRoute.addChildren([
   route('/exec/insights', InsightsScreen),
   route('/exec/sales-performance', SalesPerformanceScreen),
   route('/exec/deal-performance', DealPerformanceScreen),
+  route('/exec/org', OrgScreen),
 
   // ── planning
   route('/plan/portfolio', PortfolioScreen),

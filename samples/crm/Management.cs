@@ -180,6 +180,53 @@ public sealed record SetOrgMember(
 /// <param name="Reports">How many people are below them in the line, at any depth.</param>
 public sealed record OrgMemberSet(string UserId, int Reports);
 
+/// <summary>Asks for the reporting line, whole.</summary>
+/// <remarks>
+/// <para>
+/// <strong>Every read in this sample is scoped by this line, and nothing could show it.</strong> A
+/// manager sees their reports' rows, a director sees everybody's, and which is which is decided
+/// here — so a person placed under the wrong manager silently sees the wrong pipeline, and the one
+/// screen that would reveal it did not exist.
+/// </para>
+/// <para>
+/// <strong>Unscoped on purpose, unlike the reads it governs.</strong> The chart is who reports to
+/// whom, not anybody's numbers; a manager who could only see their own branch could not tell a
+/// missing person from somebody placed elsewhere, which is the mistake this read exists to make
+/// visible.
+/// </para>
+/// </remarks>
+public sealed record ReadOrgChart();
+
+/// <summary>One person in the line.</summary>
+/// <param name="UserId">Their subject, as their token carries it.</param>
+/// <param name="DisplayName">What to show.</param>
+/// <param name="Role">What they see by default.</param>
+/// <param name="ReportsTo">Their manager's subject, or null at the top.</param>
+/// <param name="Reports">
+/// How many report to them directly. Direct rather than at any depth, because the number sits
+/// beside a row whose children are drawn underneath it, and a total that counted grandchildren
+/// would not match what the reader can see.
+/// </param>
+public sealed record OrgChartMember(
+    string UserId,
+    string DisplayName,
+    OrgRole Role,
+    string? ReportsTo,
+    int Reports);
+
+/// <summary>The reporting line.</summary>
+/// <param name="Members">
+/// Everybody, managers before their reports.
+/// <para>
+/// <strong>There is no "unplaced" count beside this, and the schema is why.</strong> A quota
+/// carries a foreign key into <c>org_member</c>, so somebody holding a number is placed by
+/// construction — a count of people who are not would be a column that is always zero. A caller
+/// whose own subject is absent from this list is the case that matters, and the caller is the one
+/// who knows their subject.
+/// </para>
+/// </param>
+public sealed record OrgChart(IReadOnlyList<OrgChartMember> Members);
+
 /// <summary>Writes an objective of an account plan.</summary>
 /// <param name="Plan">Which plan.</param>
 /// <param name="Ordinal">Where it sits.</param>

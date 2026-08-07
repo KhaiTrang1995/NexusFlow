@@ -916,3 +916,56 @@ export interface QuotaSet {
   /** What was assigned, after ramp. */
   target: number
 }
+
+export interface OrgChartMember {
+  userId: string
+  displayName: string
+  role: OrgRole
+  /** Their manager's subject, or null at the top. */
+  reportsTo: string | null
+  /** How many report to them directly — not at any depth, so it matches what is drawn below. */
+  reports: number
+}
+
+/**
+ * The reporting line.
+ *
+ * `members` arrives managers-first, so a tree can be built in one pass without holding rows aside
+ * for parents that have not been seen yet.
+ */
+export interface OrgChart {
+  members: OrgChartMember[]
+}
+
+export interface SetOrgMember {
+  userId: string
+  displayName: string
+  role: OrgRole
+  reportsTo: string | null
+}
+
+export interface OrgMemberSet {
+  userId: string
+  /** How many are below them in the line, at any depth. */
+  reports: number
+}
+
+/**
+ * Records what was said about a number.
+ *
+ * THE ACTUAL IS NOT SENT. The server reads the KPI at the moment the review is recorded and
+ * stores that — which is what makes a minute a minute. A form that collected the figure would be
+ * collecting one the server discards.
+ */
+export interface ReviewKpi {
+  kpi: string
+  period: string
+  commentary: string
+}
+
+export interface KpiReviewed {
+  kpi: string
+  /** What the number was when the commentary was written. Stored, unlike a plan's actual. */
+  actual: number
+  status: string
+}

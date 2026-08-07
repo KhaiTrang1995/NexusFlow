@@ -711,3 +711,66 @@ export function useSetQuota(): UseMutationResult<C.QuotaSet, Error, C.SetQuota> 
     onSuccess: () => client.invalidateQueries({ queryKey: keys.performance.all(tenantId) }),
   })
 }
+
+/**
+ * The reporting line, whole.
+ *
+ * WHAT EVERY OTHER READ IN THIS CLIENT IS SCOPED BY. A manager sees their reports' rows and a
+ * director sees everybody's, and which is which is decided here — so somebody placed under the
+ * wrong manager sees the wrong pipeline, and until this screen existed nothing showed it.
+ */
+export function useOrgChart(): UseQueryResult<C.OrgChart> {
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useQuery({
+    queryKey: keys.org.chart(tenantId),
+    queryFn: ({ signal }) => call.read<C.OrgChart, object>('/org/chart', {}, signal),
+  })
+}
+
+/**
+ * Places a person in the line, or moves them.
+ *
+ * A LOOP IS REFUSED AT THE WRITE, and the settings screen is exactly where one gets made by
+ * accident — A reports to B on Monday, B is moved under A on Thursday by somebody else. The
+ * refusal comes back in the server's words rather than being pre-empted here.
+ */
+export function useSetOrgMember(): UseMutationResult<C.OrgMemberSet, Error, C.SetOrgMember> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.SetOrgMember) =>
+      call.write<C.OrgMemberSet, C.SetOrgMember>('/org/members', input),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: keys.org.all(tenantId) })
+
+      // Moving somebody changes whose rows everybody below them sees, so every scoped read is
+      // now answering from a line that no longer exists.
+      client.invalidateQueries({ queryKey: keys.performance.all(tenantId) })
+      client.invalidateQueries({ queryKey: keys.board.all(tenantId) })
+      client.invalidateQueries({ queryKey: keys.planning.all(tenantId) })
+    },
+  })
+}
+
+/**
+ * Records what was said about a KPI.
+ *
+ * THE NUMBER IS THE SERVER'S, READ AT THE MOMENT OF RECORDING. This is the one place in the
+ * application where an actual is written down rather than read live, because a minute of a meeting
+ * that silently updated itself would not be one — and a client that sent its own figure would be
+ * recording what its cache held rather than what was true when somebody said it.
+ */
+export function useReviewKpi(): UseMutationResult<C.KpiReviewed, Error, C.ReviewKpi> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.ReviewKpi) => call.write<C.KpiReviewed, C.ReviewKpi>('/kpis/reviews', input),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.scorecard.all(tenantId) }),
+  })
+}

@@ -181,6 +181,24 @@ export function ExecScreen() {
                   onOpen={() => void navigate({ to: '/exec/insights' })}
                 />
               </Columns>
+
+              <Columns layout="thirds">
+                <ShortcutPanel
+                  title="Reporting line"
+                  detail="Who reports to whom — what every number above is scoped by."
+                  onOpen={() => void navigate({ to: '/exec/org' })}
+                />
+                <ShortcutPanel
+                  title="Sales performance"
+                  detail="Assigned, committed and achieved, person by person."
+                  onOpen={() => void navigate({ to: '/exec/sales-performance' })}
+                />
+                <ShortcutPanel
+                  title="Scorecard"
+                  detail="Every KPI, computed live rather than stored."
+                  onOpen={() => void navigate({ to: '/exec/kpis' })}
+                />
+              </Columns>
             </>
           )
         }}

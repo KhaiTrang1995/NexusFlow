@@ -202,6 +202,8 @@ namespace Crm;
 // The reporting line, the depth an account plan actually has, and the numbers reviewed.
 [JsonSerializable(typeof(SetOrgMember))]
 [JsonSerializable(typeof(OrgMemberSet))]
+[JsonSerializable(typeof(ReadOrgChart))]
+[JsonSerializable(typeof(OrgChart))]
 [JsonSerializable(typeof(SetObjective))]
 [JsonSerializable(typeof(ObjectiveSet))]
 [JsonSerializable(typeof(SetStakeholder))]

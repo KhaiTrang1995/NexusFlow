@@ -30,6 +30,7 @@ public sealed class ManagementApiTests
     private const string Plans = "/api/v1/crm/planning/plans";
     private const string RollUps = "/api/v1/crm/planning/roll-ups";
     private const string Members = "/api/v1/crm/org/members";
+    private const string Chart = "/api/v1/crm/org/chart";
     private const string Objectives = "/api/v1/crm/planning/objectives";
     private const string Stakeholders = "/api/v1/crm/planning/stakeholders";
     private const string Risks = "/api/v1/crm/planning/risks";
@@ -375,6 +376,88 @@ public sealed class ManagementApiTests
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
 
         return await CrmApplication.ReadAsync<Scorecard>(response);
+    }
+
+    /// <summary>
+    /// The reporting line comes back whole, managers before their reports.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Every scoped read in this sample is scoped by this line, and nothing could show
+    /// it.</strong> Somebody placed under the wrong manager silently sees the wrong pipeline, and
+    /// the answer looks like an empty quarter rather than a misplaced person.
+    /// </para>
+    /// <para>
+    /// <strong>The order is the claim, not a nicety.</strong> A client draws the tree in one pass;
+    /// a row arriving before its parent has to be held aside, and a build that returned insertion
+    /// order would work on the fixture that happened to be inserted top-down and nowhere else. It
+    /// is asserted by placing the deepest person first.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task TheReportingLineComesBackManagersFirst()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+
+        // Deliberately bottom-up: the answer must not depend on the order they were written in.
+        await MemberAsync(app, new SetOrgMember(Manager, "Bea Vance", OrgRole.Director, null));
+        await MemberAsync(app, new SetOrgMember("mgr-2", "Jo Okafor", OrgRole.Manager, Manager));
+        await MemberAsync(app, new SetOrgMember(Rep, "Ada Rowe", OrgRole.Representative, "mgr-2"));
+
+        var chart = await ChartAsync(app);
+
+        chart.Members.Select(member => member.UserId).ShouldBe(
+            [Manager, "mgr-2", Rep], "the director, then the manager, then the representative.");
+
+        var director = chart.Members[0]!;
+
+        director.ReportsTo.ShouldBeNull("nobody is above the top.");
+        director.Role.ShouldBe(OrgRole.Director);
+        director.Reports.ShouldBe(1, "one person directly below, not two at any depth.");
+
+        chart.Members[2]!.ReportsTo.ShouldBe("mgr-2");
+    }
+
+    /// <summary>
+    /// A quota cannot be carried by somebody who is in no line at all.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The schema is what makes it true, not a check somebody wrote.</strong>
+    /// <c>quota</c> carries a foreign key into <c>org_member</c>, so "assigned a number to a name
+    /// nobody placed" is refused at the write rather than discovered at the review. This is the
+    /// test that stopped the chart shipping an <c>Unplaced</c> count that could only ever be zero.
+    /// </remarks>
+    [Fact]
+    public async Task ANumberCannotBeCarriedBySomebodyInNoLine()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+
+        await MemberAsync(app, new SetOrgMember(Manager, "Bea Vance", OrgRole.Director, null));
+
+        (await app.PostAsync(
+            "/api/v1/crm/planning/periods",
+            new DefinePeriod("fy26", "FY26", new DateOnly(2026, 1, 1), new DateOnly(2026, 12, 31), null),
+            CrmTokens.NorthwindManager)).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        (await app.PostAsync(
+            "/api/v1/crm/quotas",
+            new SetQuota("fy26", "nobody-placed-1", QuotaMeasure.Revenue, 250_000m, 1.0m),
+            CrmTokens.NorthwindManager))
+            .StatusCode.ShouldNotBe(HttpStatusCode.OK, "there is nobody of that name in the line.");
+
+        (await ChartAsync(app)).Members.Select(member => member.UserId)
+            .ShouldBe([Manager], "and so nothing is missing from the chart.");
+    }
+
+    private static async Task<OrgChart> ChartAsync(CrmApplication app)
+    {
+        var response = await app.PostAsync(
+            Chart, new ReadOrgChart(), CrmTokens.Northwind, idempotencyKey: null);
+
+        response.StatusCode.ShouldBe(
+            HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Cancellation));
+
+        return await CrmApplication.ReadAsync<OrgChart>(response);
     }
 
     private static async Task MemberAsync(CrmApplication app, SetOrgMember member)
