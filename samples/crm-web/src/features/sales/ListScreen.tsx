@@ -18,9 +18,13 @@ import { modelFor, optionsFor } from '@/fixtures/objects'
 import type { RecordRow } from '@/fixtures/objects'
 import { isNumeric, renderCell } from './RecordCell'
 import { entityOf, toRows } from './liveRecords'
+import { EditFieldsDrawer } from './EditFieldsDrawer'
 import { NewLeadDrawer } from './NewLeadDrawer'
 import { NewTaskDrawer } from './NewTaskDrawer'
 import styles from './ListScreen.module.css'
+
+/** The kinds a custom field can be declared on, which is what the edit drawer writes. */
+const EDITABLE_KINDS: readonly string[] = ['Lead', 'Account', 'Contact', 'Opportunity']
 
 /** The objects this build has a write for. Everything else says so rather than pretending. */
 const CAN_CREATE: readonly string[] = ['lead', 'task']
@@ -40,6 +44,7 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
   const [search, setSearch] = useState('')
   const [stage, setStage] = useState<string>('all')
   const [peek, setPeek] = useState<RecordRow | null>(null)
+  const [editing, setEditing] = useState<RecordRow | null>(null)
   const [hidden, setHidden] = useState<readonly string[]>([])
   const [showColumns, setShowColumns] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -242,7 +247,25 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
               >
                 Open record
               </Button>
-              <Button>Edit</Button>
+              {/*
+                The same drawer the record page opens, and only for the four kinds a custom field
+                can be declared on. It did nothing at all before, which is the one outcome a
+                reader cannot tell from a slow one.
+              */}
+              <Button
+                disabled={!EDITABLE_KINDS.includes(String(entity))}
+                title={
+                  EDITABLE_KINDS.includes(String(entity))
+                    ? undefined
+                    : 'Nothing on this kind of record is editable by this build.'
+                }
+                onClick={() => {
+                  setEditing(peek)
+                  setPeek(null)
+                }}
+              >
+                Edit
+              </Button>
             </>
           }
         >
@@ -265,6 +288,15 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
             </>
           ) : null}
         </Drawer>
+      ) : null}
+
+      {editing !== null && entity !== null ? (
+        <EditFieldsDrawer
+          kind={entity as 'Lead' | 'Account' | 'Contact' | 'Opportunity'}
+          id={editing.id}
+          title={String(editing[model.listCols[0] ?? 'name'] ?? editing.id)}
+          onClose={() => setEditing(null)}
+        />
       ) : null}
     </Page>
   )
