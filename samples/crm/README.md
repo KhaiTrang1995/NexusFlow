@@ -27,6 +27,11 @@ FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 Or the whole stack — database, API, web client — with `cp .env.example .env` and
 `docker compose up --build` from the repository root. Only the client publishes a port.
 
+Two probes, because they answer two questions: `/health/live` runs no checks and says only that
+the process is worth keeping, and `/health/ready` says whether the schema behind it is the one
+this build writes against. `/health` is readiness, as it always was. A container probes itself
+with `dotnet Crm.dll --healthcheck` — the runtime image has no shell to probe it with.
+
 A tenant starts empty. `CRM_SEED_FILE` names a JSON document holding a tenant's metadata and its
 rows — custom objects and fields, a configured process with its stages, and accounts, contacts,
 opportunities and leads. Each item carries an alias, the row's id is derived from it, and

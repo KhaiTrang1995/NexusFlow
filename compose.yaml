@@ -98,10 +98,17 @@ services:
     expose:
       - "8080"
 
-    # NO healthcheck HERE, DELIBERATELY. The application serves /health; the chiselled runtime
-    # image has no shell and no curl to call it with, and adding one to reach a probe would undo
-    # the reason the image was chosen. A real deployment checks it from outside the container —
-    # a Kubernetes probe, a load balancer — which is where a health check belongs anyway.
+    healthcheck:
+      # The runtime asking itself, because a chiselled image has no shell and no curl — and
+      # installing one to reach a probe would undo the reason the image was chosen. It asks
+      # /health/ready, so a container is healthy when its schema is at this build's version and
+      # not merely when the process is up.
+      test: ["CMD", "dotnet", "/app/Crm.dll", "--healthcheck"]
+      interval: 15s
+      timeout: 10s
+      # Long enough for two migrators and, when one is configured, the seed.
+      start_period: 45s
+      retries: 3
 
     read_only: true
     tmpfs:
@@ -121,10 +128,10 @@ services:
     restart: unless-stopped
 
     depends_on:
-      # `service_started`, because the API has no in-container health check; nginx answers 502
-      # for the few seconds between the two, which is what a proxy is supposed to do.
+      # `service_healthy` now that the API has a probe: the client is not served until the
+      # schema behind it is the one this build writes against.
       api:
-        condition: service_started
+        condition: service_healthy
 
     # The one published port. Bound to the loopback address rather than every interface: on a
     # laptop on a shared network, `8080:8080` is the whole CRM on the office wifi.

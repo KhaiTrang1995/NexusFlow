@@ -53,4 +53,9 @@ USER $APP_UID
 
 EXPOSE 8080
 
+# The runtime probes itself, because there is no shell here to probe it with — see CrmProbe.
+# `--start-period` covers the two migrators and, when one is configured, the seed.
+HEALTHCHECK --interval=15s --timeout=10s --start-period=45s --retries=3 \
+    CMD ["dotnet", "Crm.dll", "--healthcheck"]
+
 ENTRYPOINT ["dotnet", "Crm.dll"]

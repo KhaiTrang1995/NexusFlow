@@ -7,7 +7,16 @@ using FlowX.Mcp;
 using FlowX.Postgres;
 using FlowX.RabbitMq;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Npgsql;
+
+// Before anything is built: this invocation may be a container's health check rather than a
+// start. See CrmProbe — the runtime image has no shell to run one with, so the runtime is the
+// probe.
+if (CrmProbe.WasAsked(args))
+{
+    return await CrmProbe.RunAsync().ConfigureAwait(false);
+}
 
 var builder = WebApplication.CreateSlimBuilder(args);
 
@@ -145,6 +154,13 @@ builder.Services.AddSingleton<ServiceStore>();
 builder.Services.AddSingleton<CampaignStore>();
 builder.Services.AddSingleton<EntityQueryStore>();
 builder.Services.AddSingleton<SeedStore>();
+builder.Services.AddSingleton<CrmSchemaHealthCheck>();
+
+// Tagged `ready`, beside the runtime's own drain check. Registered here rather than inside
+// AddFlowX because the schema is this sample's and not the platform's.
+builder.Services
+    .AddHealthChecks()
+    .AddCheck<CrmSchemaHealthCheck>(CrmSchemaHealthCheck.Name, tags: [CrmSchemaHealthCheck.Tag]);
 builder.Services.AddSingleton<SeedApplier>();
 builder.Services.AddSingleton(TimeProvider.System);
 
@@ -201,6 +217,24 @@ app.UseCors();
 
 app.UseAuthentication();
 
+// Two probes, because they answer two questions and wiring one to both is how a draining node
+// gets restarted mid-drain.
+//
+// LIVE: no checks at all. "Is this process worth restarting?" — and the honest answer is yes
+// whenever the endpoint can be reached, because everything else is somebody else's outage. A
+// liveness probe that consulted the database restarts every replica during a failover, and none
+// of the restarts can reach the database either.
+app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
+
+// READY: the runtime's own drain state, and whether this build's tables are actually there. The
+// second is the one that catches a deployment nobody migrated — which otherwise starts, answers
+// every probe, and fails on the first request that touches a new column.
+app.MapHealthChecks(
+    "/health/ready",
+    new HealthCheckOptions { Predicate = check => check.Tags.Contains(CrmSchemaHealthCheck.Tag) });
+
+// The name everything already points at. Readiness, because that is what it has always run —
+// AddFlowX registers its drain check tagged `ready` and this endpoint had no predicate.
 app.MapHealthChecks("/health");
 
 // Everything this application declared, in one call: the routes from each [HttpTrigger], the
@@ -238,3 +272,5 @@ app.MapFlowXOpenApi(FlowXManifest.Json, CrmJsonContext.Default);
 app.MapFlowXOpenApiUi();
 
 await app.RunAsync().ConfigureAwait(false);
+
+return 0;
