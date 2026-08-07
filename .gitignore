@@ -28,7 +28,12 @@ CLAUDE.md
 
 # Local infrastructure from `flowx dev up`
 docker-compose.override.yml
+compose.override.yaml
 .env.local
+
+# The compose stack's secrets. `.env.example` is tracked and holds no values; `.env` holds the
+# password somebody generated and must never be one `git add -A` away from a branch.
+.env
 
 # Redis snapshots written by a locally started redis-server during testing.
 # The lease-store suite needs a live Redis; its default save behaviour drops a

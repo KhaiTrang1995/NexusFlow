@@ -1,0 +1,56 @@
+# The CRM sample's API.
+#
+# TWO STAGES, AND THE SDK NEVER SHIPS. The build image carries a compiler, a package cache and
+# the whole source tree; the runtime image carries the assemblies. Collapsing them would put a
+# toolchain — and every credential the restore used — inside the thing that faces the network.
+#
+# CHISELED RATHER THAN THE FULL RUNTIME. No shell, no package manager, no busybox: a chiselled
+# image has nothing for an attacker who reaches code execution to pivot with, and it is a
+# smaller surface for a CVE feed to have opinions about. The cost is that `docker exec` cannot
+# give you a prompt, which is the point.
+#
+# Build from the repository root, because this project references src/ and plugins/:
+#   docker build -f samples/crm/Dockerfile -t flowx-crm .
+
+# ---------------------------------------------------------------------------------- build
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
+
+WORKDIR /src
+
+# Restore before the source is copied, so a change to a .cs file does not re-download the world.
+# The glob keeps every project's file at the path the solution expects.
+COPY global.json Directory.Build.props FlowX.slnx .editorconfig ./
+COPY src/ src/
+COPY plugins/ plugins/
+COPY samples/crm/ samples/crm/
+
+RUN dotnet restore samples/crm/Crm.csproj
+
+# No `--no-restore` fallback and no `-p:TreatWarningsAsErrors=false`: this repository builds
+# warning-free, and a container that quietly relaxed that would be the one build nobody checks.
+RUN dotnet publish samples/crm/Crm.csproj \
+    -c Release \
+    --no-restore \
+    -o /app
+
+# ---------------------------------------------------------------------------------- runtime
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled AS runtime
+
+# 8080 rather than 80: a port above 1024 needs no capability to bind, so the process can drop
+# every one of them. Binding 80 is the usual reason a container ends up running as root.
+ENV ASPNETCORE_HTTP_PORTS=8080 \
+    DOTNET_EnableDiagnostics=0
+
+WORKDIR /app
+
+COPY --from=build --chown=$APP_UID:$APP_UID /app ./
+
+# The chiselled images define a non-root APP_UID (64198) and no shell to escalate with. Stated
+# rather than inherited, so a base-image change that dropped it is a build-time difference.
+USER $APP_UID
+
+EXPOSE 8080
+
+ENTRYPOINT ["dotnet", "Crm.dll"]

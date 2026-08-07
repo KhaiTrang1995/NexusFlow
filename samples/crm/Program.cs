@@ -144,6 +144,14 @@ builder.Services.AddSingleton<ApproverResolver>();
 builder.Services.AddSingleton<ServiceStore>();
 builder.Services.AddSingleton<CampaignStore>();
 builder.Services.AddSingleton<EntityQueryStore>();
+builder.Services.AddSingleton<SeedStore>();
+builder.Services.AddSingleton<SeedApplier>();
+builder.Services.AddSingleton(TimeProvider.System);
+
+// Starting state from a file, when one is configured. Registered after the stores it uses and
+// before UseFlowX, so a tenant is configured by the time anything can read it; the migrators
+// above run first because they run before the host starts at all.
+builder.Services.AddHostedService<CrmSeeder>();
 
 // The one thing in this application that talks to somebody else's system. Registered under the
 // interface, so a deployment with a vault or a real Slack renderer replaces this line and

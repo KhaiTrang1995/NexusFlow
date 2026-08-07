@@ -24,6 +24,15 @@ FLOWX_RABBITMQ_CONNECTION="amqp://guest:guest@localhost:5672/" \
 FLOWX_POSTGRES_CONNECTION="..." dotnet run --project samples/crm
 ```
 
+Or the whole stack — database, API, web client — with `cp .env.example .env` and
+`docker compose up --build` from the repository root. Only the client publishes a port.
+
+A tenant starts empty. `CRM_SEED_FILE` names a JSON document holding a tenant's metadata and its
+rows — custom objects and fields, a configured process with its stages, and accounts, contacts,
+opportunities and leads. Each item carries an alias, the row's id is derived from it, and
+applying the same file again therefore writes nothing: `samples/crm/seed/northwind.json` is the
+one compose mounts.
+
 ## What it is
 
 Sixty-three tables, eighty flows and three authorisation stances, over the entities a CRM actually
