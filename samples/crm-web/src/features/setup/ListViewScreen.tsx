@@ -15,6 +15,7 @@ import {
 import { useToast } from '@/app/ToastProvider'
 import { modelFor, optionsFor } from '@/fixtures/objects'
 import { ObjectSwitcher } from './ObjectSwitcher'
+import { DeclaredList } from './DeclaredList'
 import styles from './setup.module.css'
 
 const OPERATORS = ['Equals', 'NotEquals', 'GreaterThan', 'LessThan', 'IsSet'] as const
@@ -41,6 +42,15 @@ export function ListViewScreen() {
   return (
     <Page>
       <PageHeader eyebrow="Setup" title="List views" />
+
+      {/* The half this screen was missing: it could save a view and never show one again. */}
+      <div style={{ marginBottom: 'var(--section-gap)' }}>
+        <DeclaredList
+          kind="ListView"
+          title="Saved views"
+          empty="No views are saved. The form below saves one."
+        />
+      </div>
 
       <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
         <ObjectSwitcher value={objectKey} onChange={setObjectKey} />

@@ -16,6 +16,7 @@ import {
 import { StackedBars } from '@/design/charts'
 import { fullMoney, money } from '@/lib/format'
 import { modelFor, OBJECT_MODELS } from '@/fixtures/objects'
+import { DeclaredList } from '@/features/setup/DeclaredList'
 import styles from './analytics.module.css'
 
 type Aggregate = 'count' | 'sum' | 'average'
@@ -90,6 +91,27 @@ export function ReportsScreen() {
           </>
         }
       />
+
+      {/*
+        What this tenant has actually saved, above the sample report builder below. The two are
+        different things and the screen now says so: one is what the server will run, the other
+        is the prototype's illustration of what a report looks like.
+      */}
+      <div style={{ marginBottom: 'var(--section-gap)' }}>
+        <DeclaredList
+          kind="Report"
+          title="Saved reports"
+          empty="No reports are saved. The builder below is the prototype's illustration."
+        />
+      </div>
+
+      <div style={{ marginBottom: 'var(--section-gap)' }}>
+        <DeclaredList
+          kind="Dashboard"
+          title="Dashboards"
+          empty="No dashboards are saved."
+        />
+      </div>
 
       <StatGrid columns={3}>
         <StatTile label="Groups" value={rows.length} note={`by ${selected.groupBy}`} />

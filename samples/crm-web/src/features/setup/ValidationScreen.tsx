@@ -16,6 +16,7 @@ import {
 import { useToast } from '@/app/ToastProvider'
 import { modelFor, optionsFor } from '@/fixtures/objects'
 import { ObjectSwitcher } from './ObjectSwitcher'
+import { DeclaredList } from './DeclaredList'
 import styles from './setup.module.css'
 
 const OPERATORS = ['Equals', 'NotEquals', 'GreaterThan', 'LessThan', 'IsSet'] as const
@@ -62,6 +63,15 @@ export function ValidationScreen() {
   return (
     <Page>
       <PageHeader eyebrow="Setup" title="Validation rules" />
+
+      {/* Each rule's sentence is the server's: it knows what an operator and a value mean. */}
+      <div style={{ marginBottom: 'var(--section-gap)' }}>
+        <DeclaredList
+          kind="ValidationRule"
+          title="Rules in force"
+          empty="No rules are declared, so nothing is refused."
+        />
+      </div>
 
       <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
         <ObjectSwitcher value={objectKey} onChange={setObjectKey} />

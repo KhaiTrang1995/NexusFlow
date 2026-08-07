@@ -153,6 +153,7 @@ builder.Services.AddSingleton<ApproverResolver>();
 builder.Services.AddSingleton<ServiceStore>();
 builder.Services.AddSingleton<CampaignStore>();
 builder.Services.AddSingleton<EntityQueryStore>();
+builder.Services.AddSingleton<ConfigStore>();
 builder.Services.AddSingleton<SeedStore>();
 builder.Services.AddSingleton<CrmSchemaHealthCheck>();
 
