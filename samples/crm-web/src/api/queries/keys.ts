@@ -80,5 +80,7 @@ export const keys = {
       ['entities', tenant, entity, limit] as const,
     record: (tenant: string, entity: string, id: string) =>
       ['entities', tenant, entity, 'record', id] as const,
+    related: (tenant: string, entity: string, field: string, value: string) =>
+      ['entities', tenant, entity, 'related', field, value] as const,
   },
 } as const

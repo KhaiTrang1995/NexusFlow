@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Tag } from '@/design/primitives'
 import type { TagTone } from '@/design/primitives'
-import { fullMoney } from '@/lib/format'
+import { date, fullMoney } from '@/lib/format'
 import { fieldOf } from '@/fixtures/objects'
 import type { ObjectModel, RecordRow } from '@/fixtures/objects'
 
@@ -71,6 +71,12 @@ export function renderCell(model: ObjectModel, row: RecordRow, name: string): Re
       return `${value}%`
     case 'number':
       return Number(value).toLocaleString('en-US')
+    case 'date':
+      // The fixtures carry '2026-08-20' and the server carries
+      // '2026-08-28T23:18:06.488811+00:00'. Falling through to String() rendered the first
+      // acceptably and the second as a machine's timestamp, so every date column looked correct
+      // for as long as the screen it was on was reading fixtures.
+      return date(String(value))
     case 'picklist':
       return <Tag tone={toneFor(String(value))}>{String(value)}</Tag>
     case 'email':

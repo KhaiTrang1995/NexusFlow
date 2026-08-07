@@ -774,3 +774,43 @@ export function useReviewKpi(): UseMutationResult<C.KpiReviewed, Error, C.Review
     onSuccess: () => client.invalidateQueries({ queryKey: keys.scorecard.all(tenantId) }),
   })
 }
+
+/**
+ * The rows of one entity that point at a particular record.
+ *
+ * WHAT MAKES A RELATED LIST A RELATED LIST. Every foreign key these screens need — a quote's
+ * opportunity, an order's quote, a contact's account, an activity's parent — is already in the
+ * entity's closed readable-column list, so this is the page endpoint with a filter and not a
+ * surface of its own. The field name is checked against that list on the server; a column this
+ * client invented is refused rather than interpolated.
+ *
+ * NULL DISABLES IT. A related list on a record that has not loaded yet is a query with no id to
+ * filter by, and asking anyway returns the whole tenant — which looks like a related list right
+ * up until somebody reads it.
+ */
+export function useRelatedRecords(
+  entity: C.ReadableEntity | null,
+  field: string | null,
+  value: string | null,
+  limit = 50,
+): UseQueryResult<C.RecordPage> {
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useQuery({
+    queryKey: keys.entities.related(tenantId, entity ?? 'none', field ?? 'none', value ?? 'none'),
+    queryFn: ({ signal }) =>
+      call.read<C.RecordPage, C.ReadEntityPage>(
+        '/entities',
+        {
+          entity: entity!,
+          filter: { match: 'All', criteria: [{ field: field!, operator: 'Equals', value: value! }] },
+          limit,
+          after: null,
+        },
+        signal,
+      ),
+    enabled: entity !== null && field !== null && value !== null && value.length > 0,
+    staleTime: 15_000,
+  })
+}

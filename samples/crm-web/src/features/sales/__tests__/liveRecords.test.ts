@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { modelFor } from '@/fixtures/objects'
 import { entityOf, keyColumnOf, toRows } from '../liveRecords'
+import { renderCell } from '../RecordCell'
 
 describe('entityOf', () => {
   it('names the four objects the server can page', () => {
@@ -99,5 +100,29 @@ describe('toRows', () => {
 
   it('is empty for an object the server does not page', () => {
     expect(toRows('invented', modelFor('quote'), [{ recordId: 'q', values: {} }])).toEqual([])
+  })
+})
+
+/**
+ * A date cell, which had no case of its own and fell through to `String()`.
+ *
+ * The fixtures carry a plain day and the server carries a full timestamptz, so the fall-through
+ * rendered correctly for exactly as long as the screen was reading fixtures — and then put
+ * `2026-08-28T23:18:06.488811+00:00` in a column headed "Expires".
+ */
+describe('renderCell, on a date', () => {
+  const model = modelFor('quote')
+
+  it('renders a server timestamp as a day', () => {
+    expect(renderCell(model, { id: 'q', expires: '2026-08-28T23:18:06.488811+00:00' }, 'expires'))
+      .toBe('28 Aug 2026')
+  })
+
+  it('renders a plain day as the same day', () => {
+    expect(renderCell(model, { id: 'q', expires: '2026-08-28' }, 'expires')).toBe('28 Aug 2026')
+  })
+
+  it('says nothing rather than "Invalid Date" when the value is not one', () => {
+    expect(renderCell(model, { id: 'q', expires: 'soon' }, 'expires')).toBe('—')
   })
 })
