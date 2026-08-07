@@ -554,3 +554,46 @@ export function useCreateTask(): UseMutationResult<C.TaskCreated, Error, C.Creat
     onSuccess: () => client.invalidateQueries({ queryKey: keys.entities.all(tenantId) }),
   })
 }
+
+// ─────────────────────────────────────────────────────────────── editing and quoting
+
+/**
+ * Sets custom fields on a built-in record.
+ *
+ * A MERGE, NOT A REPLACEMENT. Only the fields being changed are sent, so two people editing
+ * different fields of one account do not overwrite each other — which is what a form posting the
+ * whole record does, and the loser never finds out.
+ */
+export function useSetCustomFields(): UseMutationResult<
+  C.CustomFieldsSet,
+  Error,
+  C.SetCustomFields
+> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.SetCustomFields) =>
+      call.write<C.CustomFieldsSet, C.SetCustomFields>('/custom/entity-fields', input),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.entities.all(tenantId) }),
+  })
+}
+
+/**
+ * Prices and issues a quote against an opportunity.
+ *
+ * THE PRICE IS THE SERVER'S. Lines and a discount go up; a subtotal, a total and — the part that
+ * matters — whether it needs approval come back. A client that computed the total would be a
+ * second pricing engine, and the discount threshold is exactly the rule somebody would get wrong.
+ */
+export function useIssueQuote(): UseMutationResult<C.QuoteIssued, Error, C.IssueQuote> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.IssueQuote) => call.write<C.QuoteIssued, C.IssueQuote>('/quotes', input),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.entities.all(tenantId) }),
+  })
+}

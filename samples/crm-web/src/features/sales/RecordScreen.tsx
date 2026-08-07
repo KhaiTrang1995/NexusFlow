@@ -18,6 +18,9 @@ import { modelFor, OBJECT_MODELS } from '@/fixtures/objects'
 import type { RecordRow } from '@/fixtures/objects'
 import { renderCell } from './RecordCell'
 import { entityOf, keyColumnOf, toRows } from './liveRecords'
+import { EditFieldsDrawer } from './EditFieldsDrawer'
+import { IssueQuoteDrawer } from './IssueQuoteDrawer'
+import { NewTaskDrawer } from './NewTaskDrawer'
 import styles from './RecordScreen.module.css'
 
 type RecordTab = 'details' | 'related' | 'activity' | 'files'
@@ -30,10 +33,16 @@ type RecordTab = 'details' | 'related' | 'activity' | 'files'
  * appears here, and a record in a stage the model does not have is visibly in none of them rather
  * than silently drawn as the first.
  */
+/** The kinds a custom field can be declared on, which is what the edit drawer writes. */
+const EDITABLE: readonly string[] = ['Lead', 'Account', 'Contact', 'Opportunity']
+
 export function RecordScreen({ objectKey, id }: { objectKey: string; id: string }) {
   const navigate = useNavigate()
   const model = modelFor(objectKey)
   const [tab, setTab] = useState<RecordTab>('details')
+  const [editing, setEditing] = useState(false)
+  const [quoting, setQuoting] = useState(false)
+  const [addingTask, setAddingTask] = useState(false)
 
   // The record comes from the server for the four entities it can page, and from the
   // prototype's fixtures for the other three. Before this, it came from the fixtures always —
@@ -112,14 +121,34 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
             <h1 className={styles.title}>{String(record[titleField] ?? record.id)}</h1>
           </div>
           <div className={styles.actions}>
-            <Button>Edit</Button>
+            {/*
+              Only the four kinds a custom field can be declared on, and only for a live record.
+              Everything else has nothing this build can write.
+            */}
+            <Button
+              disabled={!EDITABLE.includes(String(entity))}
+              title={
+                EDITABLE.includes(String(entity))
+                  ? undefined
+                  : 'Nothing on this record is editable by this build.'
+              }
+              onClick={() => setEditing(true)}
+            >
+              Edit
+            </Button>
             <Button>Clone</Button>
             {model.key === 'quote' ? (
               <Button tone="primary" onClick={() => void navigate({ to: '/quote/$id', params: { id: record.id } })}>
                 Open builder
               </Button>
+            ) : entity === 'Opportunity' ? (
+              <Button tone="primary" onClick={() => setQuoting(true)}>
+                New quote
+              </Button>
             ) : (
-              <Button tone="primary">New task</Button>
+              <Button tone="primary" onClick={() => setAddingTask(true)}>
+                New task
+              </Button>
             )}
           </div>
         </div>
@@ -274,6 +303,26 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
           </Panel>
         ) : null}
       </div>
+
+      {quoting ? (
+        <IssueQuoteDrawer
+          opportunityId={id}
+          opportunityName={String(record[titleField] ?? id)}
+          currency={String(record['currency'] ?? 'EUR')}
+          onClose={() => setQuoting(false)}
+        />
+      ) : null}
+
+      {addingTask ? <NewTaskDrawer onClose={() => setAddingTask(false)} /> : null}
+
+      {editing && entity !== null ? (
+        <EditFieldsDrawer
+          kind={entity as 'Lead' | 'Account' | 'Contact' | 'Opportunity'}
+          id={id}
+          title={String(record[titleField] ?? id)}
+          onClose={() => setEditing(false)}
+        />
+      ) : null}
     </Page>
   )
 }
