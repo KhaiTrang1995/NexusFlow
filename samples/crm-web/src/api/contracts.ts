@@ -644,3 +644,63 @@ export interface ConfigList {
   kind: ConfigKind
   items: ConfigItem[]
 }
+
+// ─────────────────────────────────────────────────────────────── one plan, whole
+
+export interface ReadPlan {
+  name: string
+}
+
+export interface PlanObjectiveRow {
+  ordinal: number
+  description: string
+  measure: string
+  target: number
+  status: string
+}
+
+export interface PlanStepRow {
+  ordinal: number
+  description: string
+  dueOn: string
+  isComplete: boolean
+  /** Decided by the server, against one clock. */
+  isOverdue: boolean
+}
+
+export interface PlanRiskRow {
+  ordinal: number
+  description: string
+  severity: string
+  mitigation: string
+  isOpen: boolean
+}
+
+export interface PlanQualificationRow {
+  element: string
+  isAnswered: boolean
+  note: string
+}
+
+export interface PlanStakeholderRow {
+  contactId: string
+  fullName: string
+  role: string
+  sentiment: string
+  influence: number
+}
+
+export interface PlanDetail {
+  name: string
+  label: string
+  kind: string
+  period: string
+  owner: string
+  targetAmount: number | null
+  currency: string | null
+  objectives: PlanObjectiveRow[]
+  steps: PlanStepRow[]
+  risks: PlanRiskRow[]
+  qualification: PlanQualificationRow[]
+  stakeholders: PlanStakeholderRow[]
+}

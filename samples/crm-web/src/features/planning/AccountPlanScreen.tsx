@@ -3,6 +3,8 @@ import { OBJECT_MODELS } from '@/fixtures/objects'
 import { fullMoney, money } from '@/lib/format'
 import { OBJECTIVES, RISKS, STAKEHOLDERS } from './planFixtures'
 import type { Objective, Risk, Stakeholder } from './planFixtures'
+import { PERIODS } from '@/features/exec/period'
+import { PlanDetailPanels } from './PlanDetailPanels'
 import styles from './planning.module.css'
 
 /**
@@ -31,6 +33,12 @@ export function AccountPlanScreen() {
         eyebrow="Planning · account plan"
         title={String(account?.['name'] ?? 'Account plan')}
       />
+
+
+      {/* The tenant's own plans, read whole. Everything below this is the prototype's. */}
+      <PlanDetailPanels kind="Account" period={PERIODS[0]} />
+
+      <div className={styles.sampleNote}>Everything below is sample data.</div>
 
       <StatGrid columns={4}>
         <StatTile label="ARR today" value={money(Number(account?.['arr'] ?? 0))} note={String(account?.['tier'])} />

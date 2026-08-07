@@ -44,6 +44,7 @@ export const keys = {
     all: (tenant: string) => ['planning', tenant] as const,
     rollUp: (tenant: string, period: string) => ['planning', tenant, 'roll-up', period] as const,
     tree: (tenant: string, period: string) => ['planning', tenant, 'tree', period] as const,
+    plan: (tenant: string, name: string) => ['planning', tenant, 'plan', name] as const,
   },
   scorecard: {
     all: (tenant: string) => ['scorecard', tenant] as const,

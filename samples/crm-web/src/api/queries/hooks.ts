@@ -468,3 +468,28 @@ export function useConfig(kind: C.ConfigKind, limit = 100): UseQueryResult<C.Con
     staleTime: 30_000,
   })
 }
+
+// ─────────────────────────────────────────────────────────────── one plan, whole
+
+/**
+ * One plan and everything hung off it, in one request.
+ *
+ * By name rather than by id, because that is what {@link usePlanTree} hands back for every node —
+ * a screen navigating from the tree to the plan needs nothing the tree did not already give it.
+ *
+ * `isOverdue` arrives decided. A client comparing a due date against its own clock reports a step
+ * overdue in Sydney and not in Lisbon on the same afternoon, and an overdue step is the earliest
+ * signal a deal has stopped moving.
+ */
+export function usePlan(name: string | null): UseQueryResult<C.PlanDetail> {
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useQuery({
+    queryKey: keys.planning.plan(tenantId, name ?? 'none'),
+    queryFn: ({ signal }) =>
+      call.read<C.PlanDetail, C.ReadPlan>('/planning/plan', { name: name! }, signal),
+    enabled: name !== null && name.length > 0,
+    staleTime: 15_000,
+  })
+}
