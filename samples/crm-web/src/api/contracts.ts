@@ -484,3 +484,37 @@ export interface ExecutiveBoard {
   deals: DealPerformance
   scorecard: Scorecard
 }
+
+// ─────────────────────────────────────────────────────────────── built-in entity pages
+
+export type EntityKind = 'Lead' | 'Account' | 'Contact' | 'Opportunity'
+export type FilterMatch = 'All' | 'Any'
+
+export interface RecordCriterion {
+  field: string
+  operator: GuardOperator
+  value: string
+}
+
+export interface RecordFilter {
+  match: FilterMatch
+  criteria: RecordCriterion[]
+}
+
+export interface ReadEntityPage {
+  entity: EntityKind
+  filter: RecordFilter | null
+  limit: number
+  after: string | null
+}
+
+export interface RecordView {
+  recordId: string
+  values: Record<string, string | null>
+}
+
+export interface RecordPage {
+  records: RecordView[]
+  redacted: string[]
+  nextCursor: string | null
+}

@@ -335,3 +335,33 @@ export function useSearch(phrase: string, limit = 25): UseQueryResult<C.SearchRe
     staleTime: 30_000,
   })
 }
+
+// ─────────────────────────────────────────────────────────────── built-in entity pages
+
+/**
+ * A page of a built-in entity.
+ *
+ * NO FILTER IS SENT. The list screen already filters and sorts what it holds, and a screen that
+ * pushed its search box to the server would show a spinner on every keystroke over a page it
+ * could have filtered in the browser. The server's filter is for the case this does not cover —
+ * a list too long for one page — and that is the caller's decision, not this hook's.
+ */
+export function useEntityPage(
+  entity: C.EntityKind | null,
+  limit = 200,
+): UseQueryResult<C.RecordPage> {
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useQuery({
+    queryKey: keys.entities.page(tenantId, entity ?? 'none', limit),
+    queryFn: ({ signal }) =>
+      call.read<C.RecordPage, C.ReadEntityPage>(
+        '/entities',
+        { entity: entity!, filter: null, limit, after: null },
+        signal,
+      ),
+    enabled: entity !== null,
+    staleTime: 15_000,
+  })
+}

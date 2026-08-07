@@ -13,9 +13,11 @@ import {
   TextField,
 } from '@/design/primitives'
 import type { Column } from '@/design/primitives'
+import { useEntityPage } from '@/api/queries/hooks'
 import { modelFor, optionsFor } from '@/fixtures/objects'
 import type { RecordRow } from '@/fixtures/objects'
 import { isNumeric, renderCell } from './RecordCell'
+import { entityOf, toRows } from './liveRecords'
 import styles from './ListScreen.module.css'
 
 /**
@@ -38,17 +40,46 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
 
   const stages = model.stageField ? optionsFor(model, model.stageField) : []
 
+  // Four of the seven objects are tables this build has; the server pages those. The rest are
+  // the prototype's, and saying so on the screen is better than a list that looks live and is not.
+  const entity = entityOf(objectKey)
+  const page = useEntityPage(entity)
+  const live = entity !== null && page.data !== undefined
+
+  // Contacts and opportunities carry an account id. The accounts page answers what it is called,
+  // and it is one cached request rather than one per row.
+  const accounts = useEntityPage(entity === 'Contact' || entity === 'Opportunity' ? 'Account' : null)
+
+  const accountNames = useMemo(() => {
+    const names = new Map<string, string>()
+
+    for (const record of accounts.data?.records ?? []) {
+      const name = record.values['name']
+
+      if (name !== null && name !== undefined) {
+        names.set(record.recordId, name)
+      }
+    }
+
+    return names
+  }, [accounts.data])
+
+  const source = useMemo(
+    () => (live ? toRows(objectKey, model, page.data!.records, accountNames) : model.records),
+    [live, objectKey, model, page.data, accountNames],
+  )
+
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase()
 
-    return model.records.filter((record) => {
+    return source.filter((record) => {
       if (stage !== 'all' && model.stageField && record[model.stageField] !== stage) return false
       if (term === '') return true
       // Every field, not just the first column: a list whose search only looked at the name is a
       // list you cannot use to find the account somebody mentioned on the telephone.
       return Object.values(record).some((value) => String(value ?? '').toLowerCase().includes(term))
     })
-  }, [model, search, stage])
+  }, [source, model.stageField, search, stage])
 
   const columns: readonly Column<RecordRow>[] = model.listCols
     .filter((name) => !hidden.includes(name))
@@ -68,7 +99,16 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
       <PageHeader
         bar
         small
-        eyebrow={`${rows.length} of ${model.records.length} · All ${model.plural.toLowerCase()}`}
+        eyebrow={
+          `${rows.length} of ${source.length} · ` +
+          (entity === null
+            ? 'sample data'
+            : page.isPending
+              ? 'reading…'
+              : page.isError
+                ? 'sample data — the server did not answer'
+                : `live ${entity.toLowerCase()}s`)
+        }
         title={model.plural}
         actions={
           <>
