@@ -35,6 +35,7 @@ namespace Crm;
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     UseStringEnumConverter = true)]
+[JsonSerializable(typeof(SeedDocument))]
 [JsonSerializable(typeof(CaptureLead))]
 [JsonSerializable(typeof(LeadCaptured))]
 [JsonSerializable(typeof(LeadCreated))]

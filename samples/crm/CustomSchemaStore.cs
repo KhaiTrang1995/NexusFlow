@@ -303,7 +303,8 @@ public sealed class CustomSchemaStore
     /// <param name="json">The validated document.</param>
     /// <param name="now">The invocation's instant.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
-    public async ValueTask WriteRecordAsync(
+    /// <returns>Whether a row was written, rather than one with that id already existing.</returns>
+    public async ValueTask<bool> WriteRecordAsync(
         string? tenantId,
         Guid id,
         Guid objectId,
@@ -324,7 +325,7 @@ public sealed class CustomSchemaStore
         Add(command, "values", NpgsqlDbType.Text, json);
         Add(command, "now", NpgsqlDbType.TimestampTz, now);
 
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) == 1;
     }
 
     /// <summary>Joins two records, or reports that the cardinality refused it.</summary>

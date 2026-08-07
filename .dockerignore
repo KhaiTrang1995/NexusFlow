@@ -1,0 +1,30 @@
+# What never belongs in a build context.
+#
+# Two reasons, and the second is the one that matters. Speed: bin/ and obj/ across forty projects
+# is most of the bytes the daemon would otherwise copy. Secrecy: a build context is readable by
+# every layer of the build, and `.env`, `.git` and a stray `*.pem` are exactly what an image
+# accidentally ships when somebody adds `COPY . .` later.
+
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/.vs/
+**/.vscode/
+**/TestResults/
+
+.git/
+.github/
+.env
+.env.*
+!.env.example
+
+**/*.user
+**/*.pem
+**/*.key
+**/*.pfx
+**/secrets.json
+
+docs/
+benchmarks/
+*.md

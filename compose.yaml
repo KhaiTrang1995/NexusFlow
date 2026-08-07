@@ -1,0 +1,185 @@
+# The CRM sample, end to end: a database, the API, and the web client in front of both.
+#
+#   cp .env.example .env      # then put a real password in it
+#   docker compose up --build
+#   open http://localhost:8080
+#
+# WHAT THIS IS ARRANGED AROUND. Three properties, in the order they get broken in practice:
+#
+#   1. No default credential anywhere. `${POSTGRES_PASSWORD:?…}` refuses to start rather than
+#      falling back to `postgres`, because a default password is the one that reaches production.
+#   2. Nothing is exposed that does not need to be. Only the web client publishes a port; the API
+#      and the database are reachable on the compose network and nowhere else. A `ports:` entry
+#      on the database is a listener on the developer's machine, and on some networks that is a
+#      listener on the office.
+#   3. Every container runs unprivileged, on a read-only root filesystem, with every capability
+#      dropped and no way to acquire one. What a process cannot do, a bug in it cannot do either.
+#
+# Add a broker with `--profile broker`. The application starts without one — see UnpublishedOutbox.
+
+name: flowx-crm
+
+services:
+  # --------------------------------------------------------------------------------- database
+
+  db:
+    image: postgres:16.4-alpine
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: crm
+      POSTGRES_USER: crm
+      # No default. Compose refuses to start if it is unset, which is the whole point.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env — there is no default}
+      # scram-sha-256 for connections and for the initdb superuser alike. The image's default is
+      # trust for local socket connections, which is how a container ends up authenticating
+      # nobody.
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+
+    # Deliberately no `ports:`. Reach it with `docker compose exec db psql -U crm crm`.
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+    healthcheck:
+      # `-U crm` matters: without it pg_isready asks about the root user and answers "accepting
+      # connections" while the database this application needs is still being created.
+      test: ["CMD-SHELL", "pg_isready -U crm -d crm"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # setuid is how the entrypoint drops from root to postgres, and initdb needs to own its
+    # directory. These two are the whole of what it keeps.
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+
+  # --------------------------------------------------------------------------------- api
+
+  api:
+    build:
+      context: .
+      dockerfile: samples/crm/Dockerfile
+    restart: unless-stopped
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    environment:
+      # SSL Mode=Disable is honest here and would not be outside: this connection never leaves
+      # the compose network. Pointing FLOWX_POSTGRES_CONNECTION at a managed database means
+      # SSL Mode=VerifyFull, and nothing else in this file changes.
+      FLOWX_POSTGRES_CONNECTION: "Host=db;Port=5432;Database=crm;Username=crm;Password=${POSTGRES_PASSWORD:?};SSL Mode=Disable;Include Error Detail=false"
+      # Unset by default. `docker compose --profile broker up` and the value in .env.example turn
+      # the three lead.created subscriptions on; without it they stay silent and nothing else
+      # changes.
+      FLOWX_RABBITMQ_CONNECTION: "${FLOWX_RABBITMQ_CONNECTION:-}"
+      # Empty on purpose: the client is served from the same origin by the web service, so no
+      # browser ever sends this application a cross-origin request. Set it only if you point a
+      # client at the API directly.
+      FLOWX_CORS_ORIGINS: ""
+      ASPNETCORE_ENVIRONMENT: Development
+      # The starting state. Remove this line and the container starts with an empty tenant.
+      CRM_SEED_FILE: /seed/northwind.json
+
+    volumes:
+      # Read-only: the application reads this file and has no business writing it.
+      - ./samples/crm/seed:/seed:ro
+
+    # Not published. The web service reaches it as `api:8080` over the compose network.
+    expose:
+      - "8080"
+
+    healthcheck:
+      # The runtime asking itself, because a chiselled image has no shell and no curl — and
+      # installing one to reach a probe would undo the reason the image was chosen. It asks
+      # /health/ready, so a container is healthy when its schema is at this build's version and
+      # not merely when the process is up.
+      test: ["CMD", "dotnet", "/app/Crm.dll", "--healthcheck"]
+      interval: 15s
+      timeout: 10s
+      # Long enough for two migrators and, when one is configured, the seed.
+      start_period: 45s
+      retries: 3
+
+    read_only: true
+    tmpfs:
+      # The only writable path the runtime needs, and it is gone when the container stops.
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # --------------------------------------------------------------------------------- web
+
+  web:
+    build:
+      context: .
+      dockerfile: samples/crm-web/Dockerfile
+    restart: unless-stopped
+
+    depends_on:
+      # `service_healthy` now that the API has a probe: the client is not served until the
+      # schema behind it is the one this build writes against.
+      api:
+        condition: service_healthy
+
+    # The one published port. Bound to the loopback address rather than every interface: on a
+    # laptop on a shared network, `8080:8080` is the whole CRM on the office wifi.
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+      - /var/cache/nginx:size=32m
+      - /var/run:size=1m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # --------------------------------------------------------------------------------- broker
+
+  broker:
+    profiles: ["broker"]
+    image: rabbitmq:4.0-alpine
+    restart: unless-stopped
+
+    environment:
+      RABBITMQ_DEFAULT_USER: crm
+      # `:?` rather than a default, same as the database. Compose interpolates the whole file
+      # before it selects profiles, so this is required whenever a .env exists at all — which is
+      # the right way round: the file that configures the stack states every secret it needs.
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env — there is no default}
+
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  db-data:

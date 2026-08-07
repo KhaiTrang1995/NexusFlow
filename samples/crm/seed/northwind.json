@@ -1,0 +1,162 @@
+{
+  "tenant": "crm-northwind",
+  "metadata": {
+    "objects": [
+      { "alias": "project", "name": "project", "label": "Delivery Project" }
+    ],
+    "fields": [
+      {
+        "alias": "account_segment",
+        "entity": "Account",
+        "target": null,
+        "name": "segment",
+        "label": "Segment",
+        "type": "Picklist",
+        "required": false,
+        "options": [
+          { "value": "strategic", "label": "Strategic" },
+          { "value": "enterprise", "label": "Enterprise" },
+          { "value": "mid_market", "label": "Mid-market" }
+        ]
+      },
+      {
+        "alias": "project_code",
+        "entity": null,
+        "target": "project",
+        "name": "code",
+        "label": "Code",
+        "type": "Text",
+        "required": true,
+        "options": null
+      },
+      {
+        "alias": "project_status",
+        "entity": null,
+        "target": "project",
+        "name": "status",
+        "label": "Status",
+        "type": "Picklist",
+        "required": true,
+        "options": [
+          { "value": "planned", "label": "Planned" },
+          { "value": "running", "label": "Running" },
+          { "value": "done", "label": "Done" }
+        ]
+      }
+    ],
+    "relationships": [],
+    "processes": [
+      {
+        "alias": "pipeline",
+        "appliesTo": "Opportunity",
+        "version": 1,
+        "stages": [
+          { "name": "Discovery", "terminal": false },
+          { "name": "Qualification", "terminal": false },
+          { "name": "Proposal", "terminal": false },
+          { "name": "Negotiation", "terminal": false },
+          { "name": "Closed", "terminal": true }
+        ],
+        "transitions": [
+          { "from": "Discovery", "to": "Qualification", "trigger": "discovered" },
+          { "from": "Qualification", "to": "Proposal", "trigger": "qualified" },
+          { "from": "Proposal", "to": "Negotiation", "trigger": "quoted" },
+          { "from": "Negotiation", "to": "Closed", "trigger": "signed" }
+        ]
+      }
+    ]
+  },
+  "data": {
+    "accounts": [
+      {
+        "alias": "northwind",
+        "name": "Northwind Systems",
+        "industry": "SaaS",
+        "lifecycle": "Customer",
+        "region": "NA",
+        "owner": "33333333-3333-3333-3333-333333333333"
+      },
+      {
+        "alias": "meridian",
+        "name": "Meridian Logistics",
+        "industry": "Logistics",
+        "lifecycle": "Prospect",
+        "region": "EMEA",
+        "owner": "33333333-3333-3333-3333-333333333333"
+      }
+    ],
+    "contacts": [
+      {
+        "alias": "elena",
+        "account": "northwind",
+        "fullName": "Elena Vargas",
+        "email": "e.vargas@northwind.example",
+        "phone": "+1 415 555 0142",
+        "primary": true
+      },
+      {
+        "alias": "ron",
+        "account": "meridian",
+        "fullName": "Ron Petrov",
+        "email": "r.petrov@meridian.example",
+        "phone": null,
+        "primary": true
+      }
+    ],
+    "opportunities": [
+      {
+        "alias": "northwind_expansion",
+        "account": "northwind",
+        "primaryContact": "elena",
+        "name": "Northwind — Platform Expansion",
+        "amount": 184000,
+        "currency": "EUR",
+        "stage": "pipeline:Negotiation",
+        "probability": 70,
+        "expectedClose": "2026-09-30",
+        "owner": "33333333-3333-3333-3333-333333333333"
+      },
+      {
+        "alias": "meridian_pilot",
+        "account": "meridian",
+        "primaryContact": "ron",
+        "name": "Meridian — Compliance Pilot",
+        "amount": 42000,
+        "currency": "EUR",
+        "stage": "pipeline:Qualification",
+        "probability": 25,
+        "expectedClose": "2026-11-16",
+        "owner": "33333333-3333-3333-3333-333333333333"
+      }
+    ],
+    "leads": [
+      {
+        "alias": "acme_freight",
+        "company": "Acme Freight",
+        "contactName": "Dana Ilić",
+        "email": "d.ilic@acme.example",
+        "source": "Event",
+        "status": "Working",
+        "score": 55,
+        "owner": "33333333-3333-3333-3333-333333333333"
+      },
+      {
+        "alias": "borealis",
+        "company": "Borealis Health",
+        "contactName": "Sam Okonkwo",
+        "email": "s.okonkwo@borealis.example",
+        "source": "Web",
+        "status": "New",
+        "score": 20,
+        "owner": null
+      }
+    ],
+    "records": [
+      {
+        "alias": "atlas",
+        "target": "project",
+        "values": { "code": "P-ATLAS", "status": "running" }
+      }
+    ]
+  }
+}
