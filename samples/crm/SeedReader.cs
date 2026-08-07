@@ -86,6 +86,7 @@ public static class SeedReader
                 BusinessHours = metadata.BusinessHours ?? [],
                 SlaPolicies = metadata.SlaPolicies ?? [],
                 Campaigns = metadata.Campaigns ?? [],
+                ApprovalProcesses = metadata.ApprovalProcesses ?? [],
             },
             Data = data with
             {
@@ -106,7 +107,7 @@ public static class SeedReader
     private static class Empty
     {
         public static readonly SeedMetadata Metadata =
-            new([], [], [], [], [], [], [], [], [], [], [], [], []);
+            new([], [], [], [], [], [], [], [], [], [], [], [], [], []);
 
         public static readonly SeedData Data = new([], [], [], [], [], [], [], [], []);
     }
@@ -174,6 +175,7 @@ public static class SeedReader
             ?? Collect("territories", metadata.Territories, item => item.Alias, [])
             ?? Collect("slaPolicies", metadata.SlaPolicies, item => item.Alias, [])
             ?? Collect("campaigns", metadata.Campaigns, item => item.Alias, [])
+            ?? Collect("approvalProcesses", metadata.ApprovalProcesses, item => item.Alias, [])
             ?? Collect("activities", data.Activities, item => item.Alias, [])
             ?? Collect("quotes", data.Quotes, item => item.Alias, quotes)
             ?? Collect("orders", data.Orders, item => item.Alias, [])
@@ -551,6 +553,48 @@ public static class SeedReader
             {
                 return Result.Fail<SeedDocument>(
                     SeedErrors.UnknownReference("order " + order.Alias, order.Account));
+            }
+        }
+
+        foreach (var process in metadata.ApprovalProcesses)
+        {
+            if (!CustomValues.IsUsableName(process.Name))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.NameIsNotUsable("approvalProcess", process.Name));
+            }
+
+            if (process.Steps.Count == 0)
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.OutOfRange(process.Alias, "steps", "at least one"));
+            }
+
+            // The same closed list the capability checks. Saying it here makes a typo a sentence
+            // about the file rather than a refusal at start-up with the seed half applied.
+            foreach (var criterion in process.Criteria)
+            {
+                if (!ApprovalAttributes.Of(process.Subject)
+                        .Contains(criterion.Attribute, StringComparer.Ordinal))
+                {
+                    return Result.Fail<SeedDocument>(SeedErrors.UnknownReference(
+                        $"approvalProcess {process.Alias} criterion", criterion.Attribute));
+                }
+            }
+
+            foreach (var step in process.Steps)
+            {
+                // A named approver with no name, or the submitter's manager with one, are both
+                // a step nobody can resolve at the moment somebody needs it approved.
+                var needsApprover = step.Kind is not ApproverKind.SubmittersManager;
+
+                if (needsApprover != (step.Approver is { Length: > 0 }))
+                {
+                    return Result.Fail<SeedDocument>(SeedErrors.OutOfRange(
+                        process.Alias,
+                        $"step '{step.Label}'",
+                        needsApprover ? "given an approver" : "given no approver"));
+                }
             }
         }
 

@@ -179,6 +179,43 @@ public sealed class SeedReaderTests
         read.Error!.Code.ShouldBe("crm.seed_out_of_range");
     }
 
+    /// <summary>A criterion on an attribute its subject does not have is refused.</summary>
+    /// <remarks>
+    /// The list is closed and the same one the capability checks. Reading it here turns a typo
+    /// into a sentence about the file, rather than a process that is published, matches nothing,
+    /// and looks exactly like a threshold nobody has crossed yet.
+    /// </remarks>
+    [Fact]
+    public void AnApprovalCriterionOnAnUnknownAttributeIsRefused()
+    {
+        var read = SeedReader.Read(
+            Utf8(Fixture.Replace(
+                "\"attribute\": \"discount\"", "\"attribute\": \"amount\"", StringComparison.Ordinal)));
+
+        read.IsSuccess.ShouldBeFalse("amount is an opportunity's attribute, not a quote's.");
+        read.Error!.Code.ShouldBe("crm.seed_reference_unknown");
+        read.Error.Message.ShouldContain("amount");
+    }
+
+    /// <summary>A step whose kind and approver disagree is refused.</summary>
+    /// <remarks>
+    /// Both halves fail at the moment somebody needs the thing approved, which is the worst time
+    /// to find out: a role holder with no role names nobody, and the submitter's manager with a
+    /// name written next to it is two answers to one question.
+    /// </remarks>
+    [Fact]
+    public void AnApprovalStepThatNamesNobodyIsRefused()
+    {
+        var read = SeedReader.Read(
+            Utf8(Fixture.Replace(
+                "\"kind\": \"RoleHolder\", \"approver\": \"Director\"",
+                "\"kind\": \"RoleHolder\", \"approver\": null",
+                StringComparison.Ordinal)));
+
+        read.IsSuccess.ShouldBeFalse();
+        read.Error!.Code.ShouldBe("crm.seed_out_of_range");
+    }
+
     // ------------------------------------------------------------------------------- fixtures
 
     private static byte[] Utf8(string text) => Encoding.UTF8.GetBytes(text);
@@ -219,6 +256,19 @@ public sealed class SeedReaderTests
                 "transitions": [
                   { "from": "Discovery", "to": "Proposal", "trigger": "qualified" },
                   { "from": "Proposal", "to": "Closed", "trigger": "signed" }
+                ]
+              }
+            ],
+            "approvalProcesses": [
+              {
+                "alias": "big_discount", "name": "big_discount", "label": "Discount over 200",
+                "subject": "Quote", "priority": 10,
+                "criteria": [
+                  { "attribute": "discount", "operator": "GreaterThan", "value": "200" }
+                ],
+                "steps": [
+                  { "label": "The submitter's manager", "kind": "SubmittersManager", "approver": null },
+                  { "label": "Sales director", "kind": "RoleHolder", "approver": "Director" }
                 ]
               }
             ]

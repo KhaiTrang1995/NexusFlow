@@ -26,21 +26,29 @@ public sealed class SeedApplier
 {
     private readonly SeedStore _seeds;
     private readonly CustomSchemaStore _schema;
+    private readonly ApprovalStore _approvals;
     private readonly TimeProvider _clock;
 
     /// <summary>Creates the applier.</summary>
     /// <param name="seeds">Writes the built-in rows and the process.</param>
     /// <param name="schema">Writes the custom objects, fields, relationships and records.</param>
+    /// <param name="approvals">Writes the approval processes, through the store that owns them.</param>
     /// <param name="clock">Supplies the instant every written row is stamped with.</param>
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
-    public SeedApplier(SeedStore seeds, CustomSchemaStore schema, TimeProvider clock)
+    public SeedApplier(
+        SeedStore seeds,
+        CustomSchemaStore schema,
+        ApprovalStore approvals,
+        TimeProvider clock)
     {
         ArgumentNullException.ThrowIfNull(seeds);
         ArgumentNullException.ThrowIfNull(schema);
+        ArgumentNullException.ThrowIfNull(approvals);
         ArgumentNullException.ThrowIfNull(clock);
 
         _seeds = seeds;
         _schema = schema;
+        _approvals = approvals;
         _clock = clock;
     }
 
@@ -114,6 +122,29 @@ public sealed class SeedApplier
         {
             outcome = outcome.And(
                 await _seeds.WriteCampaignAsync(tenant, campaign, now, ct).ConfigureAwait(false));
+        }
+
+        // Through ApprovalStore rather than through a statement of this module's own: it already
+        // writes the process, its criteria and its steps in one transaction, and a second
+        // spelling of that would be a second thing to keep right.
+        foreach (var approval in document.Metadata.ApprovalProcesses)
+        {
+            var written = await _approvals.SaveProcessAsync(
+                tenant,
+                SeedIds.For(tenant, "approval", approval.Alias),
+                new DefineApprovalProcess(
+                    approval.Name,
+                    approval.Label,
+                    approval.Subject,
+                    approval.Priority,
+                    [.. approval.Criteria.Select(criterion =>
+                        new ApprovalCriterion(criterion.Attribute, criterion.Operator, criterion.Value))],
+                    [.. approval.Steps.Select(step =>
+                        new ApprovalStepDefinition(step.Label, step.Kind, step.Approver))]),
+                now,
+                ct).ConfigureAwait(false);
+
+            outcome = outcome.And(written is not null);
         }
 
         foreach (var process in document.Metadata.Processes)

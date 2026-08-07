@@ -411,6 +411,55 @@
         "endsOn": "2026-09-30",
         "budget": 8000
       }
+    ],
+    "approvalProcesses": [
+      {
+        "alias": "big_discount",
+        "name": "big_discount",
+        "label": "Discount over 20%",
+        "subject": "Quote",
+        "priority": 10,
+        "criteria": [
+          {
+            "attribute": "discount",
+            "operator": "GreaterThan",
+            "value": "20000"
+          }
+        ],
+        "steps": [
+          {
+            "label": "The submitter's manager",
+            "kind": "SubmittersManager",
+            "approver": null
+          },
+          {
+            "label": "Sales director",
+            "kind": "RoleHolder",
+            "approver": "Director"
+          }
+        ]
+      },
+      {
+        "alias": "large_deal",
+        "name": "large_deal",
+        "label": "Opportunity over 500k",
+        "subject": "Opportunity",
+        "priority": 20,
+        "criteria": [
+          {
+            "attribute": "amount",
+            "operator": "GreaterThan",
+            "value": "500000"
+          }
+        ],
+        "steps": [
+          {
+            "label": "Sales director",
+            "kind": "RoleHolder",
+            "approver": "Director"
+          }
+        ]
+      }
     ]
   },
   "data": {
