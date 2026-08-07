@@ -3,7 +3,9 @@ import { useNavigate } from '@tanstack/react-router'
 import { Button, ButtonGroup, Page, PageHeader, Tag } from '@/design/primitives'
 import { useToast } from '@/app/ToastProvider'
 import { fullMoney, money } from '@/lib/format'
+import { useEntityPage } from '@/api/queries/hooks'
 import { modelFor } from '@/fixtures/objects'
+import { toRows } from './liveRecords'
 import type { RecordRow } from '@/fixtures/objects'
 import styles from './KanbanScreen.module.css'
 
@@ -38,9 +40,20 @@ export function KanbanScreen() {
 
   const stageOf = (row: RecordRow) => moved[row.id] ?? String(row['stage'])
 
+  // Live opportunities, grouped by the stage the configured process put them in. The stage is a
+  // column of the answer without being a column of the table — the server merges its name into
+  // the projection, because an identifier is not something a board can group by.
+  const page = useEntityPage('Opportunity')
+  const live = page.data !== undefined
+
+  const source = useMemo(
+    () => (live ? toRows('opportunity', model, page.data!.records) : model.records),
+    [live, model, page.data],
+  )
+
   const rows = useMemo(
-    () => model.records.filter((row) => scope === 'all' || row['owner'] === 'A. Ruiz'),
-    [model.records, scope],
+    () => source.filter((row) => scope === 'all' || row['owner'] === 'A. Ruiz'),
+    [source, scope],
   )
 
   function move(row: RecordRow, direction: -1 | 1) {

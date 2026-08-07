@@ -149,29 +149,65 @@ public sealed class QueryStore
     // The tenant does not appear in the predicate. Row-level security is what scopes this, on all
     // five tables at once, which is the whole argument for the scope being a connection setting
     // rather than a WHERE clause somebody has to remember to write in a sixth place.
+    // WHY THE QUERY IS BUILT FROM to_tsvector RATHER THAN websearch_to_tsquery.
+    //
+    // `websearch_to_tsquery` matches whole lexemes, so somebody typing "north" into a search box
+    // gets nothing until they finish the word "northwind" — which is exactly wrong for the one
+    // surface a person uses by typing. The fix is a prefix query, and the unsafe way to build one
+    // is to append `:*` to the caller's text: their punctuation then becomes tsquery syntax, and
+    // an apostrophe is a runtime error rather than a name.
+    //
+    // So the lexemes come from PostgreSQL itself. `to_tsvector` normalises the phrase and strips
+    // anything that is not a word; `unnest` hands back those lexemes; `quote_literal` makes each
+    // one a literal `to_tsquery` cannot read as an operator. The caller's text stays a bound
+    // parameter throughout — SqlFitnessTests would refuse anything else, and rightly.
+    //
+    // The result is `'north':*` from "north" and `'meri':* & 'log':*` from "meri log": every word
+    // is a prefix, and all of them must match.
+    // WHY THE QUERY IS BUILT FROM to_tsvector RATHER THAN websearch_to_tsquery.
+    //
+    // `websearch_to_tsquery` matches whole lexemes, so somebody typing "north" into a search box
+    // gets nothing until they finish the word "northwind" — exactly wrong for the one surface a
+    // person uses by typing. The fix is a prefix query, and the unsafe way to build one is to
+    // append `:*` to the caller's text: their punctuation then becomes tsquery syntax, and an
+    // apostrophe is a runtime error rather than a name.
+    //
+    // So the lexemes come from PostgreSQL itself. `to_tsvector` normalises the phrase and strips
+    // anything that is not a word; `unnest` hands back those lexemes; `quote_literal` makes each
+    // one a literal `to_tsquery` cannot read as an operator. The caller's text stays a bound
+    // parameter throughout, and the statement stays fixed at build time.
+    //
+    // The result is `'north':*` from "north" and `'meri':* & 'log':*` from "meri log": every word
+    // is a prefix, and all of them must match. Computed once in the CTE rather than ten times.
+    //
+    // The tenant does not appear in the predicate. Row-level security is what scopes this, on all
+    // five tables at once, which is the whole argument for the scope being a connection setting
+    // rather than a WHERE clause somebody has to remember to write in a sixth place.
     private const string SearchEverything = """
+        WITH asked AS (
+            SELECT to_tsquery('simple', (
+                SELECT string_agg(quote_literal(lexeme) || ':*', ' & ')
+                FROM unnest(to_tsvector('simple', @phrase)))) AS query
+        )
         SELECT kind, id, title, rank FROM (
             SELECT 'Lead' AS kind, lead_id AS id, company AS title,
-                   ts_rank(search_document, websearch_to_tsquery('simple', @phrase)) AS rank
-            FROM lead WHERE search_document @@ websearch_to_tsquery('simple', @phrase)
+                   ts_rank(search_document, asked.query) AS rank
+            FROM lead CROSS JOIN asked WHERE search_document @@ asked.query
             UNION ALL
-            SELECT 'Account', account_id, name,
-                   ts_rank(search_document, websearch_to_tsquery('simple', @phrase))
-            FROM account WHERE search_document @@ websearch_to_tsquery('simple', @phrase)
+            SELECT 'Account', account_id, name, ts_rank(search_document, asked.query)
+            FROM account CROSS JOIN asked WHERE search_document @@ asked.query
             UNION ALL
-            SELECT 'Contact', contact_id, full_name,
-                   ts_rank(search_document, websearch_to_tsquery('simple', @phrase))
-            FROM contact WHERE search_document @@ websearch_to_tsquery('simple', @phrase)
+            SELECT 'Contact', contact_id, full_name, ts_rank(search_document, asked.query)
+            FROM contact CROSS JOIN asked WHERE search_document @@ asked.query
             UNION ALL
-            SELECT 'Opportunity', opportunity_id, name,
-                   ts_rank(search_document, websearch_to_tsquery('simple', @phrase))
-            FROM opportunity WHERE search_document @@ websearch_to_tsquery('simple', @phrase)
+            SELECT 'Opportunity', opportunity_id, name, ts_rank(search_document, asked.query)
+            FROM opportunity CROSS JOIN asked WHERE search_document @@ asked.query
             UNION ALL
-            SELECT 'CustomRecord', r.record_id, o.label,
-                   ts_rank(r.search_document, websearch_to_tsquery('simple', @phrase))
+            SELECT 'CustomRecord', r.record_id, o.label, ts_rank(r.search_document, asked.query)
             FROM custom_record r
             JOIN custom_object o ON o.object_id = r.object_id
-            WHERE r.search_document @@ websearch_to_tsquery('simple', @phrase)
+            CROSS JOIN asked
+            WHERE r.search_document @@ asked.query
         ) AS hits
         ORDER BY rank DESC, title
         LIMIT @limit

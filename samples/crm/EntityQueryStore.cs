@@ -78,9 +78,17 @@ public sealed class EntityQueryStore
         LIMIT @limit
         """;
 
+    // The one entity whose row is not the whole answer. `stage_id` is a foreign key into the
+    // configured process, and an identifier is not something a pipeline board can group by or a
+    // person can read — so the stage's *name* is merged into the projection. It is a column of
+    // the answer without being a column of the table, which is why the join is here and the name
+    // is in EntityColumns.Readable.
     private const string OpportunityPage = """
-        SELECT opportunity_id, to_jsonb(o) AS body
-        FROM opportunity o, LATERAL (SELECT to_jsonb(o) AS body) AS projected
+        SELECT opportunity_id,
+               to_jsonb(o) || jsonb_build_object('stage', s.name) AS body
+        FROM opportunity o
+        LEFT JOIN process_stage s ON s.stage_id = o.stage_id,
+        LATERAL (SELECT to_jsonb(o) || jsonb_build_object('stage', s.name) AS body) AS projected
         WHERE (@after IS NULL OR opportunity_id > @after)
         """ + Predicate + """
 

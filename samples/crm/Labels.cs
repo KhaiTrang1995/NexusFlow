@@ -60,7 +60,12 @@ public static class EntityColumns
             ["contact_id", "account_id", "full_name", "email", "phone", "is_primary"],
         _ =>
             ["opportunity_id", "account_id", "primary_contact_id", "name", "amount", "currency",
-             "probability", "expected_close", "outcome", "owner_id", "stage_entered_at"],
+             "probability", "expected_close", "outcome", "owner_id", "stage_entered_at",
+
+             // Not a column of `opportunity`. The store merges the configured process's stage
+             // name into the projection, because an identifier is not something a board can
+             // group by — see EntityQueryStore.OpportunityPage.
+             "stage"],
     };
 
     /// <summary>Which column identifies a row, and therefore orders the keyset.</summary>

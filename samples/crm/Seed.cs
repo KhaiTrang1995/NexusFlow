@@ -44,11 +44,29 @@ public sealed record SeedDocument(
 /// foreign key into it — a seed that wrote rows first would fail on the first opportunity, and
 /// only for tenants whose file happened to contain one.
 /// </param>
+/// <param name="Periods">The fiscal calendar. Everything in the executive surface hangs off it.</param>
+/// <param name="Strategy">The number for a period, and the sentence beside it.</param>
+/// <param name="OrgMembers">The reporting line, which is what decides whose rows a manager sees.</param>
+/// <param name="Kpis">What is measured, and against what.</param>
+/// <param name="Territories">The map.</param>
+/// <param name="Quotas">Somebody's number, per period and per measure.</param>
+/// <param name="BusinessHours">When the desk is open. The SLA clock stops outside these.</param>
+/// <param name="SlaPolicies">What a case of each priority is promised.</param>
+/// <param name="Campaigns">What marketing is running.</param>
 public sealed record SeedMetadata(
     IReadOnlyList<SeedObject> Objects,
     IReadOnlyList<SeedField> Fields,
     IReadOnlyList<SeedRelationship> Relationships,
-    IReadOnlyList<SeedProcess> Processes);
+    IReadOnlyList<SeedProcess> Processes,
+    IReadOnlyList<SeedPeriod> Periods,
+    IReadOnlyList<SeedStrategy> Strategy,
+    IReadOnlyList<SeedOrgMember> OrgMembers,
+    IReadOnlyList<SeedKpi> Kpis,
+    IReadOnlyList<SeedTerritory> Territories,
+    IReadOnlyList<SeedQuota> Quotas,
+    IReadOnlyList<SeedBusinessHours> BusinessHours,
+    IReadOnlyList<SeedSlaPolicy> SlaPolicies,
+    IReadOnlyList<SeedCampaign> Campaigns);
 
 /// <summary>Rows.</summary>
 /// <param name="Accounts">Applied first: contacts and opportunities reference them.</param>
@@ -56,12 +74,14 @@ public sealed record SeedMetadata(
 /// <param name="Opportunities">Third, because one needs both of the above and a stage.</param>
 /// <param name="Leads">Independent of the three, and applied last so a failure above stops sooner.</param>
 /// <param name="Records">Rows of a custom object declared in <see cref="SeedMetadata.Objects"/>.</param>
+/// <param name="Activities">Tasks, calls, meetings and notes against the rows above.</param>
 public sealed record SeedData(
     IReadOnlyList<SeedAccount> Accounts,
     IReadOnlyList<SeedContact> Contacts,
     IReadOnlyList<SeedOpportunity> Opportunities,
     IReadOnlyList<SeedLead> Leads,
-    IReadOnlyList<SeedRecord> Records);
+    IReadOnlyList<SeedRecord> Records,
+    IReadOnlyList<SeedActivity> Activities);
 
 // -------------------------------------------------------------------------------- metadata items
 
@@ -138,6 +158,126 @@ public sealed record SeedStage(string Name, bool Terminal);
 /// <param name="Trigger">What causes it.</param>
 public sealed record SeedTransition(string From, string To, string Trigger);
 
+/// <summary>One period of the fiscal calendar.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Name">The identifier the API takes. Lower case, snake case — <c>fy26_q3</c>.</param>
+/// <param name="Label">What a person sees.</param>
+/// <param name="StartsOn">The first day.</param>
+/// <param name="EndsOn">The last day.</param>
+/// <param name="Parent">The alias of the period this one sits inside, or null.</param>
+/// <remarks>
+/// <strong>Without one of these the executive surface is not empty — it is a 404.</strong> Every
+/// roll-up, scorecard, forecast and quota report is asked for by period name, and a tenant with
+/// no calendar answers <c>crm.period_not_found</c> to all of them. That is the difference between
+/// a screen with nothing on it and a screen that looks broken.
+/// </remarks>
+public sealed record SeedPeriod(
+    string Alias,
+    string Name,
+    string Label,
+    DateOnly StartsOn,
+    DateOnly EndsOn,
+    string? Parent);
+
+/// <summary>The number for a period, and the sentence beside it.</summary>
+/// <param name="Period">The alias of the period.</param>
+/// <param name="Vision">What the number is for, in the executive's own words.</param>
+/// <param name="TargetAmount">The number.</param>
+/// <param name="Currency">Its unit. Three letters.</param>
+public sealed record SeedStrategy(
+    string Period,
+    string Vision,
+    decimal TargetAmount,
+    string Currency);
+
+/// <summary>One person in the reporting line.</summary>
+/// <param name="UserId">Their identifier, which is what a token's subject carries.</param>
+/// <param name="DisplayName">What a person sees.</param>
+/// <param name="Role">What they may see: their own rows, their reports', or everybody's.</param>
+/// <param name="ReportsTo">Whose report they are, or null at the top.</param>
+public sealed record SeedOrgMember(
+    string UserId,
+    string DisplayName,
+    OrgRole Role,
+    string? ReportsTo);
+
+/// <summary>One measured number.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Name">The identifier.</param>
+/// <param name="Label">What a person sees.</param>
+/// <param name="Source">Which of the five counts it reads. A closed set, not an expression.</param>
+/// <param name="Target">What it is held to.</param>
+/// <param name="Direction">Whether more is better.</param>
+public sealed record SeedKpi(
+    string Alias,
+    string Name,
+    string Label,
+    KpiSource Source,
+    decimal Target,
+    KpiDirection Direction);
+
+/// <summary>One territory.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Name">The identifier.</param>
+/// <param name="Label">What a person sees.</param>
+/// <param name="Priority">Which wins when two would both claim a row. Lower is stronger.</param>
+public sealed record SeedTerritory(string Alias, string Name, string Label, int Priority);
+
+/// <summary>Somebody's number.</summary>
+/// <param name="Period">The alias of the period.</param>
+/// <param name="UserId">Whose.</param>
+/// <param name="Measure">Of what.</param>
+/// <param name="Target">How much.</param>
+/// <param name="RampFactor">
+/// What fraction of it counts, for somebody who started part-way through. Between zero and one.
+/// </param>
+public sealed record SeedQuota(
+    string Period,
+    string UserId,
+    QuotaMeasure Measure,
+    decimal Target,
+    decimal RampFactor);
+
+/// <summary>When the desk is open on one day of the week.</summary>
+/// <param name="DayOfWeek">Nought is Sunday, as PostgreSQL counts.</param>
+/// <param name="OpensAt">Local opening time, <c>HH:mm</c>.</param>
+/// <param name="ClosesAt">Local closing time.</param>
+public sealed record SeedBusinessHours(int DayOfWeek, TimeOnly OpensAt, TimeOnly ClosesAt);
+
+/// <summary>What a case of one priority is promised.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Name">The identifier.</param>
+/// <param name="Label">What a person sees.</param>
+/// <param name="Priority">Which cases it governs.</param>
+/// <param name="FirstResponseMinutes">How long until somebody answers.</param>
+/// <param name="ResolutionMinutes">How long until it is closed.</param>
+/// <param name="BusinessHoursOnly">Whether the clock stops when the desk shuts.</param>
+public sealed record SeedSlaPolicy(
+    string Alias,
+    string Name,
+    string Label,
+    CasePriority Priority,
+    int FirstResponseMinutes,
+    int ResolutionMinutes,
+    bool BusinessHoursOnly);
+
+/// <summary>One campaign.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Name">The identifier.</param>
+/// <param name="Label">What a person sees.</param>
+/// <param name="Channel">How it reaches people.</param>
+/// <param name="StartsOn">The first day.</param>
+/// <param name="EndsOn">The last day.</param>
+/// <param name="Budget">What it was given.</param>
+public sealed record SeedCampaign(
+    string Alias,
+    string Name,
+    string Label,
+    CampaignChannel Channel,
+    DateOnly StartsOn,
+    DateOnly EndsOn,
+    decimal Budget);
+
 // -------------------------------------------------------------------------------- data items
 
 /// <summary>A row of <c>account</c>.</summary>
@@ -211,6 +351,28 @@ public sealed record SeedLead(
     LeadStatus Status,
     int Score,
     Guid? Owner);
+
+/// <summary>A task, call, meeting or note against one of the rows above.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Kind">Which of the four.</param>
+/// <param name="Subject">What it is about.</param>
+/// <param name="RelatesToKind">Which entity it hangs off.</param>
+/// <param name="RelatesTo">The alias of the row, in that entity's collection.</param>
+/// <param name="Owner">Whose it is.</param>
+/// <param name="DueInDays">
+/// When it is due, counted from the moment the seed is applied. A date would be in the past by
+/// the time anybody looked at the sample, and an overdue-task sweep would escalate every one.
+/// </param>
+/// <param name="Status">Where it has got to. Never <c>Completed</c>; see the reader.</param>
+public sealed record SeedActivity(
+    string Alias,
+    ActivityKind Kind,
+    string Subject,
+    EntityKind RelatesToKind,
+    string RelatesTo,
+    Guid Owner,
+    int DueInDays,
+    ActivityStatus Status);
 
 /// <summary>A row of a custom object.</summary>
 /// <param name="Alias">Its name in this file.</param>

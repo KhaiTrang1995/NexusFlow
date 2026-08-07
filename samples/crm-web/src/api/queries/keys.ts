@@ -57,5 +57,7 @@ export const keys = {
     all: (tenant: string) => ['entities', tenant] as const,
     page: (tenant: string, entity: string, limit: number) =>
       ['entities', tenant, entity, limit] as const,
+    record: (tenant: string, entity: string, id: string) =>
+      ['entities', tenant, entity, 'record', id] as const,
   },
 } as const
