@@ -775,3 +775,45 @@ export interface TaskCreated {
   activityId: string
   dueAt: string | null
 }
+
+// ─────────────────────────────────────────────────────────────── editing and quoting
+
+export interface SetCustomFields {
+  kind: EntityKind
+  id: string
+  /** Only the fields being changed. Absent is "leave it"; null is "clear it". */
+  values: Record<string, string | null>
+}
+
+export interface CustomFieldsSet {
+  id: string
+  values: Record<string, string | null>
+}
+
+export interface Money {
+  amount: number
+  currency: string
+}
+
+export interface QuoteRequestLine {
+  sku: string
+  quantity: number
+  unitPrice: Money
+}
+
+export interface IssueQuote {
+  opportunityId: string
+  lines: QuoteRequestLine[]
+  discount: number
+  validForDays: number
+}
+
+export type QuoteStatus = 'Draft' | 'Issued' | 'Accepted' | 'Rejected' | 'Expired'
+
+export interface QuoteIssued {
+  quoteId: string
+  total: Money
+  status: QuoteStatus
+  /** True when the discount crossed the threshold, so it is Draft until a manager approves. */
+  needsApproval: boolean
+}
