@@ -2,7 +2,11 @@
   "tenant": "crm-northwind",
   "metadata": {
     "objects": [
-      { "alias": "project", "name": "project", "label": "Delivery Project" }
+      {
+        "alias": "project",
+        "name": "project",
+        "label": "Delivery Project"
+      }
     ],
     "fields": [
       {
@@ -14,9 +18,18 @@
         "type": "Picklist",
         "required": false,
         "options": [
-          { "value": "strategic", "label": "Strategic" },
-          { "value": "enterprise", "label": "Enterprise" },
-          { "value": "mid_market", "label": "Mid-market" }
+          {
+            "value": "strategic",
+            "label": "Strategic"
+          },
+          {
+            "value": "enterprise",
+            "label": "Enterprise"
+          },
+          {
+            "value": "mid_market",
+            "label": "Mid-market"
+          }
         ]
       },
       {
@@ -38,9 +51,18 @@
         "type": "Picklist",
         "required": true,
         "options": [
-          { "value": "planned", "label": "Planned" },
-          { "value": "running", "label": "Running" },
-          { "value": "done", "label": "Done" }
+          {
+            "value": "planned",
+            "label": "Planned"
+          },
+          {
+            "value": "running",
+            "label": "Running"
+          },
+          {
+            "value": "done",
+            "label": "Done"
+          }
         ]
       }
     ],
@@ -51,18 +73,343 @@
         "appliesTo": "Opportunity",
         "version": 1,
         "stages": [
-          { "name": "Discovery", "terminal": false },
-          { "name": "Qualification", "terminal": false },
-          { "name": "Proposal", "terminal": false },
-          { "name": "Negotiation", "terminal": false },
-          { "name": "Closed", "terminal": true }
+          {
+            "name": "Prospecting",
+            "terminal": false
+          },
+          {
+            "name": "Discovery",
+            "terminal": false
+          },
+          {
+            "name": "Qualify",
+            "terminal": false
+          },
+          {
+            "name": "Solution Fit",
+            "terminal": false
+          },
+          {
+            "name": "Proposal",
+            "terminal": false
+          },
+          {
+            "name": "Negotiation",
+            "terminal": false
+          },
+          {
+            "name": "Contracting",
+            "terminal": false
+          },
+          {
+            "name": "Closed Won",
+            "terminal": true
+          },
+          {
+            "name": "Closed Lost",
+            "terminal": true
+          }
         ],
         "transitions": [
-          { "from": "Discovery", "to": "Qualification", "trigger": "discovered" },
-          { "from": "Qualification", "to": "Proposal", "trigger": "qualified" },
-          { "from": "Proposal", "to": "Negotiation", "trigger": "quoted" },
-          { "from": "Negotiation", "to": "Closed", "trigger": "signed" }
+          {
+            "from": "Prospecting",
+            "to": "Discovery",
+            "trigger": "engaged"
+          },
+          {
+            "from": "Discovery",
+            "to": "Qualify",
+            "trigger": "discovered"
+          },
+          {
+            "from": "Qualify",
+            "to": "Solution Fit",
+            "trigger": "qualified"
+          },
+          {
+            "from": "Solution Fit",
+            "to": "Proposal",
+            "trigger": "fit_agreed"
+          },
+          {
+            "from": "Proposal",
+            "to": "Negotiation",
+            "trigger": "quoted"
+          },
+          {
+            "from": "Negotiation",
+            "to": "Contracting",
+            "trigger": "terms_agreed"
+          },
+          {
+            "from": "Contracting",
+            "to": "Closed Won",
+            "trigger": "signed"
+          },
+          {
+            "from": "Negotiation",
+            "to": "Closed Lost",
+            "trigger": "lost"
+          },
+          {
+            "from": "Proposal",
+            "to": "Closed Lost",
+            "trigger": "declined"
+          }
         ]
+      }
+    ],
+    "periods": [
+      {
+        "alias": "fy26",
+        "name": "fy26",
+        "label": "FY26",
+        "startsOn": "2025-10-01",
+        "endsOn": "2026-09-30",
+        "parent": null
+      },
+      {
+        "alias": "fy26_q3",
+        "name": "fy26_q3",
+        "label": "FY26 Q3",
+        "startsOn": "2026-04-01",
+        "endsOn": "2026-06-30",
+        "parent": "fy26"
+      },
+      {
+        "alias": "fy26_q4",
+        "name": "fy26_q4",
+        "label": "FY26 Q4",
+        "startsOn": "2026-07-01",
+        "endsOn": "2026-09-30",
+        "parent": "fy26"
+      }
+    ],
+    "strategy": [
+      {
+        "period": "fy26_q4",
+        "vision": "Win the logistics segment by being the only platform their auditors will sign off.",
+        "targetAmount": 1250000,
+        "currency": "EUR"
+      },
+      {
+        "period": "fy26_q3",
+        "vision": "Prove the platform in two reference accounts before the segment push.",
+        "targetAmount": 900000,
+        "currency": "EUR"
+      }
+    ],
+    "orgMembers": [
+      {
+        "userId": "director-northwind-1",
+        "displayName": "P. Almeida",
+        "role": "Director",
+        "reportsTo": null
+      },
+      {
+        "userId": "manager-northwind-1",
+        "displayName": "J. Okafor",
+        "role": "Manager",
+        "reportsTo": "director-northwind-1"
+      },
+      {
+        "userId": "rep-northwind-1",
+        "displayName": "A. Ruiz",
+        "role": "Representative",
+        "reportsTo": "manager-northwind-1"
+      },
+      {
+        "userId": "rep-northwind-2",
+        "displayName": "M. Lindqvist",
+        "role": "Representative",
+        "reportsTo": "manager-northwind-1"
+      }
+    ],
+    "kpis": [
+      {
+        "alias": "won_revenue",
+        "name": "won_revenue",
+        "label": "Won revenue",
+        "source": "WonRevenue",
+        "target": 900000,
+        "direction": "HigherIsBetter"
+      },
+      {
+        "alias": "open_pipeline",
+        "name": "open_pipeline",
+        "label": "Open pipeline",
+        "source": "OpenPipeline",
+        "target": 2000000,
+        "direction": "HigherIsBetter"
+      },
+      {
+        "alias": "leads_captured",
+        "name": "leads_captured",
+        "label": "Leads captured",
+        "source": "LeadsCaptured",
+        "target": 120,
+        "direction": "HigherIsBetter"
+      },
+      {
+        "alias": "open_tasks",
+        "name": "open_tasks",
+        "label": "Open tasks",
+        "source": "OpenTasks",
+        "target": 40,
+        "direction": "LowerIsBetter"
+      },
+      {
+        "alias": "overdue_steps",
+        "name": "overdue_steps",
+        "label": "Overdue plan steps",
+        "source": "OverduePlanSteps",
+        "target": 0,
+        "direction": "LowerIsBetter"
+      }
+    ],
+    "territories": [
+      {
+        "alias": "emea",
+        "name": "emea",
+        "label": "EMEA",
+        "priority": 10
+      },
+      {
+        "alias": "na",
+        "name": "na",
+        "label": "North America",
+        "priority": 20
+      }
+    ],
+    "quotas": [
+      {
+        "period": "fy26_q3",
+        "userId": "rep-northwind-1",
+        "measure": "Revenue",
+        "target": 300000,
+        "rampFactor": 1.0
+      },
+      {
+        "period": "fy26_q3",
+        "userId": "rep-northwind-2",
+        "measure": "Revenue",
+        "target": 180000,
+        "rampFactor": 0.75
+      },
+      {
+        "period": "fy26_q3",
+        "userId": "manager-northwind-1",
+        "measure": "Revenue",
+        "target": 480000,
+        "rampFactor": 1.0
+      },
+      {
+        "period": "fy26_q3",
+        "userId": "rep-northwind-1",
+        "measure": "Leads",
+        "target": 40,
+        "rampFactor": 1.0
+      },
+      {
+        "period": "fy26_q4",
+        "userId": "rep-northwind-1",
+        "measure": "Revenue",
+        "target": 340000,
+        "rampFactor": 1.0
+      }
+    ],
+    "businessHours": [
+      {
+        "dayOfWeek": 1,
+        "opensAt": "09:00",
+        "closesAt": "17:30"
+      },
+      {
+        "dayOfWeek": 2,
+        "opensAt": "09:00",
+        "closesAt": "17:30"
+      },
+      {
+        "dayOfWeek": 3,
+        "opensAt": "09:00",
+        "closesAt": "17:30"
+      },
+      {
+        "dayOfWeek": 4,
+        "opensAt": "09:00",
+        "closesAt": "17:30"
+      },
+      {
+        "dayOfWeek": 5,
+        "opensAt": "09:00",
+        "closesAt": "17:30"
+      }
+    ],
+    "slaPolicies": [
+      {
+        "alias": "urgent",
+        "name": "urgent",
+        "label": "Urgent",
+        "priority": "Urgent",
+        "firstResponseMinutes": 30,
+        "resolutionMinutes": 240,
+        "businessHoursOnly": false
+      },
+      {
+        "alias": "high",
+        "name": "high",
+        "label": "High",
+        "priority": "High",
+        "firstResponseMinutes": 120,
+        "resolutionMinutes": 960,
+        "businessHoursOnly": true
+      },
+      {
+        "alias": "normal",
+        "name": "normal",
+        "label": "Normal",
+        "priority": "Normal",
+        "firstResponseMinutes": 480,
+        "resolutionMinutes": 2880,
+        "businessHoursOnly": true
+      },
+      {
+        "alias": "low",
+        "name": "low",
+        "label": "Low",
+        "priority": "Low",
+        "firstResponseMinutes": 1440,
+        "resolutionMinutes": 7200,
+        "businessHoursOnly": true
+      }
+    ],
+    "campaigns": [
+      {
+        "alias": "enterprise_outbound",
+        "name": "enterprise_outbound",
+        "label": "Enterprise outbound",
+        "channel": "Outbound",
+        "startsOn": "2026-04-01",
+        "endsOn": "2026-06-30",
+        "budget": 45000
+      },
+      {
+        "alias": "logistics_webinar",
+        "name": "logistics_webinar",
+        "label": "Logistics compliance webinar",
+        "channel": "Webinar",
+        "startsOn": "2026-05-01",
+        "endsOn": "2026-05-31",
+        "budget": 12000
+      },
+      {
+        "alias": "q3_content",
+        "name": "q3_content",
+        "label": "Audit-readiness content",
+        "channel": "Content",
+        "startsOn": "2026-04-01",
+        "endsOn": "2026-09-30",
+        "budget": 8000
       }
     ]
   },
@@ -123,7 +470,7 @@
         "name": "Meridian — Compliance Pilot",
         "amount": 42000,
         "currency": "EUR",
-        "stage": "pipeline:Qualification",
+        "stage": "pipeline:Qualify",
         "probability": 25,
         "expectedClose": "2026-11-16",
         "owner": "33333333-3333-3333-3333-333333333333"
@@ -155,7 +502,62 @@
       {
         "alias": "atlas",
         "target": "project",
-        "values": { "code": "P-ATLAS", "status": "running" }
+        "values": {
+          "code": "P-ATLAS",
+          "status": "running"
+        }
+      }
+    ],
+    "activities": [
+      {
+        "alias": "msa_redlines",
+        "kind": "Task",
+        "subject": "Send redlined MSA to Ron Petrov",
+        "relatesToKind": "Opportunity",
+        "relatesTo": "meridian_pilot",
+        "owner": "33333333-3333-3333-3333-333333333333",
+        "dueInDays": 2,
+        "status": "Open"
+      },
+      {
+        "alias": "security_review",
+        "kind": "Meeting",
+        "subject": "Security review with Northwind IT",
+        "relatesToKind": "Opportunity",
+        "relatesTo": "northwind_expansion",
+        "owner": "33333333-3333-3333-3333-333333333333",
+        "dueInDays": 5,
+        "status": "Open"
+      },
+      {
+        "alias": "renewal_call",
+        "kind": "Call",
+        "subject": "Renewal check-in",
+        "relatesToKind": "Account",
+        "relatesTo": "northwind",
+        "owner": "33333333-3333-3333-3333-333333333333",
+        "dueInDays": 9,
+        "status": "Open"
+      },
+      {
+        "alias": "borealis_qualify",
+        "kind": "Call",
+        "subject": "Qualify Borealis Health",
+        "relatesToKind": "Lead",
+        "relatesTo": "borealis",
+        "owner": "33333333-3333-3333-3333-333333333333",
+        "dueInDays": -3,
+        "status": "Open"
+      },
+      {
+        "alias": "elena_note",
+        "kind": "Note",
+        "subject": "Prefers email; travelling until the 20th",
+        "relatesToKind": "Contact",
+        "relatesTo": "elena",
+        "owner": "33333333-3333-3333-3333-333333333333",
+        "dueInDays": 30,
+        "status": "Open"
       }
     ]
   }

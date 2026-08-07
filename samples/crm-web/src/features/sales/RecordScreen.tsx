@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import {
   Button,
@@ -9,12 +9,15 @@ import {
   Panel,
   PanelBody,
   PanelHeader,
+  Skeleton,
   Tabs,
 } from '@/design/primitives'
 import { fullMoney } from '@/lib/format'
+import { useEntityPage, useEntityRecord } from '@/api/queries/hooks'
 import { modelFor, OBJECT_MODELS } from '@/fixtures/objects'
 import type { RecordRow } from '@/fixtures/objects'
 import { renderCell } from './RecordCell'
+import { entityOf, keyColumnOf, toRows } from './liveRecords'
 import styles from './RecordScreen.module.css'
 
 type RecordTab = 'details' | 'related' | 'activity' | 'files'
@@ -32,7 +35,43 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
   const model = modelFor(objectKey)
   const [tab, setTab] = useState<RecordTab>('details')
 
-  const record = model.records.find((candidate) => candidate.id === id)
+  // The record comes from the server for the four entities it can page, and from the
+  // prototype's fixtures for the other three. Before this, it came from the fixtures always —
+  // so a row opened from a list of live accounts reported that no such account existed, which
+  // was true only of the fixtures it was looking in.
+  const entity = entityOf(objectKey)
+  const live = useEntityRecord(entity, keyColumnOf(objectKey), id)
+  const accounts = useEntityPage(entity === 'Contact' || entity === 'Opportunity' ? 'Account' : null)
+
+  const accountNames = useMemo(() => {
+    const names = new Map<string, string>()
+
+    for (const row of accounts.data?.records ?? []) {
+      const name = row.values['name']
+
+      if (name !== null && name !== undefined) {
+        names.set(row.recordId, name)
+      }
+    }
+
+    return names
+  }, [accounts.data])
+
+  const record = useMemo(() => {
+    if (entity === null) {
+      return model.records.find((candidate) => candidate.id === id)
+    }
+
+    return toRows(objectKey, model, live.data?.records ?? [], accountNames)[0]
+  }, [entity, model, objectKey, id, live.data, accountNames])
+
+  if (entity !== null && live.isPending) {
+    return (
+      <Page>
+        <Skeleton rows={8} />
+      </Page>
+    )
+  }
 
   if (!record) {
     return (

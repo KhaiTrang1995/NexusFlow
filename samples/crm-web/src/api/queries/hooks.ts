@@ -365,3 +365,37 @@ export function useEntityPage(
     staleTime: 15_000,
   })
 }
+
+/**
+ * One record of a built-in entity, by its id.
+ *
+ * A filter on the key column rather than a route of its own. The page endpoint already checks
+ * the field name against the entity's closed column list and already binds the value, so a
+ * record read is a page of one — and there is no second surface to keep the masking rules in
+ * step with.
+ */
+export function useEntityRecord(
+  entity: C.EntityKind | null,
+  keyColumn: string | null,
+  id: string | null,
+): UseQueryResult<C.RecordPage> {
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useQuery({
+    queryKey: keys.entities.record(tenantId, entity ?? 'none', id ?? 'none'),
+    queryFn: ({ signal }) =>
+      call.read<C.RecordPage, C.ReadEntityPage>(
+        '/entities',
+        {
+          entity: entity!,
+          filter: { match: 'All', criteria: [{ field: keyColumn!, operator: 'Equals', value: id! }] },
+          limit: 1,
+          after: null,
+        },
+        signal,
+      ),
+    enabled: entity !== null && keyColumn !== null && id !== null && id.length > 0,
+    staleTime: 15_000,
+  })
+}

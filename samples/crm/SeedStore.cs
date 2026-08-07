@@ -80,6 +80,76 @@ public sealed class SeedStore
         ON CONFLICT (transition_id) DO NOTHING
         """;
 
+    private const string InsertPeriod = """
+        INSERT INTO plan_period (
+            period_id, tenant_id, name, label, starts_on, ends_on, parent_period_id, created_at)
+        VALUES (@id, @tenant, @name, @label, @starts, @ends, @parent, @now)
+        ON CONFLICT (period_id) DO NOTHING
+        """;
+
+    private const string InsertStrategy = """
+        INSERT INTO sales_strategy (
+            strategy_id, tenant_id, period_id, vision, target_amount, currency, created_at)
+        VALUES (@id, @tenant, @period, @vision, @target, @currency, @now)
+        ON CONFLICT (strategy_id) DO NOTHING
+        """;
+
+    private const string InsertOrgMember = """
+        INSERT INTO org_member (tenant_id, user_id, display_name, role, reports_to)
+        VALUES (@tenant, @user, @name, @role, @reports)
+        ON CONFLICT (tenant_id, user_id) DO NOTHING
+        """;
+
+    private const string InsertKpi = """
+        INSERT INTO kpi (kpi_id, tenant_id, name, label, source, target, direction, created_at)
+        VALUES (@id, @tenant, @name, @label, @source, @target, @direction, @now)
+        ON CONFLICT (kpi_id) DO NOTHING
+        """;
+
+    private const string InsertTerritory = """
+        INSERT INTO territory (
+            territory_id, tenant_id, name, label, parent_territory_id, priority, created_at)
+        VALUES (@id, @tenant, @name, @label, NULL, @priority, @now)
+        ON CONFLICT (territory_id) DO NOTHING
+        """;
+
+    private const string InsertQuota = """
+        INSERT INTO quota (
+            quota_id, tenant_id, period_id, user_id, measure, target, ramp_factor, created_at)
+        VALUES (@id, @tenant, @period, @user, @measure, @target, @ramp, @now)
+        ON CONFLICT (quota_id) DO NOTHING
+        """;
+
+    private const string InsertBusinessHours = """
+        INSERT INTO business_hours (tenant_id, day_of_week, opens_at, closes_at)
+        VALUES (@tenant, @day, @opens, @closes)
+        ON CONFLICT (tenant_id, day_of_week) DO NOTHING
+        """;
+
+    private const string InsertSlaPolicy = """
+        INSERT INTO sla_policy (
+            policy_id, tenant_id, name, label, priority, first_response_minutes,
+            resolution_minutes, business_hours_only, is_active)
+        VALUES (@id, @tenant, @name, @label, @priority, @first, @resolution, @hours, true)
+        ON CONFLICT (policy_id) DO NOTHING
+        """;
+
+    private const string InsertCampaign = """
+        INSERT INTO campaign (
+            campaign_id, tenant_id, name, label, channel, starts_on, ends_on, budget,
+            is_active, created_at)
+        VALUES (@id, @tenant, @name, @label, @channel, @starts, @ends, @budget, true, @now)
+        ON CONFLICT (campaign_id) DO NOTHING
+        """;
+
+    private const string InsertActivity = """
+        INSERT INTO activity (
+            activity_id, tenant_id, kind, subject, relates_to_kind, relates_to_id, owner_id,
+            due_at, status, completed_at, escalation_count)
+        VALUES (@id, @tenant, @kind, @subject, @parentKind, @parent, @owner, @due, @status, NULL, 0)
+        ON CONFLICT (activity_id) DO NOTHING
+        """;
+
     private readonly NpgsqlDataSource _source;
 
     /// <summary>Builds the store over the application's data source.</summary>
@@ -360,6 +430,267 @@ public sealed class SeedStore
         await transaction.CommitAsync(ct).ConfigureAwait(false);
 
         return written;
+    }
+
+
+    /// <summary>Writes a period of the fiscal calendar.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="period">What to write.</param>
+    /// <param name="now">The instant it was declared.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>Whether a row was inserted rather than already there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="period"/> is null.</exception>
+    public ValueTask<bool> WritePeriodAsync(
+        string tenant, SeedPeriod period, DateTimeOffset now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(period);
+
+        return WriteAsync(tenant, InsertPeriod, command =>
+        {
+            Add(command, "id", NpgsqlDbType.Uuid, SeedIds.For(tenant, "period", period.Alias));
+            Add(command, "tenant", NpgsqlDbType.Text, tenant);
+            Add(command, "name", NpgsqlDbType.Text, period.Name);
+            Add(command, "label", NpgsqlDbType.Text, period.Label);
+            Add(command, "starts", NpgsqlDbType.Date, period.StartsOn);
+            Add(command, "ends", NpgsqlDbType.Date, period.EndsOn);
+            Add(command, "parent", NpgsqlDbType.Uuid, period.Parent is { } parent
+                ? SeedIds.For(tenant, "period", parent)
+                : DBNull.Value);
+            Add(command, "now", NpgsqlDbType.TimestampTz, now);
+        }, ct);
+    }
+
+    /// <summary>Writes the number for a period.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="strategy">What to write.</param>
+    /// <param name="now">The instant it was set.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>Whether a row was inserted rather than already there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="strategy"/> is null.</exception>
+    public ValueTask<bool> WriteStrategyAsync(
+        string tenant, SeedStrategy strategy, DateTimeOffset now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(strategy);
+
+        return WriteAsync(tenant, InsertStrategy, command =>
+        {
+            Add(command, "id", NpgsqlDbType.Uuid, SeedIds.For(tenant, "strategy", strategy.Period));
+            Add(command, "tenant", NpgsqlDbType.Text, tenant);
+            Add(command, "period", NpgsqlDbType.Uuid, SeedIds.For(tenant, "period", strategy.Period));
+            Add(command, "vision", NpgsqlDbType.Text, strategy.Vision);
+            Add(command, "target", NpgsqlDbType.Numeric, strategy.TargetAmount);
+            Add(command, "currency", NpgsqlDbType.Text, strategy.Currency);
+            Add(command, "now", NpgsqlDbType.TimestampTz, now);
+        }, ct);
+    }
+
+    /// <summary>Writes one person into the reporting line.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="member">What to write.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>Whether a row was inserted rather than already there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="member"/> is null.</exception>
+    public ValueTask<bool> WriteOrgMemberAsync(
+        string tenant, SeedOrgMember member, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(member);
+
+        return WriteAsync(tenant, InsertOrgMember, command =>
+        {
+            Add(command, "tenant", NpgsqlDbType.Text, tenant);
+            Add(command, "user", NpgsqlDbType.Text, member.UserId);
+            Add(command, "name", NpgsqlDbType.Text, member.DisplayName);
+            Add(command, "role", NpgsqlDbType.Text, member.Role.ToString());
+            Add(command, "reports", NpgsqlDbType.Text, (object?)member.ReportsTo ?? DBNull.Value);
+        }, ct);
+    }
+
+    /// <summary>Writes a measured number.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="kpi">What to write.</param>
+    /// <param name="now">The instant it was declared.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>Whether a row was inserted rather than already there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="kpi"/> is null.</exception>
+    public ValueTask<bool> WriteKpiAsync(
+        string tenant, SeedKpi kpi, DateTimeOffset now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(kpi);
+
+        return WriteAsync(tenant, InsertKpi, command =>
+        {
+            Add(command, "id", NpgsqlDbType.Uuid, SeedIds.For(tenant, "kpi", kpi.Alias));
+            Add(command, "tenant", NpgsqlDbType.Text, tenant);
+            Add(command, "name", NpgsqlDbType.Text, kpi.Name);
+            Add(command, "label", NpgsqlDbType.Text, kpi.Label);
+            Add(command, "source", NpgsqlDbType.Text, kpi.Source.ToString());
+            Add(command, "target", NpgsqlDbType.Numeric, kpi.Target);
+            Add(command, "direction", NpgsqlDbType.Text, kpi.Direction.ToString());
+            Add(command, "now", NpgsqlDbType.TimestampTz, now);
+        }, ct);
+    }
+
+    /// <summary>Writes a territory.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="territory">What to write.</param>
+    /// <param name="now">The instant it was declared.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>Whether a row was inserted rather than already there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="territory"/> is null.</exception>
+    public ValueTask<bool> WriteTerritoryAsync(
+        string tenant, SeedTerritory territory, DateTimeOffset now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(territory);
+
+        return WriteAsync(tenant, InsertTerritory, command =>
+        {
+            Add(command, "id", NpgsqlDbType.Uuid, SeedIds.For(tenant, "territory", territory.Alias));
+            Add(command, "tenant", NpgsqlDbType.Text, tenant);
+            Add(command, "name", NpgsqlDbType.Text, territory.Name);
+            Add(command, "label", NpgsqlDbType.Text, territory.Label);
+            Add(command, "priority", NpgsqlDbType.Integer, territory.Priority);
+            Add(command, "now", NpgsqlDbType.TimestampTz, now);
+        }, ct);
+    }
+
+    /// <summary>Writes somebody's number.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="quota">What to write.</param>
+    /// <param name="now">The instant it was set.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>Whether a row was inserted rather than already there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="quota"/> is null.</exception>
+    public ValueTask<bool> WriteQuotaAsync(
+        string tenant, SeedQuota quota, DateTimeOffset now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(quota);
+
+        return WriteAsync(tenant, InsertQuota, command =>
+        {
+            Add(command, "id", NpgsqlDbType.Uuid, SeedIds.For(
+                tenant, "quota", $"{quota.Period}:{quota.UserId}:{quota.Measure}"));
+            Add(command, "tenant", NpgsqlDbType.Text, tenant);
+            Add(command, "period", NpgsqlDbType.Uuid, SeedIds.For(tenant, "period", quota.Period));
+            Add(command, "user", NpgsqlDbType.Text, quota.UserId);
+            Add(command, "measure", NpgsqlDbType.Text, quota.Measure.ToString());
+            Add(command, "target", NpgsqlDbType.Numeric, quota.Target);
+            Add(command, "ramp", NpgsqlDbType.Numeric, quota.RampFactor);
+            Add(command, "now", NpgsqlDbType.TimestampTz, now);
+        }, ct);
+    }
+
+    /// <summary>Writes one day of the desk's opening hours.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="hours">What to write.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>Whether a row was inserted rather than already there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="hours"/> is null.</exception>
+    public ValueTask<bool> WriteBusinessHoursAsync(
+        string tenant, SeedBusinessHours hours, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(hours);
+
+        return WriteAsync(tenant, InsertBusinessHours, command =>
+        {
+            Add(command, "tenant", NpgsqlDbType.Text, tenant);
+            Add(command, "day", NpgsqlDbType.Smallint, (short)hours.DayOfWeek);
+            Add(command, "opens", NpgsqlDbType.Time, hours.OpensAt);
+            Add(command, "closes", NpgsqlDbType.Time, hours.ClosesAt);
+        }, ct);
+    }
+
+    /// <summary>Writes what a case of one priority is promised.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="policy">What to write.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>Whether a row was inserted rather than already there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="policy"/> is null.</exception>
+    public ValueTask<bool> WriteSlaPolicyAsync(
+        string tenant, SeedSlaPolicy policy, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+
+        return WriteAsync(tenant, InsertSlaPolicy, command =>
+        {
+            Add(command, "id", NpgsqlDbType.Uuid, SeedIds.For(tenant, "sla", policy.Alias));
+            Add(command, "tenant", NpgsqlDbType.Text, tenant);
+            Add(command, "name", NpgsqlDbType.Text, policy.Name);
+            Add(command, "label", NpgsqlDbType.Text, policy.Label);
+            Add(command, "priority", NpgsqlDbType.Text, policy.Priority.ToString());
+            Add(command, "first", NpgsqlDbType.Integer, policy.FirstResponseMinutes);
+            Add(command, "resolution", NpgsqlDbType.Integer, policy.ResolutionMinutes);
+            Add(command, "hours", NpgsqlDbType.Boolean, policy.BusinessHoursOnly);
+        }, ct);
+    }
+
+    /// <summary>Writes a campaign.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="campaign">What to write.</param>
+    /// <param name="now">The instant it was declared.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>Whether a row was inserted rather than already there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="campaign"/> is null.</exception>
+    public ValueTask<bool> WriteCampaignAsync(
+        string tenant, SeedCampaign campaign, DateTimeOffset now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(campaign);
+
+        return WriteAsync(tenant, InsertCampaign, command =>
+        {
+            Add(command, "id", NpgsqlDbType.Uuid, SeedIds.For(tenant, "campaign", campaign.Alias));
+            Add(command, "tenant", NpgsqlDbType.Text, tenant);
+            Add(command, "name", NpgsqlDbType.Text, campaign.Name);
+            Add(command, "label", NpgsqlDbType.Text, campaign.Label);
+            Add(command, "channel", NpgsqlDbType.Text, campaign.Channel.ToString());
+            Add(command, "starts", NpgsqlDbType.Date, campaign.StartsOn);
+            Add(command, "ends", NpgsqlDbType.Date, campaign.EndsOn);
+            Add(command, "budget", NpgsqlDbType.Numeric, campaign.Budget);
+            Add(command, "now", NpgsqlDbType.TimestampTz, now);
+        }, ct);
+    }
+
+    /// <summary>Writes a task, call, meeting or note.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="activity">What to write.</param>
+    /// <param name="parentId">The row it hangs off.</param>
+    /// <param name="now">The instant the seed was applied; the due date is counted from it.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>Whether a row was inserted rather than already there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="activity"/> is null.</exception>
+    public ValueTask<bool> WriteActivityAsync(
+        string tenant, SeedActivity activity, Guid parentId, DateTimeOffset now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(activity);
+
+        return WriteAsync(tenant, InsertActivity, command =>
+        {
+            Add(command, "id", NpgsqlDbType.Uuid, SeedIds.For(tenant, "activity", activity.Alias));
+            Add(command, "tenant", NpgsqlDbType.Text, tenant);
+            Add(command, "kind", NpgsqlDbType.Text, activity.Kind.ToString());
+            Add(command, "subject", NpgsqlDbType.Text, activity.Subject);
+            Add(command, "parentKind", NpgsqlDbType.Text, activity.RelatesToKind.ToString());
+            Add(command, "parent", NpgsqlDbType.Uuid, parentId);
+            Add(command, "owner", NpgsqlDbType.Uuid, activity.Owner);
+            Add(command, "due", NpgsqlDbType.TimestampTz, now.AddDays(activity.DueInDays));
+            Add(command, "status", NpgsqlDbType.Text, activity.Status.ToString());
+        }, ct);
+    }
+
+    /// <summary>Opens a scoped connection, runs one statement, and reports whether it wrote.</summary>
+    /// <remarks>
+    /// The ten writes above are one statement each against one tenant-scoped connection, and
+    /// spelling that out ten times is ten places for the scope to be forgotten in.
+    /// </remarks>
+    private async ValueTask<bool> WriteAsync(
+        string tenant,
+        string sql,
+        Action<NpgsqlCommand> bind,
+        CancellationToken ct)
+    {
+        var connection = await OpenAsync(tenant, ct).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
+
+        return await ExecuteAsync(connection, sql, bind, ct).ConfigureAwait(false);
     }
 
     /// <summary>The id a stage of a seeded process always has.</summary>

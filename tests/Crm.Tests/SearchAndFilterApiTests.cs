@@ -281,6 +281,62 @@ public sealed class SearchAndFilterApiTests
             1, "and the wall is a wall rather than an outage.");
     }
 
+    /// <summary>
+    /// Half a word finds the whole one, which is what a search box is for.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The defect this replaced.</strong> <c>websearch_to_tsquery</c> matches whole
+    /// lexemes, so typing "north" into the search box found nothing at all until the word
+    /// "northwind" was finished — on the one surface in this application a person uses by typing.
+    /// It looked like an empty database rather than an unfinished word.
+    /// </para>
+    /// <para>
+    /// The prefix query is built from the lexemes <c>to_tsvector</c> produces rather than by
+    /// appending <c>:*</c> to the caller's text, which is why the apostrophe below is a name and
+    /// not a syntax error.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task APrefixFindsTheWholeWord()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+
+        await app.PostAsync(
+            "/api/v1/crm/leads",
+            new CaptureLead("Northwind Traders", "A Person", null, LeadSource.Web),
+            CrmTokens.Northwind);
+
+        (await SearchAsync(app, "nor", CrmTokens.Northwind)).Hits.Count.ShouldBe(
+            1, "three letters of a company's name did not find it.");
+
+        (await SearchAsync(app, "nor tra", CrmTokens.Northwind)).Hits.Count.ShouldBe(
+            1, "every word is a prefix, and all of them have to match.");
+
+        (await SearchAsync(app, "nor zzz", CrmTokens.Northwind)).Hits.ShouldBeEmpty(
+            "all of them, not any of them.");
+    }
+
+    /// <summary>An apostrophe is a letter, not a tsquery operator.</summary>
+    /// <remarks>
+    /// The reason the query is assembled from <c>quote_literal(lexeme)</c>. Appending <c>:*</c>
+    /// to the caller's own text would make this a 500 rather than a search.
+    /// </remarks>
+    [Fact]
+    public async Task PunctuationInThePhraseIsNotAnOperator()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+
+        foreach (var phrase in (string[])["o'brien", "a & b", "! ? :*", "north | south"])
+        {
+            var response = await app.PostAsync(
+                Search, new SearchEverything(phrase, 10), CrmTokens.Northwind, idempotencyKey: null);
+
+            response.StatusCode.ShouldBe(
+                HttpStatusCode.OK, $"'{phrase}' reached the parser as syntax.");
+        }
+    }
+
     /// <summary>A search with nothing to look for is refused.</summary>
     [Fact]
     public async Task ASearchWithNoPhraseIsRefused()

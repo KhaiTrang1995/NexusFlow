@@ -49,7 +49,63 @@ public static class SeedReader
             return Result.Fail<SeedDocument>(SeedErrors.NotReadable("it is null."));
         }
 
-        return Validate(document);
+        return Validate(Normalise(document));
+    }
+
+    /// <summary>Turns every omitted collection into an empty one.</summary>
+    /// <param name="document">What was read.</param>
+    /// <returns>The same document with no null collections.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="document"/> is null.</exception>
+    /// <remarks>
+    /// <strong>So a file that only wants two accounts is two accounts long.</strong> Without this
+    /// every seed would have to write eleven empty arrays to say nothing about eleven things it
+    /// does not care about, and forgetting one would be a null-reference exception rather than a
+    /// refusal — the least useful message this module could produce.
+    /// </remarks>
+    public static SeedDocument Normalise(SeedDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        var metadata = document.Metadata ?? Empty.Metadata;
+        var data = document.Data ?? Empty.Data;
+
+        return document with
+        {
+            Metadata = metadata with
+            {
+                Objects = metadata.Objects ?? [],
+                Fields = metadata.Fields ?? [],
+                Relationships = metadata.Relationships ?? [],
+                Processes = metadata.Processes ?? [],
+                Periods = metadata.Periods ?? [],
+                Strategy = metadata.Strategy ?? [],
+                OrgMembers = metadata.OrgMembers ?? [],
+                Kpis = metadata.Kpis ?? [],
+                Territories = metadata.Territories ?? [],
+                Quotas = metadata.Quotas ?? [],
+                BusinessHours = metadata.BusinessHours ?? [],
+                SlaPolicies = metadata.SlaPolicies ?? [],
+                Campaigns = metadata.Campaigns ?? [],
+            },
+            Data = data with
+            {
+                Accounts = data.Accounts ?? [],
+                Contacts = data.Contacts ?? [],
+                Opportunities = data.Opportunities ?? [],
+                Leads = data.Leads ?? [],
+                Records = data.Records ?? [],
+                Activities = data.Activities ?? [],
+            },
+        };
+    }
+
+    /// <summary>A document saying nothing, which every omitted section becomes.</summary>
+    private static class Empty
+    {
+        public static readonly SeedMetadata Metadata =
+            new([], [], [], [], [], [], [], [], [], [], [], [], []);
+
+        public static readonly SeedData Data = new([], [], [], [], [], []);
     }
 
     /// <summary>Checks a document against the limits and against itself.</summary>
@@ -74,6 +130,8 @@ public static class SeedReader
         var accounts = new HashSet<string>(StringComparer.Ordinal);
         var contacts = new HashSet<string>(StringComparer.Ordinal);
         var stages = new HashSet<string>(StringComparer.Ordinal);
+        var periods = new HashSet<string>(StringComparer.Ordinal);
+        var people = new HashSet<string>(StringComparer.Ordinal);
 
         if (Collect("objects", metadata.Objects, item => item.Alias, objects) is { } badObject)
         {
@@ -95,6 +153,11 @@ public static class SeedReader
             return Result.Fail<SeedDocument>(badContact);
         }
 
+        if (Collect("periods", metadata.Periods, item => item.Alias, periods) is { } badPeriod)
+        {
+            return Result.Fail<SeedDocument>(badPeriod);
+        }
+
         // The four whose aliases nothing refers to. Still collected, because two items sharing
         // an alias share a derived id, and the second would silently be the first.
         var unreferenced =
@@ -102,7 +165,12 @@ public static class SeedReader
             ?? Collect("relationships", metadata.Relationships, item => item.Alias, [])
             ?? Collect("opportunities", data.Opportunities, item => item.Alias, [])
             ?? Collect("leads", data.Leads, item => item.Alias, [])
-            ?? Collect("records", data.Records, item => item.Alias, []);
+            ?? Collect("records", data.Records, item => item.Alias, [])
+            ?? Collect("kpis", metadata.Kpis, item => item.Alias, [])
+            ?? Collect("territories", metadata.Territories, item => item.Alias, [])
+            ?? Collect("slaPolicies", metadata.SlaPolicies, item => item.Alias, [])
+            ?? Collect("campaigns", metadata.Campaigns, item => item.Alias, [])
+            ?? Collect("activities", data.Activities, item => item.Alias, []);
 
         if (unreferenced is { } bad)
         {
@@ -271,6 +339,178 @@ public static class SeedReader
                 return Result.Fail<SeedDocument>(
                     SeedErrors.OutOfRange(
                         lead.Alias, "status", "anything but Converted; conversion is a flow, not a seed"));
+            }
+        }
+
+        // The reporting line. Collected first, because a quota and an activity both name a
+        // person and neither should be able to name one the tenant does not have.
+        foreach (var member in metadata.OrgMembers)
+        {
+            if (string.IsNullOrWhiteSpace(member.UserId))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.BadAlias("orgMembers", string.Empty, "a userId is required."));
+            }
+
+            if (!people.Add(member.UserId))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.BadAlias("orgMembers", member.UserId, "it is declared twice."));
+            }
+        }
+
+        foreach (var member in metadata.OrgMembers)
+        {
+            if (member.ReportsTo is { } manager && !people.Contains(manager))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.UnknownReference("orgMember " + member.UserId, manager));
+            }
+
+            // A line that loops has no top, and every walk up it runs until something stops it.
+            if (string.Equals(member.ReportsTo, member.UserId, StringComparison.Ordinal))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.OutOfRange(member.UserId, "reportsTo", "somebody else"));
+            }
+        }
+
+        foreach (var period in metadata.Periods)
+        {
+            if (!CustomValues.IsUsableName(period.Name))
+            {
+                return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("period", period.Name));
+            }
+
+            if (period.EndsOn < period.StartsOn)
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.OutOfRange(period.Alias, "endsOn", "on or after startsOn"));
+            }
+
+            if (period.Parent is { } parent && !periods.Contains(parent))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.UnknownReference("period " + period.Alias, parent));
+            }
+        }
+
+        foreach (var strategy in metadata.Strategy)
+        {
+            if (!periods.Contains(strategy.Period))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.UnknownReference("strategy", strategy.Period));
+            }
+        }
+
+        foreach (var quota in metadata.Quotas)
+        {
+            if (!periods.Contains(quota.Period))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.UnknownReference("quota for " + quota.UserId, quota.Period));
+            }
+
+            if (people.Count > 0 && !people.Contains(quota.UserId))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.UnknownReference("quota", quota.UserId));
+            }
+
+            if (quota.RampFactor is <= 0 or > 1)
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.OutOfRange(quota.UserId, "rampFactor", "above zero and at most one"));
+            }
+        }
+
+        foreach (var named in metadata.Kpis)
+        {
+            if (!CustomValues.IsUsableName(named.Name))
+            {
+                return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("kpi", named.Name));
+            }
+        }
+
+        foreach (var territory in metadata.Territories)
+        {
+            if (!CustomValues.IsUsableName(territory.Name))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.NameIsNotUsable("territory", territory.Name));
+            }
+        }
+
+        foreach (var policy in metadata.SlaPolicies)
+        {
+            if (!CustomValues.IsUsableName(policy.Name))
+            {
+                return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("slaPolicy", policy.Name));
+            }
+
+            if (policy.FirstResponseMinutes <= 0 || policy.ResolutionMinutes <= 0)
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.OutOfRange(policy.Alias, "its clocks", "above zero"));
+            }
+        }
+
+        foreach (var hours in metadata.BusinessHours)
+        {
+            if (hours.DayOfWeek is < 0 or > 6)
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.OutOfRange("businessHours", "dayOfWeek", "between 0 and 6"));
+            }
+
+            if (hours.ClosesAt <= hours.OpensAt)
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.OutOfRange("businessHours", "closesAt", "after opensAt"));
+            }
+        }
+
+        foreach (var campaign in metadata.Campaigns)
+        {
+            if (!CustomValues.IsUsableName(campaign.Name))
+            {
+                return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("campaign", campaign.Name));
+            }
+
+            if (campaign.EndsOn < campaign.StartsOn)
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.OutOfRange(campaign.Alias, "endsOn", "on or after startsOn"));
+            }
+        }
+
+        // An activity's parent is an alias in whichever collection its kind names. Resolved here
+        // so a typo is a refusal rather than a foreign key the trigger of migration 0001 refuses
+        // with a message about polymorphic integrity.
+        foreach (var activity in data.Activities)
+        {
+            var known = activity.RelatesToKind switch
+            {
+                EntityKind.Account => accounts,
+                EntityKind.Contact => contacts,
+                EntityKind.Lead => new HashSet<string>(data.Leads.Select(lead => lead.Alias), StringComparer.Ordinal),
+                _ => new HashSet<string>(
+                    data.Opportunities.Select(opportunity => opportunity.Alias), StringComparer.Ordinal),
+            };
+
+            if (!known.Contains(activity.RelatesTo))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.UnknownReference("activity " + activity.Alias, activity.RelatesTo));
+            }
+
+            // Completed is completed_at, and the schema's CHECK ties the two together. A seed
+            // that set the status without the instant would be refused by the constraint.
+            if (activity.Status is ActivityStatus.Completed)
+            {
+                return Result.Fail<SeedDocument>(SeedErrors.OutOfRange(
+                    activity.Alias, "status", "anything but Completed; a seed starts work, it does not finish it"));
             }
         }
 

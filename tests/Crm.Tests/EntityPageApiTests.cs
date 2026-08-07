@@ -189,6 +189,51 @@ public sealed class EntityPageApiTests
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
     }
 
+    /// <summary>
+    /// An opportunity's stage comes back as its name, and can be filtered on.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The one column of the answer that is not a column of the table.</strong>
+    /// <c>stage_id</c> is a foreign key into the configured process, and a pipeline board cannot
+    /// group by an identifier — so the store merges the stage's name into the projection. Read
+    /// and filter are asserted together because they are the same expression: the filter
+    /// evaluates <c>body-&gt;&gt;'stage'</c>, so a projection that dropped the name would leave
+    /// the filter matching nothing rather than failing.
+    /// </remarks>
+    [Fact]
+    public async Task AnOpportunityCarriesTheStagesName()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+
+        var process = await app.Crm.ProcessAsync(CrmTokens.NorthwindTenant, 1, true, Cancellation);
+        var account = await app.Crm.AccountAsync(
+            CrmTokens.NorthwindTenant, Lifecycle.Customer, Cancellation);
+        var contact = await app.Crm.ContactAsync(CrmTokens.NorthwindTenant, account, Cancellation);
+
+        await app.Crm.OpportunityAsync(
+            CrmTokens.NorthwindTenant, account, contact, process.Stage, Cancellation);
+
+        var named = await app.Crm.ScalarAsTenantAsync<string>(
+            CrmTokens.NorthwindTenant,
+            "SELECT name FROM process_stage WHERE stage_id = @stage",
+            Cancellation,
+            ("stage", process.Stage));
+
+        var page = await PageAsync(app, new ReadEntityPage(EntityKind.Opportunity, null, 50));
+
+        page.Records.Count.ShouldBeGreaterThan(0);
+        page.Records[0]!.Values["stage"].ShouldBe(named);
+
+        var filtered = await PageAsync(
+            app,
+            new ReadEntityPage(
+                EntityKind.Opportunity,
+                new RecordFilter(FilterMatch.All, [new RollupFilter("stage", GuardOperator.Equals, named!)]),
+                50));
+
+        filtered.Records.Count.ShouldBeGreaterThan(0, "the stage is filterable, not merely visible.");
+    }
+
     /// <summary>One tenant's page never contains another tenant's rows.</summary>
     [Fact]
     public async Task OneTenantsPageIsOnlyItsOwn()

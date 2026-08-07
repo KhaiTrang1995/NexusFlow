@@ -62,8 +62,22 @@ const MAPPINGS: Readonly<Record<string, { entity: EntityKind; columns: Record<st
       amount: 'amount',
       probability: 'probability',
       expected_close: 'closeDate',
+      stage: 'stage',
     },
   },
+}
+
+/**
+ * The column that identifies a row of this entity, for a filter that asks for exactly one.
+ *
+ * The first column of each mapping above, and deliberately not a convention: the server's own
+ * `EntityColumns.KeyOf` reads the same list, and two places agreeing by coincidence is how they
+ * stop agreeing.
+ */
+export function keyColumnOf(objectKey: string): string | null {
+  const columns = MAPPINGS[objectKey]?.columns
+
+  return columns === undefined ? null : (Object.keys(columns)[0] ?? null)
 }
 
 /** Which built-in entity this object is, or null when the server has no page for it. */

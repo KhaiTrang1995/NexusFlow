@@ -59,6 +59,63 @@ public sealed class SeedApplier
 
         // ------------------------------------------------------------------ metadata
 
+        // The calendar first: a strategy, a quota and every executive screen name a period, and
+        // a tenant without one answers `crm.period_not_found` rather than answering emptily.
+        foreach (var period in document.Metadata.Periods)
+        {
+            outcome = outcome.And(
+                await _seeds.WritePeriodAsync(tenant, period, now, ct).ConfigureAwait(false));
+        }
+
+        foreach (var strategy in document.Metadata.Strategy)
+        {
+            outcome = outcome.And(
+                await _seeds.WriteStrategyAsync(tenant, strategy, now, ct).ConfigureAwait(false));
+        }
+
+        // Managers before their reports: `reports_to` is a foreign key into this same table, so
+        // the order the file lists them in is the order they have to be written in.
+        foreach (var member in InReportingOrder(document.Metadata.OrgMembers))
+        {
+            outcome = outcome.And(
+                await _seeds.WriteOrgMemberAsync(tenant, member, ct).ConfigureAwait(false));
+        }
+
+        foreach (var kpi in document.Metadata.Kpis)
+        {
+            outcome = outcome.And(await _seeds.WriteKpiAsync(tenant, kpi, now, ct).ConfigureAwait(false));
+        }
+
+        foreach (var territory in document.Metadata.Territories)
+        {
+            outcome = outcome.And(
+                await _seeds.WriteTerritoryAsync(tenant, territory, now, ct).ConfigureAwait(false));
+        }
+
+        foreach (var quota in document.Metadata.Quotas)
+        {
+            outcome = outcome.And(
+                await _seeds.WriteQuotaAsync(tenant, quota, now, ct).ConfigureAwait(false));
+        }
+
+        foreach (var hours in document.Metadata.BusinessHours)
+        {
+            outcome = outcome.And(
+                await _seeds.WriteBusinessHoursAsync(tenant, hours, ct).ConfigureAwait(false));
+        }
+
+        foreach (var policy in document.Metadata.SlaPolicies)
+        {
+            outcome = outcome.And(
+                await _seeds.WriteSlaPolicyAsync(tenant, policy, ct).ConfigureAwait(false));
+        }
+
+        foreach (var campaign in document.Metadata.Campaigns)
+        {
+            outcome = outcome.And(
+                await _seeds.WriteCampaignAsync(tenant, campaign, now, ct).ConfigureAwait(false));
+        }
+
         foreach (var process in document.Metadata.Processes)
         {
             var wanted = SeedIds.For(tenant, "process", process.Alias);
@@ -165,6 +222,24 @@ public sealed class SeedApplier
                 tenant, SeedIds.For(tenant, "lead", lead.Alias), lead, now, ct).ConfigureAwait(false));
         }
 
+        foreach (var activity in document.Data.Activities)
+        {
+            var kind = activity.RelatesToKind switch
+            {
+                EntityKind.Account => "account",
+                EntityKind.Contact => "contact",
+                EntityKind.Lead => "lead",
+                _ => "opportunity",
+            };
+
+            outcome = outcome.And(await _seeds.WriteActivityAsync(
+                tenant,
+                activity,
+                SeedIds.For(tenant, kind, activity.RelatesTo),
+                now,
+                ct).ConfigureAwait(false));
+        }
+
         foreach (var record in document.Data.Records)
         {
             var target = SeedIds.For(tenant, "object", record.Target);
@@ -188,5 +263,38 @@ public sealed class SeedApplier
         }
 
         return Result.Ok(outcome);
+    }
+
+    /// <summary>Managers before the people who report to them.</summary>
+    /// <remarks>
+    /// <c>org_member.reports_to</c> is a foreign key into <c>org_member</c>, so a file listing a
+    /// representative above their manager would be refused by the database — and the operator
+    /// would be told about a constraint rather than about an ordering they had no reason to know
+    /// mattered. A depth-first walk from the people who report to nobody puts them in an order
+    /// that always works. The reader has already refused a cycle, so this terminates.
+    /// </remarks>
+    private static IEnumerable<SeedOrgMember> InReportingOrder(IReadOnlyList<SeedOrgMember> members)
+    {
+        var byManager = members
+            .GroupBy(member => member.ReportsTo ?? string.Empty, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
+
+        var queue = new Queue<SeedOrgMember>(
+            byManager.TryGetValue(string.Empty, out var top) ? top : []);
+
+        while (queue.Count > 0)
+        {
+            var member = queue.Dequeue();
+
+            yield return member;
+
+            if (byManager.TryGetValue(member.UserId, out var reports))
+            {
+                foreach (var report in reports)
+                {
+                    queue.Enqueue(report);
+                }
+            }
+        }
     }
 }

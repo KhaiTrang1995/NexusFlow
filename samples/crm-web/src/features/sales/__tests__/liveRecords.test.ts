@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { modelFor } from '@/fixtures/objects'
-import { entityOf, toRows } from '../liveRecords'
+import { entityOf, keyColumnOf, toRows } from '../liveRecords'
 
 describe('entityOf', () => {
   it('names the four objects the server can page', () => {
@@ -16,7 +16,30 @@ describe('entityOf', () => {
   })
 })
 
+describe('keyColumnOf', () => {
+  /**
+   * The record screen filters on this to read one row. A wrong name is refused by the server —
+   * `crm.entity_field_unknown` — so the failure is loud, but only where somebody looks.
+   */
+  it('is the entity key each read filters on', () => {
+    expect(keyColumnOf('account')).toBe('account_id')
+    expect(keyColumnOf('contact')).toBe('contact_id')
+    expect(keyColumnOf('lead')).toBe('lead_id')
+    expect(keyColumnOf('opportunity')).toBe('opportunity_id')
+    expect(keyColumnOf('quote')).toBeNull()
+  })
+})
+
 describe('toRows', () => {
+  /** The stage is what a pipeline board groups by, and it is not a column of `opportunity`. */
+  it('keeps the stage the server merged into the projection', () => {
+    const rows = toRows('opportunity', modelFor('opportunity'), [
+      { recordId: 'o1', values: { opportunity_id: 'o1', stage: 'Negotiation' } },
+    ])
+
+    expect(rows[0]!['stage']).toBe('Negotiation')
+  })
+
   it('renames a column to the field this screen draws', () => {
     const rows = toRows('lead', modelFor('lead'), [
       {
