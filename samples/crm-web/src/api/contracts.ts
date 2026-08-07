@@ -319,15 +319,20 @@ export interface QuotaAttainment {
   displayName: string
   measure: string
   quota: number
-  committed: number
+  /**
+   * What they committed in their plans, or null on a quota that is not measured in money — a plan
+   * commits an amount, so there is nothing to compare a leads target against.
+   */
+  committed: number | null
   actual: number
   /** Actual over quota, as a percentage 0–100. Null when they carry no number. */
   attainment: number | null
   /**
-   * Quota less committed. A different number from the gap on a roll-up: a quota is assigned
-   * downwards and a commitment is offered upwards, and the two rarely agree.
+   * Quota less committed, and null wherever `committed` is. A different number from the gap on a
+   * roll-up: a quota is assigned downwards and a commitment is offered upwards, and the two rarely
+   * agree.
    */
-  commitmentGap: number
+  commitmentGap: number | null
 }
 
 export interface QuotaAttainmentReport {
@@ -871,4 +876,43 @@ export interface OrderPlaced {
   orderId: string
   quoteId: string
   total: Money
+}
+
+/**
+ * Clears a discounted quote so it can be ordered against.
+ *
+ * A DIFFERENT THING FROM DECIDING AN APPROVAL REQUEST. The configured process records who said
+ * yes; this is the grant-holding act that moves the quote out of Draft. The approver is taken from
+ * the caller's claims and never from this body, so nobody can approve as somebody else.
+ */
+export interface ApproveDiscount {
+  quoteId: string
+}
+
+export interface DiscountApproved {
+  quoteId: string
+  approvedBy: string
+  at: string
+}
+
+export type QuotaMeasure = 'Revenue' | 'Leads' | 'Activities'
+
+/**
+ * Assigns somebody a number for a period.
+ *
+ * `rampFactor` is a fraction of the target, for somebody who joined part-way through — the server
+ * multiplies, so what comes back is what they actually carry rather than what was typed.
+ */
+export interface SetQuota {
+  period: string
+  userId: string
+  measure: QuotaMeasure
+  target: number
+  rampFactor: number
+}
+
+export interface QuotaSet {
+  userId: string
+  /** What was assigned, after ramp. */
+  target: number
 }

@@ -171,23 +171,30 @@ public sealed record Coverage(
 /// <param name="Committed">
 /// What they committed in their plans. <strong>A different number from the quota</strong>: a quota
 /// is assigned downwards, a commitment is offered upwards, and the two rarely agree.
+/// <para>
+/// <strong>Null on a quota that is not measured in money.</strong> A plan commits an amount, so
+/// there is no commitment to compare a leads or activities target against. Reporting the money
+/// figure beside a target of forty leads produced a gap of −541,960 — arithmetic between two
+/// different things, which reads as a catastrophic shortfall rather than as a question that was
+/// never asked. Zero would be no better: it says nothing was committed, and that is also untrue.
+/// </para>
 /// </param>
-/// <param name="Actual">What actually happened, read live.</param>
+/// <param name="Actual">What actually happened, read live, in this row's own measure.</param>
 /// <param name="Attainment">Actual over quota, or null when they carry no number.</param>
 /// <param name="CommitmentGap">
-/// Quota less committed. The number a sales-operations review is about: a seller carrying 500 who
-/// has committed 380 has a 120 hole that no roll-up of commitments can show, because every
-/// commitment in it is real.
+/// Quota less committed, and null wherever <see cref="Committed"/> is. The number a
+/// sales-operations review is about: a seller carrying 500 who has committed 380 has a 120 hole
+/// that no roll-up of commitments can show, because every commitment in it is real.
 /// </param>
 public sealed record QuotaAttainment(
     string UserId,
     string DisplayName,
     string Measure,
     decimal Quota,
-    decimal Committed,
+    decimal? Committed,
     decimal Actual,
     decimal? Attainment,
-    decimal CommitmentGap);
+    decimal? CommitmentGap);
 
 /// <summary>How the assigned numbers are being met.</summary>
 /// <param name="Period">Which period.</param>

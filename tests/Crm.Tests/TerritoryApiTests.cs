@@ -258,6 +258,49 @@ public sealed class TerritoryApiTests
             120_000m, "the hole between what was given out and what was taken on.");
     }
 
+    /// <summary>
+    /// A quota that is not measured in money has no commitment, and says null rather than a
+    /// number.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A plan commits an amount.</strong> There is nothing in it to compare a target of
+    /// forty leads against, so the honest answer is that the question does not arise. Reporting
+    /// the money figure beside the leads target gave a gap of −541,960 on a real screen —
+    /// arithmetic between two different things, which reads as a catastrophic shortfall rather
+    /// than as a column that does not apply.
+    /// </para>
+    /// <para>
+    /// <strong>Zero would be no better.</strong> It is a claim that nothing was committed, and
+    /// that is untrue of a seller who committed 380,000 against their revenue number in the same
+    /// period — the row beside it proves it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AQuotaNotMeasuredInMoneyHasNoCommitment()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+        var world = await WorldAsync(app);
+
+        await QuotaAsync(app, Rep, 500_000m, 1.0m);
+        await PlanAsync(app, "acme", world.Account, 380_000m, Rep);
+
+        (await app.PostAsync(
+            Quotas, new SetQuota("fy26", Rep, QuotaMeasure.Leads, 40m, 1.0m), CrmTokens.NorthwindManager))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var rows = (await AttainmentAsync(app, CrmTokens.NorthwindManager)).Rows
+            .Where(row => row.UserId == Rep)
+            .ToDictionary(row => row.Measure, StringComparer.Ordinal);
+
+        rows["Revenue"].Committed.ShouldBe(380_000m, "a plan commits an amount.");
+        rows["Revenue"].CommitmentGap.ShouldBe(120_000m);
+
+        rows["Leads"].Committed.ShouldBeNull("there is no commitment measured in leads.");
+        rows["Leads"].CommitmentGap.ShouldBeNull("and so no gap either.");
+        rows["Leads"].Quota.ShouldBe(40m, "the target itself is still a number.");
+    }
+
     /// <summary>Attainment is scoped by the reporting line, like every other read.</summary>
     [Fact]
     public async Task AttainmentIsScopedByWhoIsAsking()

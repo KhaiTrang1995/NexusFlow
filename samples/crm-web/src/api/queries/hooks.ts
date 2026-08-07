@@ -666,3 +666,48 @@ export function usePlaceOrder(): UseMutationResult<C.OrderPlaced, Error, C.Place
     onSuccess: () => client.invalidateQueries({ queryKey: keys.entities.all(tenantId) }),
   })
 }
+
+/**
+ * Clears a discounted quote, so an order can be taken against it.
+ *
+ * WHO APPROVED IS NOT SENT. The server reads it from the caller's claims, which is what makes the
+ * register worth reading — a body carrying an approver id is a body somebody can write anybody's
+ * name into.
+ *
+ * This is not the same act as deciding an approval request. The configured process says which
+ * named people agreed; this is the grant that moves the quote out of Draft, and a client that
+ * treated one as the other would let a recorded decision stand in for the control.
+ */
+export function useApproveDiscount(): UseMutationResult<
+  C.DiscountApproved,
+  Error,
+  C.ApproveDiscount
+> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.ApproveDiscount) =>
+      call.write<C.DiscountApproved, C.ApproveDiscount>('/quotes/approvals', input),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.entities.all(tenantId) }),
+  })
+}
+
+/**
+ * Assigns somebody a quota for a period.
+ *
+ * THE RAMP IS APPLIED BY THE SERVER AND THE ANSWER SAYS SO. A client that multiplied the target
+ * itself would put a number on the screen that the register does not hold, and the two would only
+ * be found to disagree at the review the number exists for.
+ */
+export function useSetQuota(): UseMutationResult<C.QuotaSet, Error, C.SetQuota> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.SetQuota) => call.write<C.QuotaSet, C.SetQuota>('/quotas', input),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.performance.all(tenantId) }),
+  })
+}

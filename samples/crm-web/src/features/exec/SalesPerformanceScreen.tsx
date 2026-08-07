@@ -10,7 +10,10 @@ import {
   StatGrid,
   StatTile,
 } from '@/design/primitives'
+import { useState } from 'react'
 import { useQuotaAttainment, useSalesPerformance } from '@/api/queries/hooks'
+import { useSession } from '@/session/SessionProvider'
+import { SetQuotaDrawer } from './SetQuotaDrawer'
 import type { QuotaAttainment, SellerPerformance } from '@/api/contracts'
 import { fullMoney, money, pct, percent } from '@/lib/format'
 import { PERIODS, PERIOD_LABEL, usePeriod } from './period'
@@ -28,6 +31,20 @@ export function SalesPerformanceScreen() {
   const [period, setPeriod] = usePeriod()
   const sales = useSalesPerformance(period)
   const quota = useQuotaAttainment(period)
+  const session = useSession()
+  const [assigning, setAssigning] = useState(false)
+
+  // Whoever the period already reports on. Assigning to somebody the server does not know about
+  // writes a row no review will ever show, which looks like the write failing rather than the
+  // name being wrong.
+  // One entry per person, not per quota row: somebody carrying both a revenue and a leads
+  // number appears twice in the attainment rows, and a picker listing them twice reads as a
+  // duplicate record rather than as two measures.
+  const people = [
+    ...new Map(
+      (quota.data?.rows ?? sales.data?.sellers ?? []).map((row) => [row.userId, row]),
+    ).values(),
+  ]
 
   return (
     <Page>
@@ -35,26 +52,54 @@ export function SalesPerformanceScreen() {
         eyebrow="Executive"
         title="Sales performance"
         actions={
-          <ButtonGroup label="Period">
-            {PERIODS.map((option) => (
-              <Button key={option} aria-pressed={period === option} onClick={() => setPeriod(option)}>
-                {PERIOD_LABEL[option]}
+          <>
+            <ButtonGroup label="Period">
+              {PERIODS.map((option) => (
+                <Button key={option} aria-pressed={period === option} onClick={() => setPeriod(option)}>
+                  {PERIOD_LABEL[option]}
+                </Button>
+              ))}
+            </ButtonGroup>
+            {session.can('crm.admin') ? (
+              <Button
+                tone="primary"
+                disabled={people.length === 0}
+                title={people.length === 0 ? 'Nobody is reported on for this period yet.' : undefined}
+                onClick={() => setAssigning(true)}
+              >
+                Set a quota
               </Button>
-            ))}
-          </ButtonGroup>
+            ) : null}
+          </>
         }
       />
 
       <AsyncBoundary query={quota} skeletonRows={4}>
         {(data) => {
-          const assigned = data.rows.reduce((sum, row) => sum + row.quota, 0)
-          const achieved = data.rows.reduce((sum, row) => sum + row.actual, 0)
-          const committed = data.rows.reduce((sum, row) => sum + row.committed, 0)
+          // Only the revenue rows. A quota can be carried in leads or in activities, and adding
+          // forty leads to three hundred thousand euros produced "€300,040" — a number that is
+          // not wrong by a little, it is not a quantity at all. Summing across measures is the
+          // arithmetic every currency bug in this repo has looked like.
+          const revenue = data.rows.filter((row) => row.measure === 'Revenue')
+
+          const assigned = revenue.reduce((sum, row) => sum + row.quota, 0)
+          const achieved = revenue.reduce((sum, row) => sum + row.actual, 0)
+          const committed = revenue.reduce((sum, row) => sum + (row.committed ?? 0), 0)
+
+          const others = data.rows.length - revenue.length
 
           return (
             <>
               <StatGrid columns={4}>
-                <StatTile label="Assigned" value={money(assigned)} note="after ramp" />
+                <StatTile
+                  label="Assigned"
+                  value={money(assigned)}
+                  note={
+                    others === 0
+                      ? 'after ramp'
+                      : `after ramp · ${others} row(s) in another measure, not added`
+                  }
+                />
                 <StatTile
                   label="Committed"
                   value={money(committed)}
@@ -82,7 +127,9 @@ export function SalesPerformanceScreen() {
                 <DataTable
                   caption="Quota attainment"
                   rows={data.rows}
-                  rowKey={(row) => row.userId}
+                  // A person carries one quota per measure, so the id alone is not a key —
+                  // React silently dropped the second row of anybody holding two.
+                  rowKey={(row) => `${row.userId}/${row.measure}`}
                   columns={[
                     {
                       id: 'name',
@@ -95,19 +142,27 @@ export function SalesPerformanceScreen() {
                       ),
                       sortValue: (row: QuotaAttainment) => row.displayName,
                     },
-                    { id: 'quota', header: 'Quota', numeric: true, cell: (row: QuotaAttainment) => fullMoney(row.quota), sortValue: (row: QuotaAttainment) => row.quota },
-                    { id: 'committed', header: 'Committed', numeric: true, cell: (row: QuotaAttainment) => fullMoney(row.committed), sortValue: (row: QuotaAttainment) => row.committed },
-                    { id: 'actual', header: 'Actual', numeric: true, cell: (row: QuotaAttainment) => fullMoney(row.actual), sortValue: (row: QuotaAttainment) => row.actual },
+                    { id: 'quota', header: 'Quota', numeric: true, cell: (row: QuotaAttainment) => inMeasure(row, row.quota), sortValue: (row: QuotaAttainment) => row.quota },
+                    { id: 'committed', header: 'Committed', numeric: true, cell: (row: QuotaAttainment) => inMeasure(row, row.committed), sortValue: (row: QuotaAttainment) => row.committed ?? -1 },
+                    { id: 'actual', header: 'Actual', numeric: true, cell: (row: QuotaAttainment) => inMeasure(row, row.actual), sortValue: (row: QuotaAttainment) => row.actual },
                     {
                       id: 'gap',
                       header: 'Commitment gap',
                       numeric: true,
                       cell: (row: QuotaAttainment) => (
-                        <span className={row.commitmentGap > 0 ? styles.negative : styles.positive}>
-                          {fullMoney(row.commitmentGap)}
+                        <span
+                          className={
+                            row.commitmentGap === null
+                              ? styles.sub
+                              : row.commitmentGap > 0
+                                ? styles.negative
+                                : styles.positive
+                          }
+                        >
+                          {inMeasure(row, row.commitmentGap)}
                         </span>
                       ),
-                      sortValue: (row: QuotaAttainment) => row.commitmentGap,
+                      sortValue: (row: QuotaAttainment) => row.commitmentGap ?? 0,
                     },
                     {
                       id: 'attainment',
@@ -161,6 +216,25 @@ export function SalesPerformanceScreen() {
           </Panel>
         )}
       </AsyncBoundary>
+      {assigning ? (
+        <SetQuotaDrawer period={period} people={people} onClose={() => setAssigning(false)} />
+      ) : null}
     </Page>
   )
+}
+
+/**
+ * A quota figure in the unit its own row is measured in.
+ *
+ * A LEADS QUOTA IS A COUNT, NOT AN AMOUNT. Rendering forty leads as "€40.00" is not a formatting
+ * slip: it reads as a target somebody would query, and the person who set it has no way to tell
+ * from the screen that the number is right and the currency sign is wrong.
+ */
+function inMeasure(row: QuotaAttainment, value: number | null): string {
+  // Null is "the question does not arise here", which an em dash says and a zero does not.
+  if (value === null) {
+    return '—'
+  }
+
+  return row.measure === 'Revenue' ? fullMoney(value) : value.toLocaleString('en-GB')
 }
