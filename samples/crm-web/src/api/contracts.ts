@@ -608,3 +608,39 @@ export interface Coverage {
   /** Territories with nobody on them. */
   unowned: number
 }
+
+// ─────────────────────────────────────────────────────────────── what a tenant has declared
+
+export type ConfigKind =
+  | 'ListView'
+  | 'ValidationRule'
+  | 'RollUp'
+  | 'Formula'
+  | 'Report'
+  | 'Dashboard'
+  | 'Connector'
+  | 'Label'
+  | 'ApprovalProcess'
+  | 'SlaPolicy'
+  | 'BusinessHours'
+  | 'Territory'
+
+export interface ReadConfig {
+  kind: ConfigKind
+  limit: number
+}
+
+export interface ConfigItem {
+  /** Null for the two kinds keyed by what they describe rather than by an id. */
+  id: string | null
+  name: string
+  label: string
+  /** What it does, in a sentence the server composed. */
+  summary: string
+  isActive: boolean
+}
+
+export interface ConfigList {
+  kind: ConfigKind
+  items: ConfigItem[]
+}

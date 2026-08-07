@@ -339,6 +339,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<ServiceStore>();
         services.AddSingleton<CampaignStore>();
         services.AddSingleton<EntityQueryStore>();
+        services.AddSingleton<ConfigStore>();
 
         // The far end, recorded rather than reached. Every other claim in these tests is checked
         // against a real PostgreSQL; a connector's far end is a network somebody else owns, and a
@@ -420,6 +421,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<ReadCrmCampaignPerformance>();
         services.AddSingleton<ReadCrmDealAttribution>();
         services.AddSingleton<ReadCrmEntityPage>();
+        services.AddSingleton<ReadCrmConfig>();
 
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
@@ -491,5 +493,6 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<CampaignPerformanceFlow.Dispatcher>();
         services.AddSingleton<DealAttributionFlow.Dispatcher>();
         services.AddSingleton<EntityPageFlow.Dispatcher>();
+        services.AddSingleton<ConfigListFlow.Dispatcher>();
     }
 }

@@ -445,3 +445,26 @@ export function useCoverage(): UseQueryResult<C.Coverage> {
     staleTime: 30_000,
   })
 }
+
+// ─────────────────────────────────────────────────────────────── what a tenant has declared
+
+/**
+ * What this tenant has declared of one kind, each row with a sentence saying what it does.
+ *
+ * ONE HOOK FOR TWELVE SETUP SCREENS. The summary is composed by the server — it knows what an
+ * operator and a value mean together, and five clients composing five different sentences about
+ * one validation rule is five chances to describe it wrongly.
+ *
+ * `crm.admin`: a caller without it gets a refusal, and the screen shows the server's own words
+ * rather than an empty table that reads as "nothing is configured".
+ */
+export function useConfig(kind: C.ConfigKind, limit = 100): UseQueryResult<C.ConfigList> {
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useQuery({
+    queryKey: keys.config.kind(tenantId, kind),
+    queryFn: ({ signal }) => call.read<C.ConfigList, C.ReadConfig>('/config', { kind, limit }, signal),
+    staleTime: 30_000,
+  })
+}

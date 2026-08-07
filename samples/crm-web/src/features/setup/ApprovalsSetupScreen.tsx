@@ -14,6 +14,7 @@ import {
 import { useDefineApprovalProcess } from '@/api/queries/hooks'
 import type { ApprovalCriterion, ApprovalStepDefinition, ApprovalSubject, ApproverKind, GuardOperator } from '@/api/contracts'
 import { useToast } from '@/app/ToastProvider'
+import { DeclaredList } from './DeclaredList'
 import styles from './setup.module.css'
 
 const OPERATORS: readonly GuardOperator[] = ['Equals', 'NotEquals', 'GreaterThan', 'LessThan', 'IsSet']
@@ -55,6 +56,14 @@ export function ApprovalsSetupScreen() {
   return (
     <Page>
       <PageHeader eyebrow="Setup" title="Approvals" />
+
+      <div style={{ marginBottom: 'var(--section-gap)' }}>
+        <DeclaredList
+          kind="ApprovalProcess"
+          title="Approval processes"
+          empty="Nothing needs approving. The form below changes that."
+        />
+      </div>
 
       <Columns layout="split">
         <Panel padding="flush">

@@ -97,7 +97,21 @@ export function SessionProvider({
   initialPersona?: Persona
   children: ReactNode
 }) {
-  const [persona, setPersona] = useState<Persona>(initialPersona)
+  // Remembered across a reload. Switching persona and losing it on the next full page load
+  // makes every deep link a representative's — which is how a screen that needs `crm.admin`
+  // reads as broken rather than as refused.
+  const [persona, remember] = useState<Persona>(() => stored() ?? initialPersona)
+
+  const setPersona = useCallback((next: Persona) => {
+    remember(next)
+
+    try {
+      globalThis.localStorage?.setItem(PersonaKey, next)
+    } catch {
+      // A browser with storage disabled still switches persona; it just forgets on reload.
+    }
+  }, [])
+
   const user = PEOPLE[persona]
 
   const can = useCallback(
@@ -111,6 +125,19 @@ export function SessionProvider({
   )
 
   return <SessionContext value={value}>{children}</SessionContext>
+}
+
+/** Where the chosen persona is remembered. */
+const PersonaKey = 'crm-web.persona'
+
+function stored(): Persona | null {
+  try {
+    const value = globalThis.localStorage?.getItem(PersonaKey)
+
+    return value !== null && value !== undefined && value in PEOPLE ? (value as Persona) : null
+  } catch {
+    return null
+  }
 }
 
 export function useSession(): Session {

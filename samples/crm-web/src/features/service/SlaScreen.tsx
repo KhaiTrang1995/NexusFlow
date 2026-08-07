@@ -14,6 +14,7 @@ import {
 import { useDefineSlaPolicy, useSetBusinessHours } from '@/api/queries/hooks'
 import type { CasePriority, OpeningHoursOfDay } from '@/api/contracts'
 import { useToast } from '@/app/ToastProvider'
+import { DeclaredList } from '@/features/setup/DeclaredList'
 import styles from './service.module.css'
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const
@@ -52,6 +53,24 @@ export function SlaScreen() {
   return (
     <Page>
       <PageHeader eyebrow="Service setup" title="Business hours and SLA policies" />
+
+      {/* Both halves of the promise: when the desk is open, and what it promises while it is. */}
+      <div style={{ marginBottom: 'var(--section-gap)' }}>
+        <DeclaredList
+          kind="BusinessHours"
+          title="When the desk is open"
+          note="a day left out is a day the clock does not run"
+          empty="No opening hours are set, so every clock runs around the clock."
+        />
+      </div>
+
+      <div style={{ marginBottom: 'var(--section-gap)' }}>
+        <DeclaredList
+          kind="SlaPolicy"
+          title="What each priority is promised"
+          empty="No policies are declared, so no case is measured against anything."
+        />
+      </div>
 
       <Columns layout="halves">
         <Panel padding="flush">
