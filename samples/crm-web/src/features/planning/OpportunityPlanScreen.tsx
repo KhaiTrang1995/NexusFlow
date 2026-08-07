@@ -3,6 +3,8 @@ import { OBJECT_MODELS } from '@/fixtures/objects'
 import { fullMoney, money, percent } from '@/lib/format'
 import { QUALIFICATION, STEPS } from './planFixtures'
 import type { PlanStep } from './planFixtures'
+import { PERIODS } from '@/features/exec/period'
+import { PlanDetailPanels } from './PlanDetailPanels'
 import styles from './planning.module.css'
 
 /**
@@ -24,6 +26,12 @@ export function OpportunityPlanScreen() {
         eyebrow="Planning · deal plan"
         title={String(deal?.['name'] ?? 'Opportunity plan')}
       />
+
+      {/* The tenant's own plans, read whole. Everything below this is the prototype's. */}
+      <PlanDetailPanels kind="Opportunity" period={PERIODS[0]} />
+
+      <div className={styles.sampleNote}>Everything below is sample data.</div>
+
 
       <StatGrid columns={4}>
         <StatTile label="Amount" value={money(Number(deal?.['amount'] ?? 0))} note={String(deal?.['stage'])} />

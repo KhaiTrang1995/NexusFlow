@@ -148,3 +148,18 @@
   line-height: 1.45;
   padding: 16px 17px;
 }
+
+/* The line between what the server said and what the prototype drew. Without it a reader has
+   no way to tell which half of the screen is theirs. */
+.sampleNote {
+  margin: var(--section-gap) 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* The plan chooser, when a period has more than one plan of a kind. */
+.planStrip {
+  padding: var(--space-3) var(--space-4);
+}
