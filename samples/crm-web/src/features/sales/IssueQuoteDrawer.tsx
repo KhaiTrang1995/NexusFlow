@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import {
   Button,
   Drawer,
@@ -32,6 +33,10 @@ const EMPTY: DraftLine = { sku: '', quantity: '1', unitPrice: '' }
  *
  * The figure below the lines is labelled as an estimate for that reason: it is arithmetic to
  * help somebody type, not the price.
+ *
+ * AND IT OPENS THE QUOTE IT JUST MADE. Before this, issuing one left the reader on the opportunity
+ * with the new quote reachable only by finding it in a list of every quote in the tenant — which,
+ * for a seller who has issued three this week, is a guessing game between four identical totals.
  */
 export function IssueQuoteDrawer({
   opportunityId,
@@ -45,6 +50,7 @@ export function IssueQuoteDrawer({
   onClose: () => void
 }) {
   const issue = useIssueQuote()
+  const navigate = useNavigate()
   const toast = useToast()
 
   const [lines, setLines] = useState<DraftLine[]>([{ ...EMPTY }])
@@ -89,8 +95,14 @@ export function IssueQuoteDrawer({
               ? `Quote ${fullMoney(result.total.amount)} is ${result.status} — a manager has to approve the discount.`
               : `Quote ${fullMoney(result.total.amount)} ${result.status.toLowerCase()}.`,
           )
+
           onClose()
+          void navigate({
+            to: '/records/$object/$id',
+            params: { object: 'quote', id: result.quoteId },
+          })
         },
+        onError: (error) => toast.failed(error, 'That quote was not priced.'),
       },
     )
   }
