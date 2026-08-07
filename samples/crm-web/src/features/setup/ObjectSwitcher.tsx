@@ -1,12 +1,17 @@
 import { Button } from '@/design/primitives'
-import { OBJECT_MODELS } from '@/fixtures/objects'
+import { useSchema } from '@/api/queries/hooks'
+import { schemaRows } from './schemaModel'
 import styles from './setup.module.css'
 
 /**
  * Which object a setup screen is editing.
  *
  * Six screens need it, so it lives once. A copy per screen would be six places for the list to
- * fall out of step with the object model that drives every one of them.
+ * fall out of step.
+ *
+ * The list is the tenant's, from `describe`. A switcher offering the objects this build was
+ * compiled with would be missing the one the administrator declared a minute ago — on the screen
+ * they declared it from.
  */
 export function ObjectSwitcher({
   value,
@@ -15,9 +20,11 @@ export function ObjectSwitcher({
   value: string
   onChange: (key: string) => void
 }) {
+  const schema = useSchema()
+
   return (
     <div className={styles.objectStrip} role="group" aria-label="Object">
-      {Object.values(OBJECT_MODELS).map((object) => (
+      {schemaRows(schema.data).map((object) => (
         <Button
           key={object.key}
           size="sm"
@@ -25,7 +32,7 @@ export function ObjectSwitcher({
           aria-pressed={value === object.key}
           onClick={() => onChange(object.key)}
         >
-          {object.plural}
+          {object.label}
         </Button>
       ))}
     </div>

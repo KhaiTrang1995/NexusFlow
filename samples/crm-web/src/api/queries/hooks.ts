@@ -399,3 +399,49 @@ export function useEntityRecord(
     staleTime: 15_000,
   })
 }
+
+// ─────────────────────────────────────────────────────────────── the schema, described
+
+/**
+ * What this tenant's schema looks like to this caller.
+ *
+ * ONE CALL FOR EVERY SETUP SCREEN. Objects, built-in entities, their columns, the fields an
+ * administrator added and the permissions already resolved — a client that asked four endpoints
+ * for those would be four descriptions of one schema, and the fourth would disagree with the
+ * first the moment somebody declared a field between two of the requests.
+ *
+ * The permissions arrive resolved rather than as rules to evaluate: `canRead` and `canWrite` are
+ * answers about this caller, so a screen hides a control instead of reimplementing the policy.
+ */
+export function useSchema(): UseQueryResult<C.SchemaDescription> {
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useQuery({
+    queryKey: keys.schema.described(tenantId),
+    queryFn: ({ signal }) =>
+      call.read<C.SchemaDescription, C.DescribeSchema>('/describe', { target: null }, signal),
+    // A schema changes when an administrator changes it, which is rarely and deliberately.
+    staleTime: 60_000,
+  })
+}
+
+// ─────────────────────────────────────────────────────────────── territory coverage
+
+/**
+ * What is covered and, more usefully, what is not.
+ *
+ * The number this read exists for is `unrouted`: accounts that fall into no territory at all. A
+ * list-per-person model cannot ask that question — an account missing from every list looks
+ * exactly like an account nobody has got to yet.
+ */
+export function useCoverage(): UseQueryResult<C.Coverage> {
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useQuery({
+    queryKey: keys.territories.coverage(tenantId),
+    queryFn: ({ signal }) => call.read<C.Coverage, Record<string, never>>('/territories/coverage', {}, signal),
+    staleTime: 30_000,
+  })
+}

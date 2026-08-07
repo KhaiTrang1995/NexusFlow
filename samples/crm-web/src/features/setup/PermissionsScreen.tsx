@@ -1,5 +1,6 @@
 import { Page, PageHeader, Panel, PanelHeader, Tag } from '@/design/primitives'
-import { OBJECT_MODELS } from '@/fixtures/objects'
+import { useSchema } from '@/api/queries/hooks'
+import { schemaRows } from './schemaModel'
 import styles from './setup.module.css'
 
 type Grant = 'read' | 'write' | 'admin' | 'none'
@@ -49,7 +50,18 @@ const TONE: Readonly<Record<Grant, 'positive' | 'accent' | 'outline' | 'neutral'
  * is doing, and hiding a button is a courtesy rather than a control.
  */
 export function PermissionsScreen() {
-  const objects = Object.values(OBJECT_MODELS)
+  const schema = useSchema()
+  const objects = schemaRows(schema.data)
+
+  // The half of this screen that is not a picture. `canRead` and `canWrite` came back from the
+  // server already resolved for whoever is holding the token, so a field missing here is
+  // field-level security refusing this caller — not a rule this client evaluated and could get
+  // wrong.
+  const restricted = objects.flatMap((object) =>
+    object.fields
+      .filter((field) => field.declared && (!field.canRead || !field.canWrite))
+      .map((field) => ({ object: object.label, ...field })),
+  )
 
   return (
     <Page>
@@ -65,7 +77,7 @@ export function PermissionsScreen() {
                 <th scope="col">Profile</th>
                 {objects.map((object) => (
                   <th key={object.key} scope="col">
-                    {object.plural}
+                    {object.label}
                   </th>
                 ))}
               </tr>
@@ -90,6 +102,43 @@ export function PermissionsScreen() {
             </tbody>
           </table>
         </div>
+      </Panel>
+
+      <Panel padding="flush" style={{ marginTop: 'var(--section-gap)' }}>
+        <PanelHeader
+          title="Fields this token may not have in full"
+          note={
+            schema.isPending
+              ? 'reading…'
+              : `${restricted.length} · resolved by the server for this caller`
+          }
+        />
+        {restricted.length === 0 ? (
+          <div style={{ padding: 'var(--space-4)' }}>
+            <span className={styles.sub}>
+              Every declared field is readable and writable by this token. Switch persona to see
+              the difference — the answer comes from the server, not from this screen.
+            </span>
+          </div>
+        ) : (
+          <div>
+            {restricted.map((field) => (
+              <div key={`${field.object}-${field.name}`} className={styles.flowRow}>
+                <Tag tone="outline">{field.object}</Tag>
+                <span className={styles.link}>{field.label}</span>
+                <span className={styles.mono}>{field.name}</span>
+                <span style={{ marginLeft: 'auto', display: 'flex', gap: 'var(--space-2)' }}>
+                  <Tag tone={field.canRead ? 'positive' : 'critical'}>
+                    {field.canRead ? 'read' : 'no read'}
+                  </Tag>
+                  <Tag tone={field.canWrite ? 'positive' : 'critical'}>
+                    {field.canWrite ? 'write' : 'no write'}
+                  </Tag>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </Panel>
     </Page>
   )

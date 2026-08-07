@@ -531,3 +531,80 @@ export interface RecordPage {
   redacted: string[]
   nextCursor: string | null
 }
+
+// ─────────────────────────────────────────────────────────────── the schema, described
+
+export interface DescribedField {
+  name: string
+  label: string
+  type: string
+  isRequired: boolean
+  isComputed: boolean
+  canRead: boolean
+  canWrite: boolean
+  options: string[]
+  references: string | null
+}
+
+export interface DescribedView {
+  name: string
+  label: string
+  kind: string
+  groupBy: string | null
+  lanes: string[]
+  wipLimit: number | null
+  titleField: string
+  subtitleField: string | null
+  columns: string[]
+}
+
+export interface DescribedObject {
+  id: string
+  name: string
+  label: string
+  fields: DescribedField[]
+  views: DescribedView[]
+}
+
+export interface DescribedColumn {
+  name: string
+  label: string
+}
+
+export interface DescribedEntity {
+  kind: string
+  label: string
+  columns: DescribedColumn[]
+  fields: DescribedField[]
+}
+
+export interface DescribeSchema {
+  target: string | null
+}
+
+export interface SchemaDescription {
+  objects: DescribedObject[]
+  entities: DescribedEntity[]
+  version: number
+}
+
+// ─────────────────────────────────────────────────────────────── territory coverage
+
+export interface ReadCoverage {
+  [key: string]: never
+}
+
+export interface TerritoryCoverage {
+  territory: string
+  label: string
+  owners: number
+  accounts: number
+}
+
+export interface Coverage {
+  territories: TerritoryCoverage[]
+  /** Accounts falling into no territory at all — the ones nobody owns. */
+  unrouted: number
+  /** Territories with nobody on them. */
+  unowned: number
+}

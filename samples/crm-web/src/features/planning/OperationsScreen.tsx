@@ -1,5 +1,17 @@
-import { DataTable, Page, PageHeader, Panel, PanelHeader, StatGrid, StatTile, Meter, Tag } from '@/design/primitives'
+import {
+  AsyncBoundary,
+  DataTable,
+  Page,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  StatGrid,
+  StatTile,
+  Meter,
+  Tag,
+} from '@/design/primitives'
 import { fullMoney, money, percent } from '@/lib/format'
+import { useCoverage } from '@/api/queries/hooks'
 import { CAPACITY } from './planFixtures'
 import type { CapacityRow } from './planFixtures'
 import styles from './planning.module.css'
@@ -16,6 +28,8 @@ export function OperationsScreen() {
   const target = CAPACITY.reduce((sum, row) => sum + row.target, 0)
   const people = CAPACITY.reduce((sum, row) => sum + row.people, 0)
   const ramped = CAPACITY.reduce((sum, row) => sum + row.rampedPeople, 0)
+
+  const coverage = useCoverage()
 
   return (
     <Page>
@@ -34,8 +48,74 @@ export function OperationsScreen() {
         />
       </StatGrid>
 
+      <AsyncBoundary query={coverage} skeletonRows={4}>
+        {(map) => (
+          <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
+            <PanelHeader
+              title="Territory coverage"
+              note={`${map.territories.length} territories · ${map.unrouted} accounts routed nowhere`}
+            />
+
+            {/*
+              The two numbers a list-per-person model cannot produce. An account in nobody's
+              territory looks exactly like an account nobody has got to yet, and a territory with
+              rules and no owner routes accounts into a queue nobody reads.
+            */}
+            <StatGrid columns={2}>
+              <StatTile
+                label="Accounts routed nowhere"
+                value={map.unrouted}
+                direction={map.unrouted === 0 ? 'up' : 'down'}
+                note="in no territory at all"
+              />
+              <StatTile
+                label="Territories with nobody on them"
+                value={map.unowned}
+                direction={map.unowned === 0 ? 'up' : 'down'}
+                note="rules with no owner"
+              />
+            </StatGrid>
+
+            <DataTable
+              caption="Territory coverage"
+              rows={map.territories}
+              rowKey={(row) => row.territory}
+              columns={[
+                {
+                  id: 'territory',
+                  header: 'Territory',
+                  cell: (row: { label: string; territory: string }) => (
+                    <>
+                      <span className={styles.link}>{row.label}</span>
+                      <div className={styles.sub}>{row.territory}</div>
+                    </>
+                  ),
+                  sortValue: (row: { label: string }) => row.label,
+                },
+                {
+                  id: 'owners',
+                  header: 'Owners',
+                  numeric: true,
+                  cell: (row: { owners: number }) =>
+                    row.owners === 0 ? <Tag tone="critical">none</Tag> : row.owners,
+                  sortValue: (row: { owners: number }) => row.owners,
+                },
+                {
+                  id: 'accounts',
+                  header: 'Accounts',
+                  numeric: true,
+                  cell: (row: { accounts: number }) => row.accounts,
+                  sortValue: (row: { accounts: number }) => row.accounts,
+                },
+              ]}
+              empty="No territories are declared."
+            />
+          </Panel>
+        )}
+      </AsyncBoundary>
+
       <Panel padding="flush">
-        <PanelHeader title="By team" note="ramped capacity against the number" />
+        <PanelHeader title="By team" note="ramped capacity against the number · sample data" />
         <DataTable
           caption="Capacity by team"
           rows={CAPACITY}

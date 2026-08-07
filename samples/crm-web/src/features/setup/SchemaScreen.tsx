@@ -1,5 +1,6 @@
 import { Page, PageHeader, Panel, PanelHeader, Tag } from '@/design/primitives'
-import { OBJECT_MODELS } from '@/fixtures/objects'
+import { useSchema } from '@/api/queries/hooks'
+import { schemaRows } from './schemaModel'
 import styles from './setup.module.css'
 
 /**
@@ -10,12 +11,16 @@ import styles from './setup.module.css'
  * relationship added in setup appears here without anybody remembering to add it.
  */
 export function SchemaScreen() {
-  const objects = Object.values(OBJECT_MODELS)
+  const schema = useSchema()
+  const objects = schemaRows(schema.data)
 
+  // Read from the description's own reference fields. A diagram drawn from a list this client
+  // keeps would show the shape of the build rather than the shape of the tenant — and the one
+  // thing a schema screen must not do is describe a schema somebody else has.
   const edges = objects.flatMap((object) =>
     object.fields
-      .filter((field) => field.type === 'lookup' && field.to && field.to !== 'User' && field.to !== 'Any')
-      .map((field) => ({ from: object.label, to: field.to as string, via: field.label })),
+      .filter((field) => field.type === 'Reference')
+      .map((field) => ({ from: object.label, to: field.name, via: field.label })),
   )
 
   return (
@@ -23,7 +28,10 @@ export function SchemaScreen() {
       <PageHeader eyebrow="Setup" title="Schema" />
 
       <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
-        <PanelHeader title="Entities" note={`${objects.length}`} />
+        <PanelHeader
+          title="Entities"
+          note={objects.length === 0 ? 'reading…' : `${objects.length} · schema v${schema.data?.version ?? '?'}`}
+        />
         <div className={styles.schema}>
           {objects.map((object) => (
             <div key={object.key} className={styles.entity}>
@@ -45,7 +53,7 @@ export function SchemaScreen() {
       </Panel>
 
       <Panel padding="flush">
-        <PanelHeader title="Relationships" note={`${edges.length} edges, read from the lookups`} />
+        <PanelHeader title="Relationships" note={`${edges.length} edges, read from the reference fields`} />
         <div>
           {edges.map((edge) => (
             <div key={`${edge.from}-${edge.via}-${edge.to}`} className={styles.flowRow}>
