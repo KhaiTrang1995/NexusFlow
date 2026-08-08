@@ -655,3 +655,48 @@ test.describe('the two buttons that did nothing', () => {
     await expect(toast(page)).toContainText('created')
   })
 })
+
+test.describe('the chrome', () => {
+  /**
+   * The shell says which organisation this is, and which chair.
+   *
+   * It read "org: gridline-prod · sandbox" on every tenant — a name nobody is signed in to beside
+   * a badge claiming this is not the real one, both fixed strings. And the rail's role label was
+   * a chain of three comparisons ending in `: 'Admin'`, so the Contoso seller was labelled an
+   * administrator while holding a reader's grants.
+   */
+  test('names the tenant and the chair it is actually in', async ({ page }) => {
+    await signIn(page, 'rep')
+    await page.goto('/')
+
+    await expect(page.getByText('org: crm-northwind')).toBeVisible()
+    await expect(page.getByText('gridline-prod')).toHaveCount(0)
+
+    await signIn(page, 'contoso')
+    await page.goto('/')
+
+    await expect(page.getByText('org: crm-contoso')).toBeVisible()
+    await expect(page.locator('nav[aria-label="Applications"]')).toContainText('Contoso')
+  })
+
+  /**
+   * The permission screen answers "what may I do", from the token.
+   *
+   * Seven objects by four profiles of `read`/`write`/`admin` used to sit here, describing a
+   * per-object model this system does not have: authorization is a scope, checked on the
+   * capability, and it is the same scope whatever the object is.
+   */
+  test('says which permissions this token holds', async ({ page }) => {
+    await signIn(page, 'rep')
+    await page.goto('/setup/permissions')
+
+    const approve = page.getByRole('row', { name: /crm\.discount\.approve/ })
+
+    await expect(approve).toContainText('not held')
+
+    await signIn(page, 'manager')
+    await page.goto('/setup/permissions')
+
+    await expect(page.getByRole('row', { name: /crm\.discount\.approve/ })).toContainText('held')
+  })
+})

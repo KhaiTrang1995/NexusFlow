@@ -87,10 +87,13 @@ function TopBar({ currentApp }: { currentApp: string }) {
         ))}
       </ButtonGroup>
 
+      {/*
+        THREE GLYPHS THAT LOOKED LIKE CONTROLS SAT HERE — a notification bell, a home and a help
+        mark, drawn from the mock-up, none of them clickable and none of them behind anything.
+        A reader who tries one and gets nothing has learnt that this application's chrome does not
+        respond, which is the wrong thing to have taught them before they reach a real control.
+      */}
       <div className={styles.topbarEnd}>
-        <span aria-hidden="true">◔</span>
-        <span aria-hidden="true">⌂</span>
-        <span aria-hidden="true">?</span>
         <div className={styles.avatar} title={`${session.displayName} · signed in as ${session.persona}`}>
           {session.initials}
         </div>
@@ -142,14 +145,13 @@ function AppRail({ currentApp }: { currentApp: string }) {
         </RailLink>
         <div className={styles.railButton} style={{ height: 52, cursor: 'default' }}>
           <span className={styles.railAvatar}>{session.initials}</span>
+          {/*
+            The chair's own label, from the one list that has them. A chain of three comparisons
+            ending in `: 'Admin'` called every persona it did not name an administrator — which
+            the Contoso seller was, in the rail, while holding a reader's grants.
+          */}
           <span className={styles.railLabel} style={{ color: 'var(--color-neutral-600)' }}>
-            {session.persona === 'rep'
-              ? 'Rep'
-              : session.persona === 'manager'
-                ? 'Mgr'
-                : session.persona === 'director'
-                  ? 'Dir'
-                  : 'Admin'}
+            {PERSONAS.find((persona) => persona.id === session.persona)?.label ?? session.persona}
           </span>
         </div>
       </div>
@@ -201,6 +203,7 @@ function RailIcon({ path }: { path: string }) {
 }
 
 function TabStrip() {
+  const { tenantId } = useSession()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
 
   return (
@@ -234,9 +237,15 @@ function TabStrip() {
         Setup
       </Link>
 
+      {/*
+        THE ORGANISATION THIS IS, NOT A NAME FROM THE MOCK-UP. It read "org: gridline-prod" and
+        "sandbox" on every tenant — an organisation nobody is signed in to, beside a badge saying
+        this is not the real one. Both were fixed strings, and the second is the sort of label a
+        reader trusts when deciding whether an action is safe. The tenant is what the token
+        carries and it is what every request on the screen is scoped by.
+      */}
       <div className={styles.org}>
-        <span className={styles.orgName}>org: gridline-prod</span>
-        <span className={styles.orgBadge}>sandbox</span>
+        <span className={styles.orgName}>org: {tenantId}</span>
       </div>
     </nav>
   )

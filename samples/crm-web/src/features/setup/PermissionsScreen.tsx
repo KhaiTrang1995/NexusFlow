@@ -1,55 +1,30 @@
 import { Page, PageHeader, Panel, PanelHeader, Tag } from '@/design/primitives'
 import { useSchema } from '@/api/queries/hooks'
+import { useSession } from '@/session/SessionProvider'
 import { schemaRows } from './schemaModel'
 import styles from './setup.module.css'
 
-type Grant = 'read' | 'write' | 'admin' | 'none'
-
-interface ProfileRow {
-  profile: string
-  permission: string
-  grants: Readonly<Record<string, Grant>>
-}
-
-const PROFILES: readonly ProfileRow[] = [
-  {
-    profile: 'Representative',
-    permission: 'crm.read, crm.write',
-    grants: { account: 'write', contact: 'write', lead: 'write', opportunity: 'write', quote: 'write', workorder: 'read', task: 'write' },
-  },
-  {
-    profile: 'Manager',
-    permission: 'crm.read, crm.write, crm.discount.approve',
-    grants: { account: 'write', contact: 'write', lead: 'write', opportunity: 'write', quote: 'admin', workorder: 'write', task: 'write' },
-  },
-  {
-    profile: 'Administrator',
-    permission: 'crm.read, crm.write, crm.admin',
-    grants: { account: 'admin', contact: 'admin', lead: 'admin', opportunity: 'admin', quote: 'admin', workorder: 'admin', task: 'admin' },
-  },
-  {
-    profile: 'Read only',
-    permission: 'crm.read',
-    grants: { account: 'read', contact: 'read', lead: 'read', opportunity: 'read', quote: 'read', workorder: 'read', task: 'read' },
-  },
+/**
+ * The permissions this build actually checks, and what each one unlocks.
+ *
+ * <strong>A per-object grid used to sit here</strong> — seven objects × four profiles, every cell
+ * saying `read`, `write` or `admin`. It described a model this system does not have: authorization
+ * is a scope on the token, checked on the capability, and it is the same scope whatever the object
+ * is. A reader who took the grid at face value would conclude a representative could read work
+ * orders and not write them, which was never true of anything.
+ *
+ * What replaced it is the four scope strings the server names in its refusals, said once, with
+ * whether this caller holds each.
+ */
+const PERMISSIONS: readonly { permission: string; unlocks: string }[] = [
+  { permission: 'crm.read', unlocks: 'Every read: the record pages, the lists, the boards and the reports.' },
+  { permission: 'crm.write', unlocks: 'Capturing, converting, quoting, ordering and commenting.' },
+  { permission: 'crm.admin', unlocks: 'Declaring objects, fields, processes, policies and approvals.' },
+  { permission: 'crm.discount.approve', unlocks: 'Clearing a quote whose discount crossed the threshold.' },
 ]
 
-const TONE: Readonly<Record<Grant, 'positive' | 'accent' | 'outline' | 'neutral'>> = {
-  admin: 'positive',
-  write: 'accent',
-  read: 'outline',
-  none: 'neutral',
-}
-
-/**
- * Who may do what.
- *
- * THIS IS A PICTURE, NOT THE ENFORCEMENT. Every grant below is checked on the server, on the
- * capability, on every request. A permission matrix that a client could edit into meaning
- * something else would be a permission matrix worth nothing — this screen shows what the server
- * is doing, and hiding a button is a courtesy rather than a control.
- */
 export function PermissionsScreen() {
+  const session = useSession()
   const schema = useSchema()
   const objects = schemaRows(schema.data)
 
@@ -68,35 +43,32 @@ export function PermissionsScreen() {
       <PageHeader eyebrow="Setup" title="Permissions" />
 
       <Panel padding="flush">
-        <PanelHeader title="Profiles" note="enforced on the server, on every request" />
+        <PanelHeader
+          title="What this token holds"
+          note={`${session.displayName} · enforced on the server, on every request`}
+        />
         <div style={{ overflowX: 'auto' }}>
           <table className={styles.matrix}>
-            <caption className="sr-only">Object permissions by profile</caption>
+            <caption className="sr-only">Permissions this build checks</caption>
             <thead>
               <tr>
-                <th scope="col">Profile</th>
-                {objects.map((object) => (
-                  <th key={object.key} scope="col">
-                    {object.label}
-                  </th>
-                ))}
+                <th scope="col">Permission</th>
+                <th scope="col">What it unlocks</th>
+                <th scope="col">Held</th>
               </tr>
             </thead>
             <tbody>
-              {PROFILES.map((row) => (
-                <tr key={row.profile}>
+              {PERMISSIONS.map((row) => (
+                <tr key={row.permission}>
+                  <td className={styles.mono}>{row.permission}</td>
+                  <td>{row.unlocks}</td>
                   <td>
-                    <div>{row.profile}</div>
-                    <div className={styles.mono}>{row.permission}</div>
+                    {session.can(row.permission) ? (
+                      <Tag tone="positive">held</Tag>
+                    ) : (
+                      <Tag tone="neutral">not held</Tag>
+                    )}
                   </td>
-                  {objects.map((object) => {
-                    const grant = row.grants[object.key] ?? 'none'
-                    return (
-                      <td key={object.key}>
-                        <Tag tone={TONE[grant]}>{grant}</Tag>
-                      </td>
-                    )
-                  })}
                 </tr>
               ))}
             </tbody>
