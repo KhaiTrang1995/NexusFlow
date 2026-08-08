@@ -424,3 +424,52 @@ public sealed class ReadPeriodRollUp : ICapability<ForViewer, PeriodRollUp>
             : Result.Fail<PeriodRollUp>(PlanningErrors.StrategyNotSet(input.Period));
     }
 }
+
+/// <summary>
+/// Says which periods this tenant has declared.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>Readable by anybody who can read, not only by an administrator.</strong> Declaring a
+/// period is an administrative act; knowing which quarter you are looking at is not. Behind
+/// <c>crm.admin</c> this would leave every seller's screen with no period to ask for and no way to
+/// find one.
+/// </para>
+/// <para>
+/// <strong>Empty is an answer, not a refusal.</strong> A tenant that has declared no periods yet
+/// has nothing to plan against, and saying so once is what lets a screen explain itself instead of
+/// showing a not-found for a quarter the client invented.
+/// </para>
+/// </remarks>
+[Capability("crm.planning.periods", Version = "1.0.0",
+    Authorization = Authorization.Permission, Permission = "crm.read",
+    Idempotent = true)]
+public sealed class ReadDeclaredPeriods : ICapability<ReadPeriods, DeclaredPeriods>
+{
+    private readonly PlanningStore _planning;
+
+    /// <summary>Creates the capability.</summary>
+    /// <param name="planning">Reads the periods.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="planning"/> is null.</exception>
+    public ReadDeclaredPeriods(PlanningStore planning)
+    {
+        ArgumentNullException.ThrowIfNull(planning);
+
+        _planning = planning;
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<Result<DeclaredPeriods>> ExecuteAsync(
+        ReadPeriods input,
+        CapabilityContext ctx,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(ctx);
+
+        var periods = await _planning
+            .PeriodsAsync(ctx.TenantId, DateOnly.FromDateTime(ctx.UtcNow.UtcDateTime), ct)
+            .ConfigureAwait(false);
+
+        return Result.Ok(new DeclaredPeriods(periods));
+    }
+}

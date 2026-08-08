@@ -197,6 +197,8 @@ namespace Crm;
 [JsonSerializable(typeof(OpportunityReadiness))]
 [JsonSerializable(typeof(LeadAttainment))]
 [JsonSerializable(typeof(PeriodRollUp))]
+[JsonSerializable(typeof(ReadPeriods))]
+[JsonSerializable(typeof(DeclaredPeriods))]
 [JsonSerializable(typeof(ForViewer))]
 
 // The reporting line, the depth an account plan actually has, and the numbers reviewed.

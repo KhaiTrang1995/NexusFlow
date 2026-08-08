@@ -233,6 +233,29 @@ public sealed class TerritoryApiTests
             .ShouldBe("crm.quota_ramp_out_of_range");
     }
 
+    /// <summary>What was assigned and what can be carried are both returned, and differ.</summary>
+    /// <remarks>
+    /// <strong>The capacity model needs both halves.</strong> A seller who joined three months
+    /// into the quarter was given 180,000 and can carry 135,000; the business still committed the
+    /// larger number. A screen holding only one of them compares it against itself and reports an
+    /// organisation short by exactly the ramp — every period, in the same direction, with nothing
+    /// on the screen to say why. The client used to hold four invented teams instead.
+    /// </remarks>
+    [Fact]
+    public async Task WhatWasAssignedAndWhatCanBeCarriedAreBothReturned()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+        await WorldAsync(app);
+
+        await QuotaAsync(app, Rep, 180_000m, 0.75m);
+
+        var row = (await AttainmentAsync(app)).Rows.Single(r => r.UserId == Rep);
+
+        row.Assigned.ShouldBe(180_000m, "what the business committed.");
+        row.RampFactor.ShouldBe(0.75m);
+        row.Quota.ShouldBe(135_000m, "what this person can actually carry.");
+    }
+
     /// <summary>Assigned, committed and achieved come back side by side.</summary>
     /// <remarks>
     /// The middle column is the one no roll-up of commitments can show, because every commitment

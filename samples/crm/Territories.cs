@@ -167,7 +167,17 @@ public sealed record Coverage(
 /// <param name="UserId">Who.</param>
 /// <param name="DisplayName">What to show.</param>
 /// <param name="Measure">In what.</param>
-/// <param name="Quota">What they were assigned, after ramp.</param>
+/// <param name="Quota">What they were assigned, after ramp — the number they are measured on.</param>
+/// <param name="Assigned">
+/// The same number before ramp. <strong>Returned alongside because capacity and target are not
+/// the same question</strong>: the business committed the unramped total, and the organisation can
+/// only carry the ramped one. A plan that compares either against itself is a plan that is short
+/// by exactly the ramp, every year, in the same direction, with nothing on the screen to say why.
+/// </param>
+/// <param name="RampFactor">
+/// The fraction of the period they carry, one for a full one. Summing these is what "ramped
+/// headcount" means — a count of bodies is not a capacity.
+/// </param>
 /// <param name="Committed">
 /// What they committed in their plans. <strong>A different number from the quota</strong>: a quota
 /// is assigned downwards, a commitment is offered upwards, and the two rarely agree.
@@ -191,6 +201,8 @@ public sealed record QuotaAttainment(
     string DisplayName,
     string Measure,
     decimal Quota,
+    decimal Assigned,
+    decimal RampFactor,
     decimal? Committed,
     decimal Actual,
     decimal? Attainment,

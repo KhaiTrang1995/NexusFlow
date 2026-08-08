@@ -92,6 +92,7 @@ public sealed class TerritoryStore
     private const string Attainment = """
         SELECT q.user_id, m.display_name, q.measure,
                q.target * q.ramp_factor,
+               q.target, q.ramp_factor,
                -- Null, not zero, on a quota that is not measured in money: a plan commits an
                -- amount, so there is nothing to compare a leads target against, and the money
                -- figure beside forty leads is a gap of minus half a million.
@@ -445,17 +446,19 @@ public sealed class TerritoryStore
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             var quota = reader.GetDecimal(3);
-            var actual = reader.GetDecimal(5);
+            var actual = reader.GetDecimal(7);
 
-            decimal? committed = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false)
+            decimal? committed = await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false)
                 ? null
-                : reader.GetDecimal(4);
+                : reader.GetDecimal(6);
 
             rows.Add(new QuotaAttainment(
                 reader.GetString(0),
                 reader.GetString(1),
                 reader.GetString(2),
                 quota,
+                reader.GetDecimal(4),
+                reader.GetDecimal(5),
                 committed,
                 actual,
                 quota == 0 ? null : Math.Round(actual / quota * 100m, 1),

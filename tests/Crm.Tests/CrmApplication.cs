@@ -393,6 +393,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<RecordQualification>();
         services.AddSingleton<SetCrmPlanStep>();
         services.AddSingleton<ReadPeriodRollUp>();
+        services.AddSingleton<ReadDeclaredPeriods>();
         services.AddSingleton<PlaceOrgMember>();
         services.AddSingleton<SetPlanObjective>();
         services.AddSingleton<SetPlanStakeholder>();
@@ -482,6 +483,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<AnswerQualificationFlow.Dispatcher>();
         services.AddSingleton<SetPlanStepFlow.Dispatcher>();
         services.AddSingleton<RollUpFlow.Dispatcher>();
+        services.AddSingleton<DeclaredPeriodsFlow.Dispatcher>();
         services.AddSingleton<SetOrgMemberFlow.Dispatcher>();
         services.AddSingleton<SetObjectiveFlow.Dispatcher>();
         services.AddSingleton<SetStakeholderFlow.Dispatcher>();

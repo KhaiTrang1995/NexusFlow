@@ -27,6 +27,7 @@ namespace Crm.Tests;
 public sealed class PlanningApiTests
 {
     private const string Periods = "/api/v1/crm/planning/periods";
+    private const string PeriodList = "/api/v1/crm/planning/periods/list";
     private const string Strategies = "/api/v1/crm/planning/strategies";
     private const string Plans = "/api/v1/crm/planning/plans";
     private const string Qualifications = "/api/v1/crm/planning/qualifications";
@@ -185,6 +186,86 @@ public sealed class PlanningApiTests
             Channel: "Web", Segment: "DACH", TargetLeads: 500));
 
         (await RollUpAsync(app, "fy26")).Committed.ShouldBe(60_000m);
+    }
+
+    /// <summary>A tenant that has declared no periods says so, rather than refusing.</summary>
+    /// <remarks>
+    /// Every executive and planning screen is "for a period", and the client used to hold three
+    /// period names of its own. On any tenant but the seeded one, twelve screens asked for a
+    /// quarter nobody had declared and each showed a not-found for a quarter printed on its own
+    /// selector. Empty has to be an answer for a screen to be able to explain itself.
+    /// </remarks>
+    [Fact]
+    public async Task ATenantWithNoPeriodsIsAnsweredEmptilyRatherThanRefused()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+
+        var response = await app.PostAsync(
+            PeriodList, new ReadPeriods(), CrmTokens.Contoso, idempotencyKey: null);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await CrmApplication.ReadAsync<DeclaredPeriods>(response)).Periods.ShouldBeEmpty();
+    }
+
+    /// <summary>The declared periods come back most recent first, saying which one is now.</summary>
+    /// <remarks>
+    /// <strong>Which one is current is decided by the server.</strong> A browser deciding it does
+    /// so in whatever timezone the machine is set to, so two offices would open the same screen on
+    /// different quarters on the last day of one.
+    /// </remarks>
+    [Fact]
+    public async Task TheDeclaredPeriodsComeBackMostRecentFirstAndSayWhichIsNow()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+        await WorldAsync(app);
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        (await app.PostAsync(
+            Periods,
+            new DefinePeriod("fy26_now", "The one we are in", today.AddDays(-1), today.AddDays(1), null),
+            CrmTokens.NorthwindManager))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        (await app.PostAsync(
+            Periods,
+            new DefinePeriod(
+                "fy20", "Long gone", new DateOnly(2020, 1, 1), new DateOnly(2020, 12, 31), null),
+            CrmTokens.NorthwindManager))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var response = await app.PostAsync(
+            PeriodList, new ReadPeriods(), CrmTokens.Northwind, idempotencyKey: null);
+
+        var declared = await CrmApplication.ReadAsync<DeclaredPeriods>(response);
+
+        declared.Periods
+            .Select(static period => period.StartsOn)
+            .ShouldBeInOrder(SortDirection.Descending, "a selector opens on the period nearest now.");
+
+        // More than one period can contain today — a quarter and the year it sits in both do —
+        // so this is a fact about each period rather than about which single one is "the" current.
+        declared.Periods.Single(static period => period.Name == "fy26_now").IsCurrent.ShouldBeTrue();
+        declared.Periods.Single(static period => period.Name == "fy20").IsCurrent.ShouldBeFalse();
+    }
+
+    /// <summary>Reading the periods needs no administrator, only a reader.</summary>
+    /// <remarks>
+    /// Declaring a period is an administrative act; knowing which quarter you are looking at is
+    /// not. Behind <c>crm.admin</c> every seller's screen would have no period to ask for and no
+    /// way to find one.
+    /// </remarks>
+    [Fact]
+    public async Task AnyReaderCanSeeWhichPeriodsExist()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+        await WorldAsync(app);
+
+        var response = await app.PostAsync(
+            PeriodList, new ReadPeriods(), CrmTokens.Northwind, idempotencyKey: null);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await CrmApplication.ReadAsync<DeclaredPeriods>(response)).Periods.ShouldNotBeEmpty();
     }
 
     /// <summary>A quarter that sticks out of its year is refused.</summary>

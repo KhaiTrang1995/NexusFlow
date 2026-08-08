@@ -28,6 +28,16 @@ public sealed class PlanningStore
         SELECT period_id, label, starts_on, ends_on FROM plan_period WHERE name = @name
         """;
 
+    // Most recent first, because a selector is nearly always opened on the period nearest now.
+    // The parent is joined by name rather than returned as an id: a client that has to resolve a
+    // uuid against a second read cannot draw the year a quarter sits in without one.
+    private const string ReadDeclaredPeriods = """
+        SELECT p.name, p.label, p.starts_on, p.ends_on, outer_period.name
+        FROM plan_period p
+        LEFT JOIN plan_period outer_period ON outer_period.period_id = p.parent_period_id
+        ORDER BY p.starts_on DESC, p.name
+        """;
+
     private const string UpsertStrategy = """
         INSERT INTO sales_strategy (
             strategy_id, tenant_id, period_id, vision, target_amount, currency, created_at)
@@ -219,6 +229,55 @@ public sealed class PlanningStore
         await using var closing = connection.ConfigureAwait(false);
 
         return await PeriodOnAsync(connection, name, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Reads every period this tenant has declared, most recent first.</summary>
+    /// <param name="tenantId">The caller's tenant.</param>
+    /// <param name="today">What day it is, for deciding which one is current.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The periods. Empty when the tenant has declared none.</returns>
+    public async ValueTask<IReadOnlyList<PeriodSummary>> PeriodsAsync(
+        string? tenantId,
+        DateOnly today,
+        CancellationToken cancellationToken)
+    {
+        var connection = await OpenAsync(tenantId, cancellationToken).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
+
+        var command = connection.CreateCommand();
+        await using var closingCommand = command.ConfigureAwait(false);
+
+        command.CommandText = ReadDeclaredPeriods;
+
+        var periods = new List<PeriodSummary>();
+
+        var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await using var closingReader = reader.ConfigureAwait(false);
+
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var starts = await reader
+                .GetFieldValueAsync<DateOnly>(2, cancellationToken)
+                .ConfigureAwait(false);
+
+            var ends = await reader
+                .GetFieldValueAsync<DateOnly>(3, cancellationToken)
+                .ConfigureAwait(false);
+
+            var parent = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false)
+                ? null
+                : reader.GetString(4);
+
+            periods.Add(new PeriodSummary(
+                reader.GetString(0),
+                reader.GetString(1),
+                starts,
+                ends,
+                parent,
+                starts <= today && today <= ends));
+        }
+
+        return periods;
     }
 
     /// <summary>Sets, or replaces, the number and the words for a period.</summary>

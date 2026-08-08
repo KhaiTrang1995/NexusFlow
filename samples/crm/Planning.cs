@@ -201,6 +201,15 @@ public sealed record PlanStepSet(int Ordinal, int Outstanding);
 /// <param name="Period">Which period.</param>
 public sealed record ReadRollUp(string Period);
 
+/// <summary>Asks which periods this tenant has declared.</summary>
+/// <remarks>
+/// <strong>Every screen that is "for a period" needs this before it can ask anything else.</strong>
+/// A client that holds its own list of period names is a client that works on the tenant it was
+/// written against and answers not-found on every other one — and the reader sees a quarter named
+/// on the screen and a refusal saying that quarter does not exist.
+/// </remarks>
+public sealed record ReadPeriods;
+
 // ------------------------------------------------------------------------------- what comes back
 
 /// <summary>One account plan, against what is actually in the pipeline for that account.</summary>
@@ -279,6 +288,29 @@ public sealed record PeriodRollUp(
     IReadOnlyList<AccountCoverage> Accounts,
     IReadOnlyList<OpportunityReadiness> Opportunities,
     IReadOnlyList<LeadAttainment> Marketing);
+
+/// <summary>One declared period.</summary>
+/// <param name="Name">What to ask for it by.</param>
+/// <param name="Label">What to show a person.</param>
+/// <param name="StartsOn">Its first day.</param>
+/// <param name="EndsOn">Its last day.</param>
+/// <param name="Parent">The period it sits inside, or null at the top.</param>
+/// <param name="IsCurrent">
+/// Whether today falls inside it. <strong>Decided here and not by the client</strong>: a browser
+/// deciding which quarter is current does it in whatever timezone the machine is set to, and two
+/// people in different offices then open the same screen on different quarters.
+/// </param>
+public sealed record PeriodSummary(
+    string Name,
+    string Label,
+    DateOnly StartsOn,
+    DateOnly EndsOn,
+    string? Parent,
+    bool IsCurrent);
+
+/// <summary>The periods this tenant has declared, most recent first.</summary>
+/// <param name="Periods">Each of them. Empty when the tenant has declared none.</param>
+public sealed record DeclaredPeriods(IReadOnlyList<PeriodSummary> Periods);
 
 // ------------------------------------------------------------------------------- what can go wrong
 

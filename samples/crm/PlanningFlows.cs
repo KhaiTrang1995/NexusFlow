@@ -105,3 +105,21 @@ public sealed partial class RollUpFlow : Flow<ReadRollUp, PeriodRollUp>
             .Return(ctx => ctx.Get<PeriodRollUp>());
     }
 }
+
+/// <summary>Says which periods this tenant has declared.</summary>
+/// <remarks><c>Ephemeral</c>: it writes nothing, and every screen that is for a period asks it first.</remarks>
+[Flow("crm.planning.periods", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral, Owner = "crm-platform")]
+[FlowDeadline("PT15S")]
+[HttpTrigger("POST", "/api/v1/crm/planning/periods/list")]
+public sealed partial class DeclaredPeriodsFlow : Flow<ReadPeriods, DeclaredPeriods>
+{
+    /// <inheritdoc />
+    protected override void Define(IFlowBuilder<ReadPeriods, DeclaredPeriods> flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+
+        flow
+            .Step<ReadDeclaredPeriods>()
+            .Return(ctx => ctx.Get<DeclaredPeriods>());
+    }
+}
