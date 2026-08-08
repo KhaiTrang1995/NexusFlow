@@ -13,6 +13,22 @@ const exact = new Intl.NumberFormat('en-US', {
 })
 
 /**
+ * Whether there is a number to write.
+ *
+ * NaN AND INFINITY ARE NOT FIGURES ANYBODY MEANT. They arrive from a division by a total that
+ * turned out to be zero, from a field that parsed to nothing, from `Number(undefined)` — and
+ * every formatter below would otherwise render them: "$NaN", "Infinity%", "NaN late". That reads
+ * as a broken screen rather than as a missing number, so the reader cannot tell which it is, and
+ * the one thing it is definitely not is a measurement. It gets the same dash as a null.
+ *
+ * The predicate narrows the other branch to `number`, which is what the callers want; NaN is
+ * itself a `number`, so nothing downstream is told a lie about the type.
+ */
+function absent(value: number | null | undefined): value is null | undefined {
+  return value === null || value === undefined || !Number.isFinite(value)
+}
+
+/**
  * A tile's amount: $1.24M, $840k, $0.
  *
  * WRITTEN BY HAND RATHER THAN WITH `Intl` COMPACT NOTATION, WHICH KEEPS TRAILING ZEROS.
@@ -21,7 +37,7 @@ const exact = new Intl.NumberFormat('en-US', {
  * so the trim is the point and not a nicety.
  */
 export function money(value: number | null | undefined): string {
-  if (value === null || value === undefined) return '—'
+  if (absent(value)) return '—'
   if (value === 0) return '$0'
 
   const sign = value < 0 ? '-' : ''
@@ -45,35 +61,57 @@ function trim(text: string): string {
 
 /** A table cell's amount, in full. */
 export function fullMoney(value: number | null | undefined): string {
-  return value === null || value === undefined ? '—' : exact.format(value)
+  return absent(value) ? '—' : exact.format(value)
 }
 
 /**
- * A rate.
+ * The point at which a "fraction" is certainly a percentage somebody passed to the wrong one.
+ *
+ * 1000% IS THE LINE, NOT 100%. Attainment of 1.4 is a real fraction and reads 140%, so warning
+ * above 1 would cry wolf on every seller over quota. Nothing in this application is a rate of ten
+ * times over, and the defects that shipped were not near the line: a win rate of 58 rendered as
+ * 5,800%, an open pipeline of 16,260 rendered as 1,626,000%.
+ */
+const IMPLAUSIBLE_FRACTION = 10
+
+/**
+ * A rate, given as a 0–1 fraction.
  *
  * **Null is not zero.** A campaign that reached nobody has no response rate; showing 0% sorts it
  * below one that reached a thousand people and converted one. The backend is careful to send null
  * for an empty denominator, and this is where that care would otherwise be thrown away.
+ *
+ * **A 0–100 field passed here is off by two orders of magnitude, and says so in development.**
+ * `winRate` and `responseRate` are both `number | null` and both mean "a rate"; one is 0–100 and
+ * the other is 0–1, and the compiler cannot tell them apart. The screen can: 1,626,000% is not a
+ * number anybody has to interpret, but it only ever appeared on a board nobody was watching.
  */
 export function percent(fraction: number | null | undefined, digits = 0): string {
-  return fraction === null || fraction === undefined
-    ? '—'
-    : `${(fraction * 100).toFixed(digits)}%`
+  if (absent(fraction)) return '—'
+
+  if (import.meta.env.DEV && Math.abs(fraction) >= IMPLAUSIBLE_FRACTION) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `percent(${fraction}) renders ${(fraction * 100).toFixed(0)}% — percent takes a 0–1 fraction. A 0–100 value wants pct().`,
+    )
+  }
+
+  return `${(fraction * 100).toFixed(digits)}%`
 }
 
 /** A percentage already expressed 0–100. */
 export function pct(value: number | null | undefined, digits = 0): string {
-  return value === null || value === undefined ? '—' : `${value.toFixed(digits)}%`
+  return absent(value) ? '—' : `${value.toFixed(digits)}%`
 }
 
 /** A count, grouped. */
 export function count(value: number | null | undefined): string {
-  return value === null || value === undefined ? '—' : value.toLocaleString('en-US')
+  return absent(value) ? '—' : value.toLocaleString('en-US')
 }
 
 /** A signed delta, so "up four" and "down four" are visibly different. */
 export function delta(value: number | null | undefined, unit = ''): string {
-  if (value === null || value === undefined) return '—'
+  if (absent(value)) return '—'
   const arrow = value > 0 ? '▲' : value < 0 ? '▼' : '—'
   return `${arrow} ${Math.abs(value)}${unit}`
 }
@@ -101,7 +139,7 @@ export function dateTime(value: string | Date | null | undefined): string {
  * now" are the same string to anything that clamps, and they are not the same situation.
  */
 export function fromNow(minutes: number | null | undefined): string {
-  if (minutes === null || minutes === undefined) return '—'
+  if (absent(minutes)) return '—'
   const late = minutes < 0
   const total = Math.abs(Math.round(minutes))
   const text =
@@ -113,8 +151,15 @@ export function fromNow(minutes: number | null | undefined): string {
   return late ? `${text} late` : `in ${text}`
 }
 
-/** A width for a meter, clamped so a number over target cannot overflow its track. */
+/**
+ * A width for a meter, clamped so a number over target cannot overflow its track.
+ *
+ * A non-finite value is not a short bar, it is no bar: `width: NaN%` is an invalid declaration
+ * the browser drops, and a fill div with no width of its own is a fill div at its container's
+ * width — a full meter, drawn from a number that does not exist. `Meter` refuses to draw a
+ * proportion at all in that case; this is the second lock on the same door.
+ */
 export function widthOf(value: number, target: number): string {
-  if (target <= 0) return '0%'
+  if (!Number.isFinite(value) || !Number.isFinite(target) || target <= 0) return '0%'
   return `${Math.max(0, Math.min(100, Math.round((value / target) * 100)))}%`
 }

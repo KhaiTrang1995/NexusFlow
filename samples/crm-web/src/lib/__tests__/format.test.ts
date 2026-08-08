@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { count, delta, fromNow, fullMoney, money, pct, percent, widthOf } from '../format'
 
 /**
@@ -119,7 +119,57 @@ describe('the two rate units', () => {
   })
 
   it('and the wrong one is off by two orders of magnitude', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
     expect(percent(100)).toBe('10000%')
     expect(pct(1)).toBe('1%')
+
+    // The compiler cannot tell the two apart, so the number itself has to raise its hand. Ten is
+    // the line rather than one: attainment of 1.4 is a real fraction and reads 140%, while
+    // nothing in this application is a rate of a thousand per cent.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('pct()'))
+    warn.mockRestore()
+  })
+
+  it('leaves a fraction that is merely over target alone', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    expect(percent(1.4)).toBe('140%')
+    expect(warn).not.toHaveBeenCalled()
+    warn.mockRestore()
+  })
+})
+
+/**
+ * Arithmetic that did not work out is not a figure.
+ *
+ * NaN AND INFINITY REACH THESE FORMATTERS THE SAME WAY A NULL DOES — a division by a total that
+ * turned out to be zero, a `Number()` over a field that was not there, a subtraction of two dates
+ * one of which never parsed. Written out they read as a broken screen ("$NaN", "Infinity%",
+ * "NaN late") rather than as a missing number, and a reader cannot tell those apart. They get the
+ * dash the null gets, because that is what they are.
+ */
+describe('a number that is not one', () => {
+  it('writes a dash rather than NaN', () => {
+    expect(money(Number.NaN)).toBe('—')
+    expect(fullMoney(Number.NaN)).toBe('—')
+    expect(percent(0 / 0)).toBe('—')
+    expect(pct(Number.NaN)).toBe('—')
+    expect(count(Number.NaN)).toBe('—')
+    expect(delta(Number.NaN)).toBe('—')
+    expect(fromNow(Number.NaN)).toBe('—')
+  })
+
+  it('writes a dash rather than an infinity', () => {
+    expect(money(1 / 0)).toBe('—')
+    expect(percent(Number.POSITIVE_INFINITY)).toBe('—')
+    expect(count(Number.NEGATIVE_INFINITY)).toBe('—')
+  })
+
+  it('gives a meter no width rather than an invalid one', () => {
+    // `width: NaN%` is a declaration the browser drops, and a fill with no width of its own is a
+    // fill at its container's width: a full meter, drawn from a number that does not exist.
+    expect(widthOf(Number.NaN, 100)).toBe('0%')
+    expect(widthOf(50, Number.NaN)).toBe('0%')
   })
 })

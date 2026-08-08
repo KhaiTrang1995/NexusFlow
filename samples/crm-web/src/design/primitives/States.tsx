@@ -71,12 +71,25 @@ export function isSettled(error: unknown): boolean {
   return error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 422)
 }
 
-/** Placeholder bars while a panel loads. */
+/**
+ * Placeholder bars while a panel loads.
+ *
+ * **The bars are decoration, but "still loading" is not.** Hiding the whole thing leaves a reader
+ * who is not looking at it with an empty panel and no way to tell a slow read from a finished one
+ * that found nothing — so the bars stay hidden and one line of text does not. It is deliberately
+ * not a live region: the toast strip owns `role="status"` on these screens, and a second one in
+ * every loading panel would be read out over it.
+ */
 export function Skeleton({ rows = 4, className }: { rows?: number; className?: string }) {
+  // A taper, not an arithmetic sequence: past fourteen rows `100 - index * 7` goes negative, the
+  // declaration is dropped, and the bar draws full width — a widening stack that reads as content.
+  const width = (index: number) => Math.max(35, 100 - index * 7)
+
   return (
-    <div className={cx(styles.stack, className)} aria-hidden="true">
-      {Array.from({ length: rows }, (_, index) => (
-        <div key={index} className={styles.bar} style={{ width: `${100 - index * 7}%` }} />
+    <div className={cx(styles.stack, className)} aria-busy="true">
+      <span className="sr-only">Loading…</span>
+      {Array.from({ length: Math.max(0, rows) }, (_, index) => (
+        <div key={index} className={styles.bar} style={{ width: `${width(index)}%` }} aria-hidden="true" />
       ))}
     </div>
   )

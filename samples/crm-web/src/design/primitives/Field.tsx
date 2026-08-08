@@ -143,6 +143,15 @@ export interface SelectFieldProps
   placeholder?: string | undefined
 }
 
+/**
+ * A choice from a list.
+ *
+ * **A value that is not in the list is still shown.** A select whose value matches no option
+ * displays nothing at all — the browser has no option to draw — so a record whose owner has left,
+ * whose stage was retired, or whose picklist entry was renamed opened as a blank field. Blank
+ * reads as "not set", the reader corrects it to something, and the old value is gone. It is drawn
+ * as a disabled option instead: visible, named, and not choosable a second time.
+ */
 export function SelectField({
   label,
   hideLabel,
@@ -154,6 +163,10 @@ export function SelectField({
   placeholder,
   ...rest
 }: SelectFieldProps) {
+  const current = rest.value ?? rest.defaultValue
+  const held = typeof current === 'string' || typeof current === 'number' ? String(current) : ''
+  const unknown = held !== '' && !options.some((option) => option.value === held) ? held : null
+
   return (
     <FieldShell
       label={label}
@@ -165,6 +178,11 @@ export function SelectField({
     >
       {(bound) => (
         <select {...rest} {...bound}>
+          {unknown !== null ? (
+            <option value={unknown} disabled>
+              {unknown}
+            </option>
+          ) : null}
           {placeholder ? <option value="">{placeholder}</option> : null}
           {options.map((option) => (
             <option key={option.value} value={option.value}>

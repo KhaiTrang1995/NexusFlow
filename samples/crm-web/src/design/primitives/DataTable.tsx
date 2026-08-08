@@ -30,7 +30,7 @@ export interface DataTableProps<Row> {
   onRowClick?: (row: Row) => void
   isRowSelected?: (row: Row) => boolean
   striped?: boolean
-  /** Shown instead of an empty body. Say what would be here, not "no data". */
+  /** Shown under the header when there are no rows. Say what would be here, not "no data". */
   empty?: ReactNode
   className?: string | undefined
 }
@@ -44,6 +44,13 @@ export interface DataTableProps<Row> {
  *
  * **A clickable row is still keyboard-reachable.** The row carries the click, and the first cell
  * carries a real link or button — a `<tr onClick>` alone is invisible to everything but a mouse.
+ *
+ * **An empty table is still a table, and always says that it is empty.** Returning a bare div
+ * instead threw away the header — the one thing on the screen that says what would be here — and
+ * the caption with it, so a screen reader was left with a floating sentence and no table to
+ * attach it to. Returning the table with an empty body and nothing else, which is what happened
+ * when the caller passed no `empty`, is worse: a header row over blank space is what a broken
+ * render looks like, and no reader can tell it from a panel that failed halfway.
  */
 export function DataTable<Row>({
   caption,
@@ -65,12 +72,7 @@ export function DataTable<Row>({
     const read = column.sortValue
     const sign = sort.direction === 'asc' ? 1 : -1
 
-    return [...rows].sort((a, b) => {
-      const left = read(a)
-      const right = read(b)
-      if (left === right) return 0
-      return (left < right ? -1 : 1) * sign
-    })
+    return [...rows].sort((a, b) => compare(read(a), read(b)) * sign)
   }, [rows, sort, columns])
 
   function toggle(id: string) {
@@ -79,10 +81,6 @@ export function DataTable<Row>({
         ? { id, direction: current.direction === 'asc' ? 'desc' : 'asc' }
         : { id, direction: 'asc' },
     )
-  }
-
-  if (rows.length === 0 && empty) {
-    return <div className={styles.empty}>{empty}</div>
   }
 
   return (
@@ -143,8 +141,36 @@ export function DataTable<Row>({
           ))}
         </tbody>
       </table>
+
+      {/*
+        Outside the body rather than as a row spanning every column: a `<tr>` carrying a sentence
+        is a row, and every count of rows on the screen and in the suite would include it.
+      */}
+      {ordered.length === 0 ? <div className={styles.empty}>{empty ?? 'No rows.'}</div> : null}
     </div>
   )
+}
+
+/**
+ * Orders two sort keys.
+ *
+ * **Text is compared as text is read.** `<` on strings compares UTF-16 code units, which puts
+ * every lower-case name after every upper-case one — "Zenith" before "acme" — and orders
+ * "Region 10" before "Region 9". A column that says it is sorted and is not is worse than a
+ * column that never offered.
+ */
+function compare(left: string | number, right: string | number): number {
+  if (typeof left === 'string' && typeof right === 'string') {
+    return left.localeCompare(right, 'en', { numeric: true, sensitivity: 'base' })
+  }
+
+  // A key that is not a number — NaN from a field that failed to parse — goes to one end rather
+  // than making the comparator inconsistent, which leaves every row in an order nothing chose.
+  const leftKnown = typeof left === 'number' && Number.isFinite(left)
+  const rightKnown = typeof right === 'number' && Number.isFinite(right)
+  if (!leftKnown || !rightKnown) return leftKnown ? -1 : rightKnown ? 1 : 0
+
+  return left === right ? 0 : left < right ? -1 : 1
 }
 
 /** A cell whose first line is the record and whose second is its context. */

@@ -191,7 +191,7 @@ describe('DataTable', () => {
     expect(header.closest('th')).toHaveAttribute('aria-sort', 'descending')
   })
 
-  it('says what would be here rather than showing an empty grid', () => {
+  it('says what would be here, and keeps the header that says what that is', () => {
     render(
       <DataTable
         caption="Accounts"
@@ -203,7 +203,47 @@ describe('DataTable', () => {
     )
 
     expect(screen.getByText('Nothing in this filter is late.')).toBeInTheDocument()
-    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+
+    // The sentence used to replace the table. It replaced the caption and the column headers with
+    // it — the reader lost the one thing on the panel that says what would have been here, and a
+    // screen reader lost the table the sentence belongs to.
+    expect(screen.getByRole('table', { name: 'Accounts' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /Account/ })).toBeInTheDocument()
+
+    // And it is still empty: the message is not a row, so nothing counting rows counts it.
+    expect(screen.queryAllByRole('row', { name: /Baltic/ })).toHaveLength(0)
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(0)
+  })
+
+  it('still says it is empty when the caller gave no sentence to say', () => {
+    // A header row over blank space is what a half-drawn panel looks like. The default is a poor
+    // sentence, which is the caller's fault; no sentence at all was the table's.
+    render(<DataTable caption="Accounts" columns={columns} rows={[]} rowKey={(row) => row.id} />)
+
+    expect(screen.getByText('No rows.')).toBeInTheDocument()
+  })
+
+  it('orders text the way it is read, not by code unit', async () => {
+    const mixed: Row[] = [
+      { id: '1', name: 'Zenith', amount: 1 },
+      { id: '2', name: 'acme', amount: 2 },
+      { id: '3', name: 'Region 10', amount: 3 },
+      { id: '4', name: 'Region 9', amount: 4 },
+    ]
+
+    render(<DataTable caption="Accounts" columns={columns} rows={mixed} rowKey={(row) => row.id} />)
+
+    await userEvent.click(screen.getByRole('button', { name: /Account/ }))
+
+    // `<` compares UTF-16 code units: it puts every lower-case name after every upper-case one and
+    // "Region 10" before "Region 9". A column that says it is sorted and is not is worse than one
+    // that never offered to sort.
+    const names = screen
+      .getAllByRole('cell')
+      .filter((cell) => /^(Zenith|acme|Region \d+)$/.test(cell.textContent ?? ''))
+      .map((cell) => cell.textContent)
+
+    expect(names).toEqual(['acme', 'Region 9', 'Region 10', 'Zenith'])
   })
 })
 

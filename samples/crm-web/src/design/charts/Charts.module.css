@@ -48,6 +48,14 @@
   text-overflow: ellipsis;
 }
 
+/* Said in the space the chart would have taken, so the panel keeps its shape. */
+.noData {
+  margin: 0;
+  padding: 20px 4px;
+  font-size: 13.5px;
+  color: var(--color-neutral-600);
+}
+
 .legend {
   display: flex;
   gap: 14px;
@@ -164,6 +172,14 @@
   background: var(--color-accent);
   border: 1px solid var(--color-accent-700);
   border-radius: 4px 4px 0 0;
+}
+
+/* The same block, as a button: no chrome of its own, all of it the target. */
+.funnelHit {
+  padding: 0;
+  width: 100%;
+  font: inherit;
+  cursor: pointer;
 }
 
 .funnelFoot {

@@ -41,13 +41,19 @@ export function Tabs<Id extends string = string>({
 }: TabsProps<Id>) {
   const strip = useRef<HTMLDivElement>(null)
 
+  // WHICH TAB HOLDS THE STRIP'S ONE TAB STOP. A selection that matches no tab — an id from a
+  // saved view, a route that lost its query, a list that reloaded shorter — left every tab at
+  // tabIndex -1, so the whole strip was unreachable by keyboard and nothing on screen said why.
+  const active = items.findIndex((item) => item.id === selected)
+  const stop = active === -1 ? 0 : active
+
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
     if (step === 0) return
 
     event.preventDefault()
-    const index = items.findIndex((item) => item.id === selected)
-    const next = items[(index + step + items.length) % items.length]
+    if (items.length === 0) return
+    const next = items[(active + step + items.length) % items.length]
     if (!next) return
 
     onSelect(next.id)
@@ -62,14 +68,14 @@ export function Tabs<Id extends string = string>({
       onKeyDown={onKeyDown}
       className={cx(styles.strip, variant === 'underlined' && styles.underlined, className)}
     >
-      {items.map((item) => (
+      {items.map((item, index) => (
         <button
           key={item.id}
           type="button"
           role="tab"
           data-tab={item.id}
           aria-selected={item.id === selected}
-          tabIndex={item.id === selected ? 0 : -1}
+          tabIndex={index === stop ? 0 : -1}
           className={styles.tab}
           onClick={() => onSelect(item.id)}
         >

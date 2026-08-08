@@ -94,7 +94,13 @@ export interface StatStripCell {
   delta?: ReactNode
   direction?: Direction
   note?: ReactNode
-  /** 0–1. Draws the hairline bar under the value when present. */
+  /**
+   * 0–1. Draws the hairline bar under the value when present.
+   *
+   * A fraction that is not a number draws no bar. `width: NaN%` is a declaration the browser
+   * drops, and a fill with no width of its own fills its track — so a ratio over a denominator of
+   * zero came out as a full bar, which is the one reading it certainly did not mean.
+   */
   fraction?: number
 }
 
@@ -113,7 +119,7 @@ export function StatStrip({ cells }: { cells: readonly StatStripCell[] }) {
               </span>
             ) : null}
           </div>
-          {cell.fraction !== undefined ? (
+          {cell.fraction !== undefined && Number.isFinite(cell.fraction) ? (
             <div
               style={{
                 height: 5,
@@ -127,7 +133,7 @@ export function StatStrip({ cells }: { cells: readonly StatStripCell[] }) {
                   height: '100%',
                   borderRadius: 3,
                   background: 'var(--color-accent)',
-                  width: `${Math.max(0, Math.min(100, Math.round(cell.fraction * 100)))}%`,
+                  width: `${Math.max(0, Math.min(100, Math.round((cell.fraction ?? 0) * 100)))}%`,
                 }}
               />
             </div>
