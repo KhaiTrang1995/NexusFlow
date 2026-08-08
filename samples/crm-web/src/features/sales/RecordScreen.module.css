@@ -70,6 +70,8 @@
   display: flex;
   gap: 2px;
   padding-bottom: 12px;
+  margin: 0;
+  list-style: none;
   overflow-x: auto;
 }
 
@@ -87,7 +89,7 @@
   color: var(--color-neutral-700);
   font-size: 13px;
   white-space: nowrap;
-  cursor: pointer;
+  /* Not a control: a stage is not somewhere you put a deal, it is where the process left it. */
   clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%, 10px 50%);
 }
 

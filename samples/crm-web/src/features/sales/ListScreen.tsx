@@ -14,8 +14,8 @@ import {
   TextField,
 } from '@/design/primitives'
 import type { Column } from '@/design/primitives'
-import { useEntityPage } from '@/api/queries/hooks'
-import { modelFor, optionsFor } from '@/fixtures/objects'
+import { useEntityPage, useProcess } from '@/api/queries/hooks'
+import { modelFor } from '@/fixtures/objects'
 import type { RecordRow } from '@/fixtures/objects'
 import { isNumeric, renderCell } from './RecordCell'
 import { entityOf, toRows } from './liveRecords'
@@ -66,11 +66,14 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
   const [showColumns, setShowColumns] = useState(false)
   const [creating, setCreating] = useState(false)
 
-  const stages = model.stageField ? optionsFor(model, model.stageField) : []
-
   // Every one of the seven objects is a table this build has, and the server pages all of them.
   const entity = entityOf(objectKey)
   const page = useEntityPage(entity)
+
+  // The board is the published process, and only opportunities have one. The button used to
+  // appear on every object with a stage field — leads, quotes, orders and tasks — and every one
+  // of them navigated to the opportunity board. Four buttons, four wrong destinations.
+  const process = useProcess(entity === 'Opportunity' ? 'Opportunity' : null)
 
   // Contacts and opportunities carry an account id. The accounts page answers what it is called,
   // and it is one cached request rather than one per row.
@@ -99,6 +102,34 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
     () => toRows(objectKey, model, page.data?.records ?? [], accountNames),
     [objectKey, model, page.data, accountNames],
   )
+
+  /**
+   * The values this filter offers.
+   *
+   * IT WAS THE PROTOTYPE'S PICKLIST. `optionsFor` read a list of stage names out of this client,
+   * so the opportunity strip offered Prospecting…Closed Lost whatever the tenant's published
+   * process actually said — a chip for a stage nobody had declared filters to nothing, and a
+   * stage an administrator added had no chip at all. For an opportunity the vocabulary is the
+   * process; for everything else there is no server vocabulary for a built-in column, so the
+   * honest list is the values the rows themselves carry.
+   */
+  const stages = useMemo(() => {
+    if (model.stageField === undefined) {
+      return []
+    }
+
+    if (process.data !== undefined) {
+      return process.data.stages.map((stage) => stage.name)
+    }
+
+    return [
+      ...new Set(
+        source
+          .map((row) => String(row[model.stageField as string] ?? ''))
+          .filter((value) => value !== ''),
+      ),
+    ].sort((left, right) => left.localeCompare(right))
+  }, [model.stageField, process.data, source])
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -153,7 +184,7 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
             <Button onClick={() => setShowColumns((open) => !open)} aria-expanded={showColumns}>
               Columns
             </Button>
-            {model.stageField ? (
+            {entity === 'Opportunity' ? (
               <Button onClick={() => void navigate({ to: '/kanban' })}>Kanban</Button>
             ) : null}
             {/*

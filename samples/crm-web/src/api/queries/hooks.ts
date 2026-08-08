@@ -533,14 +533,18 @@ export function usePlan(name: string | null): UseQueryResult<C.PlanDetail> {
  * guards that have to hold and the actions each transition takes — none of which this client
  * knows anything about, and all of which change without a deployment.
  */
-export function useProcess(appliesTo: C.EntityKind): UseQueryResult<C.ProcessView> {
+export function useProcess(appliesTo: C.EntityKind | null): UseQueryResult<C.ProcessView> {
   const { tenantId } = useSession()
   const call = useCall()
 
   return useQuery({
-    queryKey: keys.processes.of(tenantId, appliesTo),
+    queryKey: keys.processes.of(tenantId, appliesTo ?? 'none'),
     queryFn: ({ signal }) =>
-      call.read<C.ProcessView, C.ReadProcess>('/processes', { appliesTo }, signal),
+      call.read<C.ProcessView, C.ReadProcess>('/processes', { appliesTo: appliesTo! }, signal),
+    // Null for a caller that has no process to ask about — a list screen over an object with no
+    // board. Asking for one anyway answers not-found, and a screen that has to ignore a refusal
+    // it provoked is a screen where a real refusal cannot be told from a routine one.
+    enabled: appliesTo !== null,
     staleTime: 60_000,
   })
 }

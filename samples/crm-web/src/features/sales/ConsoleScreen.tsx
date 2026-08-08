@@ -38,6 +38,10 @@ export function ConsoleScreen() {
   const navigate = useNavigate()
   const console = useConsole()
 
+  /** Where every deal figure on this screen drills to. One function, so they cannot diverge. */
+  const deals = () =>
+    void navigate({ to: '/records/$object', params: { object: 'opportunity' } })
+
   // The reporting line scopes this on the server: a manager sees their people, a seller sees
   // themselves. The period is the one every executive screen shares.
   const choice = usePeriod()
@@ -94,7 +98,17 @@ export function ConsoleScreen() {
               from converting a lead — and no saved view over a built-in entity, so two of them
               had nothing to call and the third's period is fixed for every executive screen.
             */}
-            <Button size="lg" onClick={() => void navigate({ to: '/records/$object', params: { object: 'lead' } })}>
+            {/*
+              A verb beside two destinations, and it is the only one of the three that does not
+              name where it goes. Kept as the verb because it is what a seller starts the day
+              wanting; the title says what pressing it actually does, which is the convention
+              every indirect control in this client follows.
+            */}
+            <Button
+              size="lg"
+              title="Opens the lead list — a conversion starts from a lead."
+              onClick={() => void navigate({ to: '/records/$object', params: { object: 'lead' } })}
+            >
               Convert a lead
             </Button>
             <Button size="lg" onClick={() => void navigate({ to: '/kanban' })}>
@@ -115,7 +129,18 @@ export function ConsoleScreen() {
                 ? 'Showing the default view'
                 : `${console.activeCount} filter${console.activeCount === 1 ? '' : 's'} applied · ${console.open.length} open`}
             </span>
-            <Button size="sm" pill onClick={console.clear}>
+            {/*
+              Disabled when there is nothing to clear, rather than live and inert. Pressing it on
+              the default view did nothing at all, which reads as a broken button — and it is the
+              button somebody presses first when a list looks wrong.
+            */}
+            <Button
+              size="sm"
+              pill
+              disabled={console.activeCount === 0}
+              title={console.activeCount === 0 ? 'No filters are applied.' : undefined}
+              onClick={console.clear}
+            >
               Clear
             </Button>
           </>
@@ -158,25 +183,34 @@ export function ConsoleScreen() {
         />
       </FilterBar>
 
+      {/*
+        A CHEVRON MEANS THE TILE OPENS SOMETHING, AND FOUR OF THESE FIVE HAD NONE. One tile was a
+        button and the rest were not, which reads as four broken tiles rather than as one that
+        happens to link: a reader who finds a number clickable tries the number beside it. Each
+        one now opens the list its own figure is a count of — the two money tiles and the deal
+        count are all views of the same filtered opportunities, and tasks are their own list.
+      */}
       <StatGrid columns={5}>
         <StatTile
           label="Open pipeline"
           value={money(console.openValue)}
           note="open deals in this filter"
           drillLabel="the open pipeline"
-          onActivate={() => void navigate({ to: '/records/$object', params: { object: 'opportunity' } })}
+          onActivate={deals}
         />
         <StatTile
           label="Weighted"
           value={money(console.weightedValue)}
-
           note="amount × probability, deal by deal"
+          drillLabel="the deals behind it"
+          onActivate={deals}
         />
         <StatTile
           label="Closed won QTD"
           value={money(console.wonValue)}
-
           note="won, in this filter"
+          drillLabel="the deals behind it"
+          onActivate={deals}
         />
         {/*
           Two tiles said 58% and 74 days on every tenant, with a trend arrow. Win rate and cycle
@@ -188,6 +222,8 @@ export function ConsoleScreen() {
           label="Open deals"
           value={console.open.length}
           note="in this filter"
+          drillLabel="the deals behind it"
+          onActivate={deals}
         />
         <StatTile
           label="Tasks open"
@@ -195,6 +231,8 @@ export function ConsoleScreen() {
           delta={console.overdueTasks > 0 ? `${console.overdueTasks} overdue` : undefined}
           direction={console.overdueTasks > 0 ? 'down' : 'flat'}
           note="assigned in this tenant"
+          drillLabel="the task list"
+          onActivate={() => void navigate({ to: '/records/$object', params: { object: 'task' } })}
         />
       </StatGrid>
 

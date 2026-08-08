@@ -11,7 +11,7 @@ import {
   Skeleton,
   Tabs,
 } from '@/design/primitives'
-import { useEntityPage, useEntityRecord } from '@/api/queries/hooks'
+import { useEntityPage, useEntityRecord, useProcess } from '@/api/queries/hooks'
 import { modelFor } from '@/fixtures/objects'
 import { renderCell } from './RecordCell'
 import { entityOf, keyColumnOf, toRows } from './liveRecords'
@@ -58,6 +58,7 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
   const entity = entityOf(objectKey)
   const live = useEntityRecord(entity, keyColumnOf(objectKey), id)
   const accounts = useEntityPage(entity === 'Contact' || entity === 'Opportunity' ? 'Account' : null)
+  const process = useProcess(entity === 'Opportunity' ? 'Opportunity' : null)
 
   const accountNames = useMemo(() => {
     const names = new Map<string, string>()
@@ -121,7 +122,15 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
 
   const titleField = model.listCols[0] ?? 'name'
   const stageName = model.stageField ? String(record[model.stageField]) : null
-  const stageIndex = model.stages?.findIndex((stage) => stage.name === stageName) ?? -1
+  // The published process where there is one, and the build's own closed vocabulary where there
+  // is not — a lead's status and a quote's are column constraints, not tenant configuration.
+  const path =
+    process.data !== undefined
+      ? process.data.stages.filter((stage) => !stage.name.toLowerCase().includes('lost'))
+          .map((stage) => stage.name)
+      : (model.stages ?? []).filter((stage) => !stage.lost).map((stage) => stage.name)
+
+  const stageIndex = path.indexOf(stageName ?? '')
 
   // What points at this record, by foreign key. The counts are not known until each list has
   // been read, so the tab carries no badge rather than one this screen guessed.
@@ -217,24 +226,32 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
           ))}
         </div>
 
-        {model.stages ? (
-          <div className={styles.path} role="list" aria-label={`${model.label} path`}>
-            {model.stages
-              .filter((stage) => !stage.lost)
-              .map((stage, index) => (
-                <button
-                  key={stage.name}
-                  type="button"
-                  role="listitem"
-                  className={`${styles.pathStep} ${
-                    index < stageIndex ? styles.pathDone : index === stageIndex ? styles.pathCurrent : ''
-                  }`}
-                  aria-current={index === stageIndex ? 'step' : undefined}
-                >
-                  {stage.name}
-                </button>
-              ))}
-          </div>
+        {/*
+          THE PATH IS A DISPLAY, AND IT USED TO BE MADE OF BUTTONS. Nine `<button>` elements with
+          no handler at all: clicking a stage did nothing, which is the one failure a reader
+          cannot diagnose — they conclude the record is stuck rather than that the control was
+          never wired. Nothing here should be clickable either, because a stage is not somewhere
+          you put a deal: you apply a trigger and the process decides. The moves that do exist are
+          the buttons in the header above, which are the published transitions from where it is.
+
+          FOR AN OPPORTUNITY THE STEPS ARE THE PROCESS'S. They were the prototype's nine, matching
+          the seeded definition by coincidence of naming; a tenant that renamed a stage saw its
+          deal in none of them.
+        */}
+        {path.length > 0 ? (
+          <ol className={styles.path} aria-label={`${model.label} path`}>
+            {path.map((step, index) => (
+              <li
+                key={step}
+                className={`${styles.pathStep} ${
+                  index < stageIndex ? styles.pathDone : index === stageIndex ? styles.pathCurrent : ''
+                }`}
+                aria-current={index === stageIndex ? 'step' : undefined}
+              >
+                {step}
+              </li>
+            ))}
+          </ol>
         ) : null}
 
         <Tabs

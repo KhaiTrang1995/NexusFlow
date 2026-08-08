@@ -21,6 +21,7 @@ import { useCaseWorklist, useCommentOnCase } from '@/api/queries/hooks'
 import type { CasePriority, CaseStatus, QueuedCase } from '@/api/contracts'
 import { useToast } from '@/app/ToastProvider'
 import { dateTime, fromNow } from '@/lib/format'
+import { NewCaseDrawer } from './NewCaseDrawer'
 import styles from './service.module.css'
 
 /**
@@ -39,6 +40,7 @@ export function CaseConsoleScreen() {
   const [mineOnly, setMineOnly] = useState(false)
   const [priority, setPriority] = useState<CasePriority | null>(null)
   const [breachedOnly, setBreachedOnly] = useState(false)
+  const [opening, setOpening] = useState(false)
   const [peek, setPeek] = useState<QueuedCase | null>(null)
 
   const worklist = useCaseWorklist({ mineOnly, priority, breachedOnly })
@@ -122,7 +124,13 @@ export function CaseConsoleScreen() {
           <>
             <Button onClick={() => void navigate({ to: '/service/board' })}>Board</Button>
             <Button onClick={() => void navigate({ to: '/service/sla' })}>SLA setup</Button>
-            <Button tone="primary">New case</Button>
+            {/*
+              It had no handler at all — the one screen whose purpose is what has come in could
+              be read and worked but never added to. `crm.case.open` has been there throughout.
+            */}
+            <Button tone="primary" onClick={() => setOpening(true)}>
+              New case
+            </Button>
           </>
         }
       />
@@ -276,6 +284,7 @@ export function CaseConsoleScreen() {
           />
         </Drawer>
       ) : null}
+      {opening ? <NewCaseDrawer onClose={() => setOpening(false)} /> : null}
     </Page>
   )
 }

@@ -13,6 +13,7 @@ import {
   Tag,
 } from '@/design/primitives'
 import { useEntityPage } from '@/api/queries/hooks'
+import { NewTaskDrawer } from '@/features/sales/NewTaskDrawer'
 import { offGrid, weekEvents, weekOf } from './week'
 import type { WeekEvent } from './week'
 import styles from './work.module.css'
@@ -33,6 +34,7 @@ export function ActivityScreen() {
   const navigate = useNavigate()
   const [scope, setScope] = useState<'mine' | 'team'>('mine')
   const [selected, setSelected] = useState<WeekEvent | null>(null)
+  const [adding, setAdding] = useState(false)
 
   // The week the reader is actually in, not the week the prototype was drawn in. A calendar
   // headed "week of 3 August" in October is one nobody looks at twice.
@@ -64,7 +66,14 @@ export function ActivityScreen() {
               </Button>
             </ButtonGroup>
             <Button onClick={() => void navigate({ to: '/work/inbox' })}>Inbox</Button>
-            <Button tone="primary">New meeting</Button>
+            {/*
+              It had no handler at all. A meeting is an activity of kind Meeting, which the
+              task drawer already writes — the calendar was the one screen that could not add
+              anything to itself.
+            */}
+            <Button tone="primary" onClick={() => setAdding(true)}>
+              New meeting
+            </Button>
           </>
         }
       />
@@ -163,6 +172,7 @@ export function ActivityScreen() {
           </FieldRow>
         </Drawer>
       ) : null}
+      {adding ? <NewTaskDrawer initialKind="Meeting" onClose={() => setAdding(false)} /> : null}
     </Page>
   )
 }

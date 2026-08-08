@@ -26,12 +26,12 @@ const SUBJECTS: readonly { kind: EntityKind; label: string; nameColumn: string }
  * The list of candidates is read from the same page endpoint the record screens use, so a record
  * created a minute ago is selectable here without this form knowing anything about how it was.
  */
-export function NewTaskDrawer({ onClose }: { onClose: () => void }) {
+export function NewTaskDrawer({ onClose, initialKind = 'Task' }: { onClose: () => void; initialKind?: ActivityKind }) {
   const create = useCreateTask()
   const toast = useToast()
   const { ownerId } = useSession()
 
-  const [kind, setKind] = useState<ActivityKind>('Task')
+  const [kind, setKind] = useState<ActivityKind>(initialKind)
   const [subject, setSubject] = useState('')
   const [relatesToKind, setRelatesToKind] = useState<EntityKind>('Opportunity')
   const [relatesToId, setRelatesToId] = useState('')
@@ -70,7 +70,7 @@ export function NewTaskDrawer({ onClose }: { onClose: () => void }) {
   return (
     <Drawer
       eyebrow="New"
-      title="Create a task"
+      title={`Create a ${initialKind.toLowerCase()}`}
       subtitle="A polymorphic reference held up by a trigger, not a foreign key"
       onClose={onClose}
       actions={

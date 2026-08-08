@@ -617,3 +617,41 @@ test.describe('the recent panel', () => {
   })
 })
 
+
+test.describe('the two buttons that did nothing', () => {
+  /**
+   * Both had no handler at all, on screens whose whole purpose they were.
+   *
+   * The service console could be read and worked but never added to; the calendar was the one
+   * screen that could not put anything in itself. Each capability had been there throughout.
+   */
+  test('opens a case from the service console', async ({ page }) => {
+    await signIn(page, 'rep')
+    await page.goto('/service/cases')
+
+    await page.getByRole('button', { name: 'New case' }).click()
+
+    await page.getByLabel('Account').selectOption({ index: 1 })
+    await page.getByLabel('Subject').fill(`Cannot sign in ${Date.now()}`)
+    await page.getByLabel('Description').fill('Reported by telephone; the console rejects the password.')
+    await page.getByRole('button', { name: 'Open the case' }).click()
+
+    // The server's own answer: the number it assigned and the policy that matched it.
+    await expect(toast(page)).toContainText(/Case #\d+ opened/)
+  })
+
+  test('adds a meeting from the calendar', async ({ page }) => {
+    await signIn(page, 'rep')
+    await page.goto('/work/calendar')
+
+    await page.getByRole('button', { name: 'New meeting' }).click()
+
+    await expect(page.getByRole('dialog')).toContainText('Create a meeting')
+
+    await page.getByLabel('Subject').fill(`Renewal review ${Date.now()}`)
+    await page.getByLabel('Opportunity').selectOption({ index: 1 })
+    await page.getByRole('button', { name: 'Create' }).click()
+
+    await expect(toast(page)).toContainText('created')
+  })
+})
