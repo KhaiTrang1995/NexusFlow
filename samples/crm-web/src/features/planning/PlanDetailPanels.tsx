@@ -31,6 +31,23 @@ import styles from './planning.module.css'
  * comparing a due date against its own reports a step late in Sydney and not in Lisbon on the
  * same afternoon, and an overdue step is the earliest signal a deal has stopped moving.
  */
+/**
+ * What a plan kind is called in a sentence.
+ *
+ * `MarketingLead` lower-cased is "marketinglead", which is what the empty state read. A closed
+ * vocabulary of four is a table, not a transformation.
+ */
+function label(kind: string): string {
+  switch (kind) {
+    case 'MarketingLead':
+      return 'demand'
+    case 'Rollup':
+      return 'roll-up'
+    default:
+      return kind.toLowerCase()
+  }
+}
+
 export function PlanDetailPanels({ kind, period }: { kind: string; period: string }) {
   const tree = usePlanTree(period)
   const [chosen, setChosen] = useState<string | null>(null)
@@ -43,7 +60,7 @@ export function PlanDetailPanels({ kind, period }: { kind: string; period: strin
     return (
       <Panel>
         <EmptyState
-          title={`No ${kind.toLowerCase()} plan is committed for this period.`}
+          title={`No ${label(kind)} plan is committed for this period.`}
           detail="A plan is committed against a period; nothing here is a prototype, it is an empty tenant."
         />
       </Panel>

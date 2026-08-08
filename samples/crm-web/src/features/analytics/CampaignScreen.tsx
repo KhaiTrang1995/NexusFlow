@@ -12,13 +12,12 @@ import {
   StatGrid,
   StatTile,
   Tag,
-  TextField,
+  SelectField,
 } from '@/design/primitives'
 import { ShareBar } from '@/design/charts'
-import { useCampaignPerformance, useDealAttribution } from '@/api/queries/hooks'
+import { useCampaignPerformance, useDealAttribution, useEntityPage } from '@/api/queries/hooks'
 import type { AttributionModel, CampaignPerformance } from '@/api/contracts'
 import { fullMoney, money, percent } from '@/lib/format'
-import { OBJECT_MODELS } from '@/fixtures/objects'
 import styles from './analytics.module.css'
 
 const MODELS: readonly { id: AttributionModel; label: string; note: string }[] = [
@@ -53,15 +52,17 @@ export function CampaignScreen() {
   const attribution = useDealAttribution(deal, model)
 
   /**
-   * The deals this screen can offer.
+   * The decided deals this screen can offer.
    *
-   * FROM THE MODEL, WHICH MEANS THE SERVER HAS NEVER HEARD OF THEM. There is no endpoint that
-   * lists decided deals — `/campaigns/performance` answers with a count and not with ids — so
-   * every id here is a fixture, and asking the API about one gets a not-found. Rather than
-   * offering a list that fails on click, the picker takes an id and says where to get one.
+   * FROM THE ENTITY PAGE, WHICH MEANS CLICKING ONE WORKS. This list used to come from the object
+   * model — every id a fixture, every click a not-found — because `/campaigns/performance`
+   * answers with a count and not with ids, and nothing else was reachable. The page endpoint has
+   * `outcome`, so "decided" is a filter over real rows and the picker can offer them.
    */
-  const decided = (OBJECT_MODELS['opportunity']?.records ?? []).filter((row) =>
-    String(row['stage']).startsWith('Closed'),
+  const deals = useEntityPage('Opportunity')
+
+  const decided = (deals.data?.records ?? []).filter(
+    (row) => row.values['outcome'] !== null,
   )
 
   const chosen = MODELS.find((candidate) => candidate.id === model)
@@ -203,33 +204,39 @@ export function CampaignScreen() {
                     note={`${data.dealsConsidered} decided in this window`}
                   />
                   <div style={{ padding: '14px 17px 16px', display: 'grid', gap: 10 }}>
-                    <TextField
-                      label="Opportunity id"
-                      placeholder="00000000-0000-0000-0000-000000000000"
-                      hint="From the opportunity's URL, or from the row a report links to."
-                      value={dealInput}
-                      onChange={(event) => setDealInput(event.target.value)}
-                    />
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <Button
-                        tone="primary"
-                        disabled={dealInput.trim() === ''}
-                        onClick={() => setDeal(dealInput.trim())}
-                      >
-                        Share it out
-                      </Button>
-                      {deal ? <Button onClick={() => setDeal(null)}>Clear</Button> : null}
-                    </div>
-                    <p className={styles.sub}>
-                      There is no endpoint that lists decided deals — this report answers with a
-                      count, not with ids — so the deals below are examples from the object model
-                      and the server has never heard of them.
-                    </p>
-                    {decided.map((row) => (
-                      <div key={row.id} className={styles.sub}>
-                        {row['name']} · {row['stage']} · {fullMoney(Number(row['amount']))}
+                    {decided.length === 0 ? (
+                      <p className={styles.sub}>
+                        No deal in this tenant has been decided yet, so there is nothing to
+                        attribute. A deal is decided when it is won or lost.
+                      </p>
+                    ) : (
+                      <SelectField
+                        label="Decided deal"
+                        value={dealInput}
+                        placeholder="Choose one"
+                        onChange={(event) => {
+                          setDealInput(event.target.value)
+                          setDeal(event.target.value.length > 0 ? event.target.value : null)
+                        }}
+                        options={decided.map((row) => ({
+                          value: row.recordId,
+                          label: `${row.values['name'] ?? row.recordId} · ${row.values['outcome']} · ${fullMoney(Number(row.values['amount'] ?? 0))}`,
+                        }))}
+                      />
+                    )}
+
+                    {deal ? (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <Button
+                          onClick={() => {
+                            setDeal(null)
+                            setDealInput('')
+                          }}
+                        >
+                          Clear
+                        </Button>
                       </div>
-                    ))}
+                    ) : null}
                   </div>
                 </Panel>
 

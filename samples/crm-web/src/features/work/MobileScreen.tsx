@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { AsyncBoundary, Page, PageHeader, Panel, Tag } from '@/design/primitives'
-import { useCaseWorklist } from '@/api/queries/hooks'
-import { OBJECT_MODELS } from '@/fixtures/objects'
-import { fullMoney } from '@/lib/format'
+import { useCaseWorklist, useEntityPage } from '@/api/queries/hooks'
+import { date, dateTime, fullMoney } from '@/lib/format'
 import styles from './work.module.css'
 
 type MobileTab = 'home' | 'recent' | 'deals' | 'more'
@@ -17,8 +16,18 @@ type MobileTab = 'home' | 'recent' | 'deals' | 'more'
 export function MobileScreen() {
   const [tab, setTab] = useState<MobileTab>('home')
   const cases = useCaseWorklist({ mineOnly: true, priority: null, breachedOnly: false })
-  const opportunities = OBJECT_MODELS['opportunity']?.records ?? []
-  const tasks = OBJECT_MODELS['task']?.records ?? []
+  // The tenant's own rows. A phone preview showing the prototype's six deals is a screenshot,
+  // not a preview — and it is the one screen somebody points a phone at to check the data is
+  // there.
+  const deals = useEntityPage('Opportunity')
+  const activities = useEntityPage('Activity')
+
+  const opportunities = deals.data?.records ?? []
+  const open = opportunities.filter((row) => row.values['outcome'] === null)
+
+  const tasks = (activities.data?.records ?? []).filter(
+    (row) => row.values['status'] !== 'Completed',
+  )
 
   return (
     <Page>
@@ -36,11 +45,7 @@ export function MobileScreen() {
               <Panel padding="tight">
                 <div className={styles.sub}>Open pipeline</div>
                 <div className={styles.phoneTitle}>
-                  {fullMoney(
-                    opportunities
-                      .filter((row) => !String(row['stage']).startsWith('Closed'))
-                      .reduce((sum, row) => sum + Number(row['amount'] ?? 0), 0),
-                  )}
+                  {fullMoney(open.reduce((sum, row) => sum + Number(row.values['amount'] ?? 0), 0))}
                 </div>
               </Panel>
 
@@ -55,23 +60,28 @@ export function MobileScreen() {
               </AsyncBoundary>
 
               {tasks.slice(0, 3).map((task) => (
-                <div key={task.id} className={styles.phoneCard}>
-                  <div>{task['subject']}</div>
+                <div key={task.recordId} className={styles.phoneCard}>
+                  <div>{task.values['subject'] ?? '—'}</div>
                   <div className={styles.sub}>
-                    {task['related']} · due {task['due']}
+                    {task.values['kind'] ?? 'Task'} · due {dateTime(task.values['due_at'])}
                   </div>
                 </div>
               ))}
+              {tasks.length === 0 ? (
+                <div className={styles.phoneCard}>
+                  <div className={styles.sub}>Nothing is open against this tenant.</div>
+                </div>
+              ) : null}
             </>
           ) : null}
 
           {tab === 'recent' ? (
             <>
               {opportunities.slice(0, 6).map((row) => (
-                <div key={row.id} className={styles.phoneCard}>
-                  <div>{row['name']}</div>
+                <div key={row.recordId} className={styles.phoneCard}>
+                  <div>{row.values['name'] ?? '—'}</div>
                   <div className={styles.sub}>
-                    {row['stage']} · {fullMoney(Number(row['amount']))}
+                    {row.values['stage'] ?? '—'} · {fullMoney(Number(row.values['amount'] ?? 0))}
                   </div>
                 </div>
               ))}
@@ -80,17 +90,22 @@ export function MobileScreen() {
 
           {tab === 'deals' ? (
             <>
-              {opportunities
-                .filter((row) => !String(row['stage']).startsWith('Closed'))
-                .map((row) => (
-                  <div key={row.id} className={styles.phoneCard}>
-                    <div className={styles.phoneTitle}>{fullMoney(Number(row['amount']))}</div>
-                    <div>{row['name']}</div>
-                    <div className={styles.sub}>
-                      {row['stage']} · closes {row['closeDate']}
-                    </div>
+              {open.map((row) => (
+                <div key={row.recordId} className={styles.phoneCard}>
+                  <div className={styles.phoneTitle}>
+                    {fullMoney(Number(row.values['amount'] ?? 0))}
                   </div>
-                ))}
+                  <div>{row.values['name'] ?? '—'}</div>
+                  <div className={styles.sub}>
+                    {row.values['stage'] ?? '—'} · closes {date(row.values['expected_close'])}
+                  </div>
+                </div>
+              ))}
+              {open.length === 0 ? (
+                <div className={styles.phoneCard}>
+                  <div className={styles.sub}>Nothing is open.</div>
+                </div>
+              ) : null}
             </>
           ) : null}
 

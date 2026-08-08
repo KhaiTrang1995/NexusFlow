@@ -11,15 +11,26 @@ import {
   StatTile,
   Tag,
 } from '@/design/primitives'
-import { useExecutiveBoard } from '@/api/queries/hooks'
+import { useEntityPage, useExecutiveBoard } from '@/api/queries/hooks'
 import { fullMoney, money, percent } from '@/lib/format'
-import { OBJECT_MODELS } from '@/fixtures/objects'
 import { PERIOD_LABEL, usePeriod } from './period'
 import styles from './exec.module.css'
 
-type Category = 'Commit' | 'Best Case' | 'Pipeline' | 'Closed'
 
-const CATEGORIES: readonly Category[] = ['Commit', 'Best Case', 'Pipeline', 'Closed']
+/**
+ * The probability bands a forecast is read in.
+ *
+ * NOT "COMMIT / BEST CASE / PIPELINE". Those are forecast categories, and `opportunity` has no
+ * such column — the four this screen grouped by matched nothing on any real row, so it showed
+ * three confident zeroes. A probability is what a deal actually carries and what a weighted
+ * number is made of.
+ */
+const BANDS: readonly { label: string; from: number; to: number }[] = [
+  { label: '0–25%', from: 0, to: 25 },
+  { label: '26–50%', from: 26, to: 50 },
+  { label: '51–75%', from: 51, to: 75 },
+  { label: '76–100%', from: 76, to: 100 },
+]
 
 /**
  * The forecast, by category and by seller.
@@ -34,35 +45,58 @@ export function ForecastScreen() {
   const [scope, setScope] = useState<'category' | 'seller'>('category')
   const board = useExecutiveBoard(period)
 
-  const opportunities = (OBJECT_MODELS['opportunity']?.records ?? []).filter(
-    (row) => !String(row['stage']).startsWith('Closed'),
+  // Live open deals. The category half of this screen grouped by `forecast` — Commit, Best Case,
+  // Pipeline — which is not a column on `opportunity` anywhere in this schema. Against real rows
+  // every one of those three groups was empty, so the screen showed three zeroes with confidence.
+  //
+  // What a deal actually carries is a probability, which is what a weighted forecast is made of.
+  const deals = useEntityPage('Opportunity')
+
+  const opportunities = (deals.data?.records ?? []).filter(
+    (row) => row.values['outcome'] === null,
   )
 
-  const byCategory = CATEGORIES.map((category) => {
-    const rows = opportunities.filter((row) => row['forecast'] === category)
+  const byBand = BANDS.map((band) => {
+    const rows = opportunities.filter((row) => {
+      const probability = Number(row.values['probability'] ?? 0)
+      return probability >= band.from && probability <= band.to
+    })
+
+    const amount = rows.reduce((total, row) => total + Number(row.values['amount'] ?? 0), 0)
+
     return {
-      category,
+      band: band.label,
       count: rows.length,
-      amount: rows.reduce((sum, row) => sum + Number(row['amount'] ?? 0), 0),
+      amount,
       weighted: Math.round(
         rows.reduce(
-          (sum, row) => sum + (Number(row['amount'] ?? 0) * Number(row['probability'] ?? 0)) / 100,
+          (total, row) =>
+            total
+            + (Number(row.values['amount'] ?? 0) * Number(row.values['probability'] ?? 0)) / 100,
           0,
         ),
       ),
     }
   })
 
-  const sellers = [...new Set(opportunities.map((row) => String(row['owner'])))].map((owner) => {
-    const rows = opportunities.filter((row) => row['owner'] === owner)
-    return {
-      owner,
-      commit: sum(rows.filter((row) => row['forecast'] === 'Commit')),
-      best: sum(rows.filter((row) => row['forecast'] === 'Best Case')),
-      pipeline: sum(rows.filter((row) => row['forecast'] === 'Pipeline')),
-      total: sum(rows),
-    }
-  })
+  const byStage = [
+    ...opportunities
+      .reduce((groups, row) => {
+        const stage = row.values['stage'] ?? '—'
+        const current = groups.get(stage) ?? { stage, count: 0, amount: 0 }
+
+        current.count += 1
+        current.amount += Number(row.values['amount'] ?? 0)
+        groups.set(stage, current)
+
+        return groups
+      }, new Map<string, { stage: string; count: number; amount: number }>())
+      .values(),
+  ]
+
+  // The likeliest band is the closest thing this schema has to a commit number, and it is called
+  // what it is rather than "Commit" — a category nobody in this tenant ever assigned.
+  const likeliest = byBand[byBand.length - 1]
 
   return (
     <Page>
@@ -75,7 +109,7 @@ export function ForecastScreen() {
               Category
             </Button>
             <Button aria-pressed={scope === 'seller'} onClick={() => setScope('seller')}>
-              Seller
+              Stage
             </Button>
           </ButtonGroup>
         }
@@ -86,48 +120,58 @@ export function ForecastScreen() {
           <>
             <StatGrid columns={4}>
               <StatTile
-                label="Commit"
-                value={money(byCategory[0]?.amount ?? 0)}
-                note="the seller will defend this number"
+                label="Open"
+                value={money(byBand.reduce((total, row) => total + row.amount, 0))}
+                note={`${opportunities.length} deal(s) with no outcome yet`}
               />
-              <StatTile label="Best case" value={money(byCategory[1]?.amount ?? 0)} note="upside" />
-              <StatTile label="Pipeline" value={money(byCategory[2]?.amount ?? 0)} note="everything else" />
+              <StatTile
+                label="Weighted"
+                value={money(byBand.reduce((total, row) => total + row.weighted, 0))}
+                note="amount × probability, deal by deal"
+              />
+              <StatTile
+                label="Likeliest"
+                value={money(likeliest?.amount ?? 0)}
+                note={`${likeliest?.band ?? '—'} · the closest thing here to a commit`}
+              />
               <StatTile
                 label="Against target"
                 value={percent(
                   data.rollUp.target === 0
                     ? null
-                    : ((byCategory[0]?.amount ?? 0) + data.deals.wonValue) / data.rollUp.target,
+                    : (byBand.reduce((total, row) => total + row.weighted, 0) + data.deals.wonValue)
+                      / data.rollUp.target,
                 )}
                 direction={
-                  (byCategory[0]?.amount ?? 0) + data.deals.wonValue >= data.rollUp.target
+                  byBand.reduce((total, row) => total + row.weighted, 0) + data.deals.wonValue
+                  >= data.rollUp.target
                     ? 'up'
                     : 'down'
                 }
-                note="commit + won"
+                note="weighted + won"
               />
             </StatGrid>
 
             <Panel padding="flush">
               <PanelHeader
-                title={scope === 'category' ? 'By forecast category' : 'By seller'}
+                title={scope === 'category' ? 'By likelihood' : 'By stage'}
                 note="open deals only; closed is not a forecast"
               />
               <div className={styles.forecastGrid}>
                 {scope === 'category' ? (
                   <>
                     <div className={`${styles.forecastCell} ${styles.forecastHead} ${styles.forecastName}`}>
-                      Category
+                      Likelihood
                     </div>
                     <div className={`${styles.forecastCell} ${styles.forecastHead}`}>Deals</div>
                     <div className={`${styles.forecastCell} ${styles.forecastHead}`}>Amount</div>
                     <div className={`${styles.forecastCell} ${styles.forecastHead}`}>Weighted</div>
                     <div className={`${styles.forecastCell} ${styles.forecastHead}`}>Share</div>
-                    {byCategory.map((row) => (
-                      <FragmentRow key={row.category}>
+                    {byBand.map((row) => (
+                      <FragmentRow key={row.band}>
                         <div className={`${styles.forecastCell} ${styles.forecastName}`}>
-                          <Tag tone={row.category === 'Commit' ? 'positive' : 'outline'}>
-                            {row.category}
+                          <Tag tone={row.band === '76–100%' ? 'positive' : 'outline'}>
+                            {row.band}
                           </Tag>
                         </div>
                         <div className={styles.forecastCell}>{row.count}</div>
@@ -135,8 +179,8 @@ export function ForecastScreen() {
                         <div className={styles.forecastCell}>{fullMoney(row.weighted)}</div>
                         <div className={styles.forecastCell}>
                           {percent(
-                            row.amount /
-                              (byCategory.reduce((total, entry) => total + entry.amount, 0) || 1),
+                            row.amount
+                              / (byBand.reduce((total, entry) => total + entry.amount, 0) || 1),
                           )}
                         </div>
                       </FragmentRow>
@@ -144,20 +188,32 @@ export function ForecastScreen() {
                   </>
                 ) : (
                   <>
+                    {/*
+                      By stage rather than by seller. A seller breakdown needs an owner's name and
+                      an opportunity carries an owner uuid; the board above is scoped by the
+                      reporting line and is where that question is answered.
+                    */}
                     <div className={`${styles.forecastCell} ${styles.forecastHead} ${styles.forecastName}`}>
-                      Seller
+                      Stage
                     </div>
-                    <div className={`${styles.forecastCell} ${styles.forecastHead}`}>Commit</div>
-                    <div className={`${styles.forecastCell} ${styles.forecastHead}`}>Best case</div>
-                    <div className={`${styles.forecastCell} ${styles.forecastHead}`}>Pipeline</div>
-                    <div className={`${styles.forecastCell} ${styles.forecastHead}`}>Total</div>
-                    {sellers.map((row) => (
-                      <FragmentRow key={row.owner}>
-                        <div className={`${styles.forecastCell} ${styles.forecastName}`}>{row.owner}</div>
-                        <div className={styles.forecastCell}>{fullMoney(row.commit)}</div>
-                        <div className={styles.forecastCell}>{fullMoney(row.best)}</div>
-                        <div className={styles.forecastCell}>{fullMoney(row.pipeline)}</div>
-                        <div className={styles.forecastCell}>{fullMoney(row.total)}</div>
+                    <div className={`${styles.forecastCell} ${styles.forecastHead}`}>Deals</div>
+                    <div className={`${styles.forecastCell} ${styles.forecastHead}`}>Amount</div>
+                    <div className={`${styles.forecastCell} ${styles.forecastHead}`}>Share</div>
+                    <div className={`${styles.forecastCell} ${styles.forecastHead}`} />
+                    {byStage.map((row) => (
+                      <FragmentRow key={row.stage}>
+                        <div className={`${styles.forecastCell} ${styles.forecastName}`}>
+                          <Tag tone="outline">{row.stage}</Tag>
+                        </div>
+                        <div className={styles.forecastCell}>{row.count}</div>
+                        <div className={styles.forecastCell}>{fullMoney(row.amount)}</div>
+                        <div className={styles.forecastCell}>
+                          {percent(
+                            row.amount
+                              / (byStage.reduce((total, entry) => total + entry.amount, 0) || 1),
+                          )}
+                        </div>
+                        <div className={styles.forecastCell} />
                       </FragmentRow>
                     ))}
                   </>
@@ -175,6 +231,3 @@ function FragmentRow({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-function sum(rows: readonly { [key: string]: string | number | undefined }[]): number {
-  return rows.reduce((total, row) => total + Number(row['amount'] ?? 0), 0)
-}

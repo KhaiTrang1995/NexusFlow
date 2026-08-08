@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { Button, Columns, Page, PageHeader, Panel, PanelBody, PanelHeader, Tag } from '@/design/primitives'
+import { Button, Columns, Page, PageHeader, Panel, PanelBody, PanelHeader, Skeleton, Tag } from '@/design/primitives'
+import { useConfig, useProcess, useSchema } from '@/api/queries/hooks'
+import { progress, stateOf } from './onboardingState'
+import type { Evidence } from './onboardingState'
 import styles from './setup.module.css'
 
 interface Step {
@@ -29,22 +32,55 @@ const STEPS: readonly Step[] = [
  * at step three; one that says "every promise is measured in calendar time until you do this" gets
  * finished, because the cost of skipping is on the screen rather than discovered in a report six
  * weeks later.
+ *
+ * WHAT IS DONE IS READ, NOT REMEMBERED. This held a list in component state seeded with two steps
+ * already ticked, so every tenant arrived two-sevenths configured and ticking a third was
+ * forgotten on the next page load. Each step is now a question the server already answers, and
+ * the two with no evidence anywhere say so instead of being tickable.
  */
 export function OnboardingScreen() {
   const navigate = useNavigate()
-  const [done, setDone] = useState<readonly string[]>(['objects', 'fields'])
-  const [current, setCurrent] = useState(2)
+  const schema = useSchema()
+  const process = useProcess('Opportunity')
+  const hours = useConfig('BusinessHours')
+  const policies = useConfig('SlaPolicy')
+  const approvals = useConfig('ApprovalProcess')
+
+  const [current, setCurrent] = useState(0)
 
   const step = STEPS[current]
-  const complete = done.length === STEPS.length
+
+  const evidence: Evidence = {
+    objects: schema.data?.objects.length ?? 0,
+    fields: (schema.data?.entities ?? []).reduce((sum, entity) => sum + entity.fields.length, 0),
+
+    // The read 404s when nothing is published, which is the answer rather than a failure.
+    hasProcess: process.isSuccess,
+    businessHours: hours.data?.items.length ?? 0,
+    slaPolicies: policies.data?.items.length ?? 0,
+    approvals: approvals.data?.items.length ?? 0,
+  }
+
+  const counted = progress(STEPS.map((entry) => entry.id), evidence)
+  const complete = counted.done === counted.knowable
+
+  const loading =
+    schema.isPending || hours.isPending || policies.isPending || approvals.isPending
 
   return (
     <Page>
       <PageHeader
         eyebrow="Setup"
         title="Onboarding"
-        actions={<Tag tone={complete ? 'positive' : 'accent'}>{done.length} of {STEPS.length} done</Tag>}
+        actions={
+          <Tag tone={complete ? 'positive' : 'accent'}>
+            {counted.done} of {counted.knowable} done
+            {counted.unknowable > 0 ? ` · ${counted.unknowable} unknowable` : ''}
+          </Tag>
+        }
       />
+
+      {loading ? <Skeleton rows={3} /> : null}
 
       <Panel padding="flush">
         <div className={styles.wizard}>
@@ -56,8 +92,14 @@ export function OnboardingScreen() {
               aria-current={index === current ? 'step' : undefined}
               onClick={() => setCurrent(index)}
             >
-              <div className={done.includes(entry.id) ? styles.wizardDone : undefined}>
-                {done.includes(entry.id) ? '✓ ' : `${index + 1}. `}
+              <div
+                className={stateOf(entry.id, evidence) === 'done' ? styles.wizardDone : undefined}
+              >
+                {stateOf(entry.id, evidence) === 'done'
+                  ? '✓ '
+                  : stateOf(entry.id, evidence) === 'unknowable'
+                    ? '· '
+                    : `${index + 1}. `}
                 {entry.title}
               </div>
             </button>
@@ -70,23 +112,26 @@ export function OnboardingScreen() {
               <h2 className={styles.tileTitle}>{step.title}</h2>
               <p style={{ marginTop: 8, fontSize: 15 }}>{step.detail}</p>
               <div style={{ marginTop: 14, padding: 11, border: '1px solid var(--color-warning)', borderRadius: 9, background: 'var(--color-warning-bg)', color: 'var(--color-warning)', fontSize: 14 }}>
-                <strong>Until this is done:</strong> {step.blocks}
+                <strong>
+                  {stateOf(step.id, evidence) === 'done'
+                    ? 'Done. It was blocking:'
+                    : stateOf(step.id, evidence) === 'unknowable'
+                      ? 'Nothing in this build records whether this is done. It blocks:'
+                      : 'Until this is done:'}
+                </strong>{' '}
+                {step.blocks}
               </div>
               <div style={{ display: 'flex', gap: 9, marginTop: 16 }}>
                 <Button tone="primary" onClick={() => void navigate({ to: step.to })}>
                   Open {step.title.toLowerCase()}
                 </Button>
-                <Button
-                  onClick={() => {
-                    setDone((current) =>
-                      current.includes(step.id)
-                        ? current.filter((id) => id !== step.id)
-                        : [...current, step.id],
-                    )
-                    setCurrent((index) => Math.min(index + 1, STEPS.length - 1))
-                  }}
-                >
-                  {done.includes(step.id) ? 'Mark as not done' : 'Mark as done'}
+                {/*
+                  No "mark as done". A tick was a note to itself that survived nothing and meant
+                  nothing; doing the step is what marks it, because the step is a question about
+                  the tenant rather than about this browser.
+                */}
+                <Button onClick={() => setCurrent((index) => Math.min(index + 1, STEPS.length - 1))}>
+                  Next step
                 </Button>
               </div>
             </PanelBody>
@@ -95,7 +140,12 @@ export function OnboardingScreen() {
               <PanelHeader title="The rest" note="in the order they unblock each other" />
               <ol style={{ paddingLeft: 20, display: 'grid', gap: 9, marginTop: 12 }}>
                 {STEPS.map((entry) => (
-                  <li key={entry.id} className={done.includes(entry.id) ? styles.wizardDone : undefined}>
+                  <li
+                    key={entry.id}
+                    className={
+                      stateOf(entry.id, evidence) === 'done' ? styles.wizardDone : undefined
+                    }
+                  >
                     <strong>{entry.title}</strong>
                     <div className={styles.sub}>{entry.blocks}</div>
                   </li>

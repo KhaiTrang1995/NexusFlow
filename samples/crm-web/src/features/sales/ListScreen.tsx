@@ -26,6 +26,22 @@ import styles from './ListScreen.module.css'
 /** The kinds a custom field can be declared on, which is what the edit drawer writes. */
 const EDITABLE_KINDS: readonly string[] = ['Lead', 'Account', 'Contact', 'Opportunity']
 
+/**
+ * Why the other objects have no New button.
+ *
+ * <strong>"Not wired yet" was three wrong things at once.</strong> It read as an unfinished
+ * client, it produced "a account" and "a opportunity", and it was untrue: an account is not
+ * missing a form, it is a record this system creates by converting a lead. Saying which act
+ * produces the record tells a reader what to do instead; saying "not wired" tells them to wait.
+ */
+const WHY_NOT: Readonly<Record<string, string>> = {
+  account: 'An account is created by converting a lead, not from a form.',
+  contact: 'A contact is created by converting a lead, not from a form.',
+  opportunity: 'An opportunity is created by converting a lead, not from a form.',
+  quote: 'A quote is priced against an opportunity — open one and issue it there.',
+  workorder: 'An order is placed against an issued quote, not created directly.',
+}
+
 /** The objects this build has a write for. Everything else says so rather than pretending. */
 const CAN_CREATE: readonly string[] = ['lead', 'task']
 
@@ -146,11 +162,7 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
             <Button
               tone="primary"
               disabled={!CAN_CREATE.includes(objectKey)}
-              title={
-                CAN_CREATE.includes(objectKey)
-                  ? undefined
-                  : `Creating a ${model.label.toLowerCase()} is not wired yet.`
-              }
+              title={CAN_CREATE.includes(objectKey) ? undefined : WHY_NOT[objectKey]}
               onClick={() => setCreating(true)}
             >
               New {model.label.toLowerCase()}
