@@ -6,6 +6,11 @@
         "alias": "project",
         "name": "project",
         "label": "Delivery Project"
+      },
+      {
+        "alias": "milestone",
+        "name": "milestone",
+        "label": "Milestone"
       }
     ],
     "fields": [
@@ -64,9 +69,57 @@
             "label": "Done"
           }
         ]
+      },
+      {
+        "alias": "project_effort_total",
+        "entity": null,
+        "target": "project",
+        "name": "effort_days_total",
+        "label": "Effort (days)",
+        "type": "Number",
+        "required": false,
+        "options": null
+      },
+      {
+        "alias": "milestone_name",
+        "entity": null,
+        "target": "milestone",
+        "name": "name",
+        "label": "Milestone",
+        "type": "Text",
+        "required": true,
+        "options": null
+      },
+      {
+        "alias": "milestone_effort",
+        "entity": null,
+        "target": "milestone",
+        "name": "effort_days",
+        "label": "Effort (days)",
+        "type": "Number",
+        "required": true,
+        "options": null
+      },
+      {
+        "alias": "milestone_effort_hours",
+        "entity": null,
+        "target": "milestone",
+        "name": "effort_hours",
+        "label": "Effort (hours)",
+        "type": "Number",
+        "required": false,
+        "options": null
       }
     ],
-    "relationships": [],
+    "relationships": [
+      {
+        "alias": "project_milestones",
+        "name": "project_milestones",
+        "from": "project",
+        "to": "milestone",
+        "cardinality": "OneToMany"
+      }
+    ],
     "processes": [
       {
         "alias": "pipeline",
@@ -495,6 +548,194 @@
           }
         ]
       }
+    ],
+    "validationRules": [
+      {
+        "alias": "milestone_effort_bounded",
+        "entity": null,
+        "target": "milestone",
+        "name": "milestone_effort_bounded",
+        "field": "effort_days",
+        "operator": "GreaterThan",
+        "value": "90",
+        "message": "A milestone longer than a quarter is a project. Split it."
+      },
+      {
+        "alias": "milestone_effort_meaningful",
+        "entity": null,
+        "target": "milestone",
+        "name": "milestone_effort_meaningful",
+        "field": "effort_days",
+        "operator": "LessThan",
+        "value": "1",
+        "message": "A milestone of under a day is a task. Track it as one."
+      },
+      {
+        "alias": "account_segment_required",
+        "entity": "Account",
+        "target": null,
+        "name": "account_segment_required",
+        "field": "segment",
+        "operator": "IsSet",
+        "value": "false",
+        "message": "An account without a segment is one no territory rule will ever claim."
+      }
+    ],
+    "listViews": [
+      {
+        "alias": "projects_running",
+        "target": "project",
+        "name": "projects_running",
+        "label": "Projects in flight",
+        "filter": {
+          "match": "All",
+          "criteria": [
+            {
+              "field": "status",
+              "operator": "Equals",
+              "value": "running"
+            }
+          ]
+        },
+        "order": {
+          "field": "code",
+          "descending": false,
+          "numeric": false
+        },
+        "limit": 50,
+        "layout": {
+          "kind": "List",
+          "groupBy": null,
+          "lanes": null,
+          "wipLimit": null,
+          "titleField": null,
+          "subtitleField": null,
+          "columns": [
+            "code",
+            "status",
+            "effort_days_total"
+          ]
+        }
+      },
+      {
+        "alias": "projects_by_status",
+        "target": "project",
+        "name": "projects_by_status",
+        "label": "Delivery board",
+        "filter": null,
+        "order": null,
+        "limit": 100,
+        "layout": {
+          "kind": "Kanban",
+          "groupBy": "status",
+          "lanes": [
+            "planned",
+            "running",
+            "done"
+          ],
+          "wipLimit": 4,
+          "titleField": null,
+          "subtitleField": null,
+          "columns": null
+        }
+      },
+      {
+        "alias": "milestones_by_effort",
+        "target": "milestone",
+        "name": "milestones_by_effort",
+        "label": "Milestones by effort",
+        "filter": null,
+        "order": {
+          "field": "effort_days",
+          "descending": true,
+          "numeric": true
+        },
+        "limit": 50,
+        "layout": {
+          "kind": "Card",
+          "groupBy": null,
+          "lanes": null,
+          "wipLimit": null,
+          "titleField": "name",
+          "subtitleField": "effort_days",
+          "columns": null
+        }
+      }
+    ],
+    "rollUps": [
+      {
+        "alias": "project_effort",
+        "field": "project_effort_total",
+        "relationship": "project_milestones",
+        "aggregate": "Sum",
+        "sourceField": "milestone_effort",
+        "filter": null
+      }
+    ],
+    "formulas": [
+      {
+        "alias": "milestone_hours",
+        "field": "milestone_effort_hours",
+        "operation": "Multiply",
+        "left": "effort_days",
+        "right": null,
+        "literal": "8"
+      }
+    ],
+    "dashboards": [
+      {
+        "alias": "revenue_desk",
+        "name": "revenue_desk",
+        "label": "Revenue desk",
+        "reports": [
+          "pipeline_by_outcome",
+          "leads_by_status",
+          "work_by_kind"
+        ]
+      }
+    ],
+    "connectors": [
+      {
+        "alias": "revenue_slack",
+        "name": "revenue_slack",
+        "kind": "Slack",
+        "endpoint": "https://hooks.slack.example/services/northwind/revenue",
+        "secretName": "northwind-slack-revenue"
+      },
+      {
+        "alias": "billing_webhook",
+        "name": "billing_webhook",
+        "kind": "Webhook",
+        "endpoint": "https://billing.northwind.example/hooks/crm",
+        "secretName": "northwind-billing-hook"
+      }
+    ],
+    "labels": [
+      {
+        "entity": "Opportunity",
+        "column": null,
+        "label": "Deal"
+      },
+      {
+        "entity": "Opportunity",
+        "column": "amount",
+        "label": "Contract value"
+      },
+      {
+        "entity": "Opportunity",
+        "column": "expected_close",
+        "label": "Go-live"
+      },
+      {
+        "entity": "Lead",
+        "column": "company",
+        "label": "Operator"
+      },
+      {
+        "entity": "Account",
+        "column": "lifecycle",
+        "label": "Relationship stage"
+      }
     ]
   },
   "data": {
@@ -595,6 +836,46 @@
         "values": {
           "code": "P-ATLAS",
           "status": "running"
+        }
+      },
+      {
+        "alias": "meridian_rollout",
+        "target": "project",
+        "values": {
+          "code": "P-MERIDIAN",
+          "status": "planned"
+        }
+      },
+      {
+        "alias": "atlas_discovery",
+        "target": "milestone",
+        "values": {
+          "name": "Discovery workshops",
+          "effort_days": "6"
+        }
+      },
+      {
+        "alias": "atlas_migration",
+        "target": "milestone",
+        "values": {
+          "name": "Data migration",
+          "effort_days": "14"
+        }
+      },
+      {
+        "alias": "atlas_cutover",
+        "target": "milestone",
+        "values": {
+          "name": "Cutover and handover",
+          "effort_days": "4"
+        }
+      },
+      {
+        "alias": "meridian_audit_trail",
+        "target": "milestone",
+        "values": {
+          "name": "Audit trail sign-off",
+          "effort_days": "9"
         }
       }
     ],
@@ -889,6 +1170,145 @@
             "mitigation": "Confirm who signs for the platform before the terms call"
           }
         ]
+      },
+      {
+        "alias": "demand_web_q4",
+        "name": "demand_web_fy26_q4",
+        "label": "Inbound web — FY26 Q4",
+        "kind": "MarketingLead",
+        "period": "fy26_q4",
+        "owner": "manager-northwind-1",
+        "subject": null,
+        "channel": "Web",
+        "segment": "Mid-market logistics",
+        "targetAmount": null,
+        "currency": null,
+        "targetLeads": 24,
+        "objectives": [
+          {
+            "description": "Audit-readiness content converts the compliance searches",
+            "measure": "Referrals",
+            "target": 24,
+            "status": "InProgress"
+          }
+        ],
+        "steps": [
+          {
+            "description": "Put the auditor checklist behind a form",
+            "owner": "manager-northwind-1",
+            "dueInDays": 11
+          }
+        ],
+        "risks": [
+          {
+            "description": "The content programme ends before the quarter does",
+            "severity": "Medium",
+            "mitigation": "Extend the audit-readiness campaign through September"
+          }
+        ]
+      },
+      {
+        "alias": "demand_event_q4",
+        "name": "demand_event_fy26_q4",
+        "label": "Events — FY26 Q4",
+        "kind": "MarketingLead",
+        "period": "fy26_q4",
+        "owner": "manager-northwind-1",
+        "subject": null,
+        "channel": "Event",
+        "segment": "Enterprise freight",
+        "targetAmount": null,
+        "currency": null,
+        "targetLeads": 8,
+        "objectives": [
+          {
+            "description": "Two regional freight conferences worked properly",
+            "measure": "Meetings",
+            "target": 8,
+            "status": "InProgress"
+          }
+        ],
+        "steps": [
+          {
+            "description": "Confirm the stand and the speaking slot",
+            "owner": "manager-northwind-1",
+            "dueInDays": -3
+          },
+          {
+            "description": "Brief the two representatives on the qualifying questions",
+            "owner": "manager-northwind-1",
+            "dueInDays": 9
+          }
+        ],
+        "risks": [
+          {
+            "description": "Event leads arrive faster than the desk can work them",
+            "severity": "Low",
+            "mitigation": "Agree the follow-up rota before the first conference"
+          }
+        ]
+      },
+      {
+        "alias": "demand_outbound_q4",
+        "name": "demand_outbound_fy26_q4",
+        "label": "Outbound — FY26 Q4",
+        "kind": "MarketingLead",
+        "period": "fy26_q4",
+        "owner": "manager-northwind-1",
+        "subject": null,
+        "channel": "Outbound",
+        "segment": "Enterprise freight",
+        "targetAmount": null,
+        "currency": null,
+        "targetLeads": 16,
+        "objectives": [
+          {
+            "description": "The enterprise outbound campaign lands its own pipeline",
+            "measure": "Deals",
+            "target": 4,
+            "status": "NotStarted"
+          }
+        ],
+        "steps": [
+          {
+            "description": "Agree the account list with the director",
+            "owner": "manager-northwind-1",
+            "dueInDays": 6
+          }
+        ],
+        "risks": [
+          {
+            "description": "Nothing has been attributed to outbound yet this quarter",
+            "severity": "High",
+            "mitigation": "Check the campaign is tagging its leads to the Outbound source"
+          }
+        ]
+      }
+    ],
+    "links": [
+      {
+        "alias": "atlas_has_discovery",
+        "relationship": "project_milestones",
+        "from": "atlas",
+        "to": "atlas_discovery"
+      },
+      {
+        "alias": "atlas_has_migration",
+        "relationship": "project_milestones",
+        "from": "atlas",
+        "to": "atlas_migration"
+      },
+      {
+        "alias": "atlas_has_cutover",
+        "relationship": "project_milestones",
+        "from": "atlas",
+        "to": "atlas_cutover"
+      },
+      {
+        "alias": "meridian_has_audit_trail",
+        "relationship": "project_milestones",
+        "from": "meridian_rollout",
+        "to": "meridian_audit_trail"
       }
     ]
   }

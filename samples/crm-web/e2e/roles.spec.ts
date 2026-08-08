@@ -178,9 +178,14 @@ test.describe('a seller', () => {
     await expect(clone).toBeDisabled()
     await expect(clone).toHaveAttribute('title', /no duplicate-record capability/)
 
-    // And the Files tab says the build stores none, rather than listing three that cannot open.
-    await page.getByRole('tab', { name: /Files/ }).click()
-    await expect(page.getByText('This build stores no files')).toBeVisible()
+    // AND THERE IS NO FILES TAB. It held three invented documents, then a sentence saying this
+    // build stores none. There is no attachment capability in the manifest and no file surface on
+    // the server, so it was a destination whose only content was the reason not to have gone
+    // there. The three tabs that remain all have something behind them.
+    const sections = page.getByRole('tablist', { name: 'Record sections' })
+
+    await expect(sections.getByRole('tab', { name: /Files/ })).toHaveCount(0)
+    await expect(sections.getByRole('tab')).toHaveCount(3)
   })
 
   /**
@@ -1306,5 +1311,301 @@ test.describe('planning, where a screen spoke for a tenant it had not asked abou
 
     // The vision is still theirs to read. Hiding the form is not hiding the period.
     await expect(page.locator('main')).toContainText('Prove the platform')
+  })
+})
+
+test.describe('the quote builder, which took typing and kept none of it', () => {
+  /**
+   * Issues a quote with a real discount and opens the builder on it.
+   *
+   * <strong>Its own quote, because the seeded ones disagree.</strong> Twenty of this tenant's
+   * quotes are discounted and twenty-one are not, and the list is ordered by id — so a test that
+   * opened "the first Issued quote" would assert against a nought discount about half the time
+   * and pass without touching the arithmetic it exists for. 3,000 off 24,000 is 12.5%, under the
+   * 15% threshold, so the quote comes back Issued rather than Draft.
+   */
+  async function openBuilder(page: Page): Promise<void> {
+    const company = await captureAndConvert(page)
+
+    await openFirstRecord(page, '/records/opportunity', company)
+    await page.getByRole('button', { name: 'New quote' }).click()
+    await page.getByLabel('Item 1').fill('PLAT')
+    await page.getByLabel('Quantity').fill('2')
+    await page.getByLabel(/Unit price/).fill('12000')
+    await page.getByLabel(/^Discount/).fill('3000')
+    await page.getByRole('button', { name: 'Issue quote' }).click()
+
+    await expect(page).toHaveURL(/\/records\/quote\//)
+    await page.getByRole('button', { name: 'Open builder' }).click()
+    await expect(page.getByRole('table', { name: 'Quote lines' }).locator('tbody tr')).toHaveCount(1)
+  }
+
+  /** A figure by its label, off the rendered page. The totals are a two-column grid. */
+  async function money(page: Page, label: string): Promise<number> {
+    const shown = await page.locator('main').innerText()
+    const found = new RegExp(`${label}\\s*\\n?−?\\$([0-9,]+)`).exec(shown)
+
+    expect(found, `no figure beside '${label}'`).not.toBeNull()
+
+    return Number(found![1]!.replace(/,/g, ''))
+  }
+
+  /**
+   * The totals panel said what the quote would have been if nobody had discounted it.
+   *
+   * <strong>Headed "derived, never typed", beside the record's own figures.</strong> It summed the
+   * lines and applied a per-line discount of nought — a column the schema does not have — so a
+   * quote the server priced at 21,000 after 3,000 off reported a net total of 24,000 and an
+   * effective rate of 0.0%. Two numbers the tenant has never held, on the screen a seller opens to
+   * read the price they are about to quote, one panel away from the true one.
+   */
+  test('shows the price the server set, not the one it would be with no discount', async ({
+    page,
+  }) => {
+    await signIn(page, 'rep')
+    await openBuilder(page)
+
+    const list = await money(page, 'List price')
+    const given = await money(page, 'Discount given')
+    const net = await money(page, 'Net total')
+    const recorded = await money(page, 'Recorded total')
+
+    expect(given, 'the fixture must be discounted or this asserts nothing').toBeGreaterThan(0)
+    expect(list - given).toBe(net)
+    expect(net).toBe(recorded)
+    await expect(page.locator('main')).not.toContainText('0.0%')
+  })
+
+  /**
+   * A table of inputs is a promise, and this build cannot keep it.
+   *
+   * <strong>Every cell was a text field and there was an "Add line" button above them.</strong>
+   * Nothing was written: the manifest's whole quote surface is issue, approve-the-discount and
+   * place-the-order, and the first inserts a quote with its lines rather than updating one. What
+   * the screen offered instead of saying so was a note in the panel header — "editing here changes
+   * nothing on it" — over a table somebody had already typed into by the time they read it.
+   */
+  test('offers no control that implies a save until the reader asks for a sandbox', async ({
+    page,
+  }) => {
+    await signIn(page, 'rep')
+    await openBuilder(page)
+
+    const lines = page.getByRole('table', { name: 'Quote lines' })
+
+    await expect(lines.getByRole('textbox')).toHaveCount(0)
+    await expect(lines.getByRole('spinbutton')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Add line' })).toHaveCount(0)
+
+    // Asked for, and then said out loud rather than noted over the table.
+    await page.getByRole('button', { name: 'Model a change' }).click()
+
+    await expect(page.locator('main')).toContainText('nothing in it is written')
+    await expect(lines.getByRole('textbox')).not.toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Add line' })).toBeVisible()
+
+    // And the sandbox has the one capability that takes lines behind it.
+    await expect(page.getByRole('button', { name: 'Issue as a new quote' })).toBeEnabled()
+
+    const before = await money(page, 'Net total')
+
+    await page.getByRole('button', { name: 'Discard' }).click()
+
+    await expect(lines.getByRole('textbox')).toHaveCount(0)
+    expect(await money(page, 'Net total')).toBe(before)
+  })
+
+  /**
+   * The sandbox's lines reach the form that can actually price them.
+   *
+   * A what-if with nowhere to go is the reason the table was editable and dead. Issuing writes a
+   * new quote against the same opportunity and leaves this one alone, which is the only thing the
+   * server offers — so the modelled lines arrive in the drawer rather than being retyped.
+   */
+  test('carries the modelled lines into the quote it can issue', async ({ page }) => {
+    await signIn(page, 'rep')
+    await openBuilder(page)
+
+    await page.getByRole('button', { name: 'Model a change' }).click()
+    await page.getByRole('button', { name: 'Issue as a new quote' }).click()
+
+    await expect(page.getByLabel('Item 1')).toHaveValue('PLAT')
+    await expect(page.getByLabel('Quantity').first()).toHaveValue('2')
+  })
+})
+
+test.describe('the panels that drew an empty tenant from a failed read', () => {
+  /**
+   * The landing page reported a quarter of nothing.
+   *
+   * <strong>`useConsole` has carried an `error` throughout and the screen read neither it nor the
+   * pending flag.</strong> With `/entities` refused, the first screen every persona opens on said
+   * €0 open, €0 weighted, 0 deals, 0 tasks, an empty funnel and "Nothing is open in this filter" —
+   * nine confident sentences about rows nobody had managed to read, and each one is what a seller
+   * would take to mean their quarter is empty.
+   */
+  test('says the console could not be read rather than reporting an empty pipeline', async ({
+    page,
+  }) => {
+    await signIn(page, 'rep')
+    await page.route('**/api/v1/crm/entities', (route) => route.abort())
+
+    await page.goto('/')
+
+    await expect(page.getByRole('alert')).toBeVisible()
+    await expect(page.locator('main')).not.toContainText('Nothing is open in this filter')
+    await expect(page.locator('main')).not.toContainText('open deals in this filter')
+  })
+
+  /**
+   * Only the process read was guarded on the board.
+   *
+   * With the stages published and the opportunities refused, every lane drew a count of 0 over a
+   * total of €0 — a whole pipeline reported as empty, in the view a seller scans to decide there
+   * is nothing to work on.
+   */
+  test('says the board could not be read rather than drawing empty lanes', async ({ page }) => {
+    await signIn(page, 'rep')
+    await page.route('**/api/v1/crm/entities', (route) => route.abort())
+
+    await page.goto('/kanban')
+
+    await expect(page.getByRole('alert')).toBeVisible()
+    await expect(page.locator('main')).not.toContainText('Discovery')
+  })
+
+  /**
+   * The record page's two lists, on a refusal rather than on an absence.
+   *
+   * Both already distinguish the two and neither had a test that made them prove it: an aborted
+   * read has to reach the panel as a refusal, not as "nothing has been logged against this
+   * record" — which is the sentence that tells a seller a customer has never been called.
+   */
+  test('tells a refused activity read from a record nothing has happened to', async ({ page }) => {
+    await signIn(page, 'rep')
+
+    await openFirstRecord(page, '/records/account')
+    await page.route('**/api/v1/crm/entities', (route) => route.abort())
+
+    await page.getByRole('tab', { name: /Activity/ }).click()
+
+    await expect(page.getByText('The activity could not be read')).toBeVisible()
+    await expect(page.locator('main')).not.toContainText('Nothing has been logged')
+
+    await page.getByRole('tab', { name: /Related/ }).click()
+
+    await expect(page.getByText('Contacts could not be read')).toBeVisible()
+    await expect(page.locator('main')).not.toContainText('Nothing points at this record')
+  })
+
+  /**
+   * Two defects in one tile, and each was hiding the other.
+   *
+   * <strong>It could not be anything but $0.</strong> "Closed won" was counted after the outcome
+   * filter, and the console opens with Outcome set to Open — which drops every won deal before
+   * the count runs. The note said "won, in this filter", which was true, and was why nobody
+   * looked at a figure that was structurally incapable of moving.
+   *
+   * <strong>And it was dated to a quarter nothing implemented.</strong> The horizon filter has an
+   * upper bound and no lower one, so the deal below — won two years ago, closing before the end
+   * of this quarter — belongs in the figure and does not belong in a "QTD".
+   *
+   * The seeded tenant has no won deals at all, so both were wrong on data no seed could produce
+   * and no reader could check. This supplies one.
+   */
+  test('does not date a figure to a quarter it never filtered by', async ({ page }) => {
+    await signIn(page, 'rep')
+
+    await page.route('**/api/v1/crm/entities', async (route) => {
+      const body = route.request().postDataJSON() as { entity?: string } | null
+
+      if (body?.entity !== 'Opportunity') {
+        return route.fallback()
+      }
+
+      await route.fulfill({
+        json: {
+          records: [
+            {
+              recordId: '11111111-1111-1111-1111-111111111111',
+              values: {
+                opportunity_id: '11111111-1111-1111-1111-111111111111',
+                name: 'A deal won two years ago',
+                stage: 'Discovery',
+                amount: '90000.0000',
+                probability: '100',
+                expected_close: '2024-03-01',
+                outcome: 'Won',
+                owner_id: '33333333-3333-3333-3333-333333333333',
+              },
+            },
+          ],
+          redacted: [],
+          nextCursor: null,
+        },
+      })
+    })
+
+    await page.goto('/')
+
+    // It counts — the filter has no lower bound — so the only question is what the tile calls it.
+    await expect(page.locator('main')).toContainText('$90k')
+    await expect(page.locator('main')).not.toContainText('QTD')
+    await expect(page.locator('main')).not.toContainText('quarter to date')
+  })
+})
+
+test.describe('search, where a chip spoke for the server', () => {
+  /**
+   * "Nothing matches" was said over results the reader had filtered out themselves.
+   *
+   * The kind chips narrow what the panel draws and nothing narrows what the server found. Pick a
+   * kind, then refine the phrase to something of another kind, and the panel reported that the
+   * server had matched nothing — over a hit it was holding and had chosen not to draw. That is
+   * the one wrong direction: a seller concludes the customer is not in the system and creates
+   * them again.
+   */
+  test('says which chip is hiding the hits, not that there were none', async ({ page }) => {
+    await signIn(page, 'rep')
+    await page.goto('/search')
+
+    const box = page.getByLabel('What are you looking for')
+
+    // Two kinds come back for this phrase, so there is a chip to pick that is not Everything.
+    await box.fill('northwind')
+    await page.getByRole('button', { name: 'Opportunity', exact: true }).click()
+
+    // And this one matches a contact and nothing else, so the chip now hides every hit there is.
+    await box.fill('petrov')
+
+    await expect(page.locator('main')).not.toContainText('Nothing matches')
+    await expect(page.getByText('No opportunity matches')).toBeVisible()
+
+    // The way back is a control, not a chip the reader has to remember pressing.
+    await page.getByRole('button', { name: 'Show everything' }).click()
+
+    await expect(page.locator('main')).toContainText('Contact')
+  })
+})
+
+test.describe('the edit drawer, on a schema that never arrived', () => {
+  /**
+   * The same defect the five setup screens had, on the drawer that writes.
+   *
+   * Both of its branches are guarded on `isSuccess`, so a refused `describe` left a drawer with a
+   * "Declared fields" heading, empty space and a Save button — indistinguishable from one still
+   * loading, and it never stops looking like that.
+   */
+  test('says the fields could not be read rather than rendering an empty form', async ({ page }) => {
+    await signIn(page, 'rep')
+    await openFirstRecord(page, '/records/account')
+
+    await page.route('**/api/v1/crm/describe', (route) => route.abort())
+    await page.reload()
+
+    await page.getByRole('button', { name: 'Edit' }).click()
+
+    await expect(page.getByRole('alert')).toBeVisible()
+    await expect(page.locator('[role=dialog], aside')).not.toContainText('Nothing has been declared')
   })
 })

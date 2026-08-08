@@ -88,6 +88,13 @@ public static class SeedReader
                 Campaigns = metadata.Campaigns ?? [],
                 ApprovalProcesses = metadata.ApprovalProcesses ?? [],
                 Reports = metadata.Reports ?? [],
+                ValidationRules = metadata.ValidationRules ?? [],
+                ListViews = metadata.ListViews ?? [],
+                RollUps = metadata.RollUps ?? [],
+                Formulas = metadata.Formulas ?? [],
+                Dashboards = metadata.Dashboards ?? [],
+                Connectors = metadata.Connectors ?? [],
+                Labels = metadata.Labels ?? [],
             },
             Data = data with
             {
@@ -102,7 +109,19 @@ public static class SeedReader
                 // rather than the sentence about the file it is meant to be.
                 Quotes = [.. (data.Quotes ?? []).Select(quote => quote with { Lines = quote.Lines ?? [] })],
                 Orders = data.Orders ?? [],
-                Plans = data.Plans ?? [],
+                // Each plan's three collections too, for the reason a quote's lines are done
+                // here: a plan written without them reaches Validate with nulls, and the checks
+                // below would be a null-reference exception rather than a sentence about a line.
+                Plans =
+                [
+                    .. (data.Plans ?? []).Select(plan => plan with
+                    {
+                        Objectives = plan.Objectives ?? [],
+                        Steps = plan.Steps ?? [],
+                        Risks = plan.Risks ?? [],
+                    }),
+                ],
+                Links = data.Links ?? [],
             },
         };
     }
@@ -111,9 +130,9 @@ public static class SeedReader
     private static class Empty
     {
         public static readonly SeedMetadata Metadata =
-            new([], [], [], [], [], [], [], [], [], [], [], [], [], [], []);
+            new([], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], []);
 
-        public static readonly SeedData Data = new([], [], [], [], [], [], [], [], []);
+        public static readonly SeedData Data = new([], [], [], [], [], [], [], [], [], []);
     }
 
     /// <summary>Checks a document against the limits and against itself.</summary>
@@ -141,6 +160,10 @@ public static class SeedReader
         var periods = new HashSet<string>(StringComparer.Ordinal);
         var people = new HashSet<string>(StringComparer.Ordinal);
         var quotes = new HashSet<string>(StringComparer.Ordinal);
+        var fields = new HashSet<string>(StringComparer.Ordinal);
+        var relationships = new HashSet<string>(StringComparer.Ordinal);
+        var reports = new HashSet<string>(StringComparer.Ordinal);
+        var records = new HashSet<string>(StringComparer.Ordinal);
 
         if (Collect("objects", metadata.Objects, item => item.Alias, objects) is { } badObject)
         {
@@ -167,26 +190,34 @@ public static class SeedReader
             return Result.Fail<SeedDocument>(badPeriod);
         }
 
-        // The four whose aliases nothing refers to. Still collected, because two items sharing
-        // an alias share a derived id, and the second would silently be the first.
-        var unreferenced =
-            Collect("fields", metadata.Fields, item => item.Alias, [])
-            ?? Collect("relationships", metadata.Relationships, item => item.Alias, [])
+        // The rest. Those with a set are referred to by something below; those given an empty one
+        // are still collected, because two items sharing an alias share a derived id and the
+        // second would silently be the first.
+        var rest =
+            Collect("fields", metadata.Fields, item => item.Alias, fields)
+            ?? Collect("relationships", metadata.Relationships, item => item.Alias, relationships)
             ?? Collect("opportunities", data.Opportunities, item => item.Alias, [])
             ?? Collect("leads", data.Leads, item => item.Alias, [])
-            ?? Collect("records", data.Records, item => item.Alias, [])
+            ?? Collect("records", data.Records, item => item.Alias, records)
             ?? Collect("kpis", metadata.Kpis, item => item.Alias, [])
             ?? Collect("territories", metadata.Territories, item => item.Alias, [])
             ?? Collect("slaPolicies", metadata.SlaPolicies, item => item.Alias, [])
             ?? Collect("campaigns", metadata.Campaigns, item => item.Alias, [])
             ?? Collect("approvalProcesses", metadata.ApprovalProcesses, item => item.Alias, [])
-            ?? Collect("reports", metadata.Reports, item => item.Alias, [])
+            ?? Collect("reports", metadata.Reports, item => item.Alias, reports)
             ?? Collect("activities", data.Activities, item => item.Alias, [])
             ?? Collect("quotes", data.Quotes, item => item.Alias, quotes)
             ?? Collect("orders", data.Orders, item => item.Alias, [])
-            ?? Collect("plans", data.Plans, item => item.Alias, []);
+            ?? Collect("plans", data.Plans, item => item.Alias, [])
+            ?? Collect("validationRules", metadata.ValidationRules, item => item.Alias, [])
+            ?? Collect("listViews", metadata.ListViews, item => item.Alias, [])
+            ?? Collect("rollUps", metadata.RollUps, item => item.Alias, [])
+            ?? Collect("formulas", metadata.Formulas, item => item.Alias, [])
+            ?? Collect("dashboards", metadata.Dashboards, item => item.Alias, [])
+            ?? Collect("connectors", metadata.Connectors, item => item.Alias, [])
+            ?? Collect("links", data.Links, item => item.Alias, []);
 
-        if (unreferenced is { } bad)
+        if (rest is { } bad)
         {
             return Result.Fail<SeedDocument>(bad);
         }
@@ -659,6 +690,11 @@ public static class SeedReader
             }
         }
 
+        if (Declarations(metadata, objects, fields, relationships, reports) is { } badDeclaration)
+        {
+            return Result.Fail<SeedDocument>(badDeclaration);
+        }
+
         foreach (var plan in data.Plans)
         {
             if (!CustomValues.IsUsableName(plan.Name))
@@ -672,15 +708,21 @@ public static class SeedReader
                     SeedErrors.UnknownReference("plan " + plan.Alias, plan.Period));
             }
 
+            if (Commitment(plan) is { } badPlan)
+            {
+                return Result.Fail<SeedDocument>(badPlan);
+            }
+
             // The subject is looked for in the collection its kind names — the schema's own
             // CHECK ties the two together, and a plan about an account that is really an
             // opportunity is a foreign-key violation rather than a sentence about the file.
-            var subjects = plan.Kind is PlanKind.Account ? accounts : deals;
-
-            if (!subjects.Contains(plan.Subject))
+            // A demand plan is about a channel and has no subject at all, which Commitment has
+            // already established by this point.
+            if (plan.Subject is { } subject
+                && !(plan.Kind is PlanKind.Account ? accounts : deals).Contains(subject))
             {
                 return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("plan " + plan.Alias, plan.Subject));
+                    SeedErrors.UnknownReference("plan " + plan.Alias, subject));
             }
         }
 
@@ -693,7 +735,280 @@ public static class SeedReader
             }
         }
 
+        foreach (var link in data.Links)
+        {
+            if (!relationships.Contains(link.Relationship))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.UnknownReference("link " + link.Alias, link.Relationship));
+            }
+
+            foreach (var end in (string[])[link.From, link.To])
+            {
+                if (!records.Contains(end))
+                {
+                    return Result.Fail<SeedDocument>(
+                        SeedErrors.UnknownReference("link " + link.Alias, end));
+                }
+            }
+        }
+
         return Result.Ok(document);
+    }
+
+    /// <summary>
+    /// The seven configuration kinds this file declares by alias, checked against what it declares.
+    /// </summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <param name="objects">The custom objects the file declares.</param>
+    /// <param name="fields">The custom fields it declares.</param>
+    /// <param name="relationships">The edges it declares.</param>
+    /// <param name="reports">The saved reports it declares.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    /// <remarks>
+    /// <strong>Each check here is one the capability makes, restated so the refusal names a line
+    /// of the file.</strong> The alternative is not "no check" — it is the same refusal arriving
+    /// at start-up from a store, naming a column and a uuid the operator has never seen, with
+    /// half the tenant already written.
+    /// </remarks>
+    private static Error? Declarations(
+        SeedMetadata metadata,
+        HashSet<string> objects,
+        HashSet<string> fields,
+        HashSet<string> relationships,
+        HashSet<string> reports)
+    {
+        foreach (var rule in metadata.ValidationRules)
+        {
+            if (!CustomValues.IsUsableName(rule.Name))
+            {
+                return SeedErrors.NameIsNotUsable("validationRule", rule.Name);
+            }
+
+            // Exactly one owner, the same rule a field has and for the same reason: the row
+            // carries applies_to and object_id, and one with both is a rule two readers claim.
+            if ((rule.Entity is null) == (rule.Target is null))
+            {
+                return SeedErrors.FieldOwnerAmbiguous(rule.Alias);
+            }
+
+            if (rule.Target is { } owner && !objects.Contains(owner))
+            {
+                return SeedErrors.UnknownReference("validationRule " + rule.Alias, owner);
+            }
+        }
+
+        foreach (var view in metadata.ListViews)
+        {
+            if (!CustomValues.IsUsableName(view.Name))
+            {
+                return SeedErrors.NameIsNotUsable("listView", view.Name);
+            }
+
+            if (!objects.Contains(view.Target))
+            {
+                return SeedErrors.UnknownReference("listView " + view.Alias, view.Target);
+            }
+
+            if (view.Limit is < 1 or > QueryLimits.Max)
+            {
+                return SeedErrors.OutOfRange(
+                    view.Alias, "limit", $"between 1 and {QueryLimits.Max}");
+            }
+
+            if (view.Filter is { Criteria.Count: > QueryLimits.MaxCriteria } tooMany)
+            {
+                return SeedErrors.OutOfRange(
+                    view.Alias,
+                    $"filter of {tooMany.Criteria.Count} criteria",
+                    $"no more than {QueryLimits.MaxCriteria}");
+            }
+        }
+
+        foreach (var rollUp in metadata.RollUps)
+        {
+            // Count is of rows and reads no field; the other four need one. Both halves are an
+            // aggregate that is silently always empty, which nobody investigates.
+            if ((rollUp.Aggregate == RollupAggregate.Count) != (rollUp.SourceField is null))
+            {
+                return SeedErrors.OutOfRange(
+                    rollUp.Alias,
+                    "aggregate " + rollUp.Aggregate,
+                    rollUp.Aggregate == RollupAggregate.Count
+                        ? "given no sourceField"
+                        : "given a sourceField");
+            }
+
+            if (!relationships.Contains(rollUp.Relationship))
+            {
+                return SeedErrors.UnknownReference("rollUp " + rollUp.Alias, rollUp.Relationship);
+            }
+
+            foreach (var named in (string?[])[rollUp.Field, rollUp.SourceField])
+            {
+                if (named is { } alias && !fields.Contains(alias))
+                {
+                    return SeedErrors.UnknownReference("rollUp " + rollUp.Alias, alias);
+                }
+            }
+        }
+
+        foreach (var formula in metadata.Formulas)
+        {
+            if ((formula.Right is null) == (formula.Literal is null))
+            {
+                return SeedErrors.OutOfRange(
+                    formula.Alias, "right operand", "a field or a constant, and not both");
+            }
+
+            if (!fields.Contains(formula.Field))
+            {
+                return SeedErrors.UnknownReference("formula " + formula.Alias, formula.Field);
+            }
+        }
+
+        foreach (var dashboard in metadata.Dashboards)
+        {
+            if (!CustomValues.IsUsableName(dashboard.Name))
+            {
+                return SeedErrors.NameIsNotUsable("dashboard", dashboard.Name);
+            }
+
+            // A dashboard of nothing is a screen with a heading on it, and the capability
+            // refuses one for the same reason.
+            if (dashboard.Reports.Count is 0)
+            {
+                return SeedErrors.OutOfRange(dashboard.Alias, "reports", "at least one");
+            }
+
+            if (dashboard.Reports.Count > ReportLimits.MaxTiles)
+            {
+                return SeedErrors.OutOfRange(
+                    dashboard.Alias, "reports", $"no more than {ReportLimits.MaxTiles}");
+            }
+
+            foreach (var tile in dashboard.Reports)
+            {
+                if (!reports.Contains(tile))
+                {
+                    return SeedErrors.UnknownReference("dashboard " + dashboard.Alias, tile);
+                }
+            }
+        }
+
+        foreach (var connector in metadata.Connectors)
+        {
+            if (!CustomValues.IsUsableName(connector.Name))
+            {
+                return SeedErrors.NameIsNotUsable("connector", connector.Name);
+            }
+
+            // An absolute URL, because the endpoint is dialled rather than resolved against
+            // anything. A relative one is a delivery that fails at the sweep, hours later.
+            if (!Uri.TryCreate(connector.Endpoint, UriKind.Absolute, out _))
+            {
+                return SeedErrors.OutOfRange(connector.Alias, "endpoint", "an absolute URL");
+            }
+        }
+
+        return Labels(metadata.Labels);
+    }
+
+    /// <summary>What a tenant renames, checked against the columns this build has.</summary>
+    /// <param name="labels">What the file renames.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Labels(IReadOnlyList<SeedLabel> labels)
+    {
+        var taken = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var label in labels)
+        {
+            var what = label.Entity + (label.Column is { Length: > 0 } column ? "." + column : "");
+
+            // The row is keyed by (kind, field), so two lines naming the same thing are one row
+            // and the file's author only wrote one of the two names they think they set.
+            if (!taken.Add(what))
+            {
+                return SeedErrors.BadAlias("labels", what, "it is renamed twice.");
+            }
+
+            if (label.Column is { Length: > 0 } named
+                && !EntityColumns.Of(label.Entity).Contains(named, StringComparer.Ordinal))
+            {
+                return SeedErrors.UnknownReference("label " + what, named);
+            }
+
+            if (string.IsNullOrWhiteSpace(label.Label))
+            {
+                return SeedErrors.OutOfRange(what, "label", "something a person can read");
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>What a plan of each kind must and must not carry.</summary>
+    /// <param name="plan">The plan.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    /// <remarks>
+    /// <strong>The same six agreements <c>CommitPlan</c> checks and the <c>plan</c> table's own
+    /// <c>CHECK</c>s hold.</strong> Restated here because a seed that got one wrong would be a
+    /// constraint violation at start-up naming <c>plan_check3</c>, and the operator would be
+    /// looking at PostgreSQL's generated constraint name rather than at the line they wrote.
+    /// </remarks>
+    private static Error? Commitment(SeedPlan plan)
+    {
+        // Portfolio needs a parent link this file cannot express and Operation needs an activity
+        // kind it has no word for. Writing either would be a row that is legal and useless.
+        if (plan.Kind is PlanKind.Portfolio or PlanKind.Operation)
+        {
+            return SeedErrors.OutOfRange(
+                plan.Alias,
+                "kind " + plan.Kind,
+                "Account, Opportunity or MarketingLead; a seed has no vocabulary for the other two");
+        }
+
+        var demand = plan.Kind is PlanKind.MarketingLead;
+
+        if ((plan.Subject is not null) == demand)
+        {
+            return SeedErrors.OutOfRange(
+                plan.Alias,
+                "kind " + plan.Kind,
+                demand ? "given no subject" : "given a subject");
+        }
+
+        foreach (var (value, what) in ((bool, string)[])
+                 [(plan.Channel is not null, "channel"), (plan.TargetLeads is not null, "targetLeads")])
+        {
+            if (value != demand)
+            {
+                return SeedErrors.OutOfRange(
+                    plan.Alias, "kind " + plan.Kind, (demand ? "given a " : "given no ") + what);
+            }
+        }
+
+        foreach (var (value, what) in ((bool, string)[])
+                 [(plan.TargetAmount is not null, "targetAmount"), (plan.Currency is not null, "currency")])
+        {
+            if (value == demand)
+            {
+                return SeedErrors.OutOfRange(
+                    plan.Alias, "kind " + plan.Kind, (demand ? "given no " : "given a ") + what);
+            }
+        }
+
+        // The five a lead can actually arrive from. A plan for a sixth is one no lead will ever
+        // be counted against, so it reports nought for ever and reads as a marketing failure.
+        if (plan.Channel is { } channel
+            && !PlanningLimits.Channels.Contains(channel, StringComparer.Ordinal))
+        {
+            return SeedErrors.UnknownReference("plan " + plan.Alias + " channel", channel);
+        }
+
+        return plan.TargetAmount < 0 || plan.TargetLeads < 0
+            ? SeedErrors.OutOfRange(plan.Alias, "its target", "zero or more")
+            : null;
     }
 
     /// <summary>Checks one collection's size and its aliases, and collects them.</summary>

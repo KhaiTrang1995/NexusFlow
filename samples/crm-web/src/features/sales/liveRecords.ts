@@ -78,12 +78,18 @@ const MAPPINGS: Readonly<Record<string, { entity: ReadableEntity; columns: Recor
   // The prototype's "Work Order" is the closest thing this schema has to `sales_order`, and the
   // mapping says so rather than pretending they are the same idea: an order carries a total and
   // a status, and it does not carry an engineer, a schedule or estimated hours.
+  //
+  // AND `total` IS NOT `hours`, WHICH IS WHAT THIS SAID. The order's money went into the model's
+  // one spare numeric field — `field('hours', 'Est. Hours', 'number')` — so a €184,000 order read
+  // as 184,000 estimated hours under that heading, on the quote's related list and in the
+  // Scheduling section of the order's own page. A currency in a duration's column is not a
+  // near-miss: it is ninety engineer-years of work that nobody ordered. There is no money field
+  // on this model to put it in, so the total is not shown rather than shown as something else.
   workorder: {
     entity: 'Order',
     columns: {
       order_id: 'id',
       status: 'status',
-      total: 'hours',
     },
   },
   task: {
@@ -114,6 +120,19 @@ export function keyColumnOf(objectKey: string): string | null {
 /** Which built-in entity this object is, or null when the server has no page for it. */
 export function entityOf(objectKey: string): ReadableEntity | null {
   return MAPPINGS[objectKey]?.entity ?? null
+}
+
+/**
+ * The fields of this object a live row can actually fill.
+ *
+ * A COLUMN OUTSIDE THIS LIST RENDERS AN EM DASH FOR EVER. The model carries the prototype's whole
+ * field list and the server fills a subset of it, so a screen may legitimately name a field no row
+ * has yet — but a *column* named on a list is a promise of a value, and one nothing can ever put
+ * anything in reads as a child with no data rather than as a header pointing at nothing. Exported
+ * so the related lists can be checked against it rather than against the model.
+ */
+export function mappedFieldsOf(objectKey: string): readonly string[] {
+  return Object.values(MAPPINGS[objectKey]?.columns ?? {})
 }
 
 /**

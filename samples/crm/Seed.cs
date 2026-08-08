@@ -54,6 +54,20 @@ public sealed record SeedDocument(
 /// <param name="SlaPolicies">What a case of each priority is promised.</param>
 /// <param name="Campaigns">What marketing is running.</param>
 /// <param name="ApprovalProcesses">Who has to agree to what, and in what order.</param>
+/// <param name="Reports">What is saved to be run.</param>
+/// <param name="ValidationRules">What a write is refused for.</param>
+/// <param name="ListViews">Named queries over a custom object.</param>
+/// <param name="RollUps">Fields whose value is an aggregate over a parent's children.</param>
+/// <param name="Formulas">Fields computed from other fields of the same record.</param>
+/// <param name="Dashboards">Sets of tiles, each naming a report.</param>
+/// <param name="Connectors">Addresses this server will later send to.</param>
+/// <param name="Labels">What this tenant calls a built-in entity, or one of its columns.</param>
+/// <remarks>
+/// <strong>The last seven exist because <c>/config</c> could answer for twelve kinds and this file
+/// could only produce five of them.</strong> A seeded tenant therefore opened its setup screens on
+/// seven empty lists, which reads as a feature that does not work rather than as a tenant nobody
+/// has configured — and the two are indistinguishable from outside, which is the whole problem.
+/// </remarks>
 public sealed record SeedMetadata(
     IReadOnlyList<SeedObject> Objects,
     IReadOnlyList<SeedField> Fields,
@@ -69,7 +83,14 @@ public sealed record SeedMetadata(
     IReadOnlyList<SeedSlaPolicy> SlaPolicies,
     IReadOnlyList<SeedCampaign> Campaigns,
     IReadOnlyList<SeedApprovalProcess> ApprovalProcesses,
-    IReadOnlyList<SeedReport> Reports);
+    IReadOnlyList<SeedReport> Reports,
+    IReadOnlyList<SeedValidationRule> ValidationRules,
+    IReadOnlyList<SeedListView> ListViews,
+    IReadOnlyList<SeedRollUp> RollUps,
+    IReadOnlyList<SeedFormula> Formulas,
+    IReadOnlyList<SeedDashboard> Dashboards,
+    IReadOnlyList<SeedConnector> Connectors,
+    IReadOnlyList<SeedLabel> Labels);
 
 /// <summary>Rows.</summary>
 /// <param name="Accounts">Applied first: contacts and opportunities reference them.</param>
@@ -80,7 +101,11 @@ public sealed record SeedMetadata(
 /// <param name="Activities">Tasks, calls, meetings and notes against the rows above.</param>
 /// <param name="Quotes">Priced offers against an opportunity.</param>
 /// <param name="Orders">What a quote became once somebody committed.</param>
-/// <param name="Plans">Account and deal plans, with what is under them.</param>
+/// <param name="Plans">Account, deal and demand plans, with what is under them.</param>
+/// <param name="Links">
+/// Which records are joined by which relationship. Applied last of all, because a link needs both
+/// of its ends written, and because the roll-ups it feeds are recomputed from it.
+/// </param>
 public sealed record SeedData(
     IReadOnlyList<SeedAccount> Accounts,
     IReadOnlyList<SeedContact> Contacts,
@@ -90,7 +115,8 @@ public sealed record SeedData(
     IReadOnlyList<SeedActivity> Activities,
     IReadOnlyList<SeedQuote> Quotes,
     IReadOnlyList<SeedOrder> Orders,
-    IReadOnlyList<SeedPlan> Plans);
+    IReadOnlyList<SeedPlan> Plans,
+    IReadOnlyList<SeedLink> Links);
 
 // -------------------------------------------------------------------------------- metadata items
 
@@ -351,6 +377,135 @@ public sealed record SeedReport(
 /// </param>
 public sealed record SeedApprovalStep(string Label, ApproverKind Kind, string? Approver);
 
+/// <summary>Declares a rule that refuses a write when it holds.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Entity">A built-in entity kind, or null when <paramref name="Target"/> is given.</param>
+/// <param name="Target">The alias of a custom object, or null when <paramref name="Entity"/> is.</param>
+/// <param name="Name">The identifier, and what a refusal names.</param>
+/// <param name="Field">Which field it reads.</param>
+/// <param name="Operator">How it is compared.</param>
+/// <param name="Value">What it is compared against.</param>
+/// <param name="Message">
+/// What the writer is told. The rule's whole value: a refusal saying <c>amount &gt; 100000</c>
+/// tells somebody what they typed, and this tells them what to do about it.
+/// </param>
+public sealed record SeedValidationRule(
+    string Alias,
+    EntityKind? Entity,
+    string? Target,
+    string Name,
+    string Field,
+    GuardOperator Operator,
+    string Value,
+    string Message);
+
+/// <summary>A named query saved over a custom object.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Target">The alias of the object it queries.</param>
+/// <param name="Name">The identifier a caller asks for it by.</param>
+/// <param name="Label">What a person sees.</param>
+/// <param name="Filter">Which records, or null for all of them.</param>
+/// <param name="Order">How to sort, or null for insertion order.</param>
+/// <param name="Limit">How many rows at most.</param>
+/// <param name="Layout">How it is drawn, or null for a plain table of every field.</param>
+/// <remarks>
+/// <strong>The filter, the order and the layout are the runtime records, not copies of
+/// them.</strong> Everywhere else in this file a nested item exists in a <c>Seed</c> spelling
+/// because the file names things by alias and the capability names them by id. These three name
+/// nothing but field <em>names</em>, so a copy would have no translation to do and would exist
+/// only to be mapped one-for-one onto the original — a second shape to keep in step with the
+/// first, for nothing.
+/// </remarks>
+public sealed record SeedListView(
+    string Alias,
+    string Target,
+    string Name,
+    string Label,
+    RecordFilter? Filter,
+    RecordOrder? Order,
+    int Limit,
+    ViewLayout? Layout);
+
+/// <summary>Declares a field whose value is an aggregate over a parent's children.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Field">The alias of the field on the parent that holds the answer.</param>
+/// <param name="Relationship">The alias of the edge to walk. Its <c>from</c> end is the parent.</param>
+/// <param name="Aggregate">What to do to the children.</param>
+/// <param name="SourceField">
+/// The alias of the child's field to aggregate. Null for <see cref="RollupAggregate.Count"/>,
+/// which counts rows, and required for the other four.
+/// </param>
+/// <param name="Filter">Which children to count, or null for all of them.</param>
+/// <remarks>
+/// Both fields are named by their <em>alias</em> in this file and not by their column name,
+/// because the store wants ids and only the alias derives one. The filter inside is by name,
+/// because that is what is compared against the child's stored values.
+/// </remarks>
+public sealed record SeedRollUp(
+    string Alias,
+    string Field,
+    string Relationship,
+    RollupAggregate Aggregate,
+    string? SourceField,
+    RollupFilter? Filter);
+
+/// <summary>Declares a field computed from other fields of the same record.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Field">The alias of the field that holds the answer. Becomes read-only.</param>
+/// <param name="Operation">What to do to the operands.</param>
+/// <param name="Left">
+/// The left operand, by field <em>name</em> — the operands are stored and evaluated as names,
+/// unlike <paramref name="Field"/>, which the store wants as an id.
+/// </param>
+/// <param name="Right">The right operand as a field name, or null when a literal is given.</param>
+/// <param name="Literal">The right operand as a constant, or null when a field is given.</param>
+public sealed record SeedFormula(
+    string Alias,
+    string Field,
+    FormulaOperation Operation,
+    string Left,
+    string? Right,
+    string? Literal);
+
+/// <summary>A set of tiles, each naming a report.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Name">The identifier it is run by.</param>
+/// <param name="Label">What a person sees.</param>
+/// <param name="Reports">The aliases of the reports it shows, in the order it shows them.</param>
+public sealed record SeedDashboard(
+    string Alias,
+    string Name,
+    string Label,
+    IReadOnlyList<string> Reports);
+
+/// <summary>An address this server will later send to.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Name">The identifier a configured notification names.</param>
+/// <param name="Kind">What is on the other end.</param>
+/// <param name="Endpoint">Where to send.</param>
+/// <param name="SecretName">
+/// The name of a credential held wherever the deployment holds secrets, or null. <strong>Never
+/// the credential itself</strong>, and a seed file is exactly the document somebody would paste
+/// one into: it is committed, it is mounted as a config map, and it is the first thing attached
+/// to a support ticket.
+/// </param>
+public sealed record SeedConnector(
+    string Alias,
+    string Name,
+    ConnectorKind Kind,
+    string Endpoint,
+    string? SecretName);
+
+/// <summary>What this tenant calls a built-in entity, or one of its columns.</summary>
+/// <param name="Entity">Which entity.</param>
+/// <param name="Column">Which of its columns, or null for the entity itself.</param>
+/// <param name="Label">What it is called here.</param>
+/// <remarks>
+/// No alias, for the same reason <see cref="SeedBusinessHours"/> has none: the row is keyed by
+/// what it describes rather than by an id, so there is nothing for an alias to derive.
+/// </remarks>
+public sealed record SeedLabel(EntityKind Entity, string? Column, string Label);
+
 // -------------------------------------------------------------------------------- data items
 
 /// <summary>A row of <c>account</c>.</summary>
@@ -506,19 +661,43 @@ public sealed record SeedOrder(
 /// <param name="Alias">Its name in this file.</param>
 /// <param name="Name">The identifier the API takes.</param>
 /// <param name="Label">What a person sees.</param>
-/// <param name="Kind">Account or opportunity. A demand plan needs neither and is not seeded.</param>
+/// <param name="Kind">
+/// Account, opportunity or demand. Portfolio and operation are not seeded: a portfolio's whole
+/// point is the plans underneath it, and this file has no way to say that one plan rolls into
+/// another — see <see cref="SeedReader"/>, which refuses both rather than writing a root with
+/// nothing under it.
+/// </param>
 /// <param name="Period">The alias of the period it belongs to.</param>
 /// <param name="Owner">Whose it is, as a user identifier.</param>
 /// <param name="Subject">
-/// The alias of the account or opportunity it is about. The schema requires one for each kind —
+/// The alias of the account or opportunity it is about, and null for a demand plan. The schema
+/// requires one for each of the first two kinds —
 /// <c>CHECK ((kind = 'Account') = (account_id IS NOT NULL))</c> — which is what stops a plan
-/// about nothing.
+/// about nothing, and refuses one for the third.
 /// </param>
-/// <param name="TargetAmount">What it commits.</param>
-/// <param name="Currency">The unit of that.</param>
+/// <param name="Channel">
+/// <see cref="PlanKind.MarketingLead"/>: where the demand is expected from, and null otherwise.
+/// One of <see cref="PlanningLimits.Channels"/> — a plan naming a sixth channel is one no lead
+/// can ever be attributed to, so it would report nought for ever and read as a marketing failure
+/// rather than as a typo.
+/// </param>
+/// <param name="Segment">
+/// <see cref="PlanKind.MarketingLead"/>: who it is aimed at. Free text, because a closed list
+/// would be this build's opinion about somebody else's go-to-market.
+/// </param>
+/// <param name="TargetAmount">What it commits, and null for a demand plan, which commits leads.</param>
+/// <param name="Currency">The unit of that, present exactly when the amount is.</param>
+/// <param name="TargetLeads"><see cref="PlanKind.MarketingLead"/>: how many are promised.</param>
 /// <param name="Objectives">What it is trying to achieve.</param>
 /// <param name="Steps">The mutual action plan.</param>
 /// <param name="Risks">What could stop it.</param>
+/// <remarks>
+/// <strong>The demand fields are the reason the marketing panel was empty on a fully seeded
+/// tenant.</strong> The three kind-dependent groups here are the schema's own <c>CHECK</c>s —
+/// exactly one of subject, channel and nothing, and money for the revenue kinds only — so the
+/// reader can refuse a disagreement by naming the field rather than letting PostgreSQL name a
+/// constraint.
+/// </remarks>
 public sealed record SeedPlan(
     string Alias,
     string Name,
@@ -526,12 +705,15 @@ public sealed record SeedPlan(
     PlanKind Kind,
     string Period,
     string Owner,
-    string Subject,
-    decimal TargetAmount,
-    string Currency,
+    string? Subject,
+    decimal? TargetAmount,
+    string? Currency,
     IReadOnlyList<SeedObjective> Objectives,
     IReadOnlyList<SeedPlanStep> Steps,
-    IReadOnlyList<SeedPlanRisk> Risks);
+    IReadOnlyList<SeedPlanRisk> Risks,
+    string? Channel = null,
+    string? Segment = null,
+    int? TargetLeads = null);
 
 /// <summary>One thing a plan is trying to achieve.</summary>
 /// <param name="Description">What it is.</param>
@@ -567,6 +749,18 @@ public sealed record SeedRecord(
     string Alias,
     string Target,
     IReadOnlyDictionary<string, string?> Values);
+
+/// <summary>Joins two records along a declared relationship.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Relationship">The alias of the edge.</param>
+/// <param name="From">The alias of the record the edge starts at — the parent.</param>
+/// <param name="To">The alias of the record it ends at.</param>
+/// <remarks>
+/// <strong>Without these a seeded roll-up is a declaration with nothing under it.</strong> It
+/// would list on the setup screen and answer nothing on every parent, which is the aggregate
+/// <c>RollupCapabilities</c> spends its remarks refusing — a zero nobody investigates.
+/// </remarks>
+public sealed record SeedLink(string Alias, string Relationship, string From, string To);
 
 // -------------------------------------------------------------------------------- what is applied
 

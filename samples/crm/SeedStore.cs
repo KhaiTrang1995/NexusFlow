@@ -174,13 +174,27 @@ public sealed class SeedStore
         ON CONFLICT (order_id) DO NOTHING
         """;
 
+    // Channel, segment and target_leads are what a demand plan is instead of a subject and a
+    // sum, and the table has had all three since 0016. They were missing here, so the file could
+    // describe two of the three kinds it is allowed to and the marketing panel of every seeded
+    // tenant was empty for want of a column binding.
     private const string InsertPlan = """
         INSERT INTO plan (
             plan_id, tenant_id, period_id, kind, name, label, owner_id, account_id,
-            opportunity_id, target_amount, currency, created_at)
+            opportunity_id, channel, segment, target_leads, target_amount, currency, created_at)
         VALUES (@id, @tenant, @period, @kind, @name, @label, @owner, @account, @opportunity,
-            @target, @currency, @now)
+            @channel, @segment, @leads, @target, @currency, @now)
         ON CONFLICT (plan_id) DO NOTHING
+        """;
+
+    // On link_id, which is derived from the alias, rather than on the triple the unique index
+    // covers. Two aliases naming the same pair are then a refusal rather than a silent no-op —
+    // one of them is a line somebody wrote believing it did something.
+    private const string InsertLink = """
+        INSERT INTO custom_link (
+            link_id, tenant_id, relationship_id, from_record_id, to_record_id, created_at)
+        VALUES (@id, @tenant, @relationship, @from, @to, @now)
+        ON CONFLICT (link_id) DO NOTHING
         """;
 
     private const string InsertObjective = """
@@ -820,6 +834,38 @@ public sealed class SeedStore
         }, ct);
     }
 
+    /// <summary>Joins two records along a declared relationship.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="link">What to join.</param>
+    /// <param name="now">When.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>Whether a row was inserted rather than already there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="link"/> is null.</exception>
+    /// <remarks>
+    /// <strong>Here rather than through <c>CustomSchemaStore.LinkAsync</c>, and the reason is
+    /// this method's return value.</strong> That one answers "did the link stand", which is what
+    /// its capability needs and is <c>true</c> for a link that was already there; a seed has to
+    /// tell written from present, and it has no way to ask afterwards because nothing reads
+    /// <c>custom_link</c> by key. Conflicting on the derived <c>link_id</c> — the same shape as
+    /// every other insert in this file — answers both questions with one statement.
+    /// </remarks>
+    public ValueTask<bool> WriteLinkAsync(
+        string tenant, SeedLink link, DateTimeOffset now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(link);
+
+        return WriteAsync(tenant, InsertLink, command =>
+        {
+            Add(command, "id", NpgsqlDbType.Uuid, SeedIds.For(tenant, "link", link.Alias));
+            Add(command, "tenant", NpgsqlDbType.Text, tenant);
+            Add(command, "relationship", NpgsqlDbType.Uuid,
+                SeedIds.For(tenant, "relationship", link.Relationship));
+            Add(command, "from", NpgsqlDbType.Uuid, SeedIds.For(tenant, "record", link.From));
+            Add(command, "to", NpgsqlDbType.Uuid, SeedIds.For(tenant, "record", link.To));
+            Add(command, "now", NpgsqlDbType.TimestampTz, now);
+        }, ct);
+    }
+
     /// <summary>Writes a plan and everything under it.</summary>
     /// <param name="tenant">Whose.</param>
     /// <param name="plan">What to write.</param>
@@ -844,7 +890,13 @@ public sealed class SeedStore
 
         var id = SeedIds.For(tenant, "plan", plan.Alias);
         var isAccount = plan.Kind is PlanKind.Account;
-        var subject = SeedIds.For(tenant, isAccount ? "account" : "opportunity", plan.Subject);
+
+        // Null for a demand plan, which is about a channel rather than about a row. The reader
+        // has already established that a subject is present exactly for the other two kinds, so
+        // the derivation below is never asked for an alias that is not there.
+        var subject = plan.Subject is { } named
+            ? SeedIds.For(tenant, isAccount ? "account" : "opportunity", named)
+            : (object)DBNull.Value;
 
         var written = await ExecuteAsync(connection, InsertPlan, command =>
         {
@@ -856,9 +908,13 @@ public sealed class SeedStore
             Add(command, "label", NpgsqlDbType.Text, plan.Label);
             Add(command, "owner", NpgsqlDbType.Text, plan.Owner);
             Add(command, "account", NpgsqlDbType.Uuid, isAccount ? subject : DBNull.Value);
-            Add(command, "opportunity", NpgsqlDbType.Uuid, isAccount ? DBNull.Value : subject);
-            Add(command, "target", NpgsqlDbType.Numeric, plan.TargetAmount);
-            Add(command, "currency", NpgsqlDbType.Text, plan.Currency);
+            Add(command, "opportunity", NpgsqlDbType.Uuid,
+                plan.Kind is PlanKind.Opportunity ? subject : DBNull.Value);
+            Add(command, "channel", NpgsqlDbType.Text, (object?)plan.Channel ?? DBNull.Value);
+            Add(command, "segment", NpgsqlDbType.Text, (object?)plan.Segment ?? DBNull.Value);
+            Add(command, "leads", NpgsqlDbType.Integer, (object?)plan.TargetLeads ?? DBNull.Value);
+            Add(command, "target", NpgsqlDbType.Numeric, (object?)plan.TargetAmount ?? DBNull.Value);
+            Add(command, "currency", NpgsqlDbType.Text, (object?)plan.Currency ?? DBNull.Value);
             Add(command, "now", NpgsqlDbType.TimestampTz, now);
         }, ct).ConfigureAwait(false);
 

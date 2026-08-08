@@ -6,7 +6,6 @@ import {
   FieldGrid,
   Page,
   Panel,
-  PanelBody,
   PanelHeader,
   Skeleton,
   Tabs,
@@ -28,7 +27,7 @@ import { remember } from '@/features/search/recents'
 import { useSession } from '@/session/SessionProvider'
 import styles from './RecordScreen.module.css'
 
-type RecordTab = 'details' | 'related' | 'activity' | 'files'
+type RecordTab = 'details' | 'related' | 'activity'
 
 /**
  * A record page, laid out from the object's own page layout.
@@ -266,7 +265,16 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
             // No badge. It was hard-coded to four on every record in the tenant, which is a
             // count of nothing dressed as a count of something.
             { id: 'activity', label: 'Activity' },
-            { id: 'files', label: 'Files' },
+
+            /*
+              AND NO FILES TAB. It held three invented documents — the same redlined MSA and the
+              same security questionnaire on every record in the tenant, with sizes and uploaders
+              — and then a sentence saying this build stores none. Both are wrong in the same
+              direction, one loudly and one quietly: there is no attachment capability in the
+              manifest and no file surface on the server, so the tab is a destination that can
+              never hold anything. A reader who opens it has been sent somewhere to be told they
+              should not have come. The three tabs left all have something behind them.
+            */
           ]}
         />
       </header>
@@ -316,25 +324,6 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
           </Panel>
         ) : null}
 
-        {tab === 'files' ? (
-          <Panel padding="flush">
-            <PanelHeader title="Files" />
-            <PanelBody>
-              {/*
-                THREE INVENTED DOCUMENTS USED TO LIVE HERE — the same redlined MSA and the same
-                security questionnaire on every record in the tenant, with sizes and uploaders.
-                This build has no file storage at all, and a tab listing files that cannot be
-                opened is worse than one that says there are none: somebody goes looking for the
-                download that never appears, and concludes the link is broken rather than that the
-                feature is absent.
-              */}
-              <EmptyState
-                title="This build stores no files"
-                detail="There is no attachment surface on the server, so there is nothing to list. The tab is here because the design has it, not because it is waiting for data."
-              />
-            </PanelBody>
-          </Panel>
-        ) : null}
       </div>
 
       {quoting ? (

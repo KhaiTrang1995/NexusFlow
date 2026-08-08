@@ -37,24 +37,41 @@ const EMPTY: DraftLine = { sku: '', quantity: '1', unitPrice: '' }
  * AND IT OPENS THE QUOTE IT JUST MADE. Before this, issuing one left the reader on the opportunity
  * with the new quote reachable only by finding it in a list of every quote in the tenant — which,
  * for a seller who has issued three this week, is a guessing game between four identical totals.
+ *
+ * IT ALSO TAKES LINES SOMEBODY HAS ALREADY WRITTEN. The quote builder's sandbox is a set of lines
+ * and one discount — the same shape this form holds — and issuing is the only thing this build can
+ * do with them. Retyping them here would be the reader paying twice for the same thought.
  */
 export function IssueQuoteDrawer({
   opportunityId,
   opportunityName,
   currency,
+  initialLines,
+  initialDiscount,
   onClose,
 }: {
   opportunityId: string
   opportunityName: string
   currency: string
+  /** Lines to start from, where the caller already has them. One empty line otherwise. */
+  initialLines?: readonly QuoteRequestLine[]
+  initialDiscount?: number
   onClose: () => void
 }) {
   const issue = useIssueQuote()
   const navigate = useNavigate()
   const toast = useToast()
 
-  const [lines, setLines] = useState<DraftLine[]>([{ ...EMPTY }])
-  const [discount, setDiscount] = useState('0')
+  const [lines, setLines] = useState<DraftLine[]>(() =>
+    initialLines === undefined || initialLines.length === 0
+      ? [{ ...EMPTY }]
+      : initialLines.map((line) => ({
+          sku: line.sku,
+          quantity: String(line.quantity),
+          unitPrice: String(line.unitPrice.amount),
+        })),
+  )
+  const [discount, setDiscount] = useState(String(initialDiscount ?? 0))
   const [validForDays, setValidForDays] = useState('21')
 
   const priced: QuoteRequestLine[] = lines

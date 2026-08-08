@@ -28,13 +28,25 @@ public sealed class SeedApplier
     private readonly CustomSchemaStore _schema;
     private readonly ApprovalStore _approvals;
     private readonly ReportStore _reports;
+    private readonly QueryStore _views;
+    private readonly RollupStore _rollUps;
+    private readonly FormulaStore _formulas;
+    private readonly ConnectorStore _connectors;
+    private readonly LabelStore _labels;
+    private readonly FieldPolicyStore _rules;
     private readonly TimeProvider _clock;
 
     /// <summary>Creates the applier.</summary>
     /// <param name="seeds">Writes the built-in rows and the process.</param>
     /// <param name="schema">Writes the custom objects, fields, relationships and records.</param>
     /// <param name="approvals">Writes the approval processes, through the store that owns them.</param>
-    /// <param name="reports">Writes the saved reports, through the store that owns them.</param>
+    /// <param name="reports">Writes the saved reports and the dashboards over them.</param>
+    /// <param name="views">Writes the saved list views.</param>
+    /// <param name="rollUps">Writes the roll-ups, and recomputes them once their links exist.</param>
+    /// <param name="formulas">Writes the formulas, and supplies them to the record write.</param>
+    /// <param name="connectors">Registers the addresses this tenant sends to.</param>
+    /// <param name="labels">Writes what this tenant calls the built-in entities.</param>
+    /// <param name="rules">Writes the validation rules.</param>
     /// <param name="clock">Supplies the instant every written row is stamped with.</param>
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
     public SeedApplier(
@@ -42,18 +54,36 @@ public sealed class SeedApplier
         CustomSchemaStore schema,
         ApprovalStore approvals,
         ReportStore reports,
+        QueryStore views,
+        RollupStore rollUps,
+        FormulaStore formulas,
+        ConnectorStore connectors,
+        LabelStore labels,
+        FieldPolicyStore rules,
         TimeProvider clock)
     {
         ArgumentNullException.ThrowIfNull(seeds);
         ArgumentNullException.ThrowIfNull(schema);
         ArgumentNullException.ThrowIfNull(approvals);
         ArgumentNullException.ThrowIfNull(reports);
+        ArgumentNullException.ThrowIfNull(views);
+        ArgumentNullException.ThrowIfNull(rollUps);
+        ArgumentNullException.ThrowIfNull(formulas);
+        ArgumentNullException.ThrowIfNull(connectors);
+        ArgumentNullException.ThrowIfNull(labels);
+        ArgumentNullException.ThrowIfNull(rules);
         ArgumentNullException.ThrowIfNull(clock);
 
         _seeds = seeds;
         _schema = schema;
         _approvals = approvals;
         _reports = reports;
+        _views = views;
+        _rollUps = rollUps;
+        _formulas = formulas;
+        _connectors = connectors;
+        _labels = labels;
+        _rules = rules;
         _clock = clock;
     }
 
@@ -243,6 +273,12 @@ public sealed class SeedApplier
             outcome = outcome.And(written is not null);
         }
 
+        // After the objects, the fields and the edges they are all declared over. A list view
+        // names an object, and a roll-up names two fields and an edge — none of which exist
+        // until the three loops above have run.
+        outcome = await DeclarationsAsync(tenant, document.Metadata, now, outcome, ct)
+            .ConfigureAwait(false);
+
         // ------------------------------------------------------------------ data
 
         foreach (var account in document.Data.Accounts)
@@ -362,16 +398,210 @@ public sealed class SeedApplier
                 return Result.Fail<SeedOutcome>(faults[0]!);
             }
 
+            // And the same computation, in the same order RecordWriter does it: after the type
+            // check, because a formula reads values that have been checked. Without this a
+            // seeded record's computed fields are blank on every row, which reads as a formula
+            // that does not work rather than as a write that never ran one.
+            var computed = Formulas.Apply(
+                await _formulas.FormulasForAsync(tenant, target, ct).ConfigureAwait(false),
+                record.Values);
+
             outcome = outcome.And(await _schema.WriteRecordAsync(
                 tenant,
                 SeedIds.For(tenant, "record", record.Alias),
                 target,
-                CustomValues.ToJson(declared, record.Values),
+                CustomValues.ToJson(declared, computed),
                 now,
                 ct).ConfigureAwait(false));
         }
 
+        // Last, because a link needs both of its records written. Each parent it touches is then
+        // recomputed, which is what turns a declared roll-up into a number rather than a nought
+        // on every parent — the aggregate nobody investigates.
+        foreach (var link in document.Data.Links)
+        {
+            outcome = outcome.And(
+                await _seeds.WriteLinkAsync(tenant, link, now, ct).ConfigureAwait(false));
+
+            // Recomputed whether or not this run wrote the link, because a roll-up declared
+            // after the links already existed would otherwise never get its first value.
+            await _rollUps.RecomputeAsync(
+                tenant,
+                SeedIds.For(tenant, "relationship", link.Relationship),
+                SeedIds.For(tenant, "record", link.From),
+                ct).ConfigureAwait(false);
+        }
+
         return Result.Ok(outcome);
+    }
+
+    /// <summary>Writes the seven kinds a setup screen lists and this file could not produce.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <param name="now">The instant every written row is stamped with.</param>
+    /// <param name="outcome">What has been written so far.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>The running total.</returns>
+    /// <remarks>
+    /// <strong>Every one goes through the store its capability uses</strong>, for the reason the
+    /// approvals and the reports do: those inserts already carry the conflict clause the second
+    /// run relies on, and a second spelling of one is the copy that forgets it.
+    /// </remarks>
+    private async ValueTask<SeedOutcome> DeclarationsAsync(
+        string tenant,
+        SeedMetadata metadata,
+        DateTimeOffset now,
+        SeedOutcome outcome,
+        CancellationToken ct)
+    {
+        foreach (var rule in metadata.ValidationRules)
+        {
+            var written = await _rules.DeclareRuleAsync(
+                tenant,
+                SeedIds.For(tenant, "rule", rule.Alias),
+                new DefineValidationRule(
+                    rule.Entity,
+                    rule.Target is { } owner ? SeedIds.For(tenant, "object", owner) : null,
+                    rule.Name,
+                    rule.Field,
+                    rule.Operator,
+                    rule.Value,
+                    rule.Message),
+                now,
+                ct).ConfigureAwait(false);
+
+            outcome = outcome.And(written is not null);
+        }
+
+        foreach (var view in metadata.ListViews)
+        {
+            var written = await _views.SaveViewAsync(
+                tenant,
+                SeedIds.For(tenant, "view", view.Alias),
+                new DefineListView(
+                    SeedIds.For(tenant, "object", view.Target),
+                    view.Name,
+                    view.Label,
+                    view.Filter,
+                    view.Order,
+                    view.Limit,
+                    view.Layout),
+                now,
+                ct).ConfigureAwait(false);
+
+            outcome = outcome.And(written is not null);
+        }
+
+        foreach (var rollUp in metadata.RollUps)
+        {
+            var written = await _rollUps.DeclareAsync(
+                tenant,
+                SeedIds.For(tenant, "rollup", rollUp.Alias),
+                new DefineRollup(
+                    SeedIds.For(tenant, "field", rollUp.Field),
+                    SeedIds.For(tenant, "relationship", rollUp.Relationship),
+                    rollUp.Aggregate,
+                    rollUp.SourceField is { } source ? SeedIds.For(tenant, "field", source) : null,
+                    rollUp.Filter),
+                now,
+                ct).ConfigureAwait(false);
+
+            outcome = outcome.And(written is not null);
+        }
+
+        foreach (var formula in metadata.Formulas)
+        {
+            var written = await _formulas.DeclareAsync(
+                tenant,
+                SeedIds.For(tenant, "formula", formula.Alias),
+                new DefineFormula(
+                    SeedIds.For(tenant, "field", formula.Field),
+                    formula.Operation,
+                    formula.Left,
+                    formula.Right,
+                    formula.Literal),
+                now,
+                ct).ConfigureAwait(false);
+
+            outcome = outcome.And(written is not null);
+        }
+
+        foreach (var dashboard in metadata.Dashboards)
+        {
+            var written = await _reports.SaveDashboardAsync(
+                tenant,
+                SeedIds.For(tenant, "dashboard", dashboard.Alias),
+                dashboard.Name,
+                dashboard.Label,
+                [.. dashboard.Reports.Select(report => SeedIds.For(tenant, "report", report))],
+                now,
+                ct).ConfigureAwait(false);
+
+            outcome = outcome.And(written is not null);
+        }
+
+        foreach (var connector in metadata.Connectors)
+        {
+            var written = await _connectors.RegisterAsync(
+                tenant,
+                SeedIds.For(tenant, "connector", connector.Alias),
+                new DefineConnector(
+                    connector.Name, connector.Kind, connector.Endpoint, connector.SecretName),
+                now,
+                ct).ConfigureAwait(false);
+
+            outcome = outcome.And(written is not null);
+        }
+
+        return await LabelsAsync(tenant, metadata.Labels, outcome, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Names the built-in entities, leaving alone any this tenant has already named.</summary>
+    /// <param name="tenant">Whose.</param>
+    /// <param name="labels">What the file renames.</param>
+    /// <param name="outcome">What has been written so far.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>The running total.</returns>
+    /// <remarks>
+    /// <strong>The one write on this path that is not its own conflict clause.</strong>
+    /// <c>entity_label</c> upserts, because renaming over HTTP is an update — one name is one
+    /// fact, and a table holding every name a thing has ever had would need a rule about which
+    /// one wins. That makes it the only store here that would overwrite, and a seed adds; it
+    /// never updates. Reading what is already set and skipping it is what keeps that promise,
+    /// and it is also what makes a second run report nothing written rather than everything.
+    /// </remarks>
+    private async ValueTask<SeedOutcome> LabelsAsync(
+        string tenant,
+        IReadOnlyList<SeedLabel> labels,
+        SeedOutcome outcome,
+        CancellationToken ct)
+    {
+        if (labels.Count is 0)
+        {
+            return outcome;
+        }
+
+        var already = await _labels.LabelsAsync(tenant, ct).ConfigureAwait(false);
+
+        foreach (var label in labels)
+        {
+            var column = label.Column ?? LabelLimits.TheEntityItself;
+
+            if (already.ContainsKey((label.Entity.ToString(), column)))
+            {
+                outcome = outcome.And(false);
+
+                continue;
+            }
+
+            await _labels
+                .SetEntityLabelAsync(tenant, label.Entity, column, label.Label, ct)
+                .ConfigureAwait(false);
+
+            outcome = outcome.And(true);
+        }
+
+        return outcome;
     }
 
     /// <summary>Managers before the people who report to them.</summary>

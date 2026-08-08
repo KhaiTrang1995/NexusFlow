@@ -84,6 +84,13 @@ export function EditFieldsDrawer({
 
       {schema.isPending ? <Skeleton rows={4} /> : null}
 
+      {/*
+        A REFUSED DESCRIBE IS NOT A RECORD WITH NOTHING DECLARED ON IT. Both branches below are
+        guarded on `isSuccess`, so a failed schema read left this drawer with a heading and empty
+        space under it — a form that renders nothing at all, which reads as a form still loading.
+      */}
+      {schema.isError ? <ErrorState error={schema.error} onRetry={schema.refetch} /> : null}
+
       {schema.isSuccess && writable.length === 0 ? (
         <p>
           Nothing has been declared on {kind.toLowerCase()}s. Declare a field in setup and it

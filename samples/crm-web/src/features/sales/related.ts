@@ -52,11 +52,15 @@ const LINKS: Readonly<Record<string, readonly RelatedLink[]>> = {
   ],
   quote: [
     {
+      // Status alone, because status is all this object model can say about a sales order without
+      // lying about it. `Est. Hours` was the second column and it drew the order's money: the
+      // model is the prototype's work order and has no currency field, so €184,000 rendered as
+      // 184,000 hours. A column with nothing honest to put in it is not a column.
       objectKey: 'workorder',
       entity: 'Order',
       field: 'quote_id',
       title: 'Orders',
-      columns: ['status', 'hours'],
+      columns: ['status'],
     },
   ],
 }

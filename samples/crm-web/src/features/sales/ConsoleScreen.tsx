@@ -3,6 +3,7 @@ import {
   Button,
   Columns,
   DataTable,
+  ErrorState,
   FilterBar,
   FilterGroup,
   Meter,
@@ -85,10 +86,45 @@ export function ConsoleScreen() {
     },
   ]
 
+  /*
+    A REFUSED READ IS NOT A PIPELINE OF NOTHING. `useConsole` has carried an `error` and an
+    `isPending` throughout and this screen read neither: with `/entities` refused, the landing
+    page every persona opens on reported an open pipeline of €0, a weighted €0, zero deals, zero
+    tasks, an empty funnel and "Nothing is open in this filter" — nine confident statements about
+    a tenant nobody had managed to read. Every one of them is the sentence a seller would take to
+    mean their quarter is empty.
+
+    It returns rather than banners, because the filter strip is a control over rows that were
+    never fetched: pressing Everyone on a failed read reads as a filter that does nothing.
+  */
+  if (console.error !== null) {
+    return (
+      <Page>
+        <PageHeader eyebrow="Sales console" title="Pipeline overview" />
+        <ErrorState error={console.error} onRetry={console.refetch} />
+      </Page>
+    )
+  }
+
+  if (console.isPending) {
+    return (
+      <Page>
+        <PageHeader eyebrow="Sales console" title="Pipeline overview" />
+        <Skeleton rows={10} />
+      </Page>
+    )
+  }
+
   return (
     <Page>
+      {/*
+        NOT "QUARTER TO DATE", WHICH IS A PERIOD THIS SCREEN NEVER APPLIED. The horizon filter has
+        an upper bound and no lower one — `quarter` means "closes before the end of this quarter"
+        — so the eyebrow and the won tile below both named a window the rows were never inside.
+        What the filter strip says is what this screen is scoped to, and it says it in the open.
+      */}
       <PageHeader
-        eyebrow="Sales console — quarter to date"
+        eyebrow="Sales console"
         title="Pipeline overview"
         actions={
           <>
@@ -205,10 +241,15 @@ export function ConsoleScreen() {
           drillLabel="the deals behind it"
           onActivate={deals}
         />
+        {/*
+          "QTD" was the claim and nothing implemented it: the horizon filter has no lower bound, so
+          a deal won two years ago whose close date is before this quarter's end lands in this
+          figure. It is scoped by whose deals and by when they close, which is what the note says.
+        */}
         <StatTile
-          label="Closed won QTD"
+          label="Closed won"
           value={money(console.wonValue)}
-          note="won, in this filter"
+          note="won, closing in this horizon"
           drillLabel="the deals behind it"
           onActivate={deals}
         />
@@ -270,7 +311,7 @@ export function ConsoleScreen() {
               label: 'Won',
               value: String(console.won.length),
               fraction: fraction(console.won.length, console.open.length + console.won.length),
-              note: 'in this filter',
+              note: 'closing in this horizon',
             },
             {
               label: 'Closing this month',

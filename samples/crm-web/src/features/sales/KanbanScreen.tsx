@@ -1,6 +1,15 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { Button, ButtonGroup, EmptyState, Page, PageHeader, Skeleton, Tag } from '@/design/primitives'
+import {
+  Button,
+  ButtonGroup,
+  EmptyState,
+  ErrorState,
+  Page,
+  PageHeader,
+  Skeleton,
+  Tag,
+} from '@/design/primitives'
 import { useToast } from '@/app/ToastProvider'
 import { useSession } from '@/session/SessionProvider'
 import { date, fullMoney, money } from '@/lib/format'
@@ -72,6 +81,20 @@ export function KanbanScreen() {
           title="No process is published for opportunities"
           detail="A board is the published stages. Publish one and the lanes appear — this build does not invent them."
         />
+      </Page>
+    )
+  }
+
+  /*
+    A BOARD WITH NO CARDS IS NOT THE SAME FACT AS A BOARD THAT COULD NOT BE READ. Only the process
+    read was guarded: with the stages published and `/entities` refused, every lane drew with a
+    count of 0 and a total of €0 — a whole pipeline reported as empty from a request that never
+    answered, in the one view a seller scans to decide there is nothing to do.
+  */
+  if (page.isError) {
+    return (
+      <Page layout="full">
+        <ErrorState error={page.error} onRetry={page.refetch} />
       </Page>
     )
   }

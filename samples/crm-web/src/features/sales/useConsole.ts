@@ -48,6 +48,8 @@ export interface ConsoleModel {
   activeCount: number
   isPending: boolean
   error: Error | null
+  /** Asks both pages again, for the one place that reports the failure. */
+  refetch: () => void
   open: readonly Deal[]
   won: readonly Deal[]
   totals: readonly StageTotal[]
@@ -103,16 +105,13 @@ export function useConsole(): ConsoleModel {
       1,
     ).toISOString().slice(0, 10)
 
-    const inScope = all.filter((deal) => {
+    /** Whose deals, closing when — the two filters that are about the deal rather than its end. */
+    const inRange = all.filter((deal) => {
       // "Mine" is answerable and "my team's" is not: an opportunity carries an owner uuid and the
       // reporting line is keyed by the subject a token carries. They are different identity
       // spaces, so a team filter here would be a guess. The executive board is scoped by the line
       // on the server, which is where that question belongs.
       if (filters.owner === 'mine' && deal.ownerId !== ownerId) return false
-
-      if (filters.outcome === 'open' && deal.outcome !== null) return false
-      if (filters.outcome === 'Won' && deal.outcome !== 'Won') return false
-      if (filters.outcome === 'Lost' && deal.outcome !== 'Lost') return false
 
       const close = deal.closeDate ?? ''
 
@@ -122,8 +121,25 @@ export function useConsole(): ConsoleModel {
       return true
     })
 
+    const inScope = inRange.filter((deal) => {
+      if (filters.outcome === 'open' && deal.outcome !== null) return false
+      if (filters.outcome === 'Won' && deal.outcome !== 'Won') return false
+      if (filters.outcome === 'Lost' && deal.outcome !== 'Lost') return false
+
+      return true
+    })
+
     const open = inScope.filter((deal) => deal.outcome === null)
-    const won = inScope.filter((deal) => deal.outcome === 'Won')
+
+    /*
+      WON IS COUNTED OUTSIDE THE OUTCOME FILTER, BECAUSE THE OUTCOME FILTER EXCLUDES IT. This read
+      `inScope.filter(outcome === 'Won')`, and the console opens with Outcome set to Open — which
+      drops every won deal before the count runs. The "Closed won" tile could therefore read
+      anything at all as long as it read $0, on every tenant, for ever, and the note under it said
+      "won, in this filter", which was true and was the reason nobody looked. A tile that names its
+      own outcome is not the outcome chips' to empty; what those scope is the funnel and the table.
+    */
+    const won = inRange.filter((deal) => deal.outcome === 'Won')
 
     // Grouped by the stage each row is actually in, in the order they first appear — which is the
     // order the page returned them in, which is the process's ordinal.
@@ -173,6 +189,10 @@ export function useConsole(): ConsoleModel {
     activeCount,
     isPending: deals.isPending || activities.isPending,
     error: deals.error ?? activities.error,
+    refetch: () => {
+      void deals.refetch()
+      void activities.refetch()
+    },
     open: model.open,
     won: model.won,
     totals: model.totals,

@@ -304,12 +304,18 @@ public sealed class SeedApplierTests
         return applied.Value;
     }
 
-    private static SeedApplier Applier(CrmSchemaHarness crm) =>
+    internal static SeedApplier Applier(CrmSchemaHarness crm) =>
         new(
             new SeedStore(crm.DataSource),
             new CustomSchemaStore(crm.DataSource),
             new ApprovalStore(crm.DataSource),
             new ReportStore(crm.DataSource),
+            new QueryStore(crm.DataSource),
+            new RollupStore(crm.DataSource),
+            new FormulaStore(crm.DataSource),
+            new ConnectorStore(crm.DataSource),
+            new LabelStore(crm.DataSource),
+            new FieldPolicyStore(crm.DataSource),
             TimeProvider.System);
 
     /// <summary>The document the tests apply, read from the reader's own fixture.</summary>

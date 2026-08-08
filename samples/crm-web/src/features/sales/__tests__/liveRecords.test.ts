@@ -101,6 +101,26 @@ describe('toRows', () => {
   it('is empty for an object the server does not page', () => {
     expect(toRows('invented', modelFor('quote'), [{ recordId: 'q', values: {} }])).toEqual([])
   })
+
+  /**
+   * An order's money is not an order's hours.
+   *
+   * `workorder` is the prototype's work order and the closest model this client has to
+   * `sales_order`; its one spare numeric field is `field('hours', 'Est. Hours', 'number')`, and
+   * the mapping put the order's `total` in it. A €184,000 order rendered as "184,000" under a
+   * heading reading Est. Hours — on the quote's related list and in the Scheduling section of the
+   * order's own page. Both formatters are correct and the column is a lie: the model has no
+   * currency field, so the total is not shown rather than shown as a duration.
+   */
+  it('does not put an order total in a column headed Est. Hours', () => {
+    const rows = toRows('workorder', modelFor('workorder'), [
+      { recordId: 'o1', values: { order_id: 'o1', status: 'Placed', total: '184000.0000' } },
+    ])
+
+    expect(rows[0]).toMatchObject({ id: 'o1', status: 'Placed' })
+    expect(rows[0]).not.toHaveProperty('hours')
+    expect(renderCell(modelFor('workorder'), rows[0]!, 'hours')).toBe('—')
+  })
 })
 
 /**

@@ -123,7 +123,23 @@ export function SearchScreen() {
                   title="Results"
                   note={`${hits.length} of ${data.hits.length}${kind ? ` · ${kind}` : ''}`}
                 />
-                {hits.length === 0 ? (
+                {/*
+                  A KIND CHIP HIDING EVERY HIT IS NOT THE SERVER FINDING NOTHING. Both said
+                  "Nothing matches “northwind”" — one truthfully, and one over twelve results the
+                  reader had filtered out one click earlier and could no longer see the count of.
+                  The chip is the reader's own doing, so the sentence names it and offers it back.
+                */}
+                {hits.length === 0 && kind !== null && data.hits.length > 0 ? (
+                  <EmptyState
+                    title={`No ${kind.toLowerCase()} matches “${phrase}”`}
+                    detail={`The server found ${data.hits.length} of other kinds. Everything shows them.`}
+                    action={
+                      <Button tone="primary" onClick={() => setKind(null)}>
+                        Show everything
+                      </Button>
+                    }
+                  />
+                ) : hits.length === 0 ? (
                   <EmptyState
                     title={`Nothing matches “${phrase}”`}
                     detail="Search runs over accounts, contacts, leads, opportunities and quotes. A hit is an identity — opening it fetches the record through the surface that knows the read policy."

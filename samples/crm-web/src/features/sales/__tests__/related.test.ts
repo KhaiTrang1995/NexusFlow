@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { relatedLinksOf } from '../related'
-import { entityOf } from '../liveRecords'
+import { entityOf, mappedFieldsOf } from '../liveRecords'
 import { modelFor } from '@/fixtures/objects'
 
 /**
@@ -28,6 +28,29 @@ describe('relatedLinksOf', () => {
     for (const parent of ['account', 'opportunity', 'quote']) {
       for (const link of relatedLinksOf(parent)) {
         expect(entityOf(link.objectKey), `${parent} → ${link.objectKey}`).toBe(link.entity)
+      }
+    }
+  })
+
+  /**
+   * A column a live row can never fill is a header with an em dash under it, for ever.
+   *
+   * The model check below is not enough on its own: `hours` is a real field of `workorder` and a
+   * real header, and no order the server pages has ever carried one. The reader sees a child with
+   * no data rather than a column pointing at nothing, which is the failure that does not get
+   * reported because it looks like the answer.
+   */
+  it('names only columns a live row can fill', () => {
+    for (const parent of ['account', 'opportunity', 'quote']) {
+      for (const link of relatedLinksOf(parent)) {
+        const fillable = mappedFieldsOf(link.objectKey)
+
+        for (const column of link.columns) {
+          expect(
+            fillable.includes(column),
+            `nothing the server returns for ${link.entity} lands in '${column}'`,
+          ).toBe(true)
+        }
       }
     }
   })
