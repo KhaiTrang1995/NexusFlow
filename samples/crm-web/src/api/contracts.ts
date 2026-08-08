@@ -606,6 +606,17 @@ export interface DescribedObject {
 export interface DescribedColumn {
   name: string
   label: string
+  /**
+   * What the column may hold, when it holds one of a closed set; empty when it is free text, a
+   * number or a date.
+   *
+   * THIS IS WHERE A PICKLIST COMES FROM NOW. A described column used to be a name and a label, so
+   * a screen that had to draw a status chip read the values off whatever rows had arrived — a
+   * status nobody has yet had no chip, and there was no way to filter to it. The types below are
+   * still the enums transcribed by hand, and for a built-in column this list is what supersedes
+   * them: the server's vocabulary cannot drift from the server.
+   */
+  options: string[]
 }
 
 export interface DescribedEntity {
@@ -1104,6 +1115,83 @@ export interface DefineListView {
 
 export interface ListViewDefined {
   viewId: string
+  name: string
+}
+
+/**
+ * What a declared field may hold.
+ *
+ * SEVEN, AND THE SET IS THE SERVER'S `CustomFieldType`. A type is a parse and a comparison, not a
+ * label — so a type the backend cannot parse is a value nothing can validate or guard on, and the
+ * enum is closed for that reason. The setup form used to offer `email`, `phone`, `currency`,
+ * `percent`, `lookup` and `formula`: six words this backend has never heard of, on a form that
+ * would have been refused by the first of them had it ever posted anything.
+ */
+export type CustomFieldType =
+  | 'Text'
+  | 'Number'
+  | 'Boolean'
+  | 'Date'
+  | 'Picklist'
+  | 'Reference'
+  | 'MultiPicklist'
+
+/**
+ * One allowed value of a picklist.
+ *
+ * `value` is what is stored and compared, so it is named like a field; `label` is what a person
+ * sees and nothing compares it.
+ */
+export interface CustomFieldOption {
+  value: string
+  label: string
+}
+
+/**
+ * Declares a field on a built-in entity kind or on a custom object.
+ *
+ * Exactly one of `appliesTo` and `target`, the same rule {@link DefineValidationRule} follows —
+ * migration 0005's `CHECK ((applies_to IS NULL) <> (object_id IS NULL))` is what makes a field
+ * with two owners or none impossible, and the capability turns that into a named refusal.
+ *
+ * `options` is required for `Picklist` and `MultiPicklist` and empty for everything else: a closed
+ * set of nothing accepts nothing. `references` is the object a `Reference` points at, and is null
+ * for every other type.
+ */
+export interface DefineField {
+  appliesTo: EntityKind | null
+  target: string | null
+  name: string
+  label: string
+  type: CustomFieldType
+  isRequired: boolean
+  options: CustomFieldOption[]
+  references: string | null
+  /** The scope a caller must hold to write it, or null when `crm.write` is enough. */
+  requiredPermission: string | null
+  isUnique: boolean
+  /** The scope a caller must hold to see it, or null when `crm.read` is enough. */
+  readPermission: string | null
+}
+
+export interface FieldDefined {
+  fieldId: string
+  name: string
+}
+
+/**
+ * Declares an entity this build has never heard of.
+ *
+ * The whole claim the dynamic schema makes, and until now there was no way to make it from the
+ * client — the setup screen listed objects and offered no control that declared one.
+ */
+export interface DefineObject {
+  name: string
+  label: string
+}
+
+export interface ObjectDefined {
+  objectId: string
   name: string
 }
 

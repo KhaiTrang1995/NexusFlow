@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { offGrid, weekEvents, weekOf } from '../week'
+import { offGrid, ownedBy, weekEvents, weekOf } from '../week'
 
 describe('weekOf', () => {
   /**
@@ -89,5 +89,49 @@ describe('weekEvents', () => {
     ).map((event) => event.kind)
 
     expect(kinds).toEqual(['meeting', 'meeting', 'task', 'task'])
+  })
+
+  it('carries the owner, which is what the calendar filters "mine" on', () => {
+    const [event] = weekEvents(
+      [{ recordId: '1', values: { subject: 'a', kind: 'Task', due_at: null, owner_id: 'u-1' } }],
+      monday,
+    )
+
+    expect(event?.ownerId).toBe('u-1')
+  })
+})
+
+/**
+ * Whose week it is.
+ *
+ * THE SWITCH ASKED THE WRONG QUESTION ENTIRELY. "Mine" filtered on `status === 'Open'`, so it hid
+ * everybody's finished activities and showed everybody's unfinished ones — under a control
+ * labelled "Whose week". Nothing about it was about ownership, and the two settings differed only
+ * by whether closed items were included.
+ */
+describe('ownedBy', () => {
+  const events = weekEvents(
+    [
+      { recordId: 'mine-open', values: { subject: 'a', due_at: null, owner_id: 'u-1', status: 'Open' } },
+      { recordId: 'mine-done', values: { subject: 'b', due_at: null, owner_id: 'u-1', status: 'Completed' } },
+      { recordId: 'theirs', values: { subject: 'c', due_at: null, owner_id: 'u-2', status: 'Open' } },
+      { recordId: 'masked', values: { subject: 'd', due_at: null, owner_id: null, status: 'Open' } },
+    ],
+    weekOf(new Date(2026, 7, 5)).monday,
+  )
+
+  it('keeps every row this person owns, finished or not', () => {
+    expect(ownedBy(events, 'u-1').map((event) => event.id)).toEqual(['mine-open', 'mine-done'])
+  })
+
+  it('leaves out somebody else"s row even when it is open', () => {
+    expect(ownedBy(events, 'u-1').map((event) => event.id)).not.toContain('theirs')
+  })
+
+  it('does not claim a row whose owner was masked', () => {
+    // Field-level security can redact `owner_id`. Treating that as a match would put another
+    // person's week on this one's screen — the exact failure the switch exists to avoid.
+    expect(ownedBy(events, 'u-1').map((event) => event.id)).not.toContain('masked')
+    expect(ownedBy(events, '')).toEqual([])
   })
 })

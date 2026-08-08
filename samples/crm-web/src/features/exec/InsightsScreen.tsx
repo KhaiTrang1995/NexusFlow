@@ -1,5 +1,4 @@
 import { AsyncBoundary, Columns, Page, PageHeader, Panel, PanelHeader, Tag } from '@/design/primitives'
-import { Sparkline } from '@/design/charts'
 import { useExecutiveBoard } from '@/api/queries/hooks'
 import { money, pct } from '@/lib/format'
 import { usePeriod, withPeriod } from './period'
@@ -47,9 +46,18 @@ export function InsightsScreen() {
                   title={`${data.deals.stalled} open deals have not moved stage in sixty days`}
                   detail="A deal nobody has moved is not a deal going slowly. They are worth more attention than the ones losing on price."
                 />
+                {/*
+                  A NULL WIN RATE IS NOT A BAD ONE. `?? 0` made "nothing has been decided" score
+                  below every threshold, so a period with no closed deals was flagged as a problem
+                  reading "Win rate is —" — an exclamation mark over an em dash.
+                */}
                 <Insight
-                  tone={(data.deals.winRate ?? 0) < 50 ? 'warn' : 'ok'}
-                  title={`Win rate is ${pct(data.deals.winRate, 1)}`}
+                  tone={data.deals.winRate === null ? 'ok' : data.deals.winRate < 50 ? 'warn' : 'ok'}
+                  title={
+                    data.deals.winRate === null
+                      ? 'No deal has been decided this period, so there is no win rate'
+                      : `Win rate is ${pct(data.deals.winRate, 1)}`
+                  }
                   detail={`${data.deals.won} won against ${data.deals.lost} lost, ${money(data.deals.wonValue)} of value.`}
                 />
                 <Insight
@@ -70,13 +78,34 @@ export function InsightsScreen() {
               </div>
             </Panel>
 
+            {/*
+              FOUR SPARKLINES OF EIGHT WEEKS THAT NEVER HAPPENED. `[820, 861, 902, 878, …]` was
+              written in this file: the same rising line on every tenant and in every period,
+              under a heading that said "the last eight weeks". A trend is the one chart a reader
+              cannot check against anything else on the page, which is exactly why an invented one
+              survives. "Weighted" was worse again — the open value times 0.36, a ratio from
+              nowhere, drawn beside three figures the server had actually said.
+
+              THIS BUILD SERVES NO HISTORY. Every executive read is "as of now, for a period";
+              nothing anywhere returns a series. So the panel says where the numbers stand and
+              says why there is no line, rather than drawing one out of nothing.
+            */}
             <Panel>
-              <PanelHeader title="Trend" note="the last eight weeks" />
-              <div style={{ display: 'grid', gap: 18, paddingTop: 14 }}>
-                <TrendRow label="Open pipeline" values={[820, 861, 902, 878, 940, 1012, 1064, 1130]} readout={money(data.deals.openValue)} />
-                <TrendRow label="Weighted" values={[310, 322, 340, 336, 358, 372, 388, 402]} readout={money(Math.round(data.deals.openValue * 0.36))} />
-                <TrendRow label="Won" values={[0, 32, 32, 58, 58, 76, 76, 152]} readout={money(data.deals.wonValue)} />
-                <TrendRow label="Stalled deals" values={[4, 5, 5, 7, 8, 8, 9, data.deals.stalled]} readout={String(data.deals.stalled)} colour="var(--color-critical)" />
+              <PanelHeader title="Where it stands" note={`as of now · ${data.period}`} />
+              <div style={{ display: 'grid', gap: 14, paddingTop: 14 }}>
+                <Reading label="Open pipeline" value={money(data.deals.openValue)} note={`${data.deals.open} deal(s)`} />
+                <Reading label="Won" value={money(data.deals.wonValue)} note={`${data.deals.won} deal(s)`} />
+                <Reading label="Lost" value={money(data.deals.lostValue)} note={`${data.deals.lost} deal(s)`} />
+                <Reading
+                  label="Stalled"
+                  value={String(data.deals.stalled)}
+                  note="open, no stage change in sixty days"
+                />
+                <p className={styles.sub}>
+                  No line is drawn because there is nothing to draw one from: every figure this
+                  backend serves is a reading taken now for a period, and no endpoint returns a
+                  series. A sparkline here would be this screen's own invention.
+                </p>
               </div>
             </Panel>
           </Columns>
@@ -102,26 +131,16 @@ function Insight({ tone, title, detail }: { tone: 'ok' | 'warn'; title: string; 
   )
 }
 
-function TrendRow({
-  label,
-  values,
-  readout,
-  colour,
-}: {
-  label: string
-  values: readonly number[]
-  readout: string
-  colour?: string
-}) {
+function Reading({ label, value, note }: { label: string; value: string; note: string }) {
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
-        <span className={styles.sub}>{label}</span>
-        <Tag tone="outline" className={styles.numeric}>
-          {readout}
-        </Tag>
-      </div>
-      <Sparkline caption={`${label} over the last eight weeks`} values={values} {...(colour ? { colour } : {})} />
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
+      <span className={styles.sub}>{label}</span>
+      <Tag tone="outline" className={styles.numeric}>
+        {value}
+      </Tag>
+      <span className={styles.sub} style={{ marginLeft: 'auto' }}>
+        {note}
+      </span>
     </div>
   )
 }

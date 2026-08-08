@@ -203,6 +203,14 @@ export function CampaignScreen() {
                     title="Who influenced one deal"
                     note={`${data.dealsConsidered} decided in this window`}
                   />
+                  {/*
+                    "NO DEAL HAS BEEN DECIDED YET" WAS SAID ABOUT A READ THAT HAD NOT ANSWERED.
+                    The picker derives from `/entities`, which was outside every boundary on this
+                    screen: while it was in flight, and permanently if it was refused, the panel
+                    stated a fact about the tenant's deals on the strength of an empty array.
+                  */}
+                  <AsyncBoundary query={deals} skeletonRows={2}>
+                    {() => (
                   <div style={{ padding: '14px 17px 16px', display: 'grid', gap: 10 }}>
                     {decided.length === 0 ? (
                       <p className={styles.sub}>
@@ -238,6 +246,8 @@ export function CampaignScreen() {
                       </div>
                     ) : null}
                   </div>
+                    )}
+                  </AsyncBoundary>
                 </Panel>
 
                 <Panel padding="flush">

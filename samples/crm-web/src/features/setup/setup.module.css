@@ -36,70 +36,8 @@
   background: var(--color-neutral-100);
 }
 
-.layoutSection {
-  border: 1px dashed var(--color-neutral-400);
-  border-radius: 10px;
-  padding: 11px 13px;
-  margin-bottom: 12px;
-  background: var(--color-neutral-200);
-}
-
-.layoutTitle {
-  font-family: var(--font-heading);
-  font-size: 15px;
-  margin-bottom: 9px;
-}
-
-.layoutFields {
-  display: grid;
-  gap: 8px;
-}
-
-.layoutField {
-  border: 1px solid var(--color-neutral-400);
-  border-radius: 8px;
-  background: var(--color-surface);
-  padding: 7px 10px;
-  font-size: 14px;
-  cursor: grab;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.palette {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  padding: 13px 17px;
-}
-
-.paletteChip {
-  border: 1px dashed var(--color-neutral-400);
-  border-radius: 8px;
-  background: var(--color-neutral-100);
-  padding: 5px 10px;
-  font-size: 13px;
-  cursor: grab;
-}
-
-.stageRow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 17px;
-  border-bottom: 1px solid var(--color-divider);
-}
-
-.stageHandle {
-  cursor: grab;
-  color: var(--color-neutral-500);
-}
-
-.stageName {
-  flex: 1;
-  min-width: 0;
-}
+/* The layout editor's rules are gone with it: dashed sections, chips and two `cursor: grab`
+   handles over a layout nothing in this build stores. A grab cursor is a promise. */
 
 .schema {
   display: grid;

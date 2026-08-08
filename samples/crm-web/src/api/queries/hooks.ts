@@ -1004,6 +1004,48 @@ export function useDefineListView(): UseMutationResult<
 }
 
 /**
+ * Declares a field on a built-in entity or on a custom object.
+ *
+ * THE SETUP FORM POSTED NOTHING AND SAID IT HAD. "Declare the field" toasted
+ * `${label} declared on ${object}` and never touched the network, so an administrator watched a
+ * success message and then found the field on no screen — including the table beside the form.
+ * `/custom/fields` has been there throughout.
+ *
+ * INVALIDATES THE SCHEMA AND NOTHING ELSE. A new field changes what `describe` answers, which is
+ * what every setup screen reads; the record pages read rows, and those have not moved.
+ */
+export function useDefineField(): UseMutationResult<C.FieldDefined, Error, C.DefineField> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.DefineField) =>
+      call.write<C.FieldDefined, C.DefineField>('/custom/fields', input),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.schema.all(tenantId) }),
+  })
+}
+
+/**
+ * Declares an entity this build has never heard of.
+ *
+ * `crm.admin` rather than `crm.write`, and the split is the server's point: writing a lead and
+ * changing what a lead *is* are different acts. A caller without it gets the refusal on the
+ * screen rather than a control that quietly does nothing.
+ */
+export function useDefineObject(): UseMutationResult<C.ObjectDefined, Error, C.DefineObject> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.DefineObject) =>
+      call.write<C.ObjectDefined, C.DefineObject>('/custom/objects', input),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.schema.all(tenantId) }),
+  })
+}
+
+/**
  * Sets the strategy for a period.
  *
  * EVERY EXECUTIVE SCREEN ROLLS UP TO THIS. The board answers `crm.strategy_not_set` without one —

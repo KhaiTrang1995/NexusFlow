@@ -22,3 +22,22 @@ export function kpiValue(source: string, value: number): string {
 
   return value.toLocaleString('en-GB')
 }
+
+/**
+ * Which way is good, in the server's own vocabulary.
+ *
+ * `KpiDirection` is `HigherIsBetter` or `LowerIsBetter`, and two screens compared it against
+ * `'Up'` — a value the enum has never had. The comparison is false for every KPI, so both said
+ * "lower is better" under all five, including open pipeline and won revenue. It reads as a
+ * deliberate statement about the number rather than as a string that never matched.
+ *
+ * An unrecognised direction says nothing rather than guessing one of the two: a sixth value added
+ * on the server would otherwise be silently reported as the wrong half of a pair.
+ */
+export function kpiDirection(direction: string): string | null {
+  if (direction === 'HigherIsBetter') {
+    return 'higher is better'
+  }
+
+  return direction === 'LowerIsBetter' ? 'lower is better' : null
+}

@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import {
+  AsyncBoundary,
   Button,
   ButtonGroup,
   Drawer,
   DrawerSection,
+  EmptyState,
   FieldRow,
   Page,
   PageHeader,
@@ -13,8 +15,9 @@ import {
   Tag,
 } from '@/design/primitives'
 import { useEntityPage } from '@/api/queries/hooks'
+import { useSession } from '@/session/SessionProvider'
 import { NewTaskDrawer } from '@/features/sales/NewTaskDrawer'
-import { offGrid, weekEvents, weekOf } from './week'
+import { offGrid, ownedBy, weekEvents, weekOf } from './week'
 import type { WeekEvent } from './week'
 import styles from './work.module.css'
 
@@ -32,6 +35,7 @@ const HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17] as const
  */
 export function ActivityScreen() {
   const navigate = useNavigate()
+  const session = useSession()
   const [scope, setScope] = useState<'mine' | 'team'>('mine')
   const [selected, setSelected] = useState<WeekEvent | null>(null)
   const [adding, setAdding] = useState(false)
@@ -47,8 +51,13 @@ export function ActivityScreen() {
     [page.data, monday],
   )
 
-  const events = scope === 'mine' ? all.filter((event) => event.status === 'Open') : all
+  // WHOSE, NOT WHICH STATE. "Mine" filtered on `status === 'Open'`: it hid the team's completed
+  // activities and showed the team's open ones, under a label reading "Whose week". The rows
+  // carry `owner_id` and the session carries the uuid rows are owned by, so the question the
+  // switch asks is now the one it is labelled with.
+  const events = scope === 'mine' ? ownedBy(all, session.ownerId) : all
   const elsewhere = offGrid(events)
+  const onTheGrid = events.length - elsewhere.length
 
   return (
     <Page>
@@ -78,6 +87,29 @@ export function ActivityScreen() {
         }
       />
 
+      {/*
+        THE GRID DREW ITSELF WHATEVER THE SERVER SAID. Ten rows of empty cells are what this
+        screen looks like while the read is in flight, and what it looks like for ever when the
+        read is refused — indistinguishable from a week with nothing on it. The boundary is the
+        difference between "you have nothing on" and "nobody asked".
+      */}
+      <AsyncBoundary query={page} skeletonRows={6}>
+        {() => (
+          <>
+            {onTheGrid === 0 ? (
+              <EmptyState
+                title={
+                  scope === 'mine'
+                    ? 'Nothing of yours falls in this week'
+                    : 'Nothing falls in this week'
+                }
+                detail={
+                  elsewhere.length === 0
+                    ? 'No activity is dated inside Monday to Friday. A task or meeting created with a date in this week appears on the grid.'
+                    : `${elsewhere.length} activity(s) are dated outside it — overdue, later, or with no date at all — and are listed below.`
+                }
+              />
+            ) : (
       <div className={styles.calendar}>
         <div className={styles.calendarHead} />
         {DAYS.map((day) => (
@@ -110,6 +142,7 @@ export function ActivityScreen() {
           </FragmentRow>
         ))}
       </div>
+            )}
 
       {elsewhere.length > 0 ? (
         <Panel padding="flush" style={{ marginTop: 'var(--section-gap)' }}>
@@ -132,6 +165,9 @@ export function ActivityScreen() {
           </div>
         </Panel>
       ) : null}
+          </>
+        )}
+      </AsyncBoundary>
 
       {selected ? (
         <Drawer

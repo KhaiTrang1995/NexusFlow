@@ -3,6 +3,7 @@ import {
   AsyncBoundary,
   Button,
   ButtonGroup,
+  EmptyState,
   Page,
   PageHeader,
   Panel,
@@ -11,8 +12,9 @@ import {
   StatTile,
   Tag,
 } from '@/design/primitives'
-import { useEntityPage, useExecutiveBoard } from '@/api/queries/hooks'
+import { useEntityPage, useExecutiveBoard, useProcess } from '@/api/queries/hooks'
 import { fullMoney, money, percent } from '@/lib/format'
+import { byProbability, byStage, openDeals } from './pipeline'
 import { usePeriod, withPeriod } from './period'
 import { NoPeriods, PeriodPicker } from './PeriodPicker'
 import styles from './exec.module.css'
@@ -53,51 +55,9 @@ export function ForecastScreen() {
   // What a deal actually carries is a probability, which is what a weighted forecast is made of.
   const deals = useEntityPage('Opportunity')
 
-  const opportunities = (deals.data?.records ?? []).filter(
-    (row) => row.values['outcome'] === null,
-  )
-
-  const byBand = BANDS.map((band) => {
-    const rows = opportunities.filter((row) => {
-      const probability = Number(row.values['probability'] ?? 0)
-      return probability >= band.from && probability <= band.to
-    })
-
-    const amount = rows.reduce((total, row) => total + Number(row.values['amount'] ?? 0), 0)
-
-    return {
-      band: band.label,
-      count: rows.length,
-      amount,
-      weighted: Math.round(
-        rows.reduce(
-          (total, row) =>
-            total
-            + (Number(row.values['amount'] ?? 0) * Number(row.values['probability'] ?? 0)) / 100,
-          0,
-        ),
-      ),
-    }
-  })
-
-  const byStage = [
-    ...opportunities
-      .reduce((groups, row) => {
-        const stage = row.values['stage'] ?? '—'
-        const current = groups.get(stage) ?? { stage, count: 0, amount: 0 }
-
-        current.count += 1
-        current.amount += Number(row.values['amount'] ?? 0)
-        groups.set(stage, current)
-
-        return groups
-      }, new Map<string, { stage: string; count: number; amount: number }>())
-      .values(),
-  ]
-
-  // The likeliest band is the closest thing this schema has to a commit number, and it is called
-  // what it is rather than "Commit" — a category nobody in this tenant ever assigned.
-  const likeliest = byBand[byBand.length - 1]
+  // The stages the administrator published, so the by-stage roll-up is in the order the process
+  // runs rather than in whichever order the rows came back.
+  const process = useProcess('Opportunity')
 
   return (
     <Page>
@@ -123,16 +83,35 @@ export function ForecastScreen() {
 
       <AsyncBoundary query={board} skeletonRows={4} hidden={choice.isUndeclared}>
         {(data) => (
+          // THE FIGURES BELOW ARE THE DEALS READ'S, NOT THE BOARD'S, AND ONLY THE BOARD WAS
+          // GUARDED. Every tile on this screen is derived from `/entities`, which sat outside the
+          // boundary: while it was in flight — and for ever if it was refused — the screen showed
+          // "$0 open, 0 deal(s)" and a table of four empty bands, which is a forecast of nothing
+          // rather than a screen that has not read anything yet.
+          <AsyncBoundary query={deals} skeletonRows={4}>
+            {(page) => {
+              const opportunities = openDeals(page.records)
+              const byBand = byProbability(opportunities, BANDS)
+              const stages = byStage(opportunities, process.data?.stages ?? [])
+
+              const open = byBand.reduce((total, row) => total + row.amount, 0)
+              const weighted = byBand.reduce((total, row) => total + row.weighted, 0)
+
+              // The likeliest band is the closest thing this schema has to a commit number, and it
+              // is called what it is rather than "Commit" — a category nobody ever assigned.
+              const likeliest = byBand[byBand.length - 1]
+
+              return (
           <>
             <StatGrid columns={4}>
               <StatTile
                 label="Open"
-                value={money(byBand.reduce((total, row) => total + row.amount, 0))}
+                value={money(open)}
                 note={`${opportunities.length} deal(s) with no outcome yet`}
               />
               <StatTile
                 label="Weighted"
-                value={money(byBand.reduce((total, row) => total + row.weighted, 0))}
+                value={money(weighted)}
                 note="amount × probability, deal by deal"
               />
               <StatTile
@@ -145,14 +124,10 @@ export function ForecastScreen() {
                 value={percent(
                   data.rollUp.target === 0
                     ? null
-                    : (byBand.reduce((total, row) => total + row.weighted, 0) + data.deals.wonValue)
-                      / data.rollUp.target,
+                    : (weighted + data.deals.wonValue) / data.rollUp.target,
                 )}
                 direction={
-                  byBand.reduce((total, row) => total + row.weighted, 0) + data.deals.wonValue
-                  >= data.rollUp.target
-                    ? 'up'
-                    : 'down'
+                  weighted + data.deals.wonValue >= data.rollUp.target ? 'up' : 'down'
                 }
                 note="weighted + won"
               />
@@ -163,6 +138,15 @@ export function ForecastScreen() {
                 title={scope === 'category' ? 'By likelihood' : 'By stage'}
                 note="open deals only; closed is not a forecast"
               />
+              {opportunities.length === 0 ? (
+                // A GRID OF HEADINGS IS NOT A ZERO FORECAST. With nothing open the table drew its
+                // five column titles and no rows under them, which reads as a table that failed
+                // to populate rather than as a pipeline with nothing in it.
+                <EmptyState
+                  title="No deal in this tenant is still open"
+                  detail="A forecast is made of deals with no outcome yet. Everything here has been won, lost, or has not been created."
+                />
+              ) : (
               <div className={styles.forecastGrid}>
                 {scope === 'category' ? (
                   <>
@@ -206,27 +190,30 @@ export function ForecastScreen() {
                     <div className={`${styles.forecastCell} ${styles.forecastHead}`}>Amount</div>
                     <div className={`${styles.forecastCell} ${styles.forecastHead}`}>Share</div>
                     <div className={`${styles.forecastCell} ${styles.forecastHead}`} />
-                    {byStage.map((row) => (
-                      <FragmentRow key={row.stage}>
+                    {/* Only the stages something is actually standing in: this table is a
+                        roll-up of open deals, not a drawing of the process. */}
+                    {stages
+                      .filter((row) => row.count > 0)
+                      .map((row) => (
+                      <FragmentRow key={row.name}>
                         <div className={`${styles.forecastCell} ${styles.forecastName}`}>
-                          <Tag tone="outline">{row.stage}</Tag>
+                          <Tag tone="outline">{row.name}</Tag>
                         </div>
                         <div className={styles.forecastCell}>{row.count}</div>
                         <div className={styles.forecastCell}>{fullMoney(row.amount)}</div>
-                        <div className={styles.forecastCell}>
-                          {percent(
-                            row.amount
-                              / (byStage.reduce((total, entry) => total + entry.amount, 0) || 1),
-                          )}
-                        </div>
+                        <div className={styles.forecastCell}>{percent(row.amount / (open || 1))}</div>
                         <div className={styles.forecastCell} />
                       </FragmentRow>
                     ))}
                   </>
                 )}
               </div>
+              )}
             </Panel>
           </>
+              )
+            }}
+          </AsyncBoundary>
         )}
       </AsyncBoundary>
     </Page>

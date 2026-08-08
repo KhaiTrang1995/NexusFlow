@@ -116,6 +116,15 @@ export function ListViewScreen() {
           <PanelBody>
             {schema.isPending ? <Skeleton rows={5} /> : null}
 
+            {/*
+              A FAILED `describe` IS NOT A TENANT WITH NO OBJECTS. Neither branch below matched
+              when the read errored, so this half of the screen rendered a heading and nothing at
+              all — the same twenty-two-character page the plan screens used to produce.
+            */}
+            {schema.isError ? (
+              <ErrorState error={schema.error} onRetry={() => schema.refetch()} />
+            ) : null}
+
             {schema.isSuccess && objects.length === 0 ? (
               <EmptyState
                 title="Nothing has been declared to build a view over"

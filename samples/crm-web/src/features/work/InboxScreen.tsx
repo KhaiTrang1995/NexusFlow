@@ -115,7 +115,7 @@ export function InboxScreen() {
         <StatTile
           label="Tasks"
           value={activities.data === undefined ? '—' : tasks.length}
-          note="open against this tenant"
+          note={activities.isError ? 'the read was refused' : 'open against this tenant'}
           onActivate={() => setLane('tasks')}
           drillLabel="the tasks lane"
         />
@@ -199,7 +199,14 @@ export function InboxScreen() {
             </AsyncBoundary>
           ) : null}
 
+          {/*
+            THE OTHER TWO LANES WERE GUARDED AND THIS ONE WAS NOT. A refused or in-flight activity
+            read left the table rendering its own empty message — "Nothing due." — which is a
+            claim about the tenant made from a request that never answered.
+          */}
           {lane === 'tasks' ? (
+            <AsyncBoundary query={activities} skeletonRows={3}>
+              {() => (
             <DataTable
               caption="My tasks"
               columns={[
@@ -224,8 +231,10 @@ export function InboxScreen() {
               ]}
               rows={tasks}
               rowKey={(row) => row.recordId}
-              empty="Nothing due."
+              empty="Nothing is open against this tenant."
             />
+              )}
+            </AsyncBoundary>
           ) : null}
         </Panel>
 

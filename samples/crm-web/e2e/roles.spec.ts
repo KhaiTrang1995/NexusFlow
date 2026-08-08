@@ -700,3 +700,428 @@ test.describe('the chrome', () => {
     await expect(page.getByRole('row', { name: /crm\.discount\.approve/ })).toContainText('held')
   })
 })
+
+test.describe('setup, opened by somebody who has configured nothing', () => {
+  /**
+   * The page-layout screen showed a layout that was not anybody's.
+   *
+   * Three sections and twelve fields came out of `fixtures/objects` — "Forecast Category",
+   * "Weighted Amount", "Next Step" — headed "Opportunity layout · 3 sections" and drawn as chips
+   * with drag handles and `draggable`. Nothing in this build stores a page layout, so there was
+   * nowhere for a drag to go and nothing that tried to send one. An empty organisation was shown
+   * a fully configured record page and invited to rearrange it.
+   */
+  test('is not shown a page layout that belongs to nobody', async ({ page }) => {
+    await signIn(page, 'contoso')
+    await page.goto('/setup/layout')
+
+    await expect(page.locator('main')).toContainText('does not store page layouts')
+
+    // The prototype's fields, none of which this tenant — or any tenant — has declared.
+    for (const invented of ['Forecast Category', 'Weighted Amount', 'Next Step']) {
+      await expect(page.locator('main'), invented).not.toContainText(invented)
+    }
+
+    // A grab handle is a promise. There is nothing here to pick up.
+    await expect(page.locator('main [draggable=true]')).toHaveCount(0)
+  })
+
+  /**
+   * A refused read is not a step nobody has done.
+   *
+   * Three of the seven onboarding steps read `/config`, which needs `crm.admin`. Every count came
+   * through as `?? 0`, so this seller was told "0 of 5 done" and shown "Until this is done" beside
+   * three questions the server had refused to answer.
+   */
+  test('is told which onboarding steps it may not read, not that they are undone', async ({ page }) => {
+    await signIn(page, 'contoso')
+    await page.goto('/setup/onboarding')
+
+    await expect(page.locator('main')).toContainText('you may not read')
+
+    await page.getByRole('button', { name: /Business hours and SLA/ }).click()
+    await expect(page.locator('main')).toContainText('may not read whether this is done')
+
+    // The denominator drops the ones nobody was allowed to look at, rather than scoring them nought.
+    await expect(page.locator('main')).not.toContainText('0 of 5 done')
+  })
+
+  /**
+   * The permissions screen made a claim about field-level security out of a read that failed.
+   *
+   * With no boundary over `describe`, a refusal produced "0 · resolved by the server for this
+   * caller" above "Every declared field is readable and writable by this token" — which is the
+   * one sentence somebody opens this screen to check.
+   */
+  test('does not report an unrestricted token from a schema read that failed', async ({ page }) => {
+    await signIn(page, 'contoso')
+    await page.route('**/api/v1/crm/describe', (route) => route.abort())
+    await page.goto('/setup/permissions')
+
+    await expect(page.getByRole('alert')).toBeVisible()
+    await expect(page.locator('main')).not.toContainText('readable and writable by this token')
+
+    // The half that is about the token and not about the schema still answers.
+    await expect(page.getByRole('row', { name: /crm\.admin/ })).toContainText('not held')
+  })
+})
+
+test.describe('an administrator changing the schema', () => {
+  /**
+   * The two forms that declared the sample's headline feature, one of which did not exist.
+   *
+   * "Declare the field" toasted `${label} declared on ${object}` and never called the API — so
+   * the field appeared on no screen, including the table beside the form — and it offered ten
+   * types of which six (`email`, `phone`, `currency`, `percent`, `lookup`, `formula`) are words
+   * this backend has never heard of. Declaring an *object* had no control anywhere, on the screen
+   * whose subtitle is "entities this build has never heard of, declared at run time".
+   */
+  test('declares an object and a field, and both come back from the server', async ({ page }) => {
+    await signIn(page, 'manager')
+
+    const stamp = Date.now()
+    const object = `widget_${stamp}`
+
+    await page.goto('/setup/objects')
+    await page.getByLabel('Name').fill(object)
+    await page.getByLabel('Label').fill(`Widget ${stamp}`)
+    await page.getByRole('button', { name: 'Declare the object' }).click()
+
+    await expect(toast(page)).toContainText(object)
+
+    // Read back from `describe`, not from what the form was holding.
+    await expect(page.locator('tbody tr', { hasText: object })).toContainText('declared at run time')
+
+    await page.goto('/setup/fields')
+    await page.getByRole('button', { name: `Widget ${stamp}` }).click()
+    await page.getByLabel('Name').fill('grade')
+    await page.getByLabel('Label').fill('Grade')
+    await page.getByLabel('Type', { exact: true }).selectOption('Picklist')
+    await page.getByLabel('Options').fill('gold, silver')
+    await page.getByRole('button', { name: 'Declare the field' }).click()
+
+    await expect(toast(page)).toContainText(`grade is now a field of Widget ${stamp}`)
+
+    // The values are the server's, read back through `describe` — a picklist with no options is
+    // the shape this form exists to refuse.
+    await expect(page.locator('tbody tr', { hasText: 'grade' })).toContainText('gold · silver')
+  })
+
+  /** The types offered are the seven the backend can parse, and no others. */
+  test('offers no field type the server would refuse', async ({ page }) => {
+    await signIn(page, 'manager')
+    await page.goto('/setup/fields')
+
+    const types = await page.getByLabel('Type', { exact: true }).locator('option').allInnerTexts()
+
+    expect(types.sort()).toEqual([
+      'Boolean',
+      'Date',
+      'MultiPicklist',
+      'Number',
+      'Picklist',
+      'Reference',
+      'Text',
+    ])
+  })
+
+  /**
+   * A caller without `crm.admin` is told by the server, in the server's words.
+   *
+   * The control is offered rather than hidden: declaring an object is an act a representative can
+   * reasonably attempt, and the refusal naming the capability and the permission is a better
+   * answer than a screen with a form missing from it.
+   */
+  test('is refused in the server’s own words when it holds no admin grant', async ({ page }) => {
+    await signIn(page, 'rep')
+    await page.goto('/setup/objects')
+
+    await page.getByLabel('Name').fill(`nope_${Date.now()}`)
+    await page.getByLabel('Label').fill('Nope')
+    await page.getByRole('button', { name: 'Declare the object' }).click()
+
+    // In the page and not only in a toast. A toast is gone in under three seconds, and a refusal
+    // somebody looked away from is a form that appears to have done nothing.
+    await expect(page.locator('main')).toContainText('crm.custom.define_object')
+    await expect(page.locator('main')).toContainText('crm.admin')
+
+    // A 403 is settled. Asking again produces the same 403 for ever.
+    await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0)
+  })
+})
+
+test.describe('every setup screen whose schema read fails', () => {
+  /**
+   * A schema that never arrived is not a tenant with an empty schema.
+   *
+   * Five screens read `describe` through `?? []` or `?? undefined` and drew a confident page from
+   * it: "Entities · reading…" above nothing with "0 edges" beside it, "Opportunity fields · 0"
+   * above a form offering to add one, and a list-view form that rendered a heading and no body at
+   * all because neither of its two branches matched an error.
+   */
+  test('says the read failed rather than drawing an empty schema', async ({ page }) => {
+    await signIn(page, 'manager')
+    await page.route('**/api/v1/crm/describe', (route) => route.abort())
+
+    for (const path of ['/setup/objects', '/setup/fields', '/setup/layout', '/setup/schema', '/setup/list-views']) {
+      await page.goto(path)
+
+      await expect(page.getByRole('alert').first(), path).toBeVisible()
+      await expect(page.locator('main'), path).not.toContainText('0 edges')
+    }
+  })
+})
+
+test.describe('a data-quality screen whose rows cannot be read', () => {
+  /**
+   * "Nothing here is measurable yet" was advice, and it was being given about rows this client
+   * never saw. Five reads fed the screen and every one came through as `?? []`, so a refusal
+   * produced the same empty state as an organisation that genuinely has nothing.
+   */
+  test('names the entities it could not score instead of scoring nothing quietly', async ({ page }) => {
+    await signIn(page, 'rep')
+    await page.route('**/api/v1/crm/entities', (route) => route.abort())
+
+    await page.goto('/setup/quality')
+
+    await expect(page.getByText('Accounts could not be read')).toBeVisible()
+    await expect(page.locator('main')).not.toContainText('Nothing here is measurable yet')
+  })
+})
+
+test.describe('the executive screens, which drew figures nobody sent', () => {
+  /**
+   * A KPI is drawn in the unit its source produces, and captioned the way the server named it.
+   *
+   * The board pack rendered every scorecard figure with `pct`, so an open pipeline of 1,626,000
+   * appeared as "1626000%" against a target of "2000000%" — the scorecard screen had been fixed
+   * and the page a board actually reads had not. Beside it, the direction was compared against
+   * `'Up'`, a value `KpiDirection` has never carried, so all five KPIs were captioned "lower is
+   * better" including won revenue.
+   */
+  test('reads a KPI in its own unit and names the direction the server sent', async ({ page }) => {
+    await signIn(page, 'director')
+    await page.goto('/exec/board')
+
+    await expect(page.getByRole('heading', { name: 'Scorecard' })).toBeVisible()
+
+    // Nothing on this page is a percentage in the tens of thousands. A money figure drawn with
+    // `pct` is, and there is no other way to produce one.
+    await expect(page.locator('main')).not.toContainText(/\d{5,}%/)
+
+    // Both halves of the vocabulary appear, which they cannot when the comparison never matches.
+    await expect(page.locator('main')).toContainText('higher is better')
+    await expect(page.locator('main')).toContainText('lower is better')
+  })
+
+  /**
+   * The funnel is the published process, not three fractions of one total.
+   *
+   * "Early", "Mid" and "Late" held 42%, 34% and 24% of the open value — written in this client,
+   * identical on every tenant and in every period, under a heading reading "open deals by stage".
+   * Asserted against the stages the tenant actually published rather than against any names this
+   * file knows.
+   */
+  test('groups the pipeline by the stages the tenant published', async ({ page }) => {
+    await signIn(page, 'director')
+
+    await page.goto('/setup/stages')
+
+    const stages = page.getByRole('table', { name: 'Published stages' }).locator('tbody tr')
+
+    await expect(stages.first()).toBeAttached()
+
+    const published = await stages.locator('td:nth-child(2)').allInnerTexts()
+
+    await page.goto('/exec')
+
+    // The funnel is behind two reads, and `allInnerTexts` does not wait for anything — without
+    // this the assertion below reads an empty list and passes whatever the screen drew.
+    const funnel = page.getByRole('table', { name: 'Open pipeline by stage' }).locator('tbody tr')
+
+    await expect(funnel.first()).toBeAttached()
+
+    const drawn = await funnel.locator('td:first-child').allInnerTexts()
+
+    expect(drawn.length).toBeGreaterThan(0)
+
+    for (const stage of drawn) {
+      expect(published, `${stage} is not a stage this tenant published`).toContain(stage)
+    }
+
+    // The invented bands and the invented captions under them.
+    await expect(page.locator('main')).not.toContainText('prospecting → qualify')
+  })
+
+  /**
+   * No trend, because nothing serves one.
+   *
+   * Four sparklines carried eight weeks of numbers written in the file — the same rising line on
+   * every tenant — and one of them, "Weighted", was the open value times 0.36. A trend is the one
+   * chart on a page that cannot be checked against anything else, which is why an invented one
+   * survives.
+   */
+  test('draws no eight-week trend and says why', async ({ page }) => {
+    await signIn(page, 'director')
+    await page.goto('/exec/insights')
+
+    await expect(page.locator('main')).toContainText('no endpoint returns a series')
+    await expect(page.locator('main')).not.toContainText('the last eight weeks')
+
+    // The row whose figure was a ratio from nowhere.
+    await expect(page.locator('main')).not.toContainText('Weighted')
+  })
+
+  /**
+   * Every figure on the forecast comes from `/entities`, and only `/board` was guarded.
+   *
+   * With the deals read refused, the screen reported "$0 open · 0 deal(s) with no outcome yet"
+   * over four empty bands — a forecast of nothing, made from a request that never answered, and
+   * it stayed there.
+   */
+  test('says the deals could not be read rather than forecasting nothing', async ({ page }) => {
+    await signIn(page, 'director')
+    await page.route('**/api/v1/crm/entities', (route) => route.abort())
+
+    await page.goto('/exec/forecast')
+
+    await expect(page.getByRole('alert')).toBeVisible()
+    await expect(page.locator('main')).not.toContainText('deal(s) with no outcome yet')
+  })
+
+  /**
+   * `hidden` empties a boundary; it does not empty the panel around it.
+   *
+   * A tenant with no periods was told so, and then shown two headed boxes with nothing inside
+   * them — which reads as two panels that failed underneath the sentence explaining why they
+   * could not have.
+   */
+  test('shows no empty panels under the sentence explaining the emptiness', async ({ page }) => {
+    await signIn(page, 'contoso')
+    await page.goto('/exec/reviews')
+
+    await expect(page.getByText('No periods have been declared')).toBeVisible()
+    await expect(page.locator('main')).not.toContainText('What was last said')
+    await expect(page.locator('main')).not.toContainText('Record a review')
+  })
+})
+
+test.describe('my work, where a week and a phone were drawn from nothing', () => {
+  /** The uuid this sample's rows are owned by — `SessionProvider` states it for every persona. */
+  const OWNER = '33333333-3333-3333-3333-333333333333'
+
+  /** An activity page of this client's own making, so the two settings can differ. */
+  async function activitiesAre(page: Page, records: unknown[]) {
+    await page.route('**/api/v1/crm/entities', async (route) => {
+      const body = route.request().postDataJSON() as { entity?: string } | null
+
+      if (body?.entity !== 'Activity') {
+        return route.fallback()
+      }
+
+      await route.fulfill({ json: { records, redacted: [], nextCursor: null } })
+    })
+  }
+
+  /** A day inside the week the reader is in, so the row lands on the grid rather than under it. */
+  function thisWednesday(): string {
+    const day = new Date()
+
+    day.setDate(day.getDate() - ((day.getDay() + 6) % 7) + 2)
+    day.setHours(10, 0, 0, 0)
+
+    return day.toISOString()
+  }
+
+  /**
+   * "Whose week" asked whose, and it had been asking something else entirely.
+   *
+   * Mine filtered on `status === 'Open'`: it hid everybody's finished activities and showed
+   * everybody's unfinished ones. Both settings were about state and neither was about ownership,
+   * which no seeded tenant could show — every seeded row is open and owned by the same person.
+   */
+  test('filters the calendar by who owns an activity, not by whether it is open', async ({ page }) => {
+    await signIn(page, 'rep')
+
+    await activitiesAre(page, [
+      {
+        recordId: 'a-mine',
+        values: {
+          subject: 'Finished, and mine',
+          kind: 'Task',
+          due_at: thisWednesday(),
+          owner_id: OWNER,
+          status: 'Completed',
+        },
+      },
+      {
+        recordId: 'a-theirs',
+        values: {
+          subject: 'Open, and somebody else"s',
+          kind: 'Task',
+          due_at: thisWednesday(),
+          owner_id: '99999999-9999-9999-9999-999999999999',
+          status: 'Open',
+        },
+      },
+    ])
+
+    await page.goto('/work/calendar')
+
+    // Mine is mine whether it is finished or not, and is only mine.
+    await expect(page.locator('main')).toContainText('Finished, and mine')
+    await expect(page.locator('main')).not.toContainText('Open, and somebody else')
+
+    await page.getByRole('button', { name: 'Team', exact: true }).click()
+
+    await expect(page.locator('main')).toContainText('Open, and somebody else')
+    await expect(page.locator('main')).toContainText('Finished, and mine')
+  })
+
+  /**
+   * Ten rows of empty cells were what a failed read looked like, and what an empty week looked
+   * like, and there was no telling them apart.
+   */
+  test('says the week is empty rather than drawing an empty grid', async ({ page }) => {
+    await signIn(page, 'contoso')
+    await page.goto('/work/calendar')
+
+    await expect(page.getByText(/falls in this week/)).toBeVisible()
+  })
+
+  test('says so when the activity read fails, instead of drawing the week anyway', async ({ page }) => {
+    await signIn(page, 'rep')
+    await page.route('**/api/v1/crm/entities', (route) => route.abort())
+
+    await page.goto('/work/calendar')
+
+    await expect(page.getByRole('alert')).toBeVisible()
+
+    // The hour gutter is the grid. It has no business being drawn over a read that failed.
+    await expect(page.locator('main')).not.toContainText('08:00')
+  })
+
+  /**
+   * The phone preview's own inventions: a clock reading 09:41 at every hour of the day, and a
+   * "Recent" tab that was the first six rows in primary-key order — rendering nothing at all on a
+   * tenant with none.
+   */
+  test('shows the reader"s own clock, and a Recent tab that says when it has nothing', async ({ page }) => {
+    await signIn(page, 'contoso')
+    await page.goto('/work/mobile')
+
+    await expect
+      .poll(async () => {
+        const now = await page.evaluate(() =>
+          new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
+        )
+
+        return (await page.locator('main').innerText()).includes(now)
+      })
+      .toBe(true)
+
+    await page.getByRole('button', { name: 'Recent' }).click()
+
+    await expect(page.locator('main')).toContainText('nothing has moved recently')
+  })
+})

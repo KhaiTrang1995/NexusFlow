@@ -1,5 +1,6 @@
 import {
   EmptyState,
+  ErrorState,
   Meter,
   Page,
   PageHeader,
@@ -53,6 +54,13 @@ interface Measured {
  * A DECLARED VALUE IS PREFIXED IN A PAGE, because a field may legitimately be called `name` and
  * an account already has a column of that name. Reading the unprefixed key is how this screen
  * reported nought per cent against a tenant whose accounts were fully populated.
+ *
+ * A READ THAT FAILED SCORES NOTHING AND SAYS SO. Five reads feed this screen and every one of them
+ * came through as `?? []`, so a refusal or a dropped connection produced "Nothing here is
+ * measurable yet — declare a field and rows that carry it": a piece of advice about a tenant whose
+ * rows this client never saw. Worse, a partial failure was silent — three entities answering and
+ * the fourth refusing gave a headline completeness averaged over three, with nothing on the page
+ * saying the fourth was missing from it.
  */
 export function DataQualityScreen() {
   const schema = useSchema()
@@ -108,6 +116,22 @@ export function DataQualityScreen() {
     )
   }
 
+  // The schema decides the denominator, so without it nothing on this page means anything — and
+  // "nothing is measurable" would be this client's guess rather than the server's answer.
+  if (schema.isError) {
+    return (
+      <Page>
+        <PageHeader eyebrow="Setup" title="Data quality" />
+        <ErrorState error={schema.error} onRetry={() => schema.refetch()} />
+      </Page>
+    )
+  }
+
+  // A page that refused is not an entity with no rows. Named one by one rather than collapsed
+  // into a single alert: three answering and the fourth refusing is a real state, and a headline
+  // averaged over three with no mention of the fourth is the quiet version of the same lie.
+  const unread = MEASURED.filter(({ entity }) => pages[entity as keyof typeof pages].isError)
+
   // Only the entities that have something to score. An entity with no declared fields has a
   // completeness of one out of nothing, and averaging that in moves the headline towards a
   // hundred for a reason nobody can see on the screen.
@@ -124,11 +148,23 @@ export function DataQualityScreen() {
     <Page>
       <PageHeader eyebrow="Setup" title="Data quality" />
 
+      {unread.map(({ entity, plural }) => (
+        <div key={entity} style={{ marginBottom: 'var(--section-gap)' }}>
+          <PanelHeader title={`${plural} could not be read`} note="they are in none of the figures below" />
+          <ErrorState
+            error={pages[entity as keyof typeof pages].error}
+            onRetry={() => pages[entity as keyof typeof pages].refetch()}
+          />
+        </div>
+      ))}
+
       {scored.length === 0 ? (
-        <EmptyState
-          title="Nothing here is measurable yet"
-          detail="Completeness is scored against declared fields. Declare one in setup, and rows that carry it, and this screen has something to say."
-        />
+        unread.length > 0 ? null : (
+          <EmptyState
+            title="Nothing here is measurable yet"
+            detail="Completeness is scored against declared fields. Declare one in setup, and rows that carry it, and this screen has something to say."
+          />
+        )
       ) : (
         <>
           <StatGrid columns={4}>

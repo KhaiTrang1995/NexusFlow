@@ -1,4 +1,4 @@
-import { Page, PageHeader, Panel, PanelHeader, Tag } from '@/design/primitives'
+import { AsyncBoundary, Page, PageHeader, Panel, PanelHeader, Tag } from '@/design/primitives'
 import { useSchema } from '@/api/queries/hooks'
 import { useSession } from '@/session/SessionProvider'
 import { schemaRows } from './schemaModel'
@@ -26,17 +26,6 @@ const PERMISSIONS: readonly { permission: string; unlocks: string }[] = [
 export function PermissionsScreen() {
   const session = useSession()
   const schema = useSchema()
-  const objects = schemaRows(schema.data)
-
-  // The half of this screen that is not a picture. `canRead` and `canWrite` came back from the
-  // server already resolved for whoever is holding the token, so a field missing here is
-  // field-level security refusing this caller — not a rule this client evaluated and could get
-  // wrong.
-  const restricted = objects.flatMap((object) =>
-    object.fields
-      .filter((field) => field.declared && (!field.canRead || !field.canWrite))
-      .map((field) => ({ object: object.label, ...field })),
-  )
 
   return (
     <Page>
@@ -76,42 +65,68 @@ export function PermissionsScreen() {
         </div>
       </Panel>
 
-      <Panel padding="flush" style={{ marginTop: 'var(--section-gap)' }}>
-        <PanelHeader
-          title="Fields this token may not have in full"
-          note={
-            schema.isPending
-              ? 'reading…'
-              : `${restricted.length} · resolved by the server for this caller`
-          }
-        />
-        {restricted.length === 0 ? (
-          <div style={{ padding: 'var(--space-4)' }}>
-            <span className={styles.sub}>
-              Every declared field is readable and writable by this token. Switch persona to see
-              the difference — the answer comes from the server, not from this screen.
-            </span>
-          </div>
-        ) : (
-          <div>
-            {restricted.map((field) => (
-              <div key={`${field.object}-${field.name}`} className={styles.flowRow}>
-                <Tag tone="outline">{field.object}</Tag>
-                <span className={styles.link}>{field.label}</span>
-                <span className={styles.mono}>{field.name}</span>
-                <span style={{ marginLeft: 'auto', display: 'flex', gap: 'var(--space-2)' }}>
-                  <Tag tone={field.canRead ? 'positive' : 'critical'}>
-                    {field.canRead ? 'read' : 'no read'}
-                  </Tag>
-                  <Tag tone={field.canWrite ? 'positive' : 'critical'}>
-                    {field.canWrite ? 'write' : 'no write'}
-                  </Tag>
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Panel>
+      {/*
+        A FAILED `describe` IS NOT AN UNRESTRICTED TOKEN. This panel read `schemaRows(schema.data)`
+        with no boundary, so a refused or dropped read produced "0 · resolved by the server for
+        this caller" above the sentence "Every declared field is readable and writable by this
+        token" — a statement about field-level security composed from a request that never
+        answered, on the screen somebody opens to check exactly that.
+      */}
+      <div style={{ marginTop: 'var(--section-gap)' }}>
+        <AsyncBoundary query={schema} skeletonRows={3}>
+          {(description) => {
+            // `canRead` and `canWrite` came back from the server already resolved for whoever is
+            // holding the token, so a field listed here is field-level security refusing this
+            // caller — not a rule this client evaluated and could get wrong.
+            const restricted = schemaRows(description).flatMap((object) =>
+              object.fields
+                .filter((field) => field.declared && (!field.canRead || !field.canWrite))
+                .map((field) => ({ object: object.label, ...field })),
+            )
+
+            const declared = schemaRows(description).reduce(
+              (sum, object) => sum + object.fields.filter((field) => field.declared).length,
+              0,
+            )
+
+            return (
+              <Panel padding="flush">
+                <PanelHeader
+                  title="Fields this token may not have in full"
+                  note={`${restricted.length} of ${declared} declared · resolved by the server for this caller`}
+                />
+                {restricted.length === 0 ? (
+                  <div style={{ padding: 'var(--space-4)' }}>
+                    <span className={styles.sub}>
+                      {declared === 0
+                        ? 'This organisation has declared no fields, so there are none to restrict.'
+                        : 'Every declared field is readable and writable by this token. Switch persona to see the difference — the answer comes from the server, not from this screen.'}
+                    </span>
+                  </div>
+                ) : (
+                  <div>
+                    {restricted.map((field) => (
+                      <div key={`${field.object}-${field.name}`} className={styles.flowRow}>
+                        <Tag tone="outline">{field.object}</Tag>
+                        <span className={styles.link}>{field.label}</span>
+                        <span className={styles.mono}>{field.name}</span>
+                        <span style={{ marginLeft: 'auto', display: 'flex', gap: 'var(--space-2)' }}>
+                          <Tag tone={field.canRead ? 'positive' : 'critical'}>
+                            {field.canRead ? 'read' : 'no read'}
+                          </Tag>
+                          <Tag tone={field.canWrite ? 'positive' : 'critical'}>
+                            {field.canWrite ? 'write' : 'no write'}
+                          </Tag>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Panel>
+            )
+          }}
+        </AsyncBoundary>
+      </div>
     </Page>
   )
 }

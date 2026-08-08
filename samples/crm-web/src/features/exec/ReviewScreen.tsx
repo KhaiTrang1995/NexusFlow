@@ -47,6 +47,13 @@ export function ReviewScreen() {
 
       {choice.isUndeclared ? <NoPeriods what="the review register" /> : null}
 
+      {/*
+        THE PANELS OUTLIVED THEIR CONTENTS. `hidden` empties an AsyncBoundary but not the panel
+        around it, so a tenant with no periods got the sentence saying so and then two headed
+        boxes with nothing at all inside them — which reads as two panels that failed to load
+        underneath an explanation of why they could not.
+      */}
+      {choice.isUndeclared ? null : (
       <Columns layout="split">
         <Panel padding="flush">
           {/*
@@ -179,6 +186,7 @@ export function ReviewScreen() {
           </PanelBody>
         </Panel>
       </Columns>
+      )}
     </Page>
   )
 }

@@ -13,8 +13,10 @@ import {
   Tag,
 } from '@/design/primitives'
 import { Funnel, ShareBar } from '@/design/charts'
-import { useExecutiveBoard } from '@/api/queries/hooks'
+import { useEntityPage, useExecutiveBoard, useProcess } from '@/api/queries/hooks'
 import { money, pct, percent } from '@/lib/format'
+import { byStage, openDeals } from './pipeline'
+import type { StageBand } from './pipeline'
 import { usePeriod } from './period'
 import { NoPeriods, PeriodPicker } from './PeriodPicker'
 import styles from './exec.module.css'
@@ -31,6 +33,11 @@ export function ExecScreen() {
   const navigate = useNavigate()
   const choice = usePeriod()
   const board = useExecutiveBoard(choice.period)
+
+  // The two reads the funnel is made of: the tenant's open deals, and the stages the
+  // administrator published to put them in order.
+  const deals = useEntityPage('Opportunity')
+  const process = useProcess('Opportunity')
 
   return (
     <Page>
@@ -99,16 +106,48 @@ export function ExecScreen() {
                       </Button>
                     }
                   />
-                  <div style={{ paddingTop: 12 }}>
-                    <Funnel
-                      caption="Open pipeline by stage"
-                      stages={[
-                        { name: 'Early', value: data.deals.openValue * 0.42, amount: money(data.deals.openValue * 0.42), meta: 'prospecting → qualify' },
-                        { name: 'Mid', value: data.deals.openValue * 0.34, amount: money(data.deals.openValue * 0.34), meta: 'solution fit → proposal' },
-                        { name: 'Late', value: data.deals.openValue * 0.24, amount: money(data.deals.openValue * 0.24), meta: 'negotiation → contracting' },
-                      ]}
-                    />
-                  </div>
+                  {/*
+                    THREE INVENTED BANDS HOLDING 42, 34 AND 24 PER CENT OF ONE TOTAL. Early, Mid
+                    and Late were written in this file and split the open value by fractions that
+                    were the same on every tenant in every period — a funnel that could not
+                    disagree with the pipeline it claimed to draw. The stages below are the
+                    published process's, in its order, and each amount is the sum of the deals
+                    actually standing in it.
+                  */}
+                  <AsyncBoundary query={process} skeletonRows={3}>
+                    {(published) => (
+                      <AsyncBoundary query={deals} skeletonRows={3}>
+                        {(page) => {
+                          // An empty stage on the way through is the shape of the pipeline and
+                          // is drawn. An empty stage the process calls an end is not on the way
+                          // anywhere — it is only worth a column when something is standing in
+                          // it, which for an undecided deal is worth seeing.
+                          const bands = byStage(openDeals(page.records), published.stages).filter(
+                            (band) => band.count > 0 || !band.isTerminal,
+                          )
+
+                          return bands.every((band) => band.count === 0) ? (
+                            <p className={styles.sub} style={{ paddingTop: 12 }}>
+                              No deal in this tenant is still open, so there is no pipeline to
+                              place in a stage.
+                            </p>
+                          ) : (
+                            <div style={{ paddingTop: 12 }}>
+                              <Funnel
+                                caption="Open pipeline by stage"
+                                stages={bands.map((band) => ({
+                                  name: band.name,
+                                  value: band.amount,
+                                  amount: money(band.amount),
+                                  meta: `${band.count} deal(s)${meta(band)}`,
+                                }))}
+                              />
+                            </div>
+                          )
+                        }}
+                      </AsyncBoundary>
+                    )}
+                  </AsyncBoundary>
                 </Panel>
 
                 <Panel padding="flush">
@@ -199,6 +238,22 @@ export function ExecScreen() {
       </AsyncBoundary>
     </Page>
   )
+}
+
+/**
+ * What is odd about a band, if anything.
+ *
+ * A DEAL WITH NO OUTCOME IN A TERMINAL STAGE IS STILL OPEN PIPELINE, and it belongs in this total
+ * — the funnel and the board's open value have to agree or one of them is wrong. But it is also
+ * the anomaly a pipeline review looks for, so the column says which it is instead of leaving a
+ * reader to wonder why Closed Lost is in a funnel.
+ */
+function meta(band: StageBand): string {
+  if (!band.isDeclared) {
+    return ' · the process no longer declares this stage'
+  }
+
+  return band.isTerminal ? ' · undecided, in a stage the process calls an end' : ''
 }
 
 function ShortcutPanel({

@@ -14,7 +14,7 @@ import {
   TextField,
 } from '@/design/primitives'
 import type { Column } from '@/design/primitives'
-import { useEntityPage, useProcess } from '@/api/queries/hooks'
+import { useEntityPage, useProcess, useSchema } from '@/api/queries/hooks'
 import { modelFor } from '@/fixtures/objects'
 import type { RecordRow } from '@/fixtures/objects'
 import { isNumeric, renderCell } from './RecordCell'
@@ -75,6 +75,10 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
   // of them navigated to the opportunity board. Four buttons, four wrong destinations.
   const process = useProcess(entity === 'Opportunity' ? 'Opportunity' : null)
 
+  // What a built-in column may hold, from the tenant's own description. One cached call, shared
+  // with every setup screen.
+  const schema = useSchema()
+
   // Contacts and opportunities carry an account id. The accounts page answers what it is called,
   // and it is one cached request rather than one per row.
   const accounts = useEntityPage(entity === 'Contact' || entity === 'Opportunity' ? 'Account' : null)
@@ -104,14 +108,42 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
   )
 
   /**
+   * The vocabulary the server declares for the filtered column, or nothing.
+   *
+   * MATCHED BY COLUMN NAME, WHICH IS NOT ALWAYS THIS SCREEN'S NAME. `liveRecords` renames some
+   * columns on the way in — an account's `lifecycle` is `type` here — so a stage field that is
+   * not also the server's own column name finds nothing and falls back below. Guessing the
+   * inverse of that table would be a second copy of it, and a wrong guess draws a picker of
+   * values from a different column, which reads as data rather than as a bug.
+   *
+   * Empty is also the answer for quotes, orders and tasks: `describe` covers the four kinds a
+   * tenant can extend, and a status of the other three is still row-derived.
+   */
+  const declared = useMemo(() => {
+    if (model.stageField === undefined || entity === null) {
+      return []
+    }
+
+    return (
+      schema.data?.entities
+        .find((described) => described.kind === entity)
+        ?.columns.find((column) => column.name === model.stageField)?.options ?? []
+    )
+  }, [entity, model.stageField, schema.data])
+
+  /**
    * The values this filter offers.
    *
    * IT WAS THE PROTOTYPE'S PICKLIST. `optionsFor` read a list of stage names out of this client,
    * so the opportunity strip offered Prospecting…Closed Lost whatever the tenant's published
    * process actually said — a chip for a stage nobody had declared filters to nothing, and a
-   * stage an administrator added had no chip at all. For an opportunity the vocabulary is the
-   * process; for everything else there is no server vocabulary for a built-in column, so the
-   * honest list is the values the rows themselves carry.
+   * stage an administrator added had no chip at all.
+   *
+   * THREE SOURCES, IN THE ORDER OF WHAT KNOWS. For an opportunity the vocabulary is the published
+   * process. Otherwise it is what `describe` says the column may hold — which is the enum itself,
+   * so a lead can be filtered to Converted before any lead has been converted. Only where the
+   * server declares nothing are the rows the vocabulary, and a list of what happens to be on this
+   * page is a filter that hides the value you were looking for.
    */
   const stages = useMemo(() => {
     if (model.stageField === undefined) {
@@ -122,6 +154,10 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
       return process.data.stages.map((stage) => stage.name)
     }
 
+    if (declared.length > 0) {
+      return declared
+    }
+
     return [
       ...new Set(
         source
@@ -129,7 +165,7 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
           .filter((value) => value !== ''),
       ),
     ].sort((left, right) => left.localeCompare(right))
-  }, [model.stageField, process.data, source])
+  }, [declared, model.stageField, process.data, source])
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase()

@@ -4,6 +4,7 @@ import {
   Button,
   Columns,
   DataTable,
+  EmptyState,
   Meter,
   Page,
   PageHeader,
@@ -16,6 +17,7 @@ import {
 import { useExecutiveBoard } from '@/api/queries/hooks'
 import type { KpiResult, PlanNode, SellerPerformance } from '@/api/contracts'
 import { fullMoney, money, pct, percent } from '@/lib/format'
+import { kpiDirection, kpiValue } from './kpiUnits'
 import { usePeriod } from './period'
 import { NoPeriods, PeriodPicker } from './PeriodPicker'
 import styles from './exec.module.css'
@@ -98,11 +100,24 @@ export function BoardScreen() {
                   <span className={styles.sub}>{data.tree.nodes.length} plans</span>
                 }
               />
-              <div className={styles.tree}>
-                {data.tree.nodes.map((node) => (
-                  <PlanRow key={node.name} node={node} />
-                ))}
-              </div>
+              {/*
+                A HEADING OVER NOTHING IS NOT A TREE. With no plans the panel drew its title, the
+                words "0 plans" and an empty box — which reads as a panel that failed rather than
+                as a period nobody has planned against yet. The target above it is real and
+                uncommitted, and that is the sentence worth saying.
+              */}
+              {data.tree.nodes.length === 0 ? (
+                <EmptyState
+                  title="No plans have been made for this period"
+                  detail={`Nothing is committed against the ${money(data.rollUp.target)} target, because no level below has a plan yet. A plan made on the portfolio screen appears here.`}
+                />
+              ) : (
+                <div className={styles.tree}>
+                  {data.tree.nodes.map((node) => (
+                    <PlanRow key={node.name} node={node} />
+                  ))}
+                </div>
+              )}
             </Panel>
 
             <Columns layout="split">
@@ -233,23 +248,33 @@ function PlanRow({ node }: { node: PlanNode }) {
   )
 }
 
+/**
+ * One KPI, in the unit its source produces.
+ *
+ * IT WAS DRAWN AS A PERCENTAGE, AND NONE OF THE FIVE SOURCES IS ONE. Open pipeline of 1,626,000
+ * rendered here as "1626000%" beside a target of "2000000%" — the same defect the scorecard screen
+ * fixed with {@link kpiValue}, left behind on the one page a board reads. The direction was
+ * compared against `'Up'`, which `KpiDirection` has never been, so all five said "lower is better".
+ */
 function KpiRow({ kpi }: { kpi: KpiResult }) {
   const good = kpi.status === 'OnTrack'
+  const way = kpiDirection(kpi.direction)
 
   return (
     <div className={styles.treeRow}>
       <div className={styles.treeName}>
         <div className={styles.treeLabel}>{kpi.label}</div>
         <div className={styles.sub}>
-          {kpi.source} · {kpi.direction === 'Up' ? 'higher is better' : 'lower is better'}
+          {kpi.source}
+          {way === null ? '' : ` · ${way}`}
         </div>
       </div>
       <Tag tone={good ? 'positive' : 'critical'} dot>
         {good ? 'On track' : 'Off track'}
       </Tag>
       <div className={styles.treeNumbers} style={{ width: 190 }}>
-        <span>{pct(Number(kpi.actual))}</span>
-        <span className={styles.sub}>target {pct(Number(kpi.target))}</span>
+        <span>{kpiValue(kpi.source, Number(kpi.actual))}</span>
+        <span className={styles.sub}>target {kpiValue(kpi.source, Number(kpi.target))}</span>
       </div>
     </div>
   )

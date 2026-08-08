@@ -9,7 +9,7 @@ import {
   Tag,
 } from '@/design/primitives'
 import { useScorecard } from '@/api/queries/hooks'
-import { kpiValue } from './kpiUnits'
+import { kpiDirection, kpiValue } from './kpiUnits'
 import { usePeriod } from './period'
 import { NoPeriods, PeriodPicker } from './PeriodPicker'
 import styles from './exec.module.css'
@@ -57,8 +57,10 @@ export function KpiScreen() {
                   </div>
                   <div className={styles.kpiValue}>{kpiValue(kpi.source, Number(kpi.actual))}</div>
                   <div className={styles.sub}>
-                    target {kpiValue(kpi.source, Number(kpi.target))} ·{' '}
-                    {kpi.direction === 'Up' ? 'higher is better' : 'lower is better'}
+                    target {kpiValue(kpi.source, Number(kpi.target))}
+                    {kpiDirection(kpi.direction) === null
+                      ? ''
+                      : ` · ${kpiDirection(kpi.direction)}`}
                   </div>
                   <div style={{ marginTop: 9 }}>
                     <Meter
