@@ -103,8 +103,13 @@ public sealed class DescribeCrmSchema : ICapability<DescribeFor, SchemaDescripti
                 name,
                 Called(labels, name, LabelLimits.TheEntityItself, name),
                 [
+                    // The vocabulary travels with the column. A client that received the column
+                    // and not its values had to hold its own transcription of the enum, and a
+                    // transcription drifts — see EntityColumns.OptionsOf.
                     .. EntityColumns.Of(kind).Select(column => new DescribedColumn(
-                        column, Called(labels, name, column, column))),
+                        column,
+                        Called(labels, name, column, column),
+                        EntityColumns.OptionsOf(kind, column))),
                 ],
                 Describe(fields, held)));
         }

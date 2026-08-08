@@ -78,6 +78,42 @@ public static class EntityColumns
              "stage"],
     };
 
+    /// <summary>What a built-in column may hold, when it holds one of a closed set.</summary>
+    /// <param name="kind">Which entity.</param>
+    /// <param name="column">Which of its columns.</param>
+    /// <returns>The allowed values in declaration order, or empty when the column is not one.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Describe said a lead has a <c>status</c> and never what a status may be.</strong>
+    /// So every client that drew a filter chip or a picker transcribed <see cref="LeadStatus"/>
+    /// into its own language, and the web client's copy had a <c>Nurture</c> this build has never
+    /// had — a chip that filters to nothing — and no <c>Converted</c>, which it does, so nobody
+    /// could select one. Two copies of a vocabulary is one that disagrees.
+    /// </para>
+    /// <para>
+    /// <strong>Read off the enum rather than written out here.</strong> A literal list in this
+    /// file would be the second copy rather than the last: a member added to
+    /// <see cref="LeadSource"/> would leave describe answering with the old vocabulary and
+    /// nothing would say so.
+    /// </para>
+    /// <para>
+    /// <strong>Only the four kinds describe describes.</strong> A quote's status and an
+    /// activity's kind are closed vocabularies too, and neither is reachable from here —
+    /// <c>DescribeCrmSchema</c> answers for Lead, Account, Contact and Opportunity. An entry for
+    /// a column no surface returns would be an enum copy with nothing keeping it honest, which
+    /// is the defect this exists to remove.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> OptionsOf(EntityKind kind, string column) =>
+        (kind, column) switch
+        {
+            (EntityKind.Lead, "source") => Enum.GetNames<LeadSource>(),
+            (EntityKind.Lead, "status") => Enum.GetNames<LeadStatus>(),
+            (EntityKind.Account, "lifecycle") => Enum.GetNames<Lifecycle>(),
+            (EntityKind.Opportunity, "outcome") => Enum.GetNames<OpportunityOutcome>(),
+            _ => [],
+        };
+
     /// <summary>Which column identifies a row, and therefore orders the keyset.</summary>
     /// <param name="kind">Which entity.</param>
     /// <returns>The primary key's name.</returns>

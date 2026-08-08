@@ -100,6 +100,40 @@ public sealed class TenantUiSettingsApiTests
             "Lead", "one tenant's vocabulary is not another's.");
     }
 
+    /// <summary>A built-in column comes back with the values it may take.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The client was holding the second copy.</strong> Describe named a lead's
+    /// <c>status</c> column and said nothing about what a status is, so every client transcribed
+    /// <c>LeadStatus</c> into its own language to draw a chip — and the web client's copy offered
+    /// a <c>Nurture</c> that filters to nothing and omitted the <c>Converted</c> a conversion
+    /// produces. Nothing failed; the list was just quietly missing a filter.
+    /// </para>
+    /// <para>
+    /// <strong>The expected values are written out here rather than read off the enum.</strong>
+    /// Asserting <c>Enum.GetNames&lt;LeadStatus&gt;()</c> against a describe that returns
+    /// <c>Enum.GetNames&lt;LeadStatus&gt;()</c> asserts that two calls agree, which they do
+    /// whatever either says. A member added to the enum is meant to fail this line: what a lead
+    /// may be is a wire contract, and a client that cached yesterday's answer is holding the list
+    /// below.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ABuiltInColumnCarriesTheValuesItMayTake()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+
+        var lead = (await DescribeAsync(app)).Entities.Single(entity => entity.Kind == "Lead");
+
+        lead.Columns.Single(column => column.Name == "status").Options.ShouldBe(
+            ["New", "Working", "Qualified", "Disqualified", "Converted"],
+            "a picklist column that answers with no picklist is why the client had its own.");
+
+        lead.Columns.Single(column => column.Name == "company").Options.ShouldBeEmpty(
+            "a company is free text. Empty says 'draw a text box' — a column that claimed a " +
+            "vocabulary it has not got would be a picker over five wrong answers.");
+    }
+
     /// <summary>A column the entity does not have is refused rather than stored.</summary>
     /// <remarks>
     /// Stored, it would be a row nothing reads and nobody knows to delete — a settings screen

@@ -107,7 +107,19 @@ public sealed record DescribedEntity(
 /// <summary>One built-in column of a built-in entity.</summary>
 /// <param name="Name">The column. What a client sends and receives it as.</param>
 /// <param name="Label">What this tenant calls it. Defaults to the column name.</param>
-public sealed record DescribedColumn(string Name, string Label);
+/// <param name="Options">
+/// What the column may hold, when it holds one of a closed set. Empty when it holds free text, a
+/// number or a date — and empty is a fact rather than an absence: it says "draw a text box", not
+/// "ask somebody else".
+/// <para>
+/// <strong>Why this is here at all.</strong> A column was described as a name and a label, so a
+/// client that had to draw a status chip or a source picker had nowhere to read the vocabulary
+/// from and carried its own transcription of the enum. That copy drifts silently — it offers a
+/// value this build has never had, which filters to nothing, and omits one it does, which nobody
+/// can select — and a transcription that only breaks on screen is one nothing tests.
+/// </para>
+/// </param>
+public sealed record DescribedColumn(string Name, string Label, IReadOnlyList<string> Options);
 
 /// <summary>What this tenant's schema looks like to this caller.</summary>
 /// <param name="Objects">The custom objects.</param>
