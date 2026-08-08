@@ -19,8 +19,11 @@ import type {
   PlanStepRow,
 } from '@/api/contracts'
 import { fullMoney } from '@/lib/format'
-import { NoPeriods } from '@/features/exec/PeriodPicker'
 import type { PeriodChoice } from '@/features/exec/period'
+import { PeriodGate, hasNoPeriod } from './PeriodGate'
+import { AnswerQualificationDrawer } from './AnswerQualificationDrawer'
+import { qualificationOf } from './qualification'
+import type { QualificationLine } from './qualification'
 import styles from './planning.module.css'
 
 /**
@@ -39,11 +42,18 @@ import styles from './planning.module.css'
  *
  * `MarketingLead` lower-cased is "marketinglead", which is what the empty state read. A closed
  * vocabulary of four is a table, not a transformation.
+ *
+ * AND IT IS THE WORD THE REST OF THE APPLICATION USES, NOT THE SERVER'S ENUM. An
+ * `Opportunity` plan is a deal plan everywhere a person reads one — the heading over this panel,
+ * the portfolio's readiness column, the button that navigates here. "No opportunity plan is
+ * committed" under a heading reading Deal plans is one thing with two names.
  */
 function label(kind: string): string {
   switch (kind) {
     case 'MarketingLead':
       return 'demand'
+    case 'Opportunity':
+      return 'deal'
     case 'Rollup':
       return 'roll-up'
     default:
@@ -59,10 +69,10 @@ export function PlanDetailPanels({ kind, choice }: { kind: string; choice: Perio
   const name = chosen ?? plans[0]?.name ?? null
   const plan = usePlan(name)
 
-  if (choice.isUndeclared) {
+  if (hasNoPeriod(choice)) {
     return (
       <Panel>
-        <NoPeriods what={`${label(kind)} plans`} />
+        <PeriodGate choice={choice} what={`${label(kind)} plans`} />
       </Panel>
     )
   }
@@ -119,10 +129,13 @@ export function PlanDetailPanels({ kind, choice }: { kind: string; choice: Perio
             <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
               <PanelHeader
                 title={detail.label}
+                // The same word the empty state uses. `detail.kind` raw reads "MarketingLead
+                // plan" on the screen whose own heading says Demand plans, and a reader with two
+                // names for one thing has to work out whether they are the same thing.
                 note={
                   detail.targetAmount === null
-                    ? `${detail.kind} plan · ${detail.period}`
-                    : `${detail.kind} plan · ${detail.period} · ${fullMoney(
+                    ? `${label(detail.kind)} plan · ${detail.period}`
+                    : `${label(detail.kind)} plan · ${detail.period} · ${fullMoney(
                         detail.targetAmount,
                       )} ${detail.currency ?? ''} committed`
                 }
@@ -223,42 +236,7 @@ export function PlanDetailPanels({ kind, choice }: { kind: string; choice: Perio
               />
             </Panel>
 
-            <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
-              <PanelHeader
-                title="Qualification"
-                note={`${detail.qualification.filter((row) => row.isAnswered).length} of ${
-                  detail.qualification.length
-                } answered`}
-              />
-              <DataTable
-                caption="Qualification"
-                rows={detail.qualification}
-                rowKey={(row) => row.element}
-                columns={[
-                  {
-                    id: 'element',
-                    header: 'Element',
-                    cell: (row: PlanQualificationRow) => row.element,
-                  },
-                  {
-                    id: 'answered',
-                    // Answered or not — never a rating. A number a representative chooses is a
-                    // number they choose to be comfortable with.
-                    header: 'Known',
-                    cell: (row: PlanQualificationRow) =>
-                      row.isAnswered ? <Tag tone="positive">yes</Tag> : <Tag tone="outline">not yet</Tag>,
-                  },
-                  {
-                    id: 'note',
-                    header: 'What is known',
-                    cell: (row: PlanQualificationRow) => (
-                      <span className={styles.sub}>{row.note}</span>
-                    ),
-                  },
-                ]}
-                empty="Nothing has been qualified."
-              />
-            </Panel>
+            <QualificationPanel plan={detail.name} rows={detail.qualification} />
 
             <Panel padding="flush">
               <PanelHeader
@@ -305,5 +283,94 @@ export function PlanDetailPanels({ kind, choice }: { kind: string; choice: Perio
         )}
       </AsyncBoundary>
     </>
+  )
+}
+
+/**
+ * The eight questions, whether or not anybody has answered them.
+ *
+ * THE DENOMINATOR WAS THE NUMBER OF ROWS THE SERVER HAPPENED TO SEND. `/planning/plan` returns
+ * only what has been recorded, so an unqualified deal arrived as an empty list and this panel
+ * read "0 of 0 answered" — the sentence a finished checklist produces — while the portfolio's
+ * deal readiness column, which divides by the vocabulary, read 0/8 about the same deal.
+ *
+ * AND THERE WAS NO WAY TO ANSWER ONE. `/planning/qualifications` has been there throughout and
+ * needs only `crm.write`, which every persona in this sample holds; this screen read the answers
+ * and offered no control that recorded one, so the gap it reports could only ever grow.
+ *
+ * THE MUTUAL ACTION PLAN ABOVE STILL HAS NO CONTROL, AND THAT IS DELIBERATE. `SetPlanStep` is an
+ * upsert of the whole row including its owner, and `PlanDetail` does not return the step's owner
+ * — so a "mark done" tick would have to invent one, and would quietly reassign the step to
+ * whoever pressed it. A control that writes the wrong thing is worse than no control.
+ */
+function QualificationPanel({ plan, rows }: { plan: string; rows: readonly PlanQualificationRow[] }) {
+  const [answering, setAnswering] = useState<QualificationLine | null>(null)
+  const lines = qualificationOf(rows)
+  const answered = lines.filter((line) => line.isAnswered).length
+
+  return (
+    <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
+      <PanelHeader
+        title="Qualification"
+        note={`${answered} of ${lines.length} answered`}
+      />
+      <DataTable
+        caption="Qualification"
+        rows={lines}
+        rowKey={(row) => row.element}
+        columns={[
+          {
+            id: 'element',
+            header: 'Element',
+            cell: (row: QualificationLine) => (
+              <>
+                <span>{row.label}</span>
+                {row.asks === '' ? null : <div className={styles.sub}>{row.asks}</div>}
+              </>
+            ),
+          },
+          {
+            id: 'answered',
+            // Answered or not — never a rating. A number a representative chooses is a number
+            // they choose to be comfortable with.
+            header: 'Known',
+            cell: (row: QualificationLine) =>
+              row.isAnswered ? <Tag tone="positive">yes</Tag> : <Tag tone="outline">not yet</Tag>,
+          },
+          {
+            id: 'note',
+            header: 'What is known',
+            // Three states, not two. Nothing recorded is a question nobody has been asked;
+            // recorded with an empty note is somebody having looked and written nothing down.
+            cell: (row: QualificationLine) => (
+              <span className={styles.sub}>
+                {row.isRecorded ? row.note : 'Nobody has recorded an answer.'}
+              </span>
+            ),
+          },
+          {
+            id: 'record',
+            header: '',
+            cell: (row: QualificationLine) =>
+              row.isDeclared ? (
+                <Button size="sm" onClick={() => setAnswering(row)}>
+                  {row.isRecorded ? 'Change' : 'Answer'}
+                </Button>
+              ) : (
+                <span className={styles.sub}>from a newer server</span>
+              ),
+          },
+        ]}
+        empty="This build knows of no qualification elements, which cannot happen."
+      />
+
+      {answering === null ? null : (
+        <AnswerQualificationDrawer
+          plan={plan}
+          line={answering}
+          onClose={() => setAnswering(null)}
+        />
+      )}
+    </Panel>
   )
 }

@@ -40,20 +40,42 @@ export function AdvanceOpportunity({
 
   function apply(transition: ProcessTransitionView) {
     advance.mutate(
-      { opportunityId, trigger: transition.trigger, from: stage },
       {
-        // WHAT HAPPENED, NOT WHAT WAS ASKED FOR. This said "Moved to Qualify" on the 200 —
-        // before the engine had run, and whether or not it then moved anything. A guard that
-        // does not hold is the common answer here and it is not an error, so there was nothing
-        // to catch: the screen announced a move the process had declined.
-        onSuccess: (outcome) =>
-          outcome.moved
-            ? toast.saved(`Moved to ${outcome.stage}.`)
-            : toast.saved(
-                `${transition.trigger} was applied and the process left this deal in `
-                + `${outcome.stage ?? 'the same stage'}`
-                + (transition.guards.length > 0 ? ' — check its guards.' : '.'),
-              ),
+        opportunityId,
+        trigger: transition.trigger,
+
+        // NOT YET PROCESSED, SAID AS SOON AS IT IS TRUE. All a 200 from the advance means is that
+        // the application is recorded and nothing has decided it. Saying that here is what keeps
+        // the sentence below from having to cover it.
+        applied: (application) =>
+          toast.saved(`${application.trigger} is with the process, which has not decided yet.`),
+      },
+      {
+        // WHICH OF THE THREE, IN THE SERVER'S OWN WORDS. This said "Moved to Qualify" on the 200
+        // — before the engine had run, and whether or not it then moved anything. Then it said
+        // "the process left this deal in Discovery", which covered a declined move and a feed
+        // that had not arrived with one sentence that was a fabrication in one of the two cases.
+        // Declining is not an error, so neither version had anything to catch. The outcome now
+        // comes off the row the engine wrote, and the three answers read differently.
+        onSuccess: (outcome) => {
+          if (outcome.outcome === 'Moved') {
+            toast.saved(`Moved to ${outcome.stage}.`)
+            return
+          }
+
+          if (outcome.outcome === 'Declined') {
+            toast.saved(
+              `The process declined ${outcome.trigger} and left this deal in ${outcome.stage}`
+              + (transition.guards.length > 0 ? ' — check its guards.' : '.'),
+            )
+            return
+          }
+
+          toast.saved(
+            `${outcome.trigger} is with the process, which has not decided yet. `
+            + `This deal is still in ${outcome.stage}.`,
+          )
+        },
 
         onError: (error) => toast.failed(error, `${transition.trigger} was refused.`),
       },

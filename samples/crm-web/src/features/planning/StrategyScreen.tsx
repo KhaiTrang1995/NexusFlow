@@ -3,6 +3,7 @@ import {
   AsyncBoundary,
   Button,
   Columns,
+  EmptyState,
   ErrorState,
   Page,
   PageHeader,
@@ -16,11 +17,12 @@ import {
   TextField,
 } from '@/design/primitives'
 import { usePeriodRollUp, useSetStrategy } from '@/api/queries/hooks'
+import { useSession } from '@/session/SessionProvider'
 import { useToast } from '@/app/ToastProvider'
 import { money } from '@/lib/format'
 import { usePeriod, withPeriod } from '@/features/exec/period'
 import { PeriodPicker } from '@/features/exec/PeriodPicker'
-import { NoPeriods } from '@/features/exec/PeriodPicker'
+import { PeriodGate, hasNoPeriod } from './PeriodGate'
 import styles from './planning.module.css'
 
 /**
@@ -34,12 +36,19 @@ import styles from './planning.module.css'
  * requires the sentence: a period with a target and no statement of what it is for is a number
  * every level below will interpret differently, which is how four teams end up covering the same
  * quarter four different ways.
+ *
+ * AND IT WAS OFFERED TO PEOPLE THE SERVER REFUSES. `crm.planning.strategy` requires `crm.admin`;
+ * a representative filled the form in, pressed the button and was told they may not. The panel
+ * now says who sets this instead — the refusal is the server's either way, but a form nobody
+ * clears is a form that teaches people this application's buttons are decorative.
  */
 export function StrategyScreen() {
   const toast = useToast()
+  const session = useSession()
   const choice = usePeriod()
   const rollUp = usePeriodRollUp(choice.period)
   const set = useSetStrategy()
+  const maySet = session.can('crm.admin')
 
   const [target, setTarget] = useState('')
   const [vision, setVision] = useState('')
@@ -52,9 +61,9 @@ export function StrategyScreen() {
         actions={<PeriodPicker choice={choice} />}
       />
 
-      {choice.isUndeclared ? <NoPeriods what="the strategy" /> : null}
+      <PeriodGate choice={choice} what="the strategy" />
 
-      <AsyncBoundary query={rollUp} skeletonRows={4} hidden={choice.isUndeclared}>
+      <AsyncBoundary query={rollUp} skeletonRows={4} hidden={hasNoPeriod(choice)}>
         {(data) => (
           <>
             <StatGrid columns={3}>
@@ -82,60 +91,70 @@ export function StrategyScreen() {
               </Panel>
 
               <Panel padding="flush">
-                <PanelHeader title="Set the number" note="one per period; a second replaces it" />
-                <PanelBody>
-                  <form
-                    style={{ display: 'grid', gap: 12 }}
-                    onSubmit={(event) => {
-                      event.preventDefault()
+                <PanelHeader
+                  title="Set the number"
+                  note={maySet ? 'one per period; a second replaces it' : 'an administrator sets this'}
+                />
+                {maySet ? (
+                  <PanelBody>
+                    <form
+                      style={{ display: 'grid', gap: 12 }}
+                      onSubmit={(event) => {
+                        event.preventDefault()
 
-                      set.mutate(
-                        {
-                          period: choice.period as string,
-                          vision: vision.trim(),
-                          target: Number(target),
+                        set.mutate(
+                          {
+                            period: choice.period as string,
+                            vision: vision.trim(),
+                            target: Number(target),
 
-                          // The period's own currency, not one this form asks for. A strategy in
-                          // a currency the roll-up beside it does not use is two numbers that
-                          // cannot be compared, and nothing would say which was which.
-                          currency: data.currency,
-                        },
-                        {
-                          onSuccess: () =>
-                            toast.saved(
-                              `${choice.label} is set to ${money(Number(target))} ${data.currency}.`,
-                            ),
-                          onError: (error) => toast.failed(error, 'That strategy was refused.'),
-                        },
-                      )
-                    }}
-                  >
-                    <TextField
-                      label="Target"
-                      type="number"
-                      required
-                      hint={`In ${data.currency}. This is the number every level below rolls up to.`}
-                      value={target}
-                      onChange={(event) => setTarget(event.target.value)}
-                    />
-                    <TextAreaField
-                      label="Vision"
-                      required
-                      hint="What the number is for. Required, because a target with no statement is four interpretations."
-                      value={vision}
-                      onChange={(event) => setVision(event.target.value)}
-                    />
-                    <Button
-                      type="submit"
-                      tone="primary"
-                      disabled={target.trim() === '' || vision.trim() === '' || set.isPending}
+                            // The period's own currency, not one this form asks for. A strategy
+                            // in a currency the roll-up beside it does not use is two numbers
+                            // that cannot be compared, and nothing would say which was which.
+                            currency: data.currency,
+                          },
+                          {
+                            onSuccess: () =>
+                              toast.saved(
+                                `${choice.label} is set to ${money(Number(target))} ${data.currency}.`,
+                              ),
+                            onError: (error) => toast.failed(error, 'That strategy was refused.'),
+                          },
+                        )
+                      }}
                     >
-                      {set.isPending ? 'Setting…' : 'Set the strategy'}
-                    </Button>
+                      <TextField
+                        label="Target"
+                        type="number"
+                        required
+                        hint={`In ${data.currency}. This is the number every level below rolls up to.`}
+                        value={target}
+                        onChange={(event) => setTarget(event.target.value)}
+                      />
+                      <TextAreaField
+                        label="Vision"
+                        required
+                        hint="What the number is for. Required, because a target with no statement is four interpretations."
+                        value={vision}
+                        onChange={(event) => setVision(event.target.value)}
+                      />
+                      <Button
+                        type="submit"
+                        tone="primary"
+                        disabled={target.trim() === '' || vision.trim() === '' || set.isPending}
+                      >
+                        {set.isPending ? 'Setting…' : 'Set the strategy'}
+                      </Button>
 
-                    {set.isError ? <ErrorState error={set.error} /> : null}
-                  </form>
-                </PanelBody>
+                      {set.isError ? <ErrorState error={set.error} /> : null}
+                    </form>
+                  </PanelBody>
+                ) : (
+                  <EmptyState
+                    title="You do not set the number for this period"
+                    detail="Setting a strategy needs crm.admin, which this token does not carry. The vision beside this is the one in force; a manager or a director changes it."
+                  />
+                )}
               </Panel>
             </Columns>
           </>

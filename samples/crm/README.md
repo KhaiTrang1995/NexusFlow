@@ -40,7 +40,7 @@ one compose mounts.
 
 ## What it is
 
-Sixty-three tables, eighty-three flows and three authorisation stances, over the entities a CRM actually
+Sixty-four tables, eighty-three flows and three authorisation stances, over the entities a CRM actually
 has: leads, accounts, contacts, opportunities, quotes, orders, tasks and a configurable process.
 
 | Surface | Route or trigger | What it demonstrates |

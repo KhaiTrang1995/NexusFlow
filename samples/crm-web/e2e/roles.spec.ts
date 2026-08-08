@@ -319,6 +319,60 @@ test.describe('a seller', () => {
 
     await expect(toast(page)).toContainText('no move from')
   })
+
+  /**
+   * Three things can become of an applied trigger, and the screen says which.
+   *
+   * TWO OF THEM USED TO BE ONE SENTENCE. `crm.opportunity.advance` records that somebody applied a
+   * trigger and answers 200; the transition is decided afterwards, off the change feed. So a deal
+   * sitting in the stage it started in means either "the feed has not got there yet" or "the
+   * engine ran and declined the move" — no transition carries that trigger out of that stage, or
+   * one does and a guard did not hold. Neither is an error, so nothing was ever raised and nothing
+   * could be caught: this screen polled the record and announced "the process left this deal in
+   * Discovery", which is a fabrication in the first case every time.
+   *
+   * THE DECLINE HERE IS THE ONE A BUSINESS ACTUALLY HITS. Two people have the same deal open; one
+   * of them moves it, and the other's buttons are now the moves out of a stage the deal has left.
+   * A second tab is that, exactly, and it needs no fixture and no fault injection.
+   */
+  test('says whether the process moved the deal, declined the trigger, or has not decided', async ({
+    page,
+    context,
+  }) => {
+    await signIn(page, 'rep')
+
+    const company = await captureAndConvert(page)
+
+    await openFirstRecord(page, '/records/opportunity', company)
+
+    const move = (open: Page) => open.locator('header button', { hasText: '→' }).first()
+    const said = (open: Page, sentence: string) =>
+      open.locator('[role=status]', { hasText: sentence })
+
+    // Opened before anything moves the deal, so its buttons are the moves out of the stage it is
+    // in now — and they stay that way while the first tab moves it on.
+    const other = await context.newPage()
+
+    await other.goto(page.url())
+    await expect(move(other)).toBeVisible()
+
+    // NOT DECIDED YET. All the 200 carries is that the application was recorded, so that is what
+    // the screen says. Anything about a stage at this point would be invented.
+    await move(page).click()
+    await expect(said(page, 'has not decided yet')).toBeVisible()
+
+    // MOVED. The engine answered, and the answer names the stage the deal entered.
+    await expect(said(page, 'Moved to')).toBeVisible()
+
+    // DECLINED. The stale tab applies a trigger the deal has outgrown. The deal does not move, the
+    // request does not fail, and the sentence has to be a third one — the assertion below is the
+    // whole point, because the old build said this deal had moved.
+    await move(other).click()
+    await expect(said(other, 'declined')).toBeVisible()
+    await expect(said(other, 'Moved to')).toHaveCount(0)
+
+    await other.close()
+  })
 })
 
 test.describe('a manager', () => {
@@ -1123,5 +1177,134 @@ test.describe('my work, where a week and a phone were drawn from nothing', () =>
     await page.getByRole('button', { name: 'Recent' }).click()
 
     await expect(page.locator('main')).toContainText('nothing has moved recently')
+  })
+})
+
+test.describe('planning, where a screen spoke for a tenant it had not asked about', () => {
+  /** The period the seeded plans are committed against. The current one has none. */
+  async function openPlanningAt(page: Page, path: string, period: string) {
+    await page.goto(path)
+    await page.getByRole('button', { name: period, exact: true }).click()
+  }
+
+  /**
+   * The capacity table was outside every boundary, over `quota.data ?? []`.
+   *
+   * An organisation that has declared no periods makes neither read, so nothing was pending and
+   * nothing had failed — and the table printed its empty message as a finding: "nobody carries a
+   * revenue number this period", underneath the sentence saying no period exists.
+   */
+  test('says nothing about the capacity of a tenant it never asked about', async ({ page }) => {
+    await signIn(page, 'contoso')
+    await page.goto('/plan/operations')
+
+    await expect(page.getByText('No periods have been declared')).toBeVisible()
+    await expect(page.locator('main')).not.toContainText('Nobody carries a revenue number')
+    await expect(page.locator('main')).not.toContainText('By team')
+  })
+
+  /**
+   * A team is a manager, so the org chart is half of every figure on that screen — and only the
+   * quotas were guarded.
+   *
+   * With `/org/chart` refused nobody has a manager, which `capacityOf` cannot tell from a flat
+   * organisation: all of them collapse into one "Top of the line" row and the screen draws a
+   * single team that does not exist, carrying the whole company's number.
+   */
+  test('reports a refused org chart instead of inventing one team for everybody', async ({ page }) => {
+    await signIn(page, 'manager')
+    await page.route('**/api/v1/crm/org/chart', (route) => route.abort())
+
+    await page.goto('/plan/operations')
+
+    await expect(page.getByRole('alert').first()).toBeVisible()
+    await expect(page.locator('main')).not.toContainText('Top of the line')
+  })
+
+  /**
+   * Every planning screen asks for a period first, and a refused period list left them blank.
+   *
+   * Each hook takes a period and asks nothing for null, so a disabled query is pending for ever
+   * and a skeleton is `aria-hidden`: the page was a heading over white space. "This organisation
+   * has not declared a period" is not the answer either — that is a claim about the tenant made
+   * from a request that failed.
+   */
+  test('says the period list was refused rather than showing an empty portfolio', async ({ page }) => {
+    await signIn(page, 'manager')
+    await page.route('**/api/v1/crm/planning/periods/list', (route) =>
+      route.fulfill({
+        status: 403,
+        contentType: 'application/problem+json',
+        body: JSON.stringify({
+          title: 'That was refused',
+          detail: 'The caller may not read the periods of this tenant.',
+          status: 403,
+          code: 'authorization.permission_denied',
+        }),
+      }),
+    )
+
+    await page.goto('/plan/portfolio')
+
+    await expect(page.getByRole('alert').first()).toContainText('may not read the periods')
+    await expect(page.locator('main')).not.toContainText('No periods have been declared')
+  })
+
+  /**
+   * The qualification checklist is a closed eight and the panel counted the rows it was sent.
+   *
+   * `/planning/plan` returns only what somebody has recorded, so an unqualified deal arrived as
+   * an empty list and the panel read "0 of 0 answered" — the sentence a finished checklist
+   * produces — while the portfolio's readiness column, which divides by the vocabulary, read 0/8
+   * about the same deal on the same afternoon.
+   */
+  test('counts the qualification against the whole vocabulary, as the roll-up does', async ({ page }) => {
+    await signIn(page, 'manager')
+    await openPlanningAt(page, '/plan/opportunities', 'FY26 Q3')
+
+    await expect(page.locator('main')).toContainText(/\d of 8 answered/)
+
+    // Every element is a row whether or not anybody has answered it: the unanswered ones are the
+    // entire value of a checklist.
+    await expect(page.getByRole('row', { name: /Economic buyer/ })).toBeVisible()
+    await expect(page.getByRole('row', { name: /Paper process/ })).toBeVisible()
+  })
+
+  /**
+   * `/planning/qualifications` has been there throughout, and this screen offered no way to reach
+   * it: it read the answers and could only ever report a gap that never closed.
+   *
+   * The count in the toast is the server's, not the one this page just drew.
+   */
+  test('records a qualification answer and reports the server"s own count', async ({ page }) => {
+    await signIn(page, 'manager')
+    await openPlanningAt(page, '/plan/opportunities', 'FY26 Q3')
+
+    const champion = page.getByRole('row', { name: /Champion/ })
+
+    await champion.getByRole('button').click()
+    await page.getByLabel('Known').selectOption('yes')
+    await page.getByLabel('Note').fill('Their compliance officer wants this shipped.')
+    await page.getByRole('button', { name: 'Record' }).click()
+
+    await expect(toast(page)).toContainText(/of 8 answered/)
+    await expect(champion).toContainText('yes')
+  })
+
+  /**
+   * Setting a strategy needs `crm.admin` and the form was offered to everybody.
+   *
+   * A representative filled it in, pressed the button and was told they may not — on the screen
+   * that sets the number every executive surface rolls up to.
+   */
+  test('does not offer the strategy form to somebody the server refuses', async ({ page }) => {
+    await signIn(page, 'rep')
+    await openPlanningAt(page, '/plan/strategy', 'FY26 Q3')
+
+    await expect(page.getByRole('button', { name: 'Set the strategy' })).toHaveCount(0)
+    await expect(page.locator('main')).toContainText('needs crm.admin')
+
+    // The vision is still theirs to read. Hiding the form is not hiding the period.
+    await expect(page.locator('main')).toContainText('Prove the platform')
   })
 })

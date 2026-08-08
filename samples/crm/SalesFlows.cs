@@ -109,9 +109,46 @@ public sealed partial class AdvanceOpportunityFlow : Flow<AdvanceOpportunity, Op
 
         flow
             .Step<ApplyOpportunityTrigger>()
+
+            // The application id travels with the event, and it is what closes the loop: the
+            // engine's answer used to be returned to a flow that discarded it, so nothing could
+            // be told which application it belonged to. Read off the step's own answer rather
+            // than minted here, because the row the engine stamps is the row the step wrote.
             .Emit<OpportunityStageChanged>(ctx => new OpportunityStageChanged(
                 ctx.Input.OpportunityId,
-                ctx.Input.Trigger))
+                ctx.Input.Trigger,
+                ctx.Get<OpportunityAdvanced>().ApplicationId))
             .Return(ctx => ctx.Get<OpportunityAdvanced>());
+    }
+}
+
+/// <summary>What the configured process made of an applied trigger.</summary>
+/// <remarks>
+/// <para>
+/// <strong><c>Ephemeral</c>, and a caller is expected to ask more than once.</strong> The engine
+/// runs off the change feed, so the honest first answer is often
+/// <see cref="TriggerOutcome.Pending"/> — and a read that journaled would write a row per poll
+/// for a question that changes state exactly once.
+/// </para>
+/// <para>
+/// <strong>Deliberately not the shape that would make this go away.</strong> A suspending flow
+/// that returned when the engine decided would be pleasant and would make the advance
+/// synchronous in everything but name; §8.3's claim is that the transition is driven by the feed,
+/// and a caller that cannot see the seam cannot see the claim either.
+/// </para>
+/// </remarks>
+[Flow("crm.opportunity.trigger_outcome", Version = "1.0.0", Profile = ExecutionProfile.Ephemeral, Owner = "crm-sales")]
+[FlowDeadline("PT15S")]
+[HttpTrigger("POST", "/api/v1/crm/opportunities/trigger-outcomes")]
+public sealed partial class TriggerOutcomeFlow : Flow<ReadTriggerOutcome, TriggerOutcomeView>
+{
+    /// <inheritdoc />
+    protected override void Define(IFlowBuilder<ReadTriggerOutcome, TriggerOutcomeView> flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+
+        flow
+            .Step<ReadOpportunityTriggerOutcome, ReadTriggerOutcome>(ctx => ctx.Input)
+            .Return(ctx => ctx.Get<TriggerOutcomeView>());
     }
 }

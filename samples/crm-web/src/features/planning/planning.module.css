@@ -7,10 +7,6 @@
   color: var(--color-accent-700);
 }
 
-.numeric {
-  font-variant-numeric: tabular-nums;
-}
-
 .gap {
   color: var(--color-critical);
 }
@@ -52,111 +48,10 @@
   font-size: 14px;
 }
 
-.qualification {
-  display: flex;
-  flex-direction: column;
-}
-
-.qualRow {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 11px 17px;
-  border-bottom: 1px solid var(--color-divider);
-}
-
-.qualMark {
-  width: 24px;
-  height: 24px;
-  flex: none;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 12px;
-  border: 1px solid var(--color-neutral-400);
-  color: var(--color-neutral-600);
-}
-
-.qualAnswered {
-  background: var(--color-positive-bg);
-  border-color: var(--color-positive);
-  color: var(--color-positive);
-}
-
-.qualName {
-  font-size: 14.5px;
-}
-
-.step {
-  display: flex;
-  gap: 12px;
-  padding: 11px 17px;
-  border-bottom: 1px solid var(--color-divider);
-}
-
-.stepDue {
-  width: 96px;
-  flex: none;
-  font-size: 13px;
-  color: var(--color-neutral-600);
-  font-variant-numeric: tabular-nums;
-}
-
-.overdue {
-  color: var(--color-critical);
-}
-
-.stakeholder {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  padding: 14px 17px;
-}
-
-.stakeholderCard {
-  border: 1px solid var(--color-neutral-400);
-  border-radius: 10px;
-  padding: 11px 13px;
-}
-
-.grid2 {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 2px;
-  background: var(--color-divider);
-  border: 1px solid var(--color-divider);
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.quadrant {
-  background: var(--color-surface);
-  padding: 12px 14px;
-  min-height: 128px;
-}
-
-.quadrantLabel {
-  font-size: 11.5px;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--color-neutral-600);
-  margin-bottom: 7px;
-}
-
 .vision {
   font-size: 19px;
   line-height: 1.45;
   padding: 16px 17px;
-}
-
-/* The line between what the server said and what the prototype drew. Without it a reader has
-   no way to tell which half of the screen is theirs. */
-.sampleNote {
-  margin: var(--section-gap) 0 var(--space-3);
-  color: var(--text-muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 
 /* The plan chooser, when a period has more than one plan of a kind. */

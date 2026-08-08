@@ -135,6 +135,31 @@ public sealed class WorkApiTests
         var advanced = await CrmApplication.ReadAsync<OpportunityAdvanced>(response);
 
         advanced.Trigger.ShouldBe("qualified");
+        advanced.ApplicationId.ShouldNotBe(Guid.Empty, "the handle a caller reads the outcome by.");
+
+        // Nothing has decided anything: this route does not, and the change feed is not running
+        // in this host. Pending is the answer, and it is the one that used to be unsayable — a
+        // caller saw the stage unchanged and could not tell it from a move the engine refused.
+        var outcome = await CrmApplication.ReadAsync<TriggerOutcomeView>(
+            await app.PostAsync(
+                "/api/v1/crm/opportunities/trigger-outcomes",
+                new ReadTriggerOutcome(advanced.ApplicationId),
+                CrmTokens.Northwind,
+                idempotencyKey: null));
+
+        outcome.Outcome.ShouldBe(TriggerOutcome.Pending);
+        outcome.Trigger.ShouldBe("qualified");
+        outcome.DecidedAt.ShouldBeNull();
+        outcome.Stage.ShouldBe("Qualification", "where the trigger was applied from.");
+
+        (await app.PostAsync(
+            "/api/v1/crm/opportunities/trigger-outcomes",
+            new ReadTriggerOutcome(advanced.ApplicationId),
+            CrmTokens.Contoso,
+            idempotencyKey: null))
+            .StatusCode.ShouldBe(
+                HttpStatusCode.NotFound,
+                "another tenant read what somebody in this one applied.");
 
         (await app.Crm.ScalarAsOwnerAsync<long>(
             """

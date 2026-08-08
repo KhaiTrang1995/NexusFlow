@@ -121,6 +121,20 @@ public static class SalesErrors
             "That opportunity is not in this tenant.",
             ErrorCategory.NotFound)
             .With("opportunityId", opportunityId);
+
+    /// <summary>Nobody in this tenant applied a trigger under that handle.</summary>
+    /// <param name="applicationId">What was named.</param>
+    /// <remarks>
+    /// A <c>404</c> and not a <see cref="TriggerOutcome.Pending"/>: "we have no record of you
+    /// applying this" and "the engine has not answered yet" are the two mistakes this whole read
+    /// exists to keep apart, and answering the first with the second would put one of them back.
+    /// </remarks>
+    public static Error TriggerApplicationNotFound(Guid applicationId) =>
+        new Error(
+            "crm.trigger_application_not_found",
+            "No trigger was applied under that handle in this tenant.",
+            ErrorCategory.NotFound)
+            .With("applicationId", applicationId);
 }
 
 /// <summary>

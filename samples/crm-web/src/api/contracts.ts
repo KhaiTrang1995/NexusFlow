@@ -724,10 +724,51 @@ export interface PlanRiskRow {
   isOpen: boolean
 }
 
+/**
+ * What has to be known about a deal before anybody should believe its date.
+ *
+ * A CLOSED EIGHT, WHICH IS THE DENOMINATOR. `/planning/plan` returns only the elements somebody
+ * has recorded, so a deal nobody has qualified comes back with an empty list — and a screen that
+ * counted that list said "0 of 0 answered" while the roll-up beside it, which divides by the
+ * vocabulary, said 0 of 8 about the same deal.
+ *
+ * The eight are the enum the server's `AnswerQualification` accepts, and a ninth is a code change
+ * on both sides on purpose: a checklist whose items differ per deal is one no two managers can
+ * hold against each other, which is the entire reason for having one.
+ */
+export type QualificationElement =
+  | 'Metrics'
+  | 'EconomicBuyer'
+  | 'DecisionCriteria'
+  | 'DecisionProcess'
+  | 'PaperProcess'
+  | 'IdentifiedPain'
+  | 'Champion'
+  | 'Competition'
+
 export interface PlanQualificationRow {
   element: string
   isAnswered: boolean
   note: string
+}
+
+/**
+ * Records whether one thing about a deal is actually known.
+ *
+ * Answered or not, with a note — never a rating. A seller asked to score their own deal scores it
+ * comfortably; a seller asked whether they know who signs either does or does not.
+ */
+export interface AnswerQualification {
+  plan: string
+  element: QualificationElement
+  isAnswered: boolean
+  note: string
+}
+
+export interface QualificationRecorded {
+  answered: number
+  /** The size of the vocabulary, from the server. */
+  outOf: number
 }
 
 export interface PlanStakeholderRow {
@@ -906,8 +947,46 @@ export interface AdvanceOpportunity {
 }
 
 export interface OpportunityAdvanced {
+  /**
+   * The handle for this application, and the only thing in this answer worth acting on.
+   *
+   * NOTHING HERE SAYS WHERE THE DEAL WENT, because when the server writes it nobody knows. The
+   * transition is decided afterwards, off the change feed. This id is what `ReadTriggerOutcome`
+   * takes, and reading it is how a client learns which of the three things happened.
+   */
+  applicationId: string
   opportunityId: string
   trigger: string
+}
+
+/** Asks what the published process made of one application of a trigger. */
+export interface ReadTriggerOutcome {
+  applicationId: string
+}
+
+/**
+ * The three things that can have become of an applied trigger.
+ *
+ * TWO OF THESE USED TO BE ONE. A client could see that the deal had not moved and had no way to
+ * tell a feed that has not arrived from an engine that ran and declined the move — no transition
+ * carries the trigger out of that stage, or one does and a guard did not hold. Neither is an
+ * error, so there was nothing to catch and this client guessed.
+ */
+export type TriggerOutcome = 'Pending' | 'Moved' | 'Declined'
+
+/** What the process did with one application of a trigger. */
+export interface TriggerOutcomeView {
+  applicationId: string
+  opportunityId: string
+  trigger: string
+  outcome: TriggerOutcome
+  /** Where this application left the deal: the stage entered when it moved, else where it stayed. */
+  stage: string
+  /** How many configured actions ran. Zero unless it moved. */
+  actionsRun: number
+  appliedAt: string
+  /** When the engine answered, or null while it has not. */
+  decidedAt: string | null
 }
 
 /** Accepts a quote and commits the money. Refused while the quote is still a Draft. */

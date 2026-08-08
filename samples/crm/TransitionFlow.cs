@@ -6,7 +6,13 @@ namespace Crm;
 /// <summary>An opportunity moved, and the configured process has not run yet.</summary>
 /// <param name="OpportunityId">Which opportunity.</param>
 /// <param name="Trigger">What happened, in the administrator's vocabulary.</param>
-public sealed record OpportunityStageChanged(Guid OpportunityId, string Trigger);
+/// <param name="ApplicationId">
+/// Which application of that trigger this is, so the engine's answer can be written back against
+/// the act that caused it. <strong>Carried on the event rather than derived</strong>: the same
+/// trigger applied twice to the same deal is two applications with two answers, and anything
+/// derived from the pair would collapse them into one.
+/// </param>
+public sealed record OpportunityStageChanged(Guid OpportunityId, string Trigger, Guid ApplicationId);
 
 /// <summary>What the configured process did, or why it did nothing.</summary>
 /// <param name="OpportunityId">The opportunity.</param>
@@ -58,6 +64,13 @@ public static class TransitionErrors
 /// request after it. What each action did is in the row it wrote; what ran is the count this
 /// returns.
 /// </para>
+/// <para>
+/// <strong>And the answer is written down as well as returned.</strong> It was returned to a
+/// flow that discarded it, which left "declined" and "not run yet" as the same observation from
+/// outside — a deal in the stage it started in. Both are successes here, so nothing was raised
+/// and nothing could be caught; the caller guessed. Stamping the answer on the application row
+/// costs one statement and does not move where the decision is made.
+/// </para>
 /// </remarks>
 [Capability("crm.process.run_transition", Version = "1.0.0",
     Authorization = Authorization.Internal,
@@ -67,6 +80,7 @@ public sealed class RunConfiguredTransition : ICapability<BusMessage, Transition
 {
     private readonly ProcessStore _store;
     private readonly ConnectorStore _connectors;
+    private readonly TriggerLogStore _applications;
 
     /// <summary>Creates the capability.</summary>
     /// <param name="store">Reads the definition and writes what the actions do.</param>
@@ -74,14 +88,20 @@ public sealed class RunConfiguredTransition : ICapability<BusMessage, Transition
     /// Resolves the connector a <see cref="ActionKind.SendNotification"/> names, and queues what
     /// it sends.
     /// </param>
+    /// <param name="applications">Where the decision is recorded for whoever applied the trigger.</param>
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
-    public RunConfiguredTransition(ProcessStore store, ConnectorStore connectors)
+    public RunConfiguredTransition(
+        ProcessStore store,
+        ConnectorStore connectors,
+        TriggerLogStore applications)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(connectors);
+        ArgumentNullException.ThrowIfNull(applications);
 
         _store = store;
         _connectors = connectors;
+        _applications = applications;
     }
 
     /// <inheritdoc />
@@ -125,6 +145,14 @@ public sealed class RunConfiguredTransition : ICapability<BusMessage, Transition
         {
             // Not an error. Nothing the administrator configured applies here, and a recorded
             // "nothing happened" is what lets the change cursor move past this change.
+            //
+            // Recorded on the application as well, because from outside this is the branch that
+            // looked identical to not having run: the deal stays where it is either way, and only
+            // this row can say which of the two a caller is looking at.
+            await _applications
+                .DecideAsync(ctx.TenantId, changed.ApplicationId, null, null, 0, ctx.UtcNow, ct)
+                .ConfigureAwait(false);
+
             return Result.Ok(new TransitionApplied(changed.OpportunityId, null, 0));
         }
 
@@ -140,6 +168,20 @@ public sealed class RunConfiguredTransition : ICapability<BusMessage, Transition
                 ran++;
             }
         }
+
+        // After the actions, so the count is the one that ran rather than the one intended. A
+        // redelivery decides the same application again to the same values, which is why this is
+        // an update of one row and not an appended attempt.
+        await _applications
+            .DecideAsync(
+                ctx.TenantId,
+                changed.ApplicationId,
+                taken.Transition.Id,
+                taken.Transition.To,
+                ran,
+                ctx.UtcNow,
+                ct)
+            .ConfigureAwait(false);
 
         return Result.Ok(new TransitionApplied(changed.OpportunityId, taken.Transition.Id, ran));
     }

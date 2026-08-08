@@ -221,27 +221,42 @@ public sealed class PlaceOrderForQuote : ICapability<PlaceOrder, OrderPlaced>
 /// Applies a trigger to an opportunity, and lets the configured process decide what it means.
 /// </summary>
 /// <remarks>
+/// <para>
 /// <strong>It moves nothing.</strong> Where the opportunity goes is
 /// <see cref="RunConfiguredTransition"/>'s answer, read out of the definition an administrator
 /// wrote. What this does is check the opportunity is one this tenant has and record that
 /// somebody applied the trigger; the event <see cref="AdvanceOpportunityFlow"/> emits is what
 /// the change feed hands to §7's engine.
+/// </para>
+/// <para>
+/// <strong>What it now leaves behind is a row, and that is the only thing that changed.</strong>
+/// Until it did, a caller had a 200 and nothing else: the deal was in the stage it started in,
+/// and there was no way to tell "the feed has not reached it" from "the engine ran and declined
+/// to move it" — both of which are successes, so neither raised anything to catch. The engine
+/// stamps its answer onto this row when it decides, and <see cref="ReadOpportunityTriggerOutcome"/>
+/// hands it back. Nothing here waits for that, and nothing about when the transition runs moved.
+/// </para>
 /// </remarks>
 [Capability("crm.opportunity.advance", Version = "1.0.0",
     Authorization = Authorization.Permission, Permission = "crm.write",
-    Idempotent = true)]
+    Idempotent = true,
+    SideEffects = ["crm.trigger.applied"])]
 public sealed class ApplyOpportunityTrigger : ICapability<AdvanceOpportunity, OpportunityAdvanced>
 {
     private readonly SalesStore _store;
+    private readonly TriggerLogStore _applications;
 
     /// <summary>Creates the capability.</summary>
     /// <param name="store">Reads the opportunity.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="store"/> is null.</exception>
-    public ApplyOpportunityTrigger(SalesStore store)
+    /// <param name="applications">Records the application the engine will answer.</param>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    public ApplyOpportunityTrigger(SalesStore store, TriggerLogStore applications)
     {
         ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(applications);
 
         _store = store;
+        _applications = applications;
     }
 
     /// <inheritdoc />
@@ -259,6 +274,65 @@ public sealed class ApplyOpportunityTrigger : ICapability<AdvanceOpportunity, Op
                 SalesErrors.OpportunityNotFound(input.OpportunityId));
         }
 
-        return Result.Ok(new OpportunityAdvanced(input.OpportunityId, input.Trigger));
+        // Journaled, so a replay of this step records the same application rather than a second
+        // one. `ctx.NewId()` is the only id in a Durable flow that survives a replay saying the
+        // same thing, and this id is the handle the caller polls on.
+        var applicationId = ctx.NewId();
+
+        await _applications
+            .ApplyAsync(ctx.TenantId, applicationId, input.OpportunityId, input.Trigger, ctx.UtcNow, ct)
+            .ConfigureAwait(false);
+
+        return Result.Ok(new OpportunityAdvanced(applicationId, input.OpportunityId, input.Trigger));
+    }
+}
+
+/// <summary>
+/// What the configured process did with a trigger somebody applied.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>The read that replaced a guess.</strong> The web client used to poll the entity page
+/// six times over three seconds and then announce "the process left this deal in X" — true when
+/// the engine had declined, and a fabrication when it simply had not run yet. The row this reads
+/// tells the two apart because the engine writes to it, and the answer is a state rather than an
+/// inference from a stage that did not change.
+/// </para>
+/// <para>
+/// <c>crm.read</c> and not <c>crm.write</c>: asking what happened is not applying anything, and a
+/// read only the applier could make would be a board nobody else can follow.
+/// </para>
+/// </remarks>
+[Capability("crm.opportunity.trigger_outcome", Version = "1.0.0",
+    Authorization = Authorization.Permission, Permission = "crm.read",
+    Idempotent = true)]
+public sealed class ReadOpportunityTriggerOutcome : ICapability<ReadTriggerOutcome, TriggerOutcomeView>
+{
+    private readonly TriggerLogStore _applications;
+
+    /// <summary>Creates the capability.</summary>
+    /// <param name="applications">Reads the register.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="applications"/> is null.</exception>
+    public ReadOpportunityTriggerOutcome(TriggerLogStore applications)
+    {
+        ArgumentNullException.ThrowIfNull(applications);
+
+        _applications = applications;
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<Result<TriggerOutcomeView>> ExecuteAsync(
+        ReadTriggerOutcome input,
+        CapabilityContext ctx,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(ctx);
+
+        return await _applications.ReadAsync(ctx.TenantId, input.ApplicationId, ct).ConfigureAwait(false)
+            is { } outcome
+            ? Result.Ok(outcome)
+            : Result.Fail<TriggerOutcomeView>(
+                SalesErrors.TriggerApplicationNotFound(input.ApplicationId));
     }
 }

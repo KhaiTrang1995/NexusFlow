@@ -655,43 +655,39 @@ export function useConvertLead(): UseMutationResult<C.ConversionResult, Error, C
 }
 
 /**
- * Applies a trigger to an opportunity and lets the published process decide where it lands.
- *
- * THE DESTINATION IS NOT SENT. A trigger the process has no transition for is refused, and a
- * guard that does not hold refuses it too — which is the whole point of configuring the process
- * rather than writing the stage from a drop-down.
- */
-/** What the process did with a trigger, once it had done it. */
-export interface TriggerOutcome extends C.OpportunityAdvanced {
-  /** The stage the opportunity is in now. */
-  stage: string | null
-  /** Whether that is somewhere new. False means the process left it where it was. */
-  moved: boolean
-}
-
-/**
- * Applies a trigger, then waits to see what the process made of it.
+ * Applies a trigger, then asks the server what the process made of it.
  *
  * THE 200 IS NOT THE MOVE. `crm.opportunity.advance` checks the opportunity exists and records
  * that somebody applied the trigger; the transition is decided afterwards, off the change feed,
  * by the definition an administrator wrote. So the response says nothing about where the deal
  * ended up — and both callers used to announce "Moved to Qualify" the instant it arrived.
  *
- * TWO THINGS WERE WRONG WITH THAT, AND THE SECOND IS THE BAD ONE. The board refetched before the
- * transition had run and drew the card back in its old lane under a toast saying it had moved,
- * which reads as the drag having failed. And when the process declined the move — a guard that
- * does not hold, or no transition out of that stage for that trigger — the screen said it had
- * moved anyway. There is no error to catch: declining is a successful outcome of the engine.
+ * WHAT REPLACED THAT WAS A GUESS, AND THIS REPLACES THE GUESS. The hook polled the entity page
+ * six times over three seconds and reported whichever stage it found. When the stage had changed
+ * the answer was right; when it had not, "the process left this deal in Discovery" covered two
+ * completely different facts — the engine declined the move, and the feed has not got there yet.
+ * Neither is an error, so there was nothing to catch, and the sentence was a fabrication in one
+ * of the two cases every time.
  *
- * SO THIS READS THE ROW BACK. A short poll until the stage changes, then the caller is told what
- * actually happened. If it has not changed by the deadline the answer is "not moved", which is
- * true of a declined guard and of a slow feed alike — and saying "the process left it in
- * Discovery" is honest about both, where "Moved to Qualify" is honest about neither.
+ * SO IT READS THE OUTCOME THE ENGINE WROTE DOWN. The advance hands back an application id; the
+ * server records that application and the engine stamps its answer on it. `Pending` is a state
+ * the server reports, not a timeout this file invents — which is what makes the third sentence
+ * on the screen an honest one.
+ *
+ * IT STILL POLLS, AND IT STILL DOES NOT WAIT FOREVER. The engine is driven by the change feed and
+ * this hook has no business changing that. Three seconds is long enough for a feed keeping up and
+ * short enough that a reader is not left watching a spinner; past it the answer is `Pending`,
+ * which is now something the screen can say rather than something it has to disguise.
+ *
+ * `applied` IS CALLED THE MOMENT THE WRITE RETURNS, and it is the third answer said out loud. A
+ * 200 from the advance means one thing — the application is recorded and nobody has decided it —
+ * so a screen that stayed silent until the engine answered would leave the reader with a click
+ * that appeared to do nothing.
  */
 export function useAdvanceOpportunity(): UseMutationResult<
-  TriggerOutcome,
+  C.TriggerOutcomeView,
   Error,
-  C.AdvanceOpportunity & { from: string | null }
+  C.AdvanceOpportunity & { applied?: (applied: C.OpportunityAdvanced) => void }
 > {
   const client = useQueryClient()
   const { tenantId } = useSession()
@@ -705,34 +701,26 @@ export function useAdvanceOpportunity(): UseMutationResult<
         { opportunityId: input.opportunityId, trigger: input.trigger },
       )
 
-      let stage = input.from
+      input.applied?.(applied)
 
-      // Six looks over three seconds. Long enough for a feed that is keeping up, short enough
-      // that a reader is not left watching a spinner while an engine decides not to move
-      // anything at all.
-      for (let attempt = 0; attempt < 6 && stage === input.from; attempt += 1) {
-        await new Promise((resume) => setTimeout(resume, 500))
-
-        const page = await post<C.RecordPage, C.ReadEntityPage>(
-          '/entities',
-          {
-            entity: 'Opportunity',
-            filter: {
-              match: 'All',
-              criteria: [
-                { field: 'opportunity_id', operator: 'Equals', value: input.opportunityId },
-              ],
-            },
-            limit: 1,
-            after: null,
-          },
+      const ask = () =>
+        post<C.TriggerOutcomeView, C.ReadTriggerOutcome>(
+          '/opportunities/trigger-outcomes',
+          { applicationId: applied.applicationId },
           { token },
         )
 
-        stage = page.records[0]?.values['stage'] ?? stage
+      // Asked once immediately, because a feed that is keeping up has already answered by the
+      // time the write returns and half a second of nothing is half a second of nothing.
+      let outcome = await ask()
+
+      for (let attempt = 0; attempt < 6 && outcome.outcome === 'Pending'; attempt += 1) {
+        await new Promise((resume) => setTimeout(resume, 500))
+
+        outcome = await ask()
       }
 
-      return { ...applied, stage, moved: stage !== input.from }
+      return outcome
     },
     onSuccess: () => {
       client.invalidateQueries({ queryKey: keys.entities.all(tenantId) })
@@ -1067,6 +1055,32 @@ export function useSetStrategy(): UseMutationResult<C.StrategySet, Error, C.SetS
       client.invalidateQueries({ queryKey: keys.planning.all(tenantId) })
       client.invalidateQueries({ queryKey: keys.board.all(tenantId) })
       client.invalidateQueries({ queryKey: keys.performance.all(tenantId) })
+    },
+  })
+}
+
+/**
+ * Records whether one element of a deal's qualification is actually known.
+ *
+ * `crm.write` and not `crm.admin`: qualifying a deal is the seller's job, and it is the one
+ * planning write every persona in this sample holds. The plan detail and the roll-up both count
+ * the answers, so both are stale the moment one is written.
+ */
+export function useAnswerQualification(): UseMutationResult<
+  C.QualificationRecorded,
+  Error,
+  C.AnswerQualification
+> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.AnswerQualification) =>
+      call.write<C.QualificationRecorded, C.AnswerQualification>('/planning/qualifications', input),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: keys.planning.all(tenantId) })
+      client.invalidateQueries({ queryKey: keys.board.all(tenantId) })
     },
   })
 }

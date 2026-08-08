@@ -320,6 +320,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<ConversionStore>();
         services.AddSingleton<IntakeStore>();
         services.AddSingleton<SalesStore>();
+        services.AddSingleton<TriggerLogStore>();
         services.AddSingleton<WorkStore>();
         services.AddSingleton<CustomSchemaStore>();
         services.AddSingleton<ConnectorStore>();
@@ -359,6 +360,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<ApproveQuoteDiscountCapability>();
         services.AddSingleton<PlaceOrderForQuote>();
         services.AddSingleton<ApplyOpportunityTrigger>();
+        services.AddSingleton<ReadOpportunityTriggerOutcome>();
         services.AddSingleton<CreateTaskForSubject>();
         services.AddSingleton<DefineCustomObject>();
         services.AddSingleton<DefineCustomField>();
@@ -449,6 +451,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<ApproveDiscountFlow.Dispatcher>();
         services.AddSingleton<PlaceOrderFlow.Dispatcher>();
         services.AddSingleton<AdvanceOpportunityFlow.Dispatcher>();
+        services.AddSingleton<TriggerOutcomeFlow.Dispatcher>();
         services.AddSingleton<CreateTaskFlow.Dispatcher>();
         services.AddSingleton<DefineObjectFlow.Dispatcher>();
         services.AddSingleton<DefineFieldFlow.Dispatcher>();

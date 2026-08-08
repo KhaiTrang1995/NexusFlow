@@ -102,20 +102,45 @@ export function KanbanScreen() {
       return
     }
 
+    const deal = row.values['name'] ?? 'The deal'
+
     advance.mutate(
-      { opportunityId: row.recordId, trigger: transition.trigger, from },
+      {
+        opportunityId: row.recordId,
+        trigger: transition.trigger,
+
+        // NOT YET PROCESSED, SAID AS SOON AS IT IS TRUE. A 200 from the advance means the
+        // application is recorded and nobody has decided it, and nothing more. A board that said
+        // nothing until the engine answered would leave a drag looking like it had been dropped.
+        applied: (application) =>
+          toast.saved(`${application.trigger} is with the process, which has not decided yet.`),
+      },
       {
         // THE CARD USED TO SPRING BACK UNDER A TOAST SAYING IT HAD MOVED. The trigger is applied
         // synchronously and the transition is decided afterwards, so the board refetched before
         // the engine had run — and when the engine declined the move, nothing ever corrected the
-        // toast. Both cases now say what the deal's stage actually is.
-        onSuccess: (outcome) =>
-          outcome.moved
-            ? toast.saved(`${row.values['name'] ?? 'The deal'} → ${outcome.stage}.`)
-            : toast.saved(
-                `${transition.trigger} was applied and the process left this deal in ${from}`
-                + (transition.guards.length > 0 ? ' — check its guards.' : '.'),
-              ),
+        // toast. Reading the stage back fixed the first case and disguised the second: "the
+        // process left this deal in Discovery" is what a decline and a slow feed both look like
+        // from here. The three now read differently, and the server is what tells them apart.
+        onSuccess: (outcome) => {
+          if (outcome.outcome === 'Moved') {
+            toast.saved(`${deal} → ${outcome.stage}.`)
+            return
+          }
+
+          if (outcome.outcome === 'Declined') {
+            toast.saved(
+              `The process declined ${outcome.trigger} and left ${deal} in ${outcome.stage}`
+              + (transition.guards.length > 0 ? ' — check its guards.' : '.'),
+            )
+            return
+          }
+
+          toast.saved(
+            `${outcome.trigger} is with the process, which has not decided yet. `
+            + `${deal} is still in ${outcome.stage}.`,
+          )
+        },
 
         onError: (error) => toast.failed(error, `${transition.trigger} was refused.`),
       },

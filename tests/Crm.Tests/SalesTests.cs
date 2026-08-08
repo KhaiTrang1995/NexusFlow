@@ -303,7 +303,8 @@ public sealed class SalesTests
         var advanced = await RunAsync(
             AdvanceOpportunityFlow.Plan,
             new AdvanceOpportunityFlow.Dispatcher(
-                applyOpportunityTrigger: new ApplyOpportunityTrigger(new SalesStore(crm.DataSource))),
+                applyOpportunityTrigger: new ApplyOpportunityTrigger(
+                    new SalesStore(crm.DataSource), new TriggerLogStore(crm.DataSource))),
             new AdvanceOpportunity(opportunity, "advance"),
             AdvanceOpportunityFlow.Projection,
             Representative,
@@ -325,7 +326,8 @@ public sealed class SalesTests
         var advanced = await RunAsync(
             AdvanceOpportunityFlow.Plan,
             new AdvanceOpportunityFlow.Dispatcher(
-                applyOpportunityTrigger: new ApplyOpportunityTrigger(new SalesStore(crm.DataSource))),
+                applyOpportunityTrigger: new ApplyOpportunityTrigger(
+                    new SalesStore(crm.DataSource), new TriggerLogStore(crm.DataSource))),
             new AdvanceOpportunity(opportunity, "advance"),
             AdvanceOpportunityFlow.Projection,
             Representative,

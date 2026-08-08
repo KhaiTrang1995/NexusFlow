@@ -220,14 +220,19 @@ public sealed class ConnectorNotificationTests
             SchemaVersion: "1.0.0",
             PartitionKey: opportunity.ToString(),
             Payload: JsonSerializer.Serialize(
-                new OpportunityStageChanged(opportunity, "advance"),
+                // No application id: this change stands for one the register has no row for, and
+                // the engine has to run the configured notification anyway. What a caller is told
+                // afterwards is TransitionTests's business.
+                new OpportunityStageChanged(opportunity, "advance", Guid.Empty),
                 CrmJsonContext.Default.OpportunityStageChanged));
 
         return host.RunAsync(
             RunWorkflowTransitionFlow.Plan,
             new RunWorkflowTransitionFlow.Dispatcher(
                 runConfiguredTransition: new RunConfiguredTransition(
-                    new ProcessStore(crm.DataSource), new ConnectorStore(crm.DataSource))),
+                    new ProcessStore(crm.DataSource),
+                    new ConnectorStore(crm.DataSource),
+                    new TriggerLogStore(crm.DataSource))),
             new FlowInvocation(
                 "corr-" + opportunity,
                 opportunity.ToString(),

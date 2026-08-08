@@ -55,9 +55,16 @@ public sealed record OrderPlaced(Guid OrderId, Guid QuoteId, Money Total);
 public sealed record AdvanceOpportunity(Guid OpportunityId, string Trigger);
 
 /// <summary>That the trigger was accepted and announced.</summary>
+/// <param name="ApplicationId">
+/// The handle for this application, and the only thing here a caller can act on.
+/// <strong>Nothing in this answer says where the deal went, because at the moment it is written
+/// nobody knows.</strong> The transition is decided afterwards, off the change feed; this id is
+/// what <see cref="ReadTriggerOutcome"/> takes, and reading it is how a caller learns which of
+/// <see cref="TriggerOutcome"/>'s three things happened.
+/// </param>
 /// <param name="OpportunityId">The opportunity.</param>
 /// <param name="Trigger">What was applied.</param>
-public sealed record OpportunityAdvanced(Guid OpportunityId, string Trigger);
+public sealed record OpportunityAdvanced(Guid ApplicationId, Guid OpportunityId, string Trigger);
 
 /// <summary>A stored quote, as much of it as the sales rules need.</summary>
 /// <param name="Id">The quote.</param>

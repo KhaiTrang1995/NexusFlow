@@ -188,6 +188,79 @@ public sealed class TransitionTests
             .ShouldBe("Follow up", "a typo in one action must not drop the actions after it.");
     }
 
+    /// <summary>
+    /// The two answers that used to look identical from outside, told apart.
+    /// </summary>
+    /// <remarks>
+    /// <strong>This is the pair the register exists for.</strong> A declined trigger and a trigger
+    /// the feed has not reached both leave the opportunity in the stage it was already in, and
+    /// neither is an error — declining is what a configured process is for. Until the engine wrote
+    /// its answer down, the only observation available to a caller was the stage, and the stage
+    /// says the same thing in both cases.
+    /// </remarks>
+    [Fact]
+    public async Task ATriggerNoTransitionCarriesIsRecordedAsDeclined()
+    {
+        await using var crm = await CrmSchemaHarness.CreateAsync(Cancellation);
+        var world = await WorldAsync(crm);
+        var register = new TriggerLogStore(crm.DataSource);
+
+        // 'signed' is a perfectly good trigger of some other stage. No transition carries it out
+        // of this one, which is the ordinary way a process declines a move.
+        var application = await ApplyAsync(register, world.Opportunity, "signed");
+
+        (await register.ReadAsync(CrmSchemaHarness.Northwind, application, Cancellation))!
+            .Outcome.ShouldBe(
+                TriggerOutcome.Pending,
+                "nothing has run yet, and undecided is a state rather than an absent answer.");
+
+        var run = await RunAsync(crm, world.Opportunity, "signed", Cancellation, application: application);
+
+        run.IsSuccess.ShouldBeTrue(Because(run));
+        run.Value!.TransitionId.ShouldBeNull();
+
+        var outcome = (await register.ReadAsync(
+            CrmSchemaHarness.Northwind, application, Cancellation))!;
+
+        outcome.Outcome.ShouldBe(
+            TriggerOutcome.Declined,
+            "the engine ran and took nothing, and a caller cannot tell that from a feed that has " +
+            "not arrived unless this row says so.");
+
+        outcome.Stage.ShouldBe("Qualification", "where it declined to move the deal out of.");
+        outcome.ActionsRun.ShouldBe(0);
+        outcome.DecidedAt.ShouldNotBeNull("an answer with no timestamp is one that never came.");
+
+        (await StageAsync(crm, world.Opportunity)).ShouldBe(world.Negotiation);
+    }
+
+    /// <summary>The other half: a trigger the definition does carry is recorded as the move.</summary>
+    [Fact]
+    public async Task AValidTriggerIsRecordedAsHavingMovedIt()
+    {
+        await using var crm = await CrmSchemaHarness.CreateAsync(Cancellation);
+        var world = await WorldAsync(crm);
+        var register = new TriggerLogStore(crm.DataSource);
+
+        await ActionAsync(crm, world.Advance, ActionKind.CreateTask, """{"subject":"Call the sponsor"}""");
+
+        var application = await ApplyAsync(register, world.Opportunity, "advance");
+
+        var run = await RunAsync(crm, world.Opportunity, "advance", Cancellation, application: application);
+
+        run.IsSuccess.ShouldBeTrue(Because(run));
+
+        var outcome = (await register.ReadAsync(
+            CrmSchemaHarness.Northwind, application, Cancellation))!;
+
+        outcome.Outcome.ShouldBe(TriggerOutcome.Moved);
+        outcome.Stage.ShouldBe("Closing", "the stage it entered, which is the sentence a screen prints.");
+        outcome.ActionsRun.ShouldBe(1, "counted after the actions ran, not from what was configured.");
+        outcome.DecidedAt.ShouldNotBeNull();
+
+        (await StageAsync(crm, world.Opportunity)).ShouldBe(world.Closing);
+    }
+
     [Fact]
     public async Task AnOpportunityAnotherTenantOwnsIsNotFound()
     {
@@ -243,6 +316,22 @@ public sealed class TransitionTests
         return new World(opportunity, negotiation, closing, advance);
     }
 
+    /// <summary>Records an application of a trigger, as the advance flow's step does.</summary>
+    private static async Task<Guid> ApplyAsync(TriggerLogStore register, Guid opportunity, string trigger)
+    {
+        var application = Guid.NewGuid();
+
+        await register.ApplyAsync(
+            CrmSchemaHarness.Northwind,
+            application,
+            opportunity,
+            trigger,
+            DateTimeOffset.UtcNow,
+            Cancellation).ConfigureAwait(false);
+
+        return application;
+    }
+
     private static async Task GuardAsync(
         CrmSchemaHarness crm, Guid transition, string field, GuardOperator op, string value) =>
         await crm.AsTenantAsync(
@@ -283,7 +372,8 @@ public sealed class TransitionTests
         Guid opportunity,
         string trigger,
         CancellationToken ct,
-        string? tenant = null)
+        string? tenant = null,
+        Guid application = default)
     {
         var host = new FlowHost(
             new FlowEngine(SystemClock.Instance),
@@ -302,14 +392,16 @@ public sealed class TransitionTests
             SchemaVersion: "1.0.0",
             PartitionKey: opportunity.ToString(),
             Payload: JsonSerializer.Serialize(
-                new OpportunityStageChanged(opportunity, trigger),
+                new OpportunityStageChanged(opportunity, trigger, application),
                 CrmJsonContext.Default.OpportunityStageChanged));
 
         return host.RunAsync(
             RunWorkflowTransitionFlow.Plan,
             new RunWorkflowTransitionFlow.Dispatcher(
                 runConfiguredTransition: new RunConfiguredTransition(
-                    new ProcessStore(crm.DataSource), new ConnectorStore(crm.DataSource))),
+                    new ProcessStore(crm.DataSource),
+                    new ConnectorStore(crm.DataSource),
+                    new TriggerLogStore(crm.DataSource))),
             new FlowInvocation(
                 "corr-" + opportunity,
                 opportunity.ToString(),

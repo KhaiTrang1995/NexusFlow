@@ -16,8 +16,9 @@ import {
 import { usePeriodRollUp, usePlanTree } from '@/api/queries/hooks'
 import type { AccountCoverage, LeadAttainment, OpportunityReadiness, PlanNode } from '@/api/contracts'
 import { fullMoney, money, percent } from '@/lib/format'
-import { usePeriod } from '@/features/exec/period'
-import { NoPeriods, PeriodPicker } from '@/features/exec/PeriodPicker'
+import { usePeriod, withPeriod } from '@/features/exec/period'
+import { PeriodPicker } from '@/features/exec/PeriodPicker'
+import { PeriodGate, hasNoPeriod } from './PeriodGate'
 import styles from './planning.module.css'
 
 /**
@@ -37,7 +38,7 @@ export function PortfolioScreen() {
   return (
     <Page>
       <PageHeader
-        eyebrow="Planning"
+        eyebrow={withPeriod('Planning', choice)}
         title="Portfolio"
         actions={
           <>
@@ -47,9 +48,9 @@ export function PortfolioScreen() {
         }
       />
 
-      {choice.isUndeclared ? <NoPeriods what="the portfolio" /> : null}
+      <PeriodGate choice={choice} what="the portfolio" />
 
-      <AsyncBoundary query={rollUp} skeletonRows={5} hidden={choice.isUndeclared}>
+      <AsyncBoundary query={rollUp} skeletonRows={5} hidden={hasNoPeriod(choice)}>
         {(data) => (
           <>
             <StatGrid columns={4}>
@@ -245,7 +246,7 @@ export function PortfolioScreen() {
         )}
       </AsyncBoundary>
 
-      <AsyncBoundary query={tree} skeletonRows={5} hidden={choice.isUndeclared}>
+      <AsyncBoundary query={tree} skeletonRows={5} hidden={hasNoPeriod(choice)}>
         {(data) => (
           <Panel padding="flush">
             <PanelHeader

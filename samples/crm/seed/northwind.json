@@ -197,6 +197,12 @@
         "vision": "Prove the platform in two reference accounts before the segment push.",
         "targetAmount": 900000,
         "currency": "EUR"
+      },
+      {
+        "period": "fy26",
+        "vision": "Two segments proven, then sell the platform rather than the pilot.",
+        "targetAmount": 4200000,
+        "currency": "EUR"
       }
     ],
     "orgMembers": [
@@ -414,19 +420,31 @@
     ],
     "reports": [
       {
-        "alias": "pipeline_by_outcome", "name": "pipeline_by_outcome",
-        "label": "Pipeline by outcome", "source": "Opportunity",
-        "dimension": "Outcome", "measure": "Sum", "measureOf": "Amount"
+        "alias": "pipeline_by_outcome",
+        "name": "pipeline_by_outcome",
+        "label": "Pipeline by outcome",
+        "source": "Opportunity",
+        "dimension": "Outcome",
+        "measure": "Sum",
+        "measureOf": "Amount"
       },
       {
-        "alias": "leads_by_status", "name": "leads_by_status",
-        "label": "Leads by status", "source": "Lead",
-        "dimension": "Status", "measure": "Count", "measureOf": null
+        "alias": "leads_by_status",
+        "name": "leads_by_status",
+        "label": "Leads by status",
+        "source": "Lead",
+        "dimension": "Status",
+        "measure": "Count",
+        "measureOf": null
       },
       {
-        "alias": "work_by_kind", "name": "work_by_kind",
-        "label": "Work by kind", "source": "Activity",
-        "dimension": "Kind", "measure": "Count", "measureOf": null
+        "alias": "work_by_kind",
+        "name": "work_by_kind",
+        "label": "Work by kind",
+        "source": "Activity",
+        "dimension": "Kind",
+        "measure": "Count",
+        "measureOf": null
       }
     ],
     "approvalProcesses": [
@@ -488,11 +506,15 @@
         "lifecycle": "Customer",
         "region": "NA",
         "owner": "33333333-3333-3333-3333-333333333333",
-        "values": { "segment": "strategic" }
+        "values": {
+          "segment": "strategic"
+        }
       },
       {
         "alias": "meridian",
-        "values": { "segment": "mid_market" },
+        "values": {
+          "segment": "mid_market"
+        },
         "name": "Meridian Logistics",
         "industry": "Logistics",
         "lifecycle": "Prospect",
@@ -634,10 +656,26 @@
         "opportunity": "northwind_expansion",
         "status": "Issued",
         "lines": [
-          { "sku": "PLATFORM-ENT", "quantity": 120, "unitPrice": 1250 },
-          { "sku": "RESIDENCY-EU", "quantity": 1, "unitPrice": 24000 },
-          { "sku": "ONBOARD-MANAGED", "quantity": 1, "unitPrice": 18000 },
-          { "sku": "SUPPORT-PREMIUM", "quantity": 8, "unitPrice": 1000 }
+          {
+            "sku": "PLATFORM-ENT",
+            "quantity": 120,
+            "unitPrice": 1250
+          },
+          {
+            "sku": "RESIDENCY-EU",
+            "quantity": 1,
+            "unitPrice": 24000
+          },
+          {
+            "sku": "ONBOARD-MANAGED",
+            "quantity": 1,
+            "unitPrice": 18000
+          },
+          {
+            "sku": "SUPPORT-PREMIUM",
+            "quantity": 8,
+            "unitPrice": 1000
+          }
         ],
         "discount": 16000,
         "currency": "EUR",
@@ -648,8 +686,16 @@
         "opportunity": "meridian_pilot",
         "status": "Draft",
         "lines": [
-          { "sku": "PLATFORM-PILOT", "quantity": 30, "unitPrice": 1250 },
-          { "sku": "ONBOARD-SELF", "quantity": 1, "unitPrice": 7500 }
+          {
+            "sku": "PLATFORM-PILOT",
+            "quantity": 30,
+            "unitPrice": 1250
+          },
+          {
+            "sku": "ONBOARD-SELF",
+            "quantity": 1,
+            "unitPrice": 7500
+          }
         ],
         "discount": 3000,
         "currency": "EUR",
@@ -754,6 +800,93 @@
             "description": "The regulator's checklist changes in October",
             "severity": "Low",
             "mitigation": "Confirm the version in writing before the pilot"
+          }
+        ]
+      },
+      {
+        "alias": "northwind_account_plan_q4",
+        "name": "northwind_fy26_q4",
+        "label": "Northwind — FY26 Q4",
+        "kind": "Account",
+        "period": "fy26_q4",
+        "owner": "rep-northwind-1",
+        "subject": "northwind",
+        "targetAmount": 620000,
+        "currency": "EUR",
+        "objectives": [
+          {
+            "description": "Expand from the platform team into operations",
+            "measure": "Revenue",
+            "target": 400000,
+            "status": "InProgress"
+          },
+          {
+            "description": "Executive sponsor named and met",
+            "measure": "Meetings",
+            "target": 1,
+            "status": "NotStarted"
+          }
+        ],
+        "steps": [
+          {
+            "description": "Quarterly business review with the platform team",
+            "owner": "rep-northwind-1",
+            "dueInDays": -3
+          },
+          {
+            "description": "Scope the operations rollout",
+            "owner": "rep-northwind-1",
+            "dueInDays": 12
+          },
+          {
+            "description": "Renewal paper to procurement",
+            "owner": "rep-northwind-1",
+            "dueInDays": 40
+          }
+        ],
+        "risks": [
+          {
+            "description": "Their operations lead has not been met",
+            "severity": "High",
+            "mitigation": "Ask the platform sponsor for the introduction at the review"
+          }
+        ]
+      },
+      {
+        "alias": "meridian_deal_plan_q4",
+        "name": "meridian_pilot_fy26_q4",
+        "label": "Meridian — Compliance Pilot",
+        "kind": "Opportunity",
+        "period": "fy26_q4",
+        "owner": "rep-northwind-1",
+        "subject": "meridian_pilot",
+        "targetAmount": 180000,
+        "currency": "EUR",
+        "objectives": [
+          {
+            "description": "Convert the pilot into a platform agreement",
+            "measure": "Deals",
+            "target": 1,
+            "status": "InProgress"
+          }
+        ],
+        "steps": [
+          {
+            "description": "Pilot outcome report to their compliance officer",
+            "owner": "rep-northwind-1",
+            "dueInDays": 5
+          },
+          {
+            "description": "Commercial terms with procurement",
+            "owner": "rep-northwind-1",
+            "dueInDays": 21
+          }
+        ],
+        "risks": [
+          {
+            "description": "The pilot budget was not the platform budget",
+            "severity": "Medium",
+            "mitigation": "Confirm who signs for the platform before the terms call"
           }
         ]
       }

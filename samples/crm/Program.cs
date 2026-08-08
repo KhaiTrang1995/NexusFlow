@@ -130,6 +130,7 @@ builder.Services.AddSingleton<ConversionStore>();
 builder.Services.AddSingleton<IntakeStore>();
 builder.Services.AddSingleton<ProcessStore>();
 builder.Services.AddSingleton<SalesStore>();
+builder.Services.AddSingleton<TriggerLogStore>();
 builder.Services.AddSingleton<WorkStore>();
 builder.Services.AddSingleton<EnrichmentProvider>();
 builder.Services.AddSingleton<EnrichmentStore>();

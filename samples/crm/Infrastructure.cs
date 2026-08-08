@@ -88,6 +88,8 @@ namespace Crm;
 [JsonSerializable(typeof(OrderPlaced))]
 [JsonSerializable(typeof(AdvanceOpportunity))]
 [JsonSerializable(typeof(OpportunityAdvanced))]
+[JsonSerializable(typeof(ReadTriggerOutcome))]
+[JsonSerializable(typeof(TriggerOutcomeView))]
 [JsonSerializable(typeof(CreateTask))]
 [JsonSerializable(typeof(TaskCreated))]
 [JsonSerializable(typeof(TasksEscalated))]
