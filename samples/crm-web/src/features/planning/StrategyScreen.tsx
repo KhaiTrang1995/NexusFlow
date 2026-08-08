@@ -3,6 +3,7 @@ import {
   AsyncBoundary,
   Button,
   Columns,
+  ErrorState,
   Page,
   PageHeader,
   Panel,
@@ -14,7 +15,7 @@ import {
   TextAreaField,
   TextField,
 } from '@/design/primitives'
-import { usePeriodRollUp } from '@/api/queries/hooks'
+import { usePeriodRollUp, useSetStrategy } from '@/api/queries/hooks'
 import { useToast } from '@/app/ToastProvider'
 import { money } from '@/lib/format'
 import { PERIOD_LABEL, usePeriod } from '@/features/exec/period'
@@ -22,6 +23,10 @@ import styles from './planning.module.css'
 
 /**
  * The number and the vision beside it.
+ *
+ * THE FORM WROTE NOTHING. It toasted "recorded" and posted nothing at all — on the screen that
+ * sets the number every executive surface rolls up to, and without which the board answers
+ * `crm.strategy_not_set` rather than a figure.
  *
  * ONE STRATEGY PER PERIOD, AND THE VISION IS NOT DECORATION. The backend allows exactly one, and
  * requires the sentence: a period with a target and no statement of what it is for is a number
@@ -32,6 +37,7 @@ export function StrategyScreen() {
   const toast = useToast()
   const [period] = usePeriod()
   const rollUp = usePeriodRollUp(period)
+  const set = useSetStrategy()
 
   const [target, setTarget] = useState('')
   const [vision, setVision] = useState('')
@@ -74,7 +80,26 @@ export function StrategyScreen() {
                     style={{ display: 'grid', gap: 12 }}
                     onSubmit={(event) => {
                       event.preventDefault()
-                      toast.saved(`Strategy for ${PERIOD_LABEL[period]} recorded.`)
+
+                      set.mutate(
+                        {
+                          period,
+                          vision: vision.trim(),
+                          target: Number(target),
+
+                          // The period's own currency, not one this form asks for. A strategy in
+                          // a currency the roll-up beside it does not use is two numbers that
+                          // cannot be compared, and nothing would say which was which.
+                          currency: data.currency,
+                        },
+                        {
+                          onSuccess: () =>
+                            toast.saved(
+                              `${PERIOD_LABEL[period]} is set to ${money(Number(target))} ${data.currency}.`,
+                            ),
+                          onError: (error) => toast.failed(error, 'That strategy was refused.'),
+                        },
+                      )
                     }}
                   >
                     <TextField
@@ -95,10 +120,12 @@ export function StrategyScreen() {
                     <Button
                       type="submit"
                       tone="primary"
-                      disabled={target.trim() === '' || vision.trim() === ''}
+                      disabled={target.trim() === '' || vision.trim() === '' || set.isPending}
                     >
-                      Set the strategy
+                      {set.isPending ? 'Setting…' : 'Set the strategy'}
                     </Button>
+
+                    {set.isError ? <ErrorState error={set.error} /> : null}
                   </form>
                 </PanelBody>
               </Panel>
