@@ -189,6 +189,50 @@ test.describe('a seller', () => {
     expect(list).toBeGreaterThan(0)
     expect(list - discount).toBe(total)
   })
+
+  /**
+   * The landing page is about this tenant.
+   *
+   * IT MADE NO REQUEST AT ALL. Pipeline, weighted value, won this quarter, what is closing and
+   * the task list were all derived from the prototype's fixture records, filtered by
+   * `owner === 'A. Ruiz'` — a name in a file, not the person signed in. A sweep of all
+   * forty-six routes found it, along with three other screens that never called the server.
+   *
+   * Asserted by switching a filter and watching a figure move: a fixture answers the same
+   * whoever asks, so "mine" and "everyone" agreeing is the shape of the defect.
+   */
+  test('sees a console built from the tenant, not from a fixture', async ({ page }) => {
+    await signIn(page, 'rep')
+
+    await page.goto('/')
+
+    // Names from the object model that this tenant has never heard of. A. Ruiz is deliberately
+    // not one of them — the seed places her, so she appears in the live attainment panel, and
+    // asserting her absence would fail against correct data.
+    for (const invented of ['M. Chen', 'J. Park', 'K. Osei', 'L. Novak']) {
+      await expect(page.locator('main'), invented).not.toContainText(invented)
+    }
+
+    // Three tiles claimed a trend against a week nobody stores, and a $160k target nobody set.
+    await expect(page.locator('main')).not.toContainText('vs last week')
+    await expect(page.locator('main')).not.toContainText('$160k target')
+
+    await expect(page.getByRole('button', { name: /^Open pipeline/ })).toBeVisible()
+
+    const mine = await page.locator('main').innerText()
+
+    await page.getByRole('button', { name: 'Everyone' }).click()
+    await expect(page.getByRole('button', { name: 'Everyone' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+
+    // Everyone's pipeline is a superset of one seller's, so the page cannot read identically
+    // unless the rows behind it were never filtered by owner in the first place.
+    await expect
+      .poll(async () => (await page.locator('main').innerText()) !== mine)
+      .toBe(true)
+  })
 })
 
 test.describe('a manager', () => {
@@ -276,9 +320,10 @@ test.describe('a manager', () => {
 
     await page.goto('/setup/validation')
 
-    const before = await page.locator('main table tbody tr').count()
-
-    await page.getByLabel('Name').fill(`min_deal_${before}`)
+    // Unique per run. Naming it from the current row count collided the moment two runs saw the
+    // same count — a name is unique per tenant, so the second run's refusal read as the write
+    // being broken.
+    await page.getByLabel('Name').fill(`min_deal_${Date.now()}`)
     await page.getByLabel('Field').selectOption('amount')
     await page.getByLabel('Operator').selectOption('LessThan')
     await page.getByLabel('Value').fill('1000')

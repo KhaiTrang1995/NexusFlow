@@ -18,10 +18,9 @@ import {
   TextAreaField,
 } from '@/design/primitives'
 import type { Column } from '@/design/primitives'
-import { useApprovalInbox, useCaseWorklist, useDecideApproval } from '@/api/queries/hooks'
+import { useApprovalInbox, useCaseWorklist, useDecideApproval, useEntityPage } from '@/api/queries/hooks'
 import type { WaitingApproval } from '@/api/contracts'
 import { useToast } from '@/app/ToastProvider'
-import { OBJECT_MODELS } from '@/fixtures/objects'
 import { dateTime, fromNow } from '@/lib/format'
 import styles from './work.module.css'
 
@@ -50,7 +49,13 @@ export function InboxScreen() {
   const cases = useCaseWorklist({ mineOnly: true, priority: null, breachedOnly: false })
   const decide = useDecideApproval()
 
-  const tasks = OBJECT_MODELS['task']?.records ?? []
+  // The tenant's own open activities. This lane showed the prototype's four tasks — the same
+  // four on every tenant, in an inbox headed "waiting on you".
+  const activities = useEntityPage('Activity')
+
+  const tasks = (activities.data?.records ?? []).filter(
+    (row) => row.values['status'] !== 'Completed',
+  )
 
   const approvalColumns: readonly Column<WaitingApproval>[] = [
     {
@@ -109,8 +114,8 @@ export function InboxScreen() {
         />
         <StatTile
           label="Tasks"
-          value={tasks.length}
-          note="due this week"
+          value={activities.data === undefined ? '—' : tasks.length}
+          note="open against this tenant"
           onActivate={() => setLane('tasks')}
           drillLabel="the tasks lane"
         />
@@ -203,16 +208,22 @@ export function InboxScreen() {
                   header: 'Task',
                   cell: (row) => (
                     <>
-                      <span className={styles.link}>{row['subject']}</span>
-                      <div className={styles.sub}>{row['related']}</div>
+                      <span className={styles.link}>{row.values['subject'] ?? '—'}</span>
+                      <div className={styles.sub}>{row.values['status'] ?? ''}</div>
                     </>
                   ),
                 },
-                { id: 'type', header: 'Type', cell: (row) => <Tag>{row['type']}</Tag> },
-                { id: 'due', header: 'Due', cell: (row) => row['due'] },
+                { id: 'type', header: 'Type', cell: (row) => <Tag>{row.values['kind'] ?? '—'}</Tag> },
+                {
+                  id: 'due',
+                  header: 'Due',
+                  // The server's instant, formatted here. A raw timestamptz in a column headed
+                  // "Due" is the same defect this application fixed on the record page.
+                  cell: (row) => dateTime(row.values['due_at']),
+                },
               ]}
               rows={tasks}
-              rowKey={(row) => row.id}
+              rowKey={(row) => row.recordId}
               empty="Nothing due."
             />
           ) : null}
