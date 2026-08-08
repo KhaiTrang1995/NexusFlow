@@ -16,7 +16,7 @@ import type { ReactNode } from 'react'
  * server would refuse anyway, never the enforcement itself. **The server is the enforcement.**
  */
 
-export type Persona = 'rep' | 'manager' | 'director' | 'admin'
+export type Persona = 'rep' | 'manager' | 'director' | 'admin' | 'contoso'
 
 export interface SessionUser {
   persona: Persona
@@ -86,6 +86,23 @@ const PEOPLE: Record<Persona, SessionUser> = {
     // manager is the control. Giving the director every grant would make the personas
     // indistinguishable, which is the opposite of what they exist to show.
     permissions: [READ, WRITE, ADMIN],
+  },
+  // A second tenant, and an empty one. Two things nothing else here demonstrates: that a
+  // token's `tid` claim decides which rows exist at all — not a filter this client applies —
+  // and what every screen looks like before anybody has put anything in it, which is the state
+  // a real organisation starts in and the one no seeded demo ever shows.
+  contoso: {
+    persona: 'contoso',
+    displayName: 'R. Adeyemi',
+    initials: 'RA',
+    token: 'rep-contoso-token',
+    tenantId: 'crm-contoso',
+    userId: 'rep-contoso-1',
+
+    // Contoso has no org chart and no accounts, so there is no owner uuid to hold. The one
+    // below belongs to nobody in this tenant, which is the honest value: "mine" is empty.
+    ownerId: '00000000-0000-0000-0000-000000000000',
+    permissions: [READ, WRITE],
   },
   admin: {
     persona: 'admin',
@@ -172,4 +189,7 @@ export const PERSONAS: readonly { id: Persona; label: string }[] = [
   { id: 'manager', label: 'Manager' },
   { id: 'director', label: 'Director' },
   { id: 'admin', label: 'Admin' },
+
+  // Labelled by its tenant rather than by a role, because that is what switching to it changes.
+  { id: 'contoso', label: 'Contoso' },
 ]

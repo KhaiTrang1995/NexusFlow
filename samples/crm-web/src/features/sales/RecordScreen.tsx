@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import {
   Button,
@@ -24,6 +24,8 @@ import { NewTaskDrawer } from './NewTaskDrawer'
 import { QuoteActions } from './QuoteActions'
 import { RelatedList } from './RelatedList'
 import { relatedLinksOf } from './related'
+import { remember } from '@/features/search/recents'
+import { useSession } from '@/session/SessionProvider'
 import styles from './RecordScreen.module.css'
 
 type RecordTab = 'details' | 'related' | 'activity' | 'files'
@@ -42,6 +44,7 @@ const EDITABLE: readonly string[] = ['Lead', 'Account', 'Contact', 'Opportunity'
 export function RecordScreen({ objectKey, id }: { objectKey: string; id: string }) {
   const navigate = useNavigate()
   const model = modelFor(objectKey)
+  const { tenantId } = useSession()
   const [tab, setTab] = useState<RecordTab>('details')
   const [editing, setEditing] = useState(false)
   const [quoting, setQuoting] = useState(false)
@@ -77,6 +80,20 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
 
     return toRows(objectKey, model, live.data?.records ?? [], accountNames)[0]
   }, [entity, model, objectKey, id, live.data, accountNames])
+
+  // What search's "recent" panel is. Written from here rather than tracked on the server: nothing
+  // in this application records that somebody looked at a row, and a write on every record open to
+  // fill one panel would be a poor trade. That panel used to hold four invented records.
+  useEffect(() => {
+    if (record !== undefined) {
+      remember(tenantId, {
+        objectKey: model.key,
+        id,
+        title: String(record[model.listCols[0] ?? 'name'] ?? id),
+        subtitle: model.stageField ? String(record[model.stageField]) : model.label,
+      })
+    }
+  }, [record, tenantId, model, id])
 
   if (entity !== null && live.isPending) {
     return (

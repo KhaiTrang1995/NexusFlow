@@ -45,13 +45,30 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
         {problem?.detail ?? (error instanceof Error ? error.message : 'The server did not answer.')}
       </p>
       {problem?.code ? <p className={styles.code}>{problem.code}</p> : null}
-      {onRetry ? (
+
+      {/*
+        NO RETRY ON A REFUSAL THE SERVER WILL REPEAT. A 403 is not a failed request: the caller
+        does not hold the permission, and pressing "Try again" produces the same 403 for ever.
+        The same is true of a validation refusal. Offering the button anyway teaches people that
+        this application's buttons do nothing.
+      */}
+      {onRetry && !isSettled(error) ? (
         <Button tone="secondary" onClick={onRetry}>
           Try again
         </Button>
       ) : null}
     </div>
   )
+}
+
+/**
+ * Whether asking again would get the same answer.
+ *
+ * Authorization and validation are decisions about the request, not accidents of the moment. A
+ * not-found is deliberately not in this list: the row may appear.
+ */
+export function isSettled(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 422)
 }
 
 /** Placeholder bars while a panel loads. */
@@ -69,6 +86,12 @@ export interface AsyncBoundaryProps<T> {
   query: { data: T | undefined; isPending: boolean; isError: boolean; error: unknown; refetch: () => void }
   /** Rows of skeleton while pending. */
   skeletonRows?: number
+  /**
+   * The caller has already explained why nothing was asked for. A disabled query is pending for
+   * ever, so without this a screen that cannot ask — no period is declared, no record is
+   * selected — shows a skeleton that never resolves beside the sentence saying why.
+   */
+  hidden?: boolean
   children: (data: T) => ReactNode
 }
 
@@ -78,7 +101,8 @@ export interface AsyncBoundaryProps<T> {
  * Every screen in this application reads its data through this, so a failure looks the same
  * everywhere and no screen can accidentally render a half-loaded page by forgetting a guard.
  */
-export function AsyncBoundary<T>({ query, skeletonRows, children }: AsyncBoundaryProps<T>) {
+export function AsyncBoundary<T>({ query, skeletonRows, hidden, children }: AsyncBoundaryProps<T>) {
+  if (hidden === true) return null
   if (query.isError) return <ErrorState error={query.error} onRetry={query.refetch} />
   if (query.isPending || query.data === undefined)
     return <Skeleton {...(skeletonRows !== undefined ? { rows: skeletonRows } : {})} />

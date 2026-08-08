@@ -1,5 +1,5 @@
 import { useNavigate } from '@tanstack/react-router'
-import { AsyncBoundary, Button, Page, PageHeader, Tag } from '@/design/primitives'
+import { AsyncBoundary, Button, EmptyState, Page, PageHeader, Tag } from '@/design/primitives'
 import { useCaseWorklist } from '@/api/queries/hooks'
 import type { QueuedCase } from '@/api/contracts'
 import { fromNow } from '@/lib/format'
@@ -30,7 +30,17 @@ export function CaseBoardScreen() {
       />
 
       <AsyncBoundary query={worklist} skeletonRows={4}>
-        {(data) => (
+        {(data) =>
+          // FOUR EMPTY COLUMNS SAY NOTHING. A board with no cases rendered as four headings and
+          // four zeroes — ninety characters of screen that a reader cannot distinguish from a
+          // board that failed to load. The lanes are still worth drawing once there is anything
+          // in them; with nothing, a sentence is the honest answer.
+          data.cases.length === 0 ? (
+            <EmptyState
+              title="No open cases"
+              detail="Every lane is empty because this queue is. A case opened from the queue screen appears here in the lane its status names."
+            />
+          ) : (
           <div className={styles.board}>
             {LANES.map((lane) => {
               const cards = data.cases.filter((row) => row.status === lane)
@@ -50,7 +60,8 @@ export function CaseBoardScreen() {
               )
             })}
           </div>
-        )}
+          )
+        }
       </AsyncBoundary>
     </Page>
   )

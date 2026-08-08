@@ -26,7 +26,7 @@ test.skip(
 )
 
 /** The persona switch is persisted, so a full page load keeps the chair it was set to. */
-async function signIn(page: Page, persona: 'rep' | 'manager' | 'director') {
+async function signIn(page: Page, persona: 'rep' | 'manager' | 'director' | 'contoso') {
   await page.goto('/')
   await page.evaluate((who) => localStorage.setItem('crm-web.persona', who), persona)
 }
@@ -460,5 +460,74 @@ test.describe('a seller, again', () => {
     await expect(page.locator('ul li').first()).toBeVisible()
     await expect(page.getByRole('button', { name: 'Place somebody' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Move' })).toHaveCount(0)
+  })
+})
+
+/**
+ * The state every real customer starts in, which nothing had ever looked at.
+ *
+ * <strong>Empty and broken looked identical.</strong> Every screen in this application had been
+ * checked against a seeded tenant. Opened as an organisation that has declared nothing, twelve of
+ * them showed "the resource was not found — no period named 'fy26_q3' has been declared" under a
+ * selector printing Q3 FY26, because the period names were constants in the client rather than
+ * the tenant's own; three more rendered a heading and nothing at all, because a failed read fell
+ * through to a query that stayed pending for ever and a skeleton is `aria-hidden`.
+ */
+test.describe('an organisation that has just started', () => {
+  test('is told what it has not configured, rather than shown a not-found', async ({ page }) => {
+    await signIn(page, 'contoso')
+
+    for (const path of ['/exec/board', '/exec/kpis', '/plan/portfolio', '/plan/operations']) {
+      await page.goto(path)
+
+      await expect(page.getByText('No periods have been declared'), path).toBeVisible()
+      await expect(page.getByText('crm.period_not_found'), path).toHaveCount(0)
+    }
+  })
+
+  test('renders something on a plan screen whose read cannot succeed', async ({ page }) => {
+    await signIn(page, 'contoso')
+    await page.goto('/plan/accounts')
+
+    // The whole page used to be 22 characters: a heading, and a skeleton nobody could see.
+    await expect(page.locator('main')).toContainText('No periods have been declared')
+  })
+
+  test('shows no other tenant rows in the search panel', async ({ page }) => {
+    await signIn(page, 'contoso')
+    await page.goto('/search')
+
+    // "Recent — what you looked at last" was four hard-coded records of the seeded tenant, shown
+    // to everybody, each linking to an id that resolves to nothing.
+    await expect(page.getByText('Nothing opened yet')).toBeVisible()
+    await expect(page.locator('main')).not.toContainText('Northwind')
+  })
+
+  test('offers no retry on a refusal the server will repeat', async ({ page }) => {
+    await signIn(page, 'contoso')
+    await page.goto('/analytics/reports')
+
+    await expect(page.getByText('authorization.permission_denied')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0)
+  })
+})
+
+test.describe('the recent panel', () => {
+  /**
+   * It is a fact about this browser, and it has to actually be written.
+   *
+   * The empty case is asserted above; without this, the panel could be permanently empty and
+   * still pass, which is the fixture replaced by nothing rather than by the truth.
+   */
+  test('fills from the record that was opened', async ({ page }) => {
+    await signIn(page, 'rep')
+    await openFirstRecord(page, '/records/account')
+
+    const opened = await page.locator('h1').first().innerText()
+
+    await page.goto('/search')
+
+    await expect(page.getByText('Nothing opened yet')).toHaveCount(0)
+    await expect(page.locator('main')).toContainText(opened)
   })
 })

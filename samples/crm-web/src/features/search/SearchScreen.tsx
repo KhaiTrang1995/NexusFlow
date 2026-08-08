@@ -13,6 +13,8 @@ import {
 } from '@/design/primitives'
 import { useSearch } from '@/api/queries/hooks'
 import { OBJECT_MODELS } from '@/fixtures/objects'
+import { useSession } from '@/session/SessionProvider'
+import { readRecents } from './recents'
 import styles from './search.module.css'
 
 /**
@@ -31,7 +33,12 @@ export function SearchScreen() {
   const [phrase, setPhrase] = useState('')
   const [kind, setKind] = useState<string | null>(null)
 
+  const { tenantId } = useSession()
   const results = useSearch(phrase)
+
+  // Read once per mount rather than watched: the list only changes on another screen, and a
+  // storage listener here would be a subscription for a panel nobody is looking at.
+  const recent = useMemo(() => readRecents(tenantId), [tenantId])
 
   const kinds = useMemo(
     () => [...new Set((results.data?.hits ?? []).map((hit) => hit.kind))],
@@ -76,30 +83,37 @@ export function SearchScreen() {
       <div style={{ marginTop: 14 }}>
         {phrase.trim().length < 2 ? (
           <Panel padding="flush">
-            <PanelHeader title="Recent" note="what you looked at last" />
-            <div>
-              {RECENT.map((entry) => (
-                <button
-                  key={entry.id}
-                  type="button"
-                  className={styles.hit}
-                  onClick={() =>
-                    void navigate({
-                      to: '/records/$object/$id',
-                      params: { object: entry.objectKey, id: entry.id },
-                    })
-                  }
-                >
-                  <div>
-                    <div className={styles.hitTitle}>{entry.title}</div>
-                    <div className={styles.sub}>{entry.subtitle}</div>
-                  </div>
-                  <Tag tone="outline" className={styles.kindTag}>
-                    {OBJECT_MODELS[entry.objectKey]?.label}
-                  </Tag>
-                </button>
-              ))}
-            </div>
+            <PanelHeader title="Recent" note="what you opened, in this browser" />
+            {recent.length === 0 ? (
+              <EmptyState
+                title="Nothing opened yet"
+                detail="Records you open appear here. This list is this browser's, not the server's — nothing in this application records that somebody looked at a row."
+              />
+            ) : (
+              <div>
+                {recent.map((entry) => (
+                  <button
+                    key={`${entry.objectKey}/${entry.id}`}
+                    type="button"
+                    className={styles.hit}
+                    onClick={() =>
+                      void navigate({
+                        to: '/records/$object/$id',
+                        params: { object: entry.objectKey, id: entry.id },
+                      })
+                    }
+                  >
+                    <div>
+                      <div className={styles.hitTitle}>{entry.title}</div>
+                      <div className={styles.sub}>{entry.subtitle}</div>
+                    </div>
+                    <Tag tone="outline" className={styles.kindTag}>
+                      {OBJECT_MODELS[entry.objectKey]?.label}
+                    </Tag>
+                  </button>
+                ))}
+              </div>
+            )}
           </Panel>
         ) : (
           <AsyncBoundary query={results} skeletonRows={5}>
@@ -148,9 +162,3 @@ export function SearchScreen() {
   )
 }
 
-const RECENT = [
-  { objectKey: 'opportunity', id: 'O-1041', title: 'Northwind — Platform Expansion', subtitle: 'Negotiation · closes 28 Aug' },
-  { objectKey: 'account', id: 'A-101', title: 'Northwind Systems', subtitle: 'Strategic · SaaS · NA' },
-  { objectKey: 'contact', id: 'C-502', title: 'Ron Petrov', subtitle: 'CFO · Northwind Systems' },
-  { objectKey: 'quote', id: 'Q-9002', title: 'Q-9002', subtitle: 'In Review · Cardinal — Enterprise Pilot' },
-]

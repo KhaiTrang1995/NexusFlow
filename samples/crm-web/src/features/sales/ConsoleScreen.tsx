@@ -21,7 +21,7 @@ import type { Column } from '@/design/primitives'
 import { Funnel, StackedBars } from '@/design/charts'
 import { date, dateTime, fullMoney, money, percent } from '@/lib/format'
 import { useQuotaAttainment } from '@/api/queries/hooks'
-import { PERIODS } from '@/features/exec/period'
+import { usePeriod } from '@/features/exec/period'
 import { useConsole } from './useConsole'
 import type { Deal, Task } from './useConsole'
 
@@ -40,7 +40,8 @@ export function ConsoleScreen() {
 
   // The reporting line scopes this on the server: a manager sees their people, a seller sees
   // themselves. The period is the one every executive screen shares.
-  const attainment = useQuotaAttainment(PERIODS[0] as string)
+  const choice = usePeriod()
+  const attainment = useQuotaAttainment(choice.period)
 
   const closingColumns: readonly Column<Deal>[] = [
     {
@@ -386,6 +387,13 @@ export function ConsoleScreen() {
                     </div>
                   ))
               : null}
+
+            {choice.isUndeclared ? (
+              <p className={styles.sub}>
+                No periods have been declared, so nobody carries a number yet. An administrator
+                declares them; this panel fills in the moment one exists.
+              </p>
+            ) : null}
 
             {attainment.isSuccess
             && attainment.data.rows.filter((row) => row.measure === 'Revenue').length === 0 ? (
