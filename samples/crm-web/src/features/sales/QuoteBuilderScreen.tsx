@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Button,
   Columns,
@@ -12,11 +12,10 @@ import {
   Tag,
   TextField,
 } from '@/design/primitives'
-import { useSubmitForApproval } from '@/api/queries/hooks'
+import { useEntityRecord, useRelatedRecords, useSubmitForApproval } from '@/api/queries/hooks'
 import { useToast } from '@/app/ToastProvider'
 import { useSession } from '@/session/SessionProvider'
-import { fullMoney, percent } from '@/lib/format'
-import { modelFor } from '@/fixtures/objects'
+import { date, fullMoney, percent } from '@/lib/format'
 import styles from './QuoteBuilderScreen.module.css'
 
 interface Line {
@@ -27,32 +26,56 @@ interface Line {
   discount: number
 }
 
-const DEFAULT_LINES: readonly Line[] = [
-  { id: 'l1', product: 'Platform licence — Enterprise', quantity: 120, unitPrice: 1_150, discount: 8 },
-  { id: 'l2', product: 'Data residency add-on (EU)', quantity: 1, unitPrice: 24_000, discount: 0 },
-  { id: 'l3', product: 'Onboarding — managed', quantity: 1, unitPrice: 18_000, discount: 15 },
-  { id: 'l4', product: 'Premium support', quantity: 12, unitPrice: 1_400, discount: 5 },
-]
-
 /**
- * The quote builder.
+ * The quote builder — a what-if over a quote that exists.
  *
- * THE THRESHOLD IS THE FEATURE. A quote over the discount threshold needs an approval, and the
- * screen says so *before* the seller sends it rather than refusing afterwards. The submission goes
- * to the real approvals surface, which answers whether an approval is needed at all — and "no
- * approval needed" is a real answer that is said out loud rather than looking like a failed call.
+ * THE LINES ARE THE QUOTE'S OWN. Four written-out products used to sit here on every quote in the
+ * tenant: a platform licence, a residency add-on, onboarding and support, priced identically
+ * whatever the record. Reached from a real quote's "Open builder", that is not a placeholder — it
+ * is four rows that look like the customer's and are not.
  *
- * THE TOTAL IS DERIVED, NEVER TYPED. Every line's discount folds into one number, and the header
- * discount is that number expressed against the list price. A quote whose total could be edited
- * independently of its lines is a quote nobody can reconcile.
+ * WHAT IS EDITED HERE IS NOT SAVED, AND THE PANEL ON THE RIGHT IS WHY. The recorded status, total
+ * and expiry come from the server; the arithmetic on the left is what the quote would become. This
+ * build has no capability to re-price an issued quote, so a builder that appeared to save would be
+ * the worst of the three possibilities.
+ *
+ * WHETHER IT NEEDS APPROVING IS THE SERVER'S ANSWER, NOT A THRESHOLD WRITTEN HERE. It used to be
+ * `rate > 0.2` in this file — a second copy of the one rule this sample keeps proving nobody
+ * should write twice, on the screen where a seller reads it. The recorded quote is Draft or it is
+ * not, and the server decided which.
  */
 export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
   const toast = useToast()
   const session = useSession()
   const submit = useSubmitForApproval()
 
-  const quote = modelFor('quote').records.find((row) => row.id === quoteId)
-  const [lines, setLines] = useState<readonly Line[]>(DEFAULT_LINES)
+  const record = useEntityRecord('Quote', 'quote_id', quoteId)
+  const priced = useRelatedRecords('QuoteLine', 'quote_id', quoteId)
+
+  const quote = record.data?.records[0]?.values ?? null
+
+  const [lines, setLines] = useState<readonly Line[]>([])
+
+  // Seeded from the server once, then the reader's to edit. A `useMemo` would throw away every
+  // change the moment anything else on the page refetched.
+  useEffect(() => {
+    if (priced.data === undefined) {
+      return
+    }
+
+    setLines(
+      priced.data.records.map((row) => ({
+        id: row.recordId,
+        product: row.values['sku'] ?? '—',
+        quantity: Number(row.values['quantity'] ?? 0),
+        unitPrice: Number(row.values['unit_price'] ?? 0),
+
+        // A line's discount is not a column: the schema discounts the quote, not the line. Zero
+        // here is the truth, and the reader may change it to ask what-if.
+        discount: 0,
+      })),
+    )
+  }, [priced.data])
 
   const totals = useMemo(() => {
     const list = lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0)
@@ -63,14 +86,15 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
     return { list, net, given: list - net, rate: list === 0 ? 0 : (list - net) / list }
   }, [lines])
 
-  // The sample's own threshold: over twenty per cent needs somebody senior to say yes.
-  const needsApproval = totals.rate > 0.2
+  // The server's answer, not this file's. A quote it left in Draft is one it decided needs
+  // clearing; anything else it issued.
+  const isDraft = quote?.['status'] === 'Draft'
 
   return (
     <Page>
       <PageHeader
         eyebrow={`Quote · ${quoteId}`}
-        title={String(quote?.['opportunity'] ?? 'Quote builder')}
+        title={quote === null ? 'Quote builder' : `Quote ${quoteId.slice(0, 8)}`}
         actions={
           <>
             <Button disabled title="This build renders no document for a quote.">
@@ -100,12 +124,13 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
         }
       />
 
-      {needsApproval ? (
+      {isDraft ? (
         <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
           <div className={styles.warn}>
-            <strong>{percent(totals.rate, 1)} discount.</strong> Over the twenty per cent threshold,
-            so this quote needs an approval before it can be sent. Submitting it asks the configured
-            process who has to say yes — and a submitter can never be the one who approves it.
+            <strong>The server left this quote in Draft.</strong> Its discount crossed the
+            threshold, so it needs clearing before an order can be taken against it. Submitting
+            asks the configured process who has to say yes — and a submitter can never be the one
+            who approves it.
             {!session.can('crm.discount.approve') ? ' You do not hold the approval grant yourself.' : ''}
           </div>
         </Panel>
@@ -115,7 +140,7 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
         <Panel padding="flush">
           <PanelHeader
             title="Lines"
-            note={`${lines.length} · edit a quantity or a discount and the total follows`}
+            note={`${lines.length} · from the record; editing here changes nothing on it`}
             actions={
               <Button
                 size="sm"
@@ -123,7 +148,10 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
                   setLines((current) => [
                     ...current,
                     {
-                      id: `l${current.length + 1}`,
+                      // Not a server id: this row exists only in the sandbox. A key derived from
+                      // the length repeats itself after a delete, which React resolves by
+                      // reusing the wrong input.
+                      id: `sandbox-${current.length}-${current.reduce((n, l) => n + l.quantity, 0)}`,
                       product: 'New line',
                       quantity: 1,
                       unitPrice: 0,
@@ -224,7 +252,7 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
               <span>−{fullMoney(totals.given)}</span>
               <span className={styles.totalLabel}>Effective rate</span>
               <span>
-                <Tag tone={needsApproval ? 'warning' : 'positive'}>{percent(totals.rate, 1)}</Tag>
+                <Tag tone="outline">{percent(totals.rate, 1)}</Tag>
               </span>
               <span className={styles.grandLabel}>Net total</span>
               <span className={styles.grand}>{fullMoney(totals.net)}</span>
@@ -232,16 +260,19 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
           </Panel>
 
           <Panel padding="flush">
-            <PanelHeader title="Quote" note={String(quote?.['status'] ?? 'Draft')} />
+            <PanelHeader title="On the record" note={quote?.['status'] ?? '—'} />
             <PanelBody style={{ padding: 0 }}>
-              <FieldRow label="Number">{quoteId}</FieldRow>
-              <FieldRow label="Opportunity">{String(quote?.['opportunity'] ?? '—')}</FieldRow>
-              <FieldRow label="Owner">{String(quote?.['owner'] ?? '—')}</FieldRow>
-              <FieldRow label="Expires">{String(quote?.['expires'] ?? '—')}</FieldRow>
+              <FieldRow label="Quote">{quoteId}</FieldRow>
+              <FieldRow label="Opportunity">{quote?.['opportunity_id'] ?? '—'}</FieldRow>
+              <FieldRow label="Expires">{date(quote?.['valid_until'])}</FieldRow>
+              <FieldRow label="Recorded discount">
+                {quote === null ? '—' : fullMoney(Number(quote['discount']))}
+              </FieldRow>
               <FieldRow label="Recorded total">
-                {quote ? fullMoney(Number(quote['total'])) : '—'}
+                {quote === null ? '—' : fullMoney(Number(quote['total']))}
                 <div className={styles.sub}>
-                  What is on the record. The builder above is what it would become.
+                  What the server holds. The builder on the left is arithmetic about what it could
+                  become, and this build cannot re-price an issued quote.
                 </div>
               </FieldRow>
             </PanelBody>

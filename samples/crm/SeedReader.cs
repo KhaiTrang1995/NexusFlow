@@ -96,7 +96,10 @@ public static class SeedReader
                 Leads = data.Leads ?? [],
                 Records = data.Records ?? [],
                 Activities = data.Activities ?? [],
-                Quotes = data.Quotes ?? [],
+                // Each quote's lines too. A quote written without them reaches Validate with a
+                // null collection, and "at least one line" would be a null-reference exception
+                // rather than the sentence about the file it is meant to be.
+                Quotes = [.. (data.Quotes ?? []).Select(quote => quote with { Lines = quote.Lines ?? [] })],
                 Orders = data.Orders ?? [],
                 Plans = data.Plans ?? [],
             },
@@ -534,10 +537,31 @@ public static class SeedReader
                     SeedErrors.UnknownReference("quote " + quote.Alias, quote.Opportunity));
             }
 
-            if (quote.Discount > quote.Subtotal)
+            // A quote is its lines. One with none has a total nobody can reconcile and a builder
+            // with nothing to draw, which is what every seeded quote was before they existed.
+            if (quote.Lines.Count == 0)
             {
                 return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange(quote.Alias, "discount", "no more than the subtotal"));
+                    SeedErrors.OutOfRange(quote.Alias, "lines", "at least one"));
+            }
+
+            foreach (var line in quote.Lines)
+            {
+                if (line.Quantity <= 0 || line.UnitPrice < 0)
+                {
+                    return Result.Fail<SeedDocument>(SeedErrors.OutOfRange(
+                        quote.Alias,
+                        "line '" + line.Sku + "'",
+                        "a positive quantity and a price that is not negative"));
+                }
+            }
+
+            // Against the sum, because that is what the subtotal will be. A discount larger than
+            // it makes a negative total, which the schema takes without complaint.
+            if (quote.Discount > quote.Lines.Sum(line => line.Quantity * line.UnitPrice))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.OutOfRange(quote.Alias, "discount", "no more than the lines add up to"));
             }
         }
 

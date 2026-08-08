@@ -106,6 +106,16 @@ public sealed class EntityQueryStore
         LIMIT @limit
         """;
 
+    private const string QuoteLinePage = """
+        SELECT quote_line_id, to_jsonb(l) AS body
+        FROM quote_line l, LATERAL (SELECT to_jsonb(l) AS body) AS projected
+        WHERE (@after IS NULL OR quote_line_id > @after)
+        """ + Predicate + """
+
+        ORDER BY quote_line_id
+        LIMIT @limit
+        """;
+
     private const string OrderPage = """
         SELECT order_id, to_jsonb(o) AS body
         FROM sales_order o, LATERAL (SELECT to_jsonb(o) AS body) AS projected
@@ -157,7 +167,7 @@ public sealed class EntityQueryStore
         var command = connection.CreateCommand();
         await using var closingCommand = command.ConfigureAwait(false);
 
-        // Four constants chosen by the entity. A table name cannot be a parameter, and building
+        // One constant per entity, chosen by it. A table name cannot be a parameter, and building
         // one from a caller's value is the shape SqlFitnessTests exists to refuse.
         command.CommandText = query.Entity switch
         {
@@ -165,6 +175,7 @@ public sealed class EntityQueryStore
             ReadableEntity.Account => AccountPage,
             ReadableEntity.Contact => ContactPage,
             ReadableEntity.Quote => QuotePage,
+            ReadableEntity.QuoteLine => QuoteLinePage,
             ReadableEntity.Order => OrderPage,
             ReadableEntity.Activity => ActivityPage,
             _ => OpportunityPage,

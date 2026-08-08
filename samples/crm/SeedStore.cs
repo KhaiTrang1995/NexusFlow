@@ -1,3 +1,4 @@
+using System.Globalization;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -148,6 +149,12 @@ public sealed class SeedStore
             due_at, status, completed_at, escalation_count)
         VALUES (@id, @tenant, @kind, @subject, @parentKind, @parent, @owner, @due, @status, NULL, 0)
         ON CONFLICT (activity_id) DO NOTHING
+        """;
+
+    private const string InsertQuoteLine = """
+        INSERT INTO quote_line (quote_line_id, quote_id, sku, quantity, unit_price, currency)
+        VALUES (@id, @quote, @sku, @quantity, @price, @currency)
+        ON CONFLICT (quote_line_id) DO NOTHING
         """;
 
     private const string InsertQuote = """
@@ -727,27 +734,63 @@ public sealed class SeedStore
     /// <param name="ct">Cancels the call.</param>
     /// <returns>Whether a row was inserted rather than already there.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="quote"/> is null.</exception>
-    public ValueTask<bool> WriteQuoteAsync(
+    public async ValueTask<bool> WriteQuoteAsync(
         string tenant, SeedQuote quote, DateTimeOffset now, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(quote);
 
-        return WriteAsync(tenant, InsertQuote, command =>
+        // The subtotal is the lines, not a figure beside them. A file that stated both could state
+        // a subtotal they do not add up to, and the quote builder would draw four rows that
+        // disagree with the total above them.
+        var subtotal = quote.Lines.Sum(line => line.Quantity * line.UnitPrice);
+        var id = SeedIds.For(tenant, "quote", quote.Alias);
+
+        var connection = await OpenAsync(tenant, ct).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
+
+        // One transaction, because a quote with a total and no lines is exactly the row this
+        // change exists to stop existing.
+        var transaction = await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+        await using var closingTransaction = transaction.ConfigureAwait(false);
+
+        var written = await ExecuteAsync(connection, InsertQuote, command =>
         {
-            Add(command, "id", NpgsqlDbType.Uuid, SeedIds.For(tenant, "quote", quote.Alias));
+            Add(command, "id", NpgsqlDbType.Uuid, id);
             Add(command, "tenant", NpgsqlDbType.Text, tenant);
             Add(command, "opportunity", NpgsqlDbType.Uuid,
                 SeedIds.For(tenant, "opportunity", quote.Opportunity));
             Add(command, "status", NpgsqlDbType.Text, quote.Status.ToString());
-            Add(command, "subtotal", NpgsqlDbType.Numeric, quote.Subtotal);
+            Add(command, "subtotal", NpgsqlDbType.Numeric, subtotal);
             Add(command, "discount", NpgsqlDbType.Numeric, quote.Discount);
 
             // Computed rather than carried. A file that stated all three could state a total that
             // is not the subtotal less the discount, and nothing downstream would ever say so.
-            Add(command, "total", NpgsqlDbType.Numeric, quote.Subtotal - quote.Discount);
+            Add(command, "total", NpgsqlDbType.Numeric, subtotal - quote.Discount);
             Add(command, "currency", NpgsqlDbType.Text, quote.Currency);
             Add(command, "valid", NpgsqlDbType.TimestampTz, now.AddDays(quote.ValidForDays));
-        }, ct);
+        }, ct).ConfigureAwait(false);
+
+        for (var ordinal = 0; ordinal < quote.Lines.Count; ordinal++)
+        {
+            var line = quote.Lines[ordinal]!;
+
+            // Derived from the quote and the position, so re-applying the file writes the same
+            // line rather than a second one beside it.
+            await ExecuteAsync(connection, InsertQuoteLine, command =>
+            {
+                Add(command, "id", NpgsqlDbType.Uuid,
+                    SeedIds.For(tenant, "quote_line", quote.Alias + ":" + ordinal.ToString(CultureInfo.InvariantCulture)));
+                Add(command, "quote", NpgsqlDbType.Uuid, id);
+                Add(command, "sku", NpgsqlDbType.Text, line.Sku);
+                Add(command, "quantity", NpgsqlDbType.Integer, line.Quantity);
+                Add(command, "price", NpgsqlDbType.Numeric, line.UnitPrice);
+                Add(command, "currency", NpgsqlDbType.Text, quote.Currency);
+            }, ct).ConfigureAwait(false);
+        }
+
+        await transaction.CommitAsync(ct).ConfigureAwait(false);
+
+        return written;
     }
 
     /// <summary>Writes an order, taking its money from the quote it was placed from.</summary>

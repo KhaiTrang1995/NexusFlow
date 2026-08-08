@@ -63,6 +63,8 @@ public static class EntityColumns
              "valid_until", "approved_by"],
         ReadableEntity.Order =>
             ["order_id", "quote_id", "account_id", "status", "total", "currency", "placed_at"],
+        ReadableEntity.QuoteLine =>
+            ["quote_line_id", "quote_id", "sku", "quantity", "unit_price", "currency"],
         ReadableEntity.Activity =>
             ["activity_id", "kind", "subject", "relates_to_kind", "relates_to_id", "owner_id",
              "due_at", "status", "completed_at", "escalation_count"],

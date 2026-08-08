@@ -151,6 +151,44 @@ test.describe('a seller', () => {
     await page.getByRole('tab', { name: /Files/ }).click()
     await expect(page.getByText('This build stores no files')).toBeVisible()
   })
+
+  /**
+   * The builder's lines are the quote's, and they reconcile with what the server holds.
+   *
+   * Four written-out products used to sit here on every quote in the tenant — a platform licence,
+   * a residency add-on, onboarding and support — priced identically whatever the record. This
+   * asserts the arithmetic instead: the lines add up to the list price, and the list price less
+   * the recorded discount is the recorded total. Three numbers from two sources agreeing is the
+   * only check that catches a builder drawing somebody else's quote.
+   */
+  test('sees a builder whose lines reconcile with the record', async ({ page }) => {
+    await signIn(page, 'rep')
+
+    await openFirstRecord(page, '/records/quote', 'Issued')
+    await page.getByRole('button', { name: 'Open builder' }).click()
+
+    await expect(page.locator('table tbody tr').first()).toBeVisible()
+
+    // Read off the rendered page rather than by walking to a parent element: the totals are a
+    // two-column grid, so a label's parent is the whole grid and "the number next to it" is every
+    // number in the panel concatenated.
+    const shown = await page.locator('main').innerText()
+
+    const money = (label: string) => {
+      const found = new RegExp(`${label}\\s*\\n?−?\\$([0-9,]+)`).exec(shown)
+
+      expect(found, `no figure beside '${label}'`).not.toBeNull()
+
+      return Number(found![1]!.replace(/,/g, ''))
+    }
+
+    const list = money('List price')
+    const discount = money('Recorded discount')
+    const total = money('Recorded total')
+
+    expect(list).toBeGreaterThan(0)
+    expect(list - discount).toBe(total)
+  })
 })
 
 test.describe('a manager', () => {
