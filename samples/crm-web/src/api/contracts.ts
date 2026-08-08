@@ -1022,3 +1022,72 @@ export interface ReportResult {
   /** Largest first, which is the order the server sorted them in. */
   groups: ReportGroup[]
 }
+
+/**
+ * Declares a rule that refuses a write when it holds.
+ *
+ * READS BACKWARDS UNTIL SAID ALOUD: the rule describes the condition that is *refused*, not the
+ * one that is required. `discount GreaterThan 35` refuses discounts over thirty-five.
+ *
+ * Exactly one of `appliesTo` and `target` — a rule on a built-in entity or a rule on a custom
+ * object, never both and never neither.
+ */
+export interface DefineValidationRule {
+  appliesTo: EntityKind | null
+  target: string | null
+  name: string
+  field: string
+  operator: GuardOperator
+  value: string
+  /** What the caller is told. The administrator's own words, never "validation failed". */
+  message: string
+}
+
+export interface ValidationRuleDefined {
+  ruleId: string
+  name: string
+}
+
+/** How to order a saved view's rows. `numeric` picks the comparison, not the display. */
+export interface RecordOrder {
+  field: string
+  descending: boolean
+  numeric: boolean
+}
+
+/**
+ * Saves a named query over a custom object.
+ *
+ * `target` is the object's id — a view belongs to something the tenant declared, which is why
+ * there is no built-in-entity form of this.
+ */
+export interface DefineListView {
+  target: string
+  name: string
+  label: string
+  filter: RecordFilter | null
+  order: RecordOrder | null
+  limit: number
+}
+
+export interface ListViewDefined {
+  viewId: string
+  name: string
+}
+
+/**
+ * Sets a period's number and what it is for.
+ *
+ * ONE PER PERIOD; A SECOND REPLACES IT. The vision is required because a target with no statement
+ * of intent is a number every level below interprets differently.
+ */
+export interface SetStrategy {
+  period: string
+  vision: string
+  target: number
+  currency: string
+}
+
+export interface StrategySet {
+  strategyId: string
+}

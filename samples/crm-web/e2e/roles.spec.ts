@@ -261,6 +261,49 @@ test.describe('a manager', () => {
     await expect(page.getByText('of rows')).toBeVisible()
     await expect(page.locator('table').last()).not.toContainText('$')
   })
+
+  /**
+   * The setup screens write, and the stages screen shows what is published.
+   *
+   * FOUR FORMS ON THESE SCREENS TOASTED AND POSTED NOTHING — a validation rule, a list view, a
+   * strategy, and a stage reorder. Three of them had a real surface behind them the whole time;
+   * the fourth was reordering a list this client was compiled with, on the page somebody opens to
+   * check that stages live in tables. That one is gone rather than wired: reordering is
+   * publishing a new version, and this build does not publish from the browser.
+   */
+  test('declares a validation rule that then appears in force', async ({ page }) => {
+    await signIn(page, 'manager')
+
+    await page.goto('/setup/validation')
+
+    const before = await page.locator('main table tbody tr').count()
+
+    await page.getByLabel('Name').fill(`min_deal_${before}`)
+    await page.getByLabel('Field').selectOption('amount')
+    await page.getByLabel('Operator').selectOption('LessThan')
+    await page.getByLabel('Value').fill('1000')
+    await page.getByLabel('What to tell the person').fill('Too small to track.')
+    await page.getByRole('button', { name: 'Declare the rule' }).click()
+
+    await expect(toast(page)).toContainText('in force on every opportunity')
+
+    // The list is the server's, and its sentence is the server's too — this client never
+    // composes "refuses X when Y".
+    await expect(page.locator('main table').first()).toContainText('refuses Opportunity when amount')
+  })
+
+  /** The stages screen shows the published process and offers nothing that would have to lie. */
+  test('sees the published stages and no control that cannot write', async ({ page }) => {
+    await signIn(page, 'manager')
+
+    await page.goto('/setup/stages')
+
+    await expect(page.getByRole('heading', { name: 'Published stages' })).toBeVisible()
+    await expect(page.locator('main')).toContainText('version 1')
+
+    // The reorder editor is gone: its Save toasted "reordered" and moved a fixture.
+    await expect(page.getByRole('button', { name: 'Save the order' })).toHaveCount(0)
+  })
 })
 
 test.describe('a director', () => {

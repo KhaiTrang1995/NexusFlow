@@ -235,3 +235,12 @@
 .qualityMeter {
   flex: 1;
 }
+
+/* The sentence a rule reads as, before it is saved. Bordered rather than quiet: it is the one
+   part of the form that catches a rule meaning the opposite of what somebody intended. */
+.readback {
+  padding: 11px;
+  border: 1px solid var(--color-accent-300);
+  border-radius: 9px;
+  background: var(--color-accent-100);
+}

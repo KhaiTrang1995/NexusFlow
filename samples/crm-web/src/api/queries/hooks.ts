@@ -858,3 +858,78 @@ export function useDefineReport(): UseMutationResult<C.ReportDefined, Error, C.D
     },
   })
 }
+
+/**
+ * Declares a validation rule.
+ *
+ * THE FIELD IS CHECKED AGAINST WHAT THE OWNER ACTUALLY HAS. An opportunity's rule may name the six
+ * built-in process fields as well as the declared ones; every other entity has only its declared
+ * ones, and a custom object has no built-ins at all. The server holds that list and refuses a name
+ * outside it — a form that offered every field it could think of would offer refusals.
+ */
+export function useDefineValidationRule(): UseMutationResult<
+  C.ValidationRuleDefined,
+  Error,
+  C.DefineValidationRule
+> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.DefineValidationRule) =>
+      call.write<C.ValidationRuleDefined, C.DefineValidationRule>(
+        '/custom/validation-rules',
+        input,
+      ),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.config.all(tenantId) }),
+  })
+}
+
+/**
+ * Saves a list view: a named query over a custom object.
+ *
+ * The criterion is the same five operators everything else here uses, so it is a picker rather
+ * than a text box — and the server binds the value instead of assembling a statement from it.
+ */
+export function useDefineListView(): UseMutationResult<
+  C.ListViewDefined,
+  Error,
+  C.DefineListView
+> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.DefineListView) =>
+      call.write<C.ListViewDefined, C.DefineListView>('/custom/list-views', input),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.config.all(tenantId) }),
+  })
+}
+
+/**
+ * Sets the strategy for a period.
+ *
+ * EVERY EXECUTIVE SCREEN ROLLS UP TO THIS. The board answers `crm.strategy_not_set` without one —
+ * a 404 rather than an empty board, deliberately, because a period nobody has set a number for is
+ * a decision outstanding and not a quiet quarter. So this write is what makes those screens work
+ * at all, and it wrote nothing until now.
+ */
+export function useSetStrategy(): UseMutationResult<C.StrategySet, Error, C.SetStrategy> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.SetStrategy) =>
+      call.write<C.StrategySet, C.SetStrategy>('/planning/strategies', input),
+    onSuccess: () => {
+      // The number every level rolls up to changed, so the roll-up, the tree and the board are
+      // all answering from the old one.
+      client.invalidateQueries({ queryKey: keys.planning.all(tenantId) })
+      client.invalidateQueries({ queryKey: keys.board.all(tenantId) })
+      client.invalidateQueries({ queryKey: keys.performance.all(tenantId) })
+    },
+  })
+}

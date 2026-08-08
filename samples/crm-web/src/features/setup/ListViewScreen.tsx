@@ -2,160 +2,233 @@ import { useState } from 'react'
 import {
   Button,
   Columns,
-  DataTable,
+  EmptyState,
+  ErrorState,
   Page,
   PageHeader,
   Panel,
   PanelBody,
   PanelHeader,
   SelectField,
-  Tag,
+  Skeleton,
   TextField,
 } from '@/design/primitives'
+import { useDefineListView, useSchema } from '@/api/queries/hooks'
 import { useToast } from '@/app/ToastProvider'
-import { modelFor, optionsFor } from '@/fixtures/objects'
-import { ObjectSwitcher } from './ObjectSwitcher'
+import type { GuardOperator } from '@/api/contracts'
 import { DeclaredList } from './DeclaredList'
 import styles from './setup.module.css'
 
-const OPERATORS = ['Equals', 'NotEquals', 'GreaterThan', 'LessThan', 'IsSet'] as const
+const OPERATORS: readonly GuardOperator[] = [
+  'Equals',
+  'NotEquals',
+  'GreaterThan',
+  'LessThan',
+  'IsSet',
+]
 
 /**
- * Saved list views.
+ * Saved list views, saved for real.
  *
- * FIVE OPERATORS AND NOTHING ELSE. The criterion below is the same closed vocabulary the backend's
- * transition guards, validation rules, roll-up filters, territory rules and approval criteria all
- * use — one evaluator, six features. That is why a criterion is never assembled into SQL, and why
- * this form can offer a picker rather than a text box that accepts anything.
+ * SIX VIEWS WERE WRITTEN OUT IN THIS FILE — "my open deals", "commit board", "overdue tasks" —
+ * shown as though they were the tenant's, above a Save that toasted and posted nothing. The
+ * backend has had `/custom/list-views` throughout.
+ *
+ * A VIEW BELONGS TO A CUSTOM OBJECT, WHICH IS WHY THE PICKER IS OF OBJECTS AND NOT OF SCREENS.
+ * `target` is an object id: the built-in entities have list screens of their own and no saved
+ * views, and a form offering them would offer a write the server has nowhere to put. A tenant
+ * that has declared no objects is told that rather than shown an empty drop-down.
+ *
+ * FIVE OPERATORS AND NOTHING ELSE. The criterion is the same closed vocabulary the transition
+ * guards, validation rules, roll-up filters, territory rules and approval criteria all use — one
+ * evaluator, six features. That is why it is never assembled into SQL, and why this can be a
+ * picker rather than a text box that accepts anything.
  */
 export function ListViewScreen() {
+  const schema = useSchema()
+  const save = useDefineListView()
   const toast = useToast()
-  const [objectKey, setObjectKey] = useState('opportunity')
+
+  const objects = schema.data?.objects ?? []
+
+  const [target, setTarget] = useState('')
   const [name, setName] = useState('')
+  const [label, setLabel] = useState('')
   const [field, setField] = useState('')
-  const [operator, setOperator] = useState<(typeof OPERATORS)[number]>('Equals')
+  const [operator, setOperator] = useState<GuardOperator>('Equals')
   const [value, setValue] = useState('')
 
-  const model = modelFor(objectKey)
-  const options = field ? optionsFor(model, field) : []
+  const chosen = objects.find((object) => object.id === target) ?? objects[0]
+  const fields = chosen?.fields ?? []
+  const picked = fields.find((entry) => entry.name === field)
+
+  const ready = chosen !== undefined && name.trim().length > 0 && label.trim().length > 0
+
+  function submit() {
+    if (chosen === undefined) {
+      return
+    }
+
+    save.mutate(
+      {
+        target: chosen.id,
+        name: name.trim(),
+        label: label.trim(),
+        // A view with no criterion is every row of the object, which is a legitimate view and
+        // not a missing filter. Null says that; an empty criteria list would say it too, and one
+        // of the two is what the server reads.
+        filter:
+          field.length === 0
+            ? null
+            : {
+                match: 'All',
+                criteria: [
+                  { field, operator, value: operator === 'IsSet' ? 'true' : value },
+                ],
+              },
+        order: null,
+        limit: 50,
+      },
+      {
+        onSuccess: (result) => {
+          toast.saved(`${result.name} saved on ${chosen.label}.`)
+          setName('')
+          setLabel('')
+        },
+        onError: (error) => toast.failed(error, 'That view was refused.'),
+      },
+    )
+  }
 
   return (
     <Page>
       <PageHeader eyebrow="Setup" title="List views" />
 
-      {/* The half this screen was missing: it could save a view and never show one again. */}
-      <div style={{ marginBottom: 'var(--section-gap)' }}>
+      <Columns layout="split">
         <DeclaredList
           kind="ListView"
           title="Saved views"
-          empty="No views are saved. The form below saves one."
+          empty="No views are saved. Every list is the whole object until one is."
         />
-      </div>
-
-      <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
-        <ObjectSwitcher value={objectKey} onChange={setObjectKey} />
-      </Panel>
-
-      <Columns layout="split">
-        <Panel padding="flush">
-          <PanelHeader title="Saved views" note={`on ${model.plural.toLowerCase()}`} />
-          <DataTable
-            caption="Saved list views"
-            rows={VIEWS.filter((view) => view.objectKey === objectKey || view.objectKey === 'any')}
-            rowKey={(row) => row.name}
-            columns={[
-              {
-                id: 'name',
-                header: 'View',
-                cell: (row) => (
-                  <>
-                    <span className={styles.link}>{row.label}</span>
-                    <div className={styles.mono}>{row.name}</div>
-                  </>
-                ),
-              },
-              { id: 'kind', header: 'Kind', cell: (row) => <Tag tone="outline">{row.kind}</Tag> },
-              { id: 'criteria', header: 'Criteria', cell: (row) => <span className={styles.sub}>{row.criteria}</span> },
-            ]}
-            empty="No saved views on this object."
-          />
-        </Panel>
 
         <Panel padding="flush">
           <PanelHeader title="Save a view" note="its fields are checked when it is saved" />
           <PanelBody>
-            <form
-              style={{ display: 'grid', gap: 12 }}
-              onSubmit={(event) => {
-                event.preventDefault()
-                toast.saved(`${name} saved on ${model.plural}.`)
-                setName('')
-                setValue('')
-              }}
-            >
-              <TextField
-                label="Name"
-                required
-                value={name}
-                onChange={(event) => setName(event.target.value)}
+            {schema.isPending ? <Skeleton rows={5} /> : null}
+
+            {schema.isSuccess && objects.length === 0 ? (
+              <EmptyState
+                title="Nothing has been declared to build a view over"
+                detail="A list view belongs to a custom object. Declare one in setup and it appears here."
               />
-              <SelectField
-                label="Field"
-                value={field}
-                placeholder="Choose a field"
-                onChange={(event) => {
-                  setField(event.target.value)
-                  setValue('')
+            ) : null}
+
+            {chosen !== undefined ? (
+              <form
+                style={{ display: 'grid', gap: 12 }}
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  submit()
                 }}
-                options={model.fields.map((entry) => ({ value: entry.name, label: entry.label }))}
-              />
-              <SelectField
-                label="Operator"
-                value={operator}
-                onChange={(event) => setOperator(event.target.value as (typeof OPERATORS)[number])}
-                options={OPERATORS.map((entry) => ({ value: entry, label: entry }))}
-              />
-              {operator !== 'IsSet' ? (
-                options.length > 0 ? (
-                  <SelectField
-                    label="Value"
-                    value={value}
-                    placeholder="Choose a value"
-                    onChange={(event) => setValue(event.target.value)}
-                    options={options.map((entry) => ({ value: entry, label: entry }))}
-                  />
-                ) : (
-                  <TextField
-                    label="Value"
-                    value={value}
-                    onChange={(event) => setValue(event.target.value)}
-                  />
-                )
-              ) : (
-                <p className={styles.sub}>
-                  <strong>IsSet</strong> takes no value — it asks whether the field has one at all.
-                </p>
-              )}
-              <Button
-                type="submit"
-                tone="primary"
-                disabled={name.trim() === '' || field === '' || (operator !== 'IsSet' && value === '')}
               >
-                Save the view
-              </Button>
-            </form>
+                <SelectField
+                  label="Object"
+                  value={chosen.id}
+                  options={objects.map((object) => ({ value: object.id, label: object.label }))}
+                  onChange={(event) => {
+                    // The field belongs to the old object and is not one of the new one's.
+                    setTarget(event.target.value)
+                    setField('')
+                    setValue('')
+                  }}
+                />
+                <TextField
+                  label="Name"
+                  required
+                  hint="Lower case, digits and underscores."
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                />
+                <TextField
+                  label="Label"
+                  required
+                  value={label}
+                  onChange={(event) => setLabel(event.target.value)}
+                />
+
+                <SelectField
+                  label="Keep rows where"
+                  value={field}
+                  placeholder="Every row — no criterion"
+                  options={fields.map((entry) => ({ value: entry.name, label: entry.label }))}
+                  onChange={(event) => {
+                    setField(event.target.value)
+                    setValue('')
+                  }}
+                />
+                {field.length > 0 ? (
+                  <>
+                    <SelectField
+                      label="Operator"
+                      value={operator}
+                      options={OPERATORS.map((entry) => ({ value: entry, label: entry }))}
+                      onChange={(event) => setOperator(event.target.value as GuardOperator)}
+                    />
+                    {operator !== 'IsSet' ? (
+                      (picked?.options.length ?? 0) > 0 ? (
+                        <SelectField
+                          label="Value"
+                          value={value}
+                          placeholder="Choose a value"
+                          options={(picked?.options ?? []).map((entry) => ({
+                            value: entry,
+                            label: entry,
+                          }))}
+                          onChange={(event) => setValue(event.target.value)}
+                        />
+                      ) : (
+                        <TextField
+                          label="Value"
+                          value={value}
+                          onChange={(event) => setValue(event.target.value)}
+                        />
+                      )
+                    ) : null}
+                  </>
+                ) : null}
+
+                <div className={styles.readback}>
+                  <div className={styles.sub} style={{ marginBottom: 4 }}>
+                    Read it back
+                  </div>
+                  <p style={{ fontSize: 14 }}>
+                    {field.length === 0 ? (
+                      <>
+                        Every <strong>{chosen.label}</strong>, up to fifty rows.
+                      </>
+                    ) : (
+                      <>
+                        Every <strong>{chosen.label}</strong> whose{' '}
+                        <strong>{picked?.label ?? field}</strong>{' '}
+                        {operator === 'IsSet'
+                          ? 'has a value'
+                          : `${operator.toLowerCase()} ${value || '…'}`}
+                        , up to fifty rows.
+                      </>
+                    )}
+                  </p>
+                </div>
+
+                <Button type="submit" tone="primary" disabled={!ready || save.isPending}>
+                  {save.isPending ? 'Saving…' : 'Save the view'}
+                </Button>
+
+                {save.isError ? <ErrorState error={save.error} onRetry={submit} /> : null}
+              </form>
+            ) : null}
           </PanelBody>
         </Panel>
       </Columns>
     </Page>
   )
 }
-
-const VIEWS = [
-  { name: 'my_open_deals', label: 'My open deals', objectKey: 'opportunity', kind: 'Table', criteria: 'owner Equals me · stage NotEquals Closed Won' },
-  { name: 'closing_this_month', label: 'Closing this month', objectKey: 'opportunity', kind: 'Table', criteria: 'closeDate LessThan 2026-09-01' },
-  { name: 'commit_board', label: 'Commit board', objectKey: 'opportunity', kind: 'Kanban', criteria: 'forecast Equals Commit' },
-  { name: 'strategic_accounts', label: 'Strategic accounts', objectKey: 'account', kind: 'Table', criteria: 'tier Equals Strategic' },
-  { name: 'unworked_leads', label: 'Unworked leads', objectKey: 'lead', kind: 'Table', criteria: 'status Equals New' },
-  { name: 'overdue_tasks', label: 'Overdue tasks', objectKey: 'task', kind: 'Table', criteria: 'due LessThan today · status NotEquals Done' },
-]

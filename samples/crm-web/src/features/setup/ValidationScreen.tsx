@@ -2,140 +2,178 @@ import { useState } from 'react'
 import {
   Button,
   Columns,
-  DataTable,
+  ErrorState,
   Page,
   PageHeader,
   Panel,
   PanelBody,
   PanelHeader,
   SelectField,
-  Tag,
+  Skeleton,
   TextAreaField,
   TextField,
 } from '@/design/primitives'
+import { useDefineValidationRule, useSchema } from '@/api/queries/hooks'
 import { useToast } from '@/app/ToastProvider'
-import { modelFor, optionsFor } from '@/fixtures/objects'
-import { ObjectSwitcher } from './ObjectSwitcher'
+import type { EntityKind, GuardOperator } from '@/api/contracts'
 import { DeclaredList } from './DeclaredList'
 import styles from './setup.module.css'
 
-const OPERATORS = ['Equals', 'NotEquals', 'GreaterThan', 'LessThan', 'IsSet'] as const
+const OPERATORS: readonly GuardOperator[] = [
+  'Equals',
+  'NotEquals',
+  'GreaterThan',
+  'LessThan',
+  'IsSet',
+]
 
-interface Rule {
-  name: string
-  objectKey: string
-  attribute: string
-  operator: (typeof OPERATORS)[number]
-  value: string
-  message: string
-}
+const ENTITIES: readonly EntityKind[] = ['Lead', 'Account', 'Contact', 'Opportunity']
 
-const RULES: readonly Rule[] = [
-  { name: 'close_date_required', objectKey: 'opportunity', attribute: 'closeDate', operator: 'IsSet', value: '', message: 'A deal with no close date is a deal nobody is forecasting.' },
-  { name: 'next_step_on_late_stage', objectKey: 'opportunity', attribute: 'nextStep', operator: 'IsSet', value: '', message: 'Say what happens next before moving past Proposal.' },
-  { name: 'discount_ceiling', objectKey: 'quote', attribute: 'discount', operator: 'LessThan', value: '35', message: 'Discounts over 35% are not approvable by anybody. Restructure the deal.' },
-  { name: 'lead_source_required', objectKey: 'lead', attribute: 'source', operator: 'IsSet', value: '', message: 'Without a source, this lead cannot be attributed to anything.' },
+/**
+ * The six fields an opportunity's rule may name besides its declared ones.
+ *
+ * <strong>The server's `ProcessFields`, restated because there is no read for it.</strong> An
+ * administrator who can guard a transition on `amount` expects to be able to validate on it, so
+ * the capability allows both; every other entity has only what the tenant declared. The server
+ * still decides — a name it does not know is refused there whatever this list says.
+ */
+const PROCESS_FIELDS: readonly string[] = [
+  'amount',
+  'currency',
+  'probability',
+  'region',
+  'industry',
+  'owner',
 ]
 
 /**
- * Validation rules.
+ * Validation rules, declared for real.
  *
- * THE MESSAGE IS THE ADMINISTRATOR'S OWN WORDS. A rule that refused with "validation failed" would
- * make the person who hit it guess; the message field is required, and it is what the caller sees.
+ * THE FORM WROTE NOTHING. Four rules were written out in this file and shown in a table headed
+ * "Rules in force" — beside a real list of the tenant's own, and above a Declare button that
+ * toasted "declared" and posted nothing. Somebody reading this screen had two lists claiming the
+ * same thing and a control that agreed with neither.
+ *
+ * THE FIELD LIST IS WHAT THE OWNER ACTUALLY HAS. Declared fields come from `describe`; an
+ * opportunity additionally offers the six built-in process fields, because that is what the
+ * capability allows. Offering every field the prototype knows would be offering refusals.
  *
  * A RULE IS REFUSED WHEN IT *HOLDS*, WHICH READS BACKWARDS UNTIL YOU SAY IT ALOUD. So the preview
- * on the right says it aloud, before anybody saves a rule that means the opposite of what they
- * meant.
+ * says it aloud, before anybody saves a rule that means the opposite of what they meant.
  */
 export function ValidationScreen() {
+  const schema = useSchema()
+  const declare = useDefineValidationRule()
   const toast = useToast()
-  const [objectKey, setObjectKey] = useState('opportunity')
+
+  const [appliesTo, setAppliesTo] = useState<EntityKind>('Opportunity')
   const [name, setName] = useState('')
-  const [attribute, setAttribute] = useState('')
-  const [operator, setOperator] = useState<(typeof OPERATORS)[number]>('IsSet')
+  const [field, setField] = useState('')
+  const [operator, setOperator] = useState<GuardOperator>('IsSet')
   const [value, setValue] = useState('')
   const [message, setMessage] = useState('')
 
-  const model = modelFor(objectKey)
-  const options = attribute ? optionsFor(model, attribute) : []
-  const attributeLabel = model.fields.find((field) => field.name === attribute)?.label ?? attribute
+  const declared = schema.data?.entities.find((entity) => entity.kind === appliesTo)?.fields ?? []
+
+  const nameable = [
+    ...(appliesTo === 'Opportunity' ? PROCESS_FIELDS : []),
+    ...declared.map((entry) => entry.name),
+  ]
+
+  const chosen = declared.find((entry) => entry.name === field)
+  const options = chosen?.options ?? []
+
+  const ready = name.trim().length > 0 && field.length > 0 && message.trim().length > 0
+
+  function submit() {
+    declare.mutate(
+      {
+        appliesTo,
+        // A rule belongs to a built-in entity or to a custom object, never both. This form
+        // declares the first; the second needs an object id, which belongs on the object's page.
+        target: null,
+        name: name.trim(),
+        field,
+        operator,
+        // IsSet compares against "true" or "false" rather than against a bound, so a value left
+        // over from another operator would be sent as one.
+        value: operator === 'IsSet' ? 'true' : value,
+        message: message.trim(),
+      },
+      {
+        onSuccess: (result) => {
+          // Not `${kind}s`: "opportunitys" is what a naive plural produces, and this is the
+          // sentence somebody reads to confirm the rule landed where they meant.
+          toast.saved(`${result.name} is in force on every ${appliesTo.toLowerCase()}.`)
+          setName('')
+          setMessage('')
+        },
+        onError: (error) => toast.failed(error, 'That rule was refused.'),
+      },
+    )
+  }
 
   return (
     <Page>
       <PageHeader eyebrow="Setup" title="Validation rules" />
 
-      {/* Each rule's sentence is the server's: it knows what an operator and a value mean. */}
-      <div style={{ marginBottom: 'var(--section-gap)' }}>
+      <Columns layout="split">
+        {/* Each rule's sentence is the server's: it knows what an operator and a value mean. */}
         <DeclaredList
           kind="ValidationRule"
           title="Rules in force"
           empty="No rules are declared, so nothing is refused."
         />
-      </div>
-
-      <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
-        <ObjectSwitcher value={objectKey} onChange={setObjectKey} />
-      </Panel>
-
-      <Columns layout="split">
-        <Panel padding="flush">
-          <PanelHeader title="Rules in force" note={`on ${model.plural.toLowerCase()}`} />
-          <DataTable
-            caption="Validation rules"
-            rows={RULES.filter((rule) => rule.objectKey === objectKey)}
-            rowKey={(row) => row.name}
-            columns={[
-              {
-                id: 'name',
-                header: 'Rule',
-                cell: (row: Rule) => (
-                  <>
-                    <span className={styles.link}>{row.name}</span>
-                    <div className={styles.sub}>{row.message}</div>
-                  </>
-                ),
-              },
-              {
-                id: 'when',
-                header: 'Refuses when',
-                cell: (row: Rule) => (
-                  <Tag tone="outline">
-                    {row.attribute} {row.operator} {row.operator === 'IsSet' ? '' : row.value}
-                  </Tag>
-                ),
-              },
-            ]}
-            empty={`No rules on ${model.plural.toLowerCase()} yet.`}
-          />
-        </Panel>
 
         <Panel padding="flush">
           <PanelHeader title="Declare a rule" note="in your own words" />
           <PanelBody>
+            {schema.isPending ? <Skeleton rows={5} /> : null}
+
             <form
               style={{ display: 'grid', gap: 12 }}
               onSubmit={(event) => {
                 event.preventDefault()
-                toast.saved(`${name} declared on ${model.plural}.`)
-                setName('')
-                setMessage('')
+                submit()
               }}
             >
-              <TextField label="Name" required value={name} onChange={(event) => setName(event.target.value)} />
               <SelectField
-                label="Field"
-                value={attribute}
-                placeholder="Choose a field"
+                label="On"
+                value={appliesTo}
+                options={ENTITIES.map((entry) => ({ value: entry, label: entry }))}
                 onChange={(event) => {
-                  setAttribute(event.target.value)
+                  // The field belongs to the old entity and is not nameable on the new one.
+                  setAppliesTo(event.target.value as EntityKind)
+                  setField('')
                   setValue('')
                 }}
-                options={model.fields.map((field) => ({ value: field.name, label: field.label }))}
+              />
+              <TextField
+                label="Name"
+                required
+                hint="Lower case, digits and underscores."
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+              <SelectField
+                label="Field"
+                value={field}
+                placeholder={
+                  nameable.length === 0 ? 'Nothing is declared on this entity' : 'Choose a field'
+                }
+                onChange={(event) => {
+                  setField(event.target.value)
+                  setValue('')
+                }}
+                options={nameable.map((entry) => ({
+                  value: entry,
+                  label: declared.find((one) => one.name === entry)?.label ?? entry,
+                }))}
               />
               <SelectField
                 label="Operator"
                 value={operator}
-                onChange={(event) => setOperator(event.target.value as (typeof OPERATORS)[number])}
+                onChange={(event) => setOperator(event.target.value as GuardOperator)}
                 options={OPERATORS.map((entry) => ({ value: entry, label: entry }))}
               />
               {operator !== 'IsSet' ? (
@@ -148,7 +186,11 @@ export function ValidationScreen() {
                     options={options.map((entry) => ({ value: entry, label: entry }))}
                   />
                 ) : (
-                  <TextField label="Value" value={value} onChange={(event) => setValue(event.target.value)} />
+                  <TextField
+                    label="Value"
+                    value={value}
+                    onChange={(event) => setValue(event.target.value)}
+                  />
                 )
               ) : null}
               <TextAreaField
@@ -159,14 +201,14 @@ export function ValidationScreen() {
                 onChange={(event) => setMessage(event.target.value)}
               />
 
-              {attribute ? (
-                <div style={{ padding: 11, border: '1px solid var(--color-accent-300)', borderRadius: 9, background: 'var(--color-accent-100)' }}>
+              {field.length > 0 ? (
+                <div className={styles.readback}>
                   <div className={styles.sub} style={{ marginBottom: 4 }}>
                     Read it back
                   </div>
                   <p style={{ fontSize: 14 }}>
-                    A {model.label.toLowerCase()} is <strong>refused</strong> when{' '}
-                    <strong>{attributeLabel}</strong>{' '}
+                    A {appliesTo.toLowerCase()} is <strong>refused</strong> when{' '}
+                    <strong>{chosen?.label ?? field}</strong>{' '}
                     {operator === 'IsSet'
                       ? 'has a value'
                       : `${operator.toLowerCase()} ${value || '…'}`}
@@ -175,13 +217,11 @@ export function ValidationScreen() {
                 </div>
               ) : null}
 
-              <Button
-                type="submit"
-                tone="primary"
-                disabled={name.trim() === '' || attribute === '' || message.trim() === ''}
-              >
-                Declare the rule
+              <Button type="submit" tone="primary" disabled={!ready || declare.isPending}>
+                {declare.isPending ? 'Declaring…' : 'Declare the rule'}
               </Button>
+
+              {declare.isError ? <ErrorState error={declare.error} onRetry={submit} /> : null}
             </form>
           </PanelBody>
         </Panel>
