@@ -614,7 +614,12 @@
         "alias": "northwind_q1",
         "opportunity": "northwind_expansion",
         "status": "Issued",
-        "subtotal": 200000,
+        "lines": [
+          { "sku": "PLATFORM-ENT", "quantity": 120, "unitPrice": 1250 },
+          { "sku": "RESIDENCY-EU", "quantity": 1, "unitPrice": 24000 },
+          { "sku": "ONBOARD-MANAGED", "quantity": 1, "unitPrice": 18000 },
+          { "sku": "SUPPORT-PREMIUM", "quantity": 8, "unitPrice": 1000 }
+        ],
         "discount": 16000,
         "currency": "EUR",
         "validForDays": 21
@@ -623,7 +628,10 @@
         "alias": "meridian_q1",
         "opportunity": "meridian_pilot",
         "status": "Draft",
-        "subtotal": 45000,
+        "lines": [
+          { "sku": "PLATFORM-PILOT", "quantity": 30, "unitPrice": 1250 },
+          { "sku": "ONBOARD-SELF", "quantity": 1, "unitPrice": 7500 }
+        ],
         "discount": 3000,
         "currency": "EUR",
         "validForDays": 30

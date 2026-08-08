@@ -505,7 +505,7 @@ export type EntityKind = 'Lead' | 'Account' | 'Contact' | 'Opportunity'
  * A superset of {@link EntityKind}, and the server says so with a vocabulary of its own —
  * quotes, orders and activities are readable without being declarable.
  */
-export type ReadableEntity = EntityKind | 'Quote' | 'Order' | 'Activity'
+export type ReadableEntity = EntityKind | 'Quote' | 'QuoteLine' | 'Order' | 'Activity'
 export type FilterMatch = 'All' | 'Any'
 
 export interface RecordCriterion {

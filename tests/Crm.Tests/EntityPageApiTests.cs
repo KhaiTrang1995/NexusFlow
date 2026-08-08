@@ -330,6 +330,59 @@ public sealed class EntityPageApiTests
 
     // ------------------------------------------------------------------------------- fixtures
 
+    /// <summary>
+    /// A quote's lines are readable, and one tenant's are never another's.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><c>quote_line</c> carries no <c>tenant_id</c> of its own.</strong> Its isolation is
+    /// a policy that hops through <c>quote</c> — migration <c>0002</c>'s "five that inherit" — so
+    /// exposing it as a readable entity is the one addition here where getting the policy wrong
+    /// would be invisible on every screen and catastrophic in exactly one way. The second half of
+    /// this test is the whole reason for the first.
+    /// </para>
+    /// <para>
+    /// The client needs it because a quote builder without its lines is four invented rows beside
+    /// a real quote's total, which is what it was.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AQuotesLinesAreReadableAndOnlyByItsOwnTenant()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+
+        var account = await app.Crm.AccountAsync(
+            CrmTokens.NorthwindTenant, Lifecycle.Customer, Cancellation);
+        var contact = await app.Crm.ContactAsync(CrmTokens.NorthwindTenant, account, Cancellation);
+        var process = await app.Crm.ProcessAsync(CrmTokens.NorthwindTenant, 1, true, Cancellation);
+        var opportunity = await app.Crm.OpportunityAsync(
+            CrmTokens.NorthwindTenant, account, contact, process.Stage, Cancellation);
+
+        var (quote, _) = await app.Crm.QuoteAsync(
+            CrmTokens.NorthwindTenant, opportunity, Cancellation);
+
+        var lines = await PageAsync(
+            app,
+            new ReadEntityPage(
+                ReadableEntity.QuoteLine,
+                new RecordFilter(FilterMatch.All, [new RollupFilter("quote_id", GuardOperator.Equals, quote.ToString())]),
+                50));
+
+        lines.Records.Count.ShouldBe(1);
+
+        var line = lines.Records[0]!;
+
+        line.Values["sku"].ShouldBe("SKU-1");
+        line.Values["quantity"].ShouldBe("2");
+
+        // The whole point. Contoso holds crm.read and asks the same question of the same table.
+        (await PageAsync(
+            app,
+            new ReadEntityPage(ReadableEntity.QuoteLine, null, 50),
+            CrmTokens.Contoso))
+            .Records.ShouldBeEmpty("the policy hops through the quote, and that quote is not theirs.");
+    }
+
     private static async Task<RecordPage> PageAsync(
         CrmApplication app,
         ReadEntityPage query,

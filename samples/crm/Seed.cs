@@ -438,10 +438,23 @@ public sealed record SeedQuote(
     string Alias,
     string Opportunity,
     QuoteStatus Status,
-    decimal Subtotal,
+    IReadOnlyList<SeedQuoteLine> Lines,
     decimal Discount,
     string Currency,
     int ValidForDays);
+
+/// <summary>One priced line of a seeded quote.</summary>
+/// <param name="Sku">What was sold.</param>
+/// <param name="Quantity">How many.</param>
+/// <param name="UnitPrice">What each cost.</param>
+/// <remarks>
+/// <strong>The subtotal is not in the file; it is the sum of these.</strong> A quote that stated
+/// its own subtotal beside its lines could state one the lines do not add up to, and nothing
+/// downstream would ever say so — the same reason the total is computed from the subtotal and the
+/// discount rather than carried. Before these existed, every seeded quote had a total and no
+/// lines at all, which is a figure nobody can reconcile and a builder with nothing to show.
+/// </remarks>
+public sealed record SeedQuoteLine(string Sku, int Quantity, decimal UnitPrice);
 
 /// <summary>What a quote became once somebody committed.</summary>
 /// <param name="Alias">Its name in this file.</param>

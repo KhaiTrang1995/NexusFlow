@@ -41,6 +41,17 @@ public enum ReadableEntity
 
     /// <summary>A task, call, meeting or note.</summary>
     Activity = 6,
+
+    /// <summary>
+    /// One priced line of a quote.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Its tenant is its quote's, and the policy of migration <c>0002</c> is what says
+    /// so.</strong> The table carries no <c>tenant_id</c> of its own — the row-level policy hops
+    /// through <c>quote</c> — so this is readable for the same reason and by the same rule as
+    /// everything else here, not by an exception made for it.
+    /// </remarks>
+    QuoteLine = 7,
 }
 
 /// <summary>Reads a page of a built-in entity.</summary>

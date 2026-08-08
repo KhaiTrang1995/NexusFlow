@@ -24,9 +24,9 @@ public sealed class SeedApplierTests
         var applied = await ApplyAsync(crm, Document());
 
         applied.Written.ShouldBe(
-            10,
+            11,
             "a process, an approval process, an object, two fields, an account, a contact, " +
-            "an opportunity, a lead and a record.");
+            "an opportunity, a lead, a record and a quote.");
 
         (await crm.ScalarAsTenantAsync<long>(
             CrmSchemaHarness.Northwind, "SELECT count(*) FROM account", Cancellation))
@@ -189,6 +189,48 @@ public sealed class SeedApplierTests
         // The order is the chain: the manager first, and the director only after them.
         matched.Steps.Select(step => (step.Kind, step.Approver)).ShouldBe(
             [(ApproverKind.SubmittersManager, null), (ApproverKind.RoleHolder, "Director")]);
+    }
+
+    /// <summary>
+    /// A seeded quote's subtotal is its lines, and its total is that less the discount.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Neither figure is in the file.</strong> A seed that stated a subtotal beside its
+    /// lines could state one they do not add up to, and the quote builder would draw four rows
+    /// that disagree with the total above them — with nothing anywhere to say which is wrong.
+    /// Before the lines existed the file stated the subtotal and wrote no lines at all, which is
+    /// the same defect with the evidence removed.
+    /// </remarks>
+    [Fact]
+    public async Task ASeededQuotesSubtotalIsItsLines()
+    {
+        await using var crm = await CrmSchemaHarness.CreateAsync(Cancellation);
+
+        await ApplyAsync(crm, Document());
+
+        var quote = SeedIds.For(CrmSchemaHarness.Northwind, "quote", "expansion_q1");
+
+        (await crm.ScalarAsTenantAsync<long>(
+            CrmSchemaHarness.Northwind,
+            "SELECT count(*) FROM quote_line WHERE quote_id = @quote",
+            Cancellation,
+            ("quote", quote)))
+            .ShouldBe(2);
+
+        // 10 × 1000 + 1 × 2000, and 12,000 less the 1,200 discount.
+        (await crm.ScalarAsTenantAsync<decimal>(
+            CrmSchemaHarness.Northwind,
+            "SELECT subtotal FROM quote WHERE quote_id = @quote",
+            Cancellation,
+            ("quote", quote)))
+            .ShouldBe(12_000m);
+
+        (await crm.ScalarAsTenantAsync<decimal>(
+            CrmSchemaHarness.Northwind,
+            "SELECT total FROM quote WHERE quote_id = @quote",
+            Cancellation,
+            ("quote", quote)))
+            .ShouldBe(10_800m);
     }
 
     // ------------------------------------------------------------------------------- fixtures

@@ -216,6 +216,46 @@ public sealed class SeedReaderTests
         read.Error!.Code.ShouldBe("crm.seed_out_of_range");
     }
 
+    /// <summary>A quote with no lines is refused.</summary>
+    /// <remarks>
+    /// <strong>A quote is its lines.</strong> One with none has a subtotal of zero, a negative
+    /// total once a discount is taken off it, and a builder with nothing to draw beside a figure
+    /// the reader cannot reconcile. Every seeded quote was exactly that until the lines existed.
+    /// </remarks>
+    [Fact]
+    public void AQuoteWithNoLinesIsRefused()
+    {
+        var read = SeedReader.Read(Utf8(Fixture.Replace(
+            "{ \"sku\": \"PLATFORM-ENT\", \"quantity\": 10, \"unitPrice\": 1000 },",
+            string.Empty,
+            StringComparison.Ordinal)
+            .Replace(
+                "{ \"sku\": \"ONBOARD\", \"quantity\": 1, \"unitPrice\": 2000 }",
+                string.Empty,
+                StringComparison.Ordinal)));
+
+        read.IsSuccess.ShouldBeFalse();
+        read.Error!.Code.ShouldBe("crm.seed_out_of_range");
+        read.Error.Message.ShouldContain("lines");
+    }
+
+    /// <summary>A discount larger than the lines add up to is refused.</summary>
+    /// <remarks>
+    /// Checked against the sum rather than against a stated subtotal, because there is no longer
+    /// a stated subtotal to check against — and a discount past it makes a negative total, which
+    /// <c>numeric(19,4)</c> takes without complaint.
+    /// </remarks>
+    [Fact]
+    public void ADiscountLargerThanTheLinesIsRefused()
+    {
+        var read = SeedReader.Read(
+            Utf8(Fixture.Replace("\"discount\": 1200", "\"discount\": 99000", StringComparison.Ordinal)));
+
+        read.IsSuccess.ShouldBeFalse();
+        read.Error!.Code.ShouldBe("crm.seed_out_of_range");
+        read.Error.Message.ShouldContain("lines add up to");
+    }
+
     // ------------------------------------------------------------------------------- fixtures
 
     private static byte[] Utf8(string text) => Encoding.UTF8.GetBytes(text);
@@ -305,6 +345,16 @@ public sealed class SeedReaderTests
             ],
             "records": [
               { "alias": "atlas", "target": "project", "values": { "code": "P-ATLAS" } }
+            ],
+            "quotes": [
+              {
+                "alias": "expansion_q1", "opportunity": "expansion", "status": "Issued",
+                "lines": [
+                  { "sku": "PLATFORM-ENT", "quantity": 10, "unitPrice": 1000 },
+                  { "sku": "ONBOARD", "quantity": 1, "unitPrice": 2000 }
+                ],
+                "discount": 1200, "currency": "EUR", "validForDays": 21
+              }
             ]
           }
         }
