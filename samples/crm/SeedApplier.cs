@@ -27,28 +27,33 @@ public sealed class SeedApplier
     private readonly SeedStore _seeds;
     private readonly CustomSchemaStore _schema;
     private readonly ApprovalStore _approvals;
+    private readonly ReportStore _reports;
     private readonly TimeProvider _clock;
 
     /// <summary>Creates the applier.</summary>
     /// <param name="seeds">Writes the built-in rows and the process.</param>
     /// <param name="schema">Writes the custom objects, fields, relationships and records.</param>
     /// <param name="approvals">Writes the approval processes, through the store that owns them.</param>
+    /// <param name="reports">Writes the saved reports, through the store that owns them.</param>
     /// <param name="clock">Supplies the instant every written row is stamped with.</param>
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
     public SeedApplier(
         SeedStore seeds,
         CustomSchemaStore schema,
         ApprovalStore approvals,
+        ReportStore reports,
         TimeProvider clock)
     {
         ArgumentNullException.ThrowIfNull(seeds);
         ArgumentNullException.ThrowIfNull(schema);
         ArgumentNullException.ThrowIfNull(approvals);
+        ArgumentNullException.ThrowIfNull(reports);
         ArgumentNullException.ThrowIfNull(clock);
 
         _seeds = seeds;
         _schema = schema;
         _approvals = approvals;
+        _reports = reports;
         _clock = clock;
     }
 
@@ -141,6 +146,30 @@ public sealed class SeedApplier
                         new ApprovalCriterion(criterion.Attribute, criterion.Operator, criterion.Value))],
                     [.. approval.Steps.Select(step =>
                         new ApprovalStepDefinition(step.Label, step.Kind, step.Approver))]),
+                now,
+                ct).ConfigureAwait(false);
+
+            outcome = outcome.And(written is not null);
+        }
+
+        // Through ReportStore for the same reason as the approvals: the insert, the name
+        // collision and the summary already exist there once.
+        foreach (var report in document.Metadata.Reports)
+        {
+            var written = await _reports.SaveReportAsync(
+                tenant,
+                SeedIds.For(tenant, "report", report.Alias),
+                new DefineReport(
+                    report.Name,
+                    report.Label,
+                    report.Source,
+
+                    // Built-in sources only. A custom-object report names its object by id, and a
+                    // file cannot know one before the object it refers to has been written.
+                    Target: null,
+                    report.Dimension,
+                    report.Measure,
+                    report.MeasureOf),
                 now,
                 ct).ConfigureAwait(false);
 

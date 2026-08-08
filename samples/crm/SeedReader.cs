@@ -87,6 +87,7 @@ public static class SeedReader
                 SlaPolicies = metadata.SlaPolicies ?? [],
                 Campaigns = metadata.Campaigns ?? [],
                 ApprovalProcesses = metadata.ApprovalProcesses ?? [],
+                Reports = metadata.Reports ?? [],
             },
             Data = data with
             {
@@ -110,7 +111,7 @@ public static class SeedReader
     private static class Empty
     {
         public static readonly SeedMetadata Metadata =
-            new([], [], [], [], [], [], [], [], [], [], [], [], [], []);
+            new([], [], [], [], [], [], [], [], [], [], [], [], [], [], []);
 
         public static readonly SeedData Data = new([], [], [], [], [], [], [], [], []);
     }
@@ -179,6 +180,7 @@ public static class SeedReader
             ?? Collect("slaPolicies", metadata.SlaPolicies, item => item.Alias, [])
             ?? Collect("campaigns", metadata.Campaigns, item => item.Alias, [])
             ?? Collect("approvalProcesses", metadata.ApprovalProcesses, item => item.Alias, [])
+            ?? Collect("reports", metadata.Reports, item => item.Alias, [])
             ?? Collect("activities", data.Activities, item => item.Alias, [])
             ?? Collect("quotes", data.Quotes, item => item.Alias, quotes)
             ?? Collect("orders", data.Orders, item => item.Alias, [])
@@ -619,6 +621,41 @@ public static class SeedReader
                         $"step '{step.Label}'",
                         needsApprover ? "given an approver" : "given no approver"));
                 }
+            }
+        }
+
+        foreach (var report in metadata.Reports)
+        {
+            if (!CustomValues.IsUsableName(report.Name))
+            {
+                return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("report", report.Name));
+            }
+
+            // The same closed lists the capability checks. Reading them here makes a typo a
+            // sentence about the file rather than a report that is saved, runs, and groups
+            // everything under null — which reads as a data problem and is not.
+            if (!ReportVocabulary.Dimensions(report.Source)
+                    .Contains(report.Dimension, StringComparer.Ordinal))
+            {
+                return Result.Fail<SeedDocument>(SeedErrors.UnknownReference(
+                    $"report {report.Alias} dimension", report.Dimension));
+            }
+
+            // Count is of rows and takes no field; everything else needs one. Both halves fail at
+            // the moment somebody runs it, which is the worst time to find out.
+            if ((report.Measure == ReportMeasure.Count) != (report.MeasureOf is null))
+            {
+                return Result.Fail<SeedDocument>(SeedErrors.OutOfRange(
+                    report.Alias,
+                    "measure " + report.Measure,
+                    report.Measure == ReportMeasure.Count ? "given no field" : "given a field"));
+            }
+
+            if (report.MeasureOf is { } field
+                && !ReportVocabulary.Measures(report.Source).Contains(field, StringComparer.Ordinal))
+            {
+                return Result.Fail<SeedDocument>(SeedErrors.UnknownReference(
+                    $"report {report.Alias} measure", field));
             }
         }
 

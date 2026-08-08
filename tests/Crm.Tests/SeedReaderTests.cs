@@ -256,6 +256,44 @@ public sealed class SeedReaderTests
         read.Error.Message.ShouldContain("lines add up to");
     }
 
+    /// <summary>A report grouped by something its source does not have is refused.</summary>
+    /// <remarks>
+    /// The same closed list the capability checks. A dimension the source has no case for groups
+    /// every row under null — which looks like a data problem and is not, and is discovered by
+    /// somebody running the report rather than by the person who wrote the file.
+    /// </remarks>
+    [Fact]
+    public void AReportGroupedBySomethingItsSourceLacksIsRefused()
+    {
+        var read = SeedReader.Read(Utf8(Fixture.Replace(
+            "\"dimension\": \"Status\"", "\"dimension\": \"Outcome\"", StringComparison.Ordinal)));
+
+        read.IsSuccess.ShouldBeFalse("Outcome is an opportunity's dimension, not a lead's.");
+        read.Error!.Code.ShouldBe("crm.seed_reference_unknown");
+        read.Error.Message.ShouldContain("Outcome");
+    }
+
+    /// <summary>A count given a field to count is refused, and so is a sum given none.</summary>
+    /// <remarks>
+    /// Both halves fail at the moment somebody runs the report. <c>Count</c> is of rows and has no
+    /// field to name; every other measure is over one and cannot proceed without it.
+    /// </remarks>
+    [Fact]
+    public void AMeasureAndItsFieldHaveToAgree()
+    {
+        SeedReader.Read(Utf8(Fixture.Replace(
+            "\"measure\": \"Count\", \"measureOf\": null",
+            "\"measure\": \"Count\", \"measureOf\": \"Score\"",
+            StringComparison.Ordinal)))
+            .Error!.Code.ShouldBe("crm.seed_out_of_range");
+
+        SeedReader.Read(Utf8(Fixture.Replace(
+            "\"measure\": \"Count\", \"measureOf\": null",
+            "\"measure\": \"Sum\", \"measureOf\": null",
+            StringComparison.Ordinal)))
+            .Error!.Code.ShouldBe("crm.seed_out_of_range");
+    }
+
     // ------------------------------------------------------------------------------- fixtures
 
     private static byte[] Utf8(string text) => Encoding.UTF8.GetBytes(text);
@@ -297,6 +335,13 @@ public sealed class SeedReaderTests
                   { "from": "Discovery", "to": "Proposal", "trigger": "qualified" },
                   { "from": "Proposal", "to": "Closed", "trigger": "signed" }
                 ]
+              }
+            ],
+            "reports": [
+              {
+                "alias": "leads_by_status", "name": "leads_by_status",
+                "label": "Leads by status", "source": "Lead",
+                "dimension": "Status", "measure": "Count", "measureOf": null
               }
             ],
             "approvalProcesses": [

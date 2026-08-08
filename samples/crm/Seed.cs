@@ -68,7 +68,8 @@ public sealed record SeedMetadata(
     IReadOnlyList<SeedBusinessHours> BusinessHours,
     IReadOnlyList<SeedSlaPolicy> SlaPolicies,
     IReadOnlyList<SeedCampaign> Campaigns,
-    IReadOnlyList<SeedApprovalProcess> ApprovalProcesses);
+    IReadOnlyList<SeedApprovalProcess> ApprovalProcesses,
+    IReadOnlyList<SeedReport> Reports);
 
 /// <summary>Rows.</summary>
 /// <param name="Accounts">Applied first: contacts and opportunities reference them.</param>
@@ -317,6 +318,29 @@ public sealed record SeedApprovalProcess(
 /// <param name="Operator">How it is compared.</param>
 /// <param name="Value">What it is compared against.</param>
 public sealed record SeedApprovalCriterion(string Attribute, GuardOperator Operator, string Value);
+
+/// <summary>A saved report.</summary>
+/// <param name="Alias">Its name in this file.</param>
+/// <param name="Name">What it is run by.</param>
+/// <param name="Label">What to show a person.</param>
+/// <param name="Source">What it is about. Only the built-in sources; a custom-object report
+/// names an object by id, which a file cannot know before the object is written.</param>
+/// <param name="Dimension">What to group by, from the source's closed list.</param>
+/// <param name="Measure">How to reduce each group.</param>
+/// <param name="MeasureOf">What to aggregate. Null for <see cref="ReportMeasure.Count"/>.</param>
+/// <remarks>
+/// <strong>A tenant with no reports has a reports screen with nothing to run.</strong> Which is
+/// an honest empty state and a useless demonstration: the surface exists, the vocabulary is
+/// closed, and until something is saved nobody can see either.
+/// </remarks>
+public sealed record SeedReport(
+    string Alias,
+    string Name,
+    string Label,
+    ReportSource Source,
+    string Dimension,
+    ReportMeasure Measure,
+    string? MeasureOf);
 
 /// <summary>One step of an approval.</summary>
 /// <param name="Label">What a person sees.</param>

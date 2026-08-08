@@ -232,6 +232,35 @@ test.describe('a manager', () => {
 
     await expect(toast(page)).toContainText('carries')
   })
+
+  /**
+   * A report runs on the server, and its figure is in the unit of the field it reduced.
+   *
+   * SIX REPORTS USED TO BE WRITTEN OUT IN THE SCREEN and grouped the prototype's fixture records
+   * in the browser. A bar chart looks like evidence, which makes a fabricated one the most
+   * confident kind of wrong. This asserts the two things a fixture cannot fake: the list is what
+   * the tenant saved, and a sum of amounts is money while a count of rows is not.
+   */
+  test('runs a saved report and reads it in the right unit', async ({ page }) => {
+    await signIn(page, 'manager')
+
+    await page.goto('/analytics/reports')
+
+    const saved = page.locator('main [aria-pressed]')
+
+    await expect(saved.filter({ hasText: 'Pipeline by outcome' })).toBeVisible()
+    await saved.filter({ hasText: 'Pipeline by outcome' }).click()
+
+    // Sum of Amount: money, because the result says which field it reduced.
+    await expect(page.getByText('of Amount')).toBeVisible()
+    await expect(page.locator('main')).toContainText(/\$[0-9,]+/)
+
+    await saved.filter({ hasText: 'Leads by status' }).click()
+
+    // Count of rows: a tally, and drawing it as "$2.00" is the defect this catches.
+    await expect(page.getByText('of rows')).toBeVisible()
+    await expect(page.locator('table').last()).not.toContainText('$')
+  })
 })
 
 test.describe('a director', () => {

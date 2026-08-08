@@ -24,9 +24,9 @@ public sealed class SeedApplierTests
         var applied = await ApplyAsync(crm, Document());
 
         applied.Written.ShouldBe(
-            11,
-            "a process, an approval process, an object, two fields, an account, a contact, " +
-            "an opportunity, a lead, a record and a quote.");
+            12,
+            "a process, an approval process, a report, an object, two fields, an account, " +
+            "a contact, an opportunity, a lead, a record and a quote.");
 
         (await crm.ScalarAsTenantAsync<long>(
             CrmSchemaHarness.Northwind, "SELECT count(*) FROM account", Cancellation))
@@ -249,6 +249,7 @@ public sealed class SeedApplierTests
             new SeedStore(crm.DataSource),
             new CustomSchemaStore(crm.DataSource),
             new ApprovalStore(crm.DataSource),
+            new ReportStore(crm.DataSource),
             TimeProvider.System);
 
     /// <summary>The document the tests apply, read from the reader's own fixture.</summary>

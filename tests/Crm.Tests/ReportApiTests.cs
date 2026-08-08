@@ -84,6 +84,44 @@ public sealed class ReportApiTests
             "(none)", "a null outcome is a group a chart can label, not an absent key.");
     }
 
+    /// <summary>
+    /// A run says what it reduced, not only how.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Without the field, a reader cannot know the unit.</strong> "Sum" is how the groups
+    /// were reduced and says nothing about over what, which left a client two wrong answers to
+    /// choose between: draw every figure as money and a sum of probabilities reads as euros, or
+    /// draw every figure bare and a pipeline total reads as a tally. The report already knew the
+    /// field; it simply did not send it.
+    /// </remarks>
+    [Fact]
+    public async Task ARunSaysWhatItReducedAndNotOnlyHow()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+
+        var world = await PipelineAsync(app);
+
+        await OpportunityAsync(app, world, 1000m, "Won");
+
+        await ReportAsync(app, new DefineReport(
+            "by_amount", "Pipeline by outcome",
+            ReportSource.Opportunity, null, "Outcome", ReportMeasure.Sum, "Amount"));
+
+        await ReportAsync(app, new DefineReport(
+            "by_rows", "Deals by outcome",
+            ReportSource.Opportunity, null, "Outcome", ReportMeasure.Count, null));
+
+        var summed = await RunAsync(app, "by_amount");
+
+        summed.Measure.ShouldBe("Sum");
+        summed.MeasureOf.ShouldBe("Amount", "which is what makes it money rather than a count.");
+
+        var counted = await RunAsync(app, "by_rows");
+
+        counted.Measure.ShouldBe("Count");
+        counted.MeasureOf.ShouldBeNull("a count is of rows, and there is no field to name.");
+    }
+
     /// <summary>A custom object reports on a field an administrator invented.</summary>
     [Fact]
     public async Task ACustomObjectReportsOnAnInventedField()
