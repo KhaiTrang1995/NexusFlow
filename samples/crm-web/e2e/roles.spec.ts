@@ -510,6 +510,46 @@ test.describe('an organisation that has just started', () => {
     await expect(page.getByText('authorization.permission_denied')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0)
   })
+
+  /**
+   * A list shows the rows it was given and no others.
+   *
+   * The seven list screens fell back to the prototype's records whenever the page had not yet
+   * arrived or the read had failed. An organisation with nothing in it was shown five accounts,
+   * six opportunities and a €184,000 deal — every row clickable, every id resolving to nothing —
+   * under a grey eyebrow reading "sample data", which is not a thing anybody reads.
+   */
+  test('lists no rows it was not given', async ({ page }) => {
+    await signIn(page, 'contoso')
+
+    for (const object of ['account', 'contact', 'opportunity', 'quote']) {
+      await page.goto(`/records/${object}`)
+
+      await expect(page.locator('tbody tr'), object).toHaveCount(0)
+      await expect(page.locator('main'), object).not.toContainText('Northwind')
+    }
+  })
+})
+
+test.describe('a list whose read fails', () => {
+  /**
+   * The failure mode the empty tenant could not reach.
+   *
+   * An empty tenant gets an empty page, which is a successful read; the fixtures only surfaced
+   * while a page was pending or after it had failed. So this one refuses the read outright —
+   * the shape of a 500, an expired token or a dropped connection — and asserts the two things
+   * that were wrong: the table filled with somebody else's rows, and the refusal never appeared.
+   */
+  test('says so, and shows nobody else’s rows instead', async ({ page }) => {
+    await signIn(page, 'rep')
+    await page.route('**/api/v1/crm/entities', (route) => route.abort())
+
+    await page.goto('/records/account')
+
+    await expect(page.getByRole('alert')).toBeVisible()
+    await expect(page.locator('tbody tr')).toHaveCount(0)
+    await expect(page.locator('main')).not.toContainText('Northwind')
+  })
 })
 
 test.describe('the recent panel', () => {

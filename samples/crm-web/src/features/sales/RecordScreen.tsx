@@ -73,13 +73,10 @@ export function RecordScreen({ objectKey, id }: { objectKey: string; id: string 
     return names
   }, [accounts.data])
 
-  const record = useMemo(() => {
-    if (entity === null) {
-      return model.records.find((candidate) => candidate.id === id)
-    }
-
-    return toRows(objectKey, model, live.data?.records ?? [], accountNames)[0]
-  }, [entity, model, objectKey, id, live.data, accountNames])
+  const record = useMemo(
+    () => toRows(objectKey, model, live.data?.records ?? [], accountNames)[0],
+    [model, objectKey, live.data, accountNames],
+  )
 
   // What search's "recent" panel is. Written from here rather than tracked on the server: nothing
   // in this application records that somebody looked at a row, and a write on every record open to

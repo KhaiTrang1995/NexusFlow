@@ -4,6 +4,7 @@ import {
   Button,
   ButtonGroup,
   DataTable,
+  ErrorState,
   Drawer,
   DrawerSection,
   FieldRow,
@@ -67,11 +68,9 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
 
   const stages = model.stageField ? optionsFor(model, model.stageField) : []
 
-  // Four of the seven objects are tables this build has; the server pages those. The rest are
-  // the prototype's, and saying so on the screen is better than a list that looks live and is not.
+  // Every one of the seven objects is a table this build has, and the server pages all of them.
   const entity = entityOf(objectKey)
   const page = useEntityPage(entity)
-  const live = entity !== null && page.data !== undefined
 
   // Contacts and opportunities carry an account id. The accounts page answers what it is called,
   // and it is one cached request rather than one per row.
@@ -91,9 +90,14 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
     return names
   }, [accounts.data])
 
+  // THE FIXTURES USED TO BE THE FALLBACK, AND A GREY LABEL WAS THE ONLY WARNING. While the page
+  // loaded — and, worse, whenever it failed — this list rendered the prototype's invented rows:
+  // Northwind Systems, a €184,000 deal, five contacts, all clickable, all opening a record id
+  // that resolves to nothing. "sample data — the server did not answer" in the eyebrow does not
+  // make a table of somebody else's records honest, and nobody reads an eyebrow.
   const source = useMemo(
-    () => (live ? toRows(objectKey, model, page.data!.records, accountNames) : model.records),
-    [live, objectKey, model, page.data, accountNames],
+    () => toRows(objectKey, model, page.data?.records ?? [], accountNames),
+    [objectKey, model, page.data, accountNames],
   )
 
   const rows = useMemo(() => {
@@ -128,13 +132,11 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
         small
         eyebrow={
           `${rows.length} of ${source.length} · ` +
-          (entity === null
-            ? 'sample data'
-            : page.isPending
-              ? 'reading…'
-              : page.isError
-                ? 'sample data — the server did not answer'
-                // The object's own plural, not the server's kind with an "s" on it: the entity is
+          (page.isPending
+            ? 'reading…'
+            : page.isError
+              ? 'the server did not answer'
+              // The object's own plural, not the server's kind with an "s" on it: the entity is
               // `Activity` and the screen is Tasks, and "live activitys" is neither.
               : `live ${model.plural.toLowerCase()}`)
         }
@@ -217,6 +219,14 @@ export function ListScreen({ objectKey }: { objectKey: string }) {
       ) : null}
 
       <div className={styles.body}>
+        {/*
+          A refusal is shown, not swallowed under an empty table. "No accounts yet" is what a
+          reader concludes from an empty list, and on a 403 that sentence is false in the one
+          direction that matters — it says the tenant has none rather than that this caller may
+          not see them.
+        */}
+        {page.isError ? <ErrorState error={page.error} onRetry={page.refetch} /> : null}
+
         <DataTable
           caption={`All ${model.plural.toLowerCase()}`}
           columns={columns}
