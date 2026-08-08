@@ -134,11 +134,21 @@ public sealed record ReportGroup(string Dimension, string Value, int Rows);
 /// <param name="Name">Which report.</param>
 /// <param name="Label">What to show a person.</param>
 /// <param name="Measure">How the groups were reduced.</param>
+/// <param name="MeasureOf">
+/// What was reduced, or null for <see cref="ReportMeasure.Count"/>.
+/// <para>
+/// <strong>Without it a reader cannot know the unit.</strong> "Sum" says how the groups were
+/// reduced and not over what, so a client had the choice of drawing every figure as money — which
+/// makes a sum of probabilities read as euros — or as a bare number, which makes a pipeline total
+/// read as a tally. The field name is the fact that decides it, and the report already knows it.
+/// </para>
+/// </param>
 /// <param name="Groups">The groups, largest first.</param>
 public sealed record ReportResult(
     string Name,
     string Label,
     string Measure,
+    string? MeasureOf,
     IReadOnlyList<ReportGroup> Groups);
 
 /// <summary>What a dashboard found.</summary>

@@ -353,7 +353,7 @@ public sealed class ReportStore
 
             var groups = await GroupsAsync(connection, report, cancellationToken).ConfigureAwait(false);
 
-            results.Add(new ReportResult(tile, report.Label, report.Measure, groups));
+            results.Add(new ReportResult(tile, report.Label, report.Measure, report.MeasureOf, groups));
         }
 
         return (label, results);

@@ -155,7 +155,7 @@ public sealed class RunCrmReport : ICapability<RunReport, ReportResult>
 
         var groups = await _reports.RunAsync(ctx.TenantId, report, ct).ConfigureAwait(false);
 
-        return Result.Ok(new ReportResult(input.Name, report.Label, report.Measure, groups));
+        return Result.Ok(new ReportResult(input.Name, report.Label, report.Measure, report.MeasureOf, groups));
     }
 }
 

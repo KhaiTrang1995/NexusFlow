@@ -969,3 +969,56 @@ export interface KpiReviewed {
   actual: number
   status: string
 }
+
+// ─────────────────────────────────────────────────────────────── reports
+
+export type ReportSource = 'Opportunity' | 'Lead' | 'Activity' | 'CustomObject'
+
+export type ReportMeasure = 'Count' | 'Sum' | 'Average' | 'Min' | 'Max'
+
+/**
+ * Saves a report.
+ *
+ * `dimension` and `measureOf` are names from the source's own closed vocabulary — never a free
+ * expression. That is what lets the server bind them rather than assemble a statement, and it is
+ * why a client must read the vocabulary instead of offering every column it can think of.
+ */
+export interface DefineReport {
+  name: string
+  label: string
+  source: ReportSource
+  /** The custom object, for a `CustomObject` report. Null otherwise. */
+  target: string | null
+  dimension: string
+  measure: ReportMeasure
+  /** What to aggregate. Null for `Count`, which takes no field. */
+  measureOf: string | null
+}
+
+export interface ReportDefined {
+  reportId: string
+}
+
+export interface RunReport {
+  name: string
+}
+
+export interface ReportGroup {
+  /** `"(none)"` where the underlying value is null, so a bar always has a label. */
+  dimension: string
+  /** The measure, formatted invariantly — parse before you do arithmetic on it. */
+  value: string
+  /** How many rows are in the group, whatever the measure was. */
+  rows: number
+}
+
+export interface ReportResult {
+  name: string
+  label: string
+  /** How the groups were reduced. Not what was reduced — that is `measureOf`. */
+  measure: string
+  /** What was reduced, or null for `Count`. Without it a reader cannot know the unit. */
+  measureOf: string | null
+  /** Largest first, which is the order the server sorted them in. */
+  groups: ReportGroup[]
+}

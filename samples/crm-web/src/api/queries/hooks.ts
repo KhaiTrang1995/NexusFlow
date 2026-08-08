@@ -814,3 +814,47 @@ export function useRelatedRecords(
     staleTime: 15_000,
   })
 }
+
+/**
+ * Runs a saved report.
+ *
+ * THE GROUPING IS THE SERVER'S. It reads the saved definition, checks the dimension against the
+ * source's closed vocabulary and reduces in SQL — so a report run twice an hour apart differs
+ * only by the rows underneath it. A client that fetched every row and grouped in the browser
+ * would be a second implementation of the aggregate, and it would be the one that ran out of
+ * memory first.
+ */
+export function useReportRun(name: string | null): UseQueryResult<C.ReportResult> {
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useQuery({
+    queryKey: keys.reports.run(tenantId, name ?? 'none'),
+    queryFn: ({ signal }) =>
+      call.read<C.ReportResult, C.RunReport>('/reports/runs', { name: name as string }, signal),
+    enabled: name !== null && name.length > 0,
+    staleTime: 30_000,
+  })
+}
+
+/**
+ * Saves a report.
+ *
+ * The vocabulary is checked at declaration rather than at run time: a dimension the source does
+ * not have is refused here, instead of producing a report that groups everything under null —
+ * which reads as a data problem and is not.
+ */
+export function useDefineReport(): UseMutationResult<C.ReportDefined, Error, C.DefineReport> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.DefineReport) =>
+      call.write<C.ReportDefined, C.DefineReport>('/reports', input),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: keys.config.all(tenantId) })
+      client.invalidateQueries({ queryKey: keys.reports.all(tenantId) })
+    },
+  })
+}
