@@ -40,13 +40,21 @@ export function AdvanceOpportunity({
 
   function apply(transition: ProcessTransitionView) {
     advance.mutate(
-      { opportunityId, trigger: transition.trigger },
+      { opportunityId, trigger: transition.trigger, from: stage },
       {
-        onSuccess: () => toast.saved(`Moved to ${transition.to}.`),
+        // WHAT HAPPENED, NOT WHAT WAS ASKED FOR. This said "Moved to Qualify" on the 200 —
+        // before the engine had run, and whether or not it then moved anything. A guard that
+        // does not hold is the common answer here and it is not an error, so there was nothing
+        // to catch: the screen announced a move the process had declined.
+        onSuccess: (outcome) =>
+          outcome.moved
+            ? toast.saved(`Moved to ${outcome.stage}.`)
+            : toast.saved(
+                `${transition.trigger} was applied and the process left this deal in `
+                + `${outcome.stage ?? 'the same stage'}`
+                + (transition.guards.length > 0 ? ' — check its guards.' : '.'),
+              ),
 
-        // A guard that does not hold is the common answer here, not an exception — and without
-        // this the button was a click that did nothing, which reads as broken rather than as
-        // refused. The server's sentence names the guard; one invented here would not.
         onError: (error) => toast.failed(error, `${transition.trigger} was refused.`),
       },
     )

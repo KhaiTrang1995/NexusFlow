@@ -49,6 +49,34 @@ async function openFirstRecord(page: Page, path: string, matching?: string) {
   await page.getByRole('button', { name: 'Open record' }).click()
 }
 
+/**
+ * Captures a lead and converts it, returning the company both now carry.
+ *
+ * <strong>A test that borrows a row passes once.</strong> Two of these walked "the first
+ * opportunity", and the second run of the suite landed on the deal the first run had moved to
+ * Closed Won — a stage with no move out of it. Making the deal is also the first half of the
+ * loop they are named after, so it is not scaffolding: a converted lead starts in the first
+ * stage of the published process, which is the one place both tests can move forwards from.
+ */
+async function captureAndConvert(page: Page): Promise<string> {
+  const company = `Aster ${Date.now()}`
+
+  await page.goto('/records/lead')
+  await page.getByRole('button', { name: 'New lead' }).click()
+  await page.getByLabel('Company').fill(company)
+  await page.getByLabel('Contact name').fill('R. Halloran')
+  await page.getByLabel('Email').fill(`r.halloran@${Date.now()}.example`)
+  await page.getByRole('button', { name: 'Capture' }).click()
+  await expect(toast(page)).toContainText('captured')
+
+  await openFirstRecord(page, '/records/lead', company)
+  await page.getByRole('button', { name: 'Convert' }).click()
+  await page.getByRole('button', { name: 'Convert', exact: true }).last().click()
+  await expect(toast(page)).toContainText('converted')
+
+  return company
+}
+
 test.describe('a seller', () => {
   /**
    * Capture to order, with the approval in the middle.
@@ -60,7 +88,9 @@ test.describe('a seller', () => {
   test('walks from an opportunity to an order, and is stopped at the discount', async ({ page }) => {
     await signIn(page, 'rep')
 
-    await openFirstRecord(page, '/records/opportunity')
+    const company = await captureAndConvert(page)
+
+    await openFirstRecord(page, '/records/opportunity', company)
 
     // The moves come from the published process, not from a list this file knows. Asserting the
     // arrow rather than a stage name: which stages exist is the tenant's business.
@@ -102,15 +132,16 @@ test.describe('a seller', () => {
   test('sees its own quotes under Related', async ({ page }) => {
     await signIn(page, 'rep')
 
-    await openFirstRecord(page, '/records/opportunity')
+    // Its own deal, so the count below starts from nought whatever the tenant has been through.
+    const company = await captureAndConvert(page)
+
+    await openFirstRecord(page, '/records/opportunity', company)
 
     await page.getByRole('tab', { name: /Related/ }).click()
 
-    const quotes = page.getByRole('table', { name: 'Quotes' })
-
-    await expect(quotes).toBeVisible()
-
-    const before = await quotes.locator('tbody tr').count()
+    // The panel is there before anything points at the record. It used to render nothing at all
+    // when the list was empty, so the whole tab was blank on a new deal.
+    await expect(page.getByText('Nothing points at this record from quotes.')).toBeVisible()
 
     await page.getByRole('tab', { name: /Details/ }).click()
     await page.getByRole('button', { name: 'New quote' }).click()
@@ -124,7 +155,7 @@ test.describe('a seller', () => {
     await page.goBack()
     await page.getByRole('tab', { name: /Related/ }).click()
 
-    await expect(quotes.locator('tbody tr')).toHaveCount(before + 1)
+    await expect(page.getByRole('table', { name: 'Quotes' }).locator('tbody tr')).toHaveCount(1)
   })
 
   /**
@@ -249,16 +280,20 @@ test.describe('a seller', () => {
   test('moves a card through the published process, and cannot move it back', async ({ page }) => {
     await signIn(page, 'rep')
 
+    // Its own deal, in the first stage of the published process — see `captureAndConvert`.
+    const company = await captureAndConvert(page)
+
     await page.goto('/kanban')
 
     // The version comes from the published definition — a fixture has none.
     await expect(page.locator('main')).toContainText(/version \d+/)
 
-    const card = page.locator('section button').first()
+    const card = page.locator('section button', { hasText: company }).first()
 
     await expect(card).toBeVisible()
 
     const name = (await card.innerText()).split('\n')[0] ?? ''
+    const before = (await card.getAttribute('aria-label')) ?? ''
 
     await card.focus()
     await page.keyboard.press('ArrowRight')
@@ -268,6 +303,16 @@ test.describe('a seller', () => {
     // And back is refused, because this process runs one way. The refusal names both stages,
     // which is what tells a reader it is the configuration and not the drag that failed.
     const moved = page.locator('section button', { hasText: name }).first()
+
+    // THE TOAST NAMES WHERE THE DEAL ACTUALLY IS. The trigger is applied synchronously and the
+    // transition is decided afterwards, off the change feed — so this used to announce the move
+    // before the engine had run, and announce it again when the engine had declined to move
+    // anything. The card's own label carries its stage, and the two have to agree.
+    await expect(moved).not.toHaveAttribute('aria-label', before)
+
+    const landed = ((await moved.getAttribute('aria-label')) ?? '').split(', ')[1]?.split('.')[0]
+
+    await expect(toast(page)).toContainText(`${name} → ${landed}`)
 
     await moved.focus()
     await page.keyboard.press('ArrowLeft')
@@ -571,3 +616,4 @@ test.describe('the recent panel', () => {
     await expect(page.locator('main')).toContainText(opened)
   })
 })
+

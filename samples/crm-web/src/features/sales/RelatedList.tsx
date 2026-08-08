@@ -44,10 +44,9 @@ export function RelatedList({ link, parentId }: { link: RelatedLink; parentId: s
     )
   }
 
-  if (rows.length === 0) {
-    return null
-  }
-
+  // AN EMPTY LIST IS STILL A LIST. Returning null here meant the Related tab of a record nothing
+  // pointed at yet was blank — no heading, no sentence, nothing to distinguish "this deal has no
+  // quotes" from "this tab is broken". The panel says which list it is and that it has none.
   return (
     <Panel padding="flush">
       <PanelHeader title={link.title} note={`${rows.length}`} />
@@ -66,6 +65,7 @@ export function RelatedList({ link, parentId }: { link: RelatedLink; parentId: s
             params: { object: link.objectKey, id: row.id },
           })
         }
+        empty={`Nothing points at this record from ${link.title.toLowerCase()}.`}
       />
     </Panel>
   )

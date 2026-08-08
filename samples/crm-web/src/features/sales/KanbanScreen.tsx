@@ -103,12 +103,20 @@ export function KanbanScreen() {
     }
 
     advance.mutate(
-      { opportunityId: row.recordId, trigger: transition.trigger },
+      { opportunityId: row.recordId, trigger: transition.trigger, from },
       {
-        onSuccess: () => toast.saved(`${row.values['name'] ?? 'The deal'} → ${toStage}.`),
+        // THE CARD USED TO SPRING BACK UNDER A TOAST SAYING IT HAD MOVED. The trigger is applied
+        // synchronously and the transition is decided afterwards, so the board refetched before
+        // the engine had run — and when the engine declined the move, nothing ever corrected the
+        // toast. Both cases now say what the deal's stage actually is.
+        onSuccess: (outcome) =>
+          outcome.moved
+            ? toast.saved(`${row.values['name'] ?? 'The deal'} → ${outcome.stage}.`)
+            : toast.saved(
+                `${transition.trigger} was applied and the process left this deal in ${from}`
+                + (transition.guards.length > 0 ? ' — check its guards.' : '.'),
+              ),
 
-        // A guard that does not hold is the common answer, not an exception. Without this the
-        // card sprang back with no explanation, which reads as the drag having missed.
         onError: (error) => toast.failed(error, `${transition.trigger} was refused.`),
       },
     )

@@ -657,18 +657,79 @@ export function useConvertLead(): UseMutationResult<C.ConversionResult, Error, C
  * guard that does not hold refuses it too — which is the whole point of configuring the process
  * rather than writing the stage from a drop-down.
  */
+/** What the process did with a trigger, once it had done it. */
+export interface TriggerOutcome extends C.OpportunityAdvanced {
+  /** The stage the opportunity is in now. */
+  stage: string | null
+  /** Whether that is somewhere new. False means the process left it where it was. */
+  moved: boolean
+}
+
+/**
+ * Applies a trigger, then waits to see what the process made of it.
+ *
+ * THE 200 IS NOT THE MOVE. `crm.opportunity.advance` checks the opportunity exists and records
+ * that somebody applied the trigger; the transition is decided afterwards, off the change feed,
+ * by the definition an administrator wrote. So the response says nothing about where the deal
+ * ended up — and both callers used to announce "Moved to Qualify" the instant it arrived.
+ *
+ * TWO THINGS WERE WRONG WITH THAT, AND THE SECOND IS THE BAD ONE. The board refetched before the
+ * transition had run and drew the card back in its old lane under a toast saying it had moved,
+ * which reads as the drag having failed. And when the process declined the move — a guard that
+ * does not hold, or no transition out of that stage for that trigger — the screen said it had
+ * moved anyway. There is no error to catch: declining is a successful outcome of the engine.
+ *
+ * SO THIS READS THE ROW BACK. A short poll until the stage changes, then the caller is told what
+ * actually happened. If it has not changed by the deadline the answer is "not moved", which is
+ * true of a declined guard and of a slow feed alike — and saying "the process left it in
+ * Discovery" is honest about both, where "Moved to Qualify" is honest about neither.
+ */
 export function useAdvanceOpportunity(): UseMutationResult<
-  C.OpportunityAdvanced,
+  TriggerOutcome,
   Error,
-  C.AdvanceOpportunity
+  C.AdvanceOpportunity & { from: string | null }
 > {
   const client = useQueryClient()
   const { tenantId } = useSession()
   const call = useCall()
+  const { token } = useSession()
 
   return useMutation({
-    mutationFn: (input: C.AdvanceOpportunity) =>
-      call.write<C.OpportunityAdvanced, C.AdvanceOpportunity>('/opportunities/triggers', input),
+    mutationFn: async (input) => {
+      const applied = await call.write<C.OpportunityAdvanced, C.AdvanceOpportunity>(
+        '/opportunities/triggers',
+        { opportunityId: input.opportunityId, trigger: input.trigger },
+      )
+
+      let stage = input.from
+
+      // Six looks over three seconds. Long enough for a feed that is keeping up, short enough
+      // that a reader is not left watching a spinner while an engine decides not to move
+      // anything at all.
+      for (let attempt = 0; attempt < 6 && stage === input.from; attempt += 1) {
+        await new Promise((resume) => setTimeout(resume, 500))
+
+        const page = await post<C.RecordPage, C.ReadEntityPage>(
+          '/entities',
+          {
+            entity: 'Opportunity',
+            filter: {
+              match: 'All',
+              criteria: [
+                { field: 'opportunity_id', operator: 'Equals', value: input.opportunityId },
+              ],
+            },
+            limit: 1,
+            after: null,
+          },
+          { token },
+        )
+
+        stage = page.records[0]?.values['stage'] ?? stage
+      }
+
+      return { ...applied, stage, moved: stage !== input.from }
+    },
     onSuccess: () => {
       client.invalidateQueries({ queryKey: keys.entities.all(tenantId) })
 

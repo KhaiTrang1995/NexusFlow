@@ -1,6 +1,6 @@
 import { useNavigate } from '@tanstack/react-router'
-import { Page, PageHeader, Panel, StatGrid, StatTile, Tag } from '@/design/primitives'
-import { OBJECT_MODELS } from '@/fixtures/objects'
+import { AsyncBoundary, Page, PageHeader, Panel, StatGrid, StatTile, Tag } from '@/design/primitives'
+import { useSchema } from '@/api/queries/hooks'
 import styles from './setup.module.css'
 
 interface SetupCard {
@@ -33,19 +33,59 @@ const CARDS: readonly SetupCard[] = [
  */
 export function SetupHomeScreen() {
   const navigate = useNavigate()
-  const objects = Object.values(OBJECT_MODELS)
-  const fields = objects.reduce((sum, object) => sum + object.fields.length, 0)
+  const schema = useSchema()
+
+  const described = schema.data
+
+  // WHAT THIS TENANT HAS CONFIGURED, NOT WHAT THE PROTOTYPE HAS. These four tiles counted
+  // `OBJECT_MODELS` — a table in this client — so every organisation was told it had 7 objects,
+  // 65 fields, 5 stages and 19 layout sections, including one that had declared nothing at all.
+  // Two of the old tiles are gone rather than reworded: no endpoint says how many objects have a
+  // published path, and page layouts are not stored anywhere in this build, so both were numbers
+  // with nothing behind them. The two that replaced them are the schema's own.
+  const entities = described?.entities ?? []
+  const objects = described?.objects ?? []
+
+  const columns = entities.reduce((sum, entity) => sum + entity.columns.length, 0)
+
+  const declared =
+    entities.reduce((sum, entity) => sum + entity.fields.length, 0)
+    + objects.reduce((sum, object) => sum + object.fields.length, 0)
 
   return (
     <Page>
-      <PageHeader eyebrow="Setup" title="Configuration" />
+      <PageHeader
+        eyebrow="Setup"
+        title="Configuration"
+        actions={
+          described === undefined ? null : (
+            <Tag tone="outline">schema v{described.version}</Tag>
+          )
+        }
+      />
 
-      <StatGrid columns={4}>
-        <StatTile label="Objects" value={objects.length} note="built-in and custom" />
-        <StatTile label="Fields" value={fields} note="across every object" />
-        <StatTile label="Stages" value={objects.filter((object) => object.stages).length} note="objects with a path" />
-        <StatTile label="Layouts" value={objects.reduce((sum, object) => sum + object.layout.length, 0)} note="sections" />
-      </StatGrid>
+      <AsyncBoundary query={schema} skeletonRows={2}>
+        {() => (
+          <StatGrid columns={4}>
+            <StatTile
+              label="Objects"
+              value={entities.length + objects.length}
+              note={`${entities.length} built in · ${objects.length} declared here`}
+            />
+            <StatTile label="Columns" value={columns} note="of the built-in tables" />
+            <StatTile
+              label="Custom fields"
+              value={declared}
+              note="added without a deployment"
+            />
+            <StatTile
+              label="Saved views"
+              value={objects.reduce((sum, object) => sum + object.views.length, 0)}
+              note="named queries over custom objects"
+            />
+          </StatGrid>
+        )}
+      </AsyncBoundary>
 
       <div className={styles.tiles}>
         {CARDS.map((card) => (
