@@ -10,5 +10,15 @@ const API = process.env.CRM_API ?? 'http://localhost:5000'
 export default defineConfig({
   plugins: [react()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
-  server: { port: 5173, proxy: { '/api': { target: API, changeOrigin: true } } },
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': { target: API, changeOrigin: true },
+
+      // The compiler's manifest, which the setup screen lists the application's flows from. It
+      // is an application-level document rather than a CRM one, so it is not under /api and has
+      // to be named here — a proxy that only forwards /api leaves it 404ing against Vite.
+      '/flowx.manifest.json': { target: API, changeOrigin: true },
+    },
+  },
 })

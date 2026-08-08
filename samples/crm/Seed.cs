@@ -360,13 +360,24 @@ public sealed record SeedApprovalStep(string Label, ApproverKind Kind, string? A
 /// <param name="Lifecycle">Where it has got to.</param>
 /// <param name="Region">Free text.</param>
 /// <param name="Owner">Who holds it. An id, because a user directory is not this sample's.</param>
+/// <param name="Values">
+/// The declared fields this account carries, or null for none.
+/// <para>
+/// <strong>A file that declares a field and can never fill it in is a half-configured
+/// tenant.</strong> The seed writes custom objects with their values and, until this, wrote
+/// built-in entities without: the picklist it declares on <c>Account</c> was empty on every
+/// account it created, and the data-quality screen scored the tenant at zero per cent for a
+/// reason that was in the seed rather than in anybody's data.
+/// </para>
+/// </param>
 public sealed record SeedAccount(
     string Alias,
     string Name,
     string Industry,
     Lifecycle Lifecycle,
     string Region,
-    Guid Owner);
+    Guid Owner,
+    IReadOnlyDictionary<string, string?>? Values = null);
 
 /// <summary>A row of <c>contact</c>.</summary>
 /// <param name="Alias">Its name in this file.</param>

@@ -274,6 +274,11 @@ app.MapFlowXOpenApi(FlowXManifest.Json, CrmJsonContext.Default);
 // the generator rather than to this line.
 app.MapFlowXOpenApiUi();
 
+// The manifest itself, beside the document derived from it. The setup screen that lists what this
+// application does needs the flows' profiles and their bus and schedule triggers, and OpenAPI has
+// neither — it describes an HTTP surface, and half of what runs here has no path.
+app.MapFlowXManifest(FlowXManifest.Json);
+
 await app.RunAsync().ConfigureAwait(false);
 
 return 0;

@@ -136,6 +136,15 @@ public sealed class EntityQueryStore
         LIMIT @limit
         """;
 
+    /// <summary>
+    /// What a declared field's key is prefixed with in a projection.
+    /// </summary>
+    /// <remarks>
+    /// A declared field may be called <c>name</c>, and merging one into the same dictionary as the
+    /// built-in columns would replace the column of that name on exactly the tenants that did it.
+    /// </remarks>
+    public const string CustomFieldPrefix = "custom.";
+
     private readonly NpgsqlDataSource _source;
 
     /// <summary>Builds the store over the application's data source.</summary>
@@ -217,12 +226,25 @@ public sealed class EntityQueryStore
 
                 foreach (var column in offered)
                 {
-                    values[column] = body.RootElement.TryGetProperty(column, out var value)
-                        && value.ValueKind is not System.Text.Json.JsonValueKind.Null
-                        ? value.ValueKind is System.Text.Json.JsonValueKind.String
-                            ? value.GetString()
-                            : value.ToString()
-                        : null;
+                    values[column] = Read(body.RootElement, column);
+                }
+
+                // The declared fields, under a prefix. They live in one jsonb column and were
+                // dropped entirely: a page of accounts could not show the picklist the tenant
+                // declared on accounts, so anything measuring completeness measured zero.
+                //
+                // PREFIXED RATHER THAN MERGED, because a declared field may legitimately be
+                // called `name`, and merging would silently replace the built-in column of that
+                // name on exactly the tenants that did it. The prefix is not a filter name:
+                // `EntityColumns.Readable` still decides what a criterion may name, which is what
+                // keeps a caller's string out of the statement.
+                if (body.RootElement.TryGetProperty("custom_fields", out var custom)
+                    && custom.ValueKind is System.Text.Json.JsonValueKind.Object)
+                {
+                    foreach (var declared in custom.EnumerateObject())
+                    {
+                        values[CustomFieldPrefix + declared.Name] = Read(custom, declared.Name);
+                    }
                 }
 
                 rows.Add(new RecordView(last, values));
@@ -236,6 +258,20 @@ public sealed class EntityQueryStore
 
         return new RecordPage(rows, [], next);
     }
+
+    /// <summary>One property of a JSON object as text, or null where it is absent or null.</summary>
+    /// <remarks>
+    /// A number and a string both come back as text, because every value in a projection is text:
+    /// the caller's filter compares strings, and a page that typed some columns and not others
+    /// would sort 90,000 above 800,000 on the ones it did not.
+    /// </remarks>
+    private static string? Read(System.Text.Json.JsonElement body, string name) =>
+        body.TryGetProperty(name, out var value)
+        && value.ValueKind is not System.Text.Json.JsonValueKind.Null
+            ? value.ValueKind is System.Text.Json.JsonValueKind.String
+                ? value.GetString()
+                : value.ToString()
+            : null;
 
     private static void Add(NpgsqlCommand command, string name, NpgsqlDbType type, object value) =>
         command.Parameters.Add(new NpgsqlParameter(name, type) { Value = value });

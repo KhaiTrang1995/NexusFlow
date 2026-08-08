@@ -487,10 +487,12 @@
         "industry": "SaaS",
         "lifecycle": "Customer",
         "region": "NA",
-        "owner": "33333333-3333-3333-3333-333333333333"
+        "owner": "33333333-3333-3333-3333-333333333333",
+        "values": { "segment": "strategic" }
       },
       {
         "alias": "meridian",
+        "values": { "segment": "mid_market" },
         "name": "Meridian Logistics",
         "industry": "Logistics",
         "lifecycle": "Prospect",

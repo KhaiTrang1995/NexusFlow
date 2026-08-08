@@ -233,6 +233,66 @@ public sealed class SeedApplierTests
             .ShouldBe(10_800m);
     }
 
+    /// <summary>
+    /// A seeded account carries the fields the same file declared.
+    /// </summary>
+    /// <remarks>
+    /// <strong>A file that declares a field and can never fill it in leaves a tenant half
+    /// configured.</strong> The seed wrote custom objects with their values and built-in entities
+    /// without, so the picklist it declares on <c>Account</c> was empty on every account it
+    /// created — and the data-quality screen scored the tenant at zero per cent for a reason that
+    /// was in the seed rather than in anybody's data.
+    ///
+    /// Written through the same merge the HTTP path uses, so a value the schema would refuse is
+    /// refused here too: the second half of this test is what says so.
+    /// </remarks>
+    [Fact]
+    public async Task ASeededAccountCarriesTheFieldsTheFileDeclared()
+    {
+        await using var crm = await CrmSchemaHarness.CreateAsync(Cancellation);
+
+        await ApplyAsync(crm, Document());
+
+        (await crm.ScalarAsTenantAsync<string>(
+            CrmSchemaHarness.Northwind,
+            "SELECT custom_fields ->> 'segment' FROM account WHERE account_id = @id",
+            Cancellation,
+            ("id", SeedIds.For(CrmSchemaHarness.Northwind, "account", "northwind"))))
+            .ShouldBe("enterprise");
+    }
+
+    /// <summary>A value the declared picklist does not offer is refused, not written.</summary>
+    /// <remarks>
+    /// The same check the capability runs. A seed with its own statement would write it and the
+    /// screen reading the field would show a value nothing else in the tenant can produce.
+    /// </remarks>
+    [Fact]
+    public async Task ASeededValueThePicklistDoesNotOfferIsRefused()
+    {
+        await using var crm = await CrmSchemaHarness.CreateAsync(Cancellation);
+
+        var document = Document();
+        var account = document.Data.Accounts[0]!;
+
+        var applied = await Applier(crm).ApplyAsync(
+            document with
+            {
+                Data = document.Data with
+                {
+                    Accounts =
+                    [
+                        account with
+                        {
+                            Values = new Dictionary<string, string?> { ["segment"] = "invented" },
+                        },
+                    ],
+                },
+            },
+            Cancellation);
+
+        applied.IsSuccess.ShouldBeFalse("'invented' is not one of the three options declared.");
+    }
+
     // ------------------------------------------------------------------------------- fixtures
 
     private static async Task<SeedOutcome> ApplyAsync(CrmSchemaHarness crm, SeedDocument document)

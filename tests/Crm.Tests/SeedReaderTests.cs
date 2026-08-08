@@ -363,7 +363,8 @@ public sealed class SeedReaderTests
               {
                 "alias": "northwind", "name": "Northwind Systems", "industry": "SaaS",
                 "lifecycle": "Customer", "region": "NA",
-                "owner": "33333333-3333-3333-3333-333333333333"
+                "owner": "33333333-3333-3333-3333-333333333333",
+                "values": { "segment": "enterprise" }
               }
             ],
             "contacts": [
