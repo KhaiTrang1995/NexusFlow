@@ -1,76 +1,127 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { Button, ButtonGroup, Page, PageHeader, Tag } from '@/design/primitives'
+import { Button, ButtonGroup, EmptyState, Page, PageHeader, Skeleton, Tag } from '@/design/primitives'
 import { useToast } from '@/app/ToastProvider'
-import { fullMoney, money } from '@/lib/format'
-import { useEntityPage } from '@/api/queries/hooks'
-import { modelFor } from '@/fixtures/objects'
-import { toRows } from './liveRecords'
-import type { RecordRow } from '@/fixtures/objects'
+import { useSession } from '@/session/SessionProvider'
+import { date, fullMoney, money } from '@/lib/format'
+import { useAdvanceOpportunity, useEntityPage, useProcess } from '@/api/queries/hooks'
+import type { ProcessTransitionView, RecordView } from '@/api/contracts'
 import styles from './KanbanScreen.module.css'
 
 /**
- * The opportunity board.
+ * The opportunity board, over the published process.
+ *
+ * THE LANES WERE THE PROTOTYPE'S. They came from the object model — a stage list this client was
+ * compiled with, each carrying an invented probability drawn as "· 30%" under the column total.
+ * They matched the seeded process by coincidence of naming; on a tenant that named its stages
+ * anything else, every card would have fallen into no lane at all and the board would have looked
+ * empty rather than wrong.
+ *
+ * THE MOVE IS WRITTEN NOW, AND IT IS THE PROCESS THAT WRITES IT. Dropping a card used to move it
+ * locally and toast "not written; the process decides" — true at the time, because nothing here
+ * could name a trigger. The published transitions carry one: a drop from Discovery to Qualify is
+ * whichever trigger the administrator declared between those two stages, and the server decides
+ * whether its guards hold. A lane with no transition into it from where the card is refuses the
+ * drop, because that is what the process says.
  *
  * DRAG IS NOT THE ONLY WAY TO MOVE A CARD. Every card also has a keyboard path — focus it and use
  * the left and right arrows — because a board whose single interaction is a mouse gesture is a
- * board a whole class of people cannot use at all. The two paths call the same `move`, so they
+ * board a whole class of people cannot use at all. Both paths call the same `advance`, so they
  * cannot drift.
- *
- * THE MOVE IS LOCAL AND SAYS SO. The .NET sample advances an opportunity through
- * `/opportunities/triggers`, which announces an intent and lets the configured process decide —
- * it does not take "put this deal in that column". So the board moves the card here and the toast
- * says the move is not yet written; inventing an endpoint that does what the backend deliberately
- * refuses to do would be worse than being honest about it.
  */
 export function KanbanScreen() {
   const navigate = useNavigate()
   const toast = useToast()
-  const model = modelFor('opportunity')
+  const { ownerId } = useSession()
 
-  const [moved, setMoved] = useState<Readonly<Record<string, string>>>({})
+  const process = useProcess('Opportunity')
+  const page = useEntityPage('Opportunity')
+  const advance = useAdvanceOpportunity()
+
   const [dragging, setDragging] = useState<string | null>(null)
   const [over, setOver] = useState<string | null>(null)
   const [scope, setScope] = useState<'mine' | 'all'>('all')
 
+  // Every stage the process declares, in its own order. The lost one is left out because a board
+  // is for work in progress; a lane nothing is meant to come back from is a filter, not a column.
   const stages = useMemo(
-    () => (model.stages ?? []).filter((stage) => !stage.lost),
-    [model.stages],
-  )
-
-  const stageOf = (row: RecordRow) => moved[row.id] ?? String(row['stage'])
-
-  // Live opportunities, grouped by the stage the configured process put them in. The stage is a
-  // column of the answer without being a column of the table — the server merges its name into
-  // the projection, because an identifier is not something a board can group by.
-  const page = useEntityPage('Opportunity')
-  const live = page.data !== undefined
-
-  const source = useMemo(
-    () => (live ? toRows('opportunity', model, page.data!.records) : model.records),
-    [live, model, page.data],
+    () => (process.data?.stages ?? []).filter((stage) => !stage.name.toLowerCase().includes('lost')),
+    [process.data],
   )
 
   const rows = useMemo(
-    () => source.filter((row) => scope === 'all' || row['owner'] === 'A. Ruiz'),
-    [source, scope],
+    () =>
+      (page.data?.records ?? []).filter(
+        (row) => scope === 'all' || row.values['owner_id'] === ownerId,
+      ),
+    [page.data, scope, ownerId],
   )
 
-  function move(row: RecordRow, direction: -1 | 1) {
-    const index = stages.findIndex((stage) => stage.name === stageOf(row))
-    const next = stages[index + direction]
-    if (!next) return
-    setMoved((current) => ({ ...current, [row.id]: next.name }))
-    toast.saved(`${row['name']} → ${next.name} (not written; the process decides)`)
+  if (process.isPending || page.isPending) {
+    return (
+      <Page layout="full">
+        <Skeleton rows={8} />
+      </Page>
+    )
   }
 
-  function drop(stageName: string) {
-    const row = rows.find((candidate) => candidate.id === dragging)
-    setDragging(null)
-    setOver(null)
-    if (!row || stageOf(row) === stageName) return
-    setMoved((current) => ({ ...current, [row.id]: stageName }))
-    toast.saved(`${row['name']} → ${stageName} (not written; the process decides)`)
+  if (process.isError) {
+    return (
+      <Page layout="full">
+        <EmptyState
+          title="No process is published for opportunities"
+          detail="A board is the published stages. Publish one and the lanes appear — this build does not invent them."
+        />
+      </Page>
+    )
+  }
+
+  /**
+   * Moves a card by naming what happened, not where it should land.
+   *
+   * The transition between the two stages is what carries the trigger. Where there is none the
+   * move is refused here rather than sent: the server would refuse it too, and saying so without
+   * a round trip is the same answer sooner.
+   */
+  function advanceTo(row: RecordView, toStage: string) {
+    const from = row.values['stage'] ?? ''
+
+    if (from === toStage) {
+      return
+    }
+
+    const transition = (process.data?.transitions ?? []).find(
+      (candidate: ProcessTransitionView) => candidate.from === from && candidate.to === toStage,
+    )
+
+    if (transition === undefined) {
+      toast.failed(
+        new Error(`The published process has no move from ${from} to ${toStage}.`),
+        'That move is not in the process.',
+      )
+      return
+    }
+
+    advance.mutate(
+      { opportunityId: row.recordId, trigger: transition.trigger },
+      {
+        onSuccess: () => toast.saved(`${row.values['name'] ?? 'The deal'} → ${toStage}.`),
+
+        // A guard that does not hold is the common answer, not an exception. Without this the
+        // card sprang back with no explanation, which reads as the drag having missed.
+        onError: (error) => toast.failed(error, `${transition.trigger} was refused.`),
+      },
+    )
+  }
+
+  /** One lane left or right, through whatever transition connects them. */
+  function step(row: RecordView, direction: -1 | 1) {
+    const index = stages.findIndex((stage) => stage.name === row.values['stage'])
+    const next = stages[index + direction]
+
+    if (next !== undefined) {
+      advanceTo(row, next.name)
+    }
   }
 
   return (
@@ -78,7 +129,7 @@ export function KanbanScreen() {
       <PageHeader
         bar
         small
-        eyebrow="Opportunities · board"
+        eyebrow={`Opportunities · board · version ${process.data.version}`}
         title="Pipeline board"
         actions={
           <>
@@ -99,8 +150,19 @@ export function KanbanScreen() {
 
       <div className={styles.board}>
         {stages.map((stage) => {
-          const cards = rows.filter((row) => stageOf(row) === stage.name)
-          const sum = cards.reduce((total, row) => total + Number(row['amount'] ?? 0), 0)
+          const cards = rows.filter((row) => row.values['stage'] === stage.name)
+          const sum = cards.reduce((total, row) => total + Number(row.values['amount'] ?? 0), 0)
+
+          // The average likelihood of what is actually in the lane. The invented per-stage
+          // percentage that used to sit here was the same on every tenant and belonged to no
+          // deal; this is a fact about these cards.
+          const likelihood =
+            cards.length === 0
+              ? null
+              : Math.round(
+                  cards.reduce((total, row) => total + Number(row.values['probability'] ?? 0), 0)
+                    / cards.length,
+                )
 
           return (
             <section
@@ -111,7 +173,16 @@ export function KanbanScreen() {
                 setOver(stage.name)
               }}
               onDragLeave={() => setOver((current) => (current === stage.name ? null : current))}
-              onDrop={() => drop(stage.name)}
+              onDrop={() => {
+                const row = rows.find((candidate) => candidate.recordId === dragging)
+
+                setDragging(null)
+                setOver(null)
+
+                if (row !== undefined) {
+                  advanceTo(row, stage.name)
+                }
+              }}
             >
               <header className={styles.columnHead}>
                 <div className={styles.columnName}>
@@ -119,42 +190,45 @@ export function KanbanScreen() {
                   <span className={styles.columnCount}>{cards.length}</span>
                 </div>
                 <div className={styles.columnSum}>
-                  {money(sum)} · {stage.pct}%
+                  {money(sum)}
+                  {likelihood === null ? '' : ` · ${likelihood}% likely`}
                 </div>
               </header>
 
               <div className={styles.cards}>
                 {cards.map((row) => (
                   <button
-                    key={row.id}
+                    key={row.recordId}
                     type="button"
                     draggable
-                    className={`${styles.card} ${dragging === row.id ? styles.cardDragging : ''}`}
-                    onDragStart={() => setDragging(row.id)}
+                    className={`${styles.card} ${dragging === row.recordId ? styles.cardDragging : ''}`}
+                    onDragStart={() => setDragging(row.recordId)}
                     onDragEnd={() => setDragging(null)}
                     onClick={() =>
                       void navigate({
                         to: '/records/$object/$id',
-                        params: { object: 'opportunity', id: row.id },
+                        params: { object: 'opportunity', id: row.recordId },
                       })
                     }
                     onKeyDown={(event) => {
                       if (event.key === 'ArrowRight') {
                         event.preventDefault()
-                        move(row, 1)
+                        step(row, 1)
                       }
                       if (event.key === 'ArrowLeft') {
                         event.preventDefault()
-                        move(row, -1)
+                        step(row, -1)
                       }
                     }}
-                    aria-label={`${row['name']}, ${stageOf(row)}. Left and right arrows move it between stages.`}
+                    aria-label={`${row.values['name'] ?? 'Opportunity'}, ${stage.name}. Left and right arrows move it between stages.`}
                   >
-                    <div className={styles.cardName}>{row['name']}</div>
+                    <div className={styles.cardName}>{row.values['name'] ?? '—'}</div>
                     <div className={styles.cardMeta}>
-                      <Tag tone="outline">{row['owner']}</Tag>
-                      <span>{row['closeDate']}</span>
-                      <span className={styles.cardAmount}>{fullMoney(Number(row['amount']))}</span>
+                      <Tag tone="outline">{row.values['probability'] ?? 0}%</Tag>
+                      <span>{date(row.values['expected_close'])}</span>
+                      <span className={styles.cardAmount}>
+                        {fullMoney(Number(row.values['amount'] ?? 0))}
+                      </span>
                     </div>
                   </button>
                 ))}
