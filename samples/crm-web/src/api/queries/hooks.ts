@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query'
-import { newIdempotencyKey, post } from '../client'
+import { getDocument, newIdempotencyKey, post } from '../client'
 import type * as C from '../contracts'
 import { useSession } from '@/session/SessionProvider'
 import { keys } from './keys'
@@ -931,5 +931,24 @@ export function useSetStrategy(): UseMutationResult<C.StrategySet, Error, C.SetS
       client.invalidateQueries({ queryKey: keys.board.all(tenantId) })
       client.invalidateQueries({ queryKey: keys.performance.all(tenantId) })
     },
+  })
+}
+
+/**
+ * The compiler's manifest for this application.
+ *
+ * WHAT IT IS FOR: the setup screen that lists what this application actually does. It was written
+ * out by hand because there was nothing to read, and five of its eleven flows named flows that do
+ * not exist — against seventy-nine that do.
+ *
+ * NOT TENANT-SCOPED AND NOT CACHED BY TENANT. The manifest is a compile-time constant; it is the
+ * same document for every caller and cannot change while the server runs, so it is read once and
+ * kept.
+ */
+export function useManifest(): UseQueryResult<C.Manifest> {
+  return useQuery({
+    queryKey: keys.manifest.all(),
+    queryFn: ({ signal }) => getDocument<C.Manifest>('/flowx.manifest.json', signal),
+    staleTime: Infinity,
   })
 }

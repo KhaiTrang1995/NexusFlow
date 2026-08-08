@@ -383,6 +383,65 @@ public sealed class EntityPageApiTests
             .Records.ShouldBeEmpty("the policy hops through the quote, and that quote is not theirs.");
     }
 
+    /// <summary>
+    /// A page carries the fields the tenant declared, under a prefix that cannot collide.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>They were dropped entirely.</strong> Declared values live in one <c>custom_fields</c>
+    /// column and the projection walks the closed readable list, so a page of accounts could not
+    /// show the picklist the tenant declared on accounts — and anything measuring completeness
+    /// measured zero for a reason that was in the projection rather than in the data.
+    /// </para>
+    /// <para>
+    /// <strong>Prefixed, because a declared field may be called <c>name</c>.</strong> Merging
+    /// would replace the built-in column of that name on exactly the tenants that did it, which
+    /// is the kind of collision that shows up once, on one tenant, months later.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task APageCarriesDeclaredFieldsUnderAPrefix()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+
+        var account = await app.Crm.AccountAsync(
+            CrmTokens.NorthwindTenant, Lifecycle.Customer, Cancellation);
+
+        // A field called `name`, which an account already has as a built-in column.
+        await app.Crm.AsTenantAsync(
+            CrmTokens.NorthwindTenant,
+            """
+            INSERT INTO custom_field (
+                field_id, tenant_id, applies_to, name, label, data_type, is_required, created_at)
+            VALUES (gen_random_uuid(), @tenant, 'Account', 'name', 'Nickname', 'Text', false, now())
+            """,
+            Cancellation,
+            ("tenant", CrmTokens.NorthwindTenant));
+
+        await app.Crm.AsTenantAsync(
+            CrmTokens.NorthwindTenant,
+            "UPDATE account SET custom_fields = @values::jsonb WHERE account_id = @id",
+            Cancellation,
+            ("values", """{"name": "The nickname"}"""),
+            ("id", account));
+
+        var page = await PageAsync(
+            app,
+            new ReadEntityPage(
+                ReadableEntity.Account,
+                new RecordFilter(
+                    FilterMatch.All,
+                    [new RollupFilter("account_id", GuardOperator.Equals, account.ToString())]),
+                5));
+
+        var row = page.Records[0]!;
+
+        row.Values["custom.name"].ShouldBe("The nickname");
+
+        row.Values["name"].ShouldNotBe(
+            "The nickname", "the built-in column is still the built-in column.");
+    }
+
     private static async Task<RecordPage> PageAsync(
         CrmApplication app,
         ReadEntityPage query,

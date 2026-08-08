@@ -1091,3 +1091,51 @@ export interface SetStrategy {
 export interface StrategySet {
   strategyId: string
 }
+
+// ─────────────────────────────────────────────────────────────── the application's own manifest
+
+/**
+ * How a flow is reached.
+ *
+ * `Http` carries a method and a route; `Bus` and `Change` a topic and a consumer group;
+ * `Schedule` a cron expression and a zone; `Agent` a description and nothing else. Which fields
+ * are present depends on the kind, which is why they are all optional here.
+ *
+ * `Bus` and `Change` are the same shape and different things: a bus subscription consumes what
+ * some flow published, and a change subscription consumes what the database itself emitted. A
+ * screen that drew them alike would hide which of the two a flow is downstream of.
+ */
+export interface ManifestTrigger {
+  kind: string
+  method?: string
+  route?: string
+  topic?: string
+  group?: string
+  cron?: string
+  timeZone?: string
+  idempotent?: boolean
+  description?: string
+}
+
+export interface ManifestFlow {
+  id: string
+  version: string
+  /** `Durable` survives a restart; `Ephemeral` does not. The one property worth showing. */
+  profile: string
+  /** ISO 8601, e.g. `PT15S`. Absent where a flow declares none. */
+  deadline?: string
+  triggers: ManifestTrigger[]
+  errors?: string[]
+}
+
+/**
+ * What the compiler wrote about this application.
+ *
+ * NOT THE OPENAPI DOCUMENT. That describes an HTTP surface; this describes flows — including the
+ * ones with no route at all, and the execution profile OpenAPI has nowhere to put.
+ */
+export interface Manifest {
+  schemaVersion: string
+  application: { name: string; version: string }
+  flows: ManifestFlow[]
+}

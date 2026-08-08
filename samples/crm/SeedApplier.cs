@@ -247,8 +247,38 @@ public sealed class SeedApplier
 
         foreach (var account in document.Data.Accounts)
         {
-            outcome = outcome.And(await _seeds.WriteAccountAsync(
-                tenant, SeedIds.For(tenant, "account", account.Alias), account, ct).ConfigureAwait(false));
+            var accountId = SeedIds.For(tenant, "account", account.Alias);
+
+            outcome = outcome.And(
+                await _seeds.WriteAccountAsync(tenant, accountId, account, ct).ConfigureAwait(false));
+
+            // The declared fields it carries, through the same merge the HTTP path uses — so a
+            // value the schema would refuse is refused here too, rather than written by a second
+            // statement that does not know about picklists.
+            if (account.Values is { Count: > 0 } values)
+            {
+                var declared = await _schema
+                    .FieldsForAsync(tenant, EntityKind.Account, ct)
+                    .ConfigureAwait(false);
+
+                // Not requireComplete: a seed sets the fields it cares about, and a required one
+                // it omits is the schema's business at the write it omits it on.
+                var faults = CustomValues.Validate(declared, values, requireComplete: false);
+
+                if (faults.Count > 0)
+                {
+                    return Result.Fail<SeedOutcome>(faults[0]!);
+                }
+
+                await _schema
+                    .MergeCustomFieldsAsync(
+                        tenant,
+                        EntityKind.Account,
+                        accountId,
+                        CustomValues.ToJson(declared, values),
+                        ct)
+                    .ConfigureAwait(false);
+            }
         }
 
         foreach (var contact in document.Data.Contacts)

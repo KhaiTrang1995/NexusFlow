@@ -109,3 +109,26 @@ async function readProblem(response: Response): Promise<Problem | null> {
 export function newIdempotencyKey(): string {
   return crypto.randomUUID().replace(/-/g, '')
 }
+
+/**
+ * Reads a JSON document served beside the API rather than by it.
+ *
+ * NO TOKEN AND NO TENANT. The manifest names flow ids, profiles and routes and names no data; the
+ * server serves it anonymously for the same reason it serves the OpenAPI document that way. A
+ * helper that sent credentials would imply this is scoped to somebody, and it is not.
+ *
+ * @param path The absolute path, which is not under the CRM prefix.
+ * @param signal Cancels the fetch.
+ */
+export async function getDocument<Response>(path: string, signal?: AbortSignal): Promise<Response> {
+  const response = await fetch(path, {
+    headers: { accept: 'application/json' },
+    ...(signal ? { signal } : {}),
+  })
+
+  if (!response.ok) {
+    throw new ApiError(response.status, null)
+  }
+
+  return (await response.json()) as Response
+}

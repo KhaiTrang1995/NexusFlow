@@ -31,6 +31,50 @@ public static class OpenApiEndpointExtensions
     /// <summary>The route the document is served on unless another is given.</summary>
     public const string DefaultRoute = "/openapi.json";
 
+    /// <summary>The route the manifest is served on unless another is given.</summary>
+    public const string DefaultManifestRoute = "/flowx.manifest.json";
+
+    /// <summary>Serves the manifest itself, unchanged.</summary>
+    /// <param name="endpoints">Where to map it.</param>
+    /// <param name="manifestJson">
+    /// The application's manifest — <c>FlowX.Generated.FlowXManifest.Json</c>.
+    /// </param>
+    /// <param name="route">Where to serve it.</param>
+    /// <returns>The endpoint, so a deployment can add its own conventions.</returns>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>Not the same document as <see cref="MapFlowXOpenApi(IEndpointRouteBuilder, string,
+    /// string)"/>, and the difference is the point.</strong> OpenAPI describes an HTTP surface:
+    /// paths, bodies, status codes. The manifest describes flows — their execution profile, their
+    /// deadline, and every trigger including the bus subscriptions, the schedules and the agent
+    /// tools that have no path at all. A screen listing what an application does cannot be built
+    /// from the first and can be built from the second.
+    /// </para>
+    /// <para>
+    /// <strong>Anonymous for the same reason the document is.</strong> It names flow ids, profiles
+    /// and routes; it names no data. A deployment that disagrees calls
+    /// <c>RequireAuthorization()</c> on what this returns.
+    /// </para>
+    /// </remarks>
+    public static IEndpointConventionBuilder MapFlowXManifest(
+        this IEndpointRouteBuilder endpoints,
+        string manifestJson,
+        string route = DefaultManifestRoute)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentNullException.ThrowIfNull(manifestJson);
+        ArgumentNullException.ThrowIfNull(route);
+
+        return endpoints.MapGet(route, (HttpContext context) =>
+        {
+            context.Response.ContentType = "application/json; charset=utf-8";
+
+            // A compile-time constant: it cannot change while the process runs.
+            return context.Response.WriteAsync(manifestJson);
+        });
+    }
+
     /// <summary>Serves the OpenAPI document for a manifest.</summary>
     /// <param name="endpoints">Where to map it.</param>
     /// <param name="manifestJson">

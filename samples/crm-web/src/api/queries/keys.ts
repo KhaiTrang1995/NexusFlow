@@ -58,6 +58,10 @@ export const keys = {
     all: (tenant: string) => ['territories', tenant] as const,
     coverage: (tenant: string) => ['territories', tenant, 'coverage'] as const,
   },
+  // No tenant: the manifest is a compile-time constant and is the same for every caller.
+  manifest: {
+    all: () => ['manifest'] as const,
+  },
   reports: {
     all: (tenant: string) => ['reports', tenant] as const,
     run: (tenant: string, name: string) => ['reports', tenant, 'run', name] as const,
