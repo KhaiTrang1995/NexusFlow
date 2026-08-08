@@ -229,93 +229,123 @@ export function useRecordCampaignCost(): UseMutationResult<
 
 // ─────────────────────────────────────────────────────────── board and performance
 
-export function useExecutiveBoard(period: string): UseQueryResult<C.ExecutiveBoard> {
+export function useExecutiveBoard(period: string | null): UseQueryResult<C.ExecutiveBoard> {
   const { tenantId } = useSession()
   const call = useCall()
 
   return useQuery({
-    queryKey: keys.board.period(tenantId, period),
-    queryFn: ({ signal }) => call.read<C.ExecutiveBoard, C.ReadBoard>('/board', { period }, signal),
+    queryKey: keys.board.period(tenantId, period ?? 'none'),
+    queryFn: ({ signal }) => call.read<C.ExecutiveBoard, C.ReadBoard>('/board', { period: period as string }, signal),
+    enabled: period !== null,
     staleTime: 60_000,
   })
 }
 
-export function useSalesPerformance(period: string): UseQueryResult<C.SalesPerformance> {
+export function useSalesPerformance(period: string | null): UseQueryResult<C.SalesPerformance> {
   const { tenantId } = useSession()
   const call = useCall()
 
   return useQuery({
-    queryKey: keys.performance.sales(tenantId, period),
+    queryKey: keys.performance.sales(tenantId, period ?? 'none'),
     queryFn: ({ signal }) =>
-      call.read<C.SalesPerformance, { period: string }>('/performance/sales', { period }, signal),
+      call.read<C.SalesPerformance, { period: string }>('/performance/sales', { period: period as string }, signal),
+    enabled: period !== null,
     staleTime: 60_000,
   })
 }
 
-export function useDealPerformance(period: string): UseQueryResult<C.DealPerformance> {
+export function useDealPerformance(period: string | null): UseQueryResult<C.DealPerformance> {
   const { tenantId } = useSession()
   const call = useCall()
 
   return useQuery({
-    queryKey: keys.performance.deals(tenantId, period),
+    queryKey: keys.performance.deals(tenantId, period ?? 'none'),
     queryFn: ({ signal }) =>
-      call.read<C.DealPerformance, { period: string }>('/performance/deals', { period }, signal),
+      call.read<C.DealPerformance, { period: string }>('/performance/deals', { period: period as string }, signal),
+    enabled: period !== null,
     staleTime: 60_000,
   })
 }
 
-export function useQuotaAttainment(period: string): UseQueryResult<C.QuotaAttainmentReport> {
+export function useQuotaAttainment(period: string | null): UseQueryResult<C.QuotaAttainmentReport> {
   const { tenantId } = useSession()
   const call = useCall()
 
   return useQuery({
-    queryKey: keys.performance.quota(tenantId, period),
+    queryKey: keys.performance.quota(tenantId, period ?? 'none'),
     queryFn: ({ signal }) =>
       call.read<C.QuotaAttainmentReport, C.ReadQuotaAttainment>(
         '/quotas/attainment',
-        { period },
+        { period: period as string },
         signal,
       ),
+    enabled: period !== null,
     staleTime: 60_000,
   })
 }
 
-export function usePlanTree(period: string): UseQueryResult<C.PlanTree> {
+export function usePlanTree(period: string | null): UseQueryResult<C.PlanTree> {
   const { tenantId } = useSession()
   const call = useCall()
 
   return useQuery({
-    queryKey: keys.planning.tree(tenantId, period),
+    queryKey: keys.planning.tree(tenantId, period ?? 'none'),
     queryFn: ({ signal }) =>
       call.read<C.PlanTree, { period: string; root: string | null }>(
         '/planning/tree',
-        { period, root: null },
+        { period: period as string, root: null },
         signal,
       ),
+    enabled: period !== null,
     staleTime: 60_000,
   })
 }
 
-export function usePeriodRollUp(period: string): UseQueryResult<C.PeriodRollUp> {
+export function usePeriodRollUp(period: string | null): UseQueryResult<C.PeriodRollUp> {
   const { tenantId } = useSession()
   const call = useCall()
 
   return useQuery({
-    queryKey: keys.planning.rollUp(tenantId, period),
+    queryKey: keys.planning.rollUp(tenantId, period ?? 'none'),
     queryFn: ({ signal }) =>
-      call.read<C.PeriodRollUp, { period: string }>('/planning/roll-ups', { period }, signal),
+      call.read<C.PeriodRollUp, { period: string }>('/planning/roll-ups', { period: period as string }, signal),
+    enabled: period !== null,
     staleTime: 60_000,
   })
 }
 
-export function useScorecard(period: string): UseQueryResult<C.Scorecard> {
+/**
+ * Which periods this tenant has declared.
+ *
+ * THE PERIOD IS THE ONE PIECE OF VOCABULARY EVERY EXECUTIVE SCREEN NEEDS FIRST, and it used to be
+ * a constant in this client — three quarter names that happened to match one tenant's fixtures.
+ * Anywhere else, twelve screens asked for a quarter nobody had declared and each showed a
+ * not-found card for a quarter printed on its own selector.
+ *
+ * Long-lived on purpose: periods are declared by an administrator a few times a year, and every
+ * screen mounts this.
+ */
+export function usePeriods(): UseQueryResult<C.DeclaredPeriods> {
   const { tenantId } = useSession()
   const call = useCall()
 
   return useQuery({
-    queryKey: keys.scorecard.period(tenantId, period),
+    queryKey: keys.planning.periods(tenantId),
     queryFn: ({ signal }) =>
-      call.read<C.Scorecard, { period: string }>('/kpis/scorecards', { period }, signal),
+      call.read<C.DeclaredPeriods, C.ReadPeriods>('/planning/periods/list', {}, signal),
+    staleTime: 300_000,
+  })
+}
+
+export function useScorecard(period: string | null): UseQueryResult<C.Scorecard> {
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useQuery({
+    queryKey: keys.scorecard.period(tenantId, period ?? 'none'),
+    queryFn: ({ signal }) =>
+      call.read<C.Scorecard, { period: string }>('/kpis/scorecards', { period: period as string }, signal),
+    enabled: period !== null,
     staleTime: 60_000,
   })
 }

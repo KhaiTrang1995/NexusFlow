@@ -1,5 +1,6 @@
 import { Page, PageHeader } from '@/design/primitives'
-import { PERIODS } from '@/features/exec/period'
+import { usePeriod, withPeriod } from '@/features/exec/period'
+import { PeriodPicker } from '@/features/exec/PeriodPicker'
 import { PlanDetailPanels } from './PlanDetailPanels'
 
 /**
@@ -16,10 +17,16 @@ import { PlanDetailPanels } from './PlanDetailPanels'
  * has met the economic buyer is not a covered account, whatever the pipeline says.
  */
 export function AccountPlanScreen() {
+  const choice = usePeriod()
+
   return (
     <Page>
-      <PageHeader eyebrow="Planning" title="Account plans" />
-      <PlanDetailPanels kind="Account" period={PERIODS[0] as string} />
+      <PageHeader
+        eyebrow={withPeriod('Planning', choice)}
+        title="Account plans"
+        actions={<PeriodPicker choice={choice} />}
+      />
+      <PlanDetailPanels kind="Account" choice={choice} />
     </Page>
   )
 }

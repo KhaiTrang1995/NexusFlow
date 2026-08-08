@@ -2,7 +2,6 @@ import { useNavigate } from '@tanstack/react-router'
 import {
   AsyncBoundary,
   Button,
-  ButtonGroup,
   Meter,
   Page,
   PageHeader,
@@ -11,7 +10,8 @@ import {
 } from '@/design/primitives'
 import { useScorecard } from '@/api/queries/hooks'
 import { kpiValue } from './kpiUnits'
-import { PERIODS, PERIOD_LABEL, usePeriod } from './period'
+import { usePeriod } from './period'
+import { NoPeriods, PeriodPicker } from './PeriodPicker'
 import styles from './exec.module.css'
 
 /**
@@ -23,8 +23,8 @@ import styles from './exec.module.css'
  */
 export function KpiScreen() {
   const navigate = useNavigate()
-  const [period, setPeriod] = usePeriod()
-  const scorecard = useScorecard(period)
+  const choice = usePeriod()
+  const scorecard = useScorecard(choice.period)
 
   return (
     <Page>
@@ -33,19 +33,15 @@ export function KpiScreen() {
         title="Scorecard"
         actions={
           <>
-            <ButtonGroup label="Period">
-              {PERIODS.map((option) => (
-                <Button key={option} aria-pressed={period === option} onClick={() => setPeriod(option)}>
-                  {PERIOD_LABEL[option]}
-                </Button>
-              ))}
-            </ButtonGroup>
+            <PeriodPicker choice={choice} />
             <Button onClick={() => void navigate({ to: '/exec/reviews' })}>Reviews</Button>
           </>
         }
       />
 
-      <AsyncBoundary query={scorecard} skeletonRows={5}>
+      {choice.isUndeclared ? <NoPeriods what="the scorecard" /> : null}
+
+      <AsyncBoundary query={scorecard} skeletonRows={5} hidden={choice.isUndeclared}>
         {(data) => (
           <div className={styles.kpiGrid}>
             {data.kpis.map((kpi) => {
@@ -88,7 +84,7 @@ export function KpiScreen() {
             })}
             {data.kpis.length === 0 ? (
               <Panel>
-                <p className={styles.sub}>No KPIs are declared for {PERIOD_LABEL[period]}.</p>
+                <p className={styles.sub}>No KPIs are declared for {choice.label}.</p>
               </Panel>
             ) : null}
           </div>

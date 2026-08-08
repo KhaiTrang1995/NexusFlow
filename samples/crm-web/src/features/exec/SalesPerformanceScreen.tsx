@@ -1,7 +1,6 @@
 import {
   AsyncBoundary,
   Button,
-  ButtonGroup,
   DataTable,
   Page,
   PageHeader,
@@ -16,7 +15,8 @@ import { useSession } from '@/session/SessionProvider'
 import { SetQuotaDrawer } from './SetQuotaDrawer'
 import type { QuotaAttainment, SellerPerformance } from '@/api/contracts'
 import { fullMoney, money, pct, percent } from '@/lib/format'
-import { PERIODS, PERIOD_LABEL, usePeriod } from './period'
+import { usePeriod } from './period'
+import { NoPeriods, PeriodPicker } from './PeriodPicker'
 import styles from './exec.module.css'
 
 /**
@@ -28,9 +28,9 @@ import styles from './exec.module.css'
  * roll-up of commitments can show, because every commitment in it is real.
  */
 export function SalesPerformanceScreen() {
-  const [period, setPeriod] = usePeriod()
-  const sales = useSalesPerformance(period)
-  const quota = useQuotaAttainment(period)
+  const choice = usePeriod()
+  const sales = useSalesPerformance(choice.period)
+  const quota = useQuotaAttainment(choice.period)
   const session = useSession()
   const [assigning, setAssigning] = useState(false)
 
@@ -53,13 +53,7 @@ export function SalesPerformanceScreen() {
         title="Sales performance"
         actions={
           <>
-            <ButtonGroup label="Period">
-              {PERIODS.map((option) => (
-                <Button key={option} aria-pressed={period === option} onClick={() => setPeriod(option)}>
-                  {PERIOD_LABEL[option]}
-                </Button>
-              ))}
-            </ButtonGroup>
+            <PeriodPicker choice={choice} />
             {session.can('crm.admin') ? (
               <Button
                 tone="primary"
@@ -74,7 +68,9 @@ export function SalesPerformanceScreen() {
         }
       />
 
-      <AsyncBoundary query={quota} skeletonRows={4}>
+      {choice.isUndeclared ? <NoPeriods what="sales performance" /> : null}
+
+      <AsyncBoundary query={quota} skeletonRows={4} hidden={choice.isUndeclared}>
         {(data) => {
           // Only the revenue rows. A quota can be carried in leads or in activities, and adding
           // forty leads to three hundred thousand euros produced "€300,040" — a number that is
@@ -187,7 +183,7 @@ export function SalesPerformanceScreen() {
         }}
       </AsyncBoundary>
 
-      <AsyncBoundary query={sales} skeletonRows={4}>
+      <AsyncBoundary query={sales} skeletonRows={4} hidden={choice.isUndeclared}>
         {(data) => (
           <Panel padding="flush">
             <PanelHeader title="Pipeline and closed" note={`${data.sellers.length} people`} />
@@ -217,7 +213,7 @@ export function SalesPerformanceScreen() {
         )}
       </AsyncBoundary>
       {assigning ? (
-        <SetQuotaDrawer period={period} people={people} onClose={() => setAssigning(false)} />
+        <SetQuotaDrawer period={choice.period as string} people={people} onClose={() => setAssigning(false)} />
       ) : null}
     </Page>
   )

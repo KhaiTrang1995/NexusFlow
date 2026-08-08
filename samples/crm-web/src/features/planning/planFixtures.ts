@@ -108,18 +108,3 @@ export const DEMAND: readonly DemandRow[] = [
   { segment: 'Public sector', channel: 'Partner', target: 90, actual: 41, costPerLead: 410 },
 ]
 
-export interface CapacityRow {
-  team: string
-  people: number
-  rampedPeople: number
-  quotaEach: number
-  capacity: number
-  target: number
-}
-
-export const CAPACITY: readonly CapacityRow[] = [
-  { team: 'Enterprise NA', people: 8, rampedPeople: 6.5, quotaEach: 520_000, capacity: 3_380_000, target: 3_600_000 },
-  { team: 'Enterprise EMEA', people: 5, rampedPeople: 4.0, quotaEach: 480_000, capacity: 1_920_000, target: 1_800_000 },
-  { team: 'Mid-market NA', people: 12, rampedPeople: 10.5, quotaEach: 300_000, capacity: 3_150_000, target: 3_400_000 },
-  { team: 'APAC', people: 4, rampedPeople: 2.5, quotaEach: 340_000, capacity: 850_000, target: 1_100_000 },
-]

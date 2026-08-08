@@ -11,9 +11,11 @@ import {
   Tag,
 } from '@/design/primitives'
 import { fullMoney, money, percent } from '@/lib/format'
-import { useCoverage } from '@/api/queries/hooks'
-import { CAPACITY } from './planFixtures'
-import type { CapacityRow } from './planFixtures'
+import { useCoverage, useOrgChart, useQuotaAttainment } from '@/api/queries/hooks'
+import { usePeriod, withPeriod } from '@/features/exec/period'
+import { NoPeriods, PeriodPicker } from '@/features/exec/PeriodPicker'
+import { capacityOf } from './capacity'
+import type { TeamCapacity } from './capacity'
 import styles from './planning.module.css'
 
 /**
@@ -22,31 +24,63 @@ import styles from './planning.module.css'
  * RAMPED HEADCOUNT, NOT HEADCOUNT. A seller who started in June carries a fraction of a quota,
  * and a plan built on bodies rather than on ramped capacity is a plan that is short by exactly the
  * ramp — every year, in the same direction, and nobody can ever say why.
+ *
+ * IT WAS FOUR TEAMS IN A FILE. 29 people, €9.3M of capacity and 94% coverage were constants in
+ * this client, shown to every tenant including an empty one. The numbers are the quotas people
+ * actually carry now, and a team is whoever they report to — the only grouping this schema has.
  */
 export function OperationsScreen() {
-  const capacity = CAPACITY.reduce((sum, row) => sum + row.capacity, 0)
-  const target = CAPACITY.reduce((sum, row) => sum + row.target, 0)
-  const people = CAPACITY.reduce((sum, row) => sum + row.people, 0)
-  const ramped = CAPACITY.reduce((sum, row) => sum + row.rampedPeople, 0)
-
+  const choice = usePeriod()
+  const quota = useQuotaAttainment(choice.period)
+  const org = useOrgChart()
   const coverage = useCoverage()
+
+  const capacity = capacityOf(quota.data?.rows ?? [], org.data?.members ?? [])
 
   return (
     <Page>
-      <PageHeader eyebrow="Planning · operations" title="Capacity and coverage" />
+      <PageHeader
+        eyebrow={withPeriod('Planning · operations', choice)}
+        title="Capacity and coverage"
+        actions={<PeriodPicker choice={choice} />}
+      />
 
-      <StatGrid columns={4}>
-        <StatTile label="Headcount" value={people} note={`${ramped.toFixed(1)} ramped`} />
-        <StatTile label="Capacity" value={money(capacity)} note="ramped people × quota" />
-        <StatTile label="Target" value={money(target)} note="what the business has committed" />
-        <StatTile
-          label="Coverage"
-          value={percent(capacity / target)}
-          direction={capacity >= target ? 'up' : 'down'}
-          delta={capacity >= target ? 'covered' : `${money(target - capacity)} short`}
-          note="capacity against target"
-        />
-      </StatGrid>
+      {choice.isUndeclared ? <NoPeriods what="capacity" /> : null}
+
+      <AsyncBoundary query={quota} skeletonRows={4} hidden={choice.isUndeclared}>
+        {() => (
+          <StatGrid columns={4}>
+            <StatTile
+              label="Headcount"
+              value={capacity.people}
+              note={`${capacity.rampedPeople.toFixed(1)} ramped · carrying a revenue number`}
+            />
+            <StatTile
+              label="Capacity"
+              value={money(capacity.capacity)}
+              note="what they can carry, after ramp"
+            />
+            <StatTile
+              label="Target"
+              value={money(capacity.target)}
+              note="what was assigned, before ramp"
+            />
+            <StatTile
+              label="Coverage"
+              value={capacity.target === 0 ? '—' : percent(capacity.capacity / capacity.target)}
+              direction={capacity.capacity >= capacity.target ? 'up' : 'down'}
+              delta={
+                capacity.target === 0
+                  ? 'nobody carries a number'
+                  : capacity.capacity >= capacity.target
+                    ? 'covered'
+                    : `${money(capacity.target - capacity.capacity)} short`
+              }
+              note="capacity against target"
+            />
+          </StatGrid>
+        )}
+      </AsyncBoundary>
 
       <AsyncBoundary query={coverage} skeletonRows={4}>
         {(map) => (
@@ -115,16 +149,23 @@ export function OperationsScreen() {
       </AsyncBoundary>
 
       <Panel padding="flush">
-        <PanelHeader title="By team" note="ramped capacity against the number · sample data" />
+        <PanelHeader
+          title="By team"
+          note={
+            capacity.otherMeasures === 0
+              ? 'ramped capacity against the number, by reporting line'
+              : `by reporting line · ${capacity.otherMeasures} quota row(s) in another measure, not added`
+          }
+        />
         <DataTable
           caption="Capacity by team"
-          rows={CAPACITY}
+          rows={capacity.teams}
           rowKey={(row) => row.team}
           columns={[
             {
               id: 'team',
               header: 'Team',
-              cell: (row: CapacityRow) => (
+              cell: (row: TeamCapacity) => (
                 <>
                   <span className={styles.link}>{row.team}</span>
                   <div className={styles.sub}>
@@ -132,33 +173,26 @@ export function OperationsScreen() {
                   </div>
                 </>
               ),
-              sortValue: (row: CapacityRow) => row.team,
-            },
-            {
-              id: 'quota',
-              header: 'Quota each',
-              numeric: true,
-              cell: (row: CapacityRow) => fullMoney(row.quotaEach),
-              sortValue: (row: CapacityRow) => row.quotaEach,
+              sortValue: (row: TeamCapacity) => row.team,
             },
             {
               id: 'capacity',
               header: 'Capacity',
               numeric: true,
-              cell: (row: CapacityRow) => fullMoney(row.capacity),
-              sortValue: (row: CapacityRow) => row.capacity,
+              cell: (row: TeamCapacity) => fullMoney(row.capacity),
+              sortValue: (row: TeamCapacity) => row.capacity,
             },
             {
               id: 'target',
               header: 'Target',
               numeric: true,
-              cell: (row: CapacityRow) => fullMoney(row.target),
-              sortValue: (row: CapacityRow) => row.target,
+              cell: (row: TeamCapacity) => fullMoney(row.target),
+              sortValue: (row: TeamCapacity) => row.target,
             },
             {
               id: 'coverage',
               header: 'Coverage',
-              cell: (row: CapacityRow) => (
+              cell: (row: TeamCapacity) => (
                 <>
                   <Meter
                     label={`${row.team} capacity against target`}
@@ -167,7 +201,7 @@ export function OperationsScreen() {
                     tone={row.capacity >= row.target ? 'positive' : 'critical'}
                   />
                   <div className={styles.sub} style={{ marginTop: 3 }}>
-                    {percent(row.capacity / row.target)}
+                    {row.target === 0 ? '—' : percent(row.capacity / row.target)}
                   </div>
                 </>
               ),
@@ -175,7 +209,7 @@ export function OperationsScreen() {
             {
               id: 'verdict',
               header: '',
-              cell: (row: CapacityRow) =>
+              cell: (row: TeamCapacity) =>
                 row.capacity >= row.target ? (
                   <Tag tone="positive">Covered</Tag>
                 ) : (
@@ -185,6 +219,7 @@ export function OperationsScreen() {
                 ),
             },
           ]}
+          empty="Nobody carries a revenue number this period, so there is no capacity to compare."
         />
       </Panel>
     </Page>

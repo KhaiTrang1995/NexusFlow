@@ -2,7 +2,6 @@ import { useNavigate } from '@tanstack/react-router'
 import {
   AsyncBoundary,
   Button,
-  ButtonGroup,
   Columns,
   Page,
   PageHeader,
@@ -16,7 +15,8 @@ import {
 import { Funnel, ShareBar } from '@/design/charts'
 import { useExecutiveBoard } from '@/api/queries/hooks'
 import { money, pct, percent } from '@/lib/format'
-import { PERIODS, PERIOD_LABEL, usePeriod } from './period'
+import { usePeriod } from './period'
+import { NoPeriods, PeriodPicker } from './PeriodPicker'
 import styles from './exec.module.css'
 
 /**
@@ -29,26 +29,20 @@ import styles from './exec.module.css'
  */
 export function ExecScreen() {
   const navigate = useNavigate()
-  const [period, setPeriod] = usePeriod()
-  const board = useExecutiveBoard(period)
+  const choice = usePeriod()
+  const board = useExecutiveBoard(choice.period)
 
   return (
     <Page>
       <PageHeader
         eyebrow="Executive"
         title="Where the business stands"
-        actions={
-          <ButtonGroup label="Period">
-            {PERIODS.map((option) => (
-              <Button key={option} aria-pressed={period === option} onClick={() => setPeriod(option)}>
-                {PERIOD_LABEL[option]}
-              </Button>
-            ))}
-          </ButtonGroup>
-        }
+        actions={<PeriodPicker choice={choice} />}
       />
 
-      <AsyncBoundary query={board} skeletonRows={6}>
+      {choice.isUndeclared ? <NoPeriods what="these numbers" /> : null}
+
+      <AsyncBoundary query={board} skeletonRows={6} hidden={choice.isUndeclared}>
         {(data) => {
           const offTrack = data.scorecard.kpis.filter((kpi) => kpi.status !== 'OnTrack')
 

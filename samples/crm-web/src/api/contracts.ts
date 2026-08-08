@@ -318,7 +318,12 @@ export interface QuotaAttainment {
   userId: string
   displayName: string
   measure: string
+  /** What they were assigned, after ramp — the number they are measured on. */
   quota: number
+  /** The same number before ramp: what the business committed, which nobody carries in full. */
+  assigned: number
+  /** The fraction of the period they carry. Summing these is what ramped headcount means. */
+  rampFactor: number
   /**
    * What they committed in their plans, or null on a quota that is not measured in money — a plan
    * commits an amount, so there is nothing to compare a leads target against.
@@ -391,6 +396,33 @@ export interface LeadAttainment {
   channel: string
   targetLeads: number
   actualLeads: number
+}
+
+export interface ReadPeriods {
+  /**
+   * Nothing is asked. The request body is an empty object because every endpoint here is a POST
+   * carrying its input, and a read with no parameters still has to send one.
+   */
+  readonly _?: never
+}
+
+export interface PeriodSummary {
+  name: string
+  label: string
+  /** ISO date, its first day. */
+  startsOn: string
+  /** ISO date, its last day. */
+  endsOn: string
+  parent: string | null
+  /**
+   * Whether today falls inside it, decided by the server. A browser deciding this does it in
+   * whatever timezone the machine is set to, and two offices then open different quarters.
+   */
+  isCurrent: boolean
+}
+
+export interface DeclaredPeriods {
+  periods: PeriodSummary[]
 }
 
 export interface PeriodRollUp {

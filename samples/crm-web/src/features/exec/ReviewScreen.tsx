@@ -16,7 +16,8 @@ import {
 import { useReviewKpi, useScorecard } from '@/api/queries/hooks'
 import { useToast } from '@/app/ToastProvider'
 import { kpiValue } from './kpiUnits'
-import { PERIOD_LABEL, usePeriod } from './period'
+import { usePeriod, withPeriod } from './period'
+import { NoPeriods, PeriodPicker } from './PeriodPicker'
 import styles from './exec.module.css'
 
 /**
@@ -29,8 +30,8 @@ import styles from './exec.module.css'
  */
 export function ReviewScreen() {
   const toast = useToast()
-  const [period] = usePeriod()
-  const scorecard = useScorecard(period)
+  const choice = usePeriod()
+  const scorecard = useScorecard(choice.period)
   const record = useReviewKpi()
 
   const [kpi, setKpi] = useState('')
@@ -38,7 +39,13 @@ export function ReviewScreen() {
 
   return (
     <Page>
-      <PageHeader eyebrow={`Executive · ${PERIOD_LABEL[period]}`} title="KPI reviews" />
+      <PageHeader
+        eyebrow={withPeriod('Executive', choice)}
+        title="KPI reviews"
+        actions={<PeriodPicker choice={choice} />}
+      />
+
+      {choice.isUndeclared ? <NoPeriods what="the review register" /> : null}
 
       <Columns layout="split">
         <Panel padding="flush">
@@ -54,7 +61,7 @@ export function ReviewScreen() {
           */}
           <PanelHeader title="What was last said" note="one per KPI" />
           <PanelBody style={{ padding: 0 }}>
-            <AsyncBoundary query={scorecard} skeletonRows={3}>
+            <AsyncBoundary query={scorecard} skeletonRows={3} hidden={choice.isUndeclared}>
               {(data) => {
                 const said = data.kpis.filter((row) => row.lastCommentary !== null)
 
@@ -96,7 +103,7 @@ export function ReviewScreen() {
         <Panel padding="flush">
           <PanelHeader title="Record a review" note="the number and the words together" />
           <PanelBody>
-            <AsyncBoundary query={scorecard} skeletonRows={3}>
+            <AsyncBoundary query={scorecard} skeletonRows={3} hidden={choice.isUndeclared}>
               {(data) =>
                 data.kpis.length === 0 ? (
                   <EmptyState
@@ -112,7 +119,7 @@ export function ReviewScreen() {
                       record.mutate(
                         {
                           kpi: kpi.length > 0 ? kpi : (data.kpis[0]?.name ?? ''),
-                          period,
+                          period: choice.period as string,
                           commentary: commentary.trim(),
                         },
                         {

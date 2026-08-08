@@ -2,7 +2,6 @@ import { useNavigate } from '@tanstack/react-router'
 import {
   AsyncBoundary,
   Button,
-  ButtonGroup,
   Columns,
   DataTable,
   Meter,
@@ -17,7 +16,8 @@ import {
 import { useExecutiveBoard } from '@/api/queries/hooks'
 import type { KpiResult, PlanNode, SellerPerformance } from '@/api/contracts'
 import { fullMoney, money, pct, percent } from '@/lib/format'
-import { PERIODS, PERIOD_LABEL, usePeriod } from './period'
+import { usePeriod } from './period'
+import { NoPeriods, PeriodPicker } from './PeriodPicker'
 import styles from './exec.module.css'
 
 /**
@@ -30,8 +30,8 @@ import styles from './exec.module.css'
  */
 export function BoardScreen() {
   const navigate = useNavigate()
-  const [period, setPeriod] = usePeriod()
-  const board = useExecutiveBoard(period)
+  const choice = usePeriod()
+  const board = useExecutiveBoard(choice.period)
 
   return (
     <Page>
@@ -40,23 +40,15 @@ export function BoardScreen() {
         title="Board pack"
         actions={
           <>
-            <ButtonGroup label="Period">
-              {PERIODS.map((option) => (
-                <Button
-                  key={option}
-                  aria-pressed={period === option}
-                  onClick={() => setPeriod(option)}
-                >
-                  {PERIOD_LABEL[option]}
-                </Button>
-              ))}
-            </ButtonGroup>
+            <PeriodPicker choice={choice} />
             <Button onClick={() => void navigate({ to: '/exec/kpis' })}>Scorecard</Button>
           </>
         }
       />
 
-      <AsyncBoundary query={board} skeletonRows={8}>
+      {choice.isUndeclared ? <NoPeriods what="the board pack" /> : null}
+
+      <AsyncBoundary query={board} skeletonRows={8} hidden={choice.isUndeclared}>
         {(data) => (
           <>
             <StatGrid columns={4}>

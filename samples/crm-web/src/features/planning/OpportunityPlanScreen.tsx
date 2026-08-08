@@ -1,5 +1,6 @@
 import { Page, PageHeader } from '@/design/primitives'
-import { PERIODS } from '@/features/exec/period'
+import { usePeriod, withPeriod } from '@/features/exec/period'
+import { PeriodPicker } from '@/features/exec/PeriodPicker'
 import { PlanDetailPanels } from './PlanDetailPanels'
 
 /**
@@ -14,10 +15,16 @@ import { PlanDetailPanels } from './PlanDetailPanels'
  * the quarter ends rather than after.
  */
 export function OpportunityPlanScreen() {
+  const choice = usePeriod()
+
   return (
     <Page>
-      <PageHeader eyebrow="Planning" title="Deal plans" />
-      <PlanDetailPanels kind="Opportunity" period={PERIODS[0] as string} />
+      <PageHeader
+        eyebrow={withPeriod('Planning', choice)}
+        title="Deal plans"
+        actions={<PeriodPicker choice={choice} />}
+      />
+      <PlanDetailPanels kind="Opportunity" choice={choice} />
     </Page>
   )
 }

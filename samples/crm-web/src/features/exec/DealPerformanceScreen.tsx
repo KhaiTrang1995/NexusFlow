@@ -1,7 +1,5 @@
 import {
   AsyncBoundary,
-  Button,
-  ButtonGroup,
   Columns,
   Page,
   PageHeader,
@@ -13,7 +11,8 @@ import {
 import { ShareBar, StackedBars } from '@/design/charts'
 import { useDealPerformance } from '@/api/queries/hooks'
 import { money, pct } from '@/lib/format'
-import { PERIODS, PERIOD_LABEL, usePeriod } from './period'
+import { usePeriod } from './period'
+import { NoPeriods, PeriodPicker } from './PeriodPicker'
 import styles from './exec.module.css'
 
 /**
@@ -24,26 +23,20 @@ import styles from './exec.module.css'
  * actually act on. It is given its own tile rather than buried in a table.
  */
 export function DealPerformanceScreen() {
-  const [period, setPeriod] = usePeriod()
-  const deals = useDealPerformance(period)
+  const choice = usePeriod()
+  const deals = useDealPerformance(choice.period)
 
   return (
     <Page>
       <PageHeader
         eyebrow="Executive"
         title="Deal performance"
-        actions={
-          <ButtonGroup label="Period">
-            {PERIODS.map((option) => (
-              <Button key={option} aria-pressed={period === option} onClick={() => setPeriod(option)}>
-                {PERIOD_LABEL[option]}
-              </Button>
-            ))}
-          </ButtonGroup>
-        }
+        actions={<PeriodPicker choice={choice} />}
       />
 
-      <AsyncBoundary query={deals} skeletonRows={4}>
+      {choice.isUndeclared ? <NoPeriods what="deal performance" /> : null}
+
+      <AsyncBoundary query={deals} skeletonRows={4} hidden={choice.isUndeclared}>
         {(data) => (
           <>
             <StatGrid columns={5}>
@@ -83,7 +76,7 @@ export function DealPerformanceScreen() {
                     ]}
                     bars={[
                       {
-                        label: PERIOD_LABEL[period],
+                        label: choice.label,
                         values: [data.openValue, data.wonValue, data.lostValue],
                         readout: money(data.openValue + data.wonValue + data.lostValue),
                       },

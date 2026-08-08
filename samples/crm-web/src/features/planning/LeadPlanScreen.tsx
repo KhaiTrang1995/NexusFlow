@@ -1,5 +1,6 @@
 import { Page, PageHeader } from '@/design/primitives'
-import { PERIODS } from '@/features/exec/period'
+import { usePeriod, withPeriod } from '@/features/exec/period'
+import { PeriodPicker } from '@/features/exec/PeriodPicker'
 import { PlanDetailPanels } from './PlanDetailPanels'
 
 /**
@@ -15,10 +16,16 @@ import { PlanDetailPanels } from './PlanDetailPanels'
  * two into a single table that neither read could produce.
  */
 export function LeadPlanScreen() {
+  const choice = usePeriod()
+
   return (
     <Page>
-      <PageHeader eyebrow="Planning" title="Demand plans" />
-      <PlanDetailPanels kind="MarketingLead" period={PERIODS[0] as string} />
+      <PageHeader
+        eyebrow={withPeriod('Planning', choice)}
+        title="Demand plans"
+        actions={<PeriodPicker choice={choice} />}
+      />
+      <PlanDetailPanels kind="MarketingLead" choice={choice} />
     </Page>
   )
 }

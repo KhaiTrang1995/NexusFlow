@@ -2,7 +2,8 @@ import { AsyncBoundary, Columns, Page, PageHeader, Panel, PanelHeader, Tag } fro
 import { Sparkline } from '@/design/charts'
 import { useExecutiveBoard } from '@/api/queries/hooks'
 import { money, pct } from '@/lib/format'
-import { PERIOD_LABEL, usePeriod } from './period'
+import { usePeriod, withPeriod } from './period'
+import { NoPeriods, PeriodPicker } from './PeriodPicker'
 import styles from './exec.module.css'
 
 /**
@@ -13,14 +14,20 @@ import styles from './exec.module.css'
  * quoted in a board meeting and cannot be defended.
  */
 export function InsightsScreen() {
-  const [period] = usePeriod()
-  const board = useExecutiveBoard(period)
+  const choice = usePeriod()
+  const board = useExecutiveBoard(choice.period)
 
   return (
     <Page>
-      <PageHeader eyebrow={`Executive · ${PERIOD_LABEL[period]}`} title="Insights" />
+      <PageHeader
+        eyebrow={withPeriod('Executive', choice)}
+        title="Insights"
+        actions={<PeriodPicker choice={choice} />}
+      />
 
-      <AsyncBoundary query={board} skeletonRows={5}>
+      {choice.isUndeclared ? <NoPeriods what="these insights" /> : null}
+
+      <AsyncBoundary query={board} skeletonRows={5} hidden={choice.isUndeclared}>
         {(data) => (
           <Columns layout="split">
             <Panel padding="flush">

@@ -18,7 +18,9 @@ import {
 import { usePeriodRollUp, useSetStrategy } from '@/api/queries/hooks'
 import { useToast } from '@/app/ToastProvider'
 import { money } from '@/lib/format'
-import { PERIOD_LABEL, usePeriod } from '@/features/exec/period'
+import { usePeriod, withPeriod } from '@/features/exec/period'
+import { PeriodPicker } from '@/features/exec/PeriodPicker'
+import { NoPeriods } from '@/features/exec/PeriodPicker'
 import styles from './planning.module.css'
 
 /**
@@ -35,8 +37,8 @@ import styles from './planning.module.css'
  */
 export function StrategyScreen() {
   const toast = useToast()
-  const [period] = usePeriod()
-  const rollUp = usePeriodRollUp(period)
+  const choice = usePeriod()
+  const rollUp = usePeriodRollUp(choice.period)
   const set = useSetStrategy()
 
   const [target, setTarget] = useState('')
@@ -44,9 +46,15 @@ export function StrategyScreen() {
 
   return (
     <Page>
-      <PageHeader eyebrow={`Planning · ${PERIOD_LABEL[period]}`} title="Strategy" />
+      <PageHeader
+        eyebrow={withPeriod('Planning', choice)}
+        title="Strategy"
+        actions={<PeriodPicker choice={choice} />}
+      />
 
-      <AsyncBoundary query={rollUp} skeletonRows={4}>
+      {choice.isUndeclared ? <NoPeriods what="the strategy" /> : null}
+
+      <AsyncBoundary query={rollUp} skeletonRows={4} hidden={choice.isUndeclared}>
         {(data) => (
           <>
             <StatGrid columns={3}>
@@ -62,7 +70,7 @@ export function StrategyScreen() {
 
             <Columns layout="split">
               <Panel padding="flush">
-                <PanelHeader title="The vision in force" note={PERIOD_LABEL[period]} />
+                <PanelHeader title="The vision in force" note={choice.label} />
                 <p className={styles.vision}>{data.vision}</p>
                 <PanelBody style={{ borderTop: '1px solid var(--color-divider)' }}>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -83,7 +91,7 @@ export function StrategyScreen() {
 
                       set.mutate(
                         {
-                          period,
+                          period: choice.period as string,
                           vision: vision.trim(),
                           target: Number(target),
 
@@ -95,7 +103,7 @@ export function StrategyScreen() {
                         {
                           onSuccess: () =>
                             toast.saved(
-                              `${PERIOD_LABEL[period]} is set to ${money(Number(target))} ${data.currency}.`,
+                              `${choice.label} is set to ${money(Number(target))} ${data.currency}.`,
                             ),
                           onError: (error) => toast.failed(error, 'That strategy was refused.'),
                         },

@@ -2,7 +2,6 @@ import { useNavigate } from '@tanstack/react-router'
 import {
   AsyncBoundary,
   Button,
-  ButtonGroup,
   Columns,
   DataTable,
   Meter,
@@ -17,7 +16,8 @@ import {
 import { usePeriodRollUp, usePlanTree } from '@/api/queries/hooks'
 import type { AccountCoverage, LeadAttainment, OpportunityReadiness, PlanNode } from '@/api/contracts'
 import { fullMoney, money, percent } from '@/lib/format'
-import { PERIODS, PERIOD_LABEL, usePeriod } from '@/features/exec/period'
+import { usePeriod } from '@/features/exec/period'
+import { NoPeriods, PeriodPicker } from '@/features/exec/PeriodPicker'
 import styles from './planning.module.css'
 
 /**
@@ -30,9 +30,9 @@ import styles from './planning.module.css'
  */
 export function PortfolioScreen() {
   const navigate = useNavigate()
-  const [period, setPeriod] = usePeriod()
-  const rollUp = usePeriodRollUp(period)
-  const tree = usePlanTree(period)
+  const choice = usePeriod()
+  const rollUp = usePeriodRollUp(choice.period)
+  const tree = usePlanTree(choice.period)
 
   return (
     <Page>
@@ -41,19 +41,15 @@ export function PortfolioScreen() {
         title="Portfolio"
         actions={
           <>
-            <ButtonGroup label="Period">
-              {PERIODS.map((option) => (
-                <Button key={option} aria-pressed={period === option} onClick={() => setPeriod(option)}>
-                  {PERIOD_LABEL[option]}
-                </Button>
-              ))}
-            </ButtonGroup>
+            <PeriodPicker choice={choice} />
             <Button onClick={() => void navigate({ to: '/plan/strategy' })}>Strategy</Button>
           </>
         }
       />
 
-      <AsyncBoundary query={rollUp} skeletonRows={5}>
+      {choice.isUndeclared ? <NoPeriods what="the portfolio" /> : null}
+
+      <AsyncBoundary query={rollUp} skeletonRows={5} hidden={choice.isUndeclared}>
         {(data) => (
           <>
             <StatGrid columns={4}>
@@ -80,7 +76,7 @@ export function PortfolioScreen() {
             </StatGrid>
 
             <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
-              <PanelHeader title="The vision this sits under" note={PERIOD_LABEL[period]} />
+              <PanelHeader title="The vision this sits under" note={choice.label} />
               <p className={styles.vision}>{data.vision}</p>
             </Panel>
 
@@ -249,7 +245,7 @@ export function PortfolioScreen() {
         )}
       </AsyncBoundary>
 
-      <AsyncBoundary query={tree} skeletonRows={5}>
+      <AsyncBoundary query={tree} skeletonRows={5} hidden={choice.isUndeclared}>
         {(data) => (
           <Panel padding="flush">
             <PanelHeader

@@ -5,6 +5,7 @@ import {
   ButtonGroup,
   DataTable,
   EmptyState,
+  ErrorState,
   Panel,
   PanelHeader,
   Tag,
@@ -18,6 +19,8 @@ import type {
   PlanStepRow,
 } from '@/api/contracts'
 import { fullMoney } from '@/lib/format'
+import { NoPeriods } from '@/features/exec/PeriodPicker'
+import type { PeriodChoice } from '@/features/exec/period'
 import styles from './planning.module.css'
 
 /**
@@ -48,13 +51,33 @@ function label(kind: string): string {
   }
 }
 
-export function PlanDetailPanels({ kind, period }: { kind: string; period: string }) {
-  const tree = usePlanTree(period)
+export function PlanDetailPanels({ kind, choice }: { kind: string; choice: PeriodChoice }) {
+  const tree = usePlanTree(choice.period)
   const [chosen, setChosen] = useState<string | null>(null)
 
   const plans = (tree.data?.nodes ?? []).filter((node) => node.kind === kind)
   const name = chosen ?? plans[0]?.name ?? null
   const plan = usePlan(name)
+
+  if (choice.isUndeclared) {
+    return (
+      <Panel>
+        <NoPeriods what={`${label(kind)} plans`} />
+      </Panel>
+    )
+  }
+
+  // THE SCREEN USED TO RENDER NOTHING AT ALL HERE. When the tree read failed the component fell
+  // through to a plan query that was disabled — pending for ever — and a skeleton is
+  // `aria-hidden`, so the whole page was a heading and 19 characters of white space. A failed
+  // read that produces a blank screen is indistinguishable from a broken build.
+  if (tree.isError) {
+    return (
+      <Panel>
+        <ErrorState error={tree.error} onRetry={tree.refetch} />
+      </Panel>
+    )
+  }
 
   if (tree.isSuccess && plans.length === 0) {
     return (

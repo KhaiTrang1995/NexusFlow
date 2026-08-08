@@ -42,6 +42,7 @@ export const keys = {
   },
   planning: {
     all: (tenant: string) => ['planning', tenant] as const,
+    periods: (tenant: string) => ['planning', tenant, 'periods'] as const,
     rollUp: (tenant: string, period: string) => ['planning', tenant, 'roll-up', period] as const,
     tree: (tenant: string, period: string) => ['planning', tenant, 'tree', period] as const,
     plan: (tenant: string, name: string) => ['planning', tenant, 'plan', name] as const,

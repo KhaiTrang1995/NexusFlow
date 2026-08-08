@@ -13,7 +13,8 @@ import {
 } from '@/design/primitives'
 import { useEntityPage, useExecutiveBoard } from '@/api/queries/hooks'
 import { fullMoney, money, percent } from '@/lib/format'
-import { PERIOD_LABEL, usePeriod } from './period'
+import { usePeriod, withPeriod } from './period'
+import { NoPeriods, PeriodPicker } from './PeriodPicker'
 import styles from './exec.module.css'
 
 
@@ -41,9 +42,9 @@ const BANDS: readonly { label: string; from: number; to: number }[] = [
  * fiction, so both are shown.
  */
 export function ForecastScreen() {
-  const [period] = usePeriod()
+  const choice = usePeriod()
   const [scope, setScope] = useState<'category' | 'seller'>('category')
-  const board = useExecutiveBoard(period)
+  const board = useExecutiveBoard(choice.period)
 
   // Live open deals. The category half of this screen grouped by `forecast` — Commit, Best Case,
   // Pipeline — which is not a column on `opportunity` anywhere in this schema. Against real rows
@@ -101,21 +102,26 @@ export function ForecastScreen() {
   return (
     <Page>
       <PageHeader
-        eyebrow={`Executive · ${PERIOD_LABEL[period]}`}
+        eyebrow={withPeriod('Executive', choice)}
         title="Forecast"
         actions={
-          <ButtonGroup label="Roll up by">
+          <>
+            <PeriodPicker choice={choice} />
+            <ButtonGroup label="Roll up by">
             <Button aria-pressed={scope === 'category'} onClick={() => setScope('category')}>
               Category
             </Button>
             <Button aria-pressed={scope === 'seller'} onClick={() => setScope('seller')}>
               Stage
             </Button>
-          </ButtonGroup>
+            </ButtonGroup>
+          </>
         }
       />
 
-      <AsyncBoundary query={board} skeletonRows={4}>
+      {choice.isUndeclared ? <NoPeriods what="the forecast" /> : null}
+
+      <AsyncBoundary query={board} skeletonRows={4} hidden={choice.isUndeclared}>
         {(data) => (
           <>
             <StatGrid columns={4}>
