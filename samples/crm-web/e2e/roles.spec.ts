@@ -233,6 +233,47 @@ test.describe('a seller', () => {
       .poll(async () => (await page.locator('main').innerText()) !== mine)
       .toBe(true)
   })
+
+  /**
+   * The board is the published process, and moving a card writes.
+   *
+   * ITS LANES WERE THE PROTOTYPE'S — a stage list this client was compiled with, each carrying an
+   * invented probability drawn under the column total. They matched the seed by coincidence of
+   * naming; a tenant that named its stages anything else would have seen every card fall into no
+   * lane and an empty board rather than a wrong one.
+   *
+   * A DROP NAMES WHAT HAPPENED, NOT WHERE IT LANDS. The transition between two stages carries the
+   * trigger; the server decides whether its guards hold. A lane with no transition into it is
+   * refused, which is the process talking rather than the board.
+   */
+  test('moves a card through the published process, and cannot move it back', async ({ page }) => {
+    await signIn(page, 'rep')
+
+    await page.goto('/kanban')
+
+    // The version comes from the published definition — a fixture has none.
+    await expect(page.locator('main')).toContainText(/version \d+/)
+
+    const card = page.locator('section button').first()
+
+    await expect(card).toBeVisible()
+
+    const name = (await card.innerText()).split('\n')[0] ?? ''
+
+    await card.focus()
+    await page.keyboard.press('ArrowRight')
+
+    await expect(toast(page)).toContainText(`${name} →`)
+
+    // And back is refused, because this process runs one way. The refusal names both stages,
+    // which is what tells a reader it is the configuration and not the drag that failed.
+    const moved = page.locator('section button', { hasText: name }).first()
+
+    await moved.focus()
+    await page.keyboard.press('ArrowLeft')
+
+    await expect(toast(page)).toContainText('no move from')
+  })
 })
 
 test.describe('a manager', () => {
