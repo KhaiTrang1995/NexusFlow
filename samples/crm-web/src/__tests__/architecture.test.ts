@@ -325,4 +325,33 @@ describe('the import graph', () => {
 
     expect(missing, `nothing is there:\n${missing.join('\n')}`).toEqual([])
   })
+  /**
+   * <strong>The served config forwards no host the caller chose.</strong>
+   *
+   * `nginx.conf` proxies `/api/` to the API container, and it read `proxy_set_header Host $host`.
+   * `$host` is the request's own `Host` header, and `server_name _` accepts every name, so that
+   * value is the caller's: reset links pointing at another domain, cache entries keyed on one
+   * host and served for another, upstream routing decided by a header. `$proxy_host` — nginx's
+   * own default for this header — is the upstream from `proxy_pass`.
+   *
+   * <strong>Here because nothing else reads this file.</strong> Checkov scans
+   * `kubernetes,helm,dockerfile` and skips when there is no `deploy/`; Semgrep's OWASP pack does
+   * not carry the nginx rules. The deployment config was the one artefact in this directory with
+   * no gate over it, which is why a header written once stayed written.
+   */
+  it('forwards no caller-controlled host to the API', () => {
+    const conf = readFileSync(join(SRC, '..', 'nginx.conf'), 'utf8')
+
+    const directives = [...conf.matchAll(/^\s*proxy_set_header\s+(\S+)\s+([^;]+);/gm)]
+
+    expect(directives.length, 'no proxy_set_header found — this rule stopped reading the file')
+      .toBeGreaterThan(0)
+
+    const tainted = directives
+      .filter(([, , value]) => /\$host\b|\$http_host\b|\$http_x_forwarded_host\b/.test(value ?? ''))
+      .map(([line]) => line.trim())
+
+    expect(tainted, `these pass a caller-controlled host upstream:\n${tainted.join('\n')}`)
+      .toEqual([])
+  })
 })

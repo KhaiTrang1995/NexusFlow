@@ -34,8 +34,8 @@ jobs:
     name: Allocation budget (B2, and B6's allocation half)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
         with:
           global-json-file: global.json
 
@@ -56,8 +56,8 @@ jobs:
     name: Benchmark budgets (B1, B3, B12 isolated)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
         with:
           global-json-file: global.json
 
@@ -85,7 +85,7 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         if: always()
         with:
           name: benchmark-results
@@ -95,8 +95,8 @@ jobs:
     name: Budget B12 — build overhead
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
         with:
           global-json-file: global.json
 
@@ -146,8 +146,8 @@ jobs:
     # is a wall-clock question, `scale-overhead` is the instrument for it, and it fails.
     # The checker reprints that criterion on every run, including passing ones.
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
         with:
           global-json-file: global.json
 
@@ -221,7 +221,7 @@ jobs:
               --baseline generator-cost-baseline.candidate.json --record || true
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         if: always()
         with:
           name: generator-cost
@@ -233,7 +233,7 @@ jobs:
     name: The generator-cost gate can fail
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
       - name: A regression under the threshold must fail the gate
         # A gate nobody has seen fail is an assumption, not a gate — the same argument
@@ -324,8 +324,8 @@ jobs:
     #   esac
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
         with:
           global-json-file: global.json
 
@@ -358,7 +358,7 @@ jobs:
     name: The gate can fail
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
       - name: Injecting a regression must fail the gate
         # A gate nobody has seen fail is an assumption, not a gate. This builds a

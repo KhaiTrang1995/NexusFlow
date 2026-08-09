@@ -77,9 +77,9 @@ jobs:
           - 1433:1433
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
         with:
           global-json-file: global.json
 
@@ -234,9 +234,9 @@ jobs:
         working-directory: samples/crm-web
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           # No .nvmrc to read from, so the version is named here. Vite 6 wants an even
           # major on a current line; 22 is what the client is developed against.
@@ -274,6 +274,23 @@ jobs:
         # `tsc -b && vite build`. Type-checking passing is not the same fact as the bundle
         # being producible — a bad asset import or a circular module fails only here.
         run: npm run build
+
+      - name: The served config parses
+        # NOTHING READ THIS FILE UNTIL NOW. `nginx.conf` is what serves the client in
+        # production — the CSP, the SPA fallback and the /api proxy all live in it — and no
+        # job in this repository opened it. Checkov scans `kubernetes,helm,dockerfile` and
+        # skips outright while there is no `deploy/`; Semgrep's OWASP pack does not carry the
+        # nginx rules. A typo in here is a container that crash-loops on first boot, found by
+        # whoever deploys it.
+        #
+        # `nginx -t` in the image the Dockerfile actually ships, so the parser is the one that
+        # will read the file. The content rule — no caller-controlled `Host` forwarded
+        # upstream — is asserted in src/__tests__/architecture.test.ts, where a developer sees
+        # it before pushing.
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/samples/crm-web/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginxinc/nginx-unprivileged:1.27-alpine nginx -t
 
   client-e2e:
     name: CRM web client browser suite
@@ -316,13 +333,13 @@ jobs:
           --health-retries 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
         with:
           global-json-file: global.json
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           node-version: 22
           cache: npm
@@ -421,7 +438,7 @@ jobs:
               sys.exit(1)
           PY
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         if: failure()
         with:
           # The traces, which playwright.config.ts retains on failure, and the page snapshot
@@ -435,8 +452,8 @@ jobs:
     name: dotnet new flowx
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
         with:
           global-json-file: global.json
 
@@ -462,8 +479,8 @@ jobs:
     name: NativeAOT smoke test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
         with:
           global-json-file: global.json
 
@@ -570,8 +587,8 @@ jobs:
     name: Manifest compatibility
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
         with:
           global-json-file: global.json
 
@@ -614,9 +631,9 @@ jobs:
     name: Documentation gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
         with:
           global-json-file: global.json   # the flow-graph step below runs the CLI
 
@@ -728,7 +745,7 @@ jobs:
     name: Attribution guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           fetch-depth: 0
 
@@ -754,6 +771,31 @@ jobs:
             exit 1
           fi
           echo "History is clean."
+
+      - name: Every action is pinned to a commit
+        # SUPPLY CHAIN, AND THE REASON IT IS HERE RATHER THAN IN A SCANNER. A tag is a
+        # movable pointer: `actions/checkout@v4` is whatever that repository decides it is
+        # at the moment a job starts, and a compromise of any of these nine repositories runs
+        # arbitrary code in a runner that holds GITHUB_TOKEN. All 64 `uses:` in this
+        # repository were on tags until this commit. A 40-character SHA is immutable, and the
+        # trailing `# v4` is what keeps the file readable — Dependabot's github-actions
+        # ecosystem (see .github/dependabot.yml) moves both together, so pinning does not
+        # mean going stale.
+        #
+        # Semgrep's `github-actions-mutable-action-tag` says the same thing and was excluded
+        # by name for months because 53 findings was too many to act on at once. That
+        # exclusion is gone; this runs whether or not Semgrep does.
+        run: |
+          unpinned="$(grep -rhoE '^\s*-? *uses: [^ ]+' .github/workflows/*.yml \
+            | sed -E 's/^.*uses: //' \
+            | grep -vE '@[0-9a-f]{40}$' || true)"
+
+          if [ -n "$unpinned" ]; then
+            echo "::error::These actions are on a movable tag rather than a commit SHA:"
+            echo "$unpinned"
+            exit 1
+          fi
+          echo "Every action is pinned."
 
   red:
     name: A red run reaches a person
@@ -786,7 +828,7 @@ jobs:
       # reaches a named person's notifications.
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
       - name: Open, update or close the tracking issue
         env:
