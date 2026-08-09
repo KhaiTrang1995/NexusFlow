@@ -294,8 +294,17 @@ jobs:
         # into the script before the shell sees it, so the habit of reaching for one inside
         # `run:` is the habit that produced the injection finding this repository already
         # had. The variable is the same value and cannot be a shell fragment.
+        #
+        # --add-host, BECAUSE nginx RESOLVES THE UPSTREAM WHILE IT PARSES. `proxy_pass
+        # http://api:8080` names a host literally rather than through a variable, and nginx
+        # looks that name up at configuration-load time, not at request time. Compose gives it
+        # `api` on its own network; a bare `docker run` gives it nothing, so the first run of
+        # this step stopped at `[emerg] host not found in upstream "api" in
+        # /etc/nginx/conf.d/default.conf:41` — the checker failing, not the config. The address
+        # is never connected to: `nginx -t` parses and exits, so any resolvable value does.
         run: |
           docker run --rm \
+            --add-host api:127.0.0.1 \
             -v "$GITHUB_WORKSPACE/samples/crm-web/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
             nginxinc/nginx-unprivileged:1.27-alpine nginx -t
 
