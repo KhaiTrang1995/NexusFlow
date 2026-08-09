@@ -19,13 +19,21 @@
     "difference: a count that rose because a query pack was updated is a different fact from",
     "one that rose because somebody wrote a defect.",
     "",
-    "WHAT `total` COUNTS: alerts against code that ships. Two sets are excluded, both counted",
+    "WHAT `total` COUNTS: alerts against code that ships. Three sets are excluded, all counted",
     "and listed by the job so neither disappears. obj/generated, because fixing one means",
     "changing a generator that emits the same shape on purpose and CodeQL cannot be told to",
     "skip them \u2014 1,988 of 2,234 when last measured. And tests/, because a finding there is in",
     "code no deployment runs: the fixtures that trip cs/path-combine are string literals naming",
     "files in the working tree, and holding a release to those teaches people to raise this",
     "number, which is the one move that ends the gate.",
+    "",
+    "AND `notGated` BELOW, WHICH IS PER RULE AND PER PATH RATHER THAN PER RULE. Each entry names",
+    "the query, the files it is excused in, and what was read to decide that. Sixteen alerts, every",
+    "one opened and looked at: casts C# requires to compile, disposals through ConfigureAwait or a",
+    "finally, and one catch that already carries a written CA1031 justification. Taking the advice",
+    "at these sites would not compile, would allocate, or would delete a reason somebody wrote. The",
+    "path list is the point \u2014 the same query still fails the build anywhere else, so this excuses",
+    "the sites that were examined and not the rule.",
     "",
     "WHY IT MOVED FROM 240 TO 144. Not because 96 alerts were fixed. 240 was measured over",
     "authored code including tests/; this is the same measurement with tests/ taken out (102",
@@ -42,12 +50,63 @@
     "The ceiling binds on pushes to master, dev and release/** only, because a pull request",
     "analysis is annotated rather than persisted and has no alerts to count. See the backlog job."
   ],
-  "total": 144,
+  "total": 128,
   "bySeverity": {
     "error": 0,
     "warning": null,
     "note": null
   },
   "recordedAt": "2026-08-09",
-  "recordedFrom": "refs/heads/dev, run 31302955324, less the 102 under tests/"
+  "recordedFrom": "refs/heads/dev, run 31305466969 printed 144 shipped; less 16 in notGated. 128 rather than the expected 127 because the cs/xmldoc/missing-summary fix in PolicyGates is not yet confirmed by a run \u2014 re-record from the next one.",
+  "notGated": [
+    {
+      "rule": "cs/useless-cast-to-self",
+      "paths": [
+        "samples/crm/SeedIds.cs",
+        "samples/crm/SeedReader.cs",
+        "src/FlowX.Runtime/StreamWindowAssigner.cs",
+        "plugins/FlowX.Http/SuspensionJson.cs"
+      ],
+      "why": "Every one is a collection expression given its type by the cast \u2014 (string[])[a, b], (IReadOnlyList<T>)[], ((bool, string)[])[...]. C# has no target type for a collection expression in these positions, so removing the cast does not compile. Seven sites, each read."
+    },
+    {
+      "rule": "cs/useless-upcast",
+      "paths": [
+        "samples/crm/QueryCapabilities.cs",
+        "src/FlowX.Compiler/Analysis/DeadlineCoherenceAnalyzer.cs"
+      ],
+      "why": "(RecordOrder?)null in a conditional and (double?)null in a switch arm. The cast is what gives the arms a common type; without it neither expression compiles."
+    },
+    {
+      "rule": "cs/local-not-disposed",
+      "paths": [
+        "plugins/FlowX.Postgres/PostgresStreamCheckpointStore.cs",
+        "plugins/FlowX.Mcp/FlowMcpEndpointExtensions.cs"
+      ],
+      "why": "Disposed by `await using var closing = x.ConfigureAwait(false)`, which the query does not follow. The disposal is on the line after the construction in each case."
+    },
+    {
+      "rule": "cs/missed-using-statement",
+      "paths": [
+        "src/FlowX.Runtime/DurableLease.cs",
+        "plugins/FlowX.RabbitMq/RabbitMqBusConsumer.cs",
+        "src/FlowX.Runtime/FlowEngine.cs"
+      ],
+      "why": "A field disposed in Dispose, and two try/finally blocks where `using` cannot express what is needed: FlowEngine's CancellationTokenSource is created only when a budget was granted, and RabbitMq's finally closes the channel as well as disposing it."
+    },
+    {
+      "rule": "cs/empty-catch-block",
+      "paths": [
+        "src/FlowX.Runtime/FlowEngine.cs"
+      ],
+      "why": "The alert sink on the compensation-exhausted path, already carrying a CA1031 pragma and four lines saying why: a broken pager must not leak the reservation the engine was releasing. The decision is made and written down; this restates it."
+    },
+    {
+      "rule": "cs/useless-tostring-call",
+      "paths": [
+        "plugins/FlowX.Http/SuspensionJson.cs"
+      ],
+      "why": "instanceId.ToString() on a Guid inside a concatenation. Removing it binds to string.Concat(string, object) and boxes the Guid, so taking the advice costs an allocation. The other three sites in this rule are still gated."
+    }
+  ]
 }

@@ -387,6 +387,18 @@ jobs:
           def is_test(path):
               return tree(path) == 'tests'
 
+          baseline = json.load(open('.github/code-scanning-baseline.json'))
+          not_gated = baseline.get('notGated', [])
+
+          def excused(alert):
+              """Named in notGated for this rule AND this file, with a reason recorded there."""
+              path = path_of(alert)
+
+              return any(
+                  entry['rule'] == alert['rule']['id']
+                  and any(path == p or path.startswith(p) for p in entry['paths'])
+                  for entry in not_gated)
+
           # THE SPLIT IS THE GATE, AND IT HAS TWO CUTS. 1,988 of the 2,234 alerts on this
           # repository are raised against files under obj/generated — System.Text.Json's
           # serialisers, FlowX's own plans and dispatchers, the regex matchers. Nobody can act
@@ -397,7 +409,8 @@ jobs:
           # two are counted, listed and left alone.
           authored = [a for a in alerts if not generated(path_of(a))]
           tests = [a for a in authored if is_test(path_of(a))]
-          shipped = [a for a in authored if not is_test(path_of(a))]
+          examined = [a for a in authored if not is_test(path_of(a)) and excused(a)]
+          shipped = [a for a in authored if not is_test(path_of(a)) and not excused(a)]
           total = len(shipped)
 
           # AND THE TESTS ARE COUNTED AND SHOWN AND NOT GATED, for the reason the generated
@@ -407,8 +420,9 @@ jobs:
           # Holding a release to a style finding in a fixture is what teaches people to raise
           # the ceiling, which is the one move that ends this gate. They stay visible below,
           # so a real defect in a test is still readable — it is simply not what blocks a ship.
-          print(f'open alerts: {len(alerts)} on {ref} '
-                f'({total} shipped, {len(tests)} tests, {len(alerts) - len(authored)} generated)')
+          print(f'open alerts: {len(alerts)} on {ref} ({total} shipped, '
+                f'{len(examined)} examined, {len(tests)} tests, '
+                f'{len(alerts) - len(authored)} generated)')
 
           counts = Counter(a['rule'].get('security_severity_level')
                            or a['rule'].get('severity') or 'unknown' for a in shipped)
@@ -444,11 +458,19 @@ jobs:
           for name, n in Counter(tree(path_of(a)) for a in shipped).most_common():
               print(f'  {n:5}  {name}')
 
+          # EXAMINED, NOT IGNORED. Each of these was opened, read, and recorded in
+          # .github/code-scanning-baseline.json with what taking the advice would have cost —
+          # a file that does not compile, an allocation, or a deleted justification. Printed
+          # here so the excuse is visible on every run rather than only in the file, and so a
+          # count that starts drifting from the recorded reasons is something somebody sees.
+          print('\nexamined and not gated, by rule:')
+          for rule, n in Counter(a['rule']['id'] for a in examined).most_common():
+              print(f'  {n:5}  {rule}')
+
           print('\ntests, by rule (not gated):')
           for rule, n in Counter(a['rule']['id'] for a in tests).most_common():
               print(f'  {n:5}  {rule}')
 
-          baseline = json.load(open('.github/code-scanning-baseline.json'))
           ceiling = baseline['total']
 
           if not gated:
