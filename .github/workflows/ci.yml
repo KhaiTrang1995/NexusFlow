@@ -9,6 +9,14 @@ on:
   pull_request:
     branches: [master, dev, 'release/**']
 
+# One run per ref per workflow. Without this every push queued a full duplicate and the
+# superseded runs kept their place in line — six commits in an hour left the newest run
+# behind five that nobody was waiting for. master is exempt: a run on the trunk finishes,
+# because its result is what the ceiling and the release are read from.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
 permissions:
   contents: read
 
