@@ -77,7 +77,13 @@ namespace Workflow;
 /// </list>
 /// </remarks>
 [Flow("offer.accept", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "people-ops")]
-[HttpTrigger("POST", "/api/v1/offers")]
+// IDEMPOTENT, BECAUSE THE COMPENSATION MAKES A RETRY EXPENSIVE. This endpoint was given an
+// address in WP-64 and the key was overlooked rather than argued away: a repeated POST — a
+// proxy retry, a double-clicked button — sends the candidate a second offer and registers a
+// second `WithdrawOffer` against it, so the undo path now has two things to undo and the
+// person has two documents to sign. A durable flow that compensates is exactly the shape that
+// cannot afford to run twice.
+[HttpTrigger("POST", "/api/v1/offers", Idempotent = true)]
 [FlowDeadline("P30D")]
 public sealed partial class AcceptOfferFlow : Flow<OfferToAccept, AcceptedOffer>
 {
