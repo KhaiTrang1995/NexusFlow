@@ -245,6 +245,7 @@ internal sealed class BulkheadGate : IDisposable
 
     private int _waiting;
 
+    /// <summary>Creates a pool of permits with a bounded queue in front of it.</summary>
     /// <param name="maxConcurrency">How many callers may be inside the capability at once.</param>
     /// <param name="queueDepth">How many more may wait before one is refused.</param>
     /// <param name="capability">
