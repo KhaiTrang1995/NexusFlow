@@ -286,22 +286,6 @@ public sealed class EntityQueryStore
     private static void AddTextArray(NpgsqlCommand command, string name, string[] values) =>
         command.Parameters.Add(new NpgsqlParameter<string[]>(name, values));
 
-    private async ValueTask<NpgsqlConnection> OpenAsync(
-        string? tenantId,
-        CancellationToken cancellationToken)
-    {
-        var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-
-        try
-        {
-            await CrmTenantScope.ApplyAsync(connection, tenantId, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            await connection.DisposeAsync().ConfigureAwait(false);
-            throw;
-        }
-
-        return connection;
-    }
+    private ValueTask<NpgsqlConnection> OpenAsync(string? tenantId, CancellationToken cancellationToken) =>
+        _source.OpenAsync(tenantId, cancellationToken);
 }

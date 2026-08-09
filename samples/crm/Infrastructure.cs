@@ -381,6 +381,39 @@ public static class CrmTenantScope
 
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>Opens a new connection already bound to one tenant.</summary>
+    /// <param name="source">The pool to open the connection on.</param>
+    /// <param name="tenantId">The tenant, or null for the untenanted rows.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
+    /// <remarks>
+    /// The one body behind every store's own <c>OpenAsync</c>: open, then apply, and dispose
+    /// rather than leak the connection when applying the scope fails. Thirty stores carried
+    /// this verbatim before this method existed; a store that still repeats it is the one that
+    /// drifted.
+    /// </remarks>
+    public static async ValueTask<NpgsqlConnection> OpenAsync(
+        this NpgsqlDataSource source,
+        string? tenantId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        var connection = await source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            await ApplyAsync(connection, tenantId, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        return connection;
+    }
 }
 
 /// <summary>Reads what the CRM schema is, and what of it one tenant can reach.</summary>
