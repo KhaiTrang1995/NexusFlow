@@ -2,9 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [master, dev]
+    # `release/**` as well as the trunks. A release branch is the one that ships, so it is
+    # the last branch that should be running fewer gates than dev — and until this line it
+    # ran none of them.
+    branches: [master, dev, 'release/**']
   pull_request:
-    branches: [master, dev]
+    branches: [master, dev, 'release/**']
 
 permissions:
   contents: read
