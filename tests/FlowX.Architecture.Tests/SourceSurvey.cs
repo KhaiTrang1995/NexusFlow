@@ -105,76 +105,27 @@ internal static class SourceSurvey
 
     private static bool ImplementsCapability(TypeDeclarationSyntax type) =>
         type.BaseList is not null
-        && type.BaseList.Types.Any(static t => SimpleName(t.Type) == "ICapability");
+        && type.BaseList.Types.Any(static t => AttributeReader.SimpleName(t.Type) == "ICapability");
 
     private static CapabilityDeclaration Describe(TypeDeclarationSyntax type, FileInfo file)
     {
         var attributes = type.AttributeLists.SelectMany(static list => list.Attributes).ToList();
 
-        var capability = attributes.FirstOrDefault(static a => IsNamed(a, "Capability"));
-        var approvedBy = attributes.FirstOrDefault(static a => IsNamed(a, "ApprovedBy"));
+        var capability = attributes.FirstOrDefault(static a => AttributeReader.IsNamed(a, "Capability"));
+        var approvedBy = attributes.FirstOrDefault(static a => AttributeReader.IsNamed(a, "ApprovedBy"));
 
         return new CapabilityDeclaration(
             TypeName: type.Identifier.ValueText,
             File: RelativePath(file),
             Line: type.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
-            Id: capability is null ? null : PositionalArgument(capability, 0),
-            Authorization: capability is null ? null : EnumMember(NamedArgument(capability, "Authorization")),
+            Id: capability is null ? null : AttributeReader.PositionalArgument(capability, 0),
+            Authorization: capability is null
+                ? null
+                : AttributeReader.EnumMember(AttributeReader.NamedArgument(capability, "Authorization")),
             HasCapabilityAttribute: capability is not null,
-            Reviewer: approvedBy is null ? null : PositionalArgument(approvedBy, 0),
-            ReviewDate: approvedBy is null ? null : PositionalArgument(approvedBy, 1),
-            AttributeNames: [.. attributes.Select(static a => SimpleName(a.Name))]);
-    }
-
-    /// <summary>Matches <c>[Capability]</c> and <c>[CapabilityAttribute]</c>, qualified or not.</summary>
-    private static bool IsNamed(AttributeSyntax attribute, string name)
-    {
-        var simple = SimpleName(attribute.Name);
-
-        return simple == name || simple == name + "Attribute";
-    }
-
-    /// <summary>The right-most identifier of a possibly qualified, possibly generic name.</summary>
-    private static string SimpleName(TypeSyntax type) => type switch
-    {
-        SimpleNameSyntax simple => simple.Identifier.ValueText,
-        QualifiedNameSyntax qualified => SimpleName(qualified.Right),
-        AliasQualifiedNameSyntax aliased => SimpleName(aliased.Name),
-        _ => type.ToString(),
-    };
-
-    private static string? PositionalArgument(AttributeSyntax attribute, int index)
-    {
-        var positional = attribute.ArgumentList?.Arguments
-            .Where(static a => a.NameEquals is null)
-            .ToList();
-
-        if (positional is null || positional.Count <= index)
-        {
-            return null;
-        }
-
-        return positional[index].Expression is LiteralExpressionSyntax literal
-            ? literal.Token.ValueText
-            : positional[index].Expression.ToString();
-    }
-
-    private static string? NamedArgument(AttributeSyntax attribute, string name) =>
-        attribute.ArgumentList?.Arguments
-            .FirstOrDefault(a => a.NameEquals?.Name.Identifier.ValueText == name)
-            ?.Expression.ToString();
-
-    /// <summary><c>Authorization.Public</c> and <c>Public</c> both read as <c>Public</c>.</summary>
-    private static string? EnumMember(string? expression)
-    {
-        if (expression is null)
-        {
-            return null;
-        }
-
-        var lastDot = expression.LastIndexOf('.');
-
-        return lastDot < 0 ? expression : expression[(lastDot + 1)..];
+            Reviewer: approvedBy is null ? null : AttributeReader.PositionalArgument(approvedBy, 0),
+            ReviewDate: approvedBy is null ? null : AttributeReader.PositionalArgument(approvedBy, 1),
+            AttributeNames: [.. attributes.Select(static a => AttributeReader.SimpleName(a.Name))]);
     }
 }
 
