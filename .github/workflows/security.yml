@@ -46,56 +46,47 @@ jobs:
         with:
           category: /language:csharp
 
-  # SEMGREP IS COMMENTED OUT, TEMPORARILY, AND THIS IS WHAT IS UNGUARDED WHILE IT IS.
-  # CodeQL above analyses `csharp` only, so with this job off the React client has no SAST
-  # at all: 348 npm packages and ~30k lines of TypeScript that nothing now reads for
-  # injection, unsafe sinks or hard-coded secrets. `p/secrets` also went with it, so
-  # gitleaks below is the only thing left looking for a committed credential, and it reads
-  # git history rather than the working tree.
-  #
-  # Restore by deleting the leading `# ` from the block below. Nothing depends on this job,
-  # so nothing else changes when it comes back.
-  # semgrep:
-  #   name: "SAST: Semgrep"
-  #   runs-on: ubuntu-latest
-  #   container:
-  #     image: semgrep/semgrep
-  #   steps:
-  #     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-  #     - name: Scan
-  #       # OWASP + C# rulesets. --error makes any ERROR-severity finding fail the job;
-  #       # a security scanner that only warns is a scanner nobody reads.
-  #       #
-  #       # This job had failed on every run for months — 75 blocking findings, none of
-  #       # which anyone had looked at since the first few. That is worse than not having
-  #       # the job: it hid a real run-shell-injection finding in ci.yml for the whole of
-  #       # that time. Two rule ids are excluded by name below to bring the count to zero,
-  #       # so that the next finding is a change in colour rather than one more line in a
-  #       # log nobody opens. Excluding a rule is not the same as accepting what it looks
-  #       # for, so each says what took its place.
-  #       #
-  #       # csharp.lang.security.sqli — 20 findings, every one of them false. It matches
-  #       #   the assignment rather than the expression, so `command.CommandText = Acquire;`
-  #       #   with Acquire a `const string` reads to it exactly as an interpolation would,
-  #       #   and that is the shape of all twenty. Replaced by SqlFitnessTests in
-  #       #   tests/FlowX.Architecture.Tests, which parses the expression and fails on
-  #       #   anything not settled at build time. That gate is strictly stronger than this
-  #       #   rule was: it also reads `new NpgsqlCommand(sql, connection)`, which the rule
-  #       #   never looked at, and it follows SQL arriving through a private helper's
-  #       #   parameter back to the constants its call sites pass.
-  #       #
-  #       # yaml.github-actions.security.github-actions-mutable-action-tag was excluded here
-  #       #   for 53 findings, one per `uses:`. All 64 are pinned to 40-character SHAs now and
-  #       #   ci.yml's `Every action is pinned to a commit` step keeps them that way, so the
-  #       #   exclusion is gone and the rule runs.
-  #       run: >-
-  #         semgrep scan
-  #         --config=p/owasp-top-ten
-  #         --config=p/csharp
-  #         --config=p/secrets
-  #         --exclude-rule=csharp.lang.security.sqli.csharp-sqli.csharp-sqli
-  #         --error
-  #
+  semgrep:
+    name: "SAST: Semgrep"
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: Scan
+        # OWASP + C# rulesets. --error makes any ERROR-severity finding fail the job;
+        # a security scanner that only warns is a scanner nobody reads.
+        #
+        # This job had failed on every run for months — 75 blocking findings, none of
+        # which anyone had looked at since the first few. That is worse than not having
+        # the job: it hid a real run-shell-injection finding in ci.yml for the whole of
+        # that time. One rule id is excluded by name below to bring the count to zero, so
+        # that the next finding is a change in colour rather than one more line in a log
+        # nobody opens. Excluding a rule is not the same as accepting what it looks for, so
+        # it says what took its place.
+        #
+        # csharp.lang.security.sqli — 20 findings, every one of them false. It matches
+        #   the assignment rather than the expression, so `command.CommandText = Acquire;`
+        #   with Acquire a `const string` reads to it exactly as an interpolation would,
+        #   and that is the shape of all twenty. Replaced by SqlFitnessTests in
+        #   tests/FlowX.Architecture.Tests, which parses the expression and fails on
+        #   anything not settled at build time. That gate is strictly stronger than this
+        #   rule was: it also reads `new NpgsqlCommand(sql, connection)`, which the rule
+        #   never looked at, and it follows SQL arriving through a private helper's
+        #   parameter back to the constants its call sites pass.
+        #
+        # yaml.github-actions.security.github-actions-mutable-action-tag was excluded here
+        #   for 53 findings, one per `uses:`. All 64 are pinned to 40-character SHAs now and
+        #   ci.yml's `Every action is pinned to a commit` step keeps them that way, so the
+        #   exclusion is gone and the rule runs.
+        run: >-
+          semgrep scan
+          --config=p/owasp-top-ten
+          --config=p/csharp
+          --config=p/secrets
+          --exclude-rule=csharp.lang.security.sqli.csharp-sqli.csharp-sqli
+          --error
+
   secrets:
     name: Secret scanning
     runs-on: ubuntu-latest
@@ -411,6 +402,26 @@ jobs:
           print('\nauthored, by rule (top 15 of %d):' % len(by_rule))
           for rule, n in by_rule.most_common(15):
               print(f'  {n:5}  {rule}')
+
+          # WHERE THEY ARE, NOT ONLY HOW MANY. The counts above say the backlog moved and
+          # not one place to go and look, so acting on this job meant opening the Security
+          # tab and reading 2,234 alerts to find the 246 that are ours. Every authored alert
+          # is listed below with its path and line, grouped by rule, so a failing run is
+          # already the work list. Capped per rule because a hundred lines of the same style
+          # finding is the log nobody reads that this whole job exists to replace.
+          print('\nauthored, in full:')
+          for rule, n in by_rule.most_common():
+              print(f'\n  {rule}  ({n})')
+              shown = 0
+              for alert in authored:
+                  if alert['rule']['id'] != rule:
+                      continue
+                  if shown == 12:
+                      print(f'    … and {n - shown} more')
+                      break
+                  where = alert.get('most_recent_instance', {}).get('location', {})
+                  print(f'    {path_of(alert)}:{where.get("start_line", "?")}')
+                  shown += 1
 
           print('\nauthored, by tree:')
           for name, n in Counter(tree(path_of(a)) for a in authored).most_common():
