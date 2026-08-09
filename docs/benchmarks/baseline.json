@@ -11,7 +11,29 @@
     "",
     "Re-recorded at WP-11 with 10 warmups and 30 iterations (was 3 and 10) for the P0",
     "kill-criterion report. Still shared container hardware, and still advisory for",
-    "timing -- see docs/benchmarks/P0.md for why that does not weaken the verdict."
+    "timing -- see docs/benchmarks/P0.md for why that does not weaken the verdict.",
+    "",
+    "RE-RECORDED 2026-08-09, FOR THREE ALLOCATION FIGURES AND NOTHING ELSE.",
+    "StepLoopBenchmarks.BuildPlan 520 -> 528 B, CompilerBenchmarks.GeneratorOnly 588937 ->",
+    "857070 B, CompilerBenchmarks.WithGenerator 1508524 -> 2072971 B. The gate had been red on",
+    "every push since these figures were taken on 2026-08-01, which is a gate nobody can act on.",
+    "",
+    "WHY THEY MOVED. The generator does more than it did on 2026-08-01: capability and dispatcher",
+    "registrations are generated (b6691ea), an assembly's declarations are wired by one call",
+    "(fdd4278), and [RabbitMqTrigger] and [ServiceBusTrigger] are read (458bc28) -- all after this",
+    "file was written. More emitted code allocates more while emitting it.",
+    "",
+    "AND WHAT WAS NOT DONE: this was not bisected. The attribution above is from the commit log",
+    "over the window, not from measuring each commit, so it is the likely cause rather than the",
+    "proven one. A 45% rise in the generator's own allocations is worth somebody's afternoon even",
+    "though it tracks features that shipped; recording it here makes the next rise visible instead",
+    "of hiding it under a gate that was already red.",
+    "",
+    "MEASURED, AND FROM WHERE. Two CI runs on 2026-08-09 (f1d6745 and d8ad054) agreed to within",
+    "0.4%: GeneratorOnly 853998 and 857070, WithGenerator 2068928 and 2072971, BuildPlan exactly",
+    "528 both times. The higher of each pair is recorded. A developer machine reads WithGenerator",
+    "at about 2.39 MB -- 15% above the CI figure -- because the allocation being measured is",
+    "Roslyn's and it moves with the SDK's own paths. The gate runs in CI; CI is what is recorded."
   ],
   "recordedOn": {
     "runtime": ".NET 10.0.10 (10.0.1026.32716)",
@@ -104,10 +126,10 @@
     "StepLoopBenchmarks.BuildPlan": {
       "absoluteNs": 164.07,
       "ratioToBaseline": 54.149,
-      "allocatedBytes": 520,
+      "allocatedBytes": 528,
       "budget": "build-time",
       "budgetNs": 100000,
-      "note": "Runs once per flow at startup, not per execution."
+      "note": "Runs once per flow at startup, not per execution. 520 -> 528 B: eight bytes added by the generator work of 2026-08-02..04, and exact in both CI samples taken on 2026-08-09."
     },
     "CompilerBenchmarks.WithoutGenerator": {
       "absoluteNs": 4044320.78,
@@ -121,19 +143,19 @@
     "CompilerBenchmarks.GeneratorOnly": {
       "absoluteNs": 2860116.13,
       "ratioToBaseline": 1.0,
-      "allocatedBytes": 588937,
+      "allocatedBytes": 857070,
       "budget": "B12",
       "budgetNs": 60000000,
-      "note": "Build overhead. The ratio here does NOT answer the 8% budget -- the arms are not like-for-like. See docs/benchmarks/B12.md. Allocations are banded rather than exact because this benchmark measures Roslyn's allocations, not ours, and those move between runs of the same commit. Committed so a generator that became much slower or much greedier shows as a regression while the ratio question is open.",
+      "note": "Build overhead. The ratio here does NOT answer the 8% budget -- the arms are not like-for-like. See docs/benchmarks/B12.md. Allocations are banded rather than exact because this benchmark measures Roslyn's allocations, not ours, and those move between runs of the same commit. Committed so a generator that became much slower or much greedier shows as a regression while the ratio question is open. Re-recorded 2026-08-09: 588937 -> 857070 B.",
       "allocationTolerancePercent": 15
     },
     "CompilerBenchmarks.WithGenerator": {
       "absoluteNs": 11173681.82,
       "ratioToBaseline": 3.907,
-      "allocatedBytes": 1508524,
+      "allocatedBytes": 2072971,
       "budget": "B12",
       "budgetNs": 60000000,
-      "note": "Build overhead. The ratio here does NOT answer the 8% budget -- the arms are not like-for-like. See docs/benchmarks/B12.md. Allocations are banded rather than exact because this benchmark measures Roslyn's allocations, not ours, and those move between runs of the same commit. Committed so a generator that became much slower or much greedier shows as a regression while the ratio question is open.",
+      "note": "Build overhead. The ratio here does NOT answer the 8% budget -- the arms are not like-for-like. See docs/benchmarks/B12.md. Allocations are banded rather than exact because this benchmark measures Roslyn's allocations, not ours, and those move between runs of the same commit. Committed so a generator that became much slower or much greedier shows as a regression while the ratio question is open. Re-recorded 2026-08-09: 1508524 -> 2072971 B.",
       "allocationTolerancePercent": 15
     }
   },

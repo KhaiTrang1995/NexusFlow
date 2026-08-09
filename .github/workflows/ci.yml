@@ -412,8 +412,17 @@ jobs:
         # The dev server, not `vite preview`. The /api proxy lives in `server.proxy`, which
         # preview does not read — a preview build would serve the pages and 404 every
         # request behind them, which presents as sixty-five inscrutable timeouts.
+        #
+        # --host 127.0.0.1, BECAUSE "READY" IS NOT "REACHABLE". Vite's default host is
+        # `localhost`, and it binds to whatever that resolves to first: IPv4 on a developer's
+        # machine, `::1` on this runner. The Vite 8 upgrade turned that into a hung job — the
+        # log said `ready in 242 ms` while sixty seconds of `curl http://127.0.0.1:5173/`
+        # found nothing listening, because nothing was, on that address. Naming the interface
+        # makes the address the health check uses and the address CRM_E2E_BASE_URL names the
+        # same one the server is actually on. Left out of vite.config.ts on purpose: a
+        # developer running `npm run dev` should still get both stacks.
         run: |
-          nohup npx vite --port 5173 --strictPort > "$RUNNER_TEMP/vite.log" 2>&1 &
+          nohup npx vite --host 127.0.0.1 --port 5173 --strictPort > "$RUNNER_TEMP/vite.log" 2>&1 &
           for _ in $(seq 1 30); do
             curl -sf http://127.0.0.1:5173/ > /dev/null && break
             sleep 2
