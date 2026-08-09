@@ -268,8 +268,24 @@ public sealed class AllocationBudgetTests
     /// here rather than only in a nightly benchmark is the point: this runs in the
     /// <em>Allocation budget (B2)</em> job, on every pull request.
     /// </para>
+    /// <para>
+    /// <strong>And it is a Release measurement, so an unoptimised build does not run it.</strong>
+    /// The iterator's state machine carries fields the optimiser removes: this reads 80 B built
+    /// Debug against the 56 B an optimised build allocates, so asserting the committed figure
+    /// there fails for the build configuration rather than for the code. Everything else in this
+    /// class asserts zero, which holds either way, which is why only this one is guarded.
+    /// </para>
+    /// <para>
+    /// Something does read it that way. Stryker builds the test project with <c>-c Debug</c>, so
+    /// this was the "1 tests are failing" its mutation run warned about before scoring 0.00 %.
+    /// The <em>Allocation budget (B2)</em> job builds Release and still runs it.
+    /// </para>
     /// </remarks>
+#if DEBUG
+    [Fact(Skip = "An exact byte count is meaningful only in an optimised build; see the remarks.")]
+#else
     [Fact]
+#endif
     public void UnwindingAllocatesOneIteratorPerFailedFlow()
     {
         var step = StepNode.ForCapability(0, Fixtures.ReserveInventory, Fixtures.ReleaseInventory);
