@@ -380,40 +380,53 @@ jobs:
           def tree(path):
               return path.split('/', 1)[0] if '/' in path else '(root)'
 
-          # THE SPLIT IS THE GATE. 748 of the 988 alerts on this repository are raised
-          # against files under obj/generated — System.Text.Json's serialisers, FlowX's own
-          # plans and dispatchers, the regex matchers. Nobody can act on those: fixing one
-          # means changing a generator that emits the same shape deliberately, and CodeQL
-          # cannot be told to skip them, because paths-ignore does not apply to a compiled
-          # language that is built (see the init step above). So they are counted and shown
-          # and not gated, and the ceiling is over what somebody actually wrote.
-          authored = [a for a in alerts if not generated(path_of(a))]
-          total = len(authored)
+          def is_test(path):
+              return tree(path) == 'tests'
 
+          # THE SPLIT IS THE GATE, AND IT HAS TWO CUTS. 1,988 of the 2,234 alerts on this
+          # repository are raised against files under obj/generated — System.Text.Json's
+          # serialisers, FlowX's own plans and dispatchers, the regex matchers. Nobody can act
+          # on those: fixing one means changing a generator that emits the same shape
+          # deliberately, and CodeQL cannot be told to skip them, because paths-ignore does not
+          # apply to a compiled language that is built (see the init step above). A further 102
+          # sit under tests/. So the ceiling is over the code that actually ships, and the other
+          # two are counted, listed and left alone.
+          authored = [a for a in alerts if not generated(path_of(a))]
+          tests = [a for a in authored if is_test(path_of(a))]
+          shipped = [a for a in authored if not is_test(path_of(a))]
+          total = len(shipped)
+
+          # AND THE TESTS ARE COUNTED AND SHOWN AND NOT GATED, for the reason the generated
+          # files above are. A finding in a test is a finding in code that never leaves this
+          # repository: no deployment runs it, no caller reaches it, and the fixture that
+          # trips `cs/path-combine` is a string literal naming a file in the working tree.
+          # Holding a release to a style finding in a fixture is what teaches people to raise
+          # the ceiling, which is the one move that ends this gate. They stay visible below,
+          # so a real defect in a test is still readable — it is simply not what blocks a ship.
           print(f'open alerts: {len(alerts)} on {ref} '
-                f'({total} authored, {len(alerts) - total} generated)')
+                f'({total} shipped, {len(tests)} tests, {len(alerts) - len(authored)} generated)')
 
           counts = Counter(a['rule'].get('security_severity_level')
-                           or a['rule'].get('severity') or 'unknown' for a in authored)
+                           or a['rule'].get('severity') or 'unknown' for a in shipped)
           for level, n in sorted(counts.items()):
               print(f'  {level}: {n}')
 
-          by_rule = Counter(a['rule']['id'] for a in authored)
-          print('\nauthored, by rule (top 15 of %d):' % len(by_rule))
+          by_rule = Counter(a['rule']['id'] for a in shipped)
+          print('\nshipped, by rule (top 15 of %d):' % len(by_rule))
           for rule, n in by_rule.most_common(15):
               print(f'  {n:5}  {rule}')
 
           # WHERE THEY ARE, NOT ONLY HOW MANY. The counts above say the backlog moved and
           # not one place to go and look, so acting on this job meant opening the Security
-          # tab and reading 2,234 alerts to find the 246 that are ours. Every authored alert
-          # is listed below with its path and line, grouped by rule, so a failing run is
+          # tab and reading 2,234 alerts to find the 144 that ship. Every one of those is
+          # listed below with its path and line, grouped by rule, so a failing run is
           # already the work list. Capped per rule because a hundred lines of the same style
           # finding is the log nobody reads that this whole job exists to replace.
-          print('\nauthored, in full:')
+          print('\nshipped, in full:')
           for rule, n in by_rule.most_common():
               print(f'\n  {rule}  ({n})')
               shown = 0
-              for alert in authored:
+              for alert in shipped:
                   if alert['rule']['id'] != rule:
                       continue
                   if shown == 12:
@@ -423,9 +436,13 @@ jobs:
                   print(f'    {path_of(alert)}:{where.get("start_line", "?")}')
                   shown += 1
 
-          print('\nauthored, by tree:')
-          for name, n in Counter(tree(path_of(a)) for a in authored).most_common():
+          print('\nshipped, by tree:')
+          for name, n in Counter(tree(path_of(a)) for a in shipped).most_common():
               print(f'  {n:5}  {name}')
+
+          print('\ntests, by rule (not gated):')
+          for rule, n in Counter(a['rule']['id'] for a in tests).most_common():
+              print(f'  {n:5}  {rule}')
 
           baseline = json.load(open('.github/code-scanning-baseline.json'))
           ceiling = baseline['total']
@@ -437,13 +454,13 @@ jobs:
 
           if ceiling is None:
               print('::warning title=Code scanning backlog is not yet gated::'
-                    f'{total} authored alerts. Record this number as `total` in '
+                    f'{total} shipped alerts. Record this number as `total` in '
                     '.github/code-scanning-baseline.json to turn this job into a gate.')
               sys.exit(0)
 
           if total > ceiling:
-              print(f'::error::{total} authored alerts, above the committed ceiling of {ceiling}.')
+              print(f'::error::{total} shipped alerts, above the committed ceiling of {ceiling}.')
               sys.exit(1)
 
-          print(f'{total} authored alerts, at or below the ceiling of {ceiling}.')
+          print(f'{total} shipped alerts, at or below the ceiling of {ceiling}.')
           PY
