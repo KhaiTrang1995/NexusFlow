@@ -84,7 +84,8 @@ public sealed partial class SampleReadmeTests
             Case.Sensitive,
             "the count is the one CrmSchemaReader emits and TenantIsolationTests counts policies for.");
 
-        CrmMigrator.TargetVersion.ShouldBe(23);
+        // 0024 adds a column and widens a CHECK; it declares no table, so the count above holds.
+        CrmMigrator.TargetVersion.ShouldBe(24);
     }
 
     [GeneratedRegex(@"http://localhost:5000(/api/[^\s\\']+)")]
