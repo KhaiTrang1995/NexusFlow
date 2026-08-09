@@ -1,7 +1,7 @@
 import { AsyncBoundary, DataTable, Panel, PanelHeader, Tag } from '@/design/primitives'
 import { useConfig } from '@/api/queries/hooks'
 import type { ConfigItem, ConfigKind } from '@/api/contracts'
-import styles from './setup.module.css'
+import styles from './DeclaredList.module.css'
 
 /**
  * What this tenant has declared of one kind, and what each one does.
@@ -9,6 +9,11 @@ import styles from './setup.module.css'
  * ONE COMPONENT FOR TWELVE SCREENS, because the server answers the same four columns for all of
  * them. A table per kind would be twelve tables differing in nothing but a heading, and the
  * twelfth would be written by somebody copying the eleventh.
+ *
+ * NOT `setup`'S, THOUGH IT WAS WRITTEN THERE. Service declares business hours and SLA policies,
+ * analytics declares dashboards, and `ConfigKind` is the server's vocabulary rather than one
+ * screen's — so three features imported it and two of them reached across a feature boundary to
+ * do it.
  *
  * THE SENTENCE IS THE SERVER'S. `summary` says what a rule refuses or what a policy promises,
  * composed where the columns are — so this component never has to know that an SLA policy has a

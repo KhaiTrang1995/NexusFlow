@@ -1,0 +1,17 @@
+/* The three text styles this table is written in. Its own, because the component is no longer
+   inside `setup` — a shared component reaching into one feature's stylesheet is the same coupling
+   as reaching into its code, and harder to see. */
+
+.sub {
+  font-size: 13px;
+  color: var(--color-neutral-600);
+}
+
+.link {
+  color: var(--color-accent-700);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}

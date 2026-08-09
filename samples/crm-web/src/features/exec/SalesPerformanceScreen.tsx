@@ -15,8 +15,7 @@ import { useSession } from '@/session/SessionProvider'
 import { SetQuotaDrawer } from './SetQuotaDrawer'
 import type { QuotaAttainment, SellerPerformance } from '@/api/contracts'
 import { fullMoney, money, pct, percent } from '@/lib/format'
-import { usePeriod } from './period'
-import { NoPeriods, PeriodPicker } from './PeriodPicker'
+import { NoPeriods, PeriodPicker, usePeriod } from '@/period'
 import styles from './exec.module.css'
 
 /**

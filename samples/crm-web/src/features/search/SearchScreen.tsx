@@ -14,7 +14,7 @@ import {
 import { useSearch } from '@/api/queries/hooks'
 import { OBJECT_MODELS } from '@/fixtures/objects'
 import { useSession } from '@/session/SessionProvider'
-import { readRecents } from './recents'
+import { readRecents } from '@/lib/recents'
 import styles from './search.module.css'
 
 /**

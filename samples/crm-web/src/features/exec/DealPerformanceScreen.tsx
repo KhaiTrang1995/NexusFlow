@@ -11,8 +11,7 @@ import {
 import { ShareBar, StackedBars } from '@/design/charts'
 import { useDealPerformance } from '@/api/queries/hooks'
 import { money, pct } from '@/lib/format'
-import { usePeriod } from './period'
-import { NoPeriods, PeriodPicker } from './PeriodPicker'
+import { NoPeriods, PeriodPicker, usePeriod } from '@/period'
 import styles from './exec.module.css'
 
 /**

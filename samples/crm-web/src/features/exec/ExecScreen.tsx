@@ -17,8 +17,7 @@ import { useEntityPage, useExecutiveBoard, useProcess } from '@/api/queries/hook
 import { money, pct, percent } from '@/lib/format'
 import { byStage, openDeals } from './pipeline'
 import type { StageBand } from './pipeline'
-import { usePeriod } from './period'
-import { NoPeriods, PeriodPicker } from './PeriodPicker'
+import { NoPeriods, PeriodPicker, usePeriod } from '@/period'
 import styles from './exec.module.css'
 
 /**

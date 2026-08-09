@@ -1,6 +1,5 @@
 import { Page, PageHeader } from '@/design/primitives'
-import { usePeriod, withPeriod } from '@/features/exec/period'
-import { PeriodPicker } from '@/features/exec/PeriodPicker'
+import { PeriodPicker, usePeriod, withPeriod } from '@/period'
 import { PlanDetailPanels } from './PlanDetailPanels'
 
 /**

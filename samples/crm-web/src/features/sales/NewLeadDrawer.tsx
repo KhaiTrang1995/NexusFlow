@@ -3,7 +3,7 @@ import { Button, Drawer, DrawerSection, ErrorState, SelectField, TextField } fro
 import { useCaptureLead } from '@/api/queries/hooks'
 import { useToast } from '@/app/ToastProvider'
 import type { LeadSource } from '@/api/contracts'
-import { emailOrNull } from './newWork'
+import { emailOrNull } from '@/lib/newWork'
 
 const SOURCES: readonly LeadSource[] = ['Web', 'Referral', 'Event', 'Outbound', 'Partner']
 

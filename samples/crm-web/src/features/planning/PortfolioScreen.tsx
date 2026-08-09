@@ -16,8 +16,7 @@ import {
 import { usePeriodRollUp, usePlanTree } from '@/api/queries/hooks'
 import type { AccountCoverage, LeadAttainment, OpportunityReadiness, PlanNode } from '@/api/contracts'
 import { fullMoney, money, percent } from '@/lib/format'
-import { usePeriod, withPeriod } from '@/features/exec/period'
-import { PeriodPicker } from '@/features/exec/PeriodPicker'
+import { PeriodPicker, usePeriod, withPeriod } from '@/period'
 import { PeriodGate, hasNoPeriod } from './PeriodGate'
 import styles from './planning.module.css'
 

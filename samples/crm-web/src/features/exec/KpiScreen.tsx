@@ -10,8 +10,7 @@ import {
 } from '@/design/primitives'
 import { useScorecard } from '@/api/queries/hooks'
 import { kpiDirection, kpiValue } from './kpiUnits'
-import { usePeriod } from './period'
-import { NoPeriods, PeriodPicker } from './PeriodPicker'
+import { NoPeriods, PeriodPicker, usePeriod } from '@/period'
 import styles from './exec.module.css'
 
 /**

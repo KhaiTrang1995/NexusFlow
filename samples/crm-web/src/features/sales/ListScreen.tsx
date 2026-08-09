@@ -21,7 +21,7 @@ import { isNumeric, renderCell } from './RecordCell'
 import { entityOf, toRows } from './liveRecords'
 import { EditFieldsDrawer } from './EditFieldsDrawer'
 import { NewLeadDrawer } from './NewLeadDrawer'
-import { NewTaskDrawer } from './NewTaskDrawer'
+import { NewTaskDrawer } from '@/activity/NewTaskDrawer'
 import styles from './ListScreen.module.css'
 
 /** The kinds a custom field can be declared on, which is what the edit drawer writes. */

@@ -20,7 +20,7 @@ import type {
   PlanStepRow,
 } from '@/api/contracts'
 import { fullMoney } from '@/lib/format'
-import type { PeriodChoice } from '@/features/exec/period'
+import type { PeriodChoice } from '@/period'
 import { PeriodGate, hasNoPeriod } from './PeriodGate'
 import { AnswerQualificationDrawer } from './AnswerQualificationDrawer'
 import { qualificationOf } from './qualification'

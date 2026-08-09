@@ -1,8 +1,7 @@
 import { AsyncBoundary, Columns, Page, PageHeader, Panel, PanelHeader, Tag } from '@/design/primitives'
 import { useExecutiveBoard } from '@/api/queries/hooks'
 import { money, pct } from '@/lib/format'
-import { usePeriod, withPeriod } from './period'
-import { NoPeriods, PeriodPicker } from './PeriodPicker'
+import { NoPeriods, PeriodPicker, usePeriod, withPeriod } from '@/period'
 import styles from './exec.module.css'
 
 /**

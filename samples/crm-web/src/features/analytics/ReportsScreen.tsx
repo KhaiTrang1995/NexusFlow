@@ -19,7 +19,7 @@ import { StackedBars } from '@/design/charts'
 import type { ReportResult } from '@/api/contracts'
 import { useConfig, useReportRun } from '@/api/queries/hooks'
 import { count, fullMoney } from '@/lib/format'
-import { DeclaredList } from '@/features/setup/DeclaredList'
+import { DeclaredList } from '@/config/DeclaredList'
 import { NewReportDrawer } from './NewReportDrawer'
 import styles from './analytics.module.css'
 

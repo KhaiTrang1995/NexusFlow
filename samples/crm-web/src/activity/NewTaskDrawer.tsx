@@ -4,7 +4,7 @@ import { useCreateTask, useEntityPage } from '@/api/queries/hooks'
 import { useSession } from '@/session/SessionProvider'
 import { useToast } from '@/app/ToastProvider'
 import type { ActivityKind, EntityKind } from '@/api/contracts'
-import { dueAtFromDays } from './newWork'
+import { dueAtFromDays } from '@/lib/newWork'
 
 const KINDS: readonly ActivityKind[] = ['Task', 'Call', 'Meeting', 'Note']
 
@@ -25,6 +25,11 @@ const SUBJECTS: readonly { kind: EntityKind; label: string; nameColumn: string }
  *
  * The list of candidates is read from the same page endpoint the record screens use, so a record
  * created a minute ago is selectable here without this form knowing anything about how it was.
+ *
+ * OUTSIDE `features/` FOR THE SAME REASON IT IS POLYMORPHIC. An activity hangs off any of four
+ * kinds, so the screens that raise one are in more than one feature: the record page, the object
+ * list, and the week. It was `sales`' file and `work` imported it across the boundary; moving it
+ * to `work` would only have turned one such import into two.
  */
 export function NewTaskDrawer({ onClose, initialKind = 'Task' }: { onClose: () => void; initialKind?: ActivityKind }) {
   const create = useCreateTask()

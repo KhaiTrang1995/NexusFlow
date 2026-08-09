@@ -16,8 +16,7 @@ import {
 import { useReviewKpi, useScorecard } from '@/api/queries/hooks'
 import { useToast } from '@/app/ToastProvider'
 import { kpiValue } from './kpiUnits'
-import { usePeriod, withPeriod } from './period'
-import { NoPeriods, PeriodPicker } from './PeriodPicker'
+import { NoPeriods, PeriodPicker, usePeriod, withPeriod } from '@/period'
 import styles from './exec.module.css'
 
 /**

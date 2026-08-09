@@ -1,6 +1,6 @@
 import { ErrorState } from '@/design/primitives'
-import { NoPeriods } from '@/features/exec/PeriodPicker'
-import type { PeriodChoice } from '@/features/exec/period'
+import { NoPeriods } from '@/period'
+import type { PeriodChoice } from '@/period'
 
 /**
  * What a planning screen shows when there is no period for it to ask about.

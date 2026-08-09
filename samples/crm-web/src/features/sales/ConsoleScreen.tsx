@@ -22,7 +22,7 @@ import type { Column } from '@/design/primitives'
 import { Funnel, StackedBars } from '@/design/charts'
 import { date, dateTime, fullMoney, money, percent } from '@/lib/format'
 import { useQuotaAttainment } from '@/api/queries/hooks'
-import { usePeriod } from '@/features/exec/period'
+import { usePeriod } from '@/period'
 import { useConsole } from './useConsole'
 import type { Deal, Task } from './useConsole'
 

@@ -21,9 +21,20 @@ import { describe, expect, it } from 'vitest'
  * `type="submit"` (the form's own submit path), a `disabled` (which the second test below makes
  * explain itself), or an `href`. Anything else is a control with nowhere to go.
  */
-const SCREENS = join(__dirname, '..', '..')
+const SCREENS = join(__dirname, '..')
 
-/** Every `.tsx` under `src/features`, which is every screen this client has. */
+/**
+ * Every `.tsx` this client draws a screen with.
+ *
+ * <strong>All of `src`, not `src/features`.</strong> It read only the features directory until the
+ * period picker and the new-activity drawer moved out of it — two components with six controls
+ * between them, which a sweep scoped to a directory name stopped seeing the day they were shared.
+ *
+ * `design` is left out because that is where a control is a component: `<button {...rest}>` in
+ * `Button.tsx` takes its handler from whoever renders it, and reading the tag alone would report
+ * every primitive as inert. What those owe is asserted by rendering them, in
+ * `design/primitives/__tests__`.
+ */
 function sources(): { path: string; text: string }[] {
   const found: { path: string; text: string }[] = []
 
@@ -32,7 +43,7 @@ function sources(): { path: string; text: string }[] {
       const path = join(directory, entry.name)
 
       if (entry.isDirectory()) {
-        if (entry.name !== '__tests__') walk(path)
+        if (entry.name !== '__tests__' && entry.name !== 'design') walk(path)
       } else if (entry.name.endsWith('.tsx')) {
         // Comments out, because these files explain themselves at length and several of those
         // explanations quote the very markup this is looking for.

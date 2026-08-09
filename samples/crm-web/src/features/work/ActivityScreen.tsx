@@ -16,7 +16,7 @@ import {
 } from '@/design/primitives'
 import { useEntityPage } from '@/api/queries/hooks'
 import { useSession } from '@/session/SessionProvider'
-import { NewTaskDrawer } from '@/features/sales/NewTaskDrawer'
+import { NewTaskDrawer } from '@/activity/NewTaskDrawer'
 import { offGrid, ownedBy, weekEvents, weekOf } from './week'
 import type { WeekEvent } from './week'
 import styles from './work.module.css'

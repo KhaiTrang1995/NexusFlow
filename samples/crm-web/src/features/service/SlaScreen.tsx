@@ -14,7 +14,7 @@ import {
 import { useDefineSlaPolicy, useSetBusinessHours } from '@/api/queries/hooks'
 import type { CasePriority, OpeningHoursOfDay } from '@/api/contracts'
 import { useToast } from '@/app/ToastProvider'
-import { DeclaredList } from '@/features/setup/DeclaredList'
+import { DeclaredList } from '@/config/DeclaredList'
 import styles from './service.module.css'
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const

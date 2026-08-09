@@ -16,7 +16,7 @@ import {
 import { useDefineListView, useSchema } from '@/api/queries/hooks'
 import { useToast } from '@/app/ToastProvider'
 import type { GuardOperator } from '@/api/contracts'
-import { DeclaredList } from './DeclaredList'
+import { DeclaredList } from '@/config/DeclaredList'
 import styles from './setup.module.css'
 
 const OPERATORS: readonly GuardOperator[] = [

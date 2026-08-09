@@ -18,8 +18,7 @@ import { useExecutiveBoard } from '@/api/queries/hooks'
 import type { KpiResult, PlanNode, SellerPerformance } from '@/api/contracts'
 import { fullMoney, money, pct, percent } from '@/lib/format'
 import { kpiDirection, kpiValue } from './kpiUnits'
-import { usePeriod } from './period'
-import { NoPeriods, PeriodPicker } from './PeriodPicker'
+import { NoPeriods, PeriodPicker, usePeriod } from '@/period'
 import styles from './exec.module.css'
 
 /**

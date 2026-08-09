@@ -15,8 +15,7 @@ import {
 import { useEntityPage, useExecutiveBoard, useProcess } from '@/api/queries/hooks'
 import { fullMoney, money, percent } from '@/lib/format'
 import { byProbability, byStage, openDeals } from './pipeline'
-import { usePeriod, withPeriod } from './period'
-import { NoPeriods, PeriodPicker } from './PeriodPicker'
+import { NoPeriods, PeriodPicker, usePeriod, withPeriod } from '@/period'
 import styles from './exec.module.css'
 
 
