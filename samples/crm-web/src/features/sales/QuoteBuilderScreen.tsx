@@ -12,7 +12,13 @@ import {
   Tag,
   TextField,
 } from '@/design/primitives'
-import { useEntityRecord, useRelatedRecords, useSubmitForApproval } from '@/api/queries/hooks'
+import { useNavigate } from '@tanstack/react-router'
+import {
+  useEntityRecord,
+  useRelatedRecords,
+  useRepriceQuote,
+  useSubmitForApproval,
+} from '@/api/queries/hooks'
 import { useToast } from '@/app/ToastProvider'
 import { useSession } from '@/session/SessionProvider'
 import { date, fullMoney, percent } from '@/lib/format'
@@ -34,21 +40,23 @@ interface Line {
  * whatever the record. Reached from a real quote's "Open builder", that is not a placeholder — it
  * is four rows that look like the customer's and are not.
  *
- * NOTHING RE-PRICES AN ISSUED QUOTE, SO NOTHING HERE PRETENDS TO. The build's whole quote surface
- * is three capabilities — `crm.quote.issue`, `crm.quote.approve_discount`, `crm.order.place` — and
- * the first inserts a quote with its lines. There is no update. This screen used to answer that by
- * putting an input in every cell and an "Add line" button above them, and disclaiming it in a
- * panel-header note: "editing here changes nothing on it". A reader who types into a table expects
- * the typing to mean something, and a sentence over the table is not their agreement to lose it.
+ * A RE-PRICE SUPERSEDES, AND THE SCREEN SAYS SO IN THOSE WORDS. `crm.quote.reprice` writes a
+ * revision carrying the new lines and retires the quote it replaces: the customer's copy keeps its
+ * lines and its total, moves to Superseded, and no order can be taken against it. There is still
+ * no update — nothing edits a quote in place, because a quote is a document that was sent — so a
+ * reader who presses this gets two rows and a link between them, which is what they are told.
  *
- * SO THE TABLE IS READ-ONLY UNTIL THE READER ASKS FOR A SANDBOX. "Model a change" is the asking,
- * the banner is what they agreed to, and "Discard" puts the issued lines back. Before it is
- * pressed, every figure on this screen is one the server sent.
+ * THE TABLE IS READ-ONLY UNTIL THE READER ASKS FOR A SANDBOX. It used to be an input in every cell
+ * with an "Add line" button above them, disclaimed in a panel-header note: "editing here changes
+ * nothing on it". A reader who types into a table expects the typing to mean something, and a
+ * sentence over the table is not their agreement to lose it. "Model a change" is the asking, the
+ * banner is what they agreed to, and "Discard" puts the issued lines back. Before it is pressed,
+ * every figure on this screen is one the server sent.
  *
- * AND THE SANDBOX HAS SOMEWHERE TO GO. Issuing the modelled lines makes a NEW quote against the
- * same opportunity, which is the only thing this build can do with them — said in those words,
- * because a seller who thinks they revised the quote the customer holds has been misled by the
- * one screen that could have told them otherwise.
+ * AND THE SANDBOX HAS TWO PLACES TO GO, WHICH ARE NOT THE SAME ACT. Re-pricing replaces this
+ * quote; issuing leaves it live and makes a second offer against the same opportunity. Both
+ * existed before as one button that could only do the second, described as the first by anybody
+ * who did not read its tooltip.
  *
  * ONE DISCOUNT, NOT ONE PER LINE, BECAUSE THAT IS WHAT THE SCHEMA HAS. A "Disc %" column used to
  * sit on each row; `quote_line` carries a sku, a quantity and a unit price, and the discount is
@@ -64,6 +72,8 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
   const toast = useToast()
   const session = useSession()
   const submit = useSubmitForApproval()
+  const reprice = useRepriceQuote()
+  const navigate = useNavigate()
 
   const record = useEntityRecord('Quote', 'quote_id', quoteId)
   const priced = useRelatedRecords('QuoteLine', 'quote_id', quoteId)
@@ -124,9 +134,53 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
   // clearing; anything else it issued.
   const isDraft = quote?.['status'] === 'Draft'
 
+  // Terminal. A quote that has been replaced can be read and nothing else — no order, no
+  // approval, and no second revision — so the screen offers none of them rather than offering a
+  // button whose only outcome is a 409.
+  const isSuperseded = quote?.['status'] === 'Superseded'
+  const supersedes = quote?.['supersedes'] ?? null
+
   function openSandbox() {
     setDraft(issued)
     setDraftDiscount(String(recorded.given))
+  }
+
+  /**
+   * Replaces this quote with the modelled lines.
+   *
+   * The two ids come back together, which is the only reason the toast can name what happened to
+   * the one the reader has open. Then it opens the revision: leaving them on a Superseded quote
+   * after they re-priced it is the screen refusing to say where their price went.
+   */
+  function supersede() {
+    reprice.mutate(
+      {
+        quoteId,
+        lines: lines.map((line) => ({
+          sku: line.product,
+          quantity: line.quantity,
+          unitPrice: { amount: line.unitPrice, currency },
+        })),
+        discount: totals.given,
+        validForDays: 21,
+      },
+      {
+        onSuccess: (result) => {
+          toast.saved(
+            result.needsApproval
+              ? `Re-priced at ${fullMoney(result.total.amount)}. The revision is ${result.status} — a manager has to approve the discount — and this quote is superseded.`
+              : `Re-priced at ${fullMoney(result.total.amount)}. The revision is ${result.status.toLowerCase()} and this quote is superseded.`,
+          )
+
+          setDraft(null)
+          void navigate({
+            to: '/records/$object/$id',
+            params: { object: 'quote', id: result.quoteId },
+          })
+        },
+        onError: (error) => toast.failed(error, 'That quote was not re-priced.'),
+      },
+    )
   }
 
   return (
@@ -175,13 +229,23 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
         </Panel>
       ) : null}
 
+      {isSuperseded ? (
+        <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
+          <div className={styles.warn}>
+            <strong>This quote has been superseded.</strong> It was replaced by a re-priced quote
+            and no order can be taken against it. What is below is what was offered on the day it
+            was offered, which is why it is still here.
+          </div>
+        </Panel>
+      ) : null}
+
       {draft !== null ? (
         <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
           <div className={styles.warn}>
-            <strong>This is a sandbox, and nothing in it is written.</strong> This build has no
-            capability that re-prices an issued quote, so the lines below cannot replace the ones
-            the customer holds. Issuing them makes a new quote against the same opportunity, and
-            leaves this one exactly as it is.
+            <strong>This is a sandbox, and nothing in it is written.</strong> Re-pricing replaces
+            this quote: the lines below become a new one, and the one the customer holds keeps its
+            own lines and moves to Superseded, where nothing can be ordered against it. Issuing
+            instead leaves this quote live and makes a second offer beside it.
           </div>
         </Panel>
       ) : null}
@@ -337,18 +401,34 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
             {draft !== null ? (
               <PanelBody>
                 {/*
-                  The one capability that takes lines. It inserts a quote; it does not update one,
-                  and the button says which of those it is about to do.
+                  Two acts, not one. Re-pricing replaces this quote and links the two; issuing
+                  leaves it live and makes a second offer. Neither edits a quote in place, and
+                  each button says which of the two it is.
                 */}
                 <Button
                   tone="primary"
+                  disabled={
+                    isSuperseded || lines.length === 0 || reprice.isPending
+                  }
+                  title={
+                    isSuperseded
+                      ? 'This quote has already been replaced, so it cannot be re-priced again.'
+                      : lines.length === 0
+                        ? 'There are no lines to price.'
+                        : 'Replaces this quote: these lines become a new one and this is superseded.'
+                  }
+                  onClick={supersede}
+                >
+                  {reprice.isPending ? 'Re-pricing…' : 'Re-price and supersede'}
+                </Button>
+                <Button
                   disabled={opportunityId === null || lines.length === 0}
                   title={
                     opportunityId === null
                       ? 'This quote names no opportunity to issue another against.'
                       : lines.length === 0
                         ? 'There are no lines to price.'
-                        : 'Prices these lines as a new quote on the same opportunity. This one is unchanged.'
+                        : 'Prices these lines as a second quote on the same opportunity. This one stays live.'
                   }
                   onClick={() => setIssuing(true)}
                 >
@@ -363,6 +443,18 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
             <PanelBody style={{ padding: 0 }}>
               <FieldRow label="Quote">{quoteId}</FieldRow>
               <FieldRow label="Opportunity">{quote?.['opportunity_id'] ?? '—'}</FieldRow>
+              {/*
+                The link between the two rows, from the row itself. A revision that did not say
+                what it replaced would look like an unrelated second quote for the same money.
+              */}
+              {supersedes === null ? null : (
+                <FieldRow label="Supersedes">
+                  {supersedes}
+                  <div className={styles.sub}>
+                    This quote re-prices that one, which can no longer be ordered against.
+                  </div>
+                </FieldRow>
+              )}
               <FieldRow label="Expires">{date(quote?.['valid_until'])}</FieldRow>
               <FieldRow label="Recorded discount">
                 {quote === null ? '—' : fullMoney(recorded.given)}
@@ -370,8 +462,8 @@ export function QuoteBuilderScreen({ quoteId }: { quoteId: string }) {
               <FieldRow label="Recorded total">
                 {quote === null ? '—' : fullMoney(recorded.net)}
                 <div className={styles.sub}>
-                  What the server holds, whatever the panel above is modelling. This build cannot
-                  re-price an issued quote.
+                  What the server holds, whatever the panel above is modelling. Re-pricing writes a
+                  second quote and retires this one; nothing edits these figures in place.
                 </div>
               </FieldRow>
             </PanelBody>

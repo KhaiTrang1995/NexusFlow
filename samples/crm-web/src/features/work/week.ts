@@ -73,7 +73,7 @@ export function weekEvents(records: readonly RecordView[], monday: Date): WeekEv
     return {
       id: record.recordId,
       title: record.values['subject'] ?? '(no subject)',
-      day: inWeek ? Math.floor((when!.getTime() - monday.getTime()) / 86_400_000) : -1,
+      day: inWeek ? Math.floor((when.getTime() - monday.getTime()) / 86_400_000) : -1,
       hour: when === null ? 9 : when.getHours(),
       minutes: when === null ? 0 : when.getMinutes(),
       kind: kind === 'Meeting' || kind === 'Call' ? 'meeting' : 'task',

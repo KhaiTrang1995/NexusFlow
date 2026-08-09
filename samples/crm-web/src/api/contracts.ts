@@ -710,10 +710,37 @@ export interface PlanObjectiveRow {
 export interface PlanStepRow {
   ordinal: number
   description: string
+  /**
+   * Whose step it is. Sent straight back by anything that writes the row: `SetPlanStep` upserts
+   * the whole step, so a client that dropped this would reassign it to whoever pressed the button.
+   */
+  owner: string
   dueOn: string
   isComplete: boolean
   /** Decided by the server, against one clock. */
   isOverdue: boolean
+}
+
+/**
+ * Writes one step of the mutual action plan, or marks one done.
+ *
+ * THE WHOLE ROW, WHICH IS WHY THE OWNER IS HERE. The server upserts on (plan, ordinal); every
+ * field is written, so every field has to be sent — the ones being changed and the ones being
+ * kept. `PlanStepRow.owner` is what a "mark done" control sends back for the owner.
+ */
+export interface SetPlanStep {
+  plan: string
+  ordinal: number
+  description: string
+  owner: string
+  dueOn: string
+  isComplete: boolean
+}
+
+export interface PlanStepSet {
+  ordinal: number
+  /** How many steps of this plan are still to do, counted by the server. */
+  outstanding: number
 }
 
 export interface PlanRiskRow {
@@ -899,13 +926,51 @@ export interface IssueQuote {
   validForDays: number
 }
 
-export type QuoteStatus = 'Draft' | 'Issued' | 'Accepted' | 'Rejected' | 'Expired'
+export type QuoteStatus =
+  | 'Draft'
+  | 'Issued'
+  | 'Accepted'
+  | 'Rejected'
+  | 'Expired'
+  /** Replaced by a re-priced quote. Terminal: no order can be taken against it. */
+  | 'Superseded'
 
 export interface QuoteIssued {
   quoteId: string
   total: Money
   status: QuoteStatus
   /** True when the discount crossed the threshold, so it is Draft until a manager approves. */
+  needsApproval: boolean
+}
+
+/**
+ * Re-prices a quote by replacing it with a revised one.
+ *
+ * A RE-PRICE SUPERSEDES; IT DOES NOT EDIT. The quote the customer holds keeps its lines and its
+ * total — that is the record of what was offered — and moves to `Superseded`, which is terminal.
+ * The revision is a new quote against the same opportunity, carrying `supersedes` back to it.
+ *
+ * The lines are the whole revised set and not a patch: the server has no rule for what an omitted
+ * line would mean, and every such rule is wrong for somebody.
+ */
+export interface RepriceQuote {
+  quoteId: string
+  lines: QuoteRequestLine[]
+  discount: number
+  validForDays: number
+}
+
+export interface QuoteSuperseded {
+  /** The revision, which carries the new lines. */
+  quoteId: string
+  /** The quote it replaced, now `Superseded`. */
+  supersedes: string
+  total: Money
+  status: QuoteStatus
+  /**
+   * The revision is priced from scratch. A discount a manager signed off on the old lines is not
+   * one they signed off on these, so a revision past the threshold is a Draft either way.
+   */
   needsApproval: boolean
 }
 

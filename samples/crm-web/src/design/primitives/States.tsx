@@ -35,7 +35,18 @@ export function EmptyState({
  * with a code and a sentence written for a person — throwing that away and rendering "Something
  * went wrong" discards the only part of the response that could have helped.
  */
-export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+export function ErrorState({
+  error,
+  onRetry,
+}: {
+  error: unknown
+  /**
+   * Retrying is a refetch, and a refetch returns a promise. Typed `() => void`, every caller
+   * handing this `query.refetch` was passing a promise where none was expected — seven of them,
+   * each one a rejection nothing would catch. The type says what a retry actually is.
+   */
+  onRetry?: () => void | Promise<unknown>
+}) {
   const problem = error instanceof ApiError ? error.problem : null
 
   return (
@@ -53,7 +64,7 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
         this application's buttons do nothing.
       */}
       {onRetry && !isSettled(error) ? (
-        <Button tone="secondary" onClick={onRetry}>
+        <Button tone="secondary" onClick={() => void onRetry()}>
           Try again
         </Button>
       ) : null}

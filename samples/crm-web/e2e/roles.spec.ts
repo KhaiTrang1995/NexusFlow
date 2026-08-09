@@ -1297,6 +1297,76 @@ test.describe('planning, where a screen spoke for a tenant it had not asked abou
   })
 
   /**
+   * The year reported nought committed while its own quarters held commitments.
+   *
+   * <strong>The arithmetic was right and the model was empty.</strong> `DefinePlan` has taken a
+   * parent since the portfolio migration, the seed document had no word for one, and the reader
+   * refused the Portfolio kind outright — so nothing was ever written into the year's period and
+   * nothing rolled into anything. A director opened FY26 on €0 committed against 4.2m, under a
+   * gap the size of the whole ambition.
+   *
+   * The director, because the roll-up is scoped: a representative sees the plans they own, and the
+   * year's portfolio is not one of them.
+   */
+  test('shows the year covered by the quarters that roll into it', async ({ page }) => {
+    await signIn(page, 'director')
+    await openPlanningAt(page, '/plan/portfolio', 'FY26')
+
+    const main = page.locator('main')
+
+    await expect(main).not.toContainText('No plans for this period yet.')
+
+    // The year's own plan, and the four quarterly commitments underneath it.
+    await expect(main).toContainText('Northwind — FY26')
+    await expect(main).toContainText('4 below')
+
+    // Covered: the tree prints target then committed beside each level, and the year's two are
+    // the same figure. They used to be a number and nothing.
+    const row = /Portfolio · director-northwind-1 · 4 below\s+(\$[\d.,]+)\s+(\$[\d.,]+)/
+    const found = row.exec(await main.innerText())
+
+    expect(found, 'no figures beside the year').not.toBeNull()
+    expect(found![2], 'the year commits less than the quarters under it').toBe(found![1])
+  })
+
+  /**
+   * A step of the mutual action plan could not be marked done, and the reason was the read.
+   *
+   * <strong>`SetPlanStep` upserts the whole row, owner included.</strong> `PlanDetail` did not
+   * return the owner, so the only thing a tick could have sent for it was the caller — and every
+   * tick would quietly have taken the step off the representative who agreed to it. The manager
+   * presses it here for exactly that reason.
+   */
+  test('marks a step done without taking it off the person who owns it', async ({ page }) => {
+    await signIn(page, 'manager')
+    await openPlanningAt(page, '/plan/opportunities', 'FY26 Q3')
+
+    const steps = page.getByRole('table', { name: 'Steps' })
+    const step = steps.locator('tbody tr').first()
+
+    await expect(step).toContainText('rep-northwind-1')
+
+    // The suite runs against one tenant more than once, so start from a known state rather than
+    // from wherever the last run left this step.
+    const mark = step.getByRole('button', { name: /Mark done|Reopen/ })
+
+    if ((await mark.innerText()).includes('Reopen')) {
+      await mark.click()
+      await expect(toast(page)).toContainText('Reopened')
+    }
+
+    await step.getByRole('button', { name: 'Mark done' }).click()
+
+    // The server's count, not the one this page was holding.
+    await expect(toast(page)).toContainText(/still to do/)
+    await expect(step).toContainText('done')
+
+    // The whole point: the manager who pressed it did not become its owner.
+    await expect(step).toContainText('rep-northwind-1')
+    await expect(step).not.toContainText('manager-northwind-1')
+  })
+
+  /**
    * Setting a strategy needs `crm.admin` and the form was offered to everybody.
    *
    * A representative filled it in, pressed the button and was told they may not — on the screen
@@ -1431,6 +1501,52 @@ test.describe('the quote builder, which took typing and kept none of it', () => 
 
     await expect(page.getByLabel('Item 1')).toHaveValue('PLAT')
     await expect(page.getByLabel('Quantity').first()).toHaveValue('2')
+  })
+
+  /**
+   * A re-price supersedes, and the screen now has the capability to say so.
+   *
+   * <strong>Before this the sandbox could only issue an unrelated second quote.</strong> Two live
+   * offers against one opportunity, nothing saying which was current, and the old one still
+   * orderable at the old price — offered under a button a seller would read as "revise". The
+   * revision now names the quote it replaced, and the replaced one is terminal.
+   */
+  test('re-prices a quote by superseding it, and links the two', async ({ page }) => {
+    await signIn(page, 'rep')
+    await openBuilder(page)
+
+    // The builder is /quote/$id, so the id of the quote about to be replaced is in the URL.
+    const replaced = page.url()
+    const replacedId = replaced.split('/quote/')[1]!
+
+    await page.getByRole('button', { name: 'Model a change' }).click()
+    await page.getByLabel('Unit price').first().fill('15000')
+    await page.getByRole('button', { name: 'Re-price and supersede' }).click()
+
+    await expect(toast(page)).toContainText('superseded')
+
+    // It opens the revision: leaving a seller on a retired quote is the screen refusing to say
+    // where their price went.
+    await expect(page).toHaveURL(/\/records\/quote\//)
+    expect(page.url()).not.toContain(replacedId)
+
+    await page.getByRole('button', { name: 'Open builder' }).click()
+
+    // The link, off the revision's own row — the half that did not exist. An unlinked second
+    // quote for a different total is indistinguishable from a re-price until somebody orders the
+    // wrong one.
+    await expect(page.locator('main')).toContainText('Supersedes')
+    await expect(page.locator('main')).toContainText(replacedId)
+
+    // And the quote the customer holds keeps its own lines, terminally.
+    await page.goto(replaced)
+
+    await expect(page.locator('main')).toContainText('This quote has been superseded')
+    await expect(page.getByRole('table', { name: 'Quote lines' }).locator('tbody tr'))
+      .toHaveCount(1)
+
+    await page.getByRole('button', { name: 'Model a change' }).click()
+    await expect(page.getByRole('button', { name: 'Re-price and supersede' })).toBeDisabled()
   })
 })
 

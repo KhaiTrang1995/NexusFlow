@@ -97,7 +97,7 @@ export async function post<Response, Body = unknown>(
 async function readProblem(response: Response): Promise<Problem | null> {
   try {
     const body: unknown = await response.json()
-    return body !== null && typeof body === 'object' ? (body as Problem) : null
+    return body !== null && typeof body === 'object' ? (body) : null
   } catch {
     // A gateway that answered HTML, or a connection that closed mid-body. The status is still
     // worth reporting, so a failure to parse the problem is not itself an error.

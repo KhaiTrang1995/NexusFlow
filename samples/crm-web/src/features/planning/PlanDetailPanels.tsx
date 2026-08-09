@@ -10,7 +10,8 @@ import {
   PanelHeader,
   Tag,
 } from '@/design/primitives'
-import { usePlan, usePlanTree } from '@/api/queries/hooks'
+import { usePlan, usePlanTree, useSetPlanStep } from '@/api/queries/hooks'
+import { useToast } from '@/app/ToastProvider'
 import type {
   PlanObjectiveRow,
   PlanQualificationRow,
@@ -166,40 +167,7 @@ export function PlanDetailPanels({ kind, choice }: { kind: string; choice: Perio
               />
             </Panel>
 
-            <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
-              <PanelHeader
-                title="Mutual action plan"
-                note={`${detail.steps.filter((step) => step.isOverdue).length} overdue`}
-              />
-              <DataTable
-                caption="Steps"
-                rows={detail.steps}
-                rowKey={(row) => String(row.ordinal)}
-                columns={[
-                  {
-                    id: 'description',
-                    header: 'Step',
-                    cell: (row: PlanStepRow) => row.description,
-                  },
-                  { id: 'due', header: 'Due', cell: (row: PlanStepRow) => row.dueOn },
-                  {
-                    id: 'state',
-                    header: 'State',
-                    // Three states and not two: done, late, and neither. A screen with a single
-                    // "complete" tick makes the late ones look the same as the ones with time.
-                    cell: (row: PlanStepRow) =>
-                      row.isComplete ? (
-                        <Tag tone="positive">done</Tag>
-                      ) : row.isOverdue ? (
-                        <Tag tone="critical">overdue</Tag>
-                      ) : (
-                        <Tag tone="outline">open</Tag>
-                      ),
-                  },
-                ]}
-                empty="Nothing has been agreed with the customer."
-              />
-            </Panel>
+            <StepsPanel plan={detail.name} rows={detail.steps} />
 
             <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
               <PanelHeader
@@ -287,6 +255,121 @@ export function PlanDetailPanels({ kind, choice }: { kind: string; choice: Perio
 }
 
 /**
+ * What both sides agreed to do, and the tick that says one of them did it.
+ *
+ * THERE WAS NO CONTROL HERE, AND THE REASON WAS THE READ. `SetPlanStep` upserts the whole row —
+ * description, owner, date and completion — so a tick has to send all four back. `PlanDetail` did
+ * not return the owner, so the only thing a control could have put in that field was the caller,
+ * and every tick would quietly have taken the step off whoever agreed to it. The read returns the
+ * owner now; this sends back what it was given and changes the one field it means to.
+ *
+ * WHICH IS ALSO WHY THE ROW IS SENT WHOLE RATHER THAN AS A PATCH. There is no partial write on
+ * this surface, and a control that pretended otherwise would blank a description the first time
+ * somebody used it.
+ *
+ * THE COUNT IN THE TOAST IS THE SERVER'S. `PlanStepSet` says how many are outstanding after the
+ * write; counting the rows this page happens to be holding would report a number that is right
+ * only until somebody else ticks one.
+ */
+function StepsPanel({ plan, rows }: { plan: string; rows: readonly PlanStepRow[] }) {
+  const write = useSetPlanStep()
+  const toast = useToast()
+  const [pending, setPending] = useState<number | null>(null)
+
+  function set(row: PlanStepRow, isComplete: boolean) {
+    setPending(row.ordinal)
+
+    write.mutate(
+      {
+        plan,
+        ordinal: row.ordinal,
+        description: row.description,
+        // The owner the server sent, returned unchanged. Never the caller.
+        owner: row.owner,
+        dueOn: row.dueOn,
+        isComplete,
+      },
+      {
+        onSuccess: (result) => {
+          setPending(null)
+          toast.saved(
+            isComplete
+              ? `Done — ${result.outstanding} step${result.outstanding === 1 ? '' : 's'} still to do.`
+              : `Reopened — ${result.outstanding} still to do.`,
+          )
+        },
+        onError: (error) => {
+          setPending(null)
+          toast.failed(error, 'That step was not written.')
+        },
+      },
+    )
+  }
+
+  return (
+    <Panel padding="flush" style={{ marginBottom: 'var(--section-gap)' }}>
+      <PanelHeader
+        title="Mutual action plan"
+        note={`${rows.filter((step) => step.isOverdue).length} overdue`}
+      />
+      <DataTable
+        caption="Steps"
+        rows={rows}
+        rowKey={(row) => String(row.ordinal)}
+        columns={[
+          {
+            id: 'description',
+            header: 'Step',
+            cell: (row: PlanStepRow) => row.description,
+          },
+          {
+            id: 'owner',
+            header: 'Owner',
+            // On the screen because it is on the write. A field a control sends and a reader
+            // cannot see is a field somebody discovers by having lost it.
+            cell: (row: PlanStepRow) => <span className={styles.sub}>{row.owner}</span>,
+          },
+          { id: 'due', header: 'Due', cell: (row: PlanStepRow) => row.dueOn },
+          {
+            id: 'state',
+            header: 'State',
+            // Three states and not two: done, late, and neither. A screen with a single
+            // "complete" tick makes the late ones look the same as the ones with time.
+            cell: (row: PlanStepRow) =>
+              row.isComplete ? (
+                <Tag tone="positive">done</Tag>
+              ) : row.isOverdue ? (
+                <Tag tone="critical">overdue</Tag>
+              ) : (
+                <Tag tone="outline">open</Tag>
+              ),
+          },
+          {
+            id: 'mark',
+            header: '',
+            cell: (row: PlanStepRow) => (
+              <Button
+                size="sm"
+                disabled={pending === row.ordinal}
+                title={`${row.owner} owns this step, and still will after this.`}
+                onClick={() => set(row, !row.isComplete)}
+              >
+                {pending === row.ordinal
+                  ? 'Saving…'
+                  : row.isComplete
+                    ? 'Reopen'
+                    : 'Mark done'}
+              </Button>
+            ),
+          },
+        ]}
+        empty="Nothing has been agreed with the customer."
+      />
+    </Panel>
+  )
+}
+
+/**
  * The eight questions, whether or not anybody has answered them.
  *
  * THE DENOMINATOR WAS THE NUMBER OF ROWS THE SERVER HAPPENED TO SEND. `/planning/plan` returns
@@ -297,11 +380,6 @@ export function PlanDetailPanels({ kind, choice }: { kind: string; choice: Perio
  * AND THERE WAS NO WAY TO ANSWER ONE. `/planning/qualifications` has been there throughout and
  * needs only `crm.write`, which every persona in this sample holds; this screen read the answers
  * and offered no control that recorded one, so the gap it reports could only ever grow.
- *
- * THE MUTUAL ACTION PLAN ABOVE STILL HAS NO CONTROL, AND THAT IS DELIBERATE. `SetPlanStep` is an
- * upsert of the whole row including its owner, and `PlanDetail` does not return the step's owner
- * — so a "mark done" tick would have to invent one, and would quietly reassign the step to
- * whoever pressed it. A control that writes the wrong thing is worse than no control.
  */
 function QualificationPanel({ plan, rows }: { plan: string; rows: readonly PlanQualificationRow[] }) {
   const [answering, setAnswering] = useState<QualificationLine | null>(null)

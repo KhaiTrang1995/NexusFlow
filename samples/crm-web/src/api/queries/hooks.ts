@@ -633,6 +633,28 @@ export function useIssueQuote(): UseMutationResult<C.QuoteIssued, Error, C.Issue
 }
 
 /**
+ * Re-prices a quote by replacing it with a revised one.
+ *
+ * NOT AN EDIT, AND THE DIFFERENCE IS WHAT THE SCREEN HAS TO SAY. The quote the customer holds
+ * keeps its lines and moves to `Superseded`, which is terminal — no order can be taken against it
+ * — and the revision carries `supersedes` back to it. A client that presented this as "save" would
+ * be describing a write this server does not have.
+ *
+ * Every entity list is invalidated because one call writes two quotes.
+ */
+export function useRepriceQuote(): UseMutationResult<C.QuoteSuperseded, Error, C.RepriceQuote> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.RepriceQuote) =>
+      call.write<C.QuoteSuperseded, C.RepriceQuote>('/quotes/revisions', input),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.entities.all(tenantId) }),
+  })
+}
+
+/**
  * Converts a lead into an account, a contact and an opportunity.
  *
  * ONE CALL, NOT THREE. The server runs it as a saga: a failure at the opportunity unwinds the
@@ -723,11 +745,11 @@ export function useAdvanceOpportunity(): UseMutationResult<
       return outcome
     },
     onSuccess: () => {
-      client.invalidateQueries({ queryKey: keys.entities.all(tenantId) })
+      void client.invalidateQueries({ queryKey: keys.entities.all(tenantId) })
 
       // The stage counts on the process view move with it, and a board still showing the old
       // occupancy is the screen somebody plans the week from.
-      client.invalidateQueries({ queryKey: keys.processes.all(tenantId) })
+      void client.invalidateQueries({ queryKey: keys.processes.all(tenantId) })
     },
   })
 }
@@ -828,13 +850,13 @@ export function useSetOrgMember(): UseMutationResult<C.OrgMemberSet, Error, C.Se
     mutationFn: (input: C.SetOrgMember) =>
       call.write<C.OrgMemberSet, C.SetOrgMember>('/org/members', input),
     onSuccess: () => {
-      client.invalidateQueries({ queryKey: keys.org.all(tenantId) })
+      void client.invalidateQueries({ queryKey: keys.org.all(tenantId) })
 
       // Moving somebody changes whose rows everybody below them sees, so every scoped read is
       // now answering from a line that no longer exists.
-      client.invalidateQueries({ queryKey: keys.performance.all(tenantId) })
-      client.invalidateQueries({ queryKey: keys.board.all(tenantId) })
-      client.invalidateQueries({ queryKey: keys.planning.all(tenantId) })
+      void client.invalidateQueries({ queryKey: keys.performance.all(tenantId) })
+      void client.invalidateQueries({ queryKey: keys.board.all(tenantId) })
+      void client.invalidateQueries({ queryKey: keys.planning.all(tenantId) })
     },
   })
 }
@@ -936,8 +958,8 @@ export function useDefineReport(): UseMutationResult<C.ReportDefined, Error, C.D
     mutationFn: (input: C.DefineReport) =>
       call.write<C.ReportDefined, C.DefineReport>('/reports', input),
     onSuccess: () => {
-      client.invalidateQueries({ queryKey: keys.config.all(tenantId) })
-      client.invalidateQueries({ queryKey: keys.reports.all(tenantId) })
+      void client.invalidateQueries({ queryKey: keys.config.all(tenantId) })
+      void client.invalidateQueries({ queryKey: keys.reports.all(tenantId) })
     },
   })
 }
@@ -1052,9 +1074,9 @@ export function useSetStrategy(): UseMutationResult<C.StrategySet, Error, C.SetS
     onSuccess: () => {
       // The number every level rolls up to changed, so the roll-up, the tree and the board are
       // all answering from the old one.
-      client.invalidateQueries({ queryKey: keys.planning.all(tenantId) })
-      client.invalidateQueries({ queryKey: keys.board.all(tenantId) })
-      client.invalidateQueries({ queryKey: keys.performance.all(tenantId) })
+      void client.invalidateQueries({ queryKey: keys.planning.all(tenantId) })
+      void client.invalidateQueries({ queryKey: keys.board.all(tenantId) })
+      void client.invalidateQueries({ queryKey: keys.performance.all(tenantId) })
     },
   })
 }
@@ -1079,8 +1101,33 @@ export function useAnswerQualification(): UseMutationResult<
     mutationFn: (input: C.AnswerQualification) =>
       call.write<C.QualificationRecorded, C.AnswerQualification>('/planning/qualifications', input),
     onSuccess: () => {
-      client.invalidateQueries({ queryKey: keys.planning.all(tenantId) })
-      client.invalidateQueries({ queryKey: keys.board.all(tenantId) })
+      void client.invalidateQueries({ queryKey: keys.planning.all(tenantId) })
+      void client.invalidateQueries({ queryKey: keys.board.all(tenantId) })
+    },
+  })
+}
+
+/**
+ * Writes one step of the mutual action plan, or marks one done.
+ *
+ * THE WHOLE ROW GOES UP, WHICH IS WHY THE CALLER HAS TO HAVE READ IT. The server upserts on
+ * (plan, ordinal) and writes every column, so a caller sending only the tick would blank the
+ * description and reassign the owner. `PlanDetail` returns the owner for exactly this reason;
+ * the caller sends back what it was given and changes the one field it means to.
+ *
+ * An overdue step is what the roll-up counts, so the board is stale the moment one is ticked.
+ */
+export function useSetPlanStep(): UseMutationResult<C.PlanStepSet, Error, C.SetPlanStep> {
+  const client = useQueryClient()
+  const { tenantId } = useSession()
+  const call = useCall()
+
+  return useMutation({
+    mutationFn: (input: C.SetPlanStep) =>
+      call.write<C.PlanStepSet, C.SetPlanStep>('/planning/steps', input),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.planning.all(tenantId) })
+      void client.invalidateQueries({ queryKey: keys.board.all(tenantId) })
     },
   })
 }

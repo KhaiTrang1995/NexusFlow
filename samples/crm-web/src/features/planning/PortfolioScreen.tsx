@@ -294,8 +294,14 @@ function TreeRow({ node }: { node: PlanNode }) {
       <div className={styles.treeNumbers}>
         <span>{fullMoney(node.target)}</span>
         <span>{fullMoney(node.committed)}</span>
+        {/*
+          A GAP OF EXACTLY NOUGHT IS COVERED, NOT OVER-COVERED BY NOTHING. `covered` is `gap <= 0`,
+          so an exactly-met node took the "+" branch and `-0` formatted as "-$0": the screen read
+          `+-$0`. Nothing produced an exactly-covered node until the year's portfolio gained the
+          quarters that roll into it, which is the first thing here whose children add up.
+        */}
         <span className={covered ? styles.covered : styles.gap}>
-          {covered ? `+${fullMoney(-node.gap)}` : fullMoney(node.gap)}
+          {node.gap === 0 ? fullMoney(0) : covered ? `+${fullMoney(-node.gap)}` : fullMoney(node.gap)}
         </span>
       </div>
     </div>

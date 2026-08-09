@@ -39,8 +39,12 @@ const EMPTY: DraftLine = { sku: '', quantity: '1', unitPrice: '' }
  * for a seller who has issued three this week, is a guessing game between four identical totals.
  *
  * IT ALSO TAKES LINES SOMEBODY HAS ALREADY WRITTEN. The quote builder's sandbox is a set of lines
- * and one discount — the same shape this form holds — and issuing is the only thing this build can
- * do with them. Retyping them here would be the reader paying twice for the same thought.
+ * and one discount — the same shape this form holds — so retyping them here would be the reader
+ * paying twice for the same thought.
+ *
+ * THIS IS THE SECOND OFFER, NOT THE REVISION. A quote issued here stands beside the one the reader
+ * came from and leaves it live; replacing a quote is `crm.quote.reprice`, which the builder calls
+ * directly. Two acts that read alike and differ in what happens to the customer's copy.
  */
 export function IssueQuoteDrawer({
   opportunityId,

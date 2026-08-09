@@ -59,8 +59,11 @@ public static class EntityColumns
         ReadableEntity.Contact =>
             ["contact_id", "account_id", "full_name", "email", "phone", "is_primary"],
         ReadableEntity.Quote =>
+            // `supersedes` is readable and not renameable: it is the edge from a re-priced quote
+            // to the one it replaced, and a screen that cannot read it shows a revision as an
+            // unrelated second quote for a different total.
             ["quote_id", "opportunity_id", "status", "subtotal", "discount", "total", "currency",
-             "valid_until", "approved_by"],
+             "valid_until", "approved_by", "supersedes"],
         ReadableEntity.Order =>
             ["order_id", "quote_id", "account_id", "status", "total", "currency", "placed_at"],
         ReadableEntity.QuoteLine =>
