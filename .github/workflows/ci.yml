@@ -391,11 +391,26 @@ jobs:
         # there by default. Overriding CRM_API would work and would also mean the thing CI
         # exercises is not the thing a developer runs.
         #
-        # Migrations and the seed run on startup (Program.cs, CrmSeeder), so /health
-        # answering 200 is also the statement that the schema exists and the seed landed.
+        # THE SEED IS ASKED FOR, BECAUSE IT WAS ONLY EVER ASSUMED. This comment used to say
+        # that /health answering 200 was "also the statement that the schema exists and the
+        # seed landed". Half of that was true. Migrations do run on startup; the seed does not
+        # unless CRM_SEED_FILE names a file, and this job never named one — so the suite ran
+        # against a schema with no rows in it. Forty of the sixty-five tests then sat waiting
+        # ninety seconds each for a deal, a quote or a process that was never written, and the
+        # job hit its thirty-minute ceiling. The tests that passed were the ones about an empty
+        # tenant, which is the shape of a suite quietly measuring the wrong world.
+        #
+        # CRM_SEED_ALLOW_PRODUCTION rather than DOTNET_ENVIRONMENT=Development: the seeder
+        # refuses to write into a Production environment without being told the writing is
+        # intended, and that is exactly what this is — a throwaway database that wants rows.
+        # Saying so keeps the host in the configuration a deployment actually runs, instead of
+        # turning on developer behaviour underneath a suite that is meant to exercise the
+        # deployed one.
         env:
           FLOWX_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres"
           ASPNETCORE_URLS: "http://127.0.0.1:5000"
+          CRM_SEED_FILE: samples/crm/seed/northwind.json
+          CRM_SEED_ALLOW_PRODUCTION: "true"
         run: |
           nohup dotnet samples/crm/bin/Release/net10.0/Crm.dll > "$RUNNER_TEMP/crm-api.log" 2>&1 &
           for _ in $(seq 1 60); do
@@ -406,6 +421,25 @@ jobs:
             echo "::error::The CRM host never became healthy. Its log follows."
             tail -50 "$RUNNER_TEMP/crm-api.log"
             exit 1; }
+
+          # AND THE SEED IS CHECKED, NOT TRUSTED. A healthy host with an empty tenant is what
+          # this job shipped for its whole life; the only thing that would have caught it is
+          # asking. CrmSeeder logs one line per tenant it applies. Polled rather than read
+          # once, because it is a hosted service and nothing orders it against the moment the
+          # server starts answering — a single grep would be a race this job cannot afford to
+          # lose quietly.
+          for _ in $(seq 1 30); do
+            grep -q "Seeded tenant" "$RUNNER_TEMP/crm-api.log" && break
+            sleep 2
+          done
+
+          grep -q "Seeded tenant" "$RUNNER_TEMP/crm-api.log" || {
+            echo "::error::The host is healthy and the seed did not run, so the suite would"
+            echo "::error::spend thirty minutes discovering an empty database. Its log follows."
+            tail -50 "$RUNNER_TEMP/crm-api.log"
+            exit 1; }
+
+          grep "Seeded tenant" "$RUNNER_TEMP/crm-api.log"
 
       - name: Start the client
         working-directory: samples/crm-web
