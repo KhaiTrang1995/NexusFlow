@@ -350,6 +350,30 @@ jobs:
     # as "still working" for the rest of a working day. Twenty-five minutes or it is
     # a failure somebody looks at.
     timeout-minutes: 25
+
+    # ADVISORY, BECAUSE THE HARNESS IS BROKEN AND THE SUITE IS NOT.
+    #
+    # This job reports 0.00 %: 524 mutants tested, 0 killed, 0 errors. That is not a
+    # measurement of the tests. Stryker injects its mutants into the source — the trace
+    # shows `MutantControl.IsActive(n)` throughout the mutated tree — and the xUnit VSTest
+    # adapter then discovers and runs all 153 tests, but no mutant is ever active in the
+    # process that runs them, so every one of them survives by construction.
+    #
+    # PROVEN, NOT ASSUMED. Scoped to CompensationStack.cs alone, Stryker tests 16 mutants
+    # and kills none. Making one of those same mutations by hand — `while (_completed.Count
+    # > 0)` to `> 1` in CompensationStack.Unwind, which compiles clean — fails five tests.
+    # The suite notices mutations; Stryker's do not reach it.
+    #
+    # WHY IT IS NOT FIXED HERE. Stryker activates a mutant through an environment variable
+    # the test host reads. The test projects are xUnit v3, which builds each of them as its
+    # own executable, and 4.16.0 — the newest dotnet-stryker on NuGet — does not carry the
+    # activation across that boundary. `test coverage capture failed` on every run is the
+    # same boundary showing itself earlier.
+    #
+    # `--break-at 70` stays at 70. The threshold is not what is wrong, and lowering it to
+    # meet a broken measurement is how a gate becomes a lie. Remove this line — not the
+    # threshold — the moment a run reports a non-zero score.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
