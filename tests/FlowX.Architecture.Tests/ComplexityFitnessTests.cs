@@ -86,7 +86,7 @@ public sealed class ComplexityFitnessTests
         ["DefineCrmListView.Layout"] = 21,
         ["FlowEngine.RunSubFlowAsync"] = 20,
         ["FlowXOptionsValidator.ValidateFairness"] = 20,
-        ["SchemaSet.WriteType"] = 20,
+        ["SchemaSet.WriteType"] = 17,
         ["SeedReader.Commitment"] = 20,
         ["CronSchedule.TryTerm"] = 19,
         ["ErrorCatalogueReader.Dispatch"] = 19,

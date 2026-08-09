@@ -60,6 +60,45 @@ public sealed class OpenApiTests
         }
         """;
 
+    /// <summary>
+    /// A document whose nested contract sorts before a top-level one.
+    /// </summary>
+    /// <remarks>
+    /// <strong><c>Coupon</c> is the whole point of this fixture.</strong> The schema collection is
+    /// sorted, and a discovery only breaks a count-based pager when it lands at or before the
+    /// boundary: <c>Origin</c> in the manifest above sorts after everything already written, so
+    /// the bug that produced 36 duplicates in the CRM sample left that document correct by luck.
+    /// <c>Coupon</c> sorts first of four, which is the case a regression has to be caught on.
+    /// </remarks>
+    private const string NestedManifest = """
+        {
+          "schemaVersion": "0.1.0",
+          "application": { "name": "Bulk", "version": "1.0.0" },
+          "flows": [
+            {
+              "id": "bulk.rows.submit",
+              "version": "1.0.0",
+              "input": { "type": "FlowX.Http.Tests.SubmitRows" },
+              "output": { "type": "FlowX.Http.Tests.Enrolled" },
+              "triggers": [
+                { "kind": "Http", "method": "POST", "route": "/api/v1/rows", "idempotent": true }
+              ],
+              "errors": []
+            },
+            {
+              "id": "bulk.enrol",
+              "version": "1.0.0",
+              "input": { "type": "FlowX.Http.Tests.Enrol" },
+              "output": { "type": "FlowX.Http.Tests.Enrolled" },
+              "triggers": [
+                { "kind": "Http", "method": "POST", "route": "/api/v1/enrolments", "idempotent": true }
+              ],
+              "errors": []
+            }
+          ]
+        }
+        """;
+
     /// <summary>Every HTTP trigger becomes a path, and nothing else does.</summary>
     /// <remarks>
     /// A cron flow is a real flow with a real contract and no URL. Documenting it as one would send
@@ -215,6 +254,141 @@ public sealed class OpenApiTests
             .TryGetProperty("ProblemDetails", out _).ShouldBeTrue();
     }
 
+
+    /// <summary>Every schema the document names is defined in it, exactly once.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Two failures of the same bug, and neither was visible from a passing test.</strong>
+    /// The schema collection is sorted and grows while it is being written — describing a contract
+    /// names the contracts it holds — and the writer paged it by count. A discovery inserted at
+    /// its sorted position moved the boundary, so whatever had been pushed past it was written a
+    /// second time and the discovery itself was never written at all.
+    /// </para>
+    /// <para>
+    /// <strong>A duplicate key is not a cosmetic fault.</strong> <c>JsonDocument</c> keeps the last
+    /// of them and every other reader keeps a different one, so the document parses here and is
+    /// rejected by the generator a client actually runs: <c>openapi-typescript</c> stops at
+    /// "duplicated mapping key" and emits nothing. The raw bytes are counted below for that
+    /// reason — asking the parsed document would ask the one reader that cannot see it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EverySchemaIsDefinedOnceAndNothingRefersToOneThatIsNot()
+    {
+        var json = OpenApi.Write(NestedManifest, ContractContext.Default, null);
+        var document = JsonDocument.Parse(json).RootElement;
+
+        var defined = document.GetProperty("components").GetProperty("schemas")
+            .EnumerateObject().Select(static schema => schema.Name).ToArray();
+
+        var written = SchemaKeys(json);
+
+        written.Where(name => written.Count(other => other == name) > 1)
+            .Distinct(StringComparer.Ordinal)
+            .ShouldBeEmpty("a schema written twice makes the document invalid to every reader " +
+                           "that does not silently keep the last one.");
+
+        Referenced(document).Except(defined, StringComparer.Ordinal).ShouldBeEmpty(
+            "these are named by a $ref and defined nowhere, so a generated client has no type " +
+            "for them.");
+
+        defined.ShouldContain("Coupon", "the nested contract is the one the paging bug dropped.");
+    }
+
+    /// <summary>A list of dictionaries is a list of objects, not a reference to a generic.</summary>
+    /// <remarks>
+    /// The items branch offered "scalar, or <c>$ref</c>" and a dictionary is neither, so
+    /// <c>IReadOnlyList&lt;IReadOnlyDictionary&lt;string, string?&gt;&gt;</c> — a bulk import's
+    /// rows — referred to a schema named after the assembly-qualified spelling of the constructed
+    /// generic, brackets, version and public key token included.
+    /// </remarks>
+    [Fact]
+    public void AListOfDictionariesIsDescribedRatherThanReferred()
+    {
+        var document = JsonDocument
+            .Parse(OpenApi.Write(NestedManifest, ContractContext.Default, null))
+            .RootElement;
+
+        var items = document.GetProperty("components").GetProperty("schemas")
+            .GetProperty("SubmitRows").GetProperty("properties")
+            .GetProperty("rows").GetProperty("items");
+
+        items.GetProperty("type").GetString().ShouldBe("object");
+        items.TryGetProperty("$ref", out _).ShouldBeFalse();
+
+        Referenced(document).ShouldAllBe(static name => !name.Contains('=', StringComparison.Ordinal));
+    }
+
+    /// <summary>The names under components/schemas, as written rather than as parsed.</summary>
+    private static List<string> SchemaKeys(string json)
+    {
+        var start = json.IndexOf("\"schemas\":", StringComparison.Ordinal);
+        var keys = new List<string>();
+        var depth = 0;
+
+        for (var i = json.IndexOf('{', start); i < json.Length; i++)
+        {
+            if (json[i] == '{')
+            {
+                depth++;
+            }
+            else if (json[i] == '}')
+            {
+                if (--depth == 0)
+                {
+                    break;
+                }
+            }
+            else if (json[i] == '"' && depth == 1)
+            {
+                var end = json.IndexOf('"', i + 1);
+                keys.Add(json[(i + 1)..end]);
+                i = end;
+            }
+        }
+
+        return keys;
+    }
+
+    /// <summary>Every schema name any $ref in the document points at.</summary>
+    private static IEnumerable<string> Referenced(JsonElement document)
+    {
+        var found = new List<string>();
+        Walk(document, found);
+
+        return found.Distinct(StringComparer.Ordinal);
+
+        static void Walk(JsonElement node, List<string> found)
+        {
+            switch (node.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    foreach (var member in node.EnumerateObject())
+                    {
+                        if (member.NameEquals("$ref") && member.Value.GetString() is { } pointer)
+                        {
+                            found.Add(pointer["#/components/schemas/".Length..]);
+                        }
+
+                        Walk(member.Value, found);
+                    }
+
+                    break;
+
+                case JsonValueKind.Array:
+                    foreach (var item in node.EnumerateArray())
+                    {
+                        Walk(item, found);
+                    }
+
+                    break;
+
+                default:
+                    break;
+            }
+        }
+    }
+
     private static JsonElement Document() =>
         JsonDocument.Parse(OpenApi.Write(Manifest, ContractContext.Default, null)).RootElement;
 }
@@ -258,9 +432,29 @@ public sealed record CaptureLead(
 /// <param name="LeadId">The lead.</param>
 public sealed record LeadCaptured(Guid LeadId);
 
+/// <summary>A nested contract whose name sorts before the contracts that hold it.</summary>
+/// <param name="Code">The code.</param>
+public sealed record Coupon(string Code);
+
+/// <summary>A contract holding one, so the writer discovers it while walking.</summary>
+/// <param name="Coupon">The coupon.</param>
+public sealed record Enrol(Coupon Coupon);
+
+/// <summary>What comes back from an enrolment.</summary>
+/// <param name="EnrolmentId">The enrolment.</param>
+public sealed record Enrolled(Guid EnrolmentId);
+
+/// <summary>A contract whose list holds dictionaries rather than contracts.</summary>
+/// <param name="Rows">The rows, each a bag of columns, as a bulk import carries them.</param>
+public sealed record SubmitRows(IReadOnlyList<IReadOnlyDictionary<string, string?>> Rows);
+
 /// <summary>The generated metadata these tests describe contracts from.</summary>
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(CaptureLead))]
 [JsonSerializable(typeof(LeadCaptured))]
 [JsonSerializable(typeof(Origin))]
+[JsonSerializable(typeof(SubmitRows))]
+[JsonSerializable(typeof(Coupon))]
+[JsonSerializable(typeof(Enrol))]
+[JsonSerializable(typeof(Enrolled))]
 public sealed partial class ContractContext : JsonSerializerContext;

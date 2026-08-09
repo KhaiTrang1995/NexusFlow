@@ -78,20 +78,25 @@ internal sealed class SchemaSet
     {
         ArgumentNullException.ThrowIfNull(writer);
 
-        // Written by index rather than by iterator, because describing one type can name another
-        // — a record with a nested record — and that adds to the collection as it is walked.
-        for (var written = 0; written < _named.Count;)
-        {
-            var batch = _named.Skip(written).ToList();
+        var written = new HashSet<string>(StringComparer.Ordinal);
 
+        // BY NAME, NOT BY COUNT. Describing one type can name another — a record with a nested
+        // record — and this walks the collection while that happens. `_named` is sorted, so a
+        // discovery inserts at its sorted position rather than at the end, and `Skip(count)` then
+        // skips whatever now occupies the first `count` places instead of what was written. The
+        // schemas the insertion pushed past the boundary were emitted a second time and the
+        // discovery itself was never emitted at all: on this repository's own document, 36
+        // duplicate keys and 36 `$ref`s pointing at nothing. A name is what identifies a schema,
+        // so a name is what is remembered.
+        while (_named.Where(entry => !written.Contains(entry.Key)).ToList() is { Count: > 0 } batch)
+        {
             foreach (var (name, type) in batch)
             {
+                written.Add(name);
                 writer.WriteStartObject(name);
                 Describe(writer, type, name);
                 writer.WriteEndObject();
             }
-
-            written += batch.Count;
         }
     }
 
@@ -220,15 +225,13 @@ internal sealed class SchemaSet
             writer.WriteString("type", "array");
             writer.WriteStartObject("items");
 
-            if (IsScalar(element))
-            {
-                WriteType(writer, element);
-            }
-            else
-            {
-                writer.WriteString("$ref", Reference(element.FullName ?? element.Name));
-                _named[Short(element.FullName ?? element.Name)] = element;
-            }
+            // The same recursion as any other position, rather than "scalar or `$ref`". That
+            // dichotomy had no arm for a dictionary, so `IReadOnlyList<IReadOnlyDictionary<…>>`
+            // — a bulk import's rows — took the `$ref` arm and referred to a schema named after
+            // the assembly-qualified spelling of the constructed generic. Recursing gets the
+            // `additionalProperties` object the dictionary arm below already writes, and the
+            // `$ref` for a contract is what the fall-through at the end of this method does.
+            WriteType(writer, element);
 
             writer.WriteEndObject();
 
@@ -247,16 +250,6 @@ internal sealed class SchemaSet
 
         writer.WriteString("$ref", Reference(underlying.FullName ?? underlying.Name));
         _named[Short(underlying.FullName ?? underlying.Name)] = underlying;
-    }
-
-    private static bool IsScalar(Type type)
-    {
-        var underlying = Nullable.GetUnderlyingType(type) ?? type;
-
-        return underlying.IsPrimitive || underlying.IsEnum
-            || underlying == typeof(string) || underlying == typeof(Guid)
-            || underlying == typeof(decimal) || underlying == typeof(DateTimeOffset)
-            || underlying == typeof(DateTime) || underlying == typeof(DateOnly);
     }
 
     private static bool IsDictionary(Type type) =>
@@ -318,8 +311,29 @@ internal sealed class SchemaSet
         return null;
     }
 
-    private static string Short(string clrType) =>
-        clrType.Contains('.', StringComparison.Ordinal)
-            ? clrType[(clrType.LastIndexOf('.') + 1)..]
-            : clrType;
+    /// <summary>The last segment of a type name, with nothing a JSON pointer cannot carry.</summary>
+    /// <remarks>
+    /// The generic-argument list goes first, then the arity tick, and only then the namespace.
+    /// Taking the last <c>.</c> straight off an assembly-qualified name found the one inside a
+    /// version number: <c>IReadOnlyDictionary`2[[System.String, …, Version=8.0.0.0, …]]</c> became
+    /// a schema called <c>0, Culture=neutral, PublicKeyToken=…]]</c>. Nothing reaches this with a
+    /// constructed generic any more, but a name that cannot be read is not the failure this should
+    /// produce if something does.
+    /// </remarks>
+    private static string Short(string clrType)
+    {
+        var name = clrType;
+
+        if (name.IndexOf('[', StringComparison.Ordinal) is >= 0 and var bracket)
+        {
+            name = name[..bracket];
+        }
+
+        if (name.IndexOf('`', StringComparison.Ordinal) is >= 0 and var arity)
+        {
+            name = name[..arity];
+        }
+
+        return name.LastIndexOf('.') is >= 0 and var dot ? name[(dot + 1)..] : name;
+    }
 }
