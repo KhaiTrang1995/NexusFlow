@@ -33,8 +33,11 @@ public sealed class PlanDetailStore
         FROM plan_objective WHERE plan_id = @plan ORDER BY ordinal
         """;
 
+    // `owner_id` is here because the write is an upsert of the whole row: a client marking a step
+    // done has to send the owner back, and one that could not read it would send whoever pressed
+    // the tick.
     private const string Steps = """
-        SELECT ordinal, description, due_on, completed_at IS NOT NULL,
+        SELECT ordinal, description, owner_id, due_on, completed_at IS NOT NULL,
                completed_at IS NULL AND due_on < current_date
         FROM plan_step WHERE plan_id = @plan ORDER BY ordinal
         """;
@@ -116,9 +119,10 @@ public sealed class PlanDetailStore
                 reader => new PlanStepRow(
                     reader.GetInt32(0),
                     reader.GetString(1),
-                    DateOnly.FromDateTime(reader.GetDateTime(2)),
-                    reader.GetBoolean(3),
-                    reader.GetBoolean(4)),
+                    reader.GetString(2),
+                    DateOnly.FromDateTime(reader.GetDateTime(3)),
+                    reader.GetBoolean(4),
+                    reader.GetBoolean(5)),
                 cancellationToken).ConfigureAwait(false),
             await ReadAllAsync(
                 connection, Risks, plan.Id,

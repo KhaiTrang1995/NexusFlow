@@ -294,9 +294,106 @@ public sealed class SeedReaderTests
             .Error!.Code.ShouldBe("crm.seed_out_of_range");
     }
 
+    /// <summary>A portfolio, and the plan that rolls into it, are both read.</summary>
+    /// <remarks>
+    /// <strong>Both halves used to be refused.</strong> The Portfolio kind was rejected outright
+    /// because a portfolio with nothing under it is a root with no children — and the only reason
+    /// it could have none was that this document had no word for a parent. So a seeded year was a
+    /// target with no plans against it, reporting nought committed on the executive screen.
+    /// </remarks>
+    [Fact]
+    public void APortfolioAndThePlanThatRollsIntoItAreRead()
+    {
+        var read = SeedReader.Read(Utf8(PlanFixture));
+
+        read.IsSuccess.ShouldBeTrue(read.IsSuccess ? null : read.Error!.Message);
+
+        var plans = read.Value!.Data.Plans;
+
+        plans[0]!.Kind.ShouldBe(PlanKind.Portfolio);
+        plans[0]!.Parent.ShouldBeNull();
+        plans[1]!.Parent.ShouldBe("year", "the child does not say what it rolls into.");
+    }
+
+    /// <summary>A plan rolling into a plan the file does not declare is refused.</summary>
+    [Fact]
+    public void APlanRollingIntoNothingIsRefused()
+    {
+        var read = SeedReader.Read(Utf8(PlanFixture.Replace(
+            "\"parent\": \"year\"", "\"parent\": \"typo\"", StringComparison.Ordinal)));
+
+        read.IsSuccess.ShouldBeFalse();
+        read.Error!.Code.ShouldBe("crm.seed_reference_unknown");
+        read.Error.Message.ShouldContain("typo");
+    }
+
+    /// <summary>A plan tree that loops is refused rather than written.</summary>
+    /// <remarks>
+    /// <strong>Nothing downstream would catch it.</strong> Migration <c>0018</c> constrains only
+    /// the self-parent case, so two plans that are each other's parent are two individually legal
+    /// rows — and the applier orders its writes parents-first, which a loop has no answer for. A
+    /// file carrying one would be applied half-way and leave a tenant nobody can total.
+    /// </remarks>
+    [Fact]
+    public void APlanTreeThatLoopsIsRefused()
+    {
+        var read = SeedReader.Read(Utf8(PlanFixture.Replace(
+            "\"risks\": [], \"parent\": null", "\"risks\": [], \"parent\": \"quarter\"",
+            StringComparison.Ordinal)));
+
+        read.IsSuccess.ShouldBeFalse("the year rolls into the quarter that rolls into the year.");
+        read.Error!.Code.ShouldBe("crm.seed_plan_tree_loops");
+    }
+
     // ------------------------------------------------------------------------------- fixtures
 
     private static byte[] Utf8(string text) => Encoding.UTF8.GetBytes(text);
+
+    /// <summary>Two periods and two plans, one rolling into the other.</summary>
+    /// <remarks>
+    /// Its own document rather than an edit of <see cref="Fixture"/>, which declares no calendar
+    /// — and a plan is committed against a period.
+    /// </remarks>
+    internal const string PlanFixture = """
+        {
+          "tenant": "crm-northwind",
+          "metadata": {
+            "periods": [
+              {
+                "alias": "fy26", "name": "fy26", "label": "FY26",
+                "startsOn": "2025-10-01", "endsOn": "2026-09-30", "parent": null
+              },
+              {
+                "alias": "fy26_q3", "name": "fy26_q3", "label": "FY26 Q3",
+                "startsOn": "2026-04-01", "endsOn": "2026-06-30", "parent": "fy26"
+              }
+            ]
+          },
+          "data": {
+            "accounts": [
+              {
+                "alias": "northwind", "name": "Northwind Systems", "industry": "SaaS",
+                "lifecycle": "Customer", "region": "NA",
+                "owner": "33333333-3333-3333-3333-333333333333", "values": {}
+              }
+            ],
+            "plans": [
+              {
+                "alias": "year", "name": "northwind_fy26", "label": "Northwind FY26",
+                "kind": "Portfolio", "period": "fy26", "owner": "director-northwind-1",
+                "subject": null, "targetAmount": 500000, "currency": "EUR",
+                "objectives": [], "steps": [], "risks": [], "parent": null
+              },
+              {
+                "alias": "quarter", "name": "northwind_fy26_q3", "label": "Northwind FY26 Q3",
+                "kind": "Account", "period": "fy26_q3", "owner": "rep-northwind-1",
+                "subject": "northwind", "targetAmount": 500000, "currency": "EUR",
+                "objectives": [], "steps": [], "risks": [], "parent": "year"
+              }
+            ]
+          }
+        }
+        """;
 
     /// <summary>One document exercising every collection, edited per test.</summary>
     internal const string Fixture = """

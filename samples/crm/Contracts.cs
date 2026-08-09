@@ -168,6 +168,17 @@ public enum QuoteStatus
 
     /// <summary>Nobody answered before <see cref="Quote.ValidUntil"/>.</summary>
     Expired = 4,
+
+    /// <summary>
+    /// Replaced by a re-priced quote, which carries <c>supersedes</c> back to this one.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Terminal, and that is the whole of the guarantee.</strong> Ordering reads
+    /// <c>Issued</c> and approving reads <c>Draft</c>, so a quote in this state can be read and
+    /// nothing else — which is what stops a customer's old price being ordered at after the
+    /// revision went out.
+    /// </remarks>
+    Superseded = 5,
 }
 
 /// <summary>Where a sales order has got to.</summary>
@@ -423,6 +434,11 @@ public sealed record Opportunity(
 /// <param name="Total">What is being asked for.</param>
 /// <param name="ValidUntil">After which it expires.</param>
 /// <param name="ApprovedBy">The manager who approved the discount, or null.</param>
+/// <param name="Supersedes">
+/// The quote this one was re-priced from, or null when it is the first offer. The pointer runs
+/// this way because the revision is the row being written and the one it replaces is already
+/// there; "what replaced this quote" is the same edge read the other way.
+/// </param>
 public sealed record Quote(
     Guid Id,
     Guid Opportunity,
@@ -431,7 +447,8 @@ public sealed record Quote(
     Money Discount,
     Money Total,
     DateTimeOffset ValidUntil,
-    Guid? ApprovedBy);
+    Guid? ApprovedBy,
+    Guid? Supersedes);
 
 /// <summary>One line of a quote.</summary>
 /// <param name="Id">The line.</param>

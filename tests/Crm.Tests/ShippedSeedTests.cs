@@ -109,6 +109,87 @@ public sealed class ShippedSeedTests
     }
 
     /// <summary>
+    /// The year's plan is covered by the quarters' plans that roll into it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>FY26 reported nought committed against 4,200,000 while its own quarters held
+    /// commitments.</strong> The arithmetic was right and the model was empty: <c>DefinePlan</c>
+    /// has taken a parent since migration <c>0018</c>, the seed document had no word for one, and
+    /// the reader refused the Portfolio kind outright — so nothing was ever written into the
+    /// year's period and nothing rolled into anything.
+    /// </para>
+    /// <para>
+    /// The quarters are asserted too. "Top-level" used to mean "has no parent at all", so the
+    /// moment a quarter's plan named the year's portfolio it disappeared from its own quarter's
+    /// board — trading one empty screen for two.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task TheShippedYearIsCoveredByTheQuartersThatRollIntoIt()
+    {
+        await using var crm = await CrmSchemaHarness.CreateAsync(Cancellation);
+
+        await ApplyShippedAsync(crm);
+
+        var planning = new PlanningStore(crm.DataSource);
+        var performance = new PerformanceStore(crm.DataSource);
+
+        var year = await planning.PeriodAsync(CrmSchemaHarness.Northwind, "fy26", Cancellation);
+
+        year.ShouldNotBeNull("the file declares fy26.");
+
+        var rollUp = await planning.RollUpAsync(
+            CrmSchemaHarness.Northwind,
+            year,
+            DateOnly.FromDateTime(DateTime.UtcNow),
+            [],
+            Cancellation);
+
+        rollUp.ShouldNotBeNull("the file declares a strategy for fy26.");
+
+        rollUp.Committed.ShouldBeGreaterThan(
+            0,
+            "the year rolls up nothing, which is a target with no plan under it.");
+
+        var tree = await performance.TreeAsync(
+            CrmSchemaHarness.Northwind, year.PeriodId, null, Cancellation);
+
+        var portfolio = tree.Single(node => node.Depth == 1);
+
+        portfolio.Kind.ShouldBe(nameof(PlanKind.Portfolio));
+        portfolio.Children.ShouldBe(4, "the four quarterly commitments roll into the year.");
+
+        tree.Count(node => node.Parent == portfolio.Name).ShouldBe(
+            4, "the tree draws the year without the plans underneath it.");
+
+        // Covered: the year's own number is exactly what its children committed. The gap
+        // arithmetic is the same one the period roll-up does, asked at this node.
+        portfolio.Committed.ShouldBe(
+            portfolio.Target,
+            "the year's plan does not add up to the plans underneath it.");
+
+        portfolio.Gap.ShouldBe(0m);
+
+        rollUp.Committed.ShouldBe(
+            portfolio.Target,
+            "the period roll-up and the tree disagree about the same plan.");
+
+        foreach (var quarter in (string[])["fy26_q3", "fy26_q4"])
+        {
+            var period = await planning.PeriodAsync(CrmSchemaHarness.Northwind, quarter, Cancellation);
+
+            period.ShouldNotBeNull();
+
+            (await performance.TreeAsync(
+                CrmSchemaHarness.Northwind, period.PeriodId, null, Cancellation))
+                .ShouldNotBeEmpty(
+                    $"{quarter} draws no plans, so rolling them into the year emptied their own " +
+                    "board.");
+        }
+    }
+
+    /// <summary>
     /// A seeded roll-up carries a number, because the file links the children that feed it.
     /// </summary>
     /// <remarks>

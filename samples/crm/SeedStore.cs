@@ -181,9 +181,10 @@ public sealed class SeedStore
     private const string InsertPlan = """
         INSERT INTO plan (
             plan_id, tenant_id, period_id, kind, name, label, owner_id, account_id,
-            opportunity_id, channel, segment, target_leads, target_amount, currency, created_at)
+            opportunity_id, channel, segment, target_leads, target_amount, currency, created_at,
+            parent_plan_id)
         VALUES (@id, @tenant, @period, @kind, @name, @label, @owner, @account, @opportunity,
-            @channel, @segment, @leads, @target, @currency, @now)
+            @channel, @segment, @leads, @target, @currency, @now, @parent)
         ON CONFLICT (plan_id) DO NOTHING
         """;
 
@@ -916,6 +917,12 @@ public sealed class SeedStore
             Add(command, "target", NpgsqlDbType.Numeric, (object?)plan.TargetAmount ?? DBNull.Value);
             Add(command, "currency", NpgsqlDbType.Text, (object?)plan.Currency ?? DBNull.Value);
             Add(command, "now", NpgsqlDbType.TimestampTz, now);
+
+            // Derived from the alias, like every other id here, and written in an order the
+            // applier fixed — the row it points at is already there.
+            Add(command, "parent", NpgsqlDbType.Uuid, plan.Parent is { } above
+                ? SeedIds.For(tenant, "plan", above)
+                : DBNull.Value);
         }, ct).ConfigureAwait(false);
 
         for (var ordinal = 0; ordinal < plan.Objectives.Count; ordinal++)

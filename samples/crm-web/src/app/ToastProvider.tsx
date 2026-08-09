@@ -45,15 +45,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const api = useMemo<ToastApi>(
     () => ({
       saved: (message) => push('saved', message),
-      failed: (error, fallback = 'That did not go through.') => {
-        const detail =
-          error instanceof ApiError
-            ? (error.problem?.detail ?? error.problem?.title ?? error.message)
-            : error instanceof Error
-              ? error.message
-              : fallback
-        push('failed', detail)
-      },
+      failed: (error, fallback) => push('failed', sentenceFor(error, fallback)),
     }),
     [push],
   )
@@ -76,6 +68,30 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       </div>
     </ToastContext>
   )
+}
+
+/**
+ * What to put in the strip for a write that did not succeed.
+ *
+ * THREE THINGS CAN GO WRONG AND ONLY ONE OF THEM IS A REFUSAL. An `ApiError` is the server having
+ * decided, and its problem document is a sentence written for a person — that one is quoted.
+ * `fetch` rejects with a `TypeError` when the request never completed: offline, the host down, the
+ * connection cut mid-flight. That is not a refusal and the write's outcome is not known — it may
+ * well have been applied — so it does not get "That did not go through", and it certainly does not
+ * get the browser's own "Failed to fetch" printed where the server's words go. Anything else
+ * thrown by a caller is a sentence that caller wrote (the board refuses a move the published
+ * process does not contain, without a round trip), so it is shown as written.
+ */
+function sentenceFor(error: unknown, fallback = 'That did not go through.'): string {
+  if (error instanceof ApiError) {
+    return error.problem?.detail ?? error.problem?.title ?? error.message
+  }
+
+  if (error instanceof TypeError) {
+    return 'The server did not answer, so whether this was applied is not known. Check before trying again.'
+  }
+
+  return error instanceof Error ? error.message : fallback
 }
 
 export function useToast(): ToastApi {

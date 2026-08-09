@@ -1506,14 +1506,18 @@ test.describe('the panels that drew an empty tenant from a failed read', () => {
    * the count runs. The note said "won, in this filter", which was true, and was why nobody
    * looked at a figure that was structurally incapable of moving.
    *
-   * <strong>And it was dated to a quarter nothing implemented.</strong> The horizon filter has an
+   * <strong>And it was dated to a quarter nothing implemented.</strong> The horizon filter had an
    * upper bound and no lower one, so the deal below — won two years ago, closing before the end
-   * of this quarter — belongs in the figure and does not belong in a "QTD".
+   * of this quarter — belonged in the figure, and the tile had to be relabelled around it. The
+   * window has a near end now, so the same deal is outside the quarter and inside all open: this
+   * asserts both, which is the only way to tell a bounded window from an empty one.
    *
-   * The seeded tenant has no won deals at all, so both were wrong on data no seed could produce
-   * and no reader could check. This supplies one.
+   * The seeded tenant has no won deals at all, so all of this was wrong on data no seed could
+   * produce and no reader could check. This supplies one.
    */
-  test('does not date a figure to a quarter it never filtered by', async ({ page }) => {
+  test('leaves a deal won two years ago outside the quarter, and finds it under all open', async ({
+    page,
+  }) => {
     await signIn(page, 'rep')
 
     await page.route('**/api/v1/crm/entities', async (route) => {
@@ -1548,10 +1552,15 @@ test.describe('the panels that drew an empty tenant from a failed read', () => {
 
     await page.goto('/')
 
-    // It counts — the filter has no lower bound — so the only question is what the tile calls it.
-    await expect(page.locator('main')).toContainText('$90k')
+    // Out of the window: it closed in another year, and "This quarter" is a quarter now.
+    await expect(page.locator('main')).not.toContainText('$90k')
     await expect(page.locator('main')).not.toContainText('QTD')
     await expect(page.locator('main')).not.toContainText('quarter to date')
+
+    // And in the one horizon that keeps history, which is the only one that ever should have.
+    await page.getByRole('button', { name: 'All open' }).click()
+
+    await expect(page.locator('main')).toContainText('$90k')
   })
 })
 
@@ -1607,5 +1616,141 @@ test.describe('the edit drawer, on a schema that never arrived', () => {
 
     await expect(page.getByRole('alert')).toBeVisible()
     await expect(page.locator('[role=dialog], aside')).not.toContainText('Nothing has been declared')
+  })
+})
+
+test.describe('an address this build has no screen for', () => {
+  /**
+   * Only a browser reaches this one.
+   *
+   * A deep link that matches nothing has to survive the static host's fallback and be answered by
+   * the router, and the router had no not-found component configured — so it drew its own
+   * `<p>Not Found</p>`, which inside a CRM reads as the record being missing. Nothing had been
+   * asked of the server at all.
+   */
+  test('says the address is unknown rather than that a record is missing', async ({ page }) => {
+    await signIn(page, 'rep')
+    await page.goto('/exec/forcast')
+
+    await expect(page.getByText(/no screen at that address/i)).toBeVisible()
+    await expect(page.locator('main')).toContainText('/exec/forcast')
+
+    // No server refused anything, so this is not dressed as a refusal.
+    await expect(page.getByRole('alert')).toHaveCount(0)
+
+    // The shell survives, and so does the way out.
+    await page.getByRole('link', { name: 'Go to the console' }).click()
+    await expect(page).toHaveURL(/\/$/)
+  })
+})
+
+test.describe('the console horizon, which had an upper bound and no lower one', () => {
+  /**
+   * "This quarter" is the tenant's quarter, by name.
+   *
+   * <strong>Only a browser sees which quarter the client picked.</strong> The window used to be
+   * `close < quarterEnd` with nothing at the near end, so every figure on the landing page was
+   * scoped to all of history and the won tile had to be relabelled because it could not mean
+   * quarter-to-date. Both ends come from the period the server marks current — a fiscal quarter is
+   * whatever an administrator declared, and one computed in the browser would agree with the
+   * target, the quota and the roll-up only by luck of the calendar. Read off the executive
+   * picker rather than named here: which periods exist is the tenant's business.
+   */
+  test('names the declared period it is scoped to, and drops the name for all open', async ({
+    page,
+  }) => {
+    await signIn(page, 'rep')
+
+    await page.goto('/exec/board')
+
+    const current = page.getByRole('group', { name: 'Period' }).locator('[aria-pressed=true]')
+
+    await expect(current).toBeVisible()
+
+    const declared = (await current.innerText()).trim()
+
+    await page.goto('/')
+
+    // The filter strip says what the chip cannot: which quarter "This quarter" turned out to be.
+    await expect(page.locator('main')).toContainText(declared)
+
+    // And the tile that was relabelled says the period again, which is the claim it lost.
+    await expect(page.getByText(`won, closing in ${declared}`)).toBeVisible()
+
+    await page.getByRole('button', { name: 'All open' }).click()
+    await expect(page.getByRole('button', { name: 'All open' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+
+    // Unbounded is a different window and says so, rather than keeping a period's name over a
+    // figure that is no longer inside it.
+    await expect(page.locator('main')).toContainText('any close date')
+    await expect(page.getByText(`won, closing in ${declared}`)).toHaveCount(0)
+  })
+
+  /**
+   * A tenant that has declared no periods still gets a bounded quarter, and is told it is the
+   * calendar's. The fallback used to be the whole of the filter: unbounded, on every tenant.
+   */
+  test('falls back to a calendar quarter, named as one, where nothing is declared', async ({
+    page,
+  }) => {
+    await signIn(page, 'contoso')
+
+    await page.goto('/')
+
+    await expect(page.locator('main')).toContainText('this quarter')
+  })
+})
+
+test.describe('an order, whose money had nowhere to go', () => {
+  /**
+   * The total is an amount, and it used to be ninety engineer-years.
+   *
+   * <strong>The heading is the defect.</strong> `Order.total` was mapped onto the object model's
+   * one spare numeric field — `Est. Hours`, left over from a design where a work order was an
+   * engineering visit — so a €184,000 order rendered as 184,000 hours. Dropping the mapping left
+   * the order with no total on any screen at all. Both formatters were always correct and no unit
+   * test can see which column a figure is drawn under, which is why this reads the header.
+   */
+  test('draws its total under Total, on the list, the record and the quote it came from', async ({
+    page,
+  }) => {
+    await signIn(page, 'rep')
+
+    await page.goto('/records/workorder')
+
+    const orders = page.getByRole('table', { name: 'All work orders' })
+    const first = orders.locator('tbody tr').first()
+
+    await expect(first).toBeVisible()
+
+    await expect(orders.getByRole('columnheader', { name: /Est. Hours/ })).toHaveCount(0)
+    await expect(orders.getByRole('columnheader', { name: /Total/ })).toBeVisible()
+
+    // The figure itself, taken off the page rather than written here: what the order is worth is
+    // the tenant's business, and that it is money is this test's.
+    const amount = /\$[0-9,]+/.exec(await first.innerText())?.[0]
+
+    expect(amount, 'no amount in the order list').toBeTruthy()
+
+    await first.click()
+    await page.getByRole('button', { name: 'Open record' }).click()
+
+    // The same figure on the record page, where it appeared under Scheduling as a duration.
+    await expect(page.locator('main')).toContainText(amount as string)
+    await expect(page.locator('main')).not.toContainText('Est. Hours')
+    await expect(page.locator('main')).not.toContainText('Assigned To')
+
+    // And the related list on the quote, which carried the status alone once the hours column was
+    // taken out — an order panel that could not say what the order was worth.
+    await openFirstRecord(page, '/records/quote', 'Issued')
+    await page.getByRole('tab', { name: /Related/ }).click()
+
+    const related = page.getByRole('table', { name: 'Orders' })
+
+    await expect(related.getByRole('columnheader', { name: /Total/ })).toBeVisible()
+    await expect(related.getByRole('columnheader', { name: /Est. Hours/ })).toHaveCount(0)
   })
 })

@@ -1,8 +1,8 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { ApiError } from '@/api/client'
-import { SessionProvider } from '@/session/SessionProvider'
+import { SessionProvider, useSession } from '@/session/SessionProvider'
 import { ToastProvider } from './ToastProvider'
 
 /**
@@ -41,8 +41,42 @@ export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={client}>
       <SessionProvider>
-        <ToastProvider>{children}</ToastProvider>
+        <CacheScopedToTheCaller>
+          <ToastProvider>{children}</ToastProvider>
+        </CacheScopedToTheCaller>
       </SessionProvider>
     </QueryClientProvider>
   )
+}
+
+/**
+ * Empties the cache when the person changes.
+ *
+ * **A cache key carries the tenant and not the caller.** That is right for what the keys were
+ * written against — row-level security is by tenant — but the server also scopes by the token's
+ * subject: an approval inbox is what is waiting on *you*, and a worklist filtered to "mine" is
+ * resolved from the claim rather than from anything in the key. So switching rep → manager, which
+ * keeps the tenant and changes the token, left every one of those entries in place. For the
+ * thirty seconds they stayed fresh the manager was shown the representative's rows, under the
+ * manager's name, with no request made — and an inbox that is empty because it was somebody
+ * else's reads exactly like an inbox with nothing in it.
+ *
+ * **Cleared during render, not in an effect.** An effect runs after the children have already
+ * committed, so the wrong rows get one painted frame before the refetch. Adjusting state during
+ * render is the documented way to react to a changed prop, and `clear()` is idempotent under the
+ * double render StrictMode does.
+ */
+function CacheScopedToTheCaller({ children }: { children: ReactNode }) {
+  const { token, tenantId } = useSession()
+  const client = useQueryClient()
+
+  const caller = `${tenantId} ${token}`
+  const [previous, setPrevious] = useState(caller)
+
+  if (previous !== caller) {
+    setPrevious(caller)
+    client.clear()
+  }
+
+  return <>{children}</>
 }

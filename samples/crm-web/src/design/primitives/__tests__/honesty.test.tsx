@@ -2,11 +2,12 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { Funnel, ShareBar, Sparkline, StackedBars, Waterfall, scaleTo } from '@/design/charts'
+import { DataTable } from '../DataTable'
 import { Drawer } from '../Drawer'
 import { SelectField } from '../Field'
 import { Meter } from '../Meter'
 import { Skeleton } from '../States'
-import { StatStrip } from '../StatTile'
+import { StatStrip, StatTile } from '../StatTile'
 import { Tabs } from '../Tabs'
 import { Tag } from '../Tag'
 
@@ -245,6 +246,29 @@ describe('ShareBar', () => {
   })
 })
 
+describe('StatTile, good news and bad', () => {
+  it('says which the change is, rather than only colouring it', () => {
+    // A falling cycle time is good and a falling win rate is not. The tile is told which; it
+    // spent that on a green or a red and nothing else, so the judgement reached the reader
+    // looking at the screen and no one else.
+    render(<StatTile label="Sales cycle" value="42d" delta="▼ 5d" direction="up" note="vs Q2" />)
+
+    expect(screen.getByText('(better)')).toHaveClass('sr-only')
+  })
+
+  it('says nothing about a change that is neither', () => {
+    render(<StatTile label="Open pipeline" value="$1.2M" delta="— 0" direction="flat" />)
+
+    expect(screen.queryByText(/better|worse/)).not.toBeInTheDocument()
+  })
+
+  it('carries the judgement into the strip as well', () => {
+    render(<StatStrip cells={[{ label: 'Win rate', value: '48%', delta: '▼ 3pt', direction: 'down' }]} />)
+
+    expect(screen.getByText('(worse)')).toHaveClass('sr-only')
+  })
+})
+
 describe('StatStrip', () => {
   it('draws no bar for a fraction that is not a number', () => {
     const { container } = render(
@@ -264,6 +288,140 @@ describe('StatStrip', () => {
     )
 
     expect(container.querySelector('[style*="width"]')).toHaveStyle({ width: '40%' })
+  })
+})
+
+/**
+ * A row that opens something, opened without a mouse.
+ *
+ * THE DOCUMENTATION USED TO ASK THE CALLER FOR THIS AND EVERY CALLER SAID NO. All six tables in
+ * this client passed a plain `<span>` styled to look like a link as their first cell, so the
+ * whole client's row navigation — every list, every related list, the case queue, the inbox —
+ * was live to a mouse and to nothing else. The table does it now, which is the only version of
+ * the rule that can be true of all six at once.
+ */
+describe('DataTable, a row that opens something', () => {
+  interface Row {
+    id: string
+    name: string
+  }
+
+  const rows: Row[] = [{ id: '1', name: 'Northwind' }]
+
+  const columns = [
+    { id: 'name', header: 'Account', cell: (row: Row) => <span>{row.name}</span> },
+    { id: 'tier', header: 'Tier', cell: () => 'Gold' },
+  ]
+
+  it('gives a keyboard the row a mouse gets', async () => {
+    const onRowClick = vi.fn()
+    render(
+      <DataTable
+        caption="Accounts"
+        columns={columns}
+        rows={rows}
+        rowKey={(row) => row.id}
+        onRowClick={onRowClick}
+      />,
+    )
+
+    const open = screen.getByRole('button', { name: 'Northwind' })
+    open.focus()
+    await userEvent.keyboard('{Enter}')
+
+    expect(open.closest('td')).toBe(screen.getByRole('cell', { name: 'Northwind' }))
+    expect(onRowClick).toHaveBeenCalledWith(rows[0])
+  })
+
+  it('opens once when the mouse lands on that first cell', async () => {
+    const onRowClick = vi.fn()
+    render(
+      <DataTable
+        caption="Accounts"
+        columns={columns}
+        rows={rows}
+        rowKey={(row) => row.id}
+        onRowClick={onRowClick}
+      />,
+    )
+
+    // The row is listening as well. Bubbling through it is a second navigation: a duplicated
+    // history entry, or a peek that opens and immediately re-opens.
+    await userEvent.click(screen.getByRole('button', { name: 'Northwind' }))
+
+    expect(onRowClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('still opens from anywhere else along the row', async () => {
+    const onRowClick = vi.fn()
+    render(
+      <DataTable
+        caption="Accounts"
+        columns={columns}
+        rows={rows}
+        rowKey={(row) => row.id}
+        onRowClick={onRowClick}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('cell', { name: 'Gold' }))
+
+    expect(onRowClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers no control on a table whose rows open nothing', () => {
+    render(<DataTable caption="Accounts" columns={columns} rows={rows} rowKey={(row) => row.id} />)
+
+    // A button that does nothing is the defect the sales scan exists for. A read-only table has
+    // no row action, so it has no button either.
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('moves along the row rather than putting a button round a link', async () => {
+    const onRowClick = vi.fn()
+    render(
+      <DataTable
+        caption="Contacts"
+        columns={[
+          // A contact list whose reader has hidden the name, the account, the title and the role.
+          // `renderCell` draws an email as a mailto and a phone as a tel, and a control inside a
+          // button is markup no browser is obliged to make sense of.
+          { id: 'email', header: 'Email', cell: () => <a href="mailto:r@example.com">r@example.com</a> },
+          { id: 'last', header: 'Last activity', cell: () => '12 Aug 2026' },
+        ]}
+        rows={rows}
+        rowKey={(row) => row.id}
+        onRowClick={onRowClick}
+      />,
+    )
+
+    expect(screen.getByRole('link', { name: 'r@example.com' }).closest('button')).toBeNull()
+
+    const open = screen.getByRole('button', { name: '12 Aug 2026' })
+    open.focus()
+    await userEvent.keyboard('{Enter}')
+
+    expect(onRowClick).toHaveBeenCalledWith(rows[0])
+  })
+
+  it('says so when no column can carry the row action', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    render(
+      <DataTable
+        caption="Contacts"
+        columns={[
+          { id: 'email', header: 'Email', cell: () => <a href="mailto:r@example.com">r@example.com</a> },
+        ]}
+        rows={rows}
+        rowKey={(row) => row.id}
+        onRowClick={() => {}}
+      />,
+    )
+
+    // Silently dropping the row's own action is how this was mouse-only for six tables at once.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('mouse only'))
+    warn.mockRestore()
   })
 })
 

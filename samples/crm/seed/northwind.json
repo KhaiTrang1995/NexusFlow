@@ -993,6 +993,33 @@
     ],
     "plans": [
       {
+        "alias": "northwind_portfolio_fy26",
+        "name": "northwind_fy26",
+        "label": "Northwind — FY26",
+        "kind": "Portfolio",
+        "period": "fy26",
+        "owner": "director-northwind-1",
+        "subject": null,
+        "targetAmount": 1342000,
+        "currency": "EUR",
+        "objectives": [
+          {
+            "description": "Two segments proven, then sell the platform rather than the pilot",
+            "measure": "Revenue",
+            "target": 1342000,
+            "status": "InProgress"
+          }
+        ],
+        "steps": [],
+        "risks": [
+          {
+            "description": "The year's commitments are 2.9m short of the strategy",
+            "severity": "High",
+            "mitigation": "Third and fourth quarter plans are being built with the segment leads"
+          }
+        ]
+      },
+      {
         "alias": "northwind_account_plan",
         "name": "northwind_fy26_q3",
         "label": "Northwind — FY26 Q3",
@@ -1002,6 +1029,7 @@
         "subject": "northwind",
         "targetAmount": 500000,
         "currency": "EUR",
+        "parent": "northwind_portfolio_fy26",
         "objectives": [
           {
             "description": "Land the platform team",
@@ -1056,6 +1084,7 @@
         "subject": "meridian_pilot",
         "targetAmount": 42000,
         "currency": "EUR",
+        "parent": "northwind_portfolio_fy26",
         "objectives": [
           {
             "description": "Prove the audit trail against their regulator's checklist",
@@ -1094,6 +1123,7 @@
         "subject": "northwind",
         "targetAmount": 620000,
         "currency": "EUR",
+        "parent": "northwind_portfolio_fy26",
         "objectives": [
           {
             "description": "Expand from the platform team into operations",
@@ -1143,6 +1173,7 @@
         "subject": "meridian_pilot",
         "targetAmount": 180000,
         "currency": "EUR",
+        "parent": "northwind_portfolio_fy26",
         "objectives": [
           {
             "description": "Convert the pilot into a platform agreement",

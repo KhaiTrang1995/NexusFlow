@@ -662,10 +662,10 @@ public sealed record SeedOrder(
 /// <param name="Name">The identifier the API takes.</param>
 /// <param name="Label">What a person sees.</param>
 /// <param name="Kind">
-/// Account, opportunity or demand. Portfolio and operation are not seeded: a portfolio's whole
-/// point is the plans underneath it, and this file has no way to say that one plan rolls into
-/// another — see <see cref="SeedReader"/>, which refuses both rather than writing a root with
-/// nothing under it.
+/// Account, opportunity, demand or portfolio. Operation is still not seeded: it commits a count
+/// of one of the four activity kinds, and this file has no word for either — see
+/// <see cref="SeedReader"/>, which refuses it rather than writing a row nothing can report
+/// against.
 /// </param>
 /// <param name="Period">The alias of the period it belongs to.</param>
 /// <param name="Owner">Whose it is, as a user identifier.</param>
@@ -691,6 +691,12 @@ public sealed record SeedOrder(
 /// <param name="Objectives">What it is trying to achieve.</param>
 /// <param name="Steps">The mutual action plan.</param>
 /// <param name="Risks">What could stop it.</param>
+/// <param name="Parent">
+/// The alias of the plan this one rolls into, or null at the top. <strong>Without it a seeded
+/// year is a target with nothing under it</strong>: the quarters hold the commitments, the year
+/// holds the ambition, and a file that could not join the two reported the year as nought
+/// committed against a number somebody had written down.
+/// </param>
 /// <remarks>
 /// <strong>The demand fields are the reason the marketing panel was empty on a fully seeded
 /// tenant.</strong> The three kind-dependent groups here are the schema's own <c>CHECK</c>s —
@@ -713,7 +719,8 @@ public sealed record SeedPlan(
     IReadOnlyList<SeedPlanRisk> Risks,
     string? Channel = null,
     string? Segment = null,
-    int? TargetLeads = null);
+    int? TargetLeads = null,
+    string? Parent = null);
 
 /// <summary>One thing a plan is trying to achieve.</summary>
 /// <param name="Description">What it is.</param>
@@ -908,4 +915,20 @@ public static class SeedErrors
     /// <returns>The refusal.</returns>
     public static Error OutOfRange(string item, string what, string allowed) =>
         new("crm.seed_out_of_range", $"'{item}' {what} must be {allowed}.", ErrorCategory.Validation);
+
+    /// <summary>A plan rolls up into itself, directly or through the plans above it.</summary>
+    /// <param name="alias">The plan the walk came back to.</param>
+    /// <returns>The refusal.</returns>
+    /// <remarks>
+    /// <strong>Refused rather than written.</strong> A cycle is two individually legal rows —
+    /// migration <c>0018</c> constrains only the self-parent case — so nothing downstream would
+    /// reject it, and every total above it becomes either wrong or bounded only by the recursive
+    /// read's depth cap. It is also the one shape the parents-first ordering cannot produce, so a
+    /// file carrying it would be applied half-written.
+    /// </remarks>
+    public static Error PlanTreeLoops(string alias) =>
+        new(
+            "crm.seed_plan_tree_loops",
+            $"Plan '{alias}' rolls up into itself. A tree that loops has no top.",
+            ErrorCategory.Validation);
 }

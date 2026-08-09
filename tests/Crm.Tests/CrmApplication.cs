@@ -357,6 +357,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         // service rather than as a test somebody forgot to write.
         services.AddSingleton<CaptureNewLead>();
         services.AddSingleton<IssueQuoteForOpportunity>();
+        services.AddSingleton<RepriceQuoteAsARevision>();
         services.AddSingleton<ApproveQuoteDiscountCapability>();
         services.AddSingleton<PlaceOrderForQuote>();
         services.AddSingleton<ApplyOpportunityTrigger>();
@@ -448,6 +449,7 @@ internal sealed class CrmApplication : IAsyncDisposable
         services.AddSingleton<OrgChartFlow.Dispatcher>();
         services.AddSingleton<CaptureLeadFlow.Dispatcher>();
         services.AddSingleton<IssueQuoteFlow.Dispatcher>();
+        services.AddSingleton<RepriceQuoteFlow.Dispatcher>();
         services.AddSingleton<ApproveDiscountFlow.Dispatcher>();
         services.AddSingleton<PlaceOrderFlow.Dispatcher>();
         services.AddSingleton<AdvanceOpportunityFlow.Dispatcher>();

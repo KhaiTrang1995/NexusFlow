@@ -23,13 +23,21 @@ public sealed class PerformanceStore
 {
     // Parents before children, and the depth so a client can indent without walking the list
     // twice. The cap is what stops a cycle created outside this API from hanging a board.
+    // TOP-LEVEL MEANS "ITS PARENT IS NOT IN THIS PERIOD", NOT "IT HAS NO PARENT". A quarter's
+    // plans roll into the year's portfolio, which lives in the year's period — so an anchor of
+    // `parent_plan_id IS NULL` drops every one of them and draws the quarter as a period nobody
+    // has committed anything against. The recursion is period-blind on purpose and already
+    // reaches those children from the year, which is what makes the year's own board add up.
     private const string Tree = """
         WITH RECURSIVE tree AS (
             SELECT p.plan_id, p.parent_plan_id, p.name, p.label, p.kind, p.owner_id,
                    p.target_amount, 1 AS depth, p.name::text AS path
             FROM plan p
             WHERE p.period_id = @period
-              AND (CASE WHEN @rooted THEN p.name = @root ELSE p.parent_plan_id IS NULL END)
+              AND (CASE WHEN @rooted THEN p.name = @root
+                        ELSE NOT EXISTS (SELECT 1 FROM plan above
+                                         WHERE above.plan_id = p.parent_plan_id
+                                           AND above.period_id = p.period_id) END)
             UNION ALL
             SELECT c.plan_id, c.parent_plan_id, c.name, c.label, c.kind, c.owner_id,
                    c.target_amount, tree.depth + 1, tree.path || '/' || c.name

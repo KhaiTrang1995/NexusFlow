@@ -115,13 +115,25 @@ export function ConsoleScreen() {
     )
   }
 
+  /**
+   * The window, as a phrase a note can end with.
+   *
+   * The unbounded case is the one that will not compose: "closing in any close date" is not
+   * English, and a screen that reads like a template is a screen a reader stops believing.
+   */
+  const inWindow = console.horizon.from === null
+    ? 'at any close date'
+    : `closing in ${console.horizon.label}`
+
   return (
     <Page>
       {/*
-        NOT "QUARTER TO DATE", WHICH IS A PERIOD THIS SCREEN NEVER APPLIED. The horizon filter has
-        an upper bound and no lower one — `quarter` means "closes before the end of this quarter"
-        — so the eyebrow and the won tile below both named a window the rows were never inside.
-        What the filter strip says is what this screen is scoped to, and it says it in the open.
+        THE WINDOW IS NAMED, NOT IMPLIED. "This quarter" used to mean "closes before the end of
+        this quarter" — an upper bound and no lower one, so every figure here was scoped to all of
+        history and the won tile had to be relabelled because it could not mean quarter-to-date.
+        The horizon has two ends now and they are the tenant's own period's, which is a boundary
+        this screen cannot compute and must not guess at: the strip below prints what it resolved
+        to, so the reader is told the quarter's name rather than left to assume the calendar's.
       */}
       <PageHeader
         eyebrow="Sales console"
@@ -160,10 +172,16 @@ export function ConsoleScreen() {
       <FilterBar
         end={
           <>
+            {/*
+              The window, always — it is the one filter whose chip cannot say what it resolved to.
+              "This quarter" is the tenant's declared quarter by name here, and the calendar's,
+              named as such, on a tenant that has declared none.
+            */}
             <span>
               {console.activeCount === 0
                 ? 'Showing the default view'
                 : `${console.activeCount} filter${console.activeCount === 1 ? '' : 's'} applied · ${console.open.length} open`}
+              {` · ${console.horizon.label}`}
             </span>
             {/*
               Disabled when there is nothing to clear, rather than live and inert. Pressing it on
@@ -242,14 +260,16 @@ export function ConsoleScreen() {
           onActivate={deals}
         />
         {/*
-          "QTD" was the claim and nothing implemented it: the horizon filter has no lower bound, so
-          a deal won two years ago whose close date is before this quarter's end lands in this
-          figure. It is scoped by whose deals and by when they close, which is what the note says.
+          "QTD" WAS THE CLAIM, AND THE ARITHMETIC NOW CARRIES IT. With no lower bound a deal won
+          two years ago landed in this figure, so the tile was relabelled to "in this horizon" —
+          true of a window that was all of history. The window is the tenant's quarter, and the
+          note names it rather than restoring a three-letter claim about a period this screen is
+          not always looking at: on Close → All open it is every won deal and says so.
         */}
         <StatTile
           label="Closed won"
           value={money(console.wonValue)}
-          note="won, closing in this horizon"
+          note={`won, ${inWindow}`}
           drillLabel="the deals behind it"
           onActivate={deals}
         />
@@ -311,7 +331,7 @@ export function ConsoleScreen() {
               label: 'Won',
               value: String(console.won.length),
               fraction: fraction(console.won.length, console.open.length + console.won.length),
-              note: 'closing in this horizon',
+              note: inWindow,
             },
             {
               label: 'Closing this month',
@@ -495,6 +515,11 @@ export function ConsoleScreen() {
               </Link>
             }
           />
+          {/*
+            THE MONTH INSIDE THE FILTER'S WINDOW, INCLUDING THE PART OF IT THAT HAS PASSED. This
+            table started at today, so an open deal that was due on the third was counted by every
+            tile above and appeared in no list — the one deal a seller opens this screen to chase.
+          */}
           <DataTable
             caption="Opportunities closing this month"
             columns={closingColumns}
@@ -506,7 +531,7 @@ export function ConsoleScreen() {
                 params: { object: 'opportunity', id: row.id },
               })
             }
-            empty="Nothing in this filter closes before the end of the month."
+            empty="Nothing in this filter closes this month."
           />
         </Panel>
 

@@ -360,8 +360,10 @@ public sealed class SeedApplier
                 await _seeds.WriteOrderAsync(tenant, order, now, ct).ConfigureAwait(false));
         }
 
-        // After the accounts and opportunities it is about, and after the periods it belongs to.
-        foreach (var plan in document.Data.Plans)
+        // After the accounts and opportunities it is about, and after the periods it belongs to —
+        // and parents before their children, because `plan.parent_plan_id` is a foreign key onto
+        // a row that has to be there already.
+        foreach (var plan in ParentsFirst(document.Data.Plans))
         {
             outcome = outcome.And(
                 await _seeds.WritePlanAsync(tenant, plan, now, ct).ConfigureAwait(false));
@@ -632,6 +634,39 @@ public sealed class SeedApplier
                 foreach (var report in reports)
                 {
                     queue.Enqueue(report);
+                }
+            }
+        }
+    }
+
+    /// <summary>Plans a parent before the plans that roll into it.</summary>
+    /// <remarks>
+    /// The same reasoning as <see cref="InReportingOrder"/>, about
+    /// <c>plan.parent_plan_id</c>. A file that listed a quarter's plan above the year's portfolio
+    /// would be refused by the foreign key of migration <c>0018</c>, halfway through, having
+    /// already written everything before it. The reader has refused a cycle and refused a parent
+    /// this file does not declare, so this walk reaches every plan.
+    /// </remarks>
+    private static IEnumerable<SeedPlan> ParentsFirst(IReadOnlyList<SeedPlan> plans)
+    {
+        var byParent = plans
+            .GroupBy(plan => plan.Parent ?? string.Empty, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
+
+        var queue = new Queue<SeedPlan>(
+            byParent.TryGetValue(string.Empty, out var roots) ? roots : []);
+
+        while (queue.Count > 0)
+        {
+            var plan = queue.Dequeue();
+
+            yield return plan;
+
+            if (byParent.TryGetValue(plan.Alias, out var children))
+            {
+                foreach (var child in children)
+                {
+                    queue.Enqueue(child);
                 }
             }
         }

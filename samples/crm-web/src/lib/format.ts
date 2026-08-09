@@ -29,12 +29,31 @@ function absent(value: number | null | undefined): value is null | undefined {
 }
 
 /**
+ * The top of the unit ladder: the first magnitude this formatter has no word for.
+ *
+ * A THOUSAND TRILLION IS WHERE en-US RUNS OUT, AND SO DOES THIS. Above it the ladder either
+ * invents a word nobody reads or keeps piling digits onto the last one it has — which is what
+ * this did, rendering 1e21 as "$1000000000000000M". That string is not a large amount, it is a
+ * broken screen: the reader cannot tell it from a render fault, and the one thing it certainly is
+ * not is a figure anybody sold. A number that size in a CRM is a corrupt read — cents summed as
+ * units, a rollup over a null, a field that parsed to garbage — which is the same thing `absent`
+ * already answers with a dash, so it gets the dash too.
+ */
+const NO_UNIT_FOR = 1e15
+
+/**
  * A tile's amount: $1.24M, $840k, $0.
  *
  * WRITTEN BY HAND RATHER THAN WITH `Intl` COMPACT NOTATION, WHICH KEEPS TRAILING ZEROS.
  * `Intl.NumberFormat` with `notation: 'compact'` renders 840,000 as "$840.00K"; the design writes
  * "$840k". Two decimal places on a headline number is exactly the noise a tile exists to remove,
  * so the trim is the point and not a nicety.
+ *
+ * THE LADDER GOES AS FAR AS THE LANGUAGE DOES: k, M, B, T. Stopping at M meant a billion read
+ * "$1200M" and a quadrillion read "$1000000000M" — the unit stayed put and the mantissa grew
+ * without limit, which is the one shape a compact notation exists to prevent. Nothing this
+ * tenant holds reaches B, so no figure on any screen today is written differently for it;
+ * B and T are here for the sums, and the dash above T is for the reads that went wrong.
  */
 export function money(value: number | null | undefined): string {
   if (absent(value)) return '—'
@@ -43,6 +62,10 @@ export function money(value: number | null | undefined): string {
   const sign = value < 0 ? '-' : ''
   const size = Math.abs(value)
 
+  if (size >= NO_UNIT_FOR) return '—'
+
+  if (size >= 1_000_000_000_000) return `${sign}$${trim((size / 1_000_000_000_000).toFixed(2))}T`
+  if (size >= 1_000_000_000) return `${sign}$${trim((size / 1_000_000_000).toFixed(2))}B`
   if (size >= 1_000_000) return `${sign}$${trim((size / 1_000_000).toFixed(2))}M`
   if (size >= 1_000) return `${sign}$${trim((size / 1_000).toFixed(size >= 100_000 ? 0 : 1))}k`
 

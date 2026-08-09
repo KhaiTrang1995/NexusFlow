@@ -24,6 +24,29 @@ public sealed partial class IssueQuoteFlow : Flow<IssueQuote, QuoteIssued>
     }
 }
 
+/// <summary>Re-prices a quote as a revision that supersedes it.</summary>
+/// <remarks>
+/// <strong><c>Idempotent</c> for the reason issuing is, and one more.</strong> A retried POST must
+/// not leave two revisions of one quote — and it cannot, because the second would find the
+/// original already <c>Superseded</c> and be refused. The journal is what makes the retry return
+/// the first answer rather than that refusal.
+/// </remarks>
+[Flow("crm.quote.reprice", Version = "1.0.0", Profile = ExecutionProfile.Durable, Owner = "crm-sales")]
+[FlowDeadline("PT15S")]
+[HttpTrigger("POST", "/api/v1/crm/quotes/revisions", Idempotent = true)]
+public sealed partial class RepriceQuoteFlow : Flow<RepriceQuote, QuoteSuperseded>
+{
+    /// <inheritdoc />
+    protected override void Define(IFlowBuilder<RepriceQuote, QuoteSuperseded> flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+
+        flow
+            .Step<RepriceQuoteAsARevision>()
+            .Return(ctx => ctx.Get<QuoteSuperseded>());
+    }
+}
+
 /// <summary>
 /// Approves a discount a representative could ask for but not grant.
 /// </summary>

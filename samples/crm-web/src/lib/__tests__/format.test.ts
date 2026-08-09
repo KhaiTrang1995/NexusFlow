@@ -35,6 +35,40 @@ describe('money', () => {
   })
 })
 
+/**
+ * How far the compact ladder goes, and what happens past the end of it.
+ *
+ * THE UNIT USED TO STOP AT M AND THE MANTISSA DID NOT. A billion read "$1200M" and a corrupt
+ * figure read "$1000000000000000M" — a string a reader cannot tell from a render fault, and the
+ * one thing it is certainly not is an amount anybody sold. Nothing this tenant holds reaches a
+ * billion, so no figure on a screen today is written differently by any of this.
+ */
+describe('money, past a million', () => {
+  it('has the words the language has', () => {
+    expect(money(1_200_000_000)).toBe('$1.2B')
+    expect(money(4_500_000_000_000)).toBe('$4.5T')
+    expect(money(-2_000_000_000)).toBe('-$2B')
+  })
+
+  it('still writes the magnitudes a tenant actually holds exactly as it did', () => {
+    expect(money(999_999)).toBe('$1000k')
+    expect(money(1_000_000)).toBe('$1M')
+    expect(money(999_000_000)).toBe('$999M')
+  })
+
+  it('writes a dash for a magnitude it has no word for', () => {
+    // A quadrillion in a CRM is a corrupt read — cents summed as units, a rollup over a null —
+    // which is the answer `absent` already gives to arithmetic that did not work out.
+    expect(money(1e15)).toBe('—')
+    expect(money(1e21)).toBe('—')
+    expect(money(-1e18)).toBe('—')
+  })
+
+  it('leaves the full form alone, because a table cell has room for the digits', () => {
+    expect(fullMoney(1_200_000_000)).toBe('$1,200,000,000')
+  })
+})
+
 describe('percent', () => {
   it('turns a fraction into a rate', () => {
     expect(percent(0.58)).toBe('58%')

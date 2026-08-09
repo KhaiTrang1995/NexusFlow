@@ -75,21 +75,21 @@ const MAPPINGS: Readonly<Record<string, { entity: ReadableEntity; columns: Recor
       valid_until: 'expires',
     },
   },
-  // The prototype's "Work Order" is the closest thing this schema has to `sales_order`, and the
-  // mapping says so rather than pretending they are the same idea: an order carries a total and
-  // a status, and it does not carry an engineer, a schedule or estimated hours.
+  // The prototype's "Work Order" is what this client calls `sales_order`, and the model it draws
+  // through is that table's now: a status, a total and the day it was placed.
   //
-  // AND `total` IS NOT `hours`, WHICH IS WHAT THIS SAID. The order's money went into the model's
-  // one spare numeric field — `field('hours', 'Est. Hours', 'number')` — so a €184,000 order read
-  // as 184,000 estimated hours under that heading, on the quote's related list and in the
-  // Scheduling section of the order's own page. A currency in a duration's column is not a
-  // near-miss: it is ninety engineer-years of work that nobody ordered. There is no money field
-  // on this model to put it in, so the total is not shown rather than shown as something else.
+  // `total` USED TO BE `hours`. The order's money went into the model's one spare numeric field —
+  // `field('hours', 'Est. Hours', 'number')` — so a €184,000 order read as 184,000 estimated
+  // hours under that heading, on the quote's related list and in the Scheduling section of the
+  // order's own page. Dropping the mapping stopped the lie and left the order with its money
+  // nowhere; the model carries a currency field, so it lands in one and renders as one.
   workorder: {
     entity: 'Order',
     columns: {
       order_id: 'id',
       status: 'status',
+      total: 'total',
+      placed_at: 'placed',
     },
   },
   task: {

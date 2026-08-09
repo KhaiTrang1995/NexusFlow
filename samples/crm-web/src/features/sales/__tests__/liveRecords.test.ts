@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { modelFor } from '@/fixtures/objects'
-import { entityOf, keyColumnOf, toRows } from '../liveRecords'
+import { entityOf, keyColumnOf, mappedFieldsOf, toRows } from '../liveRecords'
 import { renderCell } from '../RecordCell'
 
 describe('entityOf', () => {
@@ -103,23 +103,63 @@ describe('toRows', () => {
   })
 
   /**
-   * An order's money is not an order's hours.
+   * An order's money is money, and it used to be hours.
    *
-   * `workorder` is the prototype's work order and the closest model this client has to
-   * `sales_order`; its one spare numeric field is `field('hours', 'Est. Hours', 'number')`, and
-   * the mapping put the order's `total` in it. A €184,000 order rendered as "184,000" under a
-   * heading reading Est. Hours — on the quote's related list and in the Scheduling section of the
-   * order's own page. Both formatters are correct and the column is a lie: the model has no
-   * currency field, so the total is not shown rather than shown as a duration.
+   * `workorder` is what this client calls `sales_order`, and its fields were an engineering job's:
+   * a subject, an engineer, a schedule and `field('hours', 'Est. Hours', 'number')`. The mapping
+   * put the order's `total` in that one spare numeric field, so a €184,000 order rendered as
+   * "184,000" under a heading reading Est. Hours — on the quote's related list and in the
+   * Scheduling section of the order's own page. Dropping the mapping stopped the lie and left the
+   * money nowhere at all; the model has a currency field now, which is where it goes.
    */
-  it('does not put an order total in a column headed Est. Hours', () => {
-    const rows = toRows('workorder', modelFor('workorder'), [
-      { recordId: 'o1', values: { order_id: 'o1', status: 'Placed', total: '184000.0000' } },
+  it('lands an order total in a currency field and renders it as an amount', () => {
+    const model = modelFor('workorder')
+
+    const rows = toRows('workorder', model, [
+      {
+        recordId: 'o1',
+        values: {
+          order_id: 'o1',
+          status: 'Placed',
+          total: '184000.0000',
+          placed_at: '2026-08-28T23:18:06.488811+00:00',
+        },
+      },
     ])
 
-    expect(rows[0]).toMatchObject({ id: 'o1', status: 'Placed' })
-    expect(rows[0]).not.toHaveProperty('hours')
-    expect(renderCell(modelFor('workorder'), rows[0]!, 'hours')).toBe('—')
+    expect(rows[0]).toMatchObject({ id: 'o1', status: 'Placed', total: 184_000 })
+    expect(renderCell(model, rows[0]!, 'total')).toBe('$184,000')
+    expect(renderCell(model, rows[0]!, 'placed')).toBe('28 Aug 2026')
+  })
+
+  /**
+   * And there is nowhere left for it to be read as a duration.
+   *
+   * The heading is the whole defect: `fullMoney` and `toLocaleString` are both correct, and which
+   * one runs is decided by the field the value landed in. A number-typed field on this model is a
+   * place the total can land and be drawn as ninety engineer-years.
+   */
+  it('has no number-typed field on the order for a currency to fall into', () => {
+    const model = modelFor('workorder')
+
+    expect(model.fields.filter((field) => field.type === 'number')).toEqual([])
+    expect(model.fields.map((field) => field.name)).not.toContain('hours')
+  })
+
+  /**
+   * Every column the Orders list promises is one a live row fills.
+   *
+   * Six of its seven were the work order's — Subject, Priority, Assigned To, Scheduled — and no
+   * order the server pages has ever carried any of them, so the list was a header row over em
+   * dashes with a status in the middle of it.
+   */
+  it('fills every column the order list shows', () => {
+    const fillable = mappedFieldsOf('workorder')
+
+    for (const column of modelFor('workorder').listCols) {
+      expect(fillable, `nothing the server returns for an order lands in '${column}'`)
+        .toContain(column)
+    }
   })
 })
 

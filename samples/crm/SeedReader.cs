@@ -164,6 +164,7 @@ public static class SeedReader
         var relationships = new HashSet<string>(StringComparer.Ordinal);
         var reports = new HashSet<string>(StringComparer.Ordinal);
         var records = new HashSet<string>(StringComparer.Ordinal);
+        var plans = new HashSet<string>(StringComparer.Ordinal);
 
         if (Collect("objects", metadata.Objects, item => item.Alias, objects) is { } badObject)
         {
@@ -208,7 +209,7 @@ public static class SeedReader
             ?? Collect("activities", data.Activities, item => item.Alias, [])
             ?? Collect("quotes", data.Quotes, item => item.Alias, quotes)
             ?? Collect("orders", data.Orders, item => item.Alias, [])
-            ?? Collect("plans", data.Plans, item => item.Alias, [])
+            ?? Collect("plans", data.Plans, item => item.Alias, plans)
             ?? Collect("validationRules", metadata.ValidationRules, item => item.Alias, [])
             ?? Collect("listViews", metadata.ListViews, item => item.Alias, [])
             ?? Collect("rollUps", metadata.RollUps, item => item.Alias, [])
@@ -724,6 +725,17 @@ public static class SeedReader
                 return Result.Fail<SeedDocument>(
                     SeedErrors.UnknownReference("plan " + plan.Alias, subject));
             }
+
+            if (plan.Parent is { } above && !plans.Contains(above))
+            {
+                return Result.Fail<SeedDocument>(
+                    SeedErrors.UnknownReference("plan " + plan.Alias, above));
+            }
+        }
+
+        if (PlanTree(data.Plans) is { } looping)
+        {
+            return Result.Fail<SeedDocument>(looping);
         }
 
         foreach (var record in data.Records)
@@ -958,24 +970,32 @@ public static class SeedReader
     /// </remarks>
     private static Error? Commitment(SeedPlan plan)
     {
-        // Portfolio needs a parent link this file cannot express and Operation needs an activity
-        // kind it has no word for. Writing either would be a row that is legal and useless.
-        if (plan.Kind is PlanKind.Portfolio or PlanKind.Operation)
+        // Operation needs an activity kind and a count of it, and this file has a word for
+        // neither. Writing one would be a row that is legal and that nothing can report against.
+        // Portfolio is seedable now that a plan can name the one it rolls into.
+        if (plan.Kind is PlanKind.Operation)
         {
             return SeedErrors.OutOfRange(
                 plan.Alias,
                 "kind " + plan.Kind,
-                "Account, Opportunity or MarketingLead; a seed has no vocabulary for the other two");
+                "Account, Opportunity, MarketingLead or Portfolio; a seed has no vocabulary for " +
+                "the activity an Operation counts");
         }
 
         var demand = plan.Kind is PlanKind.MarketingLead;
 
-        if ((plan.Subject is not null) == demand)
+        // The schema's own `(kind = 'Account') = (account_id IS NOT NULL)` and its opposite
+        // number for an opportunity. A portfolio is about the plans underneath it rather than
+        // about a row, so it has no subject either — and it is the second kind that has none,
+        // which is why this cannot be written as "everything but demand".
+        var about = plan.Kind is PlanKind.Account or PlanKind.Opportunity;
+
+        if ((plan.Subject is not null) != about)
         {
             return SeedErrors.OutOfRange(
                 plan.Alias,
                 "kind " + plan.Kind,
-                demand ? "given no subject" : "given a subject");
+                about ? "given a subject" : "given no subject");
         }
 
         foreach (var (value, what) in ((bool, string)[])
@@ -1009,6 +1029,40 @@ public static class SeedReader
         return plan.TargetAmount < 0 || plan.TargetLeads < 0
             ? SeedErrors.OutOfRange(plan.Alias, "its target", "zero or more")
             : null;
+    }
+
+    /// <summary>Whether any plan rolls up into itself.</summary>
+    /// <param name="plans">Every plan the file declares, their parents already known to exist.</param>
+    /// <returns>The first loop found, or null.</returns>
+    /// <remarks>
+    /// Walked upwards from each plan rather than coloured in one pass: the answer wanted is which
+    /// line to point the operator at, and the plan the walk comes back to is that line.
+    /// </remarks>
+    private static Error? PlanTree(IReadOnlyList<SeedPlan> plans)
+    {
+        var above = new Dictionary<string, string?>(StringComparer.Ordinal);
+
+        foreach (var plan in plans)
+        {
+            above[plan.Alias] = plan.Parent;
+        }
+
+        foreach (var plan in plans)
+        {
+            var walked = new HashSet<string>(StringComparer.Ordinal) { plan.Alias };
+
+            // Every parent is an alias this file declares, checked before this runs, so the
+            // lookup cannot miss and the walk ends at a root or at a repeat.
+            for (var at = plan.Parent; at is not null; at = above[at])
+            {
+                if (!walked.Add(at))
+                {
+                    return SeedErrors.PlanTreeLoops(plan.Alias);
+                }
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Checks one collection's size and its aliases, and collects them.</summary>

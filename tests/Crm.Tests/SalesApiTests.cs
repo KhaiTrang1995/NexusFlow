@@ -28,6 +28,7 @@ namespace Crm.Tests;
 public sealed class SalesApiTests
 {
     private const string Quotes = "/api/v1/crm/quotes";
+    private const string Revisions = "/api/v1/crm/quotes/revisions";
     private const string Approvals = "/api/v1/crm/quotes/approvals";
     private const string Orders = "/api/v1/crm/orders";
 
@@ -272,6 +273,148 @@ public sealed class SalesApiTests
             ("id", placed.OrderId),
             ("quote", issued.QuoteId)))
             .ShouldBe(1, "the caller was told there was an order and there is no row.");
+    }
+
+    /// <summary>
+    /// A re-price writes a revision and retires the quote it replaces, which can no longer be
+    /// ordered against.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The quote the customer holds is not touched, and both halves are asserted.</strong>
+    /// Its lines are still its own — a re-price that rewrote them would be a denial that the first
+    /// price was ever quoted — and its status is terminal, which is what stops an order being
+    /// taken at yesterday's number after today's went out.
+    /// </remarks>
+    [Fact]
+    public async Task ARepricedQuoteIsSupersededAndTheRevisionCarriesTheNewLines()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+        var opportunity = await SeedOpportunityAsync(app);
+
+        var issued = await CrmApplication.ReadAsync<QuoteIssued>(
+            await app.PostAsync(
+                Quotes,
+                new IssueQuote(opportunity, [Line(2, 500m)], Discount: 100m, ValidForDays: 30),
+                CrmTokens.Northwind));
+
+        issued.Status.ShouldBe(QuoteStatus.Issued);
+
+        var response = await app.PostAsync(
+            Revisions,
+            new RepriceQuote(issued.QuoteId, [Line(3, 400m)], Discount: 120m, ValidForDays: 30),
+            CrmTokens.Northwind);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var revision = await CrmApplication.ReadAsync<QuoteSuperseded>(response);
+
+        revision.Supersedes.ShouldBe(issued.QuoteId);
+        revision.QuoteId.ShouldNotBe(issued.QuoteId, "a re-price rewrote the quote in place.");
+        revision.Status.ShouldBe(QuoteStatus.Issued, "120 off 1200 is inside the threshold.");
+        revision.Total.Amount.ShouldBe(1080m);
+
+        (await app.Crm.ScalarAsTenantAsync<string>(
+            CrmSchemaHarness.Northwind,
+            "SELECT status FROM quote WHERE quote_id = @id",
+            Cancellation,
+            ("id", issued.QuoteId)))
+            .ShouldBe(nameof(QuoteStatus.Superseded));
+
+        (await app.Crm.ScalarAsTenantAsync<Guid>(
+            CrmSchemaHarness.Northwind,
+            "SELECT supersedes FROM quote WHERE quote_id = @id",
+            Cancellation,
+            ("id", revision.QuoteId)))
+            .ShouldBe(
+                issued.QuoteId,
+                "the revision does not say which quote it replaced, so nothing can follow the chain.");
+
+        (await app.Crm.ScalarAsTenantAsync<int>(
+            CrmSchemaHarness.Northwind,
+            "SELECT quantity FROM quote_line WHERE quote_id = @id",
+            Cancellation,
+            ("id", revision.QuoteId)))
+            .ShouldBe(3, "the revision carries the lines that were re-priced.");
+
+        (await app.Crm.ScalarAsTenantAsync<int>(
+            CrmSchemaHarness.Northwind,
+            "SELECT quantity FROM quote_line WHERE quote_id = @id",
+            Cancellation,
+            ("id", issued.QuoteId)))
+            .ShouldBe(2, "the lines of the quote the customer is holding were rewritten.");
+
+        var refused = await app.PostAsync(
+            Orders, new PlaceOrder(issued.QuoteId), CrmTokens.Northwind);
+
+        refused.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await CodeOf(refused)).ShouldBe("crm.quote_wrong_status");
+
+        (await app.Crm.ScalarAsOwnerAsync<long>("SELECT count(*) FROM sales_order", Cancellation))
+            .ShouldBe(0, "an order was taken against a quote that had been replaced.");
+
+        // The other half, and the reason it is here: a re-price that made every quote unorderable
+        // would pass everything above.
+        (await app.PostAsync(Orders, new PlaceOrder(revision.QuoteId), CrmTokens.Northwind))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    /// <summary>
+    /// A quote that has been ordered against, or already replaced, cannot be superseded.
+    /// </summary>
+    /// <remarks>
+    /// The first would leave an order pointing at a document this tenant had retired. The second
+    /// is two current prices against one opportunity and nothing saying which the customer should
+    /// be reading — which is the state the whole feature exists to avoid.
+    /// </remarks>
+    [Fact]
+    public async Task AQuoteAlreadyOrderedAgainstOrAlreadyReplacedCannotBeSuperseded()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+        var opportunity = await SeedOpportunityAsync(app);
+
+        var ordered = await CrmApplication.ReadAsync<QuoteIssued>(
+            await app.PostAsync(
+                Quotes,
+                new IssueQuote(opportunity, [Line(2, 500m)], Discount: 100m, ValidForDays: 30),
+                CrmTokens.Northwind));
+
+        (await app.PostAsync(Orders, new PlaceOrder(ordered.QuoteId), CrmTokens.Northwind))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var onAnOrder = await app.PostAsync(
+            Revisions,
+            new RepriceQuote(ordered.QuoteId, [Line(1, 100m)], Discount: 0m, ValidForDays: 30),
+            CrmTokens.Northwind);
+
+        onAnOrder.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await CodeOf(onAnOrder)).ShouldBe("crm.quote_wrong_status");
+
+        var replaced = await CrmApplication.ReadAsync<QuoteIssued>(
+            await app.PostAsync(
+                Quotes,
+                new IssueQuote(opportunity, [Line(2, 500m)], Discount: 100m, ValidForDays: 30),
+                CrmTokens.Northwind));
+
+        (await app.PostAsync(
+            Revisions,
+            new RepriceQuote(replaced.QuoteId, [Line(2, 450m)], Discount: 0m, ValidForDays: 30),
+            CrmTokens.Northwind))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var twice = await app.PostAsync(
+            Revisions,
+            new RepriceQuote(replaced.QuoteId, [Line(2, 400m)], Discount: 0m, ValidForDays: 30),
+            CrmTokens.Northwind);
+
+        twice.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await CodeOf(twice)).ShouldBe("crm.quote_wrong_status");
+
+        (await app.Crm.ScalarAsTenantAsync<long>(
+            CrmSchemaHarness.Northwind,
+            "SELECT count(*) FROM quote WHERE supersedes = @id",
+            Cancellation,
+            ("id", replaced.QuoteId)))
+            .ShouldBe(1, "one quote was replaced twice, so there are two current prices.");
     }
 
     /// <summary>A quote against another tenant's opportunity is a 404, not somebody else's quote.</summary>

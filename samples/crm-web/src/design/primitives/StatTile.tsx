@@ -5,6 +5,24 @@ import styles from './StatTile.module.css'
 
 export type Direction = 'up' | 'down' | 'flat'
 
+/**
+ * The direction, said rather than coloured.
+ *
+ * GREEN AND RED WERE THE WHOLE OF IT. `direction` is the one thing on a tile the numbers cannot
+ * be read off — a cycle time falling five days is good news and a win rate falling three points
+ * is not, and both are drawn as "▼ 5" plus a hue. A reader who is not looking at the screen got
+ * the delta and not the judgement: a fact the tile was handed and then kept. This is the same
+ * refusal `Tag` makes, where every tone carries its own word.
+ *
+ * Not drawn, because the hue is the sighted reader's signal and the arrow is already beside it;
+ * this is the half of the pair that was missing.
+ */
+function Judgement({ direction }: { direction: Direction }) {
+  if (direction === 'flat') return null
+
+  return <span className="sr-only"> ({direction === 'up' ? 'better' : 'worse'})</span>
+}
+
 export interface StatTileProps {
   label: string
   value: ReactNode
@@ -52,7 +70,12 @@ export function StatTile({
       <div className={styles.value}>{value}</div>
       {delta || note ? (
         <div className={styles.foot}>
-          {delta ? <span className={styles[direction]}>{delta}</span> : null}
+          {delta ? (
+            <span className={styles[direction]}>
+              {delta}
+              <Judgement direction={direction} />
+            </span>
+          ) : null}
           {note ? <span>{note}</span> : null}
         </div>
       ) : null}
@@ -116,6 +139,7 @@ export function StatStrip({ cells }: { cells: readonly StatStripCell[] }) {
             {cell.delta ? (
               <span className={cx(styles[cell.direction ?? 'flat'])} style={{ fontSize: 13 }}>
                 {cell.delta}
+                <Judgement direction={cell.direction ?? 'flat'} />
               </span>
             ) : null}
           </div>

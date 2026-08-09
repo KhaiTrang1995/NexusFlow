@@ -155,7 +155,7 @@ export function SessionProvider({
 
   const value = useMemo<Session>(
     () => ({ ...user, can, switchTo: setPersona }),
-    [user, can],
+    [user, can, setPersona],
   )
 
   return <SessionContext value={value}>{children}</SessionContext>
@@ -168,7 +168,14 @@ function stored(): Persona | null {
   try {
     const value = globalThis.localStorage?.getItem(PersonaKey)
 
-    return value !== null && value !== undefined && value in PEOPLE ? (value as Persona) : null
+    // `Object.hasOwn`, not `in`. `'constructor' in PEOPLE` is true, as is `toString` and every
+    // other name on `Object.prototype` — so a browser holding one of those, from an older build
+    // or from anybody who has opened the console, was handed `PEOPLE.constructor` as the signed-in
+    // person and the first `can()` threw before anything rendered. A name this build does not
+    // have is not a persona, however the object answers about it.
+    return value !== null && value !== undefined && Object.hasOwn(PEOPLE, value)
+      ? (value as Persona)
+      : null
   } catch {
     return null
   }

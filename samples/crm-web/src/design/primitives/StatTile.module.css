@@ -20,11 +20,15 @@
   text-overflow: ellipsis;
 }
 
+/*
+ * The only thing on a tile that says the tile opens something, drawn at 2.2:1 against the panel.
+ * 500 is the ramp's border-and-fill step; a glyph a reader has to find needs a text step.
+ */
 .chevron {
   margin-left: auto;
   flex: none;
   font-size: 13px;
-  color: var(--color-neutral-500);
+  color: var(--color-neutral-600);
 }
 
 .value {

@@ -250,36 +250,51 @@ export const OBJECT_MODELS: Readonly<Record<string, ObjectModel>> = {
     ],
   },
 
+  /*
+    THE ROW BEHIND THIS OBJECT IS `sales_order`, AND THE FIELDS USED TO BE AN ENGINEERING JOB'S.
+    Transcribed from a design where a work order was a visit — a subject, an engineer, a schedule
+    and estimated hours — none of which this schema has. What an order has is the quote it came
+    from, an account, a status, a total, its currency and when it was placed, and the absence of a
+    money field is what pushed a €184,000 total into `Est. Hours` and rendered it as ninety
+    engineer-years. A currency field is the fix; the mapping cannot invent one.
+
+    NO ACCOUNT AND NO QUOTE COLUMN, for the reason `owner_id` is not one either: both arrive as
+    ids, this surface has no directory to resolve them against, and a column of uuids is worse
+    than no column because the reader has to work out what it is before ignoring it.
+
+    AND NO CURRENCY COLUMN BESIDE THE TOTAL. The row carries one — 'EUR' throughout this seed —
+    and every amount in this client is written by one formatter with one symbol. A column reading
+    EUR next to a figure reading $184,000 is the same defect this model just had, one field along.
+
+    The name stays Work Order: it is what the rail and the tab strip call this object, and one
+    screen renaming it would be two names for one list.
+  */
   workorder: {
     key: 'workorder',
     label: 'Work Order',
     plural: 'Work Orders',
     mono: 'WO',
     fields: [
-      field('number', 'Work Order', 'text', { required: true }),
-      field('account', 'Account', 'lookup', { to: 'Account', required: true }),
-      field('subject', 'Subject', 'text'),
+      // An order has no number: nothing in `sales_order` names it, and its id is what identifies
+      // it on every screen it appears on. `id` is on every row, so this column is always filled —
+      // which is what the first list column has to be, because it is also the record's title.
+      field('id', 'Order', 'text'),
       field('status', 'Status', 'picklist', {
-        options: ['New', 'Scheduled', 'In Progress', 'Complete'],
+        options: ['Placed', 'Fulfilled', 'Cancelled'],
       }),
-      field('priority', 'Priority', 'picklist', {
-        options: ['Low', 'Normal', 'High', 'Critical'],
-      }),
-      field('assignee', 'Assigned To', 'lookup', { to: 'User' }),
-      field('scheduled', 'Scheduled', 'date'),
-      field('hours', 'Est. Hours', 'number'),
+      field('total', 'Total', 'currency'),
+      field('placed', 'Placed', 'date'),
     ],
-    listCols: ['number', 'account', 'subject', 'status', 'priority', 'assignee', 'scheduled'],
+    listCols: ['id', 'status', 'total', 'placed'],
     layout: [
-      { title: 'Work Order', columns: 2, fields: ['number', 'account', 'subject', 'priority'] },
-      { title: 'Scheduling', columns: 2, fields: ['status', 'assignee', 'scheduled', 'hours'] },
+      { title: 'Order', columns: 2, fields: ['id', 'status', 'placed'] },
+      { title: 'Commercial', columns: 2, fields: ['total'] },
     ],
     stageField: 'status',
     stages: [
-      { name: 'New', pct: 0 },
-      { name: 'Scheduled', pct: 0 },
-      { name: 'In Progress', pct: 0 },
-      { name: 'Complete', pct: 0, won: true },
+      { name: 'Placed', pct: 0 },
+      { name: 'Fulfilled', pct: 0, won: true },
+      { name: 'Cancelled', pct: 0, lost: true },
     ],
   },
 

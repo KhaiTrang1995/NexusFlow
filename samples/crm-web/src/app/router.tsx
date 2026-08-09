@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router'
 import { AppShell } from '@/shell/AppShell'
+import { NotFound } from './NotFound'
 import { ConsoleScreen } from '@/features/sales/ConsoleScreen'
 import { KanbanScreen } from '@/features/sales/KanbanScreen'
 import { ListScreen } from '@/features/sales/ListScreen'
@@ -156,7 +157,15 @@ export const routeTree = rootRoute.addChildren([
   route('/setup/onboarding', OnboardingScreen),
 ])
 
-export const router = createRouter({ routeTree, defaultPreload: 'intent' })
+export const router = createRouter({
+  routeTree,
+  defaultPreload: 'intent',
+
+  // Without this the router draws its own `<p>Not Found</p>` — see `NotFound` for why that is the
+  // wrong sentence in this application. Set on the router rather than on the root route so a
+  // `notFound()` thrown from anywhere lands on the same screen.
+  defaultNotFoundComponent: NotFound,
+})
 
 declare module '@tanstack/react-router' {
   interface Register {

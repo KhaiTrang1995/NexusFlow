@@ -81,6 +81,8 @@ namespace Crm;
 [JsonSerializable(typeof(IssueQuote))]
 [JsonSerializable(typeof(QuoteIssued))]
 [JsonSerializable(typeof(QuoteRequestLine))]
+[JsonSerializable(typeof(RepriceQuote))]
+[JsonSerializable(typeof(QuoteSuperseded))]
 [JsonSerializable(typeof(ApproveDiscount))]
 [JsonSerializable(typeof(ApproveQuoteDiscount))]
 [JsonSerializable(typeof(DiscountApproved))]

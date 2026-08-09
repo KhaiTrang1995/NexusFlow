@@ -75,6 +75,12 @@ public sealed record PlanObjectiveRow(
 /// <summary>One agreed step.</summary>
 /// <param name="Ordinal">Where it sits in the list.</param>
 /// <param name="Description">What was agreed.</param>
+/// <param name="Owner">
+/// Whose step it is, as their subject claim. <strong>Returned because
+/// <see cref="SetPlanStep"/> upserts the whole row.</strong> A screen that could not read the
+/// owner had nothing to send back for it, so a tick marking a step done would have reassigned it
+/// to whoever pressed the tick — which is why the mutual action plan had no control on it at all.
+/// </param>
 /// <param name="DueOn">When.</param>
 /// <param name="IsComplete">Whether it was done.</param>
 /// <param name="IsOverdue">
@@ -85,6 +91,7 @@ public sealed record PlanObjectiveRow(
 public sealed record PlanStepRow(
     int Ordinal,
     string Description,
+    string Owner,
     DateOnly DueOn,
     bool IsComplete,
     bool IsOverdue);

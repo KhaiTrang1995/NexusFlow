@@ -24,8 +24,19 @@
   --color-neutral-300: #ebebef;
   --color-neutral-400: #d2d2d7;
   --color-neutral-500: #b0b0b6;
-  --color-neutral-600: #86868b;
-  --color-neutral-700: #6e6e73;
+  /*
+   * 600 and 700 are two steps darker than the handoff drew them, because both are text.
+   *
+   * 600 is the quiet half of every pair on these screens — the account under a record name, a
+   * tile's label, a field hint, a table's empty sentence, fifty-five declarations of it — and at
+   * #86868b it reached 3.6:1 on a white panel and 3.3:1 on the page behind it, under the 4.5:1
+   * ordinary text needs. It was picked from the ramp laid out in a row, which is the one place it
+   * is never used. 700 moves with it so the two are still distinguishable; both now sit at the
+   * lightness their accent-ramp counterparts already had, which is the alignment the note at the
+   * top of this file claims and did not have. `src/design/__tests__/tokens.test.ts` computes it.
+   */
+  --color-neutral-600: #6e6e73;
+  --color-neutral-700: #5b5b60;
   --color-neutral-800: #424245;
   --color-neutral-900: #1d1d1f;
 

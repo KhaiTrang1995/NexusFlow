@@ -93,6 +93,59 @@ public sealed class PlanDetailApiTests
     }
 
     /// <summary>
+    /// A step marked done keeps its owner, because the read is what hands the owner back.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The reason the mutual action plan had no control on it at all.</strong>
+    /// <see cref="SetPlanStep"/> upserts the whole row, owner included, and this read did not
+    /// return the owner — so a tick on the screen had nothing to send for it and would have
+    /// reassigned the step to whoever pressed the tick. The manager posts here for that reason:
+    /// what a tick sends is the row as it was read, with one field changed, and a client that
+    /// could not read the owner would put <c>manager-northwind-1</c> in it.
+    /// </remarks>
+    [Fact]
+    public async Task AStepMarkedDoneKeepsTheOwnerItWasAgreedWith()
+    {
+        await using var app = await CrmApplication.StartAsync(Cancellation);
+
+        await SeedAsync(app);
+
+        var before = (await ReadAsync(app, "northwind_fy26")).Steps.Single(step => step.Ordinal == 1);
+
+        before.Owner.ShouldBe(
+            "rep-northwind-1",
+            "the read has to say whose step it is or nothing can tick it without guessing.");
+
+        (await app.PostAsync(
+            "/api/v1/crm/planning/steps",
+            new SetPlanStep(
+                "northwind_fy26",
+                before.Ordinal,
+                before.Description,
+                before.Owner,
+                before.DueOn,
+                IsComplete: true),
+            CrmTokens.NorthwindManager))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var after = (await ReadAsync(app, "northwind_fy26")).Steps.Single(step => step.Ordinal == 1);
+
+        after.IsComplete.ShouldBeTrue("the tick did not land.");
+        after.Description.ShouldBe(before.Description, "the description was rewritten by the tick.");
+        after.DueOn.ShouldBe(before.DueOn, "the date was moved by the tick.");
+
+        // Off a second connection, because the read above would agree with itself even if the
+        // upsert had written the caller into the row.
+        (await app.Crm.ScalarAsTenantAsync<string>(
+            CrmSchemaHarness.Northwind,
+            "SELECT owner_id FROM plan_step WHERE ordinal = 1",
+            Cancellation))
+            .ShouldBe(
+                "rep-northwind-1",
+                "the manager who ticked the step took it over from the representative.");
+    }
+
+    /// <summary>
     /// A plan's rows are its own, and not every plan's.
     /// </summary>
     /// <remarks>

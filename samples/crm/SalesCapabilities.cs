@@ -74,6 +74,108 @@ public sealed class IssueQuoteForOpportunity : ICapability<IssueQuote, QuoteIssu
 }
 
 /// <summary>
+/// Re-prices a quote by writing a revision and retiring the quote it replaces.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>It does not touch the quote the customer holds, and that is the whole design.</strong>
+/// A quote is a document that was sent: its lines, its total and whoever approved its discount
+/// are the record of what was offered on the day it was offered, and an order joins to it.
+/// Rewriting that row in place is not a re-price, it is a denial that the first price was ever
+/// quoted. So the revision is a new row that names the one it replaces, and the replaced one
+/// moves to <see cref="QuoteStatus.Superseded"/> — terminal, which is what stops the old price
+/// from being ordered at.
+/// </para>
+/// <para>
+/// <strong>Refused on a quote that has been ordered against or already replaced.</strong> An
+/// accepted quote has an order hanging off it and superseding it would leave that order pointing
+/// at a retired document; a second revision of one quote is two current prices and nothing saying
+/// which the customer should read, which is also what the unique index on <c>supersedes</c> says.
+/// The status is checked here for the sentence and again in the <c>UPDATE</c>'s own <c>WHERE</c>
+/// for the race.
+/// </para>
+/// <para>
+/// <strong>The revision is priced from scratch, approval and all.</strong> A discount a manager
+/// signed off on the old lines is not a discount they signed off on these ones, so a revision
+/// past the threshold is a <c>Draft</c> even when the quote it replaces was approved.
+/// </para>
+/// </remarks>
+[Capability("crm.quote.reprice", Version = "1.0.0",
+    Authorization = Authorization.Permission, Permission = "crm.write",
+    Idempotent = true,
+    SideEffects = ["crm.quote.written"])]
+public sealed class RepriceQuoteAsARevision : ICapability<RepriceQuote, QuoteSuperseded>
+{
+    private readonly SalesStore _store;
+
+    /// <summary>Creates the capability.</summary>
+    /// <param name="store">Reads the quote, writes the revision and retires the original.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="store"/> is null.</exception>
+    public RepriceQuoteAsARevision(SalesStore store)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+
+        _store = store;
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<Result<QuoteSuperseded>> ExecuteAsync(
+        RepriceQuote input,
+        CapabilityContext ctx,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(ctx);
+
+        var priced = Pricing.Price(input.Lines, input.Discount);
+
+        if (!priced.IsSuccess)
+        {
+            return Result.Fail<QuoteSuperseded>(priced.Error!);
+        }
+
+        if (await _store.ReadQuoteAsync(ctx.TenantId, input.QuoteId, ct).ConfigureAwait(false)
+            is not { } replaced)
+        {
+            return Result.Fail<QuoteSuperseded>(SalesErrors.QuoteNotFound(input.QuoteId));
+        }
+
+        // Draft and Issued are the two states a quote is still live in. Accepted has an order
+        // against it, and the other three are already terminal — Superseded among them, which is
+        // what makes a second revision of one quote a refusal rather than a fork.
+        if (replaced.Status is not (QuoteStatus.Draft or QuoteStatus.Issued))
+        {
+            return Result.Fail<QuoteSuperseded>(
+                SalesErrors.QuoteIsNotIn(replaced.Id, replaced.Status, QuoteStatus.Issued));
+        }
+
+        var quoteId = ctx.NewId();
+
+        var status = await _store.SupersedeAsync(
+            ctx.TenantId,
+            quoteId,
+            replaced,
+            priced.Value!,
+            input.Lines,
+            ctx.UtcNow.AddDays(input.ValidForDays),
+            ct).ConfigureAwait(false);
+
+        // Null means the row moved between the read and the write. The same refusal as above,
+        // read off the status the quote has now.
+        if (status is not { } written)
+        {
+            var now = await _store.ReadQuoteAsync(ctx.TenantId, input.QuoteId, ct).ConfigureAwait(false);
+
+            return Result.Fail<QuoteSuperseded>(SalesErrors.QuoteIsNotIn(
+                replaced.Id, now?.Status ?? replaced.Status, QuoteStatus.Issued));
+        }
+
+        return Result.Ok(new QuoteSuperseded(
+            quoteId, replaced.Id, priced.Value!.Total, written, priced.Value.NeedsApproval));
+    }
+}
+
+/// <summary>
 /// Signs off a discount somebody asked for.
 /// </summary>
 /// <remarks>

@@ -25,6 +25,7 @@ const STATUS_TONE: Readonly<Record<string, TagTone>> = {
   Qualified: 'positive',
   Accepted: 'positive',
   Complete: 'positive',
+  Fulfilled: 'positive',
   Done: 'positive',
   'Closed Won': 'positive',
   Green: 'positive',
@@ -41,6 +42,7 @@ const STATUS_TONE: Readonly<Record<string, TagTone>> = {
   // trouble
   Unqualified: 'critical',
   Rejected: 'critical',
+  Cancelled: 'critical',
   'Closed Lost': 'critical',
   Red: 'critical',
   Critical: 'critical',

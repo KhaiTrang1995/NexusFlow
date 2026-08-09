@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { isValidElement, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { cx } from '@/lib/cx'
 import styles from './DataTable.module.css'
@@ -42,8 +42,16 @@ export interface DataTableProps<Row> {
  * what is on the page is the honest scope, and a header that offered to sort a column the server
  * ordered would silently reorder a page rather than the result.
  *
- * **A clickable row is still keyboard-reachable.** The row carries the click, and the first cell
- * carries a real link or button — a `<tr onClick>` alone is invisible to everything but a mouse.
+ * **A clickable row is still keyboard-reachable, and the table is what makes it so.** A
+ * `<tr onClick>` alone is live to a mouse and to nothing else: no tab stop, no role, no Enter.
+ * This used to be a sentence here asking callers to put a real link or button in the first cell,
+ * and not one of the six tables in this client did — every one of them passed a plain `<span>`
+ * styled to look like a link, so every list, related list and case queue was mouse-only. A rule a
+ * primitive states and cannot check is a rule that is not kept, so the primitive keeps it
+ * instead: given `onRowClick`, the leftmost cell that is not already a control has its content
+ * wrapped in a real button carrying the same activation. The row keeps its own handler, because
+ * clicking anywhere along a row is the thing a mouse expects, and the button stops the click
+ * travelling so a mouse gets one activation rather than two.
  *
  * **An empty table is still a table, and always says that it is empty.** Returning a bare div
  * instead threw away the header — the one thing on the screen that says what would be here — and
@@ -126,19 +134,52 @@ export function DataTable<Row>({
           </tr>
         </thead>
         <tbody>
-          {ordered.map((row) => (
-            <tr
-              key={rowKey(row)}
-              className={cx(isRowSelected?.(row) && styles.selected)}
-              {...(onRowClick ? { onClick: () => onRowClick(row) } : {})}
-            >
-              {columns.map((column) => (
-                <td key={column.id} className={cx(column.numeric && styles.numeric)}>
-                  {column.cell(row)}
-                </td>
-              ))}
-            </tr>
-          ))}
+          {ordered.map((row, rowIndex) => {
+            const cells = columns.map((column) => column.cell(row))
+
+            // The leftmost cell that can hold a control. Normally the first, and on a contact
+            // list whose reader has hidden the name, the account, the title and the role it is
+            // whichever comes after the mailto and the tel — those already carry an anchor, and
+            // nothing interactive may sit inside a button.
+            const open = onRowClick ? cells.findIndex((cell) => !carriesControl(cell)) : -1
+
+            if (import.meta.env.DEV && rowIndex === 0 && onRowClick && open === -1 && cells.length > 0) {
+              // eslint-disable-next-line no-console
+              console.warn(
+                `DataTable "${caption}": every column already carries a control, so the row's own action has nowhere to go and is reachable by mouse only.`,
+              )
+            }
+
+            return (
+              <tr
+                key={rowKey(row)}
+                className={cx(isRowSelected?.(row) && styles.selected)}
+                {...(onRowClick ? { onClick: () => onRowClick(row) } : {})}
+              >
+                {columns.map((column, index) => (
+                  <td key={column.id} className={cx(column.numeric && styles.numeric)}>
+                    {onRowClick && index === open ? (
+                      <button
+                        type="button"
+                        className={styles.rowOpen}
+                        onClick={(event) => {
+                          // The row is listening too. Without this a mouse click here opens the
+                          // record twice: a duplicated history entry on a router, or a peek that
+                          // opens and immediately re-opens.
+                          event.stopPropagation()
+                          onRowClick(row)
+                        }}
+                      >
+                        {cells[index]}
+                      </button>
+                    ) : (
+                      cells[index]
+                    )}
+                  </td>
+                ))}
+              </tr>
+            )
+          })}
         </tbody>
       </table>
 
@@ -149,6 +190,30 @@ export function DataTable<Row>({
       {ordered.length === 0 ? <div className={styles.empty}>{empty ?? 'No rows.'}</div> : null}
     </div>
   )
+}
+
+/** What may not sit inside the row's own button, because a control cannot contain a control. */
+const CONTROLS = new Set(['a', 'button', 'input', 'select', 'textarea', 'label', 'summary'])
+
+/**
+ * Whether a cell already holds something clickable.
+ *
+ * A `mailto:` in a contact list is the case this exists for. Host elements are read by tag; a
+ * component is read by the props that make one a control, because what it renders is not visible
+ * from here. That leaves one gap — a control passed through a prop other than `children`, as in
+ * `<CellStack primary={<Link/>}/>` — and no caller does it, so the gap is documented rather than
+ * closed with a walk of every prop of every element.
+ */
+function carriesControl(node: ReactNode): boolean {
+  if (Array.isArray(node)) return node.some((child) => carriesControl(child as ReactNode))
+  if (!isValidElement(node)) return false
+
+  if (typeof node.type === 'string' && CONTROLS.has(node.type)) return true
+
+  const props = node.props as { children?: ReactNode; href?: unknown; to?: unknown; onClick?: unknown }
+  if (props.href !== undefined || props.to !== undefined || props.onClick !== undefined) return true
+
+  return carriesControl(props.children)
 }
 
 /**

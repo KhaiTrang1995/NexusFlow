@@ -24,6 +24,40 @@ public sealed record IssueQuote(
 /// <param name="NeedsApproval">Whether the discount is over the threshold.</param>
 public sealed record QuoteIssued(Guid QuoteId, Money Total, QuoteStatus Status, bool NeedsApproval);
 
+/// <summary>Re-prices a quote by replacing it with a revised one.</summary>
+/// <param name="QuoteId">The quote being replaced. Its opportunity is the revision's.</param>
+/// <param name="Lines">What is being sold now. The whole set, not a change to it.</param>
+/// <param name="Discount">What is being taken off, in the lines' currency.</param>
+/// <param name="ValidForDays">How long the new price holds, counted from now.</param>
+/// <remarks>
+/// <strong>The lines are the revision's whole set and not a patch.</strong> A partial line edit
+/// needs a rule about what an omitted line means, and every such rule is wrong for somebody — the
+/// seller who deleted a line and the seller who did not mention it send the same request.
+/// </remarks>
+public sealed record RepriceQuote(
+    Guid QuoteId,
+    IReadOnlyList<QuoteRequestLine> Lines,
+    decimal Discount,
+    int ValidForDays);
+
+/// <summary>The revision, and the quote it retired.</summary>
+/// <param name="QuoteId">The new quote, which carries the revised lines.</param>
+/// <param name="Supersedes">The one it replaced, now <see cref="QuoteStatus.Superseded"/>.</param>
+/// <param name="Total">What the revision comes to.</param>
+/// <param name="Status">Where the revision is: <c>Issued</c>, or <c>Draft</c> pending approval.</param>
+/// <param name="NeedsApproval">Whether the revision's discount is over the threshold.</param>
+/// <remarks>
+/// <strong>Both ids, because a caller holding only the new one cannot tell a re-price from an
+/// ordinary issue.</strong> The screen that asked for it has the old quote open and has to say
+/// what happened to it.
+/// </remarks>
+public sealed record QuoteSuperseded(
+    Guid QuoteId,
+    Guid Supersedes,
+    Money Total,
+    QuoteStatus Status,
+    bool NeedsApproval);
+
 /// <summary>Asks for a discount to be approved.</summary>
 /// <param name="QuoteId">The quote whose discount is over the threshold.</param>
 public sealed record ApproveDiscount(Guid QuoteId);
@@ -208,8 +242,9 @@ public sealed class SalesStore
     private const string InsertQuote = """
         INSERT INTO quote (
             quote_id, tenant_id, opportunity_id, status,
-            subtotal, discount, total, currency, valid_until, approved_by)
-        VALUES (@id, @tenant, @opportunity, @status, @subtotal, @discount, @total, @currency, @valid, NULL)
+            subtotal, discount, total, currency, valid_until, approved_by, supersedes)
+        VALUES (@id, @tenant, @opportunity, @status, @subtotal, @discount, @total, @currency,
+            @valid, NULL, @supersedes)
         """;
 
     private const string InsertQuoteLine = """
@@ -232,6 +267,15 @@ public sealed class SalesStore
 
     private const string AcceptQuote = """
         UPDATE quote SET status = 'Accepted' WHERE quote_id = @quote AND status = 'Issued'
+        """;
+
+    // The states a quote can be re-priced out of, restated as a WHERE rather than trusted from
+    // the read above it. Two sellers revising the same quote at once is a race, and the loser has
+    // to be told rather than being allowed to retire a quote somebody has already replaced or
+    // ordered against.
+    private const string SupersedeQuote = """
+        UPDATE quote SET status = 'Superseded'
+        WHERE quote_id = @quote AND status IN ('Draft', 'Issued')
         """;
 
     private const string InsertOrder = """
@@ -307,42 +351,79 @@ public sealed class SalesStore
         var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         await using var closingTransaction = transaction.ConfigureAwait(false);
 
-        var quote = connection.CreateCommand();
-        await using var closingQuote = quote.ConfigureAwait(false);
+        await WriteQuoteAsync(
+            connection, tenantId, quoteId, opportunityId, status, priced, lines, validUntil,
+            supersedes: null, cancellationToken).ConfigureAwait(false);
 
-        quote.CommandText = InsertQuote;
-        quote.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid) { Value = quoteId });
-        quote.Parameters.Add(new NpgsqlParameter("tenant", NpgsqlDbType.Text) { Value = tenantId ?? string.Empty });
-        quote.Parameters.Add(new NpgsqlParameter("opportunity", NpgsqlDbType.Uuid) { Value = opportunityId });
-        quote.Parameters.Add(new NpgsqlParameter("status", NpgsqlDbType.Text) { Value = status.ToString() });
-        quote.Parameters.Add(new NpgsqlParameter("subtotal", NpgsqlDbType.Numeric) { Value = priced.Subtotal.Amount });
-        quote.Parameters.Add(new NpgsqlParameter("discount", NpgsqlDbType.Numeric) { Value = priced.Discount.Amount });
-        quote.Parameters.Add(new NpgsqlParameter("total", NpgsqlDbType.Numeric) { Value = priced.Total.Amount });
-        quote.Parameters.Add(new NpgsqlParameter("currency", NpgsqlDbType.Text) { Value = priced.Total.Currency });
-        quote.Parameters.Add(new NpgsqlParameter("valid", NpgsqlDbType.TimestampTz) { Value = validUntil });
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
-        await quote.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        return status;
+    }
 
-        for (var index = 0; index < lines.Count; index++)
+    /// <summary>
+    /// Writes a revised quote and retires the one it replaces, together.
+    /// </summary>
+    /// <param name="tenantId">The caller's tenant.</param>
+    /// <param name="quoteId">The revision's id.</param>
+    /// <param name="replaced">The quote being replaced, as it was read.</param>
+    /// <param name="priced">What <see cref="Pricing"/> made of the revised lines.</param>
+    /// <param name="lines">The revised lines themselves.</param>
+    /// <param name="validUntil">When the new price stops holding.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>
+    /// The status the revision was written with, or null when the quote being replaced had
+    /// already moved — in which case nothing was written at all.
+    /// </returns>
+    /// <remarks>
+    /// <strong>One transaction, because either state on its own is a lie.</strong> A revision
+    /// with the old quote still <c>Issued</c> is two live prices against one opportunity, and a
+    /// retired quote with no revision behind it is a customer holding an offer this tenant has
+    /// no record of having replaced.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="replaced"/>, <paramref name="priced"/> or <paramref name="lines"/> is null.
+    /// </exception>
+    public async ValueTask<QuoteStatus?> SupersedeAsync(
+        string? tenantId,
+        Guid quoteId,
+        QuoteRow replaced,
+        PricedQuote priced,
+        IReadOnlyList<QuoteRequestLine> lines,
+        DateTimeOffset validUntil,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(replaced);
+        ArgumentNullException.ThrowIfNull(priced);
+        ArgumentNullException.ThrowIfNull(lines);
+
+        // The revision is priced on its own merits: a discount the old quote's approval covered
+        // is a discount nobody has approved on the new one.
+        var status = priced.NeedsApproval ? QuoteStatus.Draft : QuoteStatus.Issued;
+
+        var connection = await OpenAsync(tenantId, cancellationToken).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
+
+        var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        await using var closingTransaction = transaction.ConfigureAwait(false);
+
+        var retire = connection.CreateCommand();
+        await using var closingRetire = retire.ConfigureAwait(false);
+
+        retire.CommandText = SupersedeQuote;
+        retire.Parameters.Add(new NpgsqlParameter("quote", NpgsqlDbType.Uuid) { Value = replaced.Id });
+
+        if (await retire.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
         {
-            var line = lines[index];
+            // Somebody ordered against it, or replaced it, between the read and here. Rolled
+            // back rather than written as an orphan revision nothing points at.
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
 
-            var command = connection.CreateCommand();
-            await using var closingLine = command.ConfigureAwait(false);
-
-            command.CommandText = InsertQuoteLine;
-            command.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid)
-            {
-                Value = SalesIds.Line(quoteId, index),
-            });
-            command.Parameters.Add(new NpgsqlParameter("quote", NpgsqlDbType.Uuid) { Value = quoteId });
-            command.Parameters.Add(new NpgsqlParameter("sku", NpgsqlDbType.Text) { Value = line.Sku });
-            command.Parameters.Add(new NpgsqlParameter("quantity", NpgsqlDbType.Integer) { Value = line.Quantity });
-            command.Parameters.Add(new NpgsqlParameter("price", NpgsqlDbType.Numeric) { Value = line.UnitPrice.Amount });
-            command.Parameters.Add(new NpgsqlParameter("currency", NpgsqlDbType.Text) { Value = line.UnitPrice.Currency });
-
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            return null;
         }
+
+        await WriteQuoteAsync(
+            connection, tenantId, quoteId, replaced.Opportunity, status, priced, lines, validUntil,
+            replaced.Id, cancellationToken).ConfigureAwait(false);
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
@@ -477,6 +558,66 @@ public sealed class SalesStore
         await order.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Writes one quote and its lines on a connection already in a transaction.</summary>
+    /// <remarks>
+    /// Shared by the first offer and by every revision of it, because they differ in one column.
+    /// A second copy of this insert is a second place the lines could be forgotten, and a quote
+    /// whose lines are missing has a subtotal nothing adds up to.
+    /// </remarks>
+    private static async ValueTask WriteQuoteAsync(
+        NpgsqlConnection connection,
+        string? tenantId,
+        Guid quoteId,
+        Guid opportunityId,
+        QuoteStatus status,
+        PricedQuote priced,
+        IReadOnlyList<QuoteRequestLine> lines,
+        DateTimeOffset validUntil,
+        Guid? supersedes,
+        CancellationToken cancellationToken)
+    {
+        var quote = connection.CreateCommand();
+        await using var closingQuote = quote.ConfigureAwait(false);
+
+        quote.CommandText = InsertQuote;
+        quote.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid) { Value = quoteId });
+        quote.Parameters.Add(new NpgsqlParameter("tenant", NpgsqlDbType.Text) { Value = tenantId ?? string.Empty });
+        quote.Parameters.Add(new NpgsqlParameter("opportunity", NpgsqlDbType.Uuid) { Value = opportunityId });
+        quote.Parameters.Add(new NpgsqlParameter("status", NpgsqlDbType.Text) { Value = status.ToString() });
+        quote.Parameters.Add(new NpgsqlParameter("subtotal", NpgsqlDbType.Numeric) { Value = priced.Subtotal.Amount });
+        quote.Parameters.Add(new NpgsqlParameter("discount", NpgsqlDbType.Numeric) { Value = priced.Discount.Amount });
+        quote.Parameters.Add(new NpgsqlParameter("total", NpgsqlDbType.Numeric) { Value = priced.Total.Amount });
+        quote.Parameters.Add(new NpgsqlParameter("currency", NpgsqlDbType.Text) { Value = priced.Total.Currency });
+        quote.Parameters.Add(new NpgsqlParameter("valid", NpgsqlDbType.TimestampTz) { Value = validUntil });
+        quote.Parameters.Add(new NpgsqlParameter("supersedes", NpgsqlDbType.Uuid)
+        {
+            Value = (object?)supersedes ?? DBNull.Value,
+        });
+
+        await quote.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var line = lines[index];
+
+            var command = connection.CreateCommand();
+            await using var closingLine = command.ConfigureAwait(false);
+
+            command.CommandText = InsertQuoteLine;
+            command.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid)
+            {
+                Value = SalesIds.Line(quoteId, index),
+            });
+            command.Parameters.Add(new NpgsqlParameter("quote", NpgsqlDbType.Uuid) { Value = quoteId });
+            command.Parameters.Add(new NpgsqlParameter("sku", NpgsqlDbType.Text) { Value = line.Sku });
+            command.Parameters.Add(new NpgsqlParameter("quantity", NpgsqlDbType.Integer) { Value = line.Quantity });
+            command.Parameters.Add(new NpgsqlParameter("price", NpgsqlDbType.Numeric) { Value = line.UnitPrice.Amount });
+            command.Parameters.Add(new NpgsqlParameter("currency", NpgsqlDbType.Text) { Value = line.UnitPrice.Currency });
+
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async ValueTask<NpgsqlConnection> OpenAsync(string? tenantId, CancellationToken cancellationToken)
