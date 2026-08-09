@@ -287,9 +287,13 @@ jobs:
         # will read the file. The content rule — no caller-controlled `Host` forwarded
         # upstream — is asserted in src/__tests__/architecture.test.ts, where a developer sees
         # it before pushing.
+        # $GITHUB_WORKSPACE rather than ${{ github.workspace }}: an expression is expanded
+        # into the script before the shell sees it, so the habit of reaching for one inside
+        # `run:` is the habit that produced the injection finding this repository already
+        # had. The variable is the same value and cannot be a shell fragment.
         run: |
           docker run --rm \
-            -v "${{ github.workspace }}/samples/crm-web/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+            -v "$GITHUB_WORKSPACE/samples/crm-web/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
             nginxinc/nginx-unprivileged:1.27-alpine nginx -t
 
   client-e2e:
