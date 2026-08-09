@@ -139,15 +139,17 @@ public sealed class ServiceBusConsumerTests
         await fixture.PublishAsync(Guid.NewGuid(), "customer-2", "{}");
         await fixture.PublishAsync(Guid.NewGuid(), "customer-1", "{}");
 
-        var received = await fixture.Consumer.ReceiveAsync(Subscription, 8, 16, Cancellation);
+        // THREE PUBLISHES ARE NOT THREE MESSAGES YET, WHICH IS WHAT A SINGLE RECEIVE ASSUMED.
+        // The broker makes a message visible on its own clock, so one call can hand back two of
+        // the three and be perfectly correct in doing so — this read `customer-1` with one
+        // delivery on CI and asserted two. Keep asking until all three have arrived or the bound
+        // passes, which turns a broker that never delivers them into a failed test rather than a
+        // wrong one. Grouping is still what is asserted: the key on each batch is the consumer's
+        // answer, and counting per key across the calls says the same thing about it.
+        var batches = await fixture.GroupedUntilAsync(3, TimeSpan.FromSeconds(30));
 
-        received.IsSuccess.ShouldBeTrue(Because(received));
-
-        var batches = received.Value.ToDictionary(
-            static batch => batch.PartitionKey!, StringComparer.Ordinal);
-
-        batches["customer-1"].Deliveries.Count.ShouldBe(2, "two events of one key, in order.");
-        batches["customer-2"].Deliveries.Count.ShouldBe(1);
+        batches["customer-1"].Count.ShouldBe(2, "two events of one key, in order.");
+        batches["customer-2"].Count.ShouldBe(1);
     }
 
     [Fact]
@@ -405,6 +407,49 @@ public sealed class ServiceBusConsumerTests
             received.IsSuccess.ShouldBeTrue(Because(received));
 
             return [.. received.Value.SelectMany(static batch => batch.Deliveries)];
+        }
+
+        /// <summary>Receives until a number of deliveries has arrived, grouped by their key.</summary>
+        /// <remarks>
+        /// <strong>A count, not merely "something".</strong> <see cref="ReceiveUntilAsync"/>
+        /// returns on the first delivery, which is right for a redelivery and wrong for a test
+        /// about how several messages are grouped: the first call can legitimately answer with a
+        /// subset. This accumulates by the key the consumer put on each batch until the total is
+        /// there, so a partial first answer is a slower test rather than a failing one.
+        /// </remarks>
+        public async ValueTask<IReadOnlyDictionary<string, List<BusDelivery>>> GroupedUntilAsync(
+            int deliveries, TimeSpan bound)
+        {
+            var grouped = new Dictionary<string, List<BusDelivery>>(StringComparer.Ordinal);
+            var seen = 0;
+            var deadline = DateTimeOffset.UtcNow + bound;
+
+            while (seen < deliveries && DateTimeOffset.UtcNow < deadline)
+            {
+                var received = await _consumer.ReceiveAsync(_subscription, 8, 16, Cancellation);
+
+                received.IsSuccess.ShouldBeTrue(Because(received));
+
+                foreach (var batch in received.Value)
+                {
+                    if (!grouped.TryGetValue(batch.PartitionKey!, out var into))
+                    {
+                        into = [];
+                        grouped[batch.PartitionKey!] = into;
+                    }
+
+                    into.AddRange(batch.Deliveries);
+                    seen += batch.Deliveries.Count;
+                }
+            }
+
+            seen.ShouldBe(
+                deliveries,
+                $"the broker handed back {seen} of {deliveries} within {bound}. Grouping cannot " +
+                "be judged on a subset, so this is the broker failing to deliver rather than " +
+                "the consumer failing to group.");
+
+            return grouped;
         }
 
         /// <summary>Receives until something arrives, or gives up.</summary>

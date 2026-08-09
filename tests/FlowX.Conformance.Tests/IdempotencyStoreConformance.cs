@@ -166,15 +166,48 @@ public abstract class IdempotencyStoreConformance
 
         const int Callers = 32;
 
+        // ALL THIRTY-TWO ARE RUNNING BEFORE ANY OF THEM CALLS, AND THAT IS THE ASSERTION.
+        // `Task.Run` only queues. The thread pool starts a couple straight away and then injects
+        // roughly one more per second, so on a loaded runner the first caller could read, wait
+        // and claim before the thirtieth had begun — and a store that checks and then claims
+        // looks perfectly atomic when its callers arrive one at a time. That is not a
+        // hypothetical: this assertion passed against the deliberately racy store in
+        // `TheSuiteRejectsAProcessLocalLimiterTests`, which is the suite accepting the very
+        // thing it was written to reject, and it did so only on CI.
+        //
+        // LongRunning gives each caller its own thread rather than a place in the pool's queue,
+        // and the barrier holds every thread until the last one has arrived. The overlap is then
+        // a fact about the test rather than a property of the machine it ran on — which matters
+        // most for the real stores, where a non-overlapping run is a green tick over an
+        // atomicity guarantee nobody checked.
+        //
+        // BLOCKING, AND DELIBERATELY SO. An `await` here would be worse than the queue it
+        // replaced: the continuation resumes on the thread pool, so the dedicated thread is
+        // abandoned at the first suspension and all thirty-two callers land back in the ramp
+        // this exists to avoid. Measured — with a TaskCompletionSource gate the racy store
+        // still slipped through about one run in five. Each caller owns a thread, so blocking
+        // one starves nothing.
+        using var gate = new Barrier(Callers);
+
         var attempts = new Task<Result<IdempotencyEntry>>[Callers];
 
         for (var i = 0; i < Callers; i++)
         {
             var target = i % 2 == 0 ? store.Store : store.SecondClient;
 
-            attempts[i] = Task.Run(
-                async () => await target.BeginAsync(key, LongWindow, LongLease, Cancellation),
-                Cancellation);
+            attempts[i] = Task.Factory.StartNew(
+                () =>
+                {
+                    gate.SignalAndWait(Cancellation);
+
+#pragma warning disable VSTHRD002 // Each caller owns a thread; see the note above.
+                    return target.BeginAsync(key, LongWindow, LongLease, Cancellation)
+                        .AsTask().GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
+                },
+                Cancellation,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
         }
 
         var results = await Task.WhenAll(attempts);
