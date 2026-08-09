@@ -143,149 +143,191 @@ public static class SeedReader
     {
         ArgumentNullException.ThrowIfNull(document);
 
-        var metadata = document.Metadata;
-        var data = document.Data;
-
         if (string.IsNullOrWhiteSpace(document.Tenant))
         {
             return Result.Fail<SeedDocument>(
                 SeedErrors.BadAlias("document", document.Tenant ?? string.Empty, "a tenant is required."));
         }
 
-        var objects = new HashSet<string>(StringComparer.Ordinal);
-        var processes = new HashSet<string>(StringComparer.Ordinal);
-        var accounts = new HashSet<string>(StringComparer.Ordinal);
-        var contacts = new HashSet<string>(StringComparer.Ordinal);
-        var stages = new HashSet<string>(StringComparer.Ordinal);
-        var periods = new HashSet<string>(StringComparer.Ordinal);
-        var people = new HashSet<string>(StringComparer.Ordinal);
-        var quotes = new HashSet<string>(StringComparer.Ordinal);
-        var fields = new HashSet<string>(StringComparer.Ordinal);
-        var relationships = new HashSet<string>(StringComparer.Ordinal);
-        var reports = new HashSet<string>(StringComparer.Ordinal);
-        var records = new HashSet<string>(StringComparer.Ordinal);
-        var plans = new HashSet<string>(StringComparer.Ordinal);
+        var metadata = document.Metadata;
+        var data = document.Data;
+        var aliases = new SeedAliases();
 
-        if (Collect("objects", metadata.Objects, item => item.Alias, objects) is { } badObject)
-        {
-            return Result.Fail<SeedDocument>(badObject);
-        }
+        // ORDER IS THE CONTRACT. Every check below returns the first thing wrong and `??` stops
+        // there, so a document with two mistakes reports the same one it has always reported.
+        // Several of these also fill the sets a later one reads — `Collected` gathers the
+        // aliases, `Stages` and `ReportingLine` add what only they can see — so this is a
+        // sequence, not a set of independent rules that happen to be written in an order.
+        var error =
+            Collected(metadata, data, aliases)
+            ?? Stages(metadata, aliases)
+            ?? Objects(metadata)
+            ?? Fields(metadata, aliases)
+            ?? Relationships(metadata, aliases)
+            ?? Contacts(data, aliases)
+            ?? Opportunities(data, aliases)
+            ?? Leads(data)
+            ?? ReportingLine(metadata, aliases)
+            ?? Periods(metadata, aliases)
+            ?? Strategy(metadata, aliases)
+            ?? Quotas(metadata, aliases)
+            ?? SimpleNames(metadata)
+            ?? SlaPolicies(metadata)
+            ?? BusinessHours(metadata)
+            ?? Campaigns(metadata)
+            ?? Activities(data, aliases)
+            ?? Quotes(data, aliases)
+            ?? Orders(data, aliases)
+            ?? ApprovalProcesses(metadata)
+            ?? Reports(metadata)
+            ?? Declarations(metadata, aliases.Objects, aliases.Fields, aliases.Relationships, aliases.Reports)
+            ?? Plans(data, aliases)
+            ?? PlanTree(data.Plans)
+            ?? Records(data, aliases)
+            ?? Links(data, aliases);
 
-        if (Collect("processes", metadata.Processes, item => item.Alias, processes) is { } badProcess)
-        {
-            return Result.Fail<SeedDocument>(badProcess);
-        }
+        return error is null ? Result.Ok(document) : Result.Fail<SeedDocument>(error);
+    }
 
-        if (Collect("accounts", data.Accounts, item => item.Alias, accounts) is { } badAccount)
-        {
-            return Result.Fail<SeedDocument>(badAccount);
-        }
+    /// <summary>Every alias in the document, each unique within its collection.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <param name="data">What the tenant holds.</param>
+    /// <param name="aliases">Filled with what was collected.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Collected(SeedMetadata metadata, SeedData data, SeedAliases aliases) =>
+        Collect("objects", metadata.Objects, item => item.Alias, aliases.Objects)
+        ?? Collect("processes", metadata.Processes, item => item.Alias, [])
+        ?? Collect("accounts", data.Accounts, item => item.Alias, aliases.Accounts)
+        ?? Collect("contacts", data.Contacts, item => item.Alias, aliases.Contacts)
+        ?? Collect("periods", metadata.Periods, item => item.Alias, aliases.Periods)
+        ?? Collect("fields", metadata.Fields, item => item.Alias, aliases.Fields)
+        ?? Collect("relationships", metadata.Relationships, item => item.Alias, aliases.Relationships)
+        ?? Collect("opportunities", data.Opportunities, item => item.Alias, aliases.Deals)
+        ?? Collect("leads", data.Leads, item => item.Alias, aliases.Leads)
+        ?? Collect("records", data.Records, item => item.Alias, aliases.Records)
+        ?? Collect("kpis", metadata.Kpis, item => item.Alias, [])
+        ?? Collect("territories", metadata.Territories, item => item.Alias, [])
+        ?? Collect("slaPolicies", metadata.SlaPolicies, item => item.Alias, [])
+        ?? Collect("campaigns", metadata.Campaigns, item => item.Alias, [])
+        ?? Collect("approvalProcesses", metadata.ApprovalProcesses, item => item.Alias, [])
+        ?? Collect("reports", metadata.Reports, item => item.Alias, aliases.Reports)
+        ?? Collect("activities", data.Activities, item => item.Alias, [])
+        ?? Collect("quotes", data.Quotes, item => item.Alias, aliases.Quotes)
+        ?? Collect("orders", data.Orders, item => item.Alias, [])
+        ?? Collect("plans", data.Plans, item => item.Alias, aliases.Plans)
+        ?? Collect("validationRules", metadata.ValidationRules, item => item.Alias, [])
+        ?? Collect("listViews", metadata.ListViews, item => item.Alias, [])
+        ?? Collect("rollUps", metadata.RollUps, item => item.Alias, [])
+        ?? Collect("formulas", metadata.Formulas, item => item.Alias, [])
+        ?? Collect("dashboards", metadata.Dashboards, item => item.Alias, [])
+        ?? Collect("connectors", metadata.Connectors, item => item.Alias, [])
+        ?? Collect("links", data.Links, item => item.Alias, []);
 
-        if (Collect("contacts", data.Contacts, item => item.Alias, contacts) is { } badContact)
-        {
-            return Result.Fail<SeedDocument>(badContact);
-        }
-
-        if (Collect("periods", metadata.Periods, item => item.Alias, periods) is { } badPeriod)
-        {
-            return Result.Fail<SeedDocument>(badPeriod);
-        }
-
-        // The rest. Those with a set are referred to by something below; those given an empty one
-        // are still collected, because two items sharing an alias share a derived id and the
-        // second would silently be the first.
-        var rest =
-            Collect("fields", metadata.Fields, item => item.Alias, fields)
-            ?? Collect("relationships", metadata.Relationships, item => item.Alias, relationships)
-            ?? Collect("opportunities", data.Opportunities, item => item.Alias, [])
-            ?? Collect("leads", data.Leads, item => item.Alias, [])
-            ?? Collect("records", data.Records, item => item.Alias, records)
-            ?? Collect("kpis", metadata.Kpis, item => item.Alias, [])
-            ?? Collect("territories", metadata.Territories, item => item.Alias, [])
-            ?? Collect("slaPolicies", metadata.SlaPolicies, item => item.Alias, [])
-            ?? Collect("campaigns", metadata.Campaigns, item => item.Alias, [])
-            ?? Collect("approvalProcesses", metadata.ApprovalProcesses, item => item.Alias, [])
-            ?? Collect("reports", metadata.Reports, item => item.Alias, reports)
-            ?? Collect("activities", data.Activities, item => item.Alias, [])
-            ?? Collect("quotes", data.Quotes, item => item.Alias, quotes)
-            ?? Collect("orders", data.Orders, item => item.Alias, [])
-            ?? Collect("plans", data.Plans, item => item.Alias, plans)
-            ?? Collect("validationRules", metadata.ValidationRules, item => item.Alias, [])
-            ?? Collect("listViews", metadata.ListViews, item => item.Alias, [])
-            ?? Collect("rollUps", metadata.RollUps, item => item.Alias, [])
-            ?? Collect("formulas", metadata.Formulas, item => item.Alias, [])
-            ?? Collect("dashboards", metadata.Dashboards, item => item.Alias, [])
-            ?? Collect("connectors", metadata.Connectors, item => item.Alias, [])
-            ?? Collect("links", data.Links, item => item.Alias, []);
-
-        if (rest is { } bad)
-        {
-            return Result.Fail<SeedDocument>(bad);
-        }
-
+    /// <summary>Each process has stages, named once, and transitions between two of them.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <param name="aliases">Filled with <c>process:stage</c> for every stage declared.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Stages(SeedMetadata metadata, SeedAliases aliases)
+    {
         foreach (var process in metadata.Processes)
         {
-            if (process.Stages.Count == 0)
+            if (OneProcess(process, aliases) is { } bad)
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange(process.Alias, "stages", "at least one"));
-            }
-
-            var named = new HashSet<string>(StringComparer.Ordinal);
-
-            foreach (var stage in process.Stages)
-            {
-                if (!named.Add(stage.Name))
-                {
-                    return Result.Fail<SeedDocument>(
-                        SeedErrors.BadAlias("stages", stage.Name, "it is declared twice."));
-                }
-
-                stages.Add(process.Alias + ":" + stage.Name);
-            }
-
-            foreach (var transition in process.Transitions)
-            {
-                if (!named.Contains(transition.From))
-                {
-                    return Result.Fail<SeedDocument>(
-                        SeedErrors.UnknownReference(process.Alias + " transition", transition.From));
-                }
-
-                if (!named.Contains(transition.To))
-                {
-                    return Result.Fail<SeedDocument>(
-                        SeedErrors.UnknownReference(process.Alias + " transition", transition.To));
-                }
-
-                if (string.Equals(transition.From, transition.To, StringComparison.Ordinal))
-                {
-                    return Result.Fail<SeedDocument>(
-                        SeedErrors.OutOfRange(process.Alias, "a transition", "between two different stages"));
-                }
+                return bad;
             }
         }
 
+        return null;
+    }
+
+    /// <summary>One process: at least one stage, each named once, then its transitions.</summary>
+    /// <param name="process">The process.</param>
+    /// <param name="aliases">Filled with <c>process:stage</c> for every stage it declares.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? OneProcess(SeedProcess process, SeedAliases aliases)
+    {
+        if (process.Stages.Count == 0)
+        {
+            return SeedErrors.OutOfRange(process.Alias, "stages", "at least one");
+        }
+
+        var named = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var stage in process.Stages)
+        {
+            if (!named.Add(stage.Name))
+            {
+                return SeedErrors.BadAlias("stages", stage.Name, "it is declared twice.");
+            }
+
+            aliases.Stages.Add(process.Alias + ":" + stage.Name);
+        }
+
+        return Transitions(process, named);
+    }
+
+    /// <summary>Every transition runs between two different stages the process declares.</summary>
+    /// <param name="process">The process.</param>
+    /// <param name="named">The stage names it declared, which the ends are looked up in.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Transitions(SeedProcess process, HashSet<string> named)
+    {
+        foreach (var transition in process.Transitions)
+        {
+            if (!named.Contains(transition.From))
+            {
+                return SeedErrors.UnknownReference(process.Alias + " transition", transition.From);
+            }
+
+            if (!named.Contains(transition.To))
+            {
+                return SeedErrors.UnknownReference(process.Alias + " transition", transition.To);
+            }
+
+            if (string.Equals(transition.From, transition.To, StringComparison.Ordinal))
+            {
+                return SeedErrors.OutOfRange(
+                    process.Alias, "a transition", "between two different stages");
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Every custom object is named something a column can be called.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Objects(SeedMetadata metadata)
+    {
         foreach (var declared in metadata.Objects)
         {
             if (!CustomValues.IsUsableName(declared.Name))
             {
-                return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("object", declared.Name));
+                return SeedErrors.NameIsNotUsable("object", declared.Name);
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every custom field has one owner, a usable name and usable options.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <param name="aliases">The objects a field may be targeted at.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Fields(SeedMetadata metadata, SeedAliases aliases)
+    {
         foreach (var field in metadata.Fields)
         {
             // Exactly one owner. `DefineField` says the same thing and the capability refuses
             // the rest; saying it here is what makes the refusal name the file's line.
             if ((field.Entity is null) == (field.Target is null))
             {
-                return Result.Fail<SeedDocument>(SeedErrors.FieldOwnerAmbiguous(field.Alias));
+                return SeedErrors.FieldOwnerAmbiguous(field.Alias);
             }
 
             if (!CustomValues.IsUsableName(field.Name))
             {
-                return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("field", field.Name));
+                return SeedErrors.NameIsNotUsable("field", field.Name);
             }
 
             // The same rule the capability applies, checked here so a file's mistake is a
@@ -295,86 +337,115 @@ public static class SeedReader
             {
                 if (!CustomValues.IsUsableName(option.Value))
                 {
-                    return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("option", option.Value));
+                    return SeedErrors.NameIsNotUsable("option", option.Value);
                 }
             }
 
-            if (field.Target is { } owner && !objects.Contains(owner))
+            if (field.Target is { } owner && !aliases.Objects.Contains(owner))
             {
-                return Result.Fail<SeedDocument>(SeedErrors.UnknownReference("field " + field.Alias, owner));
+                return SeedErrors.UnknownReference("field " + field.Alias, owner);
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every relationship is named usably and joins two declared objects.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <param name="aliases">The objects an edge may join.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Relationships(SeedMetadata metadata, SeedAliases aliases)
+    {
         foreach (var relationship in metadata.Relationships)
         {
             if (!CustomValues.IsUsableName(relationship.Name))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.NameIsNotUsable("relationship", relationship.Name));
+                return SeedErrors.NameIsNotUsable("relationship", relationship.Name);
             }
 
-            if (!objects.Contains(relationship.From))
+            if (!aliases.Objects.Contains(relationship.From))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("relationship " + relationship.Alias, relationship.From));
+                return SeedErrors.UnknownReference(
+                    "relationship " + relationship.Alias, relationship.From);
             }
 
-            if (!objects.Contains(relationship.To))
+            if (!aliases.Objects.Contains(relationship.To))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("relationship " + relationship.Alias, relationship.To));
+                return SeedErrors.UnknownReference(
+                    "relationship " + relationship.Alias, relationship.To);
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every contact belongs to an account the file declares.</summary>
+    /// <param name="data">What the tenant holds.</param>
+    /// <param name="aliases">The accounts declared.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Contacts(SeedData data, SeedAliases aliases)
+    {
         foreach (var contact in data.Contacts)
         {
-            if (!accounts.Contains(contact.Account))
+            if (!aliases.Accounts.Contains(contact.Account))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("contact " + contact.Alias, contact.Account));
+                return SeedErrors.UnknownReference("contact " + contact.Alias, contact.Account);
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every opportunity names a real account, contact and stage, and is in range.</summary>
+    /// <param name="data">What the tenant holds.</param>
+    /// <param name="aliases">The accounts, contacts and stages declared.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Opportunities(SeedData data, SeedAliases aliases)
+    {
         foreach (var opportunity in data.Opportunities)
         {
-            if (!accounts.Contains(opportunity.Account))
+            if (!aliases.Accounts.Contains(opportunity.Account))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("opportunity " + opportunity.Alias, opportunity.Account));
+                return SeedErrors.UnknownReference(
+                    "opportunity " + opportunity.Alias, opportunity.Account);
             }
 
-            if (!contacts.Contains(opportunity.PrimaryContact))
+            if (!aliases.Contacts.Contains(opportunity.PrimaryContact))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference(
-                        "opportunity " + opportunity.Alias, opportunity.PrimaryContact));
+                return SeedErrors.UnknownReference(
+                    "opportunity " + opportunity.Alias, opportunity.PrimaryContact);
             }
 
-            if (!stages.Contains(opportunity.Stage))
+            if (!aliases.Stages.Contains(opportunity.Stage))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("opportunity " + opportunity.Alias, opportunity.Stage));
+                return SeedErrors.UnknownReference(
+                    "opportunity " + opportunity.Alias, opportunity.Stage);
             }
 
             if (opportunity.Probability is < 0 or > 100)
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange(opportunity.Alias, "probability", "between 0 and 100"));
+                return SeedErrors.OutOfRange(opportunity.Alias, "probability", "between 0 and 100");
             }
 
             if (opportunity.Amount < 0)
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange(opportunity.Alias, "amount", "zero or more"));
+                return SeedErrors.OutOfRange(opportunity.Alias, "amount", "zero or more");
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every lead scores in range and is not already converted.</summary>
+    /// <param name="data">What the tenant holds.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Leads(SeedData data)
+    {
         foreach (var lead in data.Leads)
         {
             if (lead.Score is < 0 or > 100)
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange(lead.Alias, "score", "between 0 and 100"));
+                return SeedErrors.OutOfRange(lead.Alias, "score", "between 0 and 100");
             }
 
             // A converted lead is four columns and a saga, and three of them are not in this
@@ -382,100 +453,137 @@ public static class SeedReader
             // refuses — a message about a constraint rather than about the word.
             if (lead.Status is LeadStatus.Converted)
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange(
-                        lead.Alias, "status", "anything but Converted; conversion is a flow, not a seed"));
+                return SeedErrors.OutOfRange(
+                    lead.Alias, "status", "anything but Converted; conversion is a flow, not a seed");
             }
         }
 
-        // The reporting line. Collected first, because a quota and an activity both name a
-        // person and neither should be able to name one the tenant does not have.
+        return null;
+    }
+
+    /// <summary>Every org member is named once and reports to somebody else the file has.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <param name="aliases">Filled with the user ids declared.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    /// <remarks>
+    /// Two passes, because a quota and an activity both name a person and neither should be able
+    /// to name one the tenant does not have: the whole line has to exist before any edge in it
+    /// can be checked, or a manager declared below their report would read as unknown.
+    /// </remarks>
+    private static Error? ReportingLine(SeedMetadata metadata, SeedAliases aliases)
+    {
         foreach (var member in metadata.OrgMembers)
         {
             if (string.IsNullOrWhiteSpace(member.UserId))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.BadAlias("orgMembers", string.Empty, "a userId is required."));
+                return SeedErrors.BadAlias("orgMembers", string.Empty, "a userId is required.");
             }
 
-            if (!people.Add(member.UserId))
+            if (!aliases.People.Add(member.UserId))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.BadAlias("orgMembers", member.UserId, "it is declared twice."));
+                return SeedErrors.BadAlias("orgMembers", member.UserId, "it is declared twice.");
             }
         }
 
         foreach (var member in metadata.OrgMembers)
         {
-            if (member.ReportsTo is { } manager && !people.Contains(manager))
+            if (member.ReportsTo is { } manager && !aliases.People.Contains(manager))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("orgMember " + member.UserId, manager));
+                return SeedErrors.UnknownReference("orgMember " + member.UserId, manager);
             }
 
             // A line that loops has no top, and every walk up it runs until something stops it.
             if (string.Equals(member.ReportsTo, member.UserId, StringComparison.Ordinal))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange(member.UserId, "reportsTo", "somebody else"));
+                return SeedErrors.OutOfRange(member.UserId, "reportsTo", "somebody else");
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every period is named usably, ends after it starts, and nests in a real one.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <param name="aliases">The periods declared.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Periods(SeedMetadata metadata, SeedAliases aliases)
+    {
         foreach (var period in metadata.Periods)
         {
             if (!CustomValues.IsUsableName(period.Name))
             {
-                return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("period", period.Name));
+                return SeedErrors.NameIsNotUsable("period", period.Name);
             }
 
             if (period.EndsOn < period.StartsOn)
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange(period.Alias, "endsOn", "on or after startsOn"));
+                return SeedErrors.OutOfRange(period.Alias, "endsOn", "on or after startsOn");
             }
 
-            if (period.Parent is { } parent && !periods.Contains(parent))
+            if (period.Parent is { } parent && !aliases.Periods.Contains(parent))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("period " + period.Alias, parent));
+                return SeedErrors.UnknownReference("period " + period.Alias, parent);
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every strategy is written against a period the file declares.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <param name="aliases">The periods declared.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Strategy(SeedMetadata metadata, SeedAliases aliases)
+    {
         foreach (var strategy in metadata.Strategy)
         {
-            if (!periods.Contains(strategy.Period))
+            if (!aliases.Periods.Contains(strategy.Period))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("strategy", strategy.Period));
+                return SeedErrors.UnknownReference("strategy", strategy.Period);
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every quota names a real period and person, and ramps by a real fraction.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <param name="aliases">The periods and people declared.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Quotas(SeedMetadata metadata, SeedAliases aliases)
+    {
         foreach (var quota in metadata.Quotas)
         {
-            if (!periods.Contains(quota.Period))
+            if (!aliases.Periods.Contains(quota.Period))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("quota for " + quota.UserId, quota.Period));
+                return SeedErrors.UnknownReference("quota for " + quota.UserId, quota.Period);
             }
 
-            if (people.Count > 0 && !people.Contains(quota.UserId))
+            if (aliases.People.Count > 0 && !aliases.People.Contains(quota.UserId))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("quota", quota.UserId));
+                return SeedErrors.UnknownReference("quota", quota.UserId);
             }
 
             if (quota.RampFactor is <= 0 or > 1)
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange(quota.UserId, "rampFactor", "above zero and at most one"));
+                return SeedErrors.OutOfRange(
+                    quota.UserId, "rampFactor", "above zero and at most one");
             }
         }
 
+        return null;
+    }
+
+    /// <summary>The kinds whose only rule is that their name can be a column.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? SimpleNames(SeedMetadata metadata)
+    {
         foreach (var named in metadata.Kpis)
         {
             if (!CustomValues.IsUsableName(named.Name))
             {
-                return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("kpi", named.Name));
+                return SeedErrors.NameIsNotUsable("kpi", named.Name);
             }
         }
 
@@ -483,110 +591,144 @@ public static class SeedReader
         {
             if (!CustomValues.IsUsableName(territory.Name))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.NameIsNotUsable("territory", territory.Name));
+                return SeedErrors.NameIsNotUsable("territory", territory.Name);
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every SLA policy is named usably and both its clocks run forwards.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? SlaPolicies(SeedMetadata metadata)
+    {
         foreach (var policy in metadata.SlaPolicies)
         {
             if (!CustomValues.IsUsableName(policy.Name))
             {
-                return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("slaPolicy", policy.Name));
+                return SeedErrors.NameIsNotUsable("slaPolicy", policy.Name);
             }
 
             if (policy.FirstResponseMinutes <= 0 || policy.ResolutionMinutes <= 0)
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange(policy.Alias, "its clocks", "above zero"));
+                return SeedErrors.OutOfRange(policy.Alias, "its clocks", "above zero");
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every business day is a real day and closes after it opens.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? BusinessHours(SeedMetadata metadata)
+    {
         foreach (var hours in metadata.BusinessHours)
         {
             if (hours.DayOfWeek is < 0 or > 6)
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange("businessHours", "dayOfWeek", "between 0 and 6"));
+                return SeedErrors.OutOfRange("businessHours", "dayOfWeek", "between 0 and 6");
             }
 
             if (hours.ClosesAt <= hours.OpensAt)
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange("businessHours", "closesAt", "after opensAt"));
+                return SeedErrors.OutOfRange("businessHours", "closesAt", "after opensAt");
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every campaign is named usably and ends on or after it starts.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Campaigns(SeedMetadata metadata)
+    {
         foreach (var campaign in metadata.Campaigns)
         {
             if (!CustomValues.IsUsableName(campaign.Name))
             {
-                return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("campaign", campaign.Name));
+                return SeedErrors.NameIsNotUsable("campaign", campaign.Name);
             }
 
             if (campaign.EndsOn < campaign.StartsOn)
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange(campaign.Alias, "endsOn", "on or after startsOn"));
+                return SeedErrors.OutOfRange(campaign.Alias, "endsOn", "on or after startsOn");
             }
         }
 
-        // An activity's parent is an alias in whichever collection its kind names. Resolved here
-        // so a typo is a refusal rather than a foreign key the trigger of migration 0001 refuses
-        // with a message about polymorphic integrity.
+        return null;
+    }
+
+    /// <summary>Every activity hangs off a record of the kind it names, and has not finished.</summary>
+    /// <param name="data">What the tenant holds.</param>
+    /// <param name="aliases">The accounts, contacts, leads and deals declared.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    /// <remarks>
+    /// An activity's parent is an alias in whichever collection its kind names. Resolved here so
+    /// a typo is a refusal rather than a foreign key the trigger of migration 0001 refuses with a
+    /// message about polymorphic integrity.
+    /// </remarks>
+    private static Error? Activities(SeedData data, SeedAliases aliases)
+    {
         foreach (var activity in data.Activities)
         {
             var known = activity.RelatesToKind switch
             {
-                EntityKind.Account => accounts,
-                EntityKind.Contact => contacts,
-                EntityKind.Lead => new HashSet<string>(data.Leads.Select(lead => lead.Alias), StringComparer.Ordinal),
-                _ => new HashSet<string>(
-                    data.Opportunities.Select(opportunity => opportunity.Alias), StringComparer.Ordinal),
+                EntityKind.Account => aliases.Accounts,
+                EntityKind.Contact => aliases.Contacts,
+                EntityKind.Lead => aliases.Leads,
+                _ => aliases.Deals,
             };
 
             if (!known.Contains(activity.RelatesTo))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("activity " + activity.Alias, activity.RelatesTo));
+                return SeedErrors.UnknownReference("activity " + activity.Alias, activity.RelatesTo);
             }
 
             // Completed is completed_at, and the schema's CHECK ties the two together. A seed
             // that set the status without the instant would be refused by the constraint.
             if (activity.Status is ActivityStatus.Completed)
             {
-                return Result.Fail<SeedDocument>(SeedErrors.OutOfRange(
-                    activity.Alias, "status", "anything but Completed; a seed starts work, it does not finish it"));
+                return SeedErrors.OutOfRange(
+                    activity.Alias,
+                    "status",
+                    "anything but Completed; a seed starts work, it does not finish it");
             }
         }
 
-        var deals = new HashSet<string>(
-            data.Opportunities.Select(opportunity => opportunity.Alias), StringComparer.Ordinal);
+        return null;
+    }
 
+    /// <summary>Every quote hangs off a deal, has lines that price, and discounts within them.</summary>
+    /// <param name="data">What the tenant holds.</param>
+    /// <param name="aliases">The deals declared.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Quotes(SeedData data, SeedAliases aliases)
+    {
         foreach (var quote in data.Quotes)
         {
-            if (!deals.Contains(quote.Opportunity))
+            if (!aliases.Deals.Contains(quote.Opportunity))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("quote " + quote.Alias, quote.Opportunity));
+                return SeedErrors.UnknownReference("quote " + quote.Alias, quote.Opportunity);
             }
 
             // A quote is its lines. One with none has a total nobody can reconcile and a builder
             // with nothing to draw, which is what every seeded quote was before they existed.
             if (quote.Lines.Count == 0)
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange(quote.Alias, "lines", "at least one"));
+                return SeedErrors.OutOfRange(quote.Alias, "lines", "at least one");
             }
 
             foreach (var line in quote.Lines)
             {
                 if (line.Quantity <= 0 || line.UnitPrice < 0)
                 {
-                    return Result.Fail<SeedDocument>(SeedErrors.OutOfRange(
+                    return SeedErrors.OutOfRange(
                         quote.Alias,
                         "line '" + line.Sku + "'",
-                        "a positive quantity and a price that is not negative"));
+                        "a positive quantity and a price that is not negative");
                 }
             }
 
@@ -594,124 +736,172 @@ public static class SeedReader
             // it makes a negative total, which the schema takes without complaint.
             if (quote.Discount > quote.Lines.Sum(line => line.Quantity * line.UnitPrice))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange(quote.Alias, "discount", "no more than the lines add up to"));
+                return SeedErrors.OutOfRange(
+                    quote.Alias, "discount", "no more than the lines add up to");
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every order comes from a quote and belongs to an account.</summary>
+    /// <param name="data">What the tenant holds.</param>
+    /// <param name="aliases">The quotes and accounts declared.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Orders(SeedData data, SeedAliases aliases)
+    {
         foreach (var order in data.Orders)
         {
-            if (!quotes.Contains(order.Quote))
+            if (!aliases.Quotes.Contains(order.Quote))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("order " + order.Alias, order.Quote));
+                return SeedErrors.UnknownReference("order " + order.Alias, order.Quote);
             }
 
-            if (!accounts.Contains(order.Account))
+            if (!aliases.Accounts.Contains(order.Account))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("order " + order.Alias, order.Account));
+                return SeedErrors.UnknownReference("order " + order.Alias, order.Account);
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every approval process has steps, known criteria, and resolvable approvers.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? ApprovalProcesses(SeedMetadata metadata)
+    {
         foreach (var process in metadata.ApprovalProcesses)
         {
             if (!CustomValues.IsUsableName(process.Name))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.NameIsNotUsable("approvalProcess", process.Name));
+                return SeedErrors.NameIsNotUsable("approvalProcess", process.Name);
             }
 
             if (process.Steps.Count == 0)
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.OutOfRange(process.Alias, "steps", "at least one"));
+                return SeedErrors.OutOfRange(process.Alias, "steps", "at least one");
             }
 
-            // The same closed list the capability checks. Saying it here makes a typo a sentence
-            // about the file rather than a refusal at start-up with the seed half applied.
-            foreach (var criterion in process.Criteria)
+            if ((Criteria(process) ?? ApproverSteps(process)) is { } bad)
             {
-                if (!ApprovalAttributes.Of(process.Subject)
-                        .Contains(criterion.Attribute, StringComparer.Ordinal))
-                {
-                    return Result.Fail<SeedDocument>(SeedErrors.UnknownReference(
-                        $"approvalProcess {process.Alias} criterion", criterion.Attribute));
-                }
-            }
-
-            foreach (var step in process.Steps)
-            {
-                // A named approver with no name, or the submitter's manager with one, are both
-                // a step nobody can resolve at the moment somebody needs it approved.
-                var needsApprover = step.Kind is not ApproverKind.SubmittersManager;
-
-                if (needsApprover != (step.Approver is { Length: > 0 }))
-                {
-                    return Result.Fail<SeedDocument>(SeedErrors.OutOfRange(
-                        process.Alias,
-                        $"step '{step.Label}'",
-                        needsApprover ? "given an approver" : "given no approver"));
-                }
+                return bad;
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every criterion names an attribute the subject actually has.</summary>
+    /// <param name="process">The approval process.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    /// <remarks>
+    /// The same closed list the capability checks. Saying it here makes a typo a sentence about
+    /// the file rather than a refusal at start-up with the seed half applied.
+    /// </remarks>
+    private static Error? Criteria(SeedApprovalProcess process)
+    {
+        foreach (var criterion in process.Criteria)
+        {
+            if (!ApprovalAttributes.Of(process.Subject)
+                    .Contains(criterion.Attribute, StringComparer.Ordinal))
+            {
+                return SeedErrors.UnknownReference(
+                    $"approvalProcess {process.Alias} criterion", criterion.Attribute);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Every step names an approver exactly when its kind needs one.</summary>
+    /// <param name="process">The approval process.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? ApproverSteps(SeedApprovalProcess process)
+    {
+        foreach (var step in process.Steps)
+        {
+            // A named approver with no name, or the submitter's manager with one, are both
+            // a step nobody can resolve at the moment somebody needs it approved.
+            var needsApprover = step.Kind is not ApproverKind.SubmittersManager;
+
+            if (needsApprover != (step.Approver is { Length: > 0 }))
+            {
+                return SeedErrors.OutOfRange(
+                    process.Alias,
+                    $"step '{step.Label}'",
+                    needsApprover ? "given an approver" : "given no approver");
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Every report names a dimension and a measure its source has.</summary>
+    /// <param name="metadata">What the tenant is configured to have.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    /// <remarks>
+    /// The same closed lists the capability checks. Reading them here makes a typo a sentence
+    /// about the file rather than a report that is saved, runs, and groups everything under null
+    /// — which reads as a data problem and is not.
+    /// </remarks>
+    private static Error? Reports(SeedMetadata metadata)
+    {
         foreach (var report in metadata.Reports)
         {
             if (!CustomValues.IsUsableName(report.Name))
             {
-                return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("report", report.Name));
+                return SeedErrors.NameIsNotUsable("report", report.Name);
             }
 
-            // The same closed lists the capability checks. Reading them here makes a typo a
-            // sentence about the file rather than a report that is saved, runs, and groups
-            // everything under null — which reads as a data problem and is not.
             if (!ReportVocabulary.Dimensions(report.Source)
                     .Contains(report.Dimension, StringComparer.Ordinal))
             {
-                return Result.Fail<SeedDocument>(SeedErrors.UnknownReference(
-                    $"report {report.Alias} dimension", report.Dimension));
+                return SeedErrors.UnknownReference(
+                    $"report {report.Alias} dimension", report.Dimension);
             }
 
             // Count is of rows and takes no field; everything else needs one. Both halves fail at
             // the moment somebody runs it, which is the worst time to find out.
             if ((report.Measure == ReportMeasure.Count) != (report.MeasureOf is null))
             {
-                return Result.Fail<SeedDocument>(SeedErrors.OutOfRange(
+                return SeedErrors.OutOfRange(
                     report.Alias,
                     "measure " + report.Measure,
-                    report.Measure == ReportMeasure.Count ? "given no field" : "given a field"));
+                    report.Measure == ReportMeasure.Count ? "given no field" : "given a field");
             }
 
             if (report.MeasureOf is { } field
                 && !ReportVocabulary.Measures(report.Source).Contains(field, StringComparer.Ordinal))
             {
-                return Result.Fail<SeedDocument>(SeedErrors.UnknownReference(
-                    $"report {report.Alias} measure", field));
+                return SeedErrors.UnknownReference($"report {report.Alias} measure", field);
             }
         }
 
-        if (Declarations(metadata, objects, fields, relationships, reports) is { } badDeclaration)
-        {
-            return Result.Fail<SeedDocument>(badDeclaration);
-        }
+        return null;
+    }
 
+    /// <summary>Every plan is named usably, sits in a period, and commits about something real.</summary>
+    /// <param name="data">What the tenant holds.</param>
+    /// <param name="aliases">The periods, accounts, deals and plans declared.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Plans(SeedData data, SeedAliases aliases)
+    {
         foreach (var plan in data.Plans)
         {
             if (!CustomValues.IsUsableName(plan.Name))
             {
-                return Result.Fail<SeedDocument>(SeedErrors.NameIsNotUsable("plan", plan.Name));
+                return SeedErrors.NameIsNotUsable("plan", plan.Name);
             }
 
-            if (!periods.Contains(plan.Period))
+            if (!aliases.Periods.Contains(plan.Period))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("plan " + plan.Alias, plan.Period));
+                return SeedErrors.UnknownReference("plan " + plan.Alias, plan.Period);
             }
 
             if (Commitment(plan) is { } badPlan)
             {
-                return Result.Fail<SeedDocument>(badPlan);
+                return badPlan;
             }
 
             // The subject is looked for in the collection its kind names — the schema's own
@@ -720,52 +910,60 @@ public static class SeedReader
             // A demand plan is about a channel and has no subject at all, which Commitment has
             // already established by this point.
             if (plan.Subject is { } subject
-                && !(plan.Kind is PlanKind.Account ? accounts : deals).Contains(subject))
+                && !(plan.Kind is PlanKind.Account ? aliases.Accounts : aliases.Deals).Contains(subject))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("plan " + plan.Alias, subject));
+                return SeedErrors.UnknownReference("plan " + plan.Alias, subject);
             }
 
-            if (plan.Parent is { } above && !plans.Contains(above))
+            if (plan.Parent is { } above && !aliases.Plans.Contains(above))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("plan " + plan.Alias, above));
+                return SeedErrors.UnknownReference("plan " + plan.Alias, above);
             }
         }
 
-        if (PlanTree(data.Plans) is { } looping)
-        {
-            return Result.Fail<SeedDocument>(looping);
-        }
+        return null;
+    }
 
+    /// <summary>Every custom record is against an object the file declares.</summary>
+    /// <param name="data">What the tenant holds.</param>
+    /// <param name="aliases">The objects declared.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Records(SeedData data, SeedAliases aliases)
+    {
         foreach (var record in data.Records)
         {
-            if (!objects.Contains(record.Target))
+            if (!aliases.Objects.Contains(record.Target))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("record " + record.Alias, record.Target));
+                return SeedErrors.UnknownReference("record " + record.Alias, record.Target);
             }
         }
 
+        return null;
+    }
+
+    /// <summary>Every link is of a declared relationship and joins two declared records.</summary>
+    /// <param name="data">What the tenant holds.</param>
+    /// <param name="aliases">The relationships and records declared.</param>
+    /// <returns>The first thing wrong, or null.</returns>
+    private static Error? Links(SeedData data, SeedAliases aliases)
+    {
         foreach (var link in data.Links)
         {
-            if (!relationships.Contains(link.Relationship))
+            if (!aliases.Relationships.Contains(link.Relationship))
             {
-                return Result.Fail<SeedDocument>(
-                    SeedErrors.UnknownReference("link " + link.Alias, link.Relationship));
+                return SeedErrors.UnknownReference("link " + link.Alias, link.Relationship);
             }
 
             foreach (var end in (string[])[link.From, link.To])
             {
-                if (!records.Contains(end))
+                if (!aliases.Records.Contains(end))
                 {
-                    return Result.Fail<SeedDocument>(
-                        SeedErrors.UnknownReference("link " + link.Alias, end));
+                    return SeedErrors.UnknownReference("link " + link.Alias, end);
                 }
             }
         }
 
-        return Result.Ok(document);
+        return null;
     }
 
     /// <summary>
@@ -1100,4 +1298,47 @@ public static class SeedReader
 
         return null;
     }
+}
+
+/// <summary>
+/// The aliases a document declares, in the order the checks need them.
+/// </summary>
+/// <remarks>
+/// One object rather than thirteen parameters, because most of these sets are filled by one
+/// check and read by another several hundred lines later — passing only what each needed
+/// meant thirteen names threaded through a signature that changed whenever a collection was
+/// added. A set that is collected but read by nobody is still here on purpose: two items
+/// sharing an alias share a derived id, and the second would silently be the first.
+/// </remarks>
+internal sealed class SeedAliases
+{
+    public HashSet<string> Objects { get; } = new(StringComparer.Ordinal);
+
+    public HashSet<string> Accounts { get; } = new(StringComparer.Ordinal);
+
+    public HashSet<string> Contacts { get; } = new(StringComparer.Ordinal);
+
+    public HashSet<string> Stages { get; } = new(StringComparer.Ordinal);
+
+    public HashSet<string> Periods { get; } = new(StringComparer.Ordinal);
+
+    public HashSet<string> People { get; } = new(StringComparer.Ordinal);
+
+    public HashSet<string> Quotes { get; } = new(StringComparer.Ordinal);
+
+    public HashSet<string> Fields { get; } = new(StringComparer.Ordinal);
+
+    public HashSet<string> Relationships { get; } = new(StringComparer.Ordinal);
+
+    public HashSet<string> Reports { get; } = new(StringComparer.Ordinal);
+
+    public HashSet<string> Records { get; } = new(StringComparer.Ordinal);
+
+    public HashSet<string> Plans { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Opportunity aliases, which a quote and a plan both refer to.</summary>
+    public HashSet<string> Deals { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Lead aliases, which an activity refers to.</summary>
+    public HashSet<string> Leads { get; } = new(StringComparer.Ordinal);
 }

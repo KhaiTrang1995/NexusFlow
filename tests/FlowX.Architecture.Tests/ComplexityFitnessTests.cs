@@ -53,21 +53,25 @@ public sealed class ComplexityFitnessTests
     /// renamed "accepted".
     /// </para>
     /// <para>
-    /// <strong>Two entries are large and are staying that way for now.</strong>
+    /// <strong>One entry is large and is staying that way.</strong>
     /// <c>FlowEngine.RunRangeAsync</c> is the engine's step interpreter: one loop over a flat
     /// step array with an arm per step kind, where every arm needs the same nine pieces of
     /// state and communicates back by moving the loop index. Splitting it produces nine methods
     /// that can only be understood by mentally re-inlining them, which is a worse artefact than
-    /// the loop. <c>SeedReader.Validate</c> is a straight-line sequence of independent checks
-    /// over a seed file and would genuinely repay extraction; it is left alone here only
-    /// because the change is large, touches a path covered by the sample's whole test suite,
-    /// and buys a better-shaped method rather than a behaviour fix. The ratchet is what stops
-    /// either growing while that stays true.
+    /// the loop.
+    /// </para>
+    /// <para>
+    /// <strong>The one that left is what the ratchet is for.</strong> <c>SeedReader.Validate</c>
+    /// was recorded at 205 — a straight-line sequence of per-collection checks that this record
+    /// described as "would genuinely repay extraction" and then did not extract. It scores 2 now,
+    /// and the row is gone: the checks are one <c>Error?</c>-returning method each, chained with
+    /// <c>??</c> so the first failure still wins in the order it always did. That is the shape
+    /// the entry was holding a place for, and <see cref="NoRecordedExceedanceIsStale"/> is what
+    /// made the improvement report itself rather than sit unnoticed behind an allowance of 205.
     /// </para>
     /// </remarks>
     private static readonly Dictionary<string, int> RecordedExceedances = new(StringComparer.Ordinal)
     {
-        ["SeedReader.Validate"] = 205,
         ["FlowEngine.RunRangeAsync"] = 151,
         ["SeedReader.Declarations"] = 53,
         ["SeedApplier.ApplyAsync"] = 41,
