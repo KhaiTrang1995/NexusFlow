@@ -368,22 +368,6 @@ public sealed class ConnectorStore
     private static void Add(NpgsqlCommand command, string name, NpgsqlDbType type, object value) =>
         command.Parameters.Add(new NpgsqlParameter(name, type) { Value = value });
 
-    private async ValueTask<NpgsqlConnection> OpenAsync(
-        string? tenantId,
-        CancellationToken cancellationToken)
-    {
-        var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-
-        try
-        {
-            await CrmTenantScope.ApplyAsync(connection, tenantId, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            await connection.DisposeAsync().ConfigureAwait(false);
-            throw;
-        }
-
-        return connection;
-    }
+    private ValueTask<NpgsqlConnection> OpenAsync(string? tenantId, CancellationToken cancellationToken) =>
+        CrmTenantScope.OpenAsync(_source, tenantId, cancellationToken);
 }

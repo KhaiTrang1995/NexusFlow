@@ -353,6 +353,56 @@ public static class CrmTenantScope
     private const string Bind =
         "SELECT set_config(@setting, @tenant, false), set_config('role', @role, false)";
 
+    /// <summary>Opens a connection from <paramref name="source"/> already narrowed to one tenant.</summary>
+    /// <param name="source">The pool to take a connection from.</param>
+    /// <param name="tenantId">The tenant, or null for the untenanted rows.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>An open, bound connection the caller owns and must dispose.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>The unbound window is the whole reason this is one method.</strong> Between
+    /// <c>OpenConnectionAsync</c> returning and <see cref="ApplyAsync"/> committing, the
+    /// connection is live as the schema-owning role with no <c>flowx.tenant_id</c> set — the
+    /// one state in which migration <c>0002</c>'s policies are inert. If binding throws, that
+    /// connection must not go back to the pool still unbound and must not escape to a caller
+    /// that will run a statement on it, so the failure path disposes it rather than returning
+    /// it. Every store needs that guarantee and none of them differs in how it gets it.
+    /// </para>
+    /// <para>
+    /// <strong>Written once because it was written thirty times.</strong> Each CRM store had
+    /// its own byte-identical copy of open-bind-dispose-on-failure. Thirty copies of a
+    /// security boundary is thirty chances for the thirty-first store to omit the
+    /// <c>catch</c> and hand out a privileged connection that reads every tenant's rows; the
+    /// omission compiles, passes its own tests, and is invisible in review because the shape
+    /// looks like the other twenty-nine.
+    /// <c>TenancyFitnessTests.EveryCrmStoreOpensThroughTheTenantScope</c> is what keeps the
+    /// thirty-first from being written by hand.
+    /// </para>
+    /// </remarks>
+    public static async ValueTask<NpgsqlConnection> OpenAsync(
+        NpgsqlDataSource source,
+        string? tenantId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        var connection = await source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            await ApplyAsync(connection, tenantId, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+
+            throw;
+        }
+
+        return connection;
+    }
+
     /// <summary>Binds a freshly opened connection to one tenant.</summary>
     /// <param name="connection">The connection to narrow.</param>
     /// <param name="tenantId">The tenant, or null for the untenanted rows.</param>
@@ -461,13 +511,11 @@ public sealed class CrmSchemaReader
         string? tenantId,
         CancellationToken cancellationToken)
     {
-        var connection = await _dataSource.OpenConnectionAsync(cancellationToken)
+        var connection = await CrmTenantScope
+            .OpenAsync(_dataSource, tenantId, cancellationToken)
             .ConfigureAwait(false);
 
         await using var closing = connection.ConfigureAwait(false);
-
-        await CrmTenantScope.ApplyAsync(connection, tenantId, cancellationToken)
-            .ConfigureAwait(false);
 
         int version;
 

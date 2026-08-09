@@ -1020,20 +1020,6 @@ public sealed class SeedStore
     private static void Add(NpgsqlCommand command, string name, NpgsqlDbType type, object value) =>
         command.Parameters.Add(new NpgsqlParameter(name, type) { Value = value });
 
-    private async ValueTask<NpgsqlConnection> OpenAsync(string tenant, CancellationToken ct)
-    {
-        var connection = await _source.OpenConnectionAsync(ct).ConfigureAwait(false);
-
-        try
-        {
-            await CrmTenantScope.ApplyAsync(connection, tenant, ct).ConfigureAwait(false);
-        }
-        catch
-        {
-            await connection.DisposeAsync().ConfigureAwait(false);
-            throw;
-        }
-
-        return connection;
-    }
+    private ValueTask<NpgsqlConnection> OpenAsync(string tenant, CancellationToken ct) =>
+        CrmTenantScope.OpenAsync(_source, tenant, ct);
 }

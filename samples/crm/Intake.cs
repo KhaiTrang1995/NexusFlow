@@ -218,22 +218,8 @@ public sealed class IntakeStore
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask<NpgsqlConnection> OpenAsync(string? tenantId, CancellationToken cancellationToken)
-    {
-        var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-
-        try
-        {
-            await CrmTenantScope.ApplyAsync(connection, tenantId, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            await connection.DisposeAsync().ConfigureAwait(false);
-            throw;
-        }
-
-        return connection;
-    }
+    private ValueTask<NpgsqlConnection> OpenAsync(string? tenantId, CancellationToken cancellationToken) =>
+        CrmTenantScope.OpenAsync(_source, tenantId, cancellationToken);
 }
 
 // ------------------------------------------------------------------------- the capabilities

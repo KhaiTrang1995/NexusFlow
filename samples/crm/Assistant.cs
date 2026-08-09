@@ -104,10 +104,11 @@ public sealed class AssistantStore
         Guid accountId,
         CancellationToken cancellationToken)
     {
-        var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        await using var closing = connection.ConfigureAwait(false);
+        var connection = await CrmTenantScope
+            .OpenAsync(_source, tenantId, cancellationToken)
+            .ConfigureAwait(false);
 
-        await CrmTenantScope.ApplyAsync(connection, tenantId, cancellationToken).ConfigureAwait(false);
+        await using var closing = connection.ConfigureAwait(false);
 
         var command = connection.CreateCommand();
         await using var closingCommand = command.ConfigureAwait(false);
