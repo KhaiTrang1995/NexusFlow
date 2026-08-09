@@ -156,7 +156,7 @@ Start here, in order:
 | 20 | [Roadmap](docs/20-Roadmap.md) | Risk-first delivery plan, from walking skeleton to v1 |
 | 21 | [Quality Gates](docs/21-Quality-Gates.md) | SonarQube thresholds, OWASP Top 10 mapping, SAST/DAST, debt policy |
 | — | [ADR index](docs/adr/README.md) | Every significant decision, with its trade-off |
-| — | [Samples](samples/README.md) | Nine reference applications — **one has code today**; the index says which and what blocks the rest |
+| — | [Samples](samples/README.md) | Ten reference applications — **all ten have code and run**; the index says what each one proves |
 
 **Working documents** — these change as the build progresses:
 

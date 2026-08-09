@@ -1,14 +1,19 @@
 # 26 — CRM Sample · Design
 
-> **Status:** Design, not yet built · **Audience:** platform engineers, application architects
+> **Status:** Built — see [`samples/crm/`](../samples/crm/) · **Audience:** platform
+> engineers, application architects
 > **Answers:** what does a realistic multi-entity business application look like on FlowX,
 > and what does the compile-time bet cost when the business asks for a configurable workflow?
 
 > [!IMPORTANT]
-> **This document is a design. No code in it exists yet.** Every other document in this set
-> describes something that ships; this one describes something planned, and §10 is the plan.
-> Where a section states a platform behaviour as fact, that behaviour ships today and is
-> linked. Where it states a design decision, it says so.
+> **This document was written before the code; the code now exists.** `samples/crm/` has
+> 121 source files and `tests/Crm.Tests/` has 60 test files (~19k lines, test-to-source
+> line ratio ~0.55). The two most load-bearing claims here — the conversion saga in §8.1 and
+> the closed-`ActionKind` transition engine in §7.3 — match the implementation exactly,
+> including `TransitionTests.AnAdministratorChangesBehaviourWithNoRebuild`, which asserts the
+> claim §7 exists to make. §10's twelve-package plan is complete. Where a section states a
+> platform behaviour as fact, that behaviour ships today and is linked. Where it states a
+> design decision, the decision was kept — this is an update to status, not a retraction.
 
 ---
 

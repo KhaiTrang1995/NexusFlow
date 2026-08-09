@@ -1682,14 +1682,19 @@ noticing.
 
 ## 5g. Samples, the template, and the guideline
 
-- [x] **Three of nine samples have code** (was one). `ecommerce` (the baseline saga),
-      **`banking`** — a durable transfer saga: compensation in strict reverse order,
+- [x] **All ten samples have code** (was three of nine, was one). `ecommerce` (the baseline
+      saga), **`banking`** — a durable transfer saga: compensation in strict reverse order,
       `[Sensitive]` redaction reaching a real PostgreSQL outbox row with **zero** IBAN
       occurrences in any journal column, one event staged per instance — and **`workflow`**,
       25 compiled nodes exercising the whole shipped DSL: `Switch`/`Case`/`Default`,
       `Parallel`, `ForEach` containing `When`, `SubFlow`, `Fail`, compensation at six sites.
       **Building them found four runtime defects**, all now fixed, none of which unit-testing
-      the compiler had surfaced
+      the compiler had surfaced. The tenth, **`crm`**, is the largest by far — 121 source
+      files, 60 test files (~19k lines, test-to-source ratio ~0.55), row-level-security
+      multi-tenancy held to a mutation test, and the closed-`ActionKind` configurable
+      workflow engine [26-CRM-Sample](docs/26-CRM-Sample.md) argues for. `samples/README.md`
+      already counted it among its own "ten" — this file was the one that had not; that gap
+      is what this entry fixes
 - [x] **The six blocked samples stopped claiming a proof that never happened.** Each opened
       with a present-tense *"Claim proved:"* line; design content is kept, the claim is gone,
       and every code block using something that does not exist is marked. `event-driven` is
