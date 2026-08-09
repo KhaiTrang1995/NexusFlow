@@ -216,6 +216,221 @@ jobs:
             exit 1
           fi
 
+  client:
+    name: CRM web client
+    runs-on: ubuntu-latest
+
+    # WHY THIS EXISTS, and it is the same finding as the `build` job's block above wearing a
+    # different hat. samples/crm-web carries some 240 Vitest tests, a strict `tsc` and an
+    # ESLint config, and until now none of them ran anywhere except on the machine of whoever
+    # last thought to type `npm test`. Every one of the twenty-two screens wired to the CRM
+    # API could regress and this repository's four workflows — which build the platform,
+    # measure its coverage, scan it four ways and publish its manifest — would all stay
+    # green, because none of them so much as mentions npm.
+    #
+    # A gate whose subject is absent. Third time of writing that sentence down here.
+    defaults:
+      run:
+        working-directory: samples/crm-web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # No .nvmrc to read from, so the version is named here. Vite 6 wants an even
+          # major on a current line; 22 is what the client is developed against.
+          node-version: 22
+          cache: npm
+          cache-dependency-path: samples/crm-web/package-lock.json
+
+      - name: Install
+        # `ci`, not `install`: it installs the lockfile and fails if package.json has moved
+        # away from it, which is the difference between building what was reviewed and
+        # building whatever npm resolved this morning.
+        run: npm ci
+
+      # The order below is the repository's, and it is deliberate: the cheapest gate that
+      # can fail runs first. Type-check (12s) before lint (30s) before tests (14s) before
+      # the production build (11s) — a missing import should cost a quarter of a minute to
+      # find out about, not four.
+      - name: Type-check
+        # tsconfig.json is strict AND carries noUncheckedIndexedAccess and
+        # exactOptionalPropertyTypes, so this is not a formality: it is the gate that most
+        # of the client's contracts are actually enforced by.
+        run: npm run typecheck
+
+      - name: Lint
+        # --max-warnings 0, from package.json. Same reasoning as TreatWarningsAsErrors on
+        # the .NET side: a warning nobody fixes is a warning that hides the next one.
+        run: npm run lint
+
+      - name: Unit tests
+        # jsdom, no processes behind them. The browser suite is the `client-e2e` job below;
+        # this one must stay the fast half.
+        run: npm test
+
+      - name: Build
+        # `tsc -b && vite build`. Type-checking passing is not the same fact as the bundle
+        # being producible — a bad asset import or a circular module fails only here.
+        run: npm run build
+
+  client-e2e:
+    name: CRM web client browser suite
+    runs-on: ubuntu-latest
+
+    # Not folded into `client`, because it is a different bargain. `client` needs node and
+    # thirty seconds; this needs PostgreSQL, a built and running ASP.NET host, a dev server
+    # in front of it and a browser — and it is the only gate that covers the sixty-odd
+    # screens the unit suite deliberately does not mount (3-15% line coverage there; see
+    # quality.yml's `client-coverage`). Leaving it out would have meant claiming the client
+    # was gated while the majority of it was not.
+    #
+    # Serial by construction: playwright.config.ts sets `workers: 1` because the three roles
+    # walk one tenant's rows and one of them approves what another submitted.
+    needs: client
+
+    # The one number in this job that is a budget rather than a fact. Sixty-five tests, one
+    # worker, a 90-second per-test timeout: a suite that has genuinely broken can spend an
+    # hour and a half discovering it one timeout at a time, and the ninth of those tells a
+    # reader nothing the first did not. GitHub's own default is six hours.
+    timeout-minutes: 30
+
+    services:
+      # A fresh database per run, which is what makes the suite deterministic: the API's
+      # CrmSeeder writes the seed on startup, and the specs that create rows name them with
+      # a timestamp. Same block as `build` above, minus the four servers this sample does
+      # not use — the CRM host takes RabbitMQ as optional and does not touch Redis, Kafka
+      # or Service Bus.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: samples/crm-web/package-lock.json
+
+      - name: Install
+        working-directory: samples/crm-web
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: samples/crm-web
+        # Chromium only. The suite asserts on the words the server sent back, not on
+        # rendering, so three engines would be three times the wall clock for the same
+        # facts. `--with-deps` because a bare runner has none of the shared libraries.
+        run: npx playwright install --with-deps chromium
+
+      - name: Build the CRM host
+        # Built, then run from the dll. `dotnet run` would rebuild inside the "start the
+        # server" step, so a compile error would surface there as a health check that timed
+        # out rather than as a build that failed.
+        run: dotnet build samples/crm/Crm.csproj --configuration Release
+
+      - name: Start the CRM host
+        # Port 5000 and nothing else, because samples/crm-web/vite.config.ts proxies /api
+        # there by default. Overriding CRM_API would work and would also mean the thing CI
+        # exercises is not the thing a developer runs.
+        #
+        # Migrations and the seed run on startup (Program.cs, CrmSeeder), so /health
+        # answering 200 is also the statement that the schema exists and the seed landed.
+        env:
+          FLOWX_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres"
+          ASPNETCORE_URLS: "http://127.0.0.1:5000"
+        run: |
+          nohup dotnet samples/crm/bin/Release/net10.0/Crm.dll > "$RUNNER_TEMP/crm-api.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:5000/health > /dev/null && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:5000/health > /dev/null || {
+            echo "::error::The CRM host never became healthy. Its log follows."
+            tail -50 "$RUNNER_TEMP/crm-api.log"
+            exit 1; }
+
+      - name: Start the client
+        working-directory: samples/crm-web
+        # The dev server, not `vite preview`. The /api proxy lives in `server.proxy`, which
+        # preview does not read — a preview build would serve the pages and 404 every
+        # request behind them, which presents as sixty-five inscrutable timeouts.
+        run: |
+          nohup npx vite --port 5173 --strictPort > "$RUNNER_TEMP/vite.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:5173/ > /dev/null && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:5173/ > /dev/null || {
+            echo "::error::The dev server never answered. Its log follows."
+            tail -50 "$RUNNER_TEMP/vite.log"
+            exit 1; }
+
+      - name: Browser suite
+        working-directory: samples/crm-web
+        # Setting CRM_E2E_BASE_URL is the caller saying a client and an API exist. The spec's
+        # own rule then does the rest: unset means the whole file skips with a reason, and set
+        # with nothing listening means it FAILS. That is the same three-way bargain
+        # FLOWX_POSTGRES_CONNECTION strikes on the .NET side, and it is what stops this job
+        # from reporting green over a suite that never opened a page.
+        #
+        # The JSON reporter is named here rather than in playwright.config.ts so a developer
+        # running the suite by hand still gets `list` and nothing else; the file is only for
+        # the guard below.
+        env:
+          CRM_E2E_BASE_URL: http://127.0.0.1:5173
+          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/e2e-results.json
+        run: npx playwright test --reporter=list,json
+
+      - name: The suite is not allowed to have skipped itself
+        if: always()
+        working-directory: samples/crm-web
+        # The env var above is one deletion away from being gone and its absence is silent:
+        # `test.skip(!configured, …)` turns all sixty-five green. Reads the JSON report
+        # rather than re-running anything, for the reason the `build` job's skip guard gives.
+        run: |
+          [ -f "$RUNNER_TEMP/e2e-results.json" ] || exit 0
+          python3 - "$RUNNER_TEMP/e2e-results.json" <<'PY'
+          import json, sys
+          counts = json.load(open(sys.argv[1])).get('stats', {})
+          print(counts)
+          # Anything that reached a browser, passing or not. NOT `expected == 0`: a suite in
+          # which every test failed also reports zero expected, and this step would then
+          # answer a real red run with the one explanation that is wrong.
+          ran = counts.get('expected', 0) + counts.get('unexpected', 0) + counts.get('flaky', 0)
+          if ran == 0:
+              print(f"::error::All {counts.get('skipped', 0)} tests in e2e/roles.spec.ts skipped —")
+              print('::error::none of them opened a page. CRM_E2E_BASE_URL is what makes the file')
+              print('::error::execute rather than skip; check the step above set it.')
+              sys.exit(1)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          # The traces, which playwright.config.ts retains on failure, and the page snapshot
+          # beside each. `npx playwright show-trace <the zip>` replays the run that failed —
+          # which is the only way to debug a browser test from a log, and the reason this
+          # step exists rather than a longer tail of console output.
+          name: crm-web-playwright-traces
+          path: samples/crm-web/test-results/
+
   template:
     name: dotnet new flowx
     runs-on: ubuntu-latest
@@ -558,7 +773,7 @@ jobs:
     # chaos.yml already fixed this for the nightly QR2 run and its `issues: write` comment
     # names B-4 by number. This is that mechanism, for this workflow, deliberately the same
     # so there is one idea in the repository rather than two.
-    needs: [build, template, aot, manifest, docs, attribution]
+    needs: [build, client, client-e2e, template, aot, manifest, docs, attribution]
 
     # always(), or it would be skipped by exactly the failures it exists to report. Pushes
     # only: a red pull request is already in front of the person who opened it, and filing

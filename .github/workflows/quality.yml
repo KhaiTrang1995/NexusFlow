@@ -226,6 +226,56 @@ jobs:
           name: coverage
           path: coverage/
 
+  client-coverage:
+    name: Coverage thresholds (CRM web client)
+    runs-on: ubuntu-latest
+
+    # The job above measures .NET and nothing else, so until now the client's coverage was
+    # not low — it was UNKNOWN. `npx vitest run --coverage` did not even start: the provider
+    # package was never installed, and the runner answered "MISSING DEPENDENCY Cannot find
+    # dependency '@vitest/coverage-v8'". A number nobody can produce cannot regress, which is
+    # the quietest way for a gate to be absent.
+    #
+    # Its own job rather than a step in ci.yml's `client`, so this workflow's subject stays
+    # whole: someone reading quality.yml should be able to see every coverage gate the
+    # repository has. The unit suite therefore runs twice across the two workflows, fifteen
+    # seconds each, which is the same trade the .NET suite already makes between `build` and
+    # `coverage` at a hundred times the price.
+    defaults:
+      run:
+        working-directory: samples/crm-web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: samples/crm-web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Coverage thresholds
+        # The thresholds live in vitest.config.ts, not here — 23.8% of lines across the whole
+        # client when they were written, with a floor under each of the directories the unit
+        # suite actually owns. No second implementation of the rule in shell, for the reason
+        # this workflow's `debt` job spells out at length: two gates for one rule disagree
+        # eventually, and the weaker one is what a developer meets first.
+        #
+        # The global figure is low and is meant to be read with the client-e2e job in
+        # ci.yml: the unit suite covers the logic and the browser suite walks the screens.
+        # Raising this number by mounting sixty screens into jsdom would move the percentage
+        # and prove nothing new.
+        run: npm run test:coverage
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-crm-web
+          path: samples/crm-web/coverage/
+
   sonar:
     name: Sonar quality gate
     runs-on: ubuntu-latest
