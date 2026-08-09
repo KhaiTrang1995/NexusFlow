@@ -360,8 +360,17 @@ jobs:
         # Applied to FlowX.Core only, on purpose. Line coverage says which lines
         # ran; mutation score says whether a test would notice if they were wrong.
         # FlowX.Core holds the execution semantics, so that distinction matters there.
+        #
+        # RUN FROM THE PROJECT, BECAUSE THE ARGUMENTS BELOW WERE ALWAYS WRITTEN FOR IT.
+        # This step had no working-directory, so it ran at the repository root while
+        # passing `--test-project ../../tests/...` — two levels above the workspace, a
+        # path that does not exist. Stryker therefore never got the one argument the
+        # comment below says is the difference between a job that finishes and one that
+        # does not, and the job has hit its twenty-five-minute ceiling on every run it
+        # has ever had. It read as "still working"; it was scanning everything.
+        working-directory: src/FlowX.Core
         run: |
-          if [ ! -d src/FlowX.Core ]; then
+          if [ ! -f FlowX.Core.csproj ]; then
             echo "FlowX.Core does not exist yet (WP-2). Nothing to mutate."
             exit 0
           fi
@@ -380,7 +389,9 @@ jobs:
         if: always()
         with:
           name: mutation-report
-          path: StrykerOutput/
+          # Under the project, because the step above runs there. Left at the repository
+          # root this uploads nothing and says so only as a warning nobody reads.
+          path: src/FlowX.Core/StrykerOutput/
 
   debt:
     name: Technical-debt policy
