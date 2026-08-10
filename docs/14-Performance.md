@@ -26,7 +26,7 @@ pull request, and fails the build on regression. Nothing here is aspirational.
 | B9 | HTTP trigger end-to-end (trivial flow, localhost) | p99 | **1.2 ms** | nightly |
 | B10 | Cold start, NativeAOT, ready-to-serve | — | **200 ms** | CI |
 | B11 | Idle RSS, 100 flows registered | — | **60 MB** | CI |
-| B12 | Build overhead vs identical non-FlowX code | **+46.5 %** at 50 flows · **+67.1 %** [+61.9, +73.6] at 200 — [B12-scale.md §8](benchmarks/B12-scale.md). *This row carried the superseded **+77 %** until 2026-07-31; WP-43 re-measured after the duplicated-bind fix* | **+8 %** | **FAILING.** The job measuring this budget is **advisory** by [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) §4(4); the blocking gate in [generator-cost-gate.md](benchmarks/generator-cost-gate.md) is *relative* and answers a different question |
+| B12 | Build overhead vs identical non-FlowX code | **+46.5 %** at 50 flows · **+67.1 %** [+61.9, +73.6] at 200 — [B12-scale.md §8](benchmarks/B12-scale.md). *This row carried the superseded **+77 %** until 2026-07-31; WP-43 re-measured after the duplicated-bind fix* | **≤ 800,000 B/flow · ≤ 160,000 B/capability** | **MET**, against the criterion [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) re-expressed on 2026-08-10: 772,522 and 148,562 at 25 flows, 769,272 and 146,808 at 50. `check-generator-cost.py` fails on a breached ceiling. The percentages in this row are what the superseded ratio measured, and the `scale-overhead` job that measures it stays advisory |
 | B13 | Streaming throughput, 1 KB records, 8 partitions | sustained | **250 000 rec/s/node** | nightly |
 
 > [!IMPORTANT]

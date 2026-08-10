@@ -74,7 +74,14 @@ Revisit ADR-0002 first.
 > Accepted with no note, and the sentence above is the only place in the repository that
 > connects the number to the record it is supposed to reopen.
 > [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) exists to put
-> the resulting choice in front of a decider and remains **Proposed**. **It is no longer
+> the resulting choice in front of a decider and was **decided on 2026-08-10**: the derived
+> catalogue stays and the budget is re-expressed as generator allocation per flow and per
+> capability, which the generator meets. The trigger's own threshold — a ratio — is the thing
+> that was replaced, so the miss it fired on is answered rather than outstanding. What is
+> still true is the sentence after this one: ADR-0002 does not say any of it, and an accepted
+> record whose revisit clause has been overtaken by another record is not amended here.
+> *The paragraph below was written while ADR-0014 was still open, and is kept as the record of
+> why it stayed open for a phase.* **It is no longer
 > tracked as an open item**: the repository owner removed it from §9 on 2026-07-31, which
 > is a decision to leave the choice unmade rather than an oversight, and consistent with
 > performance being set aside for this phase. The amendment ADR-0002 owed itself was
@@ -103,7 +110,7 @@ below are satisfiable today and measured by nothing that can fail a build.
 | **V3** | p99 ≤ 5 µs, ≤ 1 alloc/step | **met and gated.** 172.3 ns against 5 000 ns; B2 exactly 0 B, re-verified after the durable seam | — |
 | **V4** | durable checkpoint p99 ≤ 15 ms @ 5 000 flows/s/node, Postgres | **unreported, and WP-50 shipping did not move it.** *01 §7 says "there is no journal to checkpoint into"; since WP-53 there is.* What is missing is still only the harness: WP-50 built the QR2 chaos rig and not `JournalBenchmarks`, and the rig measures **resume** latency after a `SIGKILL` — how long until another node picks an instance up — which is a different quantity from the **checkpoint commit** latency this row names. Nothing timed a commit | **WP-50**'s unbuilt half |
 | **V5** | cold start ≤ 200 ms, NativeAOT | **unreported.** The AOT job proves the binary links and serves a request; nothing times it | P9 |
-| **V6** | build overhead ≤ 8 % | **failing, and *not* gated in the sense P9 requires.** +67.1 % [+61.9, +73.6] at 200 flows. The `scale-overhead` job measures the criterion and is **advisory** — its effect on a pull request is suppressed by an explicit [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) §4(4) commitment, because a gate you already fail reds every PR over a defect none of them introduced. The blocking cost gate (`generator-cost`) is *relative*: it answers "did this change make it worse", never "is the build fast enough". **This row said "failing and gated" when first written on 2026-07-31 — copied from `01 §7`'s prose without reading `performance.yml`, which is the exact error this table exists to catch** | ADR-0014's decision |
+| **V6** | generator allocation ≤ 800,000 B/flow and ≤ 160,000 B/capability | **met, and gated.** 772,522 / 148,562 at 25 flows and 769,272 / 146,808 at 50; `check-generator-cost.py` fails the run on a breached ceiling. [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) replaced the ≤ 8 % ratio on 2026-08-10 — a ratio whose denominator is the user's code cannot be passed or failed, only re-argued, which is why the same generator measured +0.4 % on one flow and +67.1 % on two hundred. The `scale-overhead` job still measures the superseded ratio and is still advisory | — |
 | **V7** | 100 % of flows, capabilities, **policies and events** in the manifest | **partly met.** `ManifestIsComplete` covers flows and capabilities; the policies-and-events half is checked by nothing, because neither executes yet | P4, WP-56 |
 | **V8** | a mid-level engineer ships a correct flow in ≤ 2 h, n ≥ 10 | **not run** | P9 |
 

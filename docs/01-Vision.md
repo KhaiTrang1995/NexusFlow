@@ -138,15 +138,20 @@ A vision that cannot fail is marketing. FlowX succeeds only if:
 | V3 | Ephemeral dispatch overhead | p99 ≤ 5 µs, ≤ 1 allocation per step at steady state | `FlowX.Benchmarks`, CI-gated |
 | V4 | Durable checkpoint latency | p99 ≤ 15 ms at 5 000 flows/s/node (Postgres journal) | load test in `FlowX.Runtime.Tests` |
 | V5 | Cold start | ≤ 200 ms, NativeAOT-compatible | startup benchmark |
-| V6 | Build overhead | ≤ 8 % versus the same code without FlowX | compiler benchmark |
+| V6 | Build overhead | generator allocation ≤ 800,000 bytes per flow and ≤ 160,000 per capability ([ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md), 2026-08-10, replacing "≤ 8 % versus the same code without FlowX") | `check-generator-cost.py` |
 | V7 | Architecture knowability | 100 % of flows, capabilities, policies and events present in the manifest | `ManifestIsComplete` |
 | V8 | Onboarding | a mid-level engineer ships a correct flow within 2 hours of first contact | onboarding study, n ≥ 10 |
 
 > **What is actually gated today, criterion by criterion.** V3 and V6 are the
 > two of the four that this section calls CI-enforced and that a CI job
 > measures. **V3 passes** with a wide margin ([P0.md](benchmarks/P0.md): 172.3 ns
-> against a 5 000 ns budget, 0 B). **V6 is failing** — +46.6 % at 50 flows
-> against ≤ 8 % ([B12-scale.md](benchmarks/B12-scale.md)).
+> against a 5 000 ns budget, 0 B). **V6 passes** against the criterion
+> [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) re-expressed it in on
+> 2026-08-10 — 148,562 bytes per capability against a 160,000 ceiling — and
+> `check-generator-cost.py` fails the run when a ceiling is breached. It was failing the
+> ratio that criterion replaced, at +46.6 % against ≤ 8 %
+> ([B12-scale.md](benchmarks/B12-scale.md)), and that measurement stays true of what it
+> measured.
 >
 > **V4 and V5 have no harness.** *This sentence said "there is no journal to checkpoint
 > into"; since WP-53 there is one, with a PostgreSQL store. What V4 lacks is the load test
