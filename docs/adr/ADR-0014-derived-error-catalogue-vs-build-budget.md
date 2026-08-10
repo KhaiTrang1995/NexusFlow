@@ -1,8 +1,31 @@
 # ADR-0014: Keep the derived error catalogue, and re-express the build-overhead budget it breaks
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-07-31
 **Deciders:** Repository owner · Platform architecture
+
+> **DECIDED 2026-08-10 — option A, with one correction to it.** The derivation stays, and
+> the build-overhead budget is re-expressed per unit of work. What this record recommended
+> was *milliseconds* per flow and per capability type; the unit is **bytes allocated**
+> instead, and the reason arrived after this record was written:
+> [generator-cost-gate.md](../benchmarks/generator-cost-gate.md) measured twelve identical
+> runs of one tree disagreeing on wall clock by **139 %** while allocation moved by
+> **0.069 %**. A criterion nobody can measure on the runner they have is a criterion that
+> gets ignored, which is the failure this option exists to avoid. Milliseconds stay
+> reported, and advisory.
+>
+> **The figures the new criterion is set from**, measured on the corrected harness:
+> **772,522 bytes per flow at 25 flows and 769,272 at 50** — flat, as an absolute unit
+> should be — and **148,562 / 146,808 bytes per capability**. With the reader stubbed out
+> the same subject costs **83,460 bytes per capability**, so the derivation this record is
+> about is **≈ 65,000 bytes per capability** and the rest is the plan emitter.
+>
+> **Option B was also tried, and failed for a second reason this record did not have.**
+> §B argues it is wrong because absence in the `errors` field already means something else.
+> It is additionally not implementable cheaply: `ForAttributeWithMetadataName` gives its
+> transform no view of build properties, so an MSBuild switch can only discard the result
+> *after* the body has been bound — a switch that turns off the output and not the work.
+> Both halves are now on the record.
 
 > **Recommendation: keep the derivation ([option A](#a-keep-it-as-is-re-express-the-budget--recommended)), and re-express B12's budget per unit
 > of work with a size-qualified P1 exit criterion — because deleting the feature does not

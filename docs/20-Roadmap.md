@@ -65,7 +65,7 @@ gantt
 | **Proves** | the generator is maintainable, debuggable and fast at realistic scale |
 | **Must** | full DSL: `When`/`Otherwise`, `Switch`, `Parallel`, `ForEach`, `SubFlow` · contract-compatibility checking · diagnostics with fixes and help URIs · generator snapshot tests · readable emitted code · build-overhead budget B12 |
 | **Should** | IDE code fixes · `flowx diff` v1 |
-| **Done when** | a 200-flow synthetic solution builds with ≤ 8 % overhead; every diagnostic passes `EveryDiagnosticIsHelpful`; emitted code is breakpoint-able |
+| **Done when** | the generator allocates ≤ 800,000 bytes per flow and ≤ 160,000 bytes per capability, at any subject size ([ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) decided 2026-08-10, replacing "≤ 8 % overhead"); every diagnostic passes `EveryDiagnosticIsHelpful`; emitted code is breakpoint-able |
 
 > **P1 status, stated rather than implied.** The DSL Must is met — all five
 > shapes ship. The diagnostics Must is met for every id that exists, and the
@@ -175,7 +175,7 @@ profile, visual round-trip editing in Studio, human-task/BPM modelling.
 | Phase | Leading indicator | Lagging indicator |
 |---|---|---|
 | P0 | benchmark budgets green | the thesis survives |
-| P1 | diagnostics resolved without reading docs | build overhead ≤ 8 % |
+| P1 | diagnostics resolved without reading docs | generator bytes per flow and per capability |
 | P2 | chaos test passes 100 runs | zero duplicate effects |
 | P3 | plugin authored by someone outside the core team | conformance pass rate |
 | P4 | zero capabilities without an authorisation stance | clean pen test |

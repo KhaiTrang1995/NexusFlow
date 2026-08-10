@@ -246,7 +246,7 @@ def report(samples: dict, baseline: dict) -> None:
               f"{entry['spread_percent']:8.3f}% {entry['elapsed_ms']:9.0f}ms")
 
 
-def absolute_criterion(baseline: dict) -> None:
+def absolute_criterion(baseline: dict, samples: dict) -> bool:
     """Reprint P1's actual exit criterion, whatever the relative gate decided.
 
     A relative gate answers "did this change make it worse". It cannot answer "is it good
@@ -255,19 +255,52 @@ def absolute_criterion(baseline: dict) -> None:
     """
     criterion = baseline.get("absoluteCriterion")
     if not criterion:
-        return
+        return True
+
+    # EVALUATED NOW, NOT REPRINTED. Until ADR-0014 was decided the criterion was a wall-clock
+    # ratio measured by another harness, so this script could only quote it and say so. In
+    # bytes per flow and per capability it is exactly what these samples already hold, and a
+    # criterion this script can evaluate is one it must evaluate -- reprinting a number it
+    # could have checked is how the old one stopped being watched.
+    flow_ceiling = criterion.get("bytesPerFlowCeiling")
+    capability_ceiling = criterion.get("bytesPerCapabilityCeiling")
+
+    breaches = []
+
+    for entry in samples["sizes"]:
+        if flow_ceiling and entry["allocated_bytes_per_flow"] > flow_ceiling:
+            breaches.append(
+                f"{entry['flows']} flows: {entry['allocated_bytes_per_flow']:,.0f} bytes per "
+                f"flow, above the {flow_ceiling:,} ceiling")
+
+        if capability_ceiling and entry.get("allocated_bytes_per_capability", 0) > capability_ceiling:
+            breaches.append(
+                f"{entry['flows']} flows: {entry['allocated_bytes_per_capability']:,.0f} bytes "
+                f"per capability, above the {capability_ceiling:,} ceiling")
+
+    measurable = flow_ceiling or capability_ceiling
 
     print()
     print("=" * 72)
-    print(f"ABSOLUTE CRITERION — {criterion['status']}. This gate does not measure it.")
+    if not measurable:
+        print(f"ABSOLUTE CRITERION — {criterion['status']}. This gate does not measure it.")
+    else:
+        print(f"ABSOLUTE CRITERION — {'FAIL' if breaches else 'PASS'}, measured from this run.")
     print("=" * 72)
     print(f"    P1 exit criterion : {criterion['criterion']}")
-    print(f"    last measured     : {criterion['lastMeasured']}")
-    print(f"    measured by       : {criterion['measuredBy']}")
     print(f"    recorded in       : {criterion['recordedIn']}")
+
+    if superseded := criterion.get("supersededCriterion"):
+        print(f"    replaced          : {superseded['criterion']} — {superseded['status']}")
+
+    for breach in breaches:
+        print(f"::error::absolute criterion — {breach}")
+
     print()
-    print("    A pass above means this change did not make the generator more expensive.")
-    print("    It does not mean the build overhead budget is met. It is not.")
+    print("    The relative verdict above answers whether this change made the generator worse.")
+    print("    This answers whether it is good enough, which is a different question.")
+
+    return not breaches
 
 
 def main() -> int:
@@ -322,7 +355,12 @@ def main() -> int:
         print(f"\nVERDICT: PASS — generator cost within +{threshold}% of the committed "
               f"baseline ({len(advisory)} advisory note(s)).")
 
-    absolute_criterion(baseline)
+    # A breached ceiling fails the run even when nothing regressed. The two questions are
+    # independent: a generator can get no worse and still be too expensive, which is the
+    # state this project was in for four working packages while the criterion was only
+    # reprinted.
+    if not absolute_criterion(baseline, samples) and verdict == PASS:
+        return EXIT[FAIL]
 
     return EXIT[verdict]
 
