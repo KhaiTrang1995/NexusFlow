@@ -10,11 +10,13 @@
 FlowX publishes budgets *before* implementation. That is the point of the table: a number
 written down before the code exists is a number the code has to answer to.
 
-**Four of the fourteen rows below are measured today. The rest are not, and the `Gate`
+**Six of the fourteen rows below are measured today. The rest are not, and the `Gate`
 column now says so.** B1, B2, B3 and B12 run in CI on every pull request and fail the build
-on regression; B6's allocation half does too. The other nine have a budget, a scenario and a
-metric, and nothing that produces a number for them — including B7, B8 and B9, which are the
-durable path, the thing this platform exists to do.
+on regression; B6's allocation half does too. B7 and B8 are measured on demand by
+`tests/FlowX.Durability.Bench` against a real PostgreSQL — B8 is met at 3.634 ms, and B7 has
+a number that is not yet a verdict because no machine has offered it the 5 000 commits/s its
+budget names. The remaining seven have a budget, a scenario and a metric, and nothing that
+produces a number for them.
 
 **This paragraph used to say "measures them in CI on every pull request... Nothing here is
 aspirational."** It was written when the table was shorter and it stopped being true as rows
@@ -33,8 +35,8 @@ worse than no table — so the column is corrected rather than the sentence soft
 | B4 | Policy chain (timeout+retry+breaker, no failure) | p99 overhead | **400 ns** | **none — no benchmark exists** |
 | B5 | Telemetry with exporter attached | per step | **200 ns** | **none — no benchmark exists** |
 | B6 | Telemetry with no listener | per step | **0 ns / 0 B** | CI for the **0 B** half only (`Allocation budget` job). The **0 ns** half has no benchmark |
-| B7 | Durable step commit (Postgres, group commit) | p99 | **15 ms @ 5 000 commits/s/node** | **none — no benchmark, and no nightly performance job exists** |
-| B8 | Flow instance rehydration from journal | p99 | **8 ms** | **none — see B7** |
+| B7 | Durable step commit (Postgres, group commit) | p99 | **15 ms @ 5 000 commits/s/node** | measured by `tests/FlowX.Durability.Bench`, on demand. **Not yet judged**: the recorded four-core run saturates at 4 103 commits/s and cannot offer the rate — store-side p99 14.146 ms — [B7-B8-durability.md](benchmarks/B7-B8-durability.md). The verdict logic is merge-gated by `durability-self-test` |
+| B8 | Flow instance rehydration from journal | p99 | **8 ms** | measured by `tests/FlowX.Durability.Bench`, on demand. **MET**: p99 **3.634 ms** over 2 000 rehydrations at history depth 20 — [B7-B8-durability.md](benchmarks/B7-B8-durability.md) |
 | B9 | HTTP trigger end-to-end (trivial flow, localhost) | p99 | **1.2 ms** | **none — see B7** |
 | B10 | Cold start, NativeAOT, ready-to-serve | — | **200 ms** | **none — no benchmark exists** |
 | B11 | Idle RSS, 100 flows registered | — | **60 MB** | **none — no benchmark exists** |

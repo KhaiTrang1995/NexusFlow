@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>FlowX.Durability.Bench</RootNamespace>
+
+    <!--
+      A measurement harness, in the same position as tests/FlowX.Benchmarks and
+      tests/FlowX.Chaos: it ships to nobody, so the AOT and trim analyzers have no
+      subject here. EveryShippedProjectIsAotAnalyzed guards the trees that do ship.
+    -->
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+
+    <!--
+      CA1031 — a general catch. This rig has to report what went wrong rather than
+      unwind, because a crashed rig is indistinguishable from a rig that measured
+      nothing, and that is the outcome the whole gate exists to prevent.
+
+      CA1303 — literal strings passed to Console. This prints a report, not a UI.
+    -->
+    <NoWarn>$(NoWarn);CA1031;CA1303</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The resume path B8 prices is DurableExecution.ResumeAsync, not a rig's copy of it. -->
+    <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+    <!-- The store under measurement. B7 and B8 are both PostgreSQL numbers. -->
+    <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+  </ItemGroup>
+
+</Project>

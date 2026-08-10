@@ -1,0 +1,53 @@
+{
+  "budgets": [
+    {
+      "budget": "B7",
+      "what": "Durable step commit (PostgreSQL), one node, several writers in flight",
+      "offeredRatePerSecond": 5000,
+      "achievedRatePerSecond": 4103.5,
+      "writers": 32,
+      "refusals": 0,
+      "refusalCodes": [],
+      "service": {
+        "name": "commit.service",
+        "operations": 20000,
+        "meanMs": 7.788,
+        "p50Ms": 7.5987,
+        "p95Ms": 11.4858,
+        "p99Ms": 14.1465,
+        "maxMs": 23.0654
+      },
+      "response": {
+        "name": "commit.response",
+        "operations": 20000,
+        "meanMs": 925.6906,
+        "p50Ms": 956.4421,
+        "p95Ms": 1247.409,
+        "p99Ms": 1271.7365,
+        "maxMs": 1283.0999
+      }
+    },
+    {
+      "budget": "B8",
+      "what": "Flow instance rehydration: DurableExecution.ResumeAsync (fence, then frontier read)",
+      "historyDepth": 20,
+      "stepsRead": 40000,
+      "failures": 0,
+      "total": {
+        "name": "resume.total",
+        "operations": 2000,
+        "meanMs": 2.0327,
+        "p50Ms": 1.8802,
+        "p95Ms": 2.4958,
+        "p99Ms": 3.6343,
+        "maxMs": 30.0892
+      }
+    }
+  ],
+  "machine": {
+    "processorCount": 4,
+    "postgres": "PostgreSQL 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit",
+    "synchronousCommit": "on",
+    "wallClockSeconds": 85.4
+  }
+}

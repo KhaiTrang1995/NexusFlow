@@ -477,3 +477,37 @@ jobs:
             exit 1
           fi
           echo "Gate correctly reported the unmeasured benchmarks as absent."
+
+  durability-self-test:
+    name: The durability gate (B7, B8) can fail
+    runs-on: ubuntu-latest
+    # No database, and that is the point of putting it here rather than beside the rig.
+    # tests/FlowX.Durability.Bench needs a PostgreSQL and minutes; its JUDGEMENT needs
+    # neither, and the judgement is where a softening would happen unseen. The checker
+    # downgrades a B7 latency breach to a warning when the offered rate was not sustained
+    # — correct, because the queue is then the finding — and widening that by one
+    # condition would switch the gate off silently.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+
+      - name: Nine verdicts, and only two of them green
+        run: python3 scripts/selftest-durability-verdict.py
+
+      - name: The recorded run is the one the self-test claims it is
+        # The self-test builds every case by mutating docs/benchmarks/B7-B8-durability.json,
+        # so a recorded run replaced by a fabricated one would take the whole suite with it.
+        # Two facts are asserted directly: the commit was durable, and the arm the p99 is
+        # read from actually ran.
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          document = json.load(open('docs/benchmarks/B7-B8-durability.json'))
+          machine = document['machine']
+          if machine.get('synchronousCommit') != 'on':
+              sys.exit("::error::The recorded run did not commit durably, so it is not a B7 record.")
+          commit = next(a for a in document['budgets'] if a['budget'] == 'B7')
+          if commit['response']['operations'] < 1000:
+              sys.exit("::error::The recorded run measured too few commits to carry a p99.")
+          print(f"Recorded run: {commit['response']['operations']} commits, "
+                f"synchronous_commit {machine['synchronousCommit']}.")
+          PY

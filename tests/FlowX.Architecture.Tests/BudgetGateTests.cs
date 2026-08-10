@@ -36,6 +36,67 @@ public sealed partial class BudgetGateTests
     [GeneratedRegex(@"^\| (?<id>B[0-9]+p?) \|(?<middle>.*)\| (?<gate>[^|]*)\|\s*$", RegexOptions.Multiline)]
     private static partial Regex BudgetRow();
 
+    /// <summary>Matches a repository path named inside a gate cell.</summary>
+    [GeneratedRegex(@"`((?:tests|scripts|src|plugins|docs)/[A-Za-z0-9._/-]+)`")]
+    private static partial Regex NamedPath();
+
+    /// <summary>
+    /// A budget whose gate names a harness names one that is there.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The second way this column goes wrong.</strong> The first was a row claiming
+    /// an enforcement nothing performed, and the rule below catches it by looking for the
+    /// budget's number in the evidence CI reads. That test only fires on a cell saying "CI"
+    /// or "nightly", so it says nothing about a cell that names a rig instead — and naming a
+    /// rig is now how B7 and B8 describe themselves.
+    /// </para>
+    /// <para>
+    /// A path is checkable and a claim is not, so this checks the path. A renamed or deleted
+    /// harness leaves the row pointing at nothing, which reads to a reader exactly like a
+    /// measurement that happens elsewhere.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryHarnessNamedByAGateExists()
+    {
+        var document = new FileInfo(Path.Combine(
+            RepositoryLayout.Root.FullName, "docs", "14-Performance.md"));
+
+        var rows = BudgetRow().Matches(File.ReadAllText(document.FullName));
+
+        var missing = new List<string>();
+        var found = 0;
+
+        foreach (Match row in rows)
+        {
+            foreach (Match path in NamedPath().Matches(row.Groups["gate"].Value))
+            {
+                var named = path.Groups[1].Value;
+                var full = Path.Combine(RepositoryLayout.Root.FullName, named);
+
+                if (File.Exists(full) || Directory.Exists(full))
+                {
+                    found++;
+
+                    continue;
+                }
+
+                missing.Add(
+                    $"{row.Groups["id"].Value}'s gate names `{named}`, and there is no such "
+                    + "file or directory. The row points a reader at a measurement that is "
+                    + "not where it says it is.");
+            }
+        }
+
+        found.ShouldBeGreaterThan(
+            0,
+            "No gate cell named a harness, so this rule checked nothing. Either the table "
+            + "stopped naming its rigs or the pattern no longer matches how it does.");
+
+        missing.ShouldBeEmpty(string.Join(Environment.NewLine, missing));
+    }
+
     /// <summary>
     /// A budget whose gate column claims CI is one something in this repository measures.
     /// </summary>
