@@ -137,7 +137,7 @@
       "allocatedBytes": 678312,
       "budget": "B12",
       "budgetNs": 60000000,
-      "note": "Build overhead. The ratio here does NOT answer the 8% budget -- the arms are not like-for-like. See docs/benchmarks/B12.md. Allocations are banded rather than exact because this benchmark measures Roslyn's allocations, not ours, and those move between runs of the same commit. Committed so a generator that became much slower or much greedier shows as a regression while the ratio question is open.",
+      "note": "Build overhead. The ratio here does NOT answer the 8% budget -- the arms are not like-for-like. See docs/benchmarks/B12.md. Allocations are banded rather than exact because this benchmark measures Roslyn's allocations, not ours, and those move between runs of the same commit. Committed so a generator that became much slower or much greedier shows as a regression while the ratio question is open. THE RATIO QUESTION IS CLOSED as of 2026-08-10: ADR-0014 replaced the 8% ratio with generator allocation per flow and per capability, checked by check-generator-cost.py. These three entries still measure what they always measured and are still worth committing, but they no longer sit beside an open question.",
       "allocationTolerancePercent": 15
     },
     "CompilerBenchmarks.GeneratorOnly": {
@@ -146,7 +146,7 @@
       "allocatedBytes": 857070,
       "budget": "B12",
       "budgetNs": 60000000,
-      "note": "Build overhead. The ratio here does NOT answer the 8% budget -- the arms are not like-for-like. See docs/benchmarks/B12.md. Allocations are banded rather than exact because this benchmark measures Roslyn's allocations, not ours, and those move between runs of the same commit. Committed so a generator that became much slower or much greedier shows as a regression while the ratio question is open. Re-recorded 2026-08-09: 588937 -> 857070 B.",
+      "note": "Build overhead. The ratio here does NOT answer the 8% budget -- the arms are not like-for-like. See docs/benchmarks/B12.md. Allocations are banded rather than exact because this benchmark measures Roslyn's allocations, not ours, and those move between runs of the same commit. Committed so a generator that became much slower or much greedier shows as a regression while the ratio question is open. THE RATIO QUESTION IS CLOSED as of 2026-08-10: ADR-0014 replaced the 8% ratio with generator allocation per flow and per capability, checked by check-generator-cost.py. These three entries still measure what they always measured and are still worth committing, but they no longer sit beside an open question. Re-recorded 2026-08-09: 588937 -> 857070 B.",
       "allocationTolerancePercent": 15
     },
     "CompilerBenchmarks.WithGenerator": {
@@ -155,7 +155,7 @@
       "allocatedBytes": 2072971,
       "budget": "B12",
       "budgetNs": 60000000,
-      "note": "Build overhead. The ratio here does NOT answer the 8% budget -- the arms are not like-for-like. See docs/benchmarks/B12.md. Allocations are banded rather than exact because this benchmark measures Roslyn's allocations, not ours, and those move between runs of the same commit. Committed so a generator that became much slower or much greedier shows as a regression while the ratio question is open. Re-recorded 2026-08-09: 1508524 -> 2072971 B.",
+      "note": "Build overhead. The ratio here does NOT answer the 8% budget -- the arms are not like-for-like. See docs/benchmarks/B12.md. Allocations are banded rather than exact because this benchmark measures Roslyn's allocations, not ours, and those move between runs of the same commit. Committed so a generator that became much slower or much greedier shows as a regression while the ratio question is open. THE RATIO QUESTION IS CLOSED as of 2026-08-10: ADR-0014 replaced the 8% ratio with generator allocation per flow and per capability, checked by check-generator-cost.py. These three entries still measure what they always measured and are still worth committing, but they no longer sit beside an open question. Re-recorded 2026-08-09: 1508524 -> 2072971 B.",
       "allocationTolerancePercent": 15
     }
   },

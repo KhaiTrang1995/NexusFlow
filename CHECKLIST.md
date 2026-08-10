@@ -73,11 +73,25 @@
 > **P0 kill criterion: PASS** — B1 **172.3 ns** / 5 000 ns budget · B2 **0 B** exactly ·
 > B3 dispatch 21.9 ns / 150 ns. See [P0.md](docs/benchmarks/P0.md)
 >
-> ### ⚠ P1 closed over an unmet exit criterion, on purpose
+> ### ⚠ P1 closed over an unmet exit criterion — and that criterion has since been replaced
 >
+> **This box is kept because it was true, and it is no longer the state of the repository.**
+> On 2026-08-10 [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) was
+> decided. It keeps the derived error catalogue and states the budget in a different unit:
+> bytes the generator allocates per flow and per capability, not a percentage. The generator
+> meets it — 772,522 bytes per flow against a ceiling of 800,000, and 148,562 per capability
+> against 160,000 — and `check-generator-cost.py` fails the run if a ceiling is passed. So the
+> exception below is closed, not carried.
+>
+> **Why the unit changed.** A percentage is a comparison with the same code minus FlowX, so its
+> bottom half is the user's own code. The same generator measured **+0.4 %** on a one-flow
+> sample and **+67.1 %** on 200 flows. Nothing about the generator moved between those two
+> numbers. A figure like that can be argued about but not passed or failed.
+>
+> **What was true when this box was written, and still is as a measurement.**
 > **Build overhead at 200 flows is +67.1 %** [+61.9, +73.6] against a **≤ 8 %** exit
 > criterion — failed by 59 points. The repository owner set performance aside and closed
-> the phase on 2026-07-31; the criterion is carried into P2 as a **named, accepted
+> the phase on 2026-07-31; the criterion was carried into P2 as a **named, accepted
 > exception**. Its box below stays `[~]`, not `[x]`, and the reason it is stated up here
 > rather than only at line 500 is that a phase closed over a failing criterion a reader
 > has to go looking for is the exact drift this project spent P1 removing. Detail and the
@@ -546,7 +560,7 @@ Scope from [the roadmap](docs/20-Roadmap.md#3-increment-detail); work packages i
 
 | Criterion | Verdict |
 |---|---|
-| 200-flow solution builds with ≤ 8 % overhead | **FAIL at +67.1 %** [+61.9, +73.6]; 50 flows +46.5 %. **Accepted as an exception; the phase closed over it.** `FlowPlanGenerator` is 90.5 % of the marginal cost and would need an ~8× cut. [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) is the open decision and is still **Proposed** |
+| generator allocates ≤ 800,000 bytes per flow and ≤ 160,000 per capability | **PASS** — 772,522 and 148,562 at 25 flows, 769,272 and 146,808 at 50, flat across both sizes. `check-generator-cost.py` fails the run on a breached ceiling. [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) put this criterion in place of "≤ 8 % overhead" on 2026-08-10; against the old one the answer was **FAIL at +67.1 %**, and that measurement is still true of what it measured |
 | every diagnostic passes `EveryDiagnosticIsHelpful` | **PASS** — `FlowX.Compiler.Tests.CompilerFitnessTests.EveryDiagnosticIsHelpful`, green in this working tree |
 | emitted code is breakpoint-able | **PASS** — `FlowPlanGeneratorTests.EachStepGetsItsOwnLineDirective` plus five further line-directive tests across the emitter, `Fail` and step-input mapping, all green |
 
@@ -561,7 +575,8 @@ forbids, so the documented shape was corrected rather than faked. `AwaitSignal` 
 **Carried into P2, in three named piles** — five reserved diagnostics (`FLOWX1006`,
 `FLOWX1007`–`FLOWX1009`, `FLOWX1012`, four of them blocked on *severity* and not on
 analysis), three blocked fitness functions (`CrossTenantAccessIsDenied`,
-`RedactionCannotBeBypassed`, `PluginsPassConformance`), and the build-overhead exception.
+`RedactionCannotBeBypassed`, `PluginsPassConformance`), and the build-overhead exception —
+which is closed as of 2026-08-10, when ADR-0014 replaced the criterion it was an exception to.
 **The first pile is now empty:** WP-58 raised `FLOWX1007`–`FLOWX1009`, WP-60 raised
 `FLOWX1012`, and WP-59 raised `FLOWX1006` on 2026-08-01 — the one of the five that was
 blocked on a payload writer rather than on severity, and therefore the last. The second and
