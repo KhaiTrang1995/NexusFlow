@@ -1,0 +1,42 @@
+{
+  "$comment": [
+    "Types that hold an IStepDispatcher and are NOT decorators of it.",
+    "",
+    "EveryDispatcherDecoratorForwardsEveryMember finds a decorator structurally: a type that",
+    "implements IStepDispatcher and holds one. That predicate is deliberately wide, because the",
+    "two defects PLAN section 9 item 12 records were both hand-written harnesses holding the",
+    "GENERATED dispatcher by its concrete type -- a shape a narrower predicate missed entirely.",
+    "",
+    "Wide catches three things that are not decorators, and the difference is what a held",
+    "dispatcher is FOR:",
+    "",
+    "  a decorator holds the inner one because its whole contract is 'that, plus something'.",
+    "  Every member it does not forward is a feature it silently switches off.",
+    "",
+    "  a sub-flow composer holds a CHILD's dispatcher, for one step. Its own journal entries,",
+    "  cache keys and audit records are its own; answering for itself is correct, and forwarding",
+    "  would attribute the parent's steps to the child.",
+    "",
+    "  a stub holds one it never dispatches to, because a constructor took it.",
+    "",
+    "A row here is a claim of the second or third kind, and it must say which. The list can only",
+    "shrink: a type that starts forwarding is reported, so an entry cannot outlive its reason."
+  ],
+  "notDecorators": [
+    {
+      "type": "Workflow.OnboardEmployeeFlow/Dispatcher",
+      "kind": "sub-flow composer",
+      "why": "Generated. It holds the child flow's dispatcher for the SubFlow step and nothing else; its DescribeStep, cache keys and audit records describe the parent's own steps. Forwarding them would file the parent's journal under the child."
+    },
+    {
+      "type": "FlowX.Runtime.Tests.EngineAllocationTests/ComposingDispatcher",
+      "kind": "sub-flow composer",
+      "why": "The double for the shape above, holding a child plan and its dispatcher for one step. Same reason, and it exists to measure the engine's allocations rather than to add behaviour to anything."
+    },
+    {
+      "type": "FlowX.Hosting.Tests.DrainTests/DetachingDispatcher",
+      "kind": "stub",
+      "why": "Takes a child in its constructor and never calls it: every member answers Success so a drain can be observed without a flow doing work. There is nothing to forward to."
+    }
+  ]
+}

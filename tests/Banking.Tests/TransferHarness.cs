@@ -297,6 +297,21 @@ internal sealed class TransferHarness
         // exactly the state WP-59 found it in — while every other test went on passing.
         public JournalPayload DescribeInput(object? input) => _inner.DescribeInput(input);
 
+        /// <summary>Forwarded for <c>DescribeInput</c>'s reason, one member along.</summary>
+        /// <remarks>
+        /// A decorator that inherits the interface's default answers <c>JournalPayload.Empty</c> for
+        /// the thing it wraps, and the feature behind the member turns off without failing anything:
+        /// a cache key that reads empty makes every cached step look uncached. PLAN §9 item 12
+        /// records this costing the repository twice, both times in a harness like this one.
+        /// </remarks>
+        public JournalPayload DescribeCacheKey(int stepIndex, FlowContext ctx) =>
+            ((IStepDispatcher)_inner).DescribeCacheKey(stepIndex, ctx);
+
+        /// <inheritdoc cref="DescribeCacheKey"/>
+        public JournalPayload DescribeCacheEntry(int stepIndex, FlowContext ctx) =>
+            ((IStepDispatcher)_inner).DescribeCacheEntry(stepIndex, ctx);
+
+
         public void RestoreState(FlowContext ctx, string stateBagJson) =>
             _inner.RestoreState(ctx, stateBagJson);
 

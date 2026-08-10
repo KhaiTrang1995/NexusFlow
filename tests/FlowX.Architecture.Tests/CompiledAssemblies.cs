@@ -52,11 +52,29 @@ internal static class CompiledAssemblies
     public static IReadOnlyList<string> ShippingAssemblies => ShippingProjects.Keys.ToList();
 
     /// <summary>Shipping assembly name to the directory of the project that builds it.</summary>
-    private static readonly SortedDictionary<string, DirectoryInfo> ShippingProjects = SurveyProjects();
+    private static readonly SortedDictionary<string, DirectoryInfo> ShippingProjects =
+        SurveyProjects(SourceSurvey.ShippingTrees);
+
+    /// <summary>
+    /// The assemblies built from <c>tests/</c>, for the rules a test project can break.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Separate from <see cref="ShippingAssemblies"/> on purpose.</strong> Most rules
+    /// here are about what ships, and running them over the suite would report every deliberate
+    /// violation a test writes in order to have something to assert against. A few are not: a
+    /// hand-written decorator in a harness answers for the thing it wraps exactly as one in
+    /// <c>src</c> does, and PLAN §9 item 12 records that happening twice — both times in a
+    /// harness, which is precisely where the rule was not looking.
+    /// </remarks>
+    public static IReadOnlyList<string> TestAssemblies => TestProjects.Keys.ToList();
+
+    private static readonly SortedDictionary<string, DirectoryInfo> TestProjects = SurveyProjects(["tests"]);
 
     /// <summary>The directory of the project that builds an assembly, when it is a shipping one.</summary>
     public static DirectoryInfo? ProjectDirectory(string assemblyName) =>
-        ShippingProjects.TryGetValue(assemblyName, out var directory) ? directory : null;
+        ShippingProjects.TryGetValue(assemblyName, out var directory) ? directory
+            : TestProjects.TryGetValue(assemblyName, out var test) ? test
+            : null;
 
     /// <summary>Opens a project's own build output by project name.</summary>
     /// <param name="assemblyName">The assembly's simple name, e.g. <c>FlowX.Runtime</c>.</param>
@@ -105,11 +123,11 @@ internal static class CompiledAssemblies
             : null;
     }
 
-    private static SortedDictionary<string, DirectoryInfo> SurveyProjects()
+    private static SortedDictionary<string, DirectoryInfo> SurveyProjects(IReadOnlyList<string> trees)
     {
         var found = new SortedDictionary<string, DirectoryInfo>(StringComparer.Ordinal);
 
-        foreach (var tree in SourceSurvey.ShippingTrees)
+        foreach (var tree in trees)
         {
             var directory = new DirectoryInfo(Path.Combine(RepositoryLayout.Root.FullName, tree));
 

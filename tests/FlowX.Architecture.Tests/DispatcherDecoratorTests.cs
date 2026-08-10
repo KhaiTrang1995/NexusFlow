@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Mono.Cecil;
 using Shouldly;
 using Xunit;
@@ -60,6 +61,11 @@ public sealed class DispatcherDecoratorTests
             "StepTelemetry and SubstitutingDispatcher are both decorators, so a run that finds " +
             "none is a broken scan passing vacuously.");
 
+        decorators.Select(static decorator => decorator.Name).ShouldContain(
+            static name => name.Contains("Harness", StringComparison.Ordinal),
+            "No decorating harness was found under tests/, and two of them are what this rule " +
+            "was written for. The scan has stopped reaching the suite.");
+
         var missing = decorators
             .SelectMany(decorator => expected
                 .Where(member => !decorator.Members.Contains(member))
@@ -100,7 +106,11 @@ public sealed class DispatcherDecoratorTests
     {
         var found = new List<Decorator>();
 
-        foreach (var assembly in CompiledAssemblies.ShippingAssemblies)
+        // TEST ASSEMBLIES TOO, AND THEY ARE WHY THIS RULE EXISTS. Both defects PLAN §9 item 12
+        // records were decorating harnesses under tests/, each forwarding most members and
+        // inheriting the rest, while every other test went on passing. A rule that watched only
+        // what ships was not looking where it broke.
+        foreach (var assembly in CompiledAssemblies.ShippingAssemblies.Concat(CompiledAssemblies.TestAssemblies))
         {
             // Read eagerly rather than yielding the TypeDefinition: Cecil's members are read
             // through the module, and handing one back outliving its `using` reads a closed file.
@@ -121,10 +131,74 @@ public sealed class DispatcherDecoratorTests
         return found;
     }
 
+    /// <summary>
+    /// A dispatcher that holds another one, whether it names it by interface or by type.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The concrete case is the one that has bitten.</strong> This used to require a
+    /// field typed exactly <c>IStepDispatcher</c>, which is how <c>StepTelemetry</c> is written.
+    /// A harness wrapping one flow writes the generated type instead —
+    /// <c>ExecuteTransferFlow.Dispatcher</c> — because it wants that plan's dispatcher and
+    /// nothing else. Same decorator, same silent-default hazard, invisible here: both defects
+    /// PLAN §9 item 12 records are of exactly that shape.
+    /// </para>
+    /// <para>
+    /// Wide by design, and narrowed by <c>dispatcher-decorators-exempt.json</c> rather than by a
+    /// cleverer predicate. Holding a dispatcher for a sub-flow step is structurally identical to
+    /// decorating one; only the intent differs, and intent is not in the IL.
+    /// </para>
+    /// <para>
+    /// A field type that cannot be resolved is not a decorator, which is the safe direction: it
+    /// means the type lives in an assembly this walk was not given, and a member list read from
+    /// nothing would be a finding about the scan.
+    /// </para>
+    /// </remarks>
     private static bool IsDecorator(TypeDefinition type) =>
         type.Interfaces.Any(static i => i.InterfaceType.FullName == DispatcherInterface)
-        && type.Fields.Any(
-            static field => !field.IsStatic && field.FieldType.FullName == DispatcherInterface);
+        && !Exempt.Contains(type.FullName)
+        && type.Fields.Any(static field => !field.IsStatic && IsDispatcher(field.FieldType));
+
+    private static bool IsDispatcher(TypeReference reference)
+    {
+        if (reference.FullName == DispatcherInterface)
+        {
+            return true;
+        }
+
+        try
+        {
+            return reference.Resolve() is { } resolved
+                && resolved.Interfaces.Any(static i => i.InterfaceType.FullName == DispatcherInterface);
+        }
+        catch (AssemblyResolutionException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Types that hold a dispatcher without decorating it, with a stated reason each.</summary>
+    private static readonly HashSet<string> Exempt = ExemptTypes();
+
+    private static HashSet<string> ExemptTypes()
+    {
+        var file = new FileInfo(Path.Combine(
+            RepositoryLayout.Root.FullName,
+            "tests",
+            "FlowX.Architecture.Tests",
+            "dispatcher-decorators-exempt.json"));
+
+        file.Exists.ShouldBeTrue(
+            $"{file.FullName} is what separates a composer from a decorator. Without it every "
+            + "sub-flow dispatcher reads as a decorator that forgot six members.");
+
+        using var document = JsonDocument.Parse(File.ReadAllText(file.FullName));
+
+        return document.RootElement.GetProperty("notDecorators")
+            .EnumerateArray()
+            .Select(entry => entry.GetProperty("type").GetString() ?? string.Empty)
+            .ToHashSet(StringComparer.Ordinal);
+    }
 
     /// <summary>A decorator's name and the members it declares itself.</summary>
     private sealed record Decorator(string Name, IReadOnlySet<string> Members);
