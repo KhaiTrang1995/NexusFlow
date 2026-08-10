@@ -1,0 +1,664 @@
+[
+  {
+    "persona": "rep",
+    "route": "/",
+    "status": "ok",
+    "chars": 2228,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/kanban",
+    "status": "ok",
+    "chars": 2002,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/search",
+    "status": "ok",
+    "chars": 494,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/service/cases",
+    "status": "ok",
+    "chars": 824,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/service/board",
+    "status": "ok",
+    "chars": 479,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/service/sla",
+    "status": "api-error",
+    "chars": 1313,
+    "errors": [
+      "403 /api/v1/crm/config",
+      "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+    ]
+  },
+  {
+    "persona": "rep",
+    "route": "/work/inbox",
+    "status": "ok",
+    "chars": 713,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/work/calendar",
+    "status": "ok",
+    "chars": 733,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/work/mobile",
+    "status": "ok",
+    "chars": 550,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/exec",
+    "status": "ok",
+    "chars": 1521,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/exec/board",
+    "status": "ok",
+    "chars": 1674,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/exec/forecast",
+    "status": "ok",
+    "chars": 687,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/exec/insights",
+    "status": "ok",
+    "chars": 1574,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/exec/kpis",
+    "status": "ok",
+    "chars": 1171,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/exec/org",
+    "status": "ok",
+    "chars": 545,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/exec/reviews",
+    "status": "ok",
+    "chars": 920,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/exec/sales-performance",
+    "status": "ok",
+    "chars": 751,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/exec/deal-performance",
+    "status": "ok",
+    "chars": 785,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/plan/portfolio",
+    "status": "ok",
+    "chars": 1453,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/plan/strategy",
+    "status": "ok",
+    "chars": 764,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/plan/accounts",
+    "status": "ok",
+    "chars": 2099,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/plan/leads",
+    "status": "ok",
+    "chars": 2066,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/plan/opportunities",
+    "status": "ok",
+    "chars": 1974,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/plan/operations",
+    "status": "ok",
+    "chars": 949,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/analytics/reports",
+    "status": "api-error",
+    "chars": 440,
+    "errors": [
+      "403 /api/v1/crm/config",
+      "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+    ]
+  },
+  {
+    "persona": "rep",
+    "route": "/analytics/campaigns",
+    "status": "ok",
+    "chars": 1352,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/setup",
+    "status": "ok",
+    "chars": 1124,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/setup/objects",
+    "status": "ok",
+    "chars": 1034,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/setup/fields",
+    "status": "ok",
+    "chars": 1052,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/setup/layout",
+    "status": "ok",
+    "chars": 1195,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/setup/list-views",
+    "status": "api-error",
+    "chars": 752,
+    "errors": [
+      "403 /api/v1/crm/config",
+      "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+    ]
+  },
+  {
+    "persona": "rep",
+    "route": "/setup/flows",
+    "status": "ok",
+    "chars": 7849,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/setup/stages",
+    "status": "ok",
+    "chars": 1501,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/setup/approvals",
+    "status": "api-error",
+    "chars": 1396,
+    "errors": [
+      "403 /api/v1/crm/config",
+      "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+    ]
+  },
+  {
+    "persona": "rep",
+    "route": "/setup/permissions",
+    "status": "ok",
+    "chars": 924,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/setup/validation",
+    "status": "api-error",
+    "chars": 776,
+    "errors": [
+      "403 /api/v1/crm/config",
+      "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+    ]
+  },
+  {
+    "persona": "rep",
+    "route": "/setup/schema",
+    "status": "ok",
+    "chars": 1004,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/setup/quality",
+    "status": "ok",
+    "chars": 638,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/setup/onboarding",
+    "status": "api-error",
+    "chars": 1117,
+    "errors": [
+      "403 /api/v1/crm/config",
+      "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+    ]
+  },
+  {
+    "persona": "rep",
+    "route": "/records/lead",
+    "status": "ok",
+    "chars": 1844,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/records/account",
+    "status": "ok",
+    "chars": 1557,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/records/contact",
+    "status": "ok",
+    "chars": 2278,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/records/opportunity",
+    "status": "ok",
+    "chars": 2977,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/records/quote",
+    "status": "ok",
+    "chars": 1357,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/records/task",
+    "status": "ok",
+    "chars": 873,
+    "errors": []
+  },
+  {
+    "persona": "rep",
+    "route": "/records/workorder",
+    "status": "ok",
+    "chars": 457,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/",
+    "status": "ok",
+    "chars": 2230,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/kanban",
+    "status": "ok",
+    "chars": 2004,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/search",
+    "status": "ok",
+    "chars": 496,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/service/cases",
+    "status": "ok",
+    "chars": 826,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/service/board",
+    "status": "ok",
+    "chars": 481,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/service/sla",
+    "status": "ok",
+    "chars": 1775,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/work/inbox",
+    "status": "ok",
+    "chars": 700,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/work/calendar",
+    "status": "ok",
+    "chars": 735,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/work/mobile",
+    "status": "ok",
+    "chars": 545,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/exec",
+    "status": "ok",
+    "chars": 1523,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/exec/board",
+    "status": "ok",
+    "chars": 1751,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/exec/forecast",
+    "status": "ok",
+    "chars": 689,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/exec/insights",
+    "status": "ok",
+    "chars": 1576,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/exec/kpis",
+    "status": "ok",
+    "chars": 1173,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/exec/org",
+    "status": "ok",
+    "chars": 587,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/exec/reviews",
+    "status": "ok",
+    "chars": 922,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/exec/sales-performance",
+    "status": "ok",
+    "chars": 829,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/exec/deal-performance",
+    "status": "ok",
+    "chars": 787,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/plan/portfolio",
+    "status": "ok",
+    "chars": 1585,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/plan/strategy",
+    "status": "ok",
+    "chars": 768,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/plan/accounts",
+    "status": "ok",
+    "chars": 2101,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/plan/leads",
+    "status": "ok",
+    "chars": 2068,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/plan/opportunities",
+    "status": "ok",
+    "chars": 1976,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/plan/operations",
+    "status": "ok",
+    "chars": 951,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/analytics/reports",
+    "status": "ok",
+    "chars": 824,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/analytics/campaigns",
+    "status": "ok",
+    "chars": 1354,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/setup",
+    "status": "ok",
+    "chars": 1126,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/setup/objects",
+    "status": "ok",
+    "chars": 1036,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/setup/fields",
+    "status": "ok",
+    "chars": 1054,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/setup/layout",
+    "status": "ok",
+    "chars": 1197,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/setup/list-views",
+    "status": "ok",
+    "chars": 887,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/setup/flows",
+    "status": "ok",
+    "chars": 7851,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/setup/stages",
+    "status": "ok",
+    "chars": 1503,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/setup/approvals",
+    "status": "ok",
+    "chars": 1469,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/setup/permissions",
+    "status": "ok",
+    "chars": 919,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/setup/validation",
+    "status": "ok",
+    "chars": 1286,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/setup/schema",
+    "status": "ok",
+    "chars": 1006,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/setup/quality",
+    "status": "ok",
+    "chars": 640,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/setup/onboarding",
+    "status": "ok",
+    "chars": 1098,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/records/lead",
+    "status": "ok",
+    "chars": 1846,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/records/account",
+    "status": "ok",
+    "chars": 1559,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/records/contact",
+    "status": "ok",
+    "chars": 2280,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/records/opportunity",
+    "status": "ok",
+    "chars": 2979,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/records/quote",
+    "status": "ok",
+    "chars": 1359,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/records/task",
+    "status": "ok",
+    "chars": 875,
+    "errors": []
+  },
+  {
+    "persona": "admin",
+    "route": "/records/workorder",
+    "status": "ok",
+    "chars": 459,
+    "errors": []
+  }
+]
