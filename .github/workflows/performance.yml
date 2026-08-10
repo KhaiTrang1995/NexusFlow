@@ -124,7 +124,15 @@ jobs:
   generator-cost:
     name: Generator cost vs the committed baseline
     runs-on: ubuntu-latest
-    # BLOCKING, and it is the only gate on compile-time cost that can be.
+    # BLOCKING, and since ADR-0014 it is the only gate on compile-time cost there is.
+    #
+    # IT ANSWERS TWO QUESTIONS NOW. Relative — "did this change make the generator more
+    # expensive than the committed figure" — and, since the P1 criterion was re-expressed in
+    # bytes per flow and per capability on 2026-08-10, absolute: `check-generator-cost.py`
+    # fails the run when a ceiling in generator-cost-baseline.json is breached. Before that
+    # the criterion was a wall-clock ratio measured by `scale-overhead` below, which this job
+    # could only reprint. A criterion this job can evaluate is one it must evaluate; the old
+    # one was reprinted for four working packages and stopped being watched.
     #
     # WHY THIS EXISTS. docs/benchmarks/B12-scale.md §5.2 bisects a commit that took
     # FlowPlanGenerator from 5.60 to 27.28 ms per flow — 4.9× — and merged unnoticed
@@ -287,31 +295,42 @@ jobs:
   scale-overhead:
     name: P1 scale — 200-flow build overhead
     runs-on: ubuntu-latest
-    # ADVISORY, and deliberately so — see docs/benchmarks/B12-scale.md.
+    # ADVISORY, AND NO LONGER P1'S EXIT CRITERION — see docs/benchmarks/B12-scale.md.
     #
-    # This is P1's exit criterion, not its entry criterion: the roadmap asks that a
-    # 200-flow solution build within +8 % by the end of the phase, and it currently
-    # does not. Making the job blocking today would red every pull request for the
-    # whole of P1 over a defect none of them introduced, which trains people to
-    # ignore a red gate — the failure mode the allocation gate exists to avoid.
+    # It was the criterion, expressed as "a 200-flow solution builds within +8 %", and it
+    # was advisory because the project missed it by fifty-nine points: blocking would have
+    # redded every pull request for the whole of P1 over a defect none of them introduced.
+    #
+    # ADR-0014 replaced that ratio on 2026-08-10. A ratio's denominator is the user's own
+    # code, so the same generator measured +0.4 % on the one-flow reference sample and
+    # +67.1 % at 200 flows — a number that can be re-argued but not passed or failed. The
+    # criterion is now generator allocation per flow and per capability, `generator-cost`
+    # above measures it, and `check-generator-cost.py` fails the run on a breached ceiling.
+    #
+    # SO THIS JOB IS NOW INFORMATION RATHER THAN A GATE, and stays advisory for that reason
+    # rather than the old one. What it measures is still worth seeing — wall-clock overhead
+    # against a non-FlowX build is what a person actually waits for, and no allocation figure
+    # substitutes for it. What it must not do is fail a pull request against a criterion the
+    # repository has replaced.
     #
     # What is NOT advisory: the script's exit code. It exits 1 above +8 %, 2 when the
     # machine was too noisy to tell the two apart, pipefail is set below, and the step
     # is shown as failed either way. Only the job's effect on the pull request is
     # suppressed.
     #
-    # WHAT CHANGED, AND WHAT DID NOT. `generator-cost` above is now blocking, and it is
-    # a *relative* gate: it fails a pull request that makes the generator more expensive
-    # than the committed figure, whatever the absolute overhead happens to be. That is
-    # the gate the regression bisected in B12-scale.md §5.2 needed and did not have.
-    # It does not discharge this job. A relative gate cannot answer "is the build fast
-    # enough", only "did this change make it worse", and P1's exit criterion is the
-    # first question. This job stays, still measures wall clock, and stays advisory
-    # until it can pass.
+    # WHAT DISCHARGED IT. `generator-cost` above is blocking, and it now answers both
+    # questions rather than one. It was only ever *relative* — "did this change make the
+    # generator more expensive than the committed figure" — which is the gate the regression
+    # bisected in B12-scale.md §5.2 needed and did not have. Since ADR-0014 it also evaluates
+    # the absolute criterion, because in bytes per flow and per capability the criterion is
+    # exactly what its own samples already hold. "Is the build good enough" and "did this
+    # change make it worse" are now both asked, in one place, by something that fails.
     #
-    # Remove this line the moment B12-scale.md records a PASS — not an INCONCLUSIVE.
-    # A gate left advisory after it can pass is a gate nobody reads; a gate made
-    # blocking on a measurement that could not resolve itself is worse still.
+    # DO NOT MAKE THIS JOB BLOCKING. It would be blocking on a superseded criterion. If
+    # wall-clock overhead is ever to gate again, it needs a criterion of its own, stated in
+    # a unit this runner can resolve — twelve identical runs of one tree disagreed on wall
+    # clock by 139 % (docs/benchmarks/generator-cost-gate.md), which is why the criterion
+    # that replaced it is not in milliseconds.
     #
     # WHEN IT IS MADE BLOCKING, exit code 2 must stay non-blocking. INCONCLUSIVE is
     # not evidence of a regression — it is the harness reporting that this runner
