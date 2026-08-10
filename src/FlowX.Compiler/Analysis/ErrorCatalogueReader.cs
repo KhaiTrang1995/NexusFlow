@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using FlowX.Compiler.Model;
 using Microsoft.CodeAnalysis;
@@ -78,6 +80,81 @@ public static class ErrorCatalogueReader
     private const string CapabilityInterface = "ICapability`2";
     private const string EntryPointName = "ExecuteAsync";
 
+    /// <summary>
+    /// The last answer given for a capability, and the trees that answer was read from.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why a memo and not incrementality.</strong>
+    /// <c>ForAttributeWithMetadataName</c> combines its node table with the compilation before
+    /// invoking a transform, and the compilation changes on every edit anywhere — so Roslyn
+    /// re-invokes this reader for every capability on every keystroke and no arrangement of the
+    /// pipeline changes that. What <em>can</em> change is the price of a re-invocation:
+    /// <c>IncrementalLoopCostTests</c> measured an unrelated edit repeating 98.7 % of a cold
+    /// generation, and nearly all of it is binding bodies whose answers cannot have moved.
+    /// </para>
+    /// <para>
+    /// <strong>What makes reuse safe.</strong> A syntax tree is immutable, so an unchanged file
+    /// keeps the same instance across compilations and an edited one does not. A remembered
+    /// answer is reusable when every tree it was read from is still <em>in</em> the compilation
+    /// being asked about — an edited file's old tree is not, so its capabilities recompute — and
+    /// when no tree has been added or removed, which is the one way a new declaration could
+    /// change an answer without touching a tree that was read. That second condition is what
+    /// stops this from being a staleness bug of the kind
+    /// <c>ErrorCatalogueIncrementalTests</c> exists to catch.
+    /// </para>
+    /// <para>
+    /// <strong>Keyed on the capability's own tree, so it is bounded by construction.</strong>
+    /// Entries die with the tree they belong to; nothing has to decide a capacity, and a
+    /// generator that ran over a solution yesterday holds nothing today.
+    /// </para>
+    /// </remarks>
+    private static readonly ConditionalWeakTable<SyntaxTree, ConcurrentDictionary<string, Memo>> Remembered =
+        new ConditionalWeakTable<SyntaxTree, ConcurrentDictionary<string, Memo>>();
+
+    /// <summary>How many trees a compilation had, counted once per compilation.</summary>
+    /// <remarks>
+    /// <c>Compilation.SyntaxTrees</c> is an enumerable, and walking it once per capability would
+    /// make this check quadratic in a solution's file count — which is the shape of cost this
+    /// whole memo exists to remove.
+    /// </remarks>
+    private static readonly ConditionalWeakTable<Compilation, object> TreeCounts =
+        new ConditionalWeakTable<Compilation, object>();
+
+    private sealed class Memo
+    {
+        public Memo(CapabilityErrorCatalogue catalogue, SyntaxTree[] readFrom, int treeCount)
+        {
+            Catalogue = catalogue;
+            ReadFrom = readFrom;
+            TreeCount = treeCount;
+        }
+
+        public CapabilityErrorCatalogue Catalogue { get; }
+
+        public SyntaxTree[] ReadFrom { get; }
+
+        public int TreeCount { get; }
+
+        /// <summary>Whether this answer can be handed back for the compilation given.</summary>
+        public bool ReusableIn(Compilation compilation, int treeCount) =>
+            TreeCount == treeCount && ReadFrom.All(compilation.ContainsSyntaxTree);
+    }
+
+    private static int TreeCountOf(Compilation compilation)
+    {
+        if (TreeCounts.TryGetValue(compilation, out var counted))
+        {
+            return (int)counted;
+        }
+
+        var count = compilation.SyntaxTrees.Count();
+
+        TreeCounts.Add(compilation, count);
+
+        return count;
+    }
+
     /// <summary>Reads the capability's error catalogue, or <c>null</c> if the type is not one.</summary>
     /// <param name="capability">The capability's class symbol.</param>
     /// <param name="compilation">
@@ -97,8 +174,20 @@ public static class ErrorCatalogueReader
             return null;
         }
 
-        var scan = new Scan(capability);
         var entryPoint = EntryPoint(capability);
+        var declaredIn = entryPoint?.DeclaringSyntaxReferences.FirstOrDefault()?.SyntaxTree;
+        var key = capability.ToDisplayString();
+        var treeCount = TreeCountOf(compilation);
+
+        if (declaredIn is not null
+            && Remembered.TryGetValue(declaredIn, out var memos)
+            && memos.TryGetValue(key, out var memo)
+            && memo.ReusableIn(compilation, treeCount))
+        {
+            return memo.Catalogue;
+        }
+
+        var scan = new Scan(capability);
 
         // A capability whose entry point has no syntax here — one from a referenced
         // assembly, or one this reader could not identify — says nothing about what it
@@ -114,7 +203,7 @@ public static class ErrorCatalogueReader
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var node = reference.GetSyntax(cancellationToken);
-                var model = compilation.GetSemanticModel(node.SyntaxTree);
+                var model = scan.Model(compilation, node.SyntaxTree);
 
                 foreach (var root in Roots(node, model))
                 {
@@ -123,7 +212,15 @@ public static class ErrorCatalogueReader
             }
         }
 
-        return new CapabilityErrorCatalogue(info.Id, info.Version, scan.Found, scan.Complete);
+        var catalogue = new CapabilityErrorCatalogue(info.Id, info.Version, scan.Found, scan.Complete);
+
+        if (declaredIn is not null)
+        {
+            Remembered.GetOrCreateValue(declaredIn)[key] =
+                new Memo(catalogue, scan.Dependencies(), treeCount);
+        }
+
+        return catalogue;
     }
 
     /// <summary>The capability's implementation of <c>ICapability&lt;,&gt;.ExecuteAsync</c>.</summary>
@@ -167,6 +264,44 @@ public static class ErrorCatalogueReader
         public List<CapabilityErrorModel> Found { get; } = new List<CapabilityErrorModel>();
 
         public bool Complete { get; set; } = true;
+
+        /// <summary>
+        /// One semantic model per tree, and the record of which trees this answer depends on.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <strong>Reused, because a fresh model caches nothing.</strong>
+        /// <c>Compilation.GetSemanticModel</c> hands back a new instance every call and a
+        /// model's bound nodes live on the instance, so a scan that followed five helpers in one
+        /// file used to bind that file six times.
+        /// </para>
+        /// <para>
+        /// <strong>And it doubles as the dependency list.</strong> A tree reaches this
+        /// dictionary exactly when something asked a semantic question of it, which is exactly
+        /// when the answer could have come from it — so the keys are what
+        /// the memo above has to re-check. Recording the dependency separately would be
+        /// a second list to keep in step with this one.
+        /// </para>
+        /// </remarks>
+        private readonly Dictionary<SyntaxTree, SemanticModel> _models =
+            new Dictionary<SyntaxTree, SemanticModel>();
+
+        /// <summary>The semantic model for a tree, reused for the length of this scan.</summary>
+        /// <param name="compilation">The compilation the model comes from.</param>
+        /// <param name="tree">The tree to bind.</param>
+        public SemanticModel Model(Compilation compilation, SyntaxTree tree)
+        {
+            if (!_models.TryGetValue(tree, out var model))
+            {
+                model = compilation.GetSemanticModel(tree);
+                _models.Add(tree, model);
+            }
+
+            return model;
+        }
+
+        /// <summary>Every tree this scan read.</summary>
+        public SyntaxTree[] Dependencies() => _models.Keys.ToArray();
     }
 
     /// <summary>An expression the scan must account for, and which of the two kinds it is.</summary>
@@ -918,7 +1053,7 @@ public static class ErrorCatalogueReader
             cancellationToken.ThrowIfCancellationRequested();
 
             var node = reference.GetSyntax(cancellationToken);
-            var model = compilation.GetSemanticModel(node.SyntaxTree);
+            var model = scan.Model(compilation, node.SyntaxTree);
             var roots = Roots(node, model);
 
             if (roots.Count == 0)

@@ -54,32 +54,43 @@ public sealed class IncrementalLoopCostTests(ITestOutputHelper output)
     /// <para>
     /// <strong>Asserted as a ratio, because that is the property a fix moves.</strong> The
     /// absolute figures travel badly between machines; the share of the cold cost that an
-    /// unrelated keystroke repeats is a property of the pipeline's shape, and stays put. Today
-    /// it is close to 1 — an unrelated edit does almost all the work again — which is the
-    /// finding rather than the failure.
+    /// unrelated keystroke repeats is a property of the pipeline's shape, and stays put.
     /// </para>
     /// <para>
-    /// <strong>The ceiling is 1.05 and not 1.0.</strong> A second run can legitimately cost
-    /// slightly more than the first: the driver carries its previous state tables and compares
-    /// against them. Anything past that is a regression in the pipeline's shape and not noise.
-    /// The floor is 0, and the point of the fix is to move the number down — when it drops,
-    /// tighten this and record the new figure in the remarks so the next reader can see the
-    /// direction of travel.
+    /// <strong>Measured, on this corpus, before and after the reader's memo:</strong>
+    /// 2,707,088 B of a 3,299,208 B cold run — <strong>82.1 %</strong> — became 855,992 B of
+    /// 3,259,664 B, <strong>26.3 %</strong>. The cold figure did not move, which is the shape a
+    /// memo should have: it cannot help a run with nothing to remember.
+    /// </para>
+    /// <para>
+    /// <strong>The ceiling is 0.40 and the number is 0.26.</strong> The gap is deliberate — the
+    /// ratio moves with how much of a generation is catalogue work, and a corpus with fewer
+    /// cross-file factories would sit higher without anything being wrong. What it will not
+    /// tolerate is the memo silently ceasing to apply, which is the regression worth catching
+    /// and which lands back near 0.82.
     /// </para>
     /// </remarks>
     [Fact]
     public void AnUnrelatedEditRepeatsMostOfTheColdGeneration()
     {
+        // A SEPARATE compilation for the warm-up, and this is not tidiness. The reader keeps a
+        // memo keyed on syntax-tree identity, so warming up on the very trees the measurement
+        // then prices would make the "cold" run a memo hit and the comparison meaningless. It
+        // did, on the first version of this test: the cold figure fell by 79 % the moment the
+        // memo landed, which is not a thing a cold run can do.
+        var warmup = GeneratorHarness.CompilationOf(
+            [.. Files(), (UnrelatedPath, Unrelated(1))]);
+
+        _ = GeneratorHarness.TrackingDriver()
+            .RunGenerators(warmup, TestContext.Current.CancellationToken)
+            .RunGenerators(
+                GeneratorHarness.WithFileReplaced(warmup, UnrelatedPath, Unrelated(2)),
+                TestContext.Current.CancellationToken);
+
         var first = GeneratorHarness.CompilationOf(
             [.. Files(), (UnrelatedPath, Unrelated(1))]);
 
         var edited = GeneratorHarness.WithFileReplaced(first, UnrelatedPath, Unrelated(2));
-
-        // One full run outside the measurement, so what is priced below is steady-state work
-        // rather than the JIT and the first-touch of every Roslyn cache in the process.
-        _ = GeneratorHarness.TrackingDriver()
-            .RunGenerators(first, TestContext.Current.CancellationToken)
-            .RunGenerators(edited, TestContext.Current.CancellationToken);
 
         var driver = GeneratorHarness.TrackingDriver();
 
@@ -99,9 +110,11 @@ public sealed class IncrementalLoopCostTests(ITestOutputHelper output)
             "The cold run allocated nothing, so this measured a generator that did not run.");
 
         repeated.ShouldBeLessThan(
-            1.05,
-            "An unrelated edit now costs more than a cold generation. Whatever the pipeline "
-            + "does on a second run, it must not be more than doing it all again.");
+            0.40,
+            "An unrelated edit is repeating the work of a cold generation again. The reader's "
+            + "memo has stopped applying — most likely because something it depends on is no "
+            + "longer stable across compilations — and every keystroke in an open editor now "
+            + "pays for every capability in the solution.");
     }
 
     /// <summary>Bytes this thread allocates while the action runs.</summary>

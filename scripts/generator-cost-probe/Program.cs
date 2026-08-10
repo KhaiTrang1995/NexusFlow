@@ -122,7 +122,7 @@ if (files.Length == 0)
 // "the project being measured changed, re-record the baseline" instead of reporting a
 // change of subject as a regression in the generator.
 var digest = SHA256.Create();
-var trees = new SyntaxTree[files.Length];
+var sourceTexts = new (string Path, string Source)[files.Length];
 
 for (var i = 0; i < files.Length; i++)
 {
@@ -132,7 +132,7 @@ for (var i = 0; i < files.Length; i++)
     var block = Encoding.UTF8.GetBytes(relative + "\0" + source + "\0");
     digest.TransformBlock(block, 0, block.Length, null, 0);
 
-    trees[i] = CSharpSyntaxTree.ParseText(source, path: "/src/" + relative);
+    sourceTexts[i] = ("/src/" + relative, source);
 }
 
 digest.TransformFinalBlock([], 0, 0);
@@ -206,9 +206,19 @@ const string ImplicitUsings = """
     global using global::System.Threading.Tasks;
     """;
 
+// FRESH SYNTAX TREES EVERY RUN, and this line is the whole reason the comment in the loop
+// below says "all three cache". It used to hand every run the same parsed trees, which was
+// correct while nothing downstream remembered anything about a tree. ErrorCatalogueReader now
+// memoises a capability's catalogue against the identity of the trees it read, so reusing them
+// made run 2 onward a memo hit — and the probe reported a 39 % improvement that was the
+// harness measuring its own cache. Parsing here costs nothing the samples see: NewCompilation
+// is called before the collection and before the allocation counter is read.
 CSharpCompilation NewCompilation() => CSharpCompilation.Create(
     "ScaleSynthetic",
-    [.. trees, CSharpSyntaxTree.ParseText(ImplicitUsings, path: "/src/ImplicitUsings.g.cs")],
+    [
+        .. sourceTexts.Select(static file => CSharpSyntaxTree.ParseText(file.Source, path: file.Path)),
+        CSharpSyntaxTree.ParseText(ImplicitUsings, path: "/src/ImplicitUsings.g.cs"),
+    ],
     metadata,
     new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
