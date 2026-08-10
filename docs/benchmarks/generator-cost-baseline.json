@@ -1,5 +1,7 @@
 {
   "$comment": [
+    "PER-CAPABILITY IS NOW RECORDED BESIDE PER-FLOW, and it is the unit the argument about this budget needs. Bytes per flow is right for the plan emitter -- one plan per flow -- and wrong for the error catalogue, which is derived per capability; the synthetic project declares about five capabilities per flow, so a per-flow figure mixes two rates. Both are flat across 25 and 50 flows (772,522 / 769,272 per flow; 148,562 / 146,808 per capability), which is what an absolute unit should look like and what the +8 % criterion is not: the same generator measures +0.4 % on the one-flow reference sample and +67.1 % at 200 flows, because the denominator moves with the subject. Measuring the catalogue against a capability count is what lets its cost be stated once -- about 65,000 bytes per capability, from the arm with the reader stubbed out -- instead of restated per project shape.",
+    "",
     "RE-RECORDED 2026-08-10 BECAUSE THE HARNESS WAS MEASURING ITS OWN CACHE. The probe parsed the synthetic project's syntax trees once and handed the same instances to every run. That was correct while nothing downstream remembered anything about a tree; ErrorCatalogueReader now memoises a capability's catalogue against the identity of the trees it read, so run 2 onward was a memo hit and the probe reported a 39 % improvement that did not exist. The probe now parses fresh trees per run, outside the measured window. Against the fixed probe the memo costs +0.4 % on a cold build and the previous baseline was ~4.4 % optimistic -- the figures below are the first honest cold numbers.",
     "",
     "Committed baseline for FlowPlanGenerator's compile-time cost, in bytes allocated per",
@@ -48,14 +50,14 @@
     "gate is relative and works from here; the drift behind it is unattributed."
   ],
   "recordedOn": {
-    "commit": "3599dab",
+    "commit": "5efad74",
     "recordedAt": "2026-08-10",
     "roslyn": "4.14.0-3.25262.10+8edf7bcd4f1594c3d68a6a567469f41dbd33dd1b",
     "roslynAssemblyVersion": "4.14.0.0",
     "framework": ".NET 10.0.10",
     "sdk": "10.0.110",
     "nproc": 4,
-    "load1DuringRun": 1.35,
+    "load1DuringRun": 1.52,
     "runsPerSize": 5,
     "warmupPerSize": 2
   },
@@ -105,22 +107,22 @@
   },
   "sizes": {
     "25": {
-      "allocatedBytes": 19285120,
-      "allocatedBytesPerFlow": 771404.8,
+      "allocatedBytes": 19313040,
+      "allocatedBytesPerFlow": 772521.6,
       "sourcesSha256": "c80fa5b5f3bc074258b2a7707f3eaedfb0e192ffc5599ee5c3397250737743f8",
       "generatedTrees": 26,
       "generatedChars": 401535,
       "diagnostics": 24,
-      "observedSpreadPercent": 0.1404
+      "observedSpreadPercent": 0.5191
     },
     "50": {
-      "allocatedBytes": 38501872,
-      "allocatedBytesPerFlow": 770037.4,
+      "allocatedBytes": 38463616,
+      "allocatedBytesPerFlow": 769272.3,
       "sourcesSha256": "63dacc54694291ce27e7110ced5bd4f9061dbeac8554e0ad7eb1aa58b61c7a65",
       "generatedTrees": 51,
       "generatedChars": 805563,
       "diagnostics": 49,
-      "observedSpreadPercent": 0.3054
+      "observedSpreadPercent": 0.1523
     }
   }
 }

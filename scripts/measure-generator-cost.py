@@ -153,6 +153,19 @@ def measure(size: int, work: pathlib.Path, args: argparse.Namespace) -> dict:
         die(f"Expected {expected} generated trees at {size} flows, got "
             f"{report['subject']['generated_trees']}. Some flows did not analyse.")
 
+    # THE UNIT THE CATALOGUE COST ACTUALLY SCALES WITH. Bytes per flow is what this harness
+    # has always reported, and it is the right unit for the plan emitter — one plan per flow.
+    # The error catalogue is derived per CAPABILITY, and the synthetic project declares
+    # several per flow, so a per-flow figure mixes two rates and hides which one moved. Both
+    # are reported; neither is derived from the other.
+    capabilities = sum(
+        source.read_text(encoding="utf-8").count("[Capability(")
+        for source in project.rglob("*.cs"))
+
+    if capabilities == 0:
+        die(f"No [Capability(...)] was found in the {size}-flow subject, so a per-capability "
+            "figure would be a division by nothing. The generator script's layout changed.")
+
     allocated = [sample["allocated_bytes"] for sample in report["samples"]]
     elapsed = [sample["elapsed_ms"] for sample in report["samples"]]
 
@@ -162,6 +175,8 @@ def measure(size: int, work: pathlib.Path, args: argparse.Namespace) -> dict:
         "flows": size,
         "allocated_bytes": int(median),
         "allocated_bytes_per_flow": round(median / size, 1),
+        "capabilities": capabilities,
+        "allocated_bytes_per_capability": round(median / capabilities, 1),
         "spread_percent": round(100 * (max(allocated) - min(allocated)) / median, 4),
         "elapsed_ms": round(statistics.median(elapsed), 2),
         "elapsed_spread_percent": round(
@@ -263,13 +278,14 @@ def main() -> int:
                 (high["allocated_bytes"] - low["allocated_bytes"]) / (high["flows"] - low["flows"]), 1),
         }
 
-    print(f"{'flows':>7} {'allocated':>16} {'per flow':>12} {'spread':>9} "
-          f"{'elapsed':>10} {'spread':>9} {'emitted':>10}")
-    print("-" * 80)
+    print(f"{'flows':>7} {'allocated':>16} {'per flow':>12} {'caps':>6} {'per cap':>10} "
+          f"{'spread':>9} {'elapsed':>10} {'emitted':>10}")
+    print("-" * 92)
     for entry in sizes_report:
         print(f"{entry['flows']:7d} {entry['allocated_bytes']:16,d} "
-              f"{entry['allocated_bytes_per_flow']:12,.0f} {entry['spread_percent']:8.3f}% "
-              f"{entry['elapsed_ms']:9.0f}ms {entry['elapsed_spread_percent']:8.1f}% "
+              f"{entry['allocated_bytes_per_flow']:12,.0f} {entry['capabilities']:6d} "
+              f"{entry['allocated_bytes_per_capability']:10,.0f} "
+              f"{entry['spread_percent']:8.3f}% {entry['elapsed_ms']:9.0f}ms "
               f"{entry['generated_chars']:10,d}")
 
     if "marginal" in document:
