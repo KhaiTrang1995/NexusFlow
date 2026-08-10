@@ -7,8 +7,20 @@
 
 ## 1. Rule zero — budget, measure, optimise
 
-FlowX publishes budgets *before* implementation, measures them in CI on every
-pull request, and fails the build on regression. Nothing here is aspirational.
+FlowX publishes budgets *before* implementation. That is the point of the table: a number
+written down before the code exists is a number the code has to answer to.
+
+**Four of the fourteen rows below are measured today. The rest are not, and the `Gate`
+column now says so.** B1, B2, B3 and B12 run in CI on every pull request and fail the build
+on regression; B6's allocation half does too. The other nine have a budget, a scenario and a
+metric, and nothing that produces a number for them — including B7, B8 and B9, which are the
+durable path, the thing this platform exists to do.
+
+**This paragraph used to say "measures them in CI on every pull request... Nothing here is
+aspirational."** It was written when the table was shorter and it stopped being true as rows
+were added. Four rows named CI and four named a nightly job; there is no nightly performance
+job at all. A table whose purpose is to say what is enforced, and which says it wrongly, is
+worse than no table — so the column is corrected rather than the sentence softened.
 
 ### 1.1 Platform budgets (overhead attributable to FlowX, excluding user code and I/O)
 
@@ -16,18 +28,18 @@ pull request, and fails the build on regression. Nothing here is aspirational.
 |---|---|---|---|---|
 | B1 | 4-step ephemeral flow, in-proc | p50 / p99 overhead | **1.5 µs / 5 µs** | CI, ±5 % |
 | B2 | 4-step ephemeral flow | allocations per step | **0 B** (payload excluded) | CI, hard 0 |
-| B2p | ephemeral flow containing a `Parallel` | allocations per **fork** | **≈ 240 B/branch + 70 B**, ceiling 2 048 B | CI, recorded |
+| B2p | ephemeral flow containing a `Parallel` | allocations per **fork** | **≈ 240 B/branch + 70 B**, ceiling 2 048 B | **none — `baseline.json` holds no B2p entry** |
 | B3 | Capability dispatch | p99 | **150 ns** | CI |
-| B4 | Policy chain (timeout+retry+breaker, no failure) | p99 overhead | **400 ns** | CI |
-| B5 | Telemetry with exporter attached | per step | **200 ns** | CI |
-| B6 | Telemetry with no listener | per step | **0 ns / 0 B** | CI, hard 0 |
-| B7 | Durable step commit (Postgres, group commit) | p99 | **15 ms @ 5 000 commits/s/node** | nightly load test |
-| B8 | Flow instance rehydration from journal | p99 | **8 ms** | nightly |
-| B9 | HTTP trigger end-to-end (trivial flow, localhost) | p99 | **1.2 ms** | nightly |
-| B10 | Cold start, NativeAOT, ready-to-serve | — | **200 ms** | CI |
-| B11 | Idle RSS, 100 flows registered | — | **60 MB** | CI |
+| B4 | Policy chain (timeout+retry+breaker, no failure) | p99 overhead | **400 ns** | **none — no benchmark exists** |
+| B5 | Telemetry with exporter attached | per step | **200 ns** | **none — no benchmark exists** |
+| B6 | Telemetry with no listener | per step | **0 ns / 0 B** | CI for the **0 B** half only (`Allocation budget` job). The **0 ns** half has no benchmark |
+| B7 | Durable step commit (Postgres, group commit) | p99 | **15 ms @ 5 000 commits/s/node** | **none — no benchmark, and no nightly performance job exists** |
+| B8 | Flow instance rehydration from journal | p99 | **8 ms** | **none — see B7** |
+| B9 | HTTP trigger end-to-end (trivial flow, localhost) | p99 | **1.2 ms** | **none — see B7** |
+| B10 | Cold start, NativeAOT, ready-to-serve | — | **200 ms** | **none — no benchmark exists** |
+| B11 | Idle RSS, 100 flows registered | — | **60 MB** | **none — no benchmark exists** |
 | B12 | Build overhead vs identical non-FlowX code | **+46.5 %** at 50 flows · **+67.1 %** [+61.9, +73.6] at 200 — [B12-scale.md §8](benchmarks/B12-scale.md). *This row carried the superseded **+77 %** until 2026-07-31; WP-43 re-measured after the duplicated-bind fix* | **≤ 800,000 B/flow · ≤ 160,000 B/capability** | **MET**, against the criterion [ADR-0014](adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) re-expressed on 2026-08-10: 772,522 and 148,562 at 25 flows, 769,272 and 146,808 at 50. `check-generator-cost.py` fails on a breached ceiling. The percentages in this row are what the superseded ratio measured, and the `scale-overhead` job that measures it stays advisory |
-| B13 | Streaming throughput, 1 KB records, 8 partitions | sustained | **250 000 rec/s/node** | nightly |
+| B13 | Streaming throughput, 1 KB records, 8 partitions | sustained | **250 000 rec/s/node** | **none — see B7** |
 
 > [!IMPORTANT]
 > **The B12 row read `+0.4 %`, linked only [B12.md](benchmarks/B12.md), and read
