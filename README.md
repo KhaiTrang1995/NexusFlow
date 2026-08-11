@@ -33,6 +33,24 @@ flowchart LR
 
 **You write the blue boxes. FlowX compiles the rest.**
 
+<div align="center">
+
+### [See it running →](#the-crm--a-real-application-not-a-demo)
+
+</div>
+
+[![The FlowX CRM sales console: a pipeline overview showing $184k open pipeline, $129k weighted, one open deal and eight open tasks, above a rhythm strip and a bar chart of open work by kind.](docs/screenshots/crm-web/admin/index.png)](#the-crm--a-real-application-not-a-demo)
+
+<div align="center"><sub><b>samples/crm</b> — 87 flows, 96 capabilities, 64 tables and a 46-screen web client, all built on FlowX.<br/><a href="docs/screenshots/crm-web/">Every screen, in both roles →</a></sub></div>
+
+> [!IMPORTANT]
+> **Planning a production deployment? Talk to the author first** —
+> [votrongdao@gmail.com](mailto:votrongdao@gmail.com). FlowX is Apache-2.0 and
+> yours to run, but the choices that decide whether it goes well — execution
+> profiles, tenant isolation, journal sizing, which performance budgets actually
+> apply to you — are easy to get wrong from the outside and usually surface in
+> production. [What to ask about](#going-to-production).
+
 ---
 
 ## Table of contents
@@ -277,10 +295,21 @@ specification wins.
 
 ## The CRM — a real application, not a demo
 
-`samples/crm` is the largest thing built on FlowX, and it exists to prove one
-claim: **a sales process whose transitions, guards and actions are rows an
-administrator rewrites at run time — while the set of actions stays a closed
-enumeration the compiler sees the whole of.**
+Most platforms are introduced with a to-do list. FlowX is introduced with a CRM,
+because the interesting questions only appear at that size: dozens of flows,
+several roles, a saga that has to undo itself, scheduled sweeps, an agent surface,
+row-level security, and a business process the customer expects to change **without
+calling a developer**.
+
+`samples/crm` is that application. It exists to prove one claim:
+
+> **A sales process whose transitions, guards and actions are rows an administrator
+> rewrites at run time — while the set of actions stays a closed enumeration the
+> compiler sees the whole of.**
+
+Both halves matter. Configuration that can do anything is a scripting engine with
+no type system; configuration that can do nothing is a rebuild. The CRM draws the
+line in one place and defends it with a test.
 
 | | |
 |---|---|
@@ -288,37 +317,88 @@ enumeration the compiler sees the whole of.**
 | Capabilities | **96** |
 | HTTP routes | **79**, plus 4 cron sweeps, 3 bus subscriptions, 1 agent surface, 1 change feed |
 | Tables | **64**, under row-level security |
-| Web client | React 19 + TanStack, **46 screens** |
-| Tests | 591 for the API, 246 for the client |
+| Web client | React 19 + TanStack Router/Query, **46 screens** |
+| Tests | **591** for the API, **246** for the client |
 
-### What it looks like
+What it covers, end to end: capture a lead → three subscriptions score, assign and
+enrich it → convert it into an account, contact and opportunity as a compensating
+saga → quote it, with a discount a representative may not approve → order it →
+advance it through a process an administrator configured → sweep what went overdue
+→ answer a question about the account from an AI agent.
 
-The sales console: pipeline, weighted forecast, open work and the largest deal,
-all from the tenant's own rows.
+### The claim, in two screens
 
-![The CRM sales console. A pipeline overview showing open pipeline of $184k, a weighted figure of $129k, one open deal and eight open tasks with one overdue, above a rhythm strip and a bar chart of open work by kind.](docs/screenshots/crm-web/admin/index.png)
+**1. The process is data.** Nine stages and nine transitions, each with what has to
+hold and what it does — rows in a table, published as a version, with the live deal
+count beside each stage.
 
-The executive board — the same data, read by a different role.
+![The CRM stages setup screen. A published-stages table lists nine stages from Prospecting to Closed Lost with the number of deals sitting in each, and Closed Won and Closed Lost marked as terminal. Below it a published-transitions table lists nine moves, each with the trigger that causes it, the condition that must hold and the action that follows.](docs/screenshots/crm-web/admin/setup-stages.png)
 
-![The CRM executive board, an aggregated view of performance for a director-level reader.](docs/screenshots/crm-web/admin/exec-board.png)
-
-A deal board, dragged between the stages the administrator configured.
+**2. The same process, being worked.** Nothing in the board is hard-coded: the
+columns are the rows above.
 
 ![The CRM kanban board, opportunities arranged in columns by the configured process stage.](docs/screenshots/crm-web/admin/kanban.png)
 
-Setup: declaring an object the build has never heard of, at run time.
+Change the rows and the board changes — no rebuild, no deployment. Add a *new kind
+of action* and you need a build, because that is a compile-time enumeration on
+purpose. [26-CRM-Sample §7.3](docs/26-CRM-Sample.md) argues the line;
+`ProcessPublishing.Validate` enforces it.
+
+### The screens
+
+**Sales.** Pipeline, weighted forecast, open work and the largest deal, all from
+the tenant's own rows.
+
+![The CRM sales console. A pipeline overview showing open pipeline of $184k, a weighted figure of $129k, one open deal and eight open tasks with one overdue, above a rhythm strip and a bar chart of open work by kind.](docs/screenshots/crm-web/admin/index.png)
+
+**Executive.** The same data, aggregated for a director.
+
+![The CRM executive board, an aggregated view of performance for a director-level reader.](docs/screenshots/crm-web/admin/exec-board.png)
+
+**Service.** A case queue with SLA state — open, breached and awaiting first
+response — computed by the server, not by the browser.
+
+![The CRM service console case queue. Three tiles read open 3, breached 3 needing attention, and awaiting first response 3. Below them three cases are listed with priority, status, a late-and-unanswered first-response badge and a resolution due date.](docs/screenshots/crm-web/admin/service-cases.png)
+
+**Setup.** Declaring an entity this build has never heard of, at run time.
 
 ![The CRM setup screen for custom objects, listing declared entities and the form that adds one.](docs/screenshots/crm-web/admin/setup-objects.png)
 
-**And the screen that matters most — the one a user is refused.** Authorisation is
-not a UI concern here. The client asks; the server decides; the client renders the
-server's own sentence.
+### Authorisation is a server answer, not a UI state
+
+The client never decides what you may do. It asks, the server decides, and the
+client renders the server's own sentence — down to the error code.
+
+**What the signed-in token actually holds**, resolved per request, including the
+two fields this caller may read but not write:
+
+![The CRM permissions screen. A table titled "what this token holds", enforced on the server on every request, lists crm.read, crm.write, crm.admin and crm.discount.approve with what each unlocks, all marked held. A second panel lists two of ten declared fields the token may not have in full, each marked read but no write.](docs/screenshots/crm-web/admin/setup-permissions.png)
+
+**And the same screen for someone who does not hold it.** This is the picture worth
+having: a refusal that names the capability, the permission and the code.
 
 ![The list-views setup screen as a sales representative sees it. The panel reads: the request is not permitted — capability crm.config.list requires the crm.admin permission and the caller does not hold it, with the error code authorization.permission_denied.](docs/screenshots/crm-web/rep/setup-list-views.png)
 
-All 46 screens are captured twice, once per role, in
-[docs/screenshots/crm-web](docs/screenshots/crm-web/) — with the exact list of
-which six differ between the two.
+### Every screen, both roles
+
+All 46 screens were captured twice — once as a representative, once as an
+administrator — against the running backend on a seeded tenant. Six differ between
+the two, and [the index says which](docs/screenshots/crm-web/).
+
+| Area | Screens |
+|---|---|
+| Sales | [console](docs/screenshots/crm-web/admin/index.png) · [kanban](docs/screenshots/crm-web/admin/kanban.png) · [search](docs/screenshots/crm-web/admin/search.png) |
+| Records | [leads](docs/screenshots/crm-web/admin/records-lead.png) · [accounts](docs/screenshots/crm-web/admin/records-account.png) · [contacts](docs/screenshots/crm-web/admin/records-contact.png) · [opportunities](docs/screenshots/crm-web/admin/records-opportunity.png) · [quotes](docs/screenshots/crm-web/admin/records-quote.png) · [tasks](docs/screenshots/crm-web/admin/records-task.png) · [work orders](docs/screenshots/crm-web/admin/records-workorder.png) |
+| Service | [case queue](docs/screenshots/crm-web/admin/service-cases.png) · [board](docs/screenshots/crm-web/admin/service-board.png) · [SLA](docs/screenshots/crm-web/admin/service-sla.png) |
+| Work | [inbox](docs/screenshots/crm-web/admin/work-inbox.png) · [calendar](docs/screenshots/crm-web/admin/work-calendar.png) · [mobile](docs/screenshots/crm-web/admin/work-mobile.png) |
+| Executive | [home](docs/screenshots/crm-web/admin/exec.png) · [board](docs/screenshots/crm-web/admin/exec-board.png) · [forecast](docs/screenshots/crm-web/admin/exec-forecast.png) · [KPIs](docs/screenshots/crm-web/admin/exec-kpis.png) · [reviews](docs/screenshots/crm-web/admin/exec-reviews.png) · [insights](docs/screenshots/crm-web/admin/exec-insights.png) · [org](docs/screenshots/crm-web/admin/exec-org.png) · [sales performance](docs/screenshots/crm-web/admin/exec-sales-performance.png) · [deal performance](docs/screenshots/crm-web/admin/exec-deal-performance.png) |
+| Planning | [portfolio](docs/screenshots/crm-web/admin/plan-portfolio.png) · [strategy](docs/screenshots/crm-web/admin/plan-strategy.png) · [accounts](docs/screenshots/crm-web/admin/plan-accounts.png) · [leads](docs/screenshots/crm-web/admin/plan-leads.png) · [opportunities](docs/screenshots/crm-web/admin/plan-opportunities.png) · [operations](docs/screenshots/crm-web/admin/plan-operations.png) |
+| Analytics | [reports](docs/screenshots/crm-web/admin/analytics-reports.png) · [campaigns](docs/screenshots/crm-web/admin/analytics-campaigns.png) |
+| Setup | [home](docs/screenshots/crm-web/admin/setup.png) · [objects](docs/screenshots/crm-web/admin/setup-objects.png) · [fields](docs/screenshots/crm-web/admin/setup-fields.png) · [layout](docs/screenshots/crm-web/admin/setup-layout.png) · [list views](docs/screenshots/crm-web/admin/setup-list-views.png) · [flows](docs/screenshots/crm-web/admin/setup-flows.png) · [stages](docs/screenshots/crm-web/admin/setup-stages.png) · [approvals](docs/screenshots/crm-web/admin/setup-approvals.png) · [permissions](docs/screenshots/crm-web/admin/setup-permissions.png) · [validation](docs/screenshots/crm-web/admin/setup-validation.png) · [schema](docs/screenshots/crm-web/admin/setup-schema.png) · [quality](docs/screenshots/crm-web/admin/setup-quality.png) · [onboarding](docs/screenshots/crm-web/admin/setup-onboarding.png) |
+
+> Some list screens carry rows left behind by the API test suite, which ran against
+> the same database. They are real rows through the real API — just not pretty
+> demo data.
 
 ### How the CRM is put together
 
