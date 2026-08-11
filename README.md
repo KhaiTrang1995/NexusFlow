@@ -568,10 +568,11 @@ bug in the code, or an ADR that has not been written yet.
 > production rather than in a test.
 >
 > The author has that context and is glad to help — architecture review, sizing,
-> a migration path, or simply a second opinion before you commit. Reach out via
-> [GitHub issues](https://github.com/votrongdao/FlowX/issues) or
-> [@votrongdao](https://github.com/votrongdao), and you will get a far better
-> result than reverse-engineering it from the documents.
+> a migration path, or simply a second opinion before you commit. Reach out at
+> **[votrongdao@gmail.com](mailto:votrongdao@gmail.com)**, or via
+> [GitHub issues](https://github.com/votrongdao/FlowX/issues) and
+> [@votrongdao](https://github.com/votrongdao). You will get a far better result
+> than reverse-engineering it from the documents.
 >
 > Read [18-Cloud-Native](docs/18-Cloud-Native.md),
 > [15-Security](docs/15-Security.md) and [16-Multi-Tenancy](docs/16-Multi-Tenant.md)
