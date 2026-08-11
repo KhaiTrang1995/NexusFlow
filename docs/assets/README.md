@@ -1,16 +1,21 @@
 # Documentation assets
 
-Binary assets referenced by the documentation set. Three files are **required** —
-the README and the architecture document reference them by path, and the CI
-`docs` job fails while any is missing.
+Binary assets referenced by the documentation set. The architecture document
+references two of them by path, and the CI `docs` job fails while any is missing.
 
 ## Required files
 
 | File | Source image | Referenced from | Content |
 |---|---|---|---|
-| `flowx-overview.png` | dark poster, "The Universal Application Platform" | [`README.md`](../../README.md) hero | Universal triggers → runtime platform → core abstractions → infrastructure connectors → deploy & operate → what you get |
+| `flowx-overview.png` | dark poster, "The Universal Application Platform" | **nothing, currently** | Universal triggers → runtime platform → core abstractions → infrastructure connectors → deploy & operate → what you get |
 | `flowx-platform-map.png` | dark, numbered sections 1–10 | [`docs/05-Architecture.md`](../05-Architecture.md) §2 | Core philosophy, unified trigger layer, runtime platform, core abstractions, connectors, platform capabilities, deployment, AI layer, end-to-end flow, quality attributes |
-| `flowx-runtime-architecture.png` | light, "FlowX Runtime Architecture" | [`README.md`](../../README.md) architecture section, [`docs/05-Architecture.md`](../05-Architecture.md) §5 | Six numbered layers: front door → runtime core → core abstractions → infrastructure adapters → data & state → deployment, plus design principles, cross-cutting concerns and Studio tooling |
+| `flowx-runtime-architecture.png` | light, "FlowX Runtime Architecture" | [`docs/05-Architecture.md`](../05-Architecture.md) §5 | Six numbered layers: front door → runtime core → core abstractions → infrastructure adapters → data & state → deployment, plus design principles, cross-cutting concerns and Studio tooling |
+
+The README used both of these and now draws its own diagrams in Mermaid instead.
+A poster is still wanted for the hero — a reader arriving at a landing page is
+served better by one dense picture than by four small ones — so `flowx-overview.png`
+keeps its row and its exemption in the CI link check. It is a slot waiting to be
+filled, not a dead entry.
 
 ## Conventions
 
