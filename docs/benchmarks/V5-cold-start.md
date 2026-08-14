@@ -70,8 +70,8 @@ factor of 2.0.
 **Where this hardware would not be good enough.** Two places, named so the figure is not
 carried further than it goes. A verdict resting on a 10–30 % difference — "did this commit
 make start-up worse" — is not decidable here at the tail, and a regression gate on p99 would
-fire on the container rather than on the code; the p50 is the stable statistic and a gate, if
-one is ever built, belongs there. And this is one container's *kind* of hardware: a cold
+fire on the container rather than on the code; the p50 is the stable statistic and the gate
+in `ci.yml` is on it. And this is one container's *kind* of hardware: a cold
 container on a cloud host, where the image is pulled and the page cache is empty, pays for
 things this machine had already paid for. That is a different measurement, not a worse
 version of this one.
@@ -106,8 +106,10 @@ been worse than the unmeasured criterion it replaced.
 
 The criterion has two halves and this document measures one of them. *NativeAOT-compatible*
 is the AOT job in `ci.yml`, which links the sample and serves a request from it on every
-push; *≤ 200 ms* is the row above. Neither is gated on a threshold — no CI job compares this
-number to 200 ms, and the resolution argument above is why the tail is not the thing to gate.
+push; *≤ 200 ms* is the row above, and that same job now measures it — it hands this rig the
+binary it just published and `scripts/check-cold-start.py` fails the run when the median
+exceeds 200 ms. The tail is printed beside it and gates nothing, for the resolution reason
+above.
 
 The measurement is also of one sample. `samples/ecommerce` is the repository's only
 AOT-published assembly, so it is the only start-up there is to time, and a deployment with a
