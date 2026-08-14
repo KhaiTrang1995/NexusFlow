@@ -18,6 +18,9 @@ yet (constraint C8).
 **"I want to review the architecture"** (3 h)
 → [05 Architecture](05-Architecture.md) → [ADR index](adr/README.md) → [06 Execution Engine](06-Execution-Engine.md) → [11 Distributed Runtime](11-Distributed-Runtime.md) → [14 Performance](14-Performance.md) → [15 Security](15-Security.md)
 
+**"I am adopting it, start to finish"** (the whole path)
+→ [29 From Zero to Production](29-From-Zero-To-Production.md) — six stages, each ending in something you can demonstrate
+
 **"I have to operate it"** (1.5 h)
 → [12 Observability](12-Observability.md) → [18 Cloud-Native](18-Cloud-Native.md) → [11 Distributed Runtime](11-Distributed-Runtime.md) → [16 Multi-Tenancy](16-Multi-Tenant.md)
 
@@ -56,6 +59,7 @@ yet (constraint C8).
 | 26 | [CRM Sample · Design](26-CRM-Sample.md) | The C4 views, domain model, data model and sequences behind `samples/crm` |
 | 27 | [CRM Reference Architecture](27-CRM-Reference-Architecture.md) | A wider CRM read against what FlowX compiles, and how to build the next stage |
 | 28 | [Azure Hosting](28-Azure-Hosting.md) | Which Azure compute can host FlowX — Functions, App Service, Container Apps, AKS — and what each one costs you |
+| 29 | [From Zero to Production](29-From-Zero-To-Production.md) | The adoption path — what to learn in what order, how to gate your repository on GitHub, and how to ship |
 | — | [ADRs](adr/README.md) | Decisions |
 | — | [Diagnostics](diagnostics/README.md) | Every `FLOWX####` the compiler raises |
 | — | [Benchmarks](benchmarks/README.md) | Budgets, baselines and their reports |

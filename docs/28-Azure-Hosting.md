@@ -18,11 +18,44 @@ constraints but changes nothing below it.
 
 ---
 
+## 0. Two dispatch modes — read this first
+
+Everything else depends on one choice, and it is a **deployment** choice rather than a
+property of your flows. The same source compiles for both.
+
+| | **`Hosted`** — ships today | **`Dispatched`** — designed, not built |
+|---|---|---|
+| How a flow runs | One in-process loop, holding a lease | One invocation per step |
+| Waking a suspended flow | A timer scan every 10 s | A message scheduled for the wake instant |
+| Noticing a dead node | A recovery scan every 10 s | The broker's message lock lapses |
+| Mutual exclusion | Lease, TTL 30 s, renewed every 10 s | Fencing token on the commit, plus the message lock |
+| Works with `Ephemeral` | **Yes** — this is the only mode that can | No, and it never will |
+| Works with `Durable` | Yes | Yes |
+| Cost per step | 1.5 µs ephemeral · ~7.6 ms durable | + ~20–50 ms |
+| Can everything scale to zero? | No — two roles stay resident | **Yes** |
+
+**Why not one mode.** A durable step already pays milliseconds to write the journal, so a
+broker hop makes it ~4–5× slower and a lead conversion does not notice. An ephemeral step
+pays **1.5 µs**, so the same hop makes it ~10⁴× slower — which does not make it slow, it makes
+it pointless. The asymmetry is the reason both modes exist.
+[ADR-0077](adr/ADR-0077-a-flow-is-dispatched-in-one-of-two-modes.md) records the decision.
+
+> [!WARNING]
+> **`Dispatched` is a design. No part of it is built.** It needs three things that do not
+> exist: a `FlowX.Functions` binding generator, dispatched execution in the engine, and
+> ideally a Cosmos `IFlowJournal`. Everything in this document marked `Dispatched` is
+> therefore a plan. Everything marked `Hosted` describes code that runs today.
+
+§1 to §5 below are written for **`Hosted`**, because that is what you can deploy this
+afternoon. [§5.4](#54-the-dispatched-topology) is the `Dispatched` topology.
+
+---
+
 ## 1. The host capability contract
 
-FlowX does not require a specific platform. It requires eight things from whatever runs it.
-Score a platform against these and the answer falls out; argue about platforms first and you
-will discover the mismatch in production.
+In `Hosted` mode FlowX requires eight things from whatever runs it. Score a platform against
+these and the answer falls out; argue about platforms first and you will discover the mismatch
+in production.
 
 **Every requirement below is read out of the source, not assumed.**
 
@@ -313,7 +346,32 @@ measured at **p99 3.634 ms** — [B7-B8-durability.md](benchmarks/B7-B8-durabili
 | Poison message | Broker max delivery count → dead-letter, and alert on DLQ depth > 0 |
 | Duplicate delivery | Idempotency store is already in PostgreSQL; give mutating routes an `Idempotency-Key` |
 
-### 5.4 The four alerts worth having
+### 5.4 The Dispatched topology
+
+Once the three missing pieces exist, the same application deploys with nothing resident.
+
+```mermaid
+flowchart LR
+    C(["Client"]) --> FN1["Function<br/>HTTP trigger"]
+    FN1 --> J[("Journal<br/>Cosmos or PostgreSQL")]
+    FN1 --> Q{{"Service Bus"}}
+    Q --> FN2["Function<br/>step worker"]
+    FN2 --> J
+    FN2 -->|"next step"| Q
+    FN2 -->|"suspend until T"| Q
+    J -.->|"change feed trigger"| FN3["Function<br/>event publisher"]
+
+    style FN1 fill:#dbeafe,stroke:#1d4ed8,color:#1e3a8a
+    style FN2 fill:#dbeafe,stroke:#1d4ed8,color:#1e3a8a
+    style FN3 fill:#dbeafe,stroke:#1d4ed8,color:#1e3a8a
+```
+
+Note what disappears: no scan of any kind, no lease, no resident replica, and — with a Cosmos
+journal — no outbox poller and no connection pool. Note what appears: a message per step, a
+trace that is only whole if context rides the message, and a bill that scales with steps
+rather than with hours.
+
+### 5.5 The four alerts worth having
 
 | Alert | Condition | Why |
 |---|---|---|
@@ -321,6 +379,55 @@ measured at **p99 3.634 ms** — [B7-B8-durability.md](benchmarks/B7-B8-durabili
 | Database connections | > 70 % of `max_connections` | The ceiling in §4.1, before the 500s |
 | Dead-letter depth | > 0 for 5 minutes | A DLQ nobody watches is a data-loss queue |
 | Outbox lag | Unpublished rows older than 1 minute | Events staged but not flowing |
+
+### 5.6 Telemetry — you are already OpenTelemetry-ready
+
+**FlowX takes no dependency on any OpenTelemetry package.** It instruments with
+`System.Diagnostics.ActivitySource` and `System.Diagnostics.Metrics.Meter` from the base class
+library, under the source name **`FlowX`**. Every OTel exporter bridges those two APIs
+natively, so choosing a backend is a decision your *host* makes and FlowX never sees.
+
+That is what makes Azure Monitor a package reference rather than a re-instrumentation:
+
+```csharp
+// The whole wiring. FlowX itself is untouched.
+builder.Services.AddOpenTelemetry()
+    .UseAzureMonitor()                       // Azure.Monitor.OpenTelemetry.AspNetCore
+    .WithTracing(t => t.AddSource("FlowX"))
+    .WithMetrics(m => m.AddMeter("FlowX"));
+```
+
+Swap `UseAzureMonitor()` for an OTLP exporter and the same spans reach Grafana, Honeycomb or a
+collector. Nothing in the flow, the capability or the manifest changes.
+
+**What is emitted today** — all seven have a producer in the runtime:
+
+| Instrument | Kind | Use it for |
+|---|---|---|
+| `flowx_flow_duration_seconds` | histogram | Flow p99. The latency signal worth scaling on |
+| `flowx_flow_total` | counter | Throughput and outcome mix |
+| `flowx_step_duration_seconds` | histogram | Which step in a flow is slow |
+| `flowx_capability_duration_seconds` | histogram | Which dependency is slow, across all flows |
+| `flowx_capability_unhandled_total` | counter | **Alert on any value above zero** — a capability that threw instead of returning an error is a defect |
+| `flowx_journal_commit_seconds` | histogram | The store's own latency, i.e. B7 in production |
+| `flowx_lease_lost_total` | counter | Leases lost while still executing. Rising means scale-in is too aggressive |
+
+Span attributes carry `flowx.flow.id`, `flowx.flow.instance_id`, `flowx.flow.profile`,
+`flowx.capability.id`, `flowx.step.id`, `flowx.attempt`, `flowx.tenant.id`,
+`flowx.error.code` and `flowx.error.category` — so "show me every failed step of this instance
+across every node" is one query.
+
+> [!CAUTION]
+> **`flowx_trigger_admitted_total` is declared and has no producer.** So are the
+> `flowx.trigger.kind` and `flowx.trigger.source` attributes.
+> [18 §3](18-Cloud-Native.md#3-autoscaling) shows an autoscale rule using an admitted-rate
+> metric; that rule cannot fire today. Scale on `flowx_flow_duration_seconds`, on concurrent
+> requests, or on the `flow_instance` query in §5.1 instead.
+
+**In `Dispatched` mode this section still holds**, with one addition: a flow becomes *n*
+invocations, so the trace is only whole if the W3C trace context is carried on the message.
+That is a requirement on the dispatched implementation, and it is called out in ADR-0077's
+trade-offs rather than assumed.
 
 ---
 
