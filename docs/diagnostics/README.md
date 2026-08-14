@@ -352,8 +352,9 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1051](FLOWX1051.md) | `Hedge` requires an idempotent capability | **Two charges in flight at once, and the flow keeping whichever answers first** — a hedge is a deliberate concurrent duplicate under one idempotency key, so `FLOWX1014`'s requirement is asked of the loser as well as the winner |
 | [FLOWX1052](FLOWX1052.md) | `Fallback` constant is not the step's output contract | **A degraded mode that survives the outage and then throws** — the value is filed in the state bag under its own type, so a constant of any other type is an answer no later step can bind |
 | [FLOWX1053](FLOWX1053.md) | `Fallback` requires a capability with no side effects | **A reservation reported as made when it was not, with no compensation registered for the half of it that was** — `FLOWX1018`'s objection to caching a write, reaching the same capability by the other door |
+| [FLOWX1054](FLOWX1054.md) | Declared wait is not a compile-time constant | **A flow that silently stops publishing how long it waits** — the manifest's `timeout` is folded at build time, so a wait read from configuration is omitted, `flowx diff` has no window to compare, and the build stays green. It happened to the repository's only producer of the field |
 
-The next is `FLOWX1054`. The range is `FLOWX1001`–`FLOWX1099`.
+The next is `FLOWX1055`. The range is `FLOWX1001`–`FLOWX1099`.
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -701,7 +702,21 @@ team suppressing "caching a write" must not thereby suppress "answering for a wr
 carries half a rule `FLOWX1018` does not have — a degraded step registers no compensation — which
 is what makes it an error rather than a warning.
 
-The next is `FLOWX1054`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1054` is claimed** — *declared wait is not a compile-time constant*: an
+`.AwaitSignal<T>(timeout)` or a `.PollUntil<T>(…, timeout:)` whose duration
+[ADR-0021](../adr/ADR-0021-manifest-publishes-the-wait.md) §2.2 cannot fold, so the step's
+`timeout` is omitted from the manifest. **The rule reports the silence that record chose**, and
+it is `FLOWX1036`'s shape one artifact over: that rule says a whole policy set reaches nothing,
+this one says a declared wait reaches the plan and not the published contract. It is raised from
+`FlowAnalyzer.FoldDeclaredWait`'s own answer rather than from a second reading of the expression,
+so a rule and a field that must agree are one decision — the arrangement `FLOWX1043` did not need,
+because that rule *reads* two folded durations rather than deciding whether either can be folded.
+A **warning**, and neither the determinism set's escalation nor `FLOWX1044`'s error transfers: an
+unfoldable wait executes correctly under every profile, because the plan carries the expression
+verbatim and generated C# evaluates it. What it loses is contract visibility, which is
+`FLOWX1043`'s severity for `FLOWX1043`'s reason.
+
+The next is `FLOWX1055`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

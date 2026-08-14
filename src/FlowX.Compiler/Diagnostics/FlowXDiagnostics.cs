@@ -1783,6 +1783,58 @@ public static class FlowXDiagnostics
         "no compensation, so a half-completed effect behind one would never be undone. Declare " +
         "the fallback on the read that precedes the write, or handle the failure in the flow.");
 
+    /// <summary>FLOWX1054 — a declared wait the compiler cannot fold to a duration.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The omission
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0021-manifest-publishes-the-wait.md">ADR-0021 §2.2</a>
+    /// chose, said out loud.</strong> That record takes <c>merge</c>'s precedent — an absent
+    /// field is a consumer asking, a guessed one is a consumer misled — and it is still the
+    /// right stance for the <em>field</em>. It was the wrong stance for the <em>author</em>:
+    /// the compiler publishes nothing and says nothing, so a wait declared as a configuration
+    /// read costs the flow its <c>timeout</c> with the build green. That is not theoretical.
+    /// It happened to <c>samples/workflow</c>, the repository's only producer of the field,
+    /// and only the one test that reads it noticed.
+    /// </para>
+    /// <para>
+    /// <strong>A warning, and the stance is the catalogue's own.</strong> The set argument in
+    /// <c>docs/diagnostics/README.md</c> is <em>warning by default, error where the
+    /// compilation can prove the code is on a durable flow's replay path</em>, and that
+    /// escalation cannot apply here: an unfoldable wait executes correctly under every
+    /// profile — the plan carries the expression verbatim and generated C# evaluates it — so
+    /// there is no replay defect to escalate about. What is lost is contract visibility: the
+    /// published manifest omits the only number that says whether a wait is minutes or
+    /// quarters, and <c>FLOWX-DIFF-206</c> has nothing to compare. That is <c>FLOWX1043</c>'s
+    /// severity for <c>FLOWX1043</c>'s reason — the flow runs, and an author who genuinely
+    /// wants a wait tuned at deployment time has written one, in a way that costs a field
+    /// they should be told about. An error would refuse a flow that works.
+    /// </para>
+    /// <para>
+    /// <strong>Raised from the fold's own answer and never from a second reading of the
+    /// expression.</strong> <c>FlowAnalyzer.FoldDeclaredWait</c> reports exactly when it is
+    /// about to return <c>null</c>, so the rule and the field cannot disagree: what is
+    /// reported is precisely what is not published. A second implementation of the foldability
+    /// rule is how a diagnostic comes to fire on a wait the manifest carried anyway.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor DeclaredWaitCannotBeFolded = Create(
+        "FLOWX1054",
+        "Declared wait is not a compile-time constant",
+        "Wait '{0}' is not a compile-time constant, so this step publishes no timeout and " +
+        "flowx diff cannot compare the window — declare the duration as a constant",
+        "A declared wait reaches two artifacts. The plan carries the expression verbatim, so " +
+        "the flow waits for exactly what the source says; the manifest carries the duration " +
+        "folded at build time, because a consumer reading flowx.manifest.json has never seen " +
+        "this assembly. The compiler folds TimeSpan.Zero and TimeSpan.FromDays, FromHours, " +
+        "FromMinutes, FromSeconds and FromMilliseconds over a numeric literal, through at most " +
+        "one field or property whose declaration initialises it with one of those. Anything " +
+        "else — a method call, a conditional, a configuration or environment read — is omitted " +
+        "rather than guessed at, and the omission is silent in the published contract. Declare " +
+        "the duration as a compile-time constant, naming it as a static field or property if " +
+        "it belongs outside the flow. Suppress this rule only where the wait is deliberately " +
+        "chosen at run time and the missing timeout field is accepted.",
+        DiagnosticSeverity.Warning);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1832,7 +1884,8 @@ public static class FlowXDiagnostics
         StepBindsOnlyThePollsSignal,
         HedgeRequiresIdempotency,
         FallbackMustMatchTheStepsOutput,
-        FallbackRequiresNoSideEffects);
+        FallbackRequiresNoSideEffects,
+        DeclaredWaitCannotBeFolded);
 
     private static DiagnosticDescriptor Create(
         string id,

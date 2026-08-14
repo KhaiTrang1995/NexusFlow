@@ -1774,7 +1774,7 @@ public static class FlowAnalyzer
 
             // And the same duration again, folded, for the manifest. See ADR-0021 §2.2 for
             // why one declaration reaches two artifacts in two forms.
-            FoldDeclaredWait(declared, semanticModel),
+            FoldDeclaredWait(declared, semanticModel, diagnostics),
 
             block));
 
@@ -1837,7 +1837,7 @@ public static class FlowAnalyzer
         var interval = Argument(arguments, "interval", 1);
         var timeout = Argument(arguments, "timeout", 2);
 
-        var budget = FoldDeclaredWait(timeout, semanticModel);
+        var budget = FoldDeclaredWait(timeout, semanticModel, diagnostics);
 
         // FLOWX1043 — the second attempt falls due after the budget has gone, so the loop is
         // one call and an escalation. Silent whenever either duration is one this compiler
@@ -1974,14 +1974,40 @@ public static class FlowAnalyzer
     /// expression gets. One hop covers the form authors write; two would buy an edge case at
     /// the cost of a loop with a termination argument to make.
     /// </para>
+    /// <para>
+    /// <strong><c>FLOWX1054</c> is raised from this method's own answer, and that is the point
+    /// of it being one method.</strong> The rule reports exactly when the fold is about to
+    /// come back empty, so the diagnostic and the published <c>timeout</c> read the same
+    /// decision once: there is no second implementation of foldability that could report a
+    /// wait the manifest carried anyway, or stay quiet about one it dropped. Silent when
+    /// nothing was declared — a call with no argument does not compile, so that branch is a
+    /// half-typed buffer where C# is already saying something more useful.
+    /// </para>
     /// </remarks>
-    private static string? FoldDeclaredWait(ExpressionSyntax? declared, SemanticModel semanticModel)
+    private static string? FoldDeclaredWait(
+        ExpressionSyntax? declared, SemanticModel semanticModel, List<Diagnostic> diagnostics)
     {
         if (declared is null)
         {
             return null;
         }
 
+        var folded = Fold(declared, semanticModel);
+
+        if (folded is null)
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.DeclaredWaitCannotBeFolded,
+                declared.GetLocation(),
+                declared.ToString()));
+        }
+
+        return folded;
+    }
+
+    /// <summary>The fold itself, with no opinion about what to say when it fails.</summary>
+    private static string? Fold(ExpressionSyntax declared, SemanticModel semanticModel)
+    {
         if (DeclaredDuration.Fold(declared.ToString()) is { } folded)
         {
             return folded;
