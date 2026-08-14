@@ -842,7 +842,7 @@ jobs:
               # this job, so the exclusion only matters to somebody running it locally --
               # where, without it, this step reports a hundred failures from `undici` and
               # `css-tree` and nobody reads the two that are real.
-              if '.git' in root or 'node_modules' in root:
+              if '.git' in root or '.claude' in root or 'node_modules' in root:
                   continue
               for f in files:
                   if not f.endswith('.md'):
@@ -917,7 +917,7 @@ jobs:
 
           cache, bad, hit = {}, [], set()
           for root, _, files in os.walk('.'):
-              if '.git' in root or 'node_modules' in root:
+              if '.git' in root or '.claude' in root or 'node_modules' in root:
                   continue
               for f in files:
                   if not f.endswith('.md'):
