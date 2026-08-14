@@ -6,6 +6,7 @@
     <Project Path="src/FlowX.Compiler.CodeFixes/FlowX.Compiler.CodeFixes.csproj" />
     <Project Path="src/FlowX.Cli/FlowX.Cli.csproj" />
     <Project Path="src/FlowX.Core/FlowX.Core.csproj" />
+    <Project Path="src/FlowX.Functions/FlowX.Functions.csproj" />
     <Project Path="src/FlowX.Hosting/FlowX.Hosting.csproj" />
     <Project Path="src/FlowX.Logging/FlowX.Logging.csproj" />
     <Project Path="src/FlowX.Runtime/FlowX.Runtime.csproj" />
@@ -26,6 +27,7 @@
     <Project Path="samples/crm/Crm.csproj" />
     <Project Path="samples/ecommerce/Ecommerce.csproj" />
     <Project Path="samples/event-driven/EventDriven.csproj" />
+    <Project Path="samples/functions/Functions.csproj" />
     <Project Path="samples/realtime-stream/RealtimeStream.csproj" />
     <Project Path="samples/healthcare/Healthcare.csproj" />
     <Project Path="samples/scheduler/Scheduler.csproj" />
@@ -48,7 +50,9 @@
     <Project Path="tests/FlowX.Compiler.Tests/FlowX.Compiler.Tests.csproj" />
     <Project Path="tests/FlowX.Conformance.Tests/FlowX.Conformance.Tests.csproj" />
     <Project Path="tests/FlowX.Core.Tests/FlowX.Core.Tests.csproj" />
+    <Project Path="tests/FlowX.Functions.Tests/FlowX.Functions.Tests.csproj" />
     <Project Path="tests/FlowX.Hosting.Tests/FlowX.Hosting.Tests.csproj" />
+    <Project Path="tests/Functions.Tests/Functions.Tests.csproj" />
     <Project Path="tests/Healthcare.Tests/Healthcare.Tests.csproj" />
     <Project Path="tests/FlowX.Http.Tests/FlowX.Http.Tests.csproj" />
     <Project Path="tests/FlowX.Mcp.Tests/FlowX.Mcp.Tests.csproj" />

@@ -61,7 +61,7 @@ public sealed class FlowBusScan
 {
     private readonly FlowHost _host;
     private readonly FlowBusCatalog _subscriptions;
-    private readonly IBusConsumer _consumer;
+    private readonly IBusConsumer? _consumer;
     private readonly FlowDurability _durability;
     private readonly FlowXOptions _options;
     private readonly LeasePolicy _policy;
@@ -69,22 +69,33 @@ public sealed class FlowBusScan
     /// <summary>Builds a pass over one node's registered subscriptions.</summary>
     /// <param name="host">Where a delivery is started, so it is counted and drained.</param>
     /// <param name="subscriptions">Which subscriptions this node serves.</param>
-    /// <param name="consumer">The broker.</param>
+    /// <param name="consumer">
+    /// The broker, or null on a host that is <em>pushed</em> its messages and has none.
+    /// </param>
     /// <param name="durability">
     /// The journal, whose primary key refuses a redelivery, and the lease store, which keeps one
     /// partition to one node.
     /// </param>
     /// <param name="options">The validated host options.</param>
+    /// <remarks>
+    /// <strong>The broker is optional and the journal is not, which is the asymmetry the push
+    /// path introduced.</strong> <see cref="RunOnceAsync"/> asks a broker for work and cannot
+    /// run without one; <see cref="AdmitAsync"/> is handed the work and never touches it. A
+    /// serverless host has a platform that pulls on its behalf, so it wires no
+    /// <see cref="IBusConsumer"/> and still needs every decision this class makes — and the way
+    /// it gets them is that <see cref="IsEnabled"/> reads false and the pass does nothing, while
+    /// the seam serves. Passing null to get a scan that pulls would be a silent failure, and
+    /// <see cref="IsEnabled"/> is what makes it a stated one.
+    /// </remarks>
     public FlowBusScan(
         FlowHost host,
         FlowBusCatalog subscriptions,
-        IBusConsumer consumer,
+        IBusConsumer? consumer,
         FlowDurability durability,
         FlowXOptions options)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(subscriptions);
-        ArgumentNullException.ThrowIfNull(consumer);
         ArgumentNullException.ThrowIfNull(durability);
         ArgumentNullException.ThrowIfNull(options);
 
@@ -103,8 +114,11 @@ public sealed class FlowBusScan
     /// a subscription would start a flow per delivery of one message and nothing would record that
     /// it had — the silent failure <see cref="FlowBusCatalog.Add"/> refuses at registration. A host
     /// with no subscriptions is not misconfigured and simply does not run the loop.
+    /// False also when no broker was wired, which is the ordinary state of a push host: its
+    /// platform pulls, and <see cref="AdmitAsync"/> is the entry it uses.
     /// </remarks>
-    public bool IsEnabled => _subscriptions.Count > 0 && _host.IsDurabilityConfigured;
+    public bool IsEnabled =>
+        _consumer is not null && _subscriptions.Count > 0 && _host.IsDurabilityConfigured;
 
     /// <summary>Runs one pass and returns what it did.</summary>
     /// <param name="ct">Cancels the pass, and every flow it started.</param>
@@ -142,14 +156,14 @@ public sealed class FlowBusScan
     {
         var subscription = registration.Subscription;
 
-        var subscribed = await _consumer.SubscribeAsync(subscription, ct).ConfigureAwait(false);
+        var subscribed = await _consumer!.SubscribeAsync(subscription, ct).ConfigureAwait(false);
 
         if (subscribed.IsFailure)
         {
             return BusScanReport.Nothing with { Error = subscribed.Error };
         }
 
-        var received = await _consumer
+        var received = await _consumer!
             .ReceiveAsync(
                 subscription, _options.BusMaxConcurrentPartitions, _options.BusReceiveBatchSize, ct)
             .ConfigureAwait(false);
@@ -329,7 +343,7 @@ public sealed class FlowBusScan
         switch (admission.Disposition)
         {
             case BusDisposition.DeadLetter:
-                await _consumer
+                await _consumer!
                     .DeadLetterAsync(registration.Subscription, delivery, admission.Reason!, ct)
                     .ConfigureAwait(false);
 
@@ -339,7 +353,7 @@ public sealed class FlowBusScan
                 return one with { Requeued = 1 };
 
             default:
-                await _consumer
+                await _consumer!
                     .AcknowledgeAsync(registration.Subscription, delivery, ct)
                     .ConfigureAwait(false);
 
