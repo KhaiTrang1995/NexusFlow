@@ -833,30 +833,20 @@ jobs:
           # renamed heading, and this repository does not edit accepted records -- see
           # PLAN open item 18 for the decision that is owed. Exempted by exact link so a
           # different broken anchor in the same file still fails.
-          # Every entry here is a broken anchor INSIDE AN ACCEPTED ADR. This repository
-          # does not edit accepted records -- superseding is the only amendment -- and
-          # repointing a fragment is a judgement the repository owner has not made yet.
-          # PLAN open item 18 carries that decision; five of the six are one-word renames
-          # in another document ("four of seven metrics emit" is now "seven of seven"),
-          # and the sixth is a section ADR-0020 references and does not contain.
+          # ADR-0020 references a section "Owed work, named so it is not lost" that the
+          # record does not contain. That is a content gap inside an Accepted ADR, not a
+          # renamed heading, so it is not repointed -- there is nowhere correct to point it,
+          # and this repository does not add sections to accepted records.
           #
-          # Exempted by exact (file, fragment) pair, so a DIFFERENT broken anchor in the
-          # same record still fails this job.
+          # Six fragments in ADR-0026, ADR-0040 and ADR-0041 WERE repointed, with the
+          # repository owner's agreement: each named a heading in ANOTHER document that had
+          # since been renamed, and not one word of any record changed.
+          #
+          # Keyed to an exact (file, fragment) pair, so a different break in the same record
+          # still fails this job.
           absent = {
               ('docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md',
                '#owed-work-named-so-it-is-not-lost'),
-              ('docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md',
-               '#9-observing-policies--four-of-seven-metrics-emit'),
-              ('docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md',
-               '#3-golden-signals-automatically-per-graph-node'),
-              ('docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md',
-               '#9-observing-policies--four-of-seven-metrics-emit'),
-              ('docs/adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md',
-               '#7-idempotency-policy--specification'),
-              ('docs/adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md',
-               '#8-cache-safety--specification'),
-              ('docs/adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md',
-               '#9-observing-policies--four-of-seven-metrics-emit'),
           }
 
           def slug(text):

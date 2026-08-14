@@ -33,7 +33,7 @@ the second step would find the first step's record and replay it.
 
 `StepOutcome` carries a success or an `Error` and nothing typed. What a later step actually
 binds to is the state bag, which the dispatcher fills. So "the recorded result"
-[10 §7](../10-Policy-Framework.md#7-idempotency-policy--specification) speaks of is not the
+[10 §7](../10-Policy-Framework.md#7-idempotency-policy) speaks of is not the
 `StepOutcome`: it is the typed values the step contributed, and the only seam that can produce
 or consume them is `IStepDispatcher.DescribeStep` / `RestoreState`, for the reason those members
 exist at all — `JournalPayload.Of` needs a generated `JsonTypeInfo<T>` and only generated code
@@ -41,7 +41,7 @@ can name one.
 
 ### 1.3 What a record holds when the step *failed*
 
-[10 §8](../10-Policy-Framework.md#8-cache-safety--specification)'s table decides this for the
+[10 §8](../10-Policy-Framework.md#8-cache-safety--four-of-five-defaults-are-behaviour)'s table decides this for the
 cache — *"negative caching: off — stale failures are worse than a retry"* — and the same
 question arrives one stage earlier with a sharper edge, because an idempotency record that held
 a failure would replay that failure to every repeat of the key for the whole window.
@@ -101,7 +101,7 @@ the tenant.
 
 **`BeginAsync` is a compare-and-set, not a read followed by a write**, in both implementations,
 for `ILeaseStore`'s reason: two callers presenting one key at the same instant is the case the
-policy exists for, and [10 §7](../10-Policy-Framework.md#7-idempotency-policy--specification)
+policy exists for, and [10 §7](../10-Policy-Framework.md#7-idempotency-policy)
 names it — *"the in-flight state matters: without it, two concurrent requests with the same key
 both execute. This is the most common bug in hand-rolled idempotency."*
 
@@ -114,7 +114,7 @@ remaining deadline, so the marker cannot outlive the execution it stands for.
 
 A policed step that fails calls `AbandonAsync`, and the key is free for the next caller.
 
-**This is [10 §8](../10-Policy-Framework.md#8-cache-safety--specification)'s "negative caching:
+**This is [10 §8](../10-Policy-Framework.md#8-cache-safety--four-of-five-defaults-are-behaviour)'s "negative caching:
 off" applied one stage earlier, and it matters more here.** A recorded failure would be replayed
 for the whole window, so a transient `Unavailable` at the moment a caller first presented a key
 would make that key permanently unusable for a day — and the caller's remedy, retrying with the
@@ -148,7 +148,7 @@ prevent.
 * **A graph edit does not invalidate live records**, because the key names the capability rather
   than the position.
 * **`flowx_idempotency_replays_total` has a producer**, with the `capability` and `scope` labels
-  [10 §9](../10-Policy-Framework.md#9-observing-policies--four-of-seven-metrics-emit) froze and
+  [10 §9](../10-Policy-Framework.md#9-observing-policies--seven-of-seven-metrics-emit) froze and
   [ADR-0026](ADR-0026-policy-metrics-name-only-what-executes.md) declined to name.
 
 **Negative / accepted trade-offs:**

@@ -3,12 +3,12 @@
 **Status:** Accepted
 **Date:** 2026-08-01
 **Deciders:** Repository owner · Platform architecture
-**Amends:** [10 §9](../10-Policy-Framework.md#9-observing-policies--four-of-seven-metrics-emit)
+**Amends:** [10 §9](../10-Policy-Framework.md#9-observing-policies--seven-of-seven-metrics-emit)
 
 > **Two features shipped in the same release and never met.** The policy engine executes
 > stage 4 ([ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md)) and the
 > telemetry seam publishes eleven instruments
-> ([12 §3](../12-Observability.md#3-golden-signals-automatically-per-graph-node)) — and not one
+> ([12 §3](../12-Observability.md#3-metrics)) — and not one
 > of them describes a policy. A circuit breaker that genuinely opened did so with no external
 > evidence of any kind. This record is what closes that, and what it deliberately leaves open.
 
@@ -16,7 +16,7 @@
 
 ## 1. Context
 
-[10 §9](../10-Policy-Framework.md#9-observing-policies--four-of-seven-metrics-emit) specifies seven metric
+[10 §9](../10-Policy-Framework.md#9-observing-policies--seven-of-seven-metrics-emit) specifies seven metric
 rows. Its own warning box said none was emitted, and gave the reason: *"FlowX ships no metrics
 or logging infrastructure at all."* That reason expired when
 [`FlowXMetrics`](../../src/FlowX.Abstractions/Observability/FlowXMetrics.cs) landed. What
@@ -88,7 +88,7 @@ synchronous `Gauge<int>`s recorded at the instant the value changes.**
 | `flowx_bulkhead_queue_depth` | `Gauge<int>` | a caller joins or leaves the queue |
 
 `PolicyMetrics` is a separate type from `FlowXMetrics` because §9 and
-[12 §3](../12-Observability.md#3-golden-signals-automatically-per-graph-node) are separate
+[12 §3](../12-Observability.md#3-metrics) are separate
 frozen tables; they share `FlowXTelemetry.Meter`, because one meter name is that type's entire
 purpose, and nothing else.
 
@@ -195,5 +195,5 @@ half of §9 is built, at which point the two halves should share one decision ab
 **See also:** [ADR-0023](ADR-0023-policy-stages-hook-through-the-plan.md) ·
 [ADR-0024](ADR-0024-stage-four-is-a-fixed-nesting.md) ·
 [ADR-0025](ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) ·
-[10 §9](../10-Policy-Framework.md#9-observing-policies--four-of-seven-metrics-emit) ·
+[10 §9](../10-Policy-Framework.md#9-observing-policies--seven-of-seven-metrics-emit) ·
 [12 — Observability](../12-Observability.md)
