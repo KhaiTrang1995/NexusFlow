@@ -247,6 +247,31 @@ honest that the case exists, not to recommend it.
 
 ### 4.1 The connection ceiling — the one that bites
 
+> [!CAUTION]
+> **FlowX does not work behind PgBouncer today, and this section used to make PgBouncer
+> mandatory.** Two incompatibilities, both reproduced on 2026-08-14 against PgBouncer 1.22 and
+> PostgreSQL 16:
+>
+> 1. The adapter selects its schema with Npgsql's `SearchPath`, which travels as a PostgreSQL
+>    **startup parameter**. PgBouncer refuses the connection outright:
+>    `08P01: unsupported startup parameter: search_path`.
+> 2. The documented remedy, `ignore_startup_parameters = search_path`, makes PgBouncer accept
+>    the connection and then **discard the schema**. Every statement runs against the wrong
+>    one: `42P01: relation "flow_instance" does not exist`.
+>
+> Neither is safe, and the second is the dangerous one because the application starts. A
+> pooled endpoint would have to carry the schema another way — on PgBouncer's own database
+> line, or as a role default — and neither survives `TenantIsolation.Schema`, where the schema
+> is chosen per tenant when the connection is opened.
+>
+> **So the ceiling below is real and PgBouncer is not currently the way past it.** The honest
+> options today are a larger `max_connections`, a bigger tier, or session pooling.
+> [PLAN open item 21](../PLAN.md#9-open-items-blocking-the-plan) carries it.
+>
+> *The separate cross-tenant read this section warned about **is fixed**: the tenant binding
+> became transaction-local the same day — blocker B-5 in [CHECKLIST](../CHECKLIST.md).*
+
+
 Serverless scales instances; PostgreSQL counts connections. Thirty replicas at Npgsql's
 default pool of 100 asks for **3 000 connections** against a server that offers a few
 hundred. Under `TenantIsolation.Schema` the adapter keeps a pool **per tenant schema**, which
