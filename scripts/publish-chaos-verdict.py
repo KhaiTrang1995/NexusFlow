@@ -248,7 +248,8 @@ def render(state: dict, document: dict | None, verdict_text: str,
         "### What this verdict does and does not cover",
         "",
         "- **Gated:** zero duplicate effects against the journal's guarantee, zero effects "
-        "applied by two live workers, zero lost instances, zero orphan effects. A duplicate "
+        "applied by two live workers, zero lost instances, zero orphan effects, zero "
+        "instances taken over by more than one recovery node. A duplicate "
         "inside [ADR-0006](docs/adr/ADR-0006-journal-and-leases.md)'s documented window is "
         "counted and reported and is **not** a failure — it is the design, and a rig that "
         "failed on it would be reporting a decision as a bug.",
