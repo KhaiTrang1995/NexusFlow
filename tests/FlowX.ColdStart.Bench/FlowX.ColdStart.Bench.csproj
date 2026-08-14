@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>FlowX.ColdStart.Bench</RootNamespace>
+
+    <!--
+      A measurement harness, in the same position as tests/FlowX.Durability.Bench and
+      tests/FlowX.Chaos: it ships to nobody, so the AOT and trim analyzers have no subject
+      here. The subject of THIS rig is the AOT-published sample it launches, which carries
+      the analyzers itself. EveryShippedProjectIsAotAnalyzed guards the trees that do ship.
+    -->
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+
+    <!--
+      CA1031 — a general catch. A cold start fails in as many ways as a process and a socket
+      can, and the rig has to name what happened rather than unwind: a crashed rig is
+      indistinguishable from a rig that measured nothing, which is the outcome V5 has lived
+      with since the criterion was written.
+
+      CA1303 — literal strings passed to Console. This prints a report, not a UI.
+    -->
+    <NoWarn>$(NoWarn);CA1031;CA1303</NoWarn>
+  </PropertyGroup>
+
+  <!--
+    No ProjectReference on purpose. The subject is a PUBLISHED BINARY, not an assembly loaded
+    into this process: referencing the sample would measure a host started inside a warm
+    runtime, which is the one thing a cold-start number must not be. The rig drives
+    `dotnet publish` and an operating-system process, and the only contract between them is
+    the file path the publish writes and the port the process listens on.
+  -->
+
+</Project>
