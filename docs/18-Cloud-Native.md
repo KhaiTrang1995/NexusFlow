@@ -39,13 +39,13 @@ trigger sources and the scaling signal differ.
 ```mermaid
 flowchart TB
     subgraph cluster["Kubernetes cluster"]
-        subgraph api["api role — FLOWX_TRIGGERS=http,grpc"]
+        subgraph api["api role — Sweeps = None"]
             A1["replica 3..30<br/>HPA: RPS + p99"]
         end
-        subgraph worker["worker role — FLOWX_TRIGGERS=kafka,stream"]
+        subgraph worker["worker role — Sweeps = Ingestion"]
             W1["replica 2..20<br/>KEDA: consumer lag"]
         end
-        subgraph sched["scheduler role — FLOWX_TRIGGERS=cron"]
+        subgraph sched["scheduler role — Sweeps = Durability"]
             S1["replica 2 (leader-elected)<br/>no autoscale"]
         end
     end
@@ -68,6 +68,15 @@ flowchart TB
 
 Splitting roles is configuration, not code. A small system may run all three in
 one deployment; the manifest is unaffected.
+
+> [!NOTE]
+> **These three labels named `FLOWX_TRIGGERS`, and no such variable ever existed.** The
+> topology was drawn before anything could express it: each sweep decided whether it
+> *could* run — a recovery scan needs a journal — and none could be told whether it
+> *should*, so a host with a journal ran every sweep it was capable of.
+> `FlowXOptions.Sweeps` is the switch that makes the split real, and
+> `HostSweepGateTests` fails the build if a new sweep is added without consulting it. It
+> defaults to every sweep, so nothing already deployed changes.
 
 ---
 

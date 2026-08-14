@@ -36,9 +36,14 @@ internal sealed class FlowScheduleService : BackgroundService
     private readonly FlowScheduleScan? _scan;
     private readonly TimeSpan _interval;
 
+    /// <summary>Whether this host was deployed to run this sweep at all.</summary>
+    private readonly bool _deployed;
+
     public FlowScheduleService(FlowScheduleScan? scan, FlowXOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+
+        _deployed = options.Sweeps.HasFlag(HostSweeps.Schedule);
 
         _scan = scan;
         _interval = options.ScheduleScanInterval;
@@ -46,6 +51,14 @@ internal sealed class FlowScheduleService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // What this host was deployed to do, which is a different question from what it
+        // is capable of doing -- HostSweeps says why the two are kept apart. Checked
+        // before anything else so an opted-out host starts no loop and takes no lock.
+        if (!_deployed)
+        {
+            return;
+        }
+
         // Read at the first tick rather than in the constructor: schedules are registered from
         // the composition root after the container is built, so a node that decided at
         // construction time would decide before anything had been registered and never sweep.

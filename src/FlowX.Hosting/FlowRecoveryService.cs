@@ -32,9 +32,14 @@ internal sealed class FlowRecoveryService : BackgroundService
     private readonly FlowRecoveryScan? _scan;
     private readonly TimeSpan _interval;
 
+    /// <summary>Whether this host was deployed to run this sweep at all.</summary>
+    private readonly bool _deployed;
+
     public FlowRecoveryService(FlowRecoveryScan? scan, FlowXOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+
+        _deployed = options.Sweeps.HasFlag(HostSweeps.Recovery);
 
         _scan = scan?.IsEnabled == true ? scan : null;
         _interval = options.RecoveryScanInterval;
@@ -42,6 +47,14 @@ internal sealed class FlowRecoveryService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // What this host was deployed to do, which is a different question from what it
+        // is capable of doing -- HostSweeps says why the two are kept apart. Checked
+        // before anything else so an opted-out host starts no loop and takes no lock.
+        if (!_deployed)
+        {
+            return;
+        }
+
         if (_scan is null)
         {
             return;

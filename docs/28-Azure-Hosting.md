@@ -186,7 +186,10 @@ flowchart TB
 ```
 
 **Three roles, one image.** The code and the manifest are identical; only
-`FLOWX_TRIGGERS` and the scale rule differ. This mirrors
+`FlowXOptions.Sweeps` and the scale rule differ — `None` for the api role, `Ingestion` for
+the worker, `Durability` for the scheduler. *This paragraph named `FLOWX_TRIGGERS`, a
+variable that never existed in the source; the switch was added on 2026-08-14 and a fitness
+function now fails the build if a new sweep forgets it.* This mirrors
 [18 §1](18-Cloud-Native.md#1-deployment-topology) exactly, because it is the same topology
 on a different orchestrator. A small deployment may run all three in one app.
 

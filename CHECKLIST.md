@@ -209,6 +209,22 @@ What changed is that it is no longer tracked as a blocker.*
       stays open to say so.
       248/248 Postgres tests pass; two new unit tests pin both sides of the switch.
       See [PLAN open item 21](PLAN.md#9-open-items-blocking-the-plan)
+- [x] **B-7 · ~~The three-role topology was drawn and could not be configured.~~ FIXED 2026-08-14.**
+      `docs/18-Cloud-Native.md §1` and `docs/28-Azure-Hosting.md §3.1` both split a deployment
+      into `api`, `worker` and `scheduler` roles selected by **`FLOWX_TRIGGERS`** — a variable
+      that appeared **four times in documents and zero times in the source**. Every
+      `Flow*Scan.IsEnabled` derived from *capability* (`_durability.CanScan`,
+      `_subscriptions.Count > 0`), so a host given a journal ran every sweep it was capable of
+      and no host could be told to run fewer. Phase 1 of 28 §7 could not have been reached, and
+      `Dispatched` (ADR-0077) could not be either — turning the sweeps off is its precondition.
+      **`FlowXOptions.Sweeps`**, a flags enum defaulting to `All`, now says what a host *should*
+      do while each scan still says what it *can*; the two are kept apart so a missing journal
+      and a deliberate opt-out are not one state in a log. Six services gate on it in their
+      constructor, in this file's style of keeping the value rather than the options object.
+      **Proved rather than reviewed:** `HostSweepGateTests` reads the compiled IL — through the
+      async state machine, because the first version read the stub and reported six correctly
+      gated services as ungated — and a **compiling** mutation removing one service's gate
+      turns it red. 9 semantics tests, 28/28 test projects green, build 0 warnings.
 - [x] **B-3 · ~~Delete a stray tooling-prefixed branch from the remote.~~ RESOLVED.**
       Gone from the remote. History scan is clean: no commit in any branch has
       bot authorship, a generated-by footer, or a signature. *The branch name itself

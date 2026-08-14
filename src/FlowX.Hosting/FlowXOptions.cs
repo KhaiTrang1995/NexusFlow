@@ -66,6 +66,24 @@ public sealed class FlowXOptions
     /// </remarks>
     public TimeSpan LeaseRenewalInterval { get; set; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// Which background sweeps this host performs. Defaults to <see cref="HostSweeps.All"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The switch that makes the three-role topology in <c>docs/18-Cloud-Native.md §1</c>
+    /// configurable rather than merely drawn. One image, three deployments:
+    /// <c>HostSweeps.None</c> for an API host, <see cref="HostSweeps.Ingestion"/> for a
+    /// worker, <see cref="HostSweeps.Durability"/> for a scheduler.
+    /// </para>
+    /// <para>
+    /// This says what a host <em>should</em> do. Each scan still decides what it <em>can</em>
+    /// do — a recovery sweep needs a journal whatever this says — and
+    /// <see cref="HostSweeps"/> explains why the two are kept apart.
+    /// </para>
+    /// </remarks>
+    public HostSweeps Sweeps { get; set; } = HostSweeps.All;
+
     /// <summary>How often this node looks for instances a dead node left running.</summary>
     /// <remarks>
     /// Applied with jitter, and that is not decoration: identical nodes on an identical
