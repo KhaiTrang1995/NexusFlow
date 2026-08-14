@@ -209,6 +209,18 @@ public static class FlowXServiceCollectionExtensions
                 ResolveStreamScan(provider),
                 provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
 
+        // The doors a pushed item comes through, assembled from the same private resolution the
+        // six hosted services use. Registered whether or not anything pushes: a host that only
+        // sweeps never resolves it, and one that scales to zero has no hosted service to reach
+        // the seams through at all (FlowPushSeams says why the scans are not services of their
+        // own).
+        services.TryAddSingleton(static provider => new FlowPushSeams(
+            provider.GetRequiredService<FlowHost>(),
+            provider.GetRequiredService<FlowBusCatalog>(),
+            ResolveBusScan(provider),
+            ResolveScheduleScan(provider),
+            ResolveChangeScan(provider)));
+
         services.TryAddSingleton<FlowXHealthCheck>();
 
         // Registering the type is not the same as registering the check. Before this,
@@ -362,8 +374,7 @@ public static class FlowXServiceCollectionExtensions
     /// </remarks>
     private static FlowBusScan? ResolveBusScan(IServiceProvider provider)
     {
-        if (provider.GetService<IBusConsumer>() is not { } consumer ||
-            ResolveDurability(provider) is not { } durability)
+        if (ResolveDurability(provider) is not { } durability)
         {
             return null;
         }
@@ -371,7 +382,13 @@ public static class FlowXServiceCollectionExtensions
         return new FlowBusScan(
             provider.GetRequiredService<FlowHost>(),
             provider.GetRequiredService<FlowBusCatalog>(),
-            consumer,
+
+            // Optional since the push seam landed, and the remark above is now one way to be
+            // null rather than two. A host with no broker still holds every decision a delivery
+            // needs, because a serverless platform pulls on its behalf and hands the message to
+            // FlowBusScan.AdmitAsync — so the object exists and FlowBusScan.IsEnabled, which
+            // reads the consumer, is what keeps the pull loop from running over nothing.
+            provider.GetService<IBusConsumer>(),
             durability,
             provider.GetRequiredService<IOptions<FlowXOptions>>().Value);
     }

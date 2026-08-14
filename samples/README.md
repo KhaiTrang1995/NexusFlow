@@ -1,7 +1,7 @@
 # FlowX Samples
 
-Ten directories, each named for a claim in the specification it is meant to prove
-— not to demonstrate syntax. **All ten contain an application.**
+Eleven directories, each named for a claim in the specification it is meant to prove
+— not to demonstrate syntax. **All eleven contain an application.**
 
 > [!NOTE]
 > **All ten have code, and every one of them runs.** This page opened by saying
@@ -21,7 +21,7 @@ Ten directories, each named for a claim in the specification it is meant to prov
 > unmeasured is `realtime-stream`'s throughput, which is deferred with the rest of
 > the performance work.
 
-## The ten
+## The eleven
 
 | Sample | Proves | Code? | What blocks it |
 |---|---|---|---|
@@ -34,6 +34,7 @@ Ten directories, each named for a claim in the specification it is meant to prov
 | [healthcare](healthcare/) | Consent, PII redaction and erasure by subject, at the isolation levels that exist | **Yes** | Nothing. Needs PostgreSQL. A `[Subject]` member is digested **inside** `JournalPayload` before the redaction pass, so a member can be both `[Sensitive]` and the erasure key without an accessor. **L3/L4 are refused, not missing** — [ADR-0051](../docs/adr/ADR-0051-database-isolation-is-a-topology-not-a-runtime-level.md) holds a database per tenant is a deployment topology; this runs at L1 and L2. A signed completion certificate and `flowx purge --subject` were both refused, with reasons on the page |
 | [realtime-stream](realtime-stream/) | Bounded memory under a slow sink, over tumbling event-time windows | **Yes** | Nothing. Needs PostgreSQL and Redis. Peak resident records follow the declared channel capacity — asserted as correctness, and the assertion fails when backpressure stops consulting the channel. **The 250 000 rec/s number is not measured**: B13 is deferred with the rest of the performance work, so no benchmark claims it. `.Window(…)`/`.Aggregate(…)` are still not builder members; the window is declared on the trigger and the fold is a capability |
 | [crm](crm/) | A sales process whose transitions, guards and actions are rows an administrator rewrites at run time — while the set of actions stays a closed enumeration the compiler sees the whole of | **Yes** | Nothing. Needs PostgreSQL. Fourteen tables under row-level security, a conversion saga, a discount stance a representative does not hold, an enrichment wait ended by a webhook, two cron sweeps, and one read published to a model. **Configuration cannot add an action kind** — [26 §7.3](../docs/26-CRM-Sample.md) is where that line is drawn and `ProcessPublishing.Validate` is where it is enforced |
+| [functions](functions/) | The same flows on a host that scales to zero: a trigger declared once becomes an Azure Functions binding at build time, and no entry point is hand-written | **Yes** | Nothing to build. Needs PostgreSQL to run. `FlowX.Functions` turns `[HttpTrigger]`, `[BusTrigger]` and `[CronTrigger]` into `[Function]` entry points that are one call each into `FlowHost.RunAsync`, `FlowBusScan.AdmitAsync` and `FlowScheduleScan.RunOnceAsync`. **The declared cron is not copied into the `TimerTrigger`** — the platform's timer says "look now" and the declaration decides what is due, because a `TimerTrigger` has no field for an IANA zone and [ADR-0031](../docs/adr/ADR-0031-an-occurrence-names-the-instance-it-starts.md) derives the instance id from the expression. `[StreamTrigger]` is **refused with a reason in the generated file**: a window is wider than an invocation. **The Functions local runtime has not been run against** — the Core Tools binary is unreachable from this build environment, and `tests/Functions.Tests` drives the generated entry points directly instead |
 | [ai-agent](ai-agent/) | Capabilities as agent tools with real authorisation and no parallel permission system | **Yes** | Nothing. Serves real MCP JSON-RPC. Elicitation holds the flow until a human answers — **a decline never enters the flow**, which is a test that fails when the refusal is returned after the capability runs. Sampling borrows the caller's model; `resources/list` serves the manifest. Refused: naming a *magnitude* in a confirmation prompt, since computing it means running the flow the prompt gates |
 
 **Read the "What blocks it" column as what the sample costs.** It held, for most of
@@ -56,6 +57,7 @@ example.
 | healthcare | [16](../docs/16-Multi-Tenant.md), [15 §9](../docs/15-Security.md#9-compliance-support) |
 | realtime-stream | [09 §9](../docs/09-Trigger-Model.md#9-stream-trigger), [14](../docs/14-Performance.md), [FLOWX1028](../docs/diagnostics/FLOWX1028.md) |
 | ai-agent | [13 §6](../docs/13-AI-Native.md#6-capabilities-as-agent-tools), [15 §7](../docs/15-Security.md#7-ai-and-agent-security) |
+| functions | [09](../docs/09-Trigger-Model.md), [18](../docs/18-Cloud-Native.md), [28](../docs/28-Azure-Hosting.md) |
 
 ## Running a sample
 
