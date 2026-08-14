@@ -5,21 +5,29 @@
 > **Answers:** how does FlowX deploy, scale, roll out and degrade?
 
 > [!WARNING]
-> **This repository contains no Dockerfile, no Helm chart, no Kubernetes
-> manifest and no KEDA scaler.** The three roles in §1 are one image in the sense
-> that they would be; nothing builds that image. The Checkov IaC scan named in
+> **This repository contains no Helm chart, no Kubernetes manifest and no KEDA
+> scaler.** The three roles in §1 are one image in the sense that they would be;
+> nothing builds a role-tagged image. The Checkov IaC scan named in
 > [21 §4](21-Quality-Gates.md#4-security-testing-toolchain) has no charts to
-> scan.
+> scan. `ConfigurationCannotChangeGraph` is named here as a fitness function and
+> is not written — the *property* is real (the graph is emitted as static data at
+> build time and no configuration path reaches it) and nothing asserts it.
 >
-> The subsystems the operational behaviour depends on are also absent: there is
-> no journal, so there are no leases to release on drain and no in-flight state
-> to checkpoint; there is no telemetry, so there is no scaling signal and no
-> readiness signal beyond `FlowXHealthCheck`. `ConfigurationCannotChangeGraph` is
-> named here as a fitness function and is not written — the *property* is real
-> (the graph is emitted as static data at build time and no configuration path
-> reaches it) and nothing asserts it.
+> *This block also said there was no Dockerfile, no journal and no telemetry, and
+> that the only readiness signal was `FlowXHealthCheck`. All four stopped being
+> true as the runtime was built: `samples/crm` and `samples/crm-web` each carry a
+> Dockerfile, the PostgreSQL journal and lease store ship, leases are released
+> explicitly on drain as §2 describes, and OpenTelemetry emits the scaling signals
+> §3 scales on. The sentences are corrected rather than deleted, because a reader
+> who knew the old text needs to see which part changed.*
 >
 > Read this as the operating model P2, P5 and P9 are built towards.
+
+> [!TIP]
+> **Deploying to Azure?** This document is orchestrator-neutral on purpose.
+> [28 — Azure Hosting](28-Azure-Hosting.md) scores Functions, App Service,
+> Container Apps and AKS against what the runtime actually needs, and maps the
+> three roles below onto each of them.
 
 ---
 

@@ -52,6 +52,10 @@ yet (constraint C8).
 | 22 | [CLI](22-CLI.md) | `flowx manifest`, `graph`, `diff` |
 | 23 | [Testing Strategy](23-Testing-Strategy.md) | How a FlowX application is tested, at each level |
 | 24 | [Getting Started](24-Getting-Started.md) | The path from `dotnet new flowx` to a tested saga — every snippet compiled by a test |
+| 25 | [Remaining Platform](25-Remaining-Platform.md) | What the specification promises and the runtime has not built yet |
+| 26 | [CRM Sample · Design](26-CRM-Sample.md) | The C4 views, domain model, data model and sequences behind `samples/crm` |
+| 27 | [CRM Reference Architecture](27-CRM-Reference-Architecture.md) | A wider CRM read against what FlowX compiles, and how to build the next stage |
+| 28 | [Azure Hosting](28-Azure-Hosting.md) | Which Azure compute can host FlowX — Functions, App Service, Container Apps, AKS — and what each one costs you |
 | — | [ADRs](adr/README.md) | Decisions |
 | — | [Diagnostics](diagnostics/README.md) | Every `FLOWX####` the compiler raises |
 | — | [Benchmarks](benchmarks/README.md) | Budgets, baselines and their reports |
