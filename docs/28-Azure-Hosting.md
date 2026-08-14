@@ -6,7 +6,12 @@
 > CRM adds on top?
 
 > [!WARNING]
-> **This repository contains no Bicep, no Terraform, no Dockerfile and no pipeline.**
+> **Phase 0 now has assets; nothing beyond it does, and none of it has ever been deployed.**
+> [`deploy/azure/`](../deploy/azure/) carries a Bicep template that compiles and a manual
+> workflow that previews before it applies. This block used to say the repository contained
+> no Bicep and no pipeline, which stopped being true on 2026-08-14. What has not changed is
+> that no subscription has run either, so read them as a starting point rather than as a
+> proven deployment.
 > Everything here is a design. [18 — Cloud-Native](18-Cloud-Native.md) carries the same
 > warning for Kubernetes and is the sibling of this document: 18 says how FlowX behaves in
 > any orchestrator, this says which Azure service to put it in.
