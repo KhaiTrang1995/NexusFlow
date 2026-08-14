@@ -139,10 +139,15 @@ public static class FlowXServiceCollectionExtensions
         // over disjoint sets of rows on two intervals a deployment may reasonably set apart —
         // and because a host that can wake parked instances but cannot take over abandoned
         // ones, or the reverse, is a configuration each store decides for itself.
+        //
+        // The wake is resolved optionally, like the stores: absent is the ordinary configuration
+        // and is every release before this one — the loop waits out its interval and the sweep is
+        // untouched. A store that supplies one only ever shortens that wait.
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowTimerService>(
             static provider => new FlowTimerService(
                 ResolveTimerScan(provider),
-                provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
+                provider.GetRequiredService<IOptions<FlowXOptions>>().Value,
+                provider.GetService<ISweepSignal>())));
 
         // Registered whether or not anything is put in it, for FlowCatalog's reason: the sweep
         // over an empty catalogue is not enabled, which is the same answer as a node that fires
@@ -189,7 +194,8 @@ public static class FlowXServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowChangeService>(
             static provider => new FlowChangeService(
                 ResolveChangeScan(provider),
-                provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
+                provider.GetRequiredService<IOptions<FlowXOptions>>().Value,
+                provider.GetService<ISweepSignal>())));
 
         // Registered whether or not anything is put in it, for FlowScheduleCatalog's reason.
         services.TryAddSingleton<FlowStreamCatalog>();
