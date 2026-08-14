@@ -97,7 +97,14 @@ internal static class SamplePublish
         }
 
         return new PublishResult(
-            command,
+            // --no-publish measures a binary this run did not produce — the AOT job in
+            // ci.yml hands the rig its own publish that way — and the results document is
+            // read as evidence about one specific build. Recording the command that WOULD
+            // have produced it would attribute somebody else's binary to a run that never
+            // compiled anything.
+            options.SkipPublish
+                ? $"(none — reused the publish already in {options.PublishDirectory})"
+                : command,
 
             // Relative, because this string is copied into a committed results document and
             // an absolute path there says more about whose machine ran it than about what

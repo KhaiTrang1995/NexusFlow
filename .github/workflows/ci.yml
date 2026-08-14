@@ -704,6 +704,70 @@ jobs:
           echo "$BODY" | grep -q '"receiptId"' || {
             echo "::error::The response did not carry the flow's declared output."; exit 1; }
 
+      - name: Time the cold start of the binary this job just published
+        # Criterion V5 is "cold start ≤ 200 ms, NativeAOT-compatible". The step above
+        # answers the second half on every push; nothing answered the first until now, so
+        # the number lived in docs/benchmarks/V5-cold-start.md and was compared to 200 ms
+        # by whoever last read it.
+        #
+        # THE SAME BINARY, not another one. tests/FlowX.ColdStart.Bench publishes for
+        # itself by default, which would spend two more minutes producing a second native
+        # image and then report a start-up time for a binary no other step in this job ever
+        # ran. `--no-publish` reads whatever is in .artifacts/coldstart-aot/, so the publish
+        # the smoke test above accepted is moved there and measured.
+        run: |
+          BIN=samples/ecommerce/bin/Release/net10.0/linux-x64/publish
+          mkdir -p .artifacts
+          cp -r "$BIN" .artifacts/coldstart-aot
+
+          dotnet run --project tests/FlowX.ColdStart.Bench --configuration Release -- \
+            --no-publish --json .artifacts/cold-start.json
+
+          # The rig records nothing when it cannot measure — a timed-out start is not a
+          # sample — so the results document existing is asserted rather than assumed. A
+          # checker run over a missing or stale file would turn a broken run into a verdict.
+          test -s .artifacts/cold-start.json || {
+            echo "::error::The cold-start rig wrote no results document, so V5 was not measured on this run."
+            exit 1; }
+
+      - name: V5 gate — cold start at p50 against the 200 ms ceiling
+        # The verdict, from the rig's JSON rather than from its console output. The ceiling
+        # is V5's own number; the percentile is the median, and scripts/check-cold-start.py
+        # carries the argument for that from docs/benchmarks/V5-cold-start.md — two runs of
+        # one commit on one container agreed to 2 % at p50 and moved 26 % at p99, so a tail
+        # gate would fire on the runner's scheduler rather than on the code. p95, p99, min,
+        # max, the port-open phase and the binary's size are printed on every run and gate
+        # nothing.
+        run: |
+          # pipefail, for the reason the steps above spell out: without it the step's exit
+          # status is tee's, and a FAIL verdict would be reported as a passing step.
+          set -o pipefail
+          python3 scripts/check-cold-start.py .artifacts/cold-start.json \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: The V5 gate can fail
+        # The same assertion .github/workflows/performance.yml makes of the generator-cost
+        # and benchmark-budget gates, and for the same reason: a gate is only worth the run
+        # it costs if a breach makes it red. Re-judging the run that just passed against a
+        # 1 ms ceiling costs a JSON parse and proves the comparison is live.
+        run: |
+          if python3 scripts/check-cold-start.py .artifacts/cold-start.json --budget 1 \
+               > /tmp/cold-start-selftest.txt 2>&1; then
+            echo "::error::A 1 ms ceiling was reported as met, so the V5 gate above passes whatever the rig measured."
+            cat /tmp/cold-start-selftest.txt
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        if: failure()
+        with:
+          # Only on a red run, and it is the measurement rather than a log: a breached
+          # ceiling is argued about with the thirty starts behind it, and the step summary
+          # above only carries the percentiles.
+          name: cold-start-v5
+          path: .artifacts/cold-start.json
+          if-no-files-found: ignore
+
   manifest:
     name: Manifest compatibility
     runs-on: ubuntu-latest
