@@ -240,19 +240,41 @@ public sealed class FlowBusScan
         }
     }
 
-    /// <summary>One delivery, from the broker's offer to the broker's answer.</summary>
-    private async Task<BusScanReport> DeliverAsync(
-        BusRegistration registration, BusDelivery delivery, CancellationToken ct)
+    /// <summary>
+    /// What becomes of one delivery, decided and not settled.
+    /// </summary>
+    /// <param name="registration">The subscription the delivery belongs to.</param>
+    /// <param name="delivery">The delivery, as the broker or the platform offered it.</param>
+    /// <param name="ct">Cancels the flow this admission starts.</param>
+    /// <returns>The disposition, and the dead-letter reason when there is one.</returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>The public per-item entry, and the reason it decides rather than settles.</strong>
+    /// <see cref="RunOnceAsync"/> pulls, so it has an <see cref="IBusConsumer"/> to answer; a
+    /// serverless host is <em>pushed</em> one message and its platform settles that message
+    /// itself, so a seam that acknowledged would acknowledge twice or fight the platform for the
+    /// lock. Both routes need the same four decisions — redelivery, acknowledgement, ordering,
+    /// poison — and this is where all four are made, once. What each caller then does with the
+    /// answer is the caller's.
+    /// </para>
+    /// <para>
+    /// <strong>No lease is taken here.</strong> The partition lease belongs to
+    /// <see cref="PartitionAsync"/>, which holds it across a batch so ADR-0037's order survives a
+    /// fleet; a push host's platform is what orders its own delivery. Exactly-once execution does
+    /// not rest on that lease in either case — it rests on the derived instance id and the
+    /// journal's primary key (ADR-0035), which this call goes through unchanged.
+    /// </para>
+    /// </remarks>
+    public async ValueTask<BusAdmission> AdmitAsync(
+        BusRegistration registration, BusDelivery delivery, CancellationToken ct = default)
     {
-        var one = BusScanReport.Nothing with { Received = 1 };
+        ArgumentNullException.ThrowIfNull(registration);
+        ArgumentNullException.ThrowIfNull(delivery);
 
         if (PoisonReasonFor(delivery) is { } poison)
         {
-            await _consumer
-                .DeadLetterAsync(registration.Subscription, delivery, poison, ct)
-                .ConfigureAwait(false);
-
-            return one with { DeadLettered = 1 };
+            return BusAdmission.DeadLetter(poison);
         }
 
         var message = delivery.Message!;
@@ -284,18 +306,47 @@ public sealed class FlowBusScan
 
         var disposition = DispositionFor(result);
 
-        if (disposition == Disposition.Requeue)
+        if (disposition == BusDisposition.Requeue)
         {
-            return one with { Requeued = 1 };
+            return BusAdmission.Requeue;
         }
 
-        await _consumer
-            .AcknowledgeAsync(registration.Subscription, delivery, ct)
-            .ConfigureAwait(false);
+        TriggerAdmissionCounter.Admitted(
+            TriggerKind.Bus,
+            disposition == BusDisposition.Deduplicated ? "deduplicated" : "started",
+            message.TenantId);
 
-        return disposition == Disposition.Deduplicated
-            ? one with { Deduplicated = 1 }
-            : one with { Started = 1 };
+        return new BusAdmission(disposition, instanceId);
+    }
+
+    /// <summary>One delivery, from the broker's offer to the broker's answer.</summary>
+    private async Task<BusScanReport> DeliverAsync(
+        BusRegistration registration, BusDelivery delivery, CancellationToken ct)
+    {
+        var one = BusScanReport.Nothing with { Received = 1 };
+        var admission = await AdmitAsync(registration, delivery, ct).ConfigureAwait(false);
+
+        switch (admission.Disposition)
+        {
+            case BusDisposition.DeadLetter:
+                await _consumer
+                    .DeadLetterAsync(registration.Subscription, delivery, admission.Reason!, ct)
+                    .ConfigureAwait(false);
+
+                return one with { DeadLettered = 1 };
+
+            case BusDisposition.Requeue:
+                return one with { Requeued = 1 };
+
+            default:
+                await _consumer
+                    .AcknowledgeAsync(registration.Subscription, delivery, ct)
+                    .ConfigureAwait(false);
+
+                return admission.Disposition == BusDisposition.Deduplicated
+                    ? one with { Deduplicated = 1 }
+                    : one with { Started = 1 };
+        }
     }
 
     /// <summary>
@@ -363,18 +414,18 @@ public sealed class FlowBusScan
     /// which puts it somewhere a human can find rather than nowhere.
     /// </para>
     /// </remarks>
-    private static Disposition DispositionFor(FlowExecutionResult result)
+    private static BusDisposition DispositionFor(FlowExecutionResult result)
     {
         if (result.IsSuccess || result.IsSuspended)
         {
-            return Disposition.Started;
+            return BusDisposition.Started;
         }
 
         return result.Error!.Code switch
         {
             // An earlier delivery of this same message already ran it. This delivery has nothing
             // left to do, which is the answer it asked for and not a failure.
-            DurabilityErrors.InstanceExistsCode => Disposition.Deduplicated,
+            DurabilityErrors.InstanceExistsCode => BusDisposition.Deduplicated,
 
             DurabilityErrors.LeaseHeldCode
                 or DurabilityErrors.LeaseLostCode
@@ -386,11 +437,11 @@ public sealed class FlowBusScan
                 or TenantErrors.RateLimitedCode
                 or TenantErrors.QuotaExhaustedCode
                 or TenantErrors.SaturatedCode
-                or TenantErrors.FairnessUnavailableCode => Disposition.Requeue,
+                or TenantErrors.FairnessUnavailableCode => BusDisposition.Requeue,
 
             // The flow ran and ended badly, which is the flow's outcome and not the delivery's
             // (ADR-0007, ADR-0036).
-            _ => Disposition.Started,
+            _ => BusDisposition.Started,
         };
     }
 
@@ -414,13 +465,67 @@ public sealed class FlowBusScan
 
         return report;
     }
+}
 
-    /// <summary>What became of one delivery.</summary>
-    private enum Disposition
+/// <summary>What became of one delivery.</summary>
+/// <remarks>
+/// <strong>A decision, not an acknowledgement.</strong> Each member says what the delivery is,
+/// and every caller of <see cref="FlowBusScan.AdmitAsync"/> settles it in its own way: the sweep
+/// answers the broker through <see cref="IBusConsumer"/>, and a push host returns the decision to
+/// a platform that holds the lock itself.
+/// </remarks>
+public enum BusDisposition
+{
+    /// <summary>The flow ran, and reached an outcome the journal holds.</summary>
+    Started,
+
+    /// <summary>An earlier delivery of this message already started it (ADR-0035).</summary>
+    Deduplicated,
+
+    /// <summary>
+    /// Nothing recorded this delivery, so the message must be offered again.
+    /// </summary>
+    /// <remarks>
+    /// The lease was held elsewhere, the fence was raised, the host is draining, or admission
+    /// refused the message on its tenant's account. Acknowledging one of these would discard a
+    /// message with nothing anywhere describing it.
+    /// </remarks>
+    Requeue,
+
+    /// <summary>
+    /// The message can never be processed and belongs somewhere a human can find it.
+    /// </summary>
+    /// <remarks>ADR-0038's two conditions, and <see cref="BusAdmission.Reason"/> says which.</remarks>
+    DeadLetter,
+}
+
+/// <summary>What <see cref="FlowBusScan.AdmitAsync"/> decided about one delivery.</summary>
+/// <param name="Disposition">What the delivery is.</param>
+/// <param name="InstanceId">
+/// The instance the delivery names (ADR-0035), for a <see cref="BusDisposition.Started"/> or a
+/// <see cref="BusDisposition.Deduplicated"/>, and null otherwise. A push host logs it; nothing
+/// derives anything from it.
+/// </param>
+/// <param name="Reason">
+/// Why the message is undeliverable, on <see cref="BusDisposition.DeadLetter"/> alone. It is the
+/// sentence that reaches the dead-letter destination, so it is written for the operator who
+/// finds it there.
+/// </param>
+public sealed record BusAdmission(
+    BusDisposition Disposition, Guid? InstanceId = null, string? Reason = null)
+{
+    /// <summary>The decision for a delivery nothing recorded.</summary>
+    public static BusAdmission Requeue { get; } = new(BusDisposition.Requeue);
+
+    /// <summary>The decision for a message ADR-0038 says is poison.</summary>
+    /// <param name="reason">Why, in a sentence an operator can act on.</param>
+    /// <returns>The decision.</returns>
+    /// <exception cref="ArgumentException"><paramref name="reason"/> is null or blank.</exception>
+    public static BusAdmission DeadLetter(string reason)
     {
-        Started,
-        Deduplicated,
-        Requeue,
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+        return new BusAdmission(BusDisposition.DeadLetter, Reason: reason);
     }
 }
 

@@ -30,10 +30,10 @@ namespace FlowX.Hosting.Tests;
 /// <see cref="FlowHost"/> against a real <see cref="FlowEngine"/>.
 /// </para>
 /// <para>
-/// <strong>Three of the thirteen attributes and two of the thirteen metrics have no producer,
+/// <strong>Three of the thirteen attributes and two of the metric names have no producer,
 /// and that is asserted too.</strong> "Not emitted" is a claim like any other:
 /// <see cref="TwoOfTheThirteenAttributesAreNamedAndHaveNoProducer"/> and
-/// <see cref="TheTwoMetricsWithNoSubjectHaveNoInstrument"/> fail if somebody starts emitting one
+/// <see cref="TheMetricsWithNoSubjectHaveNoInstrument"/> fail if somebody starts emitting one
 /// without correcting §2 and §3, and fail if somebody deletes the name instead of the claim.
 /// </para>
 /// </remarks>
@@ -462,23 +462,28 @@ public sealed class TelemetryConformanceTests
     }
 
     /// <summary>
-    /// The two metrics with no producer have no instrument either.
+    /// The metrics with no producer have no instrument either.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// An instrument created and never written to publishes an empty series, and §9's warning
     /// box is exactly that an operator who follows a row "finds no such series, which is
     /// indistinguishable from a healthy one". Not creating them is what keeps the difference
     /// between "zero" and "unmeasured" visible, and this is where that stays true.
+    /// </para>
+    /// <para>
+    /// <strong>This test was <c>TheTwoMetricsWithNoSubjectHaveNoInstrument</c> and asserted that
+    /// <c>flowx_trigger_admitted_total</c> had no instrument, "because a kind label presupposes
+    /// the shared admission point P3 introduces".</strong> The seam exists —
+    /// <c>FlowBusScan.AdmitAsync</c> — so the claim moved rather than being deleted: the counter
+    /// is now asserted <em>emitted</em>, by
+    /// <see cref="TheAdmissionSeamCountsWhatItLetIn"/>.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void TheTwoMetricsWithNoSubjectHaveNoInstrument()
+    public void TheMetricsWithNoSubjectHaveNoInstrument()
     {
-        var created = typeof(FlowXMetrics)
-            .GetProperties()
-            .Select(static p => p.GetValue(null))
-            .OfType<Instrument>()
-            .Select(static i => i.Name)
-            .ToList();
+        var created = Instruments();
 
         created.ShouldNotBeEmpty("otherwise this gate is checking nothing.");
 
@@ -487,11 +492,75 @@ public sealed class TelemetryConformanceTests
             "Nothing streams, so this one arrives with P7 rather than with an emitter.");
 
         created.ShouldNotContain(
-            TelemetryNames.TriggerAdmittedTotal,
-            "A kind label presupposes the shared admission point P3 introduces.");
+            TelemetryNames.TriggerRejectedTotal,
+            "A requeue is not a refusal and a dead-letter is not the same event, so what this " +
+            "counter would count is still a decision nobody has made.");
 
-        created.ShouldNotContain(TelemetryNames.TriggerRejectedTotal);
+        created.ShouldContain(
+            TelemetryNames.TriggerAdmittedTotal,
+            "The admission seam is what this row waited for, and it exists.");
     }
+
+    /// <summary>
+    /// The admission seam counts what it let in, under the labels §3 froze.
+    /// </summary>
+    /// <remarks>
+    /// <strong>One message through the seam, and the counter is the assertion.</strong> The
+    /// labels are literals for this file's reason — a dashboard written against <c>kind</c> is
+    /// broken by a rename and by nothing else — and <c>kind</c> is asserted to be the trigger
+    /// family rather than the flow, because a counter labelled with the flow would be
+    /// <c>flowx_flow_total</c> with extra steps.
+    /// </remarks>
+    [Fact]
+    public async Task TheAdmissionSeamCountsWhatItLetIn()
+    {
+        using var metrics = new MetricRecorder();
+
+        var admitted = await PushAdmissionTests.BusSeam.AdmitOneAsync(Cancellation);
+
+        admitted.Disposition.ShouldBe(BusDisposition.Started);
+
+        var counted = metrics.Single("flowx_trigger_admitted_total");
+
+        counted.Value.ShouldBe(1);
+        counted.Tags["kind"].ShouldBe("Bus");
+        counted.Tags["reason"].ShouldBe("started");
+        counted.Tags["tenant"].ShouldBe("other");
+        counted.Tags.Count.ShouldBe(3, "§3 labels this one kind, reason and tenant.");
+    }
+
+    /// <summary>
+    /// A second delivery of one message is counted as an admission, and says which it was.
+    /// </summary>
+    /// <remarks>
+    /// The <c>reason</c> label's whole purpose. A redelivery the journal refused reached the
+    /// runtime and did no work, and folding it into <c>started</c> would report a throughput
+    /// that a broker's retry behaviour could inflate at will.
+    /// </remarks>
+    [Fact]
+    public async Task ARedeliveryIsCountedAsDeduplicatedRatherThanStarted()
+    {
+        var seam = PushAdmissionTests.BusSeam.Create();
+        var delivery = PushAdmissionTests.BusSeam.Delivery();
+
+        await seam.Scan.AdmitAsync(seam.Registration, delivery, Cancellation);
+
+        using var metrics = new MetricRecorder();
+
+        var second = await seam.Scan.AdmitAsync(seam.Registration, delivery, Cancellation);
+
+        second.Disposition.ShouldBe(BusDisposition.Deduplicated);
+
+        metrics.Single("flowx_trigger_admitted_total").Tags["reason"].ShouldBe("deduplicated");
+    }
+
+    /// <summary>Every instrument <see cref="FlowXMetrics"/> creates, by name.</summary>
+    private static IReadOnlyList<string> Instruments() =>
+        [.. typeof(FlowXMetrics)
+            .GetProperties()
+            .Select(static p => p.GetValue(null))
+            .OfType<Instrument>()
+            .Select(static i => i.Name)];
 
     /// <summary>Captures every FlowX span, in order, for the duration of a test.</summary>
     private sealed class SpanRecorder : IDisposable

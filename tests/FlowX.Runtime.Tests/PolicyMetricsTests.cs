@@ -260,11 +260,13 @@ public sealed class PolicyMetricsTests
     /// <para>
     /// <strong>The row <c>ADR-0026</c> declined to name.</strong> That record left
     /// <c>flowx_ratelimit_rejected_total</c> out of <c>TelemetryNames</c> entirely — not
-    /// named-and-unemitted like <c>flowx_trigger_admitted_total</c>, but absent — because "a
+    /// named-and-unemitted as <c>flowx_trigger_admitted_total</c> was, but absent — because "a
     /// rate-limit rejection counter describes a decision no code makes, so there is no name to
     /// freeze until <c>PolicyStage.Admission</c> is executed and the shape of its <c>scope</c>
     /// label is a decision somebody has made". Both halves are now true, and this is the
-    /// measurement.
+    /// measurement. <em>The comparison is now historical: the admission seam that
+    /// <c>flowx_trigger_admitted_total</c> was waiting for is <c>FlowBusScan.AdmitAsync</c>,
+    /// and the counter has a producer.</em>
     /// </para>
     /// <para>
     /// The <c>scope</c> label carries the declared <c>RateLimitScope</c> by name, which is what

@@ -155,7 +155,8 @@ triggers:
 > the reason is that a `kind` label needs one admission point serving every transport while
 > there is one transport. Copying the old snippet gave you an autoscaler that silently never
 > scaled. It is replaced above by request rate from the ingress, which the ingress controller
-> does emit.
+> does emit. *The producer arrived with **WP-140**'s admission seam and counts bus deliveries
+> and stream windows, not HTTP requests, so the `api` rule above still scales on ingress.*
 >
 > The other seven instruments all have producers, verified against their call sites:
 > `flowx_flow_duration_seconds`, `flowx_flow_total`, `flowx_step_duration_seconds`,
