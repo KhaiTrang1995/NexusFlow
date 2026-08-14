@@ -1773,7 +1773,7 @@ executes it, not when something publishes it.*
 | Broker publication | **runs** | four implementations — Redis Streams, RabbitMQ, Azure Service Bus, Kafka — held to one unmodified `PublisherConformance`, by four ordering mechanisms with nothing in common |
 | HTTP trigger | **runs** | `EndpointEmitter`; `202` for a flow that suspends; generated signal routes |
 | Schedule trigger | **runs** | `ScheduleEmitter`; one instance per occurrence across a fleet, no leader |
-| **Policy engine · all eight kinds** | **runs** | stage 4's four plus `RateLimit`, `Idempotency`, `Cache`, `Audit`. `FLOWX1032` deleted with the gap it reported |
+| **Policy engine · all ten kinds** | **runs** | *this row said eight until WP-78/79 (2026-08-14) added `Fallback` (constant-valued; a degraded step commits its own journal row and registers no compensation) and `Hedge` (races inside retry, one winner commits; FLOWX1051 refuses it over a non-idempotent capability)* — plus stage 4's four plus `RateLimit`, `Idempotency`, `Cache`, `Audit`. `FLOWX1032` deleted with the gap it reported |
 | **Authorisation** | **runs** | `Authenticated` and `Permission` refuse; `Public` and `Internal` permit by construction; `Policy` refused at build time (`FLOWX1037`). A fail-open where `Policy` permitted everybody is fixed |
 | Manifest | **runs** | a build artifact, byte-pinned, diffed by 40-odd rules |
 | Telemetry · traces and metrics | **runs** | 11 of 13 metrics, 10 of 13 attributes; B6's allocation half gated |
