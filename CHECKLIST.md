@@ -139,6 +139,30 @@ What changed is that it is no longer tracked as a blocker.*
       **No row below may be read as gated by B1, B3 or B12 until this job is green or its
       remaining failures are individually accepted with a recorded reason.**
       See [benchmarks/README §5.2](docs/benchmarks/README.md)
+- [ ] **B-5 · Tenant isolation does not survive a transaction-pooling proxy.**
+      **Verified 2026-08-14 against PgBouncer 1.22 in front of PostgreSQL 16** — this is a
+      reproduction, not a review finding. `TenantScope` binds the tenant with
+      `set_config('flowx.tenant_id', @tenant, false)`, session-scoped, once per connection
+      open. At `default_pool_size = 1`: client A binds `tenant-A`, client B binds `tenant-B`,
+      **and A's next statement reads `tenant-B`**. The same three steps direct to PostgreSQL
+      return empty, which is correct — so this is the proxy breaking the adapter's assumption,
+      not PostgreSQL.
+      *Why the assumption was reasonable and is still wrong:* the argument written at the
+      declaration is that a scoped journal rebinds on every open, so a pooled connection
+      cannot carry one execution's tenant into the next. True of Npgsql's pool, where a client
+      connection **is** a server session. False of PgBouncer in transaction mode, where one
+      server connection is shared between clients and consecutive statements from one client
+      can land on different ones.
+      **This is a cross-tenant read.** It is a blocker rather than a §9 item because
+      [28 §4.1](docs/28-Azure-Hosting.md#41-the-connection-ceiling--the-one-that-bites) makes
+      transaction pooling *mandatory* above a few replicas, so the two documents together
+      currently recommend a configuration that is not safe. 28 §4.1 now says so.
+      **Not fixed in the commit that found it, on purpose:** the fix makes the binding
+      transaction-local and issues it in the same transaction as the statement, which changes
+      the execution path of a durable store and has to be proven by the journal and tenant
+      conformance suites, not patched in beside a documentation change.
+      Safe combinations until then: session pooling, or a direct connection with replicas
+      bounded by `max_connections`. See [PLAN open item 21](PLAN.md#9-open-items-blocking-the-plan)
 - [x] **B-3 · ~~Delete a stray tooling-prefixed branch from the remote.~~ RESOLVED.**
       Gone from the remote. History scan is clean: no commit in any branch has
       bot authorship, a generated-by footer, or a signature. *The branch name itself

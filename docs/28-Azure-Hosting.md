@@ -261,9 +261,36 @@ multiplies it again.
 | 5 | Alert early | Alarm at 70 % of `max_connections` |
 
 > [!CAUTION]
-> **Verify row-level security still holds through PgBouncer.** Transaction pooling does not
-> preserve session state, and the tenant context for RLS is set per connection. This is a
-> test to run — the tenant isolation suite pointed at the pooled port — not an assumption.
+> **Row-level security does NOT hold through PgBouncer transaction pooling today. Verified,
+> not suspected.** This block used to say "a test to run, not an assumption". The test was
+> run on 2026-08-14 against PgBouncer 1.22 in front of PostgreSQL 16, and it failed.
+>
+> `TenantScope` binds the tenant with `set_config('flowx.tenant_id', @tenant, false)` — the
+> `false` makes it **session-scoped** — issued once when the connection is opened. Its safety
+> argument, written at the declaration, is that "a scoped journal writes both values on every
+> connection it opens, so a pooled connection cannot carry one execution's tenant into the
+> next". That holds for Npgsql's pool, where one client connection is one server session. It
+> does not hold for PgBouncer in transaction mode, where consecutive statements from one
+> client may land on different server connections and one server connection is shared between
+> clients.
+>
+> Reproduced deterministically at `default_pool_size = 1`, three round trips:
+>
+> ```text
+> client A: SELECT set_config('flowx.tenant_id','tenant-A',false)   -> tenant-A
+> client B: SELECT set_config('flowx.tenant_id','tenant-B',false)   -> tenant-B
+> client A: SELECT current_setting('flowx.tenant_id')               -> tenant-B   ← A reads as B
+> ```
+>
+> The same three steps against PostgreSQL directly return an empty setting on the third,
+> which is the correct answer: no leak.
+>
+> **Until this is fixed, do not combine `TenantIsolation.Row` with a transaction-pooling
+> proxy.** The two safe combinations are session pooling, which preserves the assumption at
+> the cost of the connection saving, or a direct connection with the replica count bounded by
+> `max_connections`. [PLAN open item 21](../PLAN.md#9-open-items-blocking-the-plan) carries
+> the fix, which is to make the binding transaction-local and issue it in the same transaction
+> as the statement — a change to the adapter's execution path, not a setting.
 
 ---
 
