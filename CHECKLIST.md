@@ -139,7 +139,7 @@ What changed is that it is no longer tracked as a blocker.*
       **No row below may be read as gated by B1, B3 or B12 until this job is green or its
       remaining failures are individually accepted with a recorded reason.**
       See [benchmarks/README §5.2](docs/benchmarks/README.md)
-- [ ] **B-5 · Tenant isolation does not survive a transaction-pooling proxy.**
+- [x] **B-5 · ~~Tenant isolation does not survive a transaction-pooling proxy.~~ FIXED 2026-08-14.**
       **Verified 2026-08-14 against PgBouncer 1.22 in front of PostgreSQL 16** — this is a
       reproduction, not a review finding. `TenantScope` binds the tenant with
       `set_config('flowx.tenant_id', @tenant, false)`, session-scoped, once per connection
@@ -161,8 +161,22 @@ What changed is that it is no longer tracked as a blocker.*
       transaction-local and issues it in the same transaction as the statement, which changes
       the execution path of a durable store and has to be proven by the journal and tenant
       conformance suites, not patched in beside a documentation change.
-      Safe combinations until then: session pooling, or a direct connection with replicas
-      bounded by `max_connections`. See [PLAN open item 21](PLAN.md#9-open-items-blocking-the-plan)
+      **The fix, and what proves it.** The binding is now `set_config(…, true)` —
+      transaction-local — issued inside a transaction the scoped acquire opens, and
+      `TenantScope.ApplyAsync` takes the `NpgsqlTransaction` rather than the connection so a
+      bind with nothing to belong to cannot be written. A `ScopedConnection` carries the
+      connection and that transaction, because Npgsql exposes no way to reach a connection's
+      transaction afterwards and the commit has to be reachable. **An unscoped deployment
+      opens no transaction and pays nothing** — its single-statement reads cost exactly what
+      they did.
+      Re-run of the reproduction on a clean pooled connection: A binds, B binds, and the next
+      statement reads **`<EMPTY>`** where it read `tenant-B` before. Inside its own
+      transaction the work still sees `tenant-A`, so the binding was not merely broken.
+      **246/246** `FlowX.Postgres.Tests` pass against a direct connection, including the
+      journal, lease and tenant conformance suites.
+      *Still owed, and tracked at [PLAN item 21](PLAN.md#9-open-items-blocking-the-plan): a
+      regression test that runs the tenant isolation suite against a pooled endpoint. The
+      property is proved by hand today, and by hand is how it rots.*
 - [x] **B-3 · ~~Delete a stray tooling-prefixed branch from the remote.~~ RESOLVED.**
       Gone from the remote. History scan is clean: no commit in any branch has
       bot authorship, a generated-by footer, or a signature. *The branch name itself
