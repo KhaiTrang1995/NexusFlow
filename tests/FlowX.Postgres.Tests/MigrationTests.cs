@@ -229,6 +229,81 @@ public sealed class MigrationTests
             "ordered and publishable rather than refused by a NOT NULL it cannot satisfy.");
     }
 
+    /// <summary>
+    /// A previous release's writer keeps writing after <c>0013</c>, and now announces.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same rollout again, and the shape of the risk is different a third time. <c>0002</c>
+    /// added a nullable column and <c>0004</c> a defaulted one; <c>0013</c> adds no column at all
+    /// — it adds two triggers, which means a statement a previous release has been issuing
+    /// unchanged for six versions suddenly runs code it has never heard of. An expand migration
+    /// that breaks the old release here breaks it at its most ordinary write: staging an event.
+    /// </para>
+    /// <para>
+    /// The schema is stood at 12 — the release before the triggers — written to by SQL naming
+    /// exactly the columns that release named, then brought forward and written to again. What
+    /// the second write proves is the whole of the compatibility argument: the trigger fires on
+    /// an <c>INSERT</c> that does not know it exists, it announces to a listener that is not
+    /// there, and the row lands regardless.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task TheNotificationMigrationDoesNotBreakTheReleaseBeforeIt()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation, throughVersion: 12);
+
+        var instance = Guid.NewGuid();
+
+        await schema.ExecuteAsync(
+            $$"""
+              INSERT INTO flow_instance (instance_id, flow_id, flow_version, state, fence)
+              VALUES ('{{instance}}', 'order.place', '1.2.0', 'Running', 1);
+              INSERT INTO outbox_event (event_id, instance_id, sequence, ordinal, type,
+                                        schema_version, partition_key, payload)
+              VALUES (gen_random_uuid(), '{{instance}}', 1, 0, 'order.placed',
+                      '1.0.0', 'order-7', '{"a":1}');
+              """,
+            Cancellation);
+
+        (await schema.Migrator.MigrateAsync(13, Cancellation)).ShouldBe(
+            13, "the migrator brought a schema at the previous release forward.");
+
+        (await schema.ScalarAsync(
+            """
+            SELECT count(*)
+              FROM pg_trigger t
+              JOIN pg_class c ON c.oid = t.tgrelid
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = current_schema()
+               AND t.tgname IN ('outbox_event_staged_notify', 'flow_instance_parked_notify')
+            """,
+            Cancellation))
+            .ShouldBe(2L, "both announcements are installed in the schema that was migrated.");
+
+        // And the previous release keeps writing, into tables that now announce what it writes.
+        await schema.ExecuteAsync(
+            $$"""
+              INSERT INTO outbox_event (event_id, instance_id, sequence, ordinal, type,
+                                        schema_version, partition_key, payload)
+              VALUES (gen_random_uuid(), '{{instance}}', 2, 0, 'order.paid',
+                      '1.0.0', 'order-7', '{"b":2}');
+              UPDATE flow_instance
+                 SET state = 'Suspended', wake_at = now() + interval '1 hour',
+                     wake_step_id = 1, wake_scope = ''
+               WHERE instance_id = '{{instance}}';
+              """,
+            Cancellation);
+
+        (await schema.ScalarAsync(
+            $"SELECT count(*) FROM outbox_event WHERE instance_id = '{instance}'", Cancellation))
+            .ShouldBe(
+                2L,
+                "a writer that has never heard of the triggers stages events and parks " +
+                "instances exactly as it did, which is what makes this migration deployable " +
+                "under a rolling update.");
+    }
+
     /// <summary>The current adapter works against the schema the migrator produces.</summary>
     /// <remarks>
     /// The other direction of the same rollout, and the one that catches a migration that

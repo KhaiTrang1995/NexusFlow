@@ -66,6 +66,7 @@ public sealed class PostgresMigrator
         new(10, "tenant_sequence_grant", "0010_tenant_sequence_grant.sql"),
         new(11, "stream_checkpoint", "0011_stream_checkpoint.sql"),
         new(12, "subject_erasure", "0012_subject_erasure.sql"),
+        new(13, "sweep_notification", "0013_sweep_notification.sql"),
     ];
 
     /// <summary>The schema version this build of the adapter reads and writes.</summary>

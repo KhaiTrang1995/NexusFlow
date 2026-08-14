@@ -19,6 +19,13 @@ namespace FlowX.Hosting;
 /// while every other node in a rolling update is doing the same.
 /// </para>
 /// <para>
+/// <strong>A registered <see cref="ISweepSignal"/> shortens the wait and changes nothing
+/// else.</strong> A store that can say "an instance is parked and due" ends the wait early, so
+/// the interval stops being how late a <c>.Delay(...)</c> can fire and becomes the ceiling on it.
+/// The sweep is the same sweep over the same rows — a wake this node never hears is a timer that
+/// fires on the interval, which is what every release before this one did.
+/// </para>
+/// <para>
 /// A no-op when the journal cannot be swept, rather than a registration the composition root
 /// has to remember to omit: whether timers can fire is a property of the store that was
 /// registered, and asking an application to keep a service list in step with that is asking it
@@ -28,18 +35,20 @@ namespace FlowX.Hosting;
 internal sealed class FlowTimerService : BackgroundService
 {
     private readonly FlowTimerScan? _scan;
+    private readonly ISweepSignal? _wake;
     private readonly TimeSpan _interval;
 
     /// <summary>Whether this host was deployed to run this sweep at all.</summary>
     private readonly bool _deployed;
 
-    public FlowTimerService(FlowTimerScan? scan, FlowXOptions options)
+    public FlowTimerService(FlowTimerScan? scan, FlowXOptions options, ISweepSignal? wake = null)
     {
         ArgumentNullException.ThrowIfNull(options);
 
         _deployed = options.Sweeps.HasFlag(HostSweeps.Timer);
 
         _scan = scan?.IsEnabled == true ? scan : null;
+        _wake = wake;
         _interval = options.TimerScanInterval;
     }
 
@@ -62,7 +71,7 @@ internal sealed class FlowTimerService : BackgroundService
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                await Task.Delay(NextInterval(), stoppingToken).ConfigureAwait(false);
+                await WaitAsync(stoppingToken).ConfigureAwait(false);
 
                 await SweepAsync(stoppingToken).ConfigureAwait(false);
             }
@@ -97,6 +106,17 @@ internal sealed class FlowTimerService : BackgroundService
         }
 #pragma warning restore CA1031
     }
+
+    /// <summary>The pause before the next sweep: the interval, or a wake that arrives first.</summary>
+    /// <remarks>
+    /// <see cref="FlowChangeService"/>'s shape and its reason — the
+    /// <see cref="Task.Delay(TimeSpan, CancellationToken)"/> this replaces is still what runs when
+    /// no signal was registered.
+    /// </remarks>
+    private Task WaitAsync(CancellationToken stoppingToken) =>
+        _wake is null
+            ? Task.Delay(NextInterval(), stoppingToken)
+            : _wake.WaitAsync(SweepKind.Timer, NextInterval(), stoppingToken);
 
     /// <summary>The configured interval, spread over ±25 % so nodes drift apart.</summary>
     private TimeSpan NextInterval() =>
