@@ -54,6 +54,12 @@ internal static class RecoveryNode
             ShutdownDrainTimeout = TimeSpan.FromSeconds(30),
         };
 
+        // The listener a deployment registers with AddFlowXPostgresSweepSignal, built here for
+        // the reason the rest of this file builds real adapters: a rig that woke itself would be
+        // measuring its own timer. Absent it, the loop below is a Task.Delay and the rig measures
+        // what every release before migration 0014 did.
+        await using var signal = new PostgresSweepSignal(options.ConnectionString, journalOptions);
+
         var host = new FlowHost(new FlowEngine(SystemClock.Instance), hostOptions, durability);
         var dispatcher = new LedgerDispatcher(dataSource, options, resuming: true);
         var catalog = new FlowCatalog().Add(LedgerDispatcher.Plan(), dispatcher);
@@ -89,10 +95,14 @@ internal static class RecoveryNode
             }
 
             // The jitter FlowRecoveryService applies, applied here for the same reason: a
-            // fleet started by one command must not sweep in lockstep for ever.
+            // fleet started by one command must not sweep in lockstep for ever. And the wait
+            // goes through the signal exactly as that service's does, so a lease that lapses
+            // ends it early and the interval stays the backstop.
             var jitter = 0.75 + (Random.Shared.NextDouble() / 2);
 
-            await Task.Delay(options.ScanInterval * jitter, cancellationToken).ConfigureAwait(false);
+            await signal
+                .WaitAsync(SweepKind.Recovery, options.ScanInterval * jitter, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         Console.WriteLine($"{options.NodeName}: resumed {resumed} instance(s).");

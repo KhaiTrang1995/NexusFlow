@@ -118,6 +118,118 @@ public sealed class SweepSignalTests
     }
 
     /// <summary>
+    /// A lease wakes the recovery sweep when it lapses, not when it is taken.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same two-sided assertion the parked wake gets, and the same easier mistake: a listener
+    /// woken when the lease was <em>written</em> would sweep at once, find an instance whose owner
+    /// is alive and well, and take over exactly as late as before.
+    /// </para>
+    /// <para>
+    /// The TTL here is two seconds against a sweep interval of ten, which is the shape
+    /// <c>PLAN §6c</c> names at thirty and ten. The wake is expected a beat after the expiry
+    /// rather than on it — <c>PostgresSweepSignal.Settle</c> says why the beat is there.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ALeaseWakesTheRecoverySweepWhenItLapsesRatherThanWhenItIsTaken()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation);
+        await using var signal = Listener(schema);
+
+        await ListeningAsync(signal);
+
+        var woken = signal.WaitAsync(SweepKind.Recovery, Unreachable, Cancellation);
+        var since = Stopwatch.StartNew();
+
+        _ = await AcquireAsync(schema, Guid.NewGuid(), TimeSpan.FromSeconds(2));
+
+        await woken.WaitAsync(Patience, Cancellation);
+
+        since.Elapsed.ShouldBeGreaterThan(
+            TimeSpan.FromMilliseconds(1500),
+            "the sweep was woken when the lease was taken rather than when it lapses. That pass " +
+            "finds an instance whose owner still holds it, and the takeover is still an interval " +
+            "late — which is the defect this migration exists to remove.");
+
+        since.Elapsed.ShouldBeLessThan(
+            new FlowXOptions().RecoveryScanInterval,
+            "and it has to beat the sweep interval, which is what a dead node's instances wait " +
+            "on top of the lease TTL without this.");
+    }
+
+    /// <summary>
+    /// A renewal moves the wake, so the instant it superseded fires nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the case that decides the shape of the whole mechanism.</strong> A holder
+    /// renews every <c>LeaseRenewalInterval</c>, so under load the announcements are mostly
+    /// renewals — and a renewal <em>extends</em> an expiry. An armed instant that could only ever
+    /// be kept or lowered would fire at the expiry the renewal replaced, on a lease whose holder
+    /// is alive, once per TTL per instance. Announcing the earliest live expiry rather than the
+    /// row's own is what lets a renewal move the armed instant later, and this is where that is
+    /// checked rather than asserted in a comment.
+    /// </para>
+    /// <para>
+    /// Two seconds of lease, renewed for thirty a beat later, then five seconds of silence
+    /// demanded: the superseded instant and the beat after it are both inside that window.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ARenewedLeaseDoesNotWakeTheSweepAtTheInstantItSuperseded()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation);
+        await using var signal = Listener(schema);
+
+        await ListeningAsync(signal);
+
+        var woken = signal.WaitAsync(SweepKind.Recovery, Unreachable, Cancellation);
+
+        var lease = await AcquireAsync(schema, Guid.NewGuid(), TimeSpan.FromSeconds(2));
+
+        await Task.Delay(TimeSpan.FromMilliseconds(500), Cancellation);
+
+        await RenewAsync(schema, lease, TimeSpan.FromSeconds(30));
+
+        await Should.ThrowAsync<TimeoutException>(
+            async () => await woken.WaitAsync(TimeSpan.FromSeconds(5), Cancellation),
+            "the sweep was woken at an expiry the renewal had already moved. The pass it causes " +
+            "can only find a live lease, and a node renewing a thousand of them would pay for " +
+            "one such pass per lease per TTL.");
+    }
+
+    /// <summary>Releasing a lease wakes nothing, because a finished instance is not recovery.</summary>
+    /// <remarks>
+    /// A release moves <c>expires_at</c> into the past rather than deleting the row, so every
+    /// completing instance writes the lease table. Announcing an instant in the past would put a
+    /// recovery pass behind every completed flow in the deployment — a stampede built out of the
+    /// ordinary case — which is why <c>0014</c> announces the earliest expiry that is still in
+    /// the future and stays silent when there is none.
+    /// </remarks>
+    [Fact]
+    public async Task ReleasingTheOnlyLeaseWakesNothing()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation);
+        await using var signal = Listener(schema);
+
+        await ListeningAsync(signal);
+
+        var lease = await AcquireAsync(schema, Guid.NewGuid(), TimeSpan.FromSeconds(30));
+
+        var woken = signal.WaitAsync(SweepKind.Recovery, Unreachable, Cancellation);
+
+        await ReleaseAsync(schema, lease);
+
+        await Should.ThrowAsync<TimeoutException>(
+            async () => await woken.WaitAsync(TimeSpan.FromSeconds(3), Cancellation),
+            "a completed instance woke the recovery sweep. There is nothing to take over from " +
+            "an instance that finished, and the announcement that says so is the one every flow " +
+            "in the deployment makes.");
+    }
+
+    /// <summary>
     /// A session killed under the listener comes back, and announcements land on the new one.
     /// </summary>
     /// <remarks>
@@ -269,6 +381,44 @@ public sealed class SweepSignalTests
                       '1.0.0', 'order-7', '{"a":1}');
               """,
             Cancellation);
+    }
+
+    /// <summary>
+    /// Takes a lease, which is what the recovery trigger announces the consequence of.
+    /// </summary>
+    /// <remarks>
+    /// The shipped store rather than the raw SQL the two helpers above use, because half of what
+    /// is under test is that <c>PostgresLeaseStore</c>'s own statements write the column the
+    /// trigger watches. A hand-written <c>UPDATE</c> would keep announcing after the store had
+    /// stopped writing it, which is the regression worth catching.
+    /// </remarks>
+    private static async Task<FlowLease> AcquireAsync(
+        PostgresTestSchema schema, Guid instance, TimeSpan ttl)
+    {
+        var acquired = await schema.Leases.AcquireAsync(instance, "node-1", ttl, Cancellation);
+
+        acquired.IsSuccess.ShouldBeTrue("nobody else has this brand-new instance's lease.");
+
+        return acquired.Value;
+    }
+
+    /// <summary>Extends a lease, which is the announcement this schema makes most of.</summary>
+    private static async Task<FlowLease> RenewAsync(
+        PostgresTestSchema schema, FlowLease lease, TimeSpan ttl)
+    {
+        var renewed = await schema.Leases.RenewAsync(lease, ttl, Cancellation);
+
+        renewed.IsSuccess.ShouldBeTrue("the lease is still held, so it renews.");
+
+        return renewed.Value;
+    }
+
+    /// <summary>Gives a lease up, which moves its expiry into the past rather than deleting it.</summary>
+    private static async Task ReleaseAsync(PostgresTestSchema schema, FlowLease lease)
+    {
+        var released = await schema.Leases.ReleaseAsync(lease, Cancellation);
+
+        released.IsSuccess.ShouldBeTrue("the holder releases what it holds.");
     }
 
     /// <summary>Parks an instance on a wake instant, which is what the timer trigger announces.</summary>

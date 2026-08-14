@@ -133,7 +133,8 @@ public static class FlowXServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowRecoveryService>(
             static provider => new FlowRecoveryService(
                 ResolveScan(provider),
-                provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
+                provider.GetRequiredService<IOptions<FlowXOptions>>().Value,
+                provider.GetService<ISweepSignal>())));
 
         // A second loop rather than a second query on the first, because they are two sweeps
         // over disjoint sets of rows on two intervals a deployment may reasonably set apart —

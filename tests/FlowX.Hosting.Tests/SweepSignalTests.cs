@@ -9,7 +9,7 @@ using Xunit;
 namespace FlowX.Hosting.Tests;
 
 /// <summary>
-/// What an <see cref="ISweepSignal"/> changes about the two sweeps that wait, and what it must
+/// What an <see cref="ISweepSignal"/> changes about the three sweeps that wait, and what it must
 /// not change about a host that has none.
 /// </summary>
 /// <remarks>
@@ -18,8 +18,8 @@ namespace FlowX.Hosting.Tests;
 /// today registers no signal, and an accelerator that altered their timing — an extra pass at
 /// startup, a wait that no longer honours the interval, a resolution that throws when the service
 /// is missing — would be a behaviour change delivered to people who did not ask for one. The rest
-/// of this assembly is the standing evidence for that, because it runs unmodified; these two say
-/// the same thing about the loops themselves rather than about the passes.
+/// of this assembly is the standing evidence for that, because it runs unmodified; the three
+/// below say the same thing about the loops themselves rather than about the passes.
 /// </para>
 /// <para>
 /// <strong>The accelerated half is asserted by a contradiction rather than by a stopwatch.</strong>
@@ -88,6 +88,60 @@ public sealed class SweepSignalTests
                 "backstop that makes a missed wake a latency cost rather than a lost timer.");
     }
 
+    /// <summary>A host with no signal takes over on its interval, as it always has.</summary>
+    /// <remarks>
+    /// The half of WP-143 that is a promise to deployments that did not ask for it: the recovery
+    /// loop with nothing registered is the <see cref="Task.Delay(TimeSpan, CancellationToken)"/>
+    /// it has always been, and the sweep behind it is untouched.
+    /// </remarks>
+    [Fact]
+    public async Task WithNoSignalTheRecoverySweepRunsOnItsInterval()
+    {
+        var index = new CountingRecoveryIndex();
+
+        using var host = Build(
+            index: null, feed: null, signal: null, TimeSpan.FromMilliseconds(50), index);
+
+        await host.StartAsync(Cancellation);
+
+        await index.Swept.WaitAsync(Patience, Cancellation);
+
+        await host.StopAsync(Cancellation);
+    }
+
+    /// <summary>A wake ends the takeover's wait, on an interval that could not have.</summary>
+    /// <remarks>
+    /// The defect: an abandoned instance waits a lease TTL to become a candidate and then up to a
+    /// whole <c>RecoveryScanInterval</c> for anything to look. What the signal changes is the
+    /// second half — the wait ends when the store says a lease lapsed.
+    /// </remarks>
+    [Fact]
+    public async Task ASignalWakesTheRecoverySweepBeforeItsInterval()
+    {
+        var index = new CountingRecoveryIndex();
+        var signal = new WakingSignal();
+
+        using var host = Build(index: null, feed: null, signal, Unreachable, index);
+
+        await host.StartAsync(Cancellation);
+
+        await index.Swept.WaitAsync(Patience, Cancellation);
+
+        await host.StopAsync(Cancellation);
+
+        signal.Waits.ShouldContain(
+            wait => wait.Sweep == SweepKind.Recovery,
+            "the recovery loop asked the signal rather than Task.Delay.");
+
+        signal.Waits
+            .Where(static wait => wait.Sweep == SweepKind.Recovery)
+            .ShouldAllBe(
+                wait => wait.Interval >= Unreachable * 0.75 && wait.Interval <= Unreachable * 1.25,
+                "the configured interval still reaches the signal, jittered, because it is the " +
+                "backstop that makes a missed wake a latency cost rather than an instance no " +
+                "node ever takes over.");
+    }
+
     /// <summary>The change loop with no signal reads its feed on its interval, as it always has.</summary>
     [Fact]
     public async Task WithNoSignalTheChangeSweepRunsOnItsInterval()
@@ -132,7 +186,11 @@ public sealed class SweepSignalTests
     /// without one is built exactly as it was before the service type existed.
     /// </remarks>
     private static IHost Build(
-        CountingTimerIndex? index, CountingChangeFeed? feed, ISweepSignal? signal, TimeSpan interval)
+        CountingTimerIndex? index,
+        CountingChangeFeed? feed,
+        ISweepSignal? signal,
+        TimeSpan interval,
+        CountingRecoveryIndex? recovery = null)
     {
         return new HostBuilder()
             .ConfigureServices(services =>
@@ -143,6 +201,7 @@ public sealed class SweepSignalTests
                     options.NodeName = "node";
                     options.TimerScanInterval = interval;
                     options.ChangeScanInterval = interval;
+                    options.RecoveryScanInterval = interval;
                 });
 
                 services.AddSingleton<IFlowJournal>(new InMemoryFlowJournal());
@@ -151,6 +210,11 @@ public sealed class SweepSignalTests
                 if (index is not null)
                 {
                     services.AddSingleton<ITimerIndex>(index);
+                }
+
+                if (recovery is not null)
+                {
+                    services.AddSingleton<IRecoveryIndex>(recovery);
                 }
 
                 if (feed is not null)
@@ -234,6 +298,24 @@ public sealed class SweepSignalTests
             _swept.TrySetResult();
 
             return ValueTask.FromResult(Result.Ok<IReadOnlyList<DueInstance>>([]));
+        }
+    }
+
+    /// <summary>A recovery index that finds nothing and says when it was asked.</summary>
+    private sealed class CountingRecoveryIndex : IRecoveryIndex
+    {
+        private readonly TaskCompletionSource _swept =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Completes on the first sweep, which is the whole observation here.</summary>
+        public Task Swept => _swept.Task;
+
+        public ValueTask<Result<IReadOnlyList<AbandonedInstance>>> ListAbandonedAsync(
+            AbandonedInstanceQuery query, CancellationToken cancellationToken)
+        {
+            _swept.TrySetResult();
+
+            return ValueTask.FromResult(Result.Ok<IReadOnlyList<AbandonedInstance>>([]));
         }
     }
 
