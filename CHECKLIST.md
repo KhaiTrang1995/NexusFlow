@@ -195,10 +195,19 @@ What changed is that it is no longer tracked as a blocker.*
       statement with a validated schema identifier, or set `search_path` per transaction,
       which needs a transaction on paths that have none today. Either is a work package with
       the journal, lease, timer and tenant conformance suites as its acceptance.
-      Until then: a direct connection with replicas bounded by `max_connections`, a larger
-      tier, or session pooling. A single-schema deployment can also carry the schema on the
-      pooler's own database line — that does **not** work for `TenantIsolation.Schema`, where
-      the schema is chosen per tenant as the connection opens.
+      **Half of it is now fixed, and the half that is not is inherent.** A server-side default
+      survives pooling because it is applied when the *server* connection is made rather than
+      sent by the client — verified through PgBouncer in transaction mode with no startup
+      parameter at all, `search_path=probe_schema` on the far side. So
+      `PostgresJournalOptions.SetSearchPathOnConnection` (default `true`, nothing changes for
+      a direct deployment) lets a pooled one say it supplies the schema itself with
+      `ALTER ROLE <role> SET search_path = <schema>`, and the adapter then sends no startup
+      parameter for a pooler to refuse. The migrating role needs the same default.
+      **What is not fixed cannot be:** `TenantIsolation.Schema` chooses the schema per tenant
+      as the connection opens, and no server-side default expresses a value that varies per
+      client. Schema-per-tenant behind a transaction pooler stays unsupported, and this row
+      stays open to say so.
+      248/248 Postgres tests pass; two new unit tests pin both sides of the switch.
       See [PLAN open item 21](PLAN.md#9-open-items-blocking-the-plan)
 - [x] **B-3 · ~~Delete a stray tooling-prefixed branch from the remote.~~ RESOLVED.**
       Gone from the remote. History scan is clean: no commit in any branch has

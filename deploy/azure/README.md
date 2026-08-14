@@ -85,7 +85,7 @@ says why migrations become their own step before the new revision takes traffic.
 
 | Not here | Why, and when |
 |---|---|
-| **PgBouncer** | **FlowX cannot use it today.** The adapter selects its schema with a startup parameter a transaction pooler rejects or discards — [blocker B-6](../../CHECKLIST.md). Enabling it produces a deployment that starts and then answers `relation "flow_instance" does not exist` |
+| **PgBouncer** | Possible now, and not enabled here. Set `SetSearchPathOnConnection = false` and give the application **and migrating** roles `ALTER ROLE <role> SET search_path = flowx` — a server-side default survives pooling where a startup parameter does not, verified through PgBouncer in transaction mode. **Not for `TenantIsolation.Schema`**, where the schema varies per client and no default can express it — [blocker B-6](../../CHECKLIST.md) |
 | Zone-redundant HA | Phase 2. One word in `main.bicep`, and it roughly doubles the compute bill |
 | Read replica, second region | Phase 4, and read [28 §5.2](../../docs/28-Azure-Hosting.md#52-availability-and-why-cross-region-is-activepassive) first — the runbook order matters more than the resources |
 | Service Bus | Phase 3, and only if something outside FlowX must consume events. The outbox and change feed already work without one |

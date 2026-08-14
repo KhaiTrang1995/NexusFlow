@@ -2,10 +2,10 @@
 // no broker, and managed identity to the database from the first deployment.
 //
 // Deliberately NOT here, and each for a reason written down rather than forgotten:
-//   * PgBouncer. FlowX cannot reach its schema through a transaction pooler today — the
-//     adapter selects the schema with a startup parameter the pooler rejects or discards.
-//     CHECKLIST blocker B-6. Turning it on would produce a deployment that starts and then
-//     answers `relation "flow_instance" does not exist`.
+//   * PgBouncer. Possible now via SetSearchPathOnConnection = false plus a role default,
+//     but not wired here: Phase 0 has one replica and no connection pressure to relieve.
+//     Still unsupported for TenantIsolation.Schema, where the schema varies per client —
+//     CHECKLIST blocker B-6.
 //   * Zone-redundant HA and a read replica. Phase 2 and Phase 4.
 //   * Service Bus. Phase 3, and only if fan-out is genuinely needed: events already flow
 //     through the outbox and the change feed.

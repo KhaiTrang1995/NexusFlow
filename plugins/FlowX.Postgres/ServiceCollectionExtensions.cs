@@ -310,10 +310,16 @@ public static class ServiceCollectionExtensions
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         ArgumentNullException.ThrowIfNull(options);
 
-        var settings = new NpgsqlConnectionStringBuilder(connectionString)
+        var settings = new NpgsqlConnectionStringBuilder(connectionString);
+
+        // Left alone when the deployment says it supplies the schema itself. A startup
+        // parameter is the shortest correct route on a direct connection and the one thing a
+        // transaction pooler cannot carry -- PostgresJournalOptions.SetSearchPathOnConnection
+        // records the two ways PgBouncer fails with it, both reproduced.
+        if (options.SetSearchPathOnConnection)
         {
-            SearchPath = options.Schema,
-        };
+            settings.SearchPath = options.Schema;
+        }
 
         return new NpgsqlDataSourceBuilder(settings.ConnectionString).Build();
     }
