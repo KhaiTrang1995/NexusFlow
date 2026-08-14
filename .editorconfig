@@ -212,6 +212,14 @@ dotnet_diagnostic.S1075.severity = none   # hardcoded URI
 # and this code never dereferences it.
 dotnet_diagnostic.S1075.severity = none   # hardcoded URI
 
+[src/FlowX.Hosting/FlowPushSeams.cs]
+# The same prefix, second copy, for the reason CorrelationHeader is a second copy of
+# FlowXHeaders.CorrelationId: FlowX.Hosting does not reference the FlowX.Http plugin
+# and must not start, and a worker's shed answers the same problem `type` as the
+# ASP.NET host's or a client has to learn two taxonomies. The two literals are held
+# equal by ProblemDetailsTaxonomyTests rather than by anybody remembering.
+dotnet_diagnostic.S1075.severity = none   # hardcoded URI
+
 # samples/workflow's FLOWX-DEBT(people-ops, 2026-12-31) suppression of FLOWX1032 was
 # deleted here when the policy engine landed PolicyStage.Resilience. The debt named one
 # set — Policies.DirectoryService, a Timeout, a Retry and a CircuitBreaker — and all

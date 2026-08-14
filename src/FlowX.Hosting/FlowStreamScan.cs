@@ -465,6 +465,16 @@ public sealed class FlowStreamScan
     /// <c>journal.instance_exists</c> is the ordinary answer after any restart, and it is what
     /// makes the checkpoint safe to commit late.
     /// </para>
+    /// <para>
+    /// <strong>Over <c>FlowXOptions.MaxInFlightAdmissions</c> this is
+    /// <see cref="WindowAdmission.Held"/>, and that member is the honest one.</strong> Held means
+    /// nothing recorded the window, which is exactly true of a shed, and
+    /// <see cref="StartAsync"/> maps it to <c>Settled: false</c> — so the checkpoint does not
+    /// move past a window whose records were never aggregated, and the window is offered again on
+    /// a later pass. <see cref="WindowDisposition.Refused"/> would be the lie: that member says
+    /// the window can <em>never</em> run, and a push host obeying it would drop a window whose
+    /// only problem was that the node was busy for a moment.
+    /// </para>
     /// </remarks>
     public async ValueTask<WindowAdmission> AdmitAsync(
         StreamRegistration registration, ClosedWindow window, CancellationToken ct = default)
@@ -485,6 +495,19 @@ public sealed class FlowStreamScan
         }
 
         var instanceId = registration.InstanceIdFor(window.Start, window.End);
+
+        // Held for the run and released after it, as on the bus seam. A mixed-tenant window
+        // never reaches here: it can never run, so a slot spent on it would be a slot spent on
+        // refusing the same window for ever.
+        using var slot = _host.AdmissionGate.TryAcquire();
+
+        if (!slot.Admitted)
+        {
+            TriggerAdmissionCounter.Rejected(
+                TriggerKind.Stream, TriggerAdmissionCounter.ShedReason, tenant.Value);
+
+            return WindowAdmission.Held;
+        }
 
         var result = await _host
             .RunAsync(

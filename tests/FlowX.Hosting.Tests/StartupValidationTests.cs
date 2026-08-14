@@ -98,6 +98,54 @@ public sealed class StartupValidationTests
             async () => await host.StartAsync(TestContext.Current.CancellationToken));
     }
 
+    /// <summary>
+    /// A ceiling that is present and not positive fails the pod rather than the customer.
+    /// </summary>
+    /// <remarks>
+    /// Zero is the interesting one: it is the spelling somebody reaches for meaning "no limit",
+    /// and it means the opposite — every item this node is ever offered is shed. Absent is the
+    /// unbounded spelling, and <see cref="AnAbsentCeilingIsTheUnboundedDefault"/> is what says so.
+    /// </remarks>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task RefusesToStartWithANonPositiveAdmissionCeiling(int ceiling)
+    {
+        using var host = BuildHost(options =>
+        {
+            options.ApplicationName = "Sample.App";
+            options.MaxInFlightAdmissions = ceiling;
+        });
+
+        var error = await Should.ThrowAsync<OptionsValidationException>(
+            async () => await host.StartAsync(TestContext.Current.CancellationToken));
+
+        error.Message.ShouldContain(nameof(FlowXOptions.MaxInFlightAdmissions));
+    }
+
+    /// <summary>
+    /// The default is no ceiling, and the host that starts under it counts nothing.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The rule this option was written under.</strong> A hosting option added to a
+    /// release must not change what a running deployment does, so the default has to be absence
+    /// rather than a number somebody guessed for other people's hardware.
+    /// </remarks>
+    [Fact]
+    public async Task AnAbsentCeilingIsTheUnboundedDefault()
+    {
+        using var host = BuildHost(options => options.ApplicationName = "Sample.App");
+
+        await host.StartAsync(TestContext.Current.CancellationToken);
+
+        var gate = host.Services.GetRequiredService<FlowHost>().AdmissionGate;
+
+        gate.IsBounded.ShouldBeFalse();
+        gate.Ceiling.ShouldBeNull();
+
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
     [Fact]
     public async Task ReportsEveryProblemAtOnceRatherThanTheFirst()
     {

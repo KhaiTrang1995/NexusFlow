@@ -279,6 +279,16 @@ public sealed class FlowBusScan
     /// not rest on that lease in either case — it rests on the derived instance id and the
     /// journal's primary key (ADR-0035), which this call goes through unchanged.
     /// </para>
+    /// <para>
+    /// <strong>Over <c>FlowXOptions.MaxInFlightAdmissions</c> this requeues, and the broker is
+    /// what the backlog is left with.</strong> That is what a broker is for: nothing was
+    /// journalled, so the message is still pending, and it is offered again when a slot frees.
+    /// Dead-lettering a shed message would discard work the node was merely busy for, and running
+    /// it anyway is the saturation the ceiling exists to prevent. A shed does not count against
+    /// <c>BusMaxDeliveries</c> any differently from any other requeue — a delivery that keeps
+    /// arriving while the node is full will eventually be dead-lettered by ADR-0038, which is the
+    /// correct outcome for a backlog no amount of shedding is draining.
+    /// </para>
     /// </remarks>
     public async ValueTask<BusAdmission> AdmitAsync(
         BusRegistration registration, BusDelivery delivery, CancellationToken ct = default)
@@ -293,6 +303,20 @@ public sealed class FlowBusScan
 
         var message = delivery.Message!;
         var instanceId = registration.InstanceIdFor(message.EventId);
+
+        // Taken before the run and released after it, which is what "in flight" means: a slot is
+        // held for exactly as long as the flow it admitted is unfinished. A poison message never
+        // reaches here, because a dead-letter runs nothing and holding a slot for it would let a
+        // broken partition consume the ceiling.
+        using var slot = _host.AdmissionGate.TryAcquire();
+
+        if (!slot.Admitted)
+        {
+            TriggerAdmissionCounter.Rejected(
+                TriggerKind.Bus, TriggerAdmissionCounter.ShedReason, message.TenantId);
+
+            return BusAdmission.Requeue;
+        }
 
         var result = await _host
             .RunAsync(

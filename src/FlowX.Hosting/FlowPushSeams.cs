@@ -277,6 +277,21 @@ public sealed class FlowPushSeams
                 "header is required. Without one a retried request would start a second flow.");
         }
 
+        // The ceiling, for the same reason and one line further: a request this node is going to
+        // shed should be shed before its body is read, not after. docs/16 §4 — "rejecting
+        // expensively is how rate limiting becomes the DoS" — and a shed here has cost the
+        // deployment one interlocked read and nothing else. Nothing is journalled, because
+        // nothing ran.
+        using var slot = _host.AdmissionGate.TryAcquire();
+
+        if (!slot.Admitted)
+        {
+            TriggerAdmissionCounter.Rejected(
+                TriggerKind.Http, TriggerAdmissionCounter.ShedReason, tenantId: null);
+
+            return FlowFunctionResponse.Shed(_host.AdmissionGate.Ceiling!.Value);
+        }
+
         TIn? request;
 
         try
@@ -410,14 +425,25 @@ public sealed class FlowPushSeams
 /// <param name="Status">The status code.</param>
 /// <param name="Body">The body, already serialised.</param>
 /// <param name="ContentType">What the body is.</param>
+/// <param name="RetryAfterSeconds">
+/// What to put in a <c>Retry-After</c> header, or null for no header. Set only where the answer
+/// is a refusal the caller should repeat — a shed — because a <c>Retry-After</c> on a refusal
+/// that will never succeed invites a client to loop over it.
+/// </param>
 /// <remarks>
 /// A value rather than a platform response object, because the platform's own type is what the
 /// generated entry point holds and this assembly has never heard of it. Two lines of generated
 /// code turn one into the other, and no decision is among them.
 /// </remarks>
 public readonly record struct FlowFunctionResponse(
-    int Status, string Body, string ContentType = "application/json")
+    int Status,
+    string Body,
+    string ContentType = "application/json",
+    int? RetryAfterSeconds = null)
 {
+    /// <summary>What a problem document is served as.</summary>
+    public const string ProblemContentType = "application/problem+json";
+
     /// <summary>An answer that is not the flow's output.</summary>
     /// <param name="status">The status code.</param>
     /// <param name="code">The error code, verbatim, so it is greppable in a log.</param>
@@ -433,14 +459,91 @@ public readonly record struct FlowFunctionResponse(
             JsonSerializer.Serialize(
                 new FlowFunctionProblem(code, detail, status),
                 FlowFunctionProblemJson.Default.FlowFunctionProblem),
-            "application/problem+json");
+            ProblemContentType);
+
+    /// <summary>The answer to a request this node is at its ceiling for.</summary>
+    /// <param name="ceiling">The bound that was reached.</param>
+    /// <returns>A <c>429</c>, its problem document, and the <c>Retry-After</c> that goes with it.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one refusal on this surface that carries <c>type</c> and <c>title</c>.</strong>
+    /// <see cref="Refusal"/> omits them because <c>instance</c> needs the routing a worker does
+    /// not have and a half-populated document is worse than a small one — but <c>type</c> needs
+    /// no routing, only a code, and this is the refusal most likely to be handled by machine
+    /// rather than read by a person. So it carries <c>FlowX.Http</c>'s taxonomy verbatim: the
+    /// same <c>https://flowx.dev/errors/{code}</c> URI and the same category title
+    /// <c>ProblemDetailsMapper</c> produces, so a client that learned the shape from the ASP.NET
+    /// host does not have to learn a second one for the worker.
+    /// </para>
+    /// <para>
+    /// <strong><c>Retry-After</c> is a header <em>and</em> an extension.</strong> The header is
+    /// what an HTTP client obeys without being taught anything; the body member is what a caller
+    /// reading the document sees, and it is the same field
+    /// <c>FlowAdmissionGate.Shed</c> puts in the error's structured detail — so the two HTTP
+    /// surfaces answer a shed with the same document.
+    /// </para>
+    /// </remarks>
+    public static FlowFunctionResponse Shed(int ceiling)
+    {
+        var error = FlowAdmissionGate.Shed(ceiling);
+        var seconds = (int)Math.Ceiling(FlowAdmissionGate.RetryAfter.TotalSeconds);
+
+        return new FlowFunctionResponse(
+            FlowAdmissionGate.TooManyRequests,
+            JsonSerializer.Serialize(
+                new FlowFunctionProblem(
+                    error.Code,
+                    error.Message,
+                    FlowAdmissionGate.TooManyRequests,
+                    Type: FlowFunctionProblem.TypeUriPrefix + error.Code,
+                    Title: FlowFunctionProblem.SaturatedTitle,
+                    RetryAfterSeconds: seconds),
+                FlowFunctionProblemJson.Default.FlowFunctionProblem),
+            ProblemContentType,
+            seconds);
+    }
 }
 
 /// <summary>The body of a refusal.</summary>
 /// <param name="Code">The error code the runtime produced.</param>
 /// <param name="Detail">What happened.</param>
 /// <param name="Status">The status code, repeated in the body as RFC 7807 does.</param>
-public sealed record FlowFunctionProblem(string Code, string Detail, int Status);
+/// <param name="Type">The taxonomy URI for the code, or null where this surface has none.</param>
+/// <param name="Title">The category's fixed title, or null where this surface has none.</param>
+/// <param name="RetryAfterSeconds">How long to wait before repeating the request, or null.</param>
+/// <remarks>
+/// The last three are omitted from the wire when they are null, so a refusal that has nothing to
+/// say about them writes exactly the document it wrote before this record grew them.
+/// </remarks>
+public sealed record FlowFunctionProblem(
+    string Code,
+    string Detail,
+    int Status,
+    string? Type = null,
+    string? Title = null,
+    int? RetryAfterSeconds = null)
+{
+    /// <summary>
+    /// Base URI for the error taxonomy, the same one <c>FlowX.Http.ProblemDetailsMapper</c>
+    /// publishes.
+    /// </summary>
+    /// <remarks>
+    /// Repeated rather than referenced, for <c>FlowPushSeams.CorrelationHeader</c>'s reason: this
+    /// assembly does not reference that plugin and must not start. <c>ProblemDetailsTaxonomyTests</c>
+    /// is what holds the two copies to one value.
+    /// </remarks>
+    public const string TypeUriPrefix = "https://flowx.dev/errors/";
+
+    /// <summary>
+    /// The title a shed carries — <c>ErrorCategory.Unavailable</c>'s, verbatim.
+    /// </summary>
+    /// <remarks>
+    /// RFC 7807 asks that a title not vary between occurrences of one problem type, which is why
+    /// it is fixed per category rather than taken from the message. Held equal to
+    /// <c>ProblemDetailsMapper.TitleFor(ErrorCategory.Unavailable)</c> by the same test.
+    /// </remarks>
+    public const string SaturatedTitle = "The service is temporarily unavailable";
+}
 
 /// <summary>Serialiser metadata for the one contract this assembly puts on a wire.</summary>
 /// <remarks>
@@ -448,7 +551,8 @@ public sealed record FlowFunctionProblem(string Code, string Detail, int Status)
 /// reflection-based serialiser is exactly what that publish cannot keep.
 /// </remarks>
 [System.Text.Json.Serialization.JsonSourceGenerationOptions(
-    PropertyNamingPolicy = System.Text.Json.Serialization.JsonKnownNamingPolicy.CamelCase)]
+    PropertyNamingPolicy = System.Text.Json.Serialization.JsonKnownNamingPolicy.CamelCase,
+    DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
 [System.Text.Json.Serialization.JsonSerializable(typeof(FlowFunctionProblem))]
 public sealed partial class FlowFunctionProblemJson : System.Text.Json.Serialization.JsonSerializerContext
 {

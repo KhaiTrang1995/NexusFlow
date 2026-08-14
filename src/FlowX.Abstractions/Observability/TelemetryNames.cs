@@ -135,13 +135,20 @@ public static class TelemetryNames
     public const string TriggerAdmittedTotal = "flowx_trigger_admitted_total";
 
     /// <summary>
-    /// Counter. Named and unemitted.
+    /// Counter. Labels: <c>kind</c>, <c>reason</c>, <c>tenant</c>.
     /// </summary>
     /// <remarks>
-    /// The admission seam's other two answers are a requeue and a dead-letter, and neither is a
-    /// rejection anybody has decided the shape of: a requeued item was not refused, it was left
-    /// with the broker to offer again, and whether that belongs in the same series as a poison
-    /// message is a decision this counter would be freezing rather than recording.
+    /// <strong>This row read "named and unemitted" until a rejection had a shape.</strong> The
+    /// claim was that "the admission seam's other two answers are a requeue and a dead-letter,
+    /// and neither is a rejection anybody has decided the shape of: a requeued item was not
+    /// refused, it was left with the broker to offer again, and whether that belongs in the same
+    /// series as a poison message is a decision this counter would be freezing rather than
+    /// recording". <strong>Every clause of that is still true, and it is no longer the whole
+    /// list.</strong> <c>FlowXOptions.MaxInFlightAdmissions</c> added a third answer that neither
+    /// of those two describes: an item the node was offered and decided not to run, at a ceiling
+    /// it set itself. <c>reason</c> carries why — <c>shed</c> is the one this repository
+    /// produces — and an item this counts is not counted by
+    /// <see cref="TriggerAdmittedTotal"/>, so the two sum to the offered load.
     /// </remarks>
     public const string TriggerRejectedTotal = "flowx_trigger_rejected_total";
 
