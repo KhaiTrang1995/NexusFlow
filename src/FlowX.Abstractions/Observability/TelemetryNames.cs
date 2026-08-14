@@ -124,13 +124,25 @@ public static class TelemetryNames
     /// Counter. Labels: <c>kind</c>, <c>reason</c>, <c>tenant</c>.
     /// </summary>
     /// <remarks>
-    /// <strong>Named and unemitted.</strong> A <c>kind</c> label presupposes one admission
-    /// point serving every transport, and there is one transport whose admission decisions
-    /// happen inside the generated HTTP endpoint. That shared point is P3's.
+    /// <strong>This row read "named and unemitted" until the admission seam it wanted
+    /// existed.</strong> The claim was that a <c>kind</c> label presupposes one admission point
+    /// serving every transport; that point is <c>FlowBusScan.AdmitAsync</c> and
+    /// <c>FlowStreamScan.AdmitAsync</c>, which decide what becomes of one item without settling
+    /// it, and which both a sweep and a push host reach. <c>reason</c> carries why the item was
+    /// admitted — <c>started</c>, or <c>deduplicated</c> for an item an earlier delivery already
+    /// journalled.
     /// </remarks>
     public const string TriggerAdmittedTotal = "flowx_trigger_admitted_total";
 
-    /// <summary>Counter. Unemitted, for the reason on <see cref="TriggerAdmittedTotal"/>.</summary>
+    /// <summary>
+    /// Counter. Named and unemitted.
+    /// </summary>
+    /// <remarks>
+    /// The admission seam's other two answers are a requeue and a dead-letter, and neither is a
+    /// rejection anybody has decided the shape of: a requeued item was not refused, it was left
+    /// with the broker to offer again, and whether that belongs in the same series as a poison
+    /// message is a decision this counter would be freezing rather than recording.
+    /// </remarks>
     public const string TriggerRejectedTotal = "flowx_trigger_rejected_total";
 
     /// <summary>Histogram, seconds. Label: <c>operation</c>.</summary>
@@ -261,8 +273,16 @@ public static class TelemetryNames
     /// <summary>Which journal call was timed.</summary>
     public const string OperationLabel = "operation";
 
-    /// <summary>Why a lease was lost.</summary>
+    /// <summary>Why a lease was lost, or why an admission seam admitted an item.</summary>
     public const string ReasonLabel = "reason";
+
+    /// <summary>Which transport family an admitted item arrived through, e.g. <c>Bus</c>.</summary>
+    /// <remarks>
+    /// A <c>TriggerKind</c> member's name, so it is bounded by construction. The metric label,
+    /// and deliberately not <see cref="TriggerKind"/> — §2's attributes are dotted and §3's
+    /// labels are bare, the distinction <see cref="AttemptLabel"/> records.
+    /// </remarks>
+    public const string KindLabel = "kind";
 
     /// <summary>The event contract's type name.</summary>
     public const string TypeLabel = "type";

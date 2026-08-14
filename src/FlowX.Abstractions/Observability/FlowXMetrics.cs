@@ -4,17 +4,18 @@ namespace FlowX.Observability;
 
 /// <summary>
 /// The instruments behind <a href="../../../docs/12-Observability.md">12-Observability</a> §3's
-/// table, for the eleven rows that have a subject this repository ships.
+/// table, for the twelve rows that have a subject this repository ships.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Eleven of thirteen, and the two absences are structural.</strong>
+/// <strong>Twelve of thirteen, and the absences are structural.</strong>
 /// <see cref="TelemetryNames.StreamLagRecords"/> has no subject — nothing streams — and
-/// <see cref="TelemetryNames.TriggerAdmittedTotal"/> has a subject and no seam, because a
-/// <c>kind</c> label presupposes the one admission point P3 introduces. Neither is created
-/// here: an instrument that exists and is never written to publishes an empty series, and an
-/// empty series is indistinguishable from a healthy one, which is the exact failure §9's
-/// warning box describes.
+/// <see cref="TelemetryNames.TriggerRejectedTotal"/> has no agreed one. Neither is created here:
+/// an instrument that exists and is never written to publishes an empty series, and an empty
+/// series is indistinguishable from a healthy one, which is the exact failure §9's warning box
+/// describes. <em>This paragraph read "eleven of thirteen" while
+/// <see cref="TelemetryNames.TriggerAdmittedTotal"/> had "a subject and no seam". The seam is
+/// <c>AdmitAsync</c>.</em>
 /// </para>
 /// <para>
 /// <strong>Every call site checks <see cref="Instrument.Enabled"/> first.</strong> That is
@@ -80,6 +81,20 @@ public static class FlowXMetrics
         TelemetryNames.CapabilityUnhandledTotal,
         unit: null,
         "Capability invocations that threw. Expected failures are values (ADR-0007), so any of these is a defect.");
+
+    /// <summary>
+    /// Items an admission seam let into the runtime. Labels: kind, reason, tenant.
+    /// </summary>
+    /// <remarks>
+    /// Written by <c>FlowBusScan.AdmitAsync</c> and <c>FlowStreamScan.AdmitAsync</c>, which is
+    /// what makes <c>kind</c> a label rather than a wish: a sweep and a push host reach the same
+    /// decision through the same call, so one series covers both routes into a transport. An
+    /// item the seam requeued or dead-lettered is not counted here — it was not admitted.
+    /// </remarks>
+    public static Counter<long> TriggerAdmitted { get; } = FlowXTelemetry.Meter.CreateCounter<long>(
+        TelemetryNames.TriggerAdmittedTotal,
+        unit: null,
+        "Items an admission seam started a flow for, or found an earlier delivery had already journalled.");
 
     /// <summary>How long a journal call took. Label: operation.</summary>
     public static Histogram<double> JournalCommit { get; } = FlowXTelemetry.Meter.CreateHistogram<double>(

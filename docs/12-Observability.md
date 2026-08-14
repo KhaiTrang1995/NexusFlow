@@ -137,7 +137,7 @@ to the third downstream event.
 | `flowx_step_duration_seconds` | histogram | `flow`, `step`, `capability`, `outcome` | **emitted** at the dispatch seam, for every step boundary — capability, emit, satisfied wait — and separately for a compensation |
 | `flowx_capability_duration_seconds` | histogram | `capability`, `outcome` | **emitted**, and deliberately not the step histogram with a label dropped: §9 diagnoses a spike "by capability", and a capability used by six flows is one dependency with one p99. Recorded only for a real capability, so an emit does not contribute time no capability spent |
 | `flowx_capability_unhandled_total` | counter | `capability` — **a defect signal** | **emitted**. Counted at the dispatch seam and re-thrown, so the engine still converts it into `FlowErrors.Unhandled` and still compensates — this observes the defect, it does not change what happens to it |
-| `flowx_trigger_admitted_total` / `_rejected_total` | counter | `kind`, `reason`, `tenant` | **not emitted, and nowhere to emit from.** There is no Trigger Engine; §5 of [09-Trigger-Model](09-Trigger-Model.md) is a diagram with four of its nine decisions enforced, all inside the HTTP endpoint. A `kind` label needs one admission point serving every transport, and there is one transport. **No instrument is created for it** — see the note below |
+| `flowx_trigger_admitted_total` / `_rejected_total` | counter | `kind`, `reason`, `tenant` | **`_admitted_total` is emitted** by the admission seam — `FlowBusScan.AdmitAsync` and `FlowStreamScan.AdmitAsync`, which decide what becomes of one item without settling it and which a sweep and a push host both reach, so `kind` separates `Bus` from `Stream` and `reason` is `started` or `deduplicated`. *This row read "not emitted, and nowhere to emit from … a `kind` label needs one admission point serving every transport, and there is one transport"; **WP-140** built that admission point.* An item the seam requeued or dead-lettered was not admitted and is not counted here — **`_rejected_total` still has no instrument**, because whether a requeue belongs in the same series as a poison message is a decision nobody has made |
 | `flowx_journal_commit_seconds` | histogram | `operation` | **emitted** as a decorator over `IFlowJournal`, so both shipped adapters and any third-party store are timed by one piece of code. `operation` is the interface member, so a commit and a frontier read are separable — §7's SLO is about the commit |
 | `flowx_lease_lost_total` | counter | `reason` | **emitted** by `DurableLease`, once on the `Held`→`Lost` edge. `reason` is `refused` (the store answered and said no) or `unreachable` (the store could not be reached, and by the time that was certain the lease had lapsed). They point at different faults, and one unlabelled counter would make a network blip and a split brain the same line |
 | `flowx_outbox_pending` | gauge | `type` | **emitted** by `plugins/FlowX.Postgres`, and it is exactly the `SELECT count(*) … WHERE published_at IS NULL GROUP BY type` this row always said it was |
@@ -161,7 +161,9 @@ happens rather than that it cannot.
 
 > [!NOTE]
 > **The fourth column read "no emitter" thirteen times. It now reads "emitted" eleven times,
-> and the two that do not are the two that never needed an emitter.**
+> and the two that do not are the two that never needed an emitter.** *Twelve, since
+> **WP-140** gave `flowx_trigger_admitted_total` the admission seam this box called P3's; only
+> `flowx_stream_lag_records` and `_rejected_total` are left without one.*
 >
 > The old version of this box said the thirteen rows sat at three different distances from
 > being true: ten needed only an emitter, one needed **P7**, one needed **P3**, and one needed

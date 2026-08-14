@@ -250,3 +250,44 @@ public sealed class CompensationFailureCounter : ICompensationAlertSink
                 alert.StepIndex.ToString(System.Globalization.CultureInfo.InvariantCulture)));
     }
 }
+
+/// <summary>
+/// Counts what an admission seam let into the runtime, against
+/// <see cref="TelemetryNames.TriggerAdmittedTotal"/>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>One counter for every transport, which is what the <c>kind</c> label always
+/// wanted.</strong> §3 froze the label and this repository had nowhere to write it from until
+/// <c>FlowBusScan.AdmitAsync</c> and <c>FlowStreamScan.AdmitAsync</c> existed — a per-transport
+/// counter would have made the label a copy of the metric name.
+/// </para>
+/// <para>
+/// <strong>Only what was admitted.</strong> A requeued delivery and a dead-lettered one are the
+/// seam declining to let an item in, and putting either under a counter named <c>admitted</c> is
+/// the kind of mislabelling that outlives everyone who could correct it.
+/// </para>
+/// </remarks>
+internal static class TriggerAdmissionCounter
+{
+    /// <summary>Counts one item an admission seam let in.</summary>
+    /// <param name="kind">Which transport family it arrived through.</param>
+    /// <param name="reason">Why it was admitted: <c>started</c> or <c>deduplicated</c>.</param>
+    /// <param name="tenantId">The item's tenant, bucketed before it becomes a label.</param>
+    internal static void Admitted(TriggerKind kind, string reason, string? tenantId)
+    {
+        // Budget B6: the tags are built only when something is listening, because a label value
+        // that is not already a string boxes on its way into a KeyValuePair.
+        if (!FlowXMetrics.TriggerAdmitted.Enabled)
+        {
+            return;
+        }
+
+        FlowXMetrics.TriggerAdmitted.Add(
+            1,
+            new KeyValuePair<string, object?>(TelemetryNames.KindLabel, kind.ToString()),
+            new KeyValuePair<string, object?>(TelemetryNames.ReasonLabel, reason),
+            new KeyValuePair<string, object?>(
+                TelemetryNames.TenantLabel, FlowXTelemetry.TenantLabel(tenantId)));
+    }
+}

@@ -483,6 +483,10 @@ across every node" is one query.
 > [18 §3](18-Cloud-Native.md#3-autoscaling) shows an autoscale rule using an admitted-rate
 > metric; that rule cannot fire today. Scale on `flowx_flow_duration_seconds`, on concurrent
 > requests, or on the `flow_instance` query in §5.1 instead.
+>
+> *The counter has a producer as of **WP-140** — the admission seam both a sweep and a push
+> host reach — and it counts bus deliveries and stream windows only, so an HTTP-fronted plan
+> still scales on one of the three above. The two span attributes are still unemitted.*
 
 **In `Dispatched` mode this section still holds**, with one addition: a flow becomes *n*
 invocations, so the trace is only whole if the W3C trace context is carried on the message.

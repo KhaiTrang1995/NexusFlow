@@ -70,6 +70,7 @@ public sealed class TransportEquivalenceTests : IAsyncLifetime
         {
             await fixture.OverHttpAsync(),
             await fixture.OverBusAsync(),
+            await fixture.OverBusPushAsync(),
             await fixture.OverChangeAsync(),
             await fixture.OverScheduleAsync(),
         };
@@ -110,8 +111,8 @@ public sealed class TransportEquivalenceTests : IAsyncLifetime
 
         invoices.Distinct().Count().ShouldBe(
             1,
-            "Four transports produced more than one invoice from the same request:" +
-            Environment.NewLine + string.Join(Environment.NewLine, invoices));
+            "Four transports and the push route produced more than one invoice from the same " +
+            "request:" + Environment.NewLine + string.Join(Environment.NewLine, invoices));
     }
 
     /// <summary>
@@ -133,6 +134,7 @@ public sealed class TransportEquivalenceTests : IAsyncLifetime
         {
             await fixture.OverHttpAsync(),
             await fixture.OverBusAsync(),
+            await fixture.OverBusPushAsync(),
             await fixture.OverChangeAsync(),
             await fixture.OverScheduleAsync(),
         };
@@ -217,6 +219,8 @@ public sealed class TransportEquivalenceTests : IAsyncLifetime
         private readonly PostgresOutboxPublisher _outbox;
         private readonly PostgresChangeFeed _feed;
         private readonly FlowBusScan _bus;
+        private readonly RedisStreamBusConsumer _broker;
+        private readonly BusRegistration _busRegistration;
         private readonly FlowChangeScan _change;
         private readonly FlowScheduleScan _schedule;
         private readonly FlowTestClock _clock;
@@ -255,16 +259,16 @@ public sealed class TransportEquivalenceTests : IAsyncLifetime
 
             _feed = new PostgresChangeFeed(dataSource);
 
-            _bus = new FlowBusScan(
-                _host,
-                new FlowBusCatalog().Add(
-                    new BusSubscription(
-                        "invoice.issue.bus", "1.0.0", "invoice.requested", "billing"),
-                    IssueInvoiceOverBusFlow.Plan,
-                    new IssueInvoiceOverBusFlow.Dispatcher(tax, persist, read, validate, @void)),
-                new RedisStreamBusConsumer(redis, streams, "test-node"),
-                _durability,
-                _options);
+            var subscriptions = new FlowBusCatalog().Add(
+                new BusSubscription(
+                    "invoice.issue.bus", "1.0.0", "invoice.requested", "billing"),
+                IssueInvoiceOverBusFlow.Plan,
+                new IssueInvoiceOverBusFlow.Dispatcher(tax, persist, read, validate, @void));
+
+            _broker = new RedisStreamBusConsumer(redis, streams, "test-node");
+            _busRegistration = subscriptions.Registrations[0];
+
+            _bus = new FlowBusScan(_host, subscriptions, _broker, _durability, _options);
 
             _change = new FlowChangeScan(
                 _host,
@@ -363,6 +367,51 @@ public sealed class TransportEquivalenceTests : IAsyncLifetime
 
             pass.Started.ShouldBeGreaterThanOrEqualTo(
                 1, "the broker offered the request and the subscription started the flow");
+
+            return arm;
+        }
+
+        /// <summary>
+        /// Issues over the broker again, pushed: one delivery handed straight to the admission
+        /// seam, with nothing sweeping and nothing acknowledged.
+        /// </summary>
+        /// <remarks>
+        /// <strong>The arm a serverless deployment is.</strong> A Functions host is handed one
+        /// message by its platform and settles it there; this arm takes the delivery from the
+        /// broker exactly as such a platform would, calls the seam, and never answers. What it
+        /// adds to this file is that the fifth route through the same chain produces the same
+        /// invoice — the sweep and the push entry agreeing about the four steps below them is
+        /// the whole of WP-140's claim.
+        /// </remarks>
+        public async ValueTask<Arm> OverBusPushAsync()
+        {
+            var arm = new Arm("invoice.issue.bus", "push");
+            var ct = TestContext.Current.CancellationToken;
+
+            await RequestAsync(arm.Reference);
+
+            var drained = await _outbox.PublishPendingAsync(ct);
+
+            drained.Published.ShouldBeGreaterThanOrEqualTo(1);
+
+            var subscription = _busRegistration.Subscription;
+
+            (await _broker.SubscribeAsync(subscription, ct)).IsSuccess.ShouldBeTrue();
+
+            var received = await _broker.ReceiveAsync(subscription, 1, 1, ct);
+
+            received.IsSuccess.ShouldBeTrue();
+
+            var delivery = received.Value
+                .SelectMany(static batch => batch.Deliveries)
+                .ShouldHaveSingleItem();
+
+            var admission = await _bus.AdmitAsync(_busRegistration, delivery, ct);
+
+            admission.Disposition.ShouldBe(
+                BusDisposition.Started,
+                "the push entry started the flow, and the message is still the platform's to " +
+                "settle — nothing here acknowledged it.");
 
             return arm;
         }
