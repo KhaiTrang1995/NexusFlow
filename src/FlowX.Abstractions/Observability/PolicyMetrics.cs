@@ -89,6 +89,16 @@ public static class PolicyMetrics
     /// </remarks>
     public const string MissedOutcome = "missed";
 
+    /// <summary>A fallback answered for a step that had failed for the last time.</summary>
+    /// <remarks>
+    /// Distinct from <see cref="OkOutcome"/>, which a step whose fallback was <em>not</em>
+    /// needed produces, for <see cref="MissedOutcome"/>'s reason: a degraded mode nobody can
+    /// see is a degraded mode nobody fixes. The two together make the share of a step's
+    /// executions that were answered by a constant computable from one series, which is the
+    /// number an operator wants when a dashboard is green and a customer is not.
+    /// </remarks>
+    public const string DegradedOutcome = "degraded";
+
     /// <summary>An audit record was written for a step that succeeded.</summary>
     /// <remarks>
     /// The only outcome an <c>Audit</c> reaches the counter with. A record that could not be

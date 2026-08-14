@@ -777,6 +777,12 @@ public static class ManifestWriter
             ["Cache"] = "Efficiency",
             ["Audit"] = "Consistency",
 
+            // WP-78 and WP-79. Both Resilience, which is what makes them a nesting question
+            // rather than an ordering one — ADR-0078 places them, and the manifest publishes
+            // the stage it always published for stage 4, so `flowx diff` needs no new rule.
+            ["Hedge"] = "Resilience",
+            ["Fallback"] = "Resilience",
+
             // WP-57. Consistency rather than Resilience, because it wraps the step's
             // *compensation* and Consistency is where ADR-0011 puts compensation: the unwind
             // is that stage's obligation discharged later, and the retry is a parameter of it.

@@ -652,6 +652,210 @@ public sealed class FlowPlanGeneratorTests
         run.Ids.ShouldContain("FLOWX1018", run.Describe());
     }
 
+    /// <summary>FLOWX1051 — a hedge over a capability that has not declared a concurrent
+    /// repeat safe.</summary>
+    /// <remarks>
+    /// FLOWX1014's requirement asked of the kind that duplicates <em>while the first call is
+    /// still running</em>. <c>payment.capture</c> is the capability that rule exists for, and
+    /// hedging it is the worse of the two duplications: the second charge is not a second
+    /// attempt after a failure but a second charge issued deliberately, and the answer the
+    /// flow keeps may be either one's.
+    /// </remarks>
+    [Fact]
+    public void ReportsFLOWX1051WhenAHedgeIsAttachedToANonIdempotentCapability()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Fast = PolicySet
+                    .Named("fast")
+                    .Hedge(afterDelay: System.TimeSpan.FromMilliseconds(300));
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<CapturePayment>().WithPolicy(Policies.Fast)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1051", run.Describe());
+
+        run.Describe().ShouldContain(
+            "payment.capture",
+            Case.Sensitive,
+            "A hedge wraps the step, so the step's own declaration is the one that decides it.");
+    }
+
+    /// <summary>And it is silent where the capability has made the claim.</summary>
+    /// <remarks>
+    /// The shape the rule has to permit, and the shape a hedge is for: an idempotent read
+    /// whose tail is worth cutting. A rule that reported this would make the policy
+    /// undeclarable rather than safe.
+    /// </remarks>
+    [Fact]
+    public void AllowsAHedgeOnAnIdempotentCapability()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Fast = PolicySet
+                    .Named("fast")
+                    .Hedge(afterDelay: System.TimeSpan.FromMilliseconds(300));
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReleaseInventory>().WithPolicy(Policies.Fast)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldNotContain("FLOWX1051", run.Describe());
+    }
+
+    /// <summary>FLOWX1053 — a fallback over a capability that changes something.</summary>
+    /// <remarks>
+    /// FLOWX1018's objection reaching the same capability by the other door: the constant is
+    /// returned as a success and the reservation never happened. The step is also left off the
+    /// unwind stack, so the half of the effect that did happen would have nothing pointing at
+    /// it.
+    /// </remarks>
+    [Fact]
+    public void ReportsFLOWX1053WhenAFallbackIsAttachedToACapabilityWithSideEffects()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Degradable = PolicySet
+                    .Named("degradable")
+                    .Fallback(new Reservation("none"));
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReserveInventory>().WithPolicy(Policies.Degradable)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1053", run.Describe());
+
+        run.Describe().ShouldContain(
+            "inventory-ledger",
+            Case.Sensitive,
+            "and it names the effect, because that is the declaration the author has to " +
+            "change or move away from.");
+    }
+
+    /// <summary>FLOWX1052 — a degraded value the next step could not read.</summary>
+    /// <remarks>
+    /// <c>inventory.release</c> produces a <c>Reservation</c>; the set declares an
+    /// <c>OrderResult</c>. Both types exist, both are in the flow's own file, and the flow
+    /// compiles — which is exactly why the rule has to exist: the mismatch is invisible until
+    /// the dependency is down and the fallback files its value under a type nothing binds.
+    /// </remarks>
+    [Fact]
+    public void ReportsFLOWX1052WhenTheFallbackConstantIsNotTheStepsOutput()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Degradable = PolicySet
+                    .Named("degradable")
+                    .Fallback(new OrderResult("none"));
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReleaseInventory>().WithPolicy(Policies.Degradable)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1052", run.Describe());
+
+        run.Describe().ShouldContain(
+            "Sample.Reservation",
+            Case.Sensitive,
+            "The message names the contract the step produces, because that is what the " +
+            "constant has to be — naming only the one that was written says what is wrong " +
+            "and not what to write.");
+    }
+
+    /// <summary>And it is silent when the constant is the contract the step produces.</summary>
+    [Fact]
+    public void AllowsAFallbackWhoseConstantIsTheStepsOutput()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Degradable = PolicySet
+                    .Named("degradable")
+                    .Fallback(new Reservation("none"));
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReleaseInventory>().WithPolicy(Policies.Degradable)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldNotContain("FLOWX1052", run.Describe());
+        run.Ids.ShouldNotContain("FLOWX1053", run.Describe());
+    }
+
+    /// <summary>
+    /// FLOWX1052 reads the set where authors actually put it: another file.
+    /// </summary>
+    /// <remarks>
+    /// The rule's one structural risk. Every other policy rule answers from the
+    /// <c>.WithPolicy(...)</c> call's own tree or from syntax alone; this one needs the
+    /// <em>type</em> of an expression in the tree the set is declared in, which is a second
+    /// semantic model. A <c>Policies</c> class of its own is the shape docs/10 §4 recommends
+    /// and every sample uses, so a rule that only worked in one file would be a rule that
+    /// never fired.
+    /// </remarks>
+    [Fact]
+    public void ReportsFLOWX1052WhenTheSetIsDeclaredInAnotherFile()
+    {
+        var run = GeneratorHarness.Run(GeneratorHarness.CompilationOf(
+            ("/src/Flows/Sample.cs", WithFlow("""
+                [Flow("order.place")]
+                public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+                {
+                    protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                        .Step<ReleaseInventory>().WithPolicy(Policies.Degradable)
+                        .Return(ctx => new OrderResult("id"));
+                }
+                """)),
+            ("/src/Flows/Policies.cs", """
+                using FlowX;
+
+                namespace Sample;
+
+                public static class Policies
+                {
+                    public static readonly PolicySet Degradable = PolicySet
+                        .Named("degradable")
+                        .Fallback(new OrderResult("none"));
+                }
+                """)));
+
+        run.Ids.ShouldContain("FLOWX1052", run.Describe());
+    }
+
     [Fact]
     public void APolicySetBuiltAtRunTimeIsNotGuessedAt()
     {

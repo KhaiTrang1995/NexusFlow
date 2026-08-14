@@ -8,11 +8,11 @@ namespace FlowX;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Seven kinds across four stages.</strong> <c>RateLimit</c> (stage 1),
-/// <c>Idempotency</c> (stage 3), <c>Timeout</c>, <c>Retry</c>, <c>CircuitBreaker</c> and
-/// <c>Bulkhead</c> (stage 4), and <c>Cache</c> (stage 5) are the kinds this reads. <c>Audit</c>
-/// (stage 7) is read past, exactly as <see cref="CompensationPolicy.From"/> reads past
-/// everything that is not a compensation retry — it runs after the step's commit and is
+/// <strong>Nine kinds across four stages.</strong> <c>RateLimit</c> (stage 1),
+/// <c>Idempotency</c> (stage 3), <c>Timeout</c>, <c>Retry</c>, <c>CircuitBreaker</c>,
+/// <c>Bulkhead</c>, <c>Hedge</c> and <c>Fallback</c> (stage 4), and <c>Cache</c> (stage 5) are
+/// the kinds this reads. <c>Audit</c> (stage 7) is read past, exactly as
+/// <see cref="CompensationPolicy.From"/> reads past everything that is not a compensation retry — it runs after the step's commit and is
 /// resolved onto <see cref="StepAudit"/> instead. Which stages a partial engine may skip is
 /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>.
 /// </para>
@@ -35,10 +35,12 @@ namespace FlowX;
 /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>.
 /// </para>
 /// <para>
-/// <strong>The order the four run in is not this type's.</strong> A chain is ordered by
-/// stage, and all four of these share one stage — so their relative nesting is a fixed
-/// decision rather than a consequence of declaration order, settled by
+/// <strong>The order the six run in is not this type's.</strong> A chain is ordered by
+/// stage, and all six of these share one stage — so their relative nesting is a fixed
+/// decision rather than a consequence of declaration order, settled for four kinds by
 /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0024-stage-four-is-a-fixed-nesting.md">ADR-0024</a>
+/// and extended to six by
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a>,
 /// and implemented in <c>FlowEngine</c>. This type carries the parameters; it does not decide
 /// what wraps what.
 /// </para>
@@ -61,7 +63,10 @@ public sealed class StepPolicy
         TimeSpan? idempotencyWindow,
         IdempotencyScope idempotencyScope,
         TimeSpan? cacheTtl,
-        CacheScope cacheScope)
+        CacheScope cacheScope,
+        TimeSpan hedgeAfter,
+        int hedgeAttempts,
+        FallbackValue? fallback)
     {
         Timeout = timeout;
         Attempts = attempts;
@@ -79,6 +84,9 @@ public sealed class StepPolicy
         IdempotencyScope = idempotencyScope;
         CacheTtl = cacheTtl;
         CacheScope = cacheScope;
+        HedgeAfter = hedgeAfter;
+        HedgeAttempts = hedgeAttempts;
+        Fallback = fallback;
     }
 
     /// <summary>
@@ -89,7 +97,7 @@ public sealed class StepPolicy
         null, 1, Backoff.ExponentialJitter(), ImmutableArray<ErrorCategory>.Empty,
         0d, TimeSpan.Zero, TimeSpan.Zero, 0, 0,
         0, TimeSpan.Zero, RateLimitScope.Tenant, null, IdempotencyScope.Tenant,
-        null, CacheScope.Tenant);
+        null, CacheScope.Tenant, TimeSpan.Zero, 1, null);
 
     /// <summary>
     /// How many calls a breaker's sampling window must hold before its ratio is evidence.
@@ -181,6 +189,25 @@ public sealed class StepPolicy
     /// <summary>What a cache entry is keyed within. <c>docs/10 §8</c>'s conservative default.</summary>
     public CacheScope CacheScope { get; }
 
+    /// <summary>
+    /// How long a call may stay outstanding before the next one is issued beside it, or
+    /// <see cref="TimeSpan.Zero"/> when no hedge was declared.
+    /// </summary>
+    /// <remarks>
+    /// Zero rather than nullable, unlike <see cref="Timeout"/>, because zero is not a value an
+    /// author can usefully write: a hedge with no delay is not a hedge but a fan-out of
+    /// <see cref="HedgeAttempts"/> simultaneous calls, which doubles the load on the dependency
+    /// and saves nothing on a call that has not had time to be slow yet. <see cref="HasHedge"/>
+    /// reads it as undeclared.
+    /// </remarks>
+    public TimeSpan HedgeAfter { get; }
+
+    /// <summary>How many calls may be in flight for one attempt at the step, including the first.</summary>
+    public int HedgeAttempts { get; }
+
+    /// <summary>The degraded value to answer with, or <c>null</c> when no fallback was declared.</summary>
+    public FallbackValue? Fallback { get; }
+
     /// <summary>True when this policy can ask for the step a second time.</summary>
     public bool IsRetrying => Attempts > 1;
 
@@ -204,6 +231,18 @@ public sealed class StepPolicy
 
     /// <summary>True when a cache with a usable lifetime was declared.</summary>
     public bool HasCache => CacheTtl > TimeSpan.Zero;
+
+    /// <summary>True when a hedge that can actually issue a second call was declared.</summary>
+    /// <remarks>
+    /// Both terms, and each rules out a degenerate declaration rather than a mistake worth a
+    /// diagnostic: <c>maxAttempts: 1</c> is a hedge that never hedges, exactly as
+    /// <c>attempts: 1</c> is a retry that never retries, and a zero delay is the simultaneous
+    /// fan-out <see cref="HedgeAfter"/> declines to be.
+    /// </remarks>
+    public bool HasHedge => HedgeAttempts > 1 && HedgeAfter > TimeSpan.Zero;
+
+    /// <summary>True when a degraded value was declared.</summary>
+    public bool HasFallback => Fallback is not null;
 
     /// <summary>
     /// True when this step has anything for the engine to apply.
@@ -233,7 +272,7 @@ public sealed class StepPolicy
     /// </remarks>
     public bool IsActive =>
         Timeout is not null || IsRetrying || HasBreaker || HasBulkhead
-        || HasRateLimit || HasIdempotency || HasCache;
+        || HasRateLimit || HasIdempotency || HasCache || HasHedge || HasFallback;
 
     /// <summary>
     /// Reads the in-line kinds out of a chain, or <see cref="None"/> when it declares none.
@@ -265,6 +304,9 @@ public sealed class StepPolicy
         var idempotencyScope = IdempotencyScope.Tenant;
         TimeSpan? cacheTtl = null;
         var cacheScope = CacheScope.Tenant;
+        var hedgeAfter = TimeSpan.Zero;
+        var hedgeAttempts = 1;
+        FallbackValue? fallback = null;
 
         foreach (var policy in policies.Ordered)
         {
@@ -311,6 +353,15 @@ public sealed class StepPolicy
                     cacheScope = Parameter(policy, "scope", CacheScope.Tenant);
                     break;
 
+                case HedgeKind:
+                    hedgeAfter = Parameter(policy, "afterDelay", TimeSpan.Zero);
+                    hedgeAttempts = Math.Max(1, Parameter(policy, "maxAttempts", 1));
+                    break;
+
+                case FallbackKind:
+                    fallback = Parameter<FallbackValue?>(policy, "value", null);
+                    break;
+
                 default:
                     // Stage 7's Audit, which StepAudit resolves. Read past rather than
                     // rejected — the chain is the author's whole declaration and this type is
@@ -323,7 +374,7 @@ public sealed class StepPolicy
             timeout, attempts, backoff, retryOn,
             failureRatio, samplingWindow, breakDuration, maxConcurrency, queueDepth,
             permits, rateWindow, rateScope, idempotencyWindow, idempotencyScope,
-            cacheTtl, cacheScope);
+            cacheTtl, cacheScope, hedgeAfter, hedgeAttempts, fallback);
 
         return resolved.IsActive ? resolved : None;
     }
@@ -356,6 +407,25 @@ public sealed class StepPolicy
     /// parameters; it does not decide what wraps what.
     /// </remarks>
     public const string CacheKind = "Cache";
+
+    /// <summary>The descriptor kind <see cref="PolicySet.Hedge"/> emits.</summary>
+    /// <remarks>
+    /// Stage 4's fifth kind, and the first one added since
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0024-stage-four-is-a-fixed-nesting.md">ADR-0024</a>
+    /// fixed the nesting of four — which is the revisit condition that record names. It sits
+    /// inside the retry and outside the breaker, so a hedged call is counted, permitted and
+    /// timed like any other call
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a>).
+    /// </remarks>
+    public const string HedgeKind = "Hedge";
+
+    /// <summary>The descriptor kind <see cref="PolicySet.Fallback{TValue}"/> emits.</summary>
+    /// <remarks>
+    /// Stage 4's sixth kind and the outermost of them, which is why the engine applies it in
+    /// the step loop rather than in the policed dispatch: everything else in the stage happens
+    /// inside one attempt, and this happens after the last of them.
+    /// </remarks>
+    public const string FallbackKind = "Fallback";
 
     /// <summary>
     /// Whether the step is worth dispatching again after <paramref name="attemptsMade"/>

@@ -173,6 +173,61 @@ public sealed record Backoff
     }
 }
 
+/// <summary>
+/// The degraded value a <see cref="PolicySet.Fallback{TValue}"/> puts into the state bag when
+/// the step it wraps has failed for the last time.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>A closure over a typed <c>Set&lt;T&gt;</c>, built where the type is known.</strong>
+/// A step's result reaches the next step through <see cref="FlowContext.Set{T}"/>, which is
+/// generic, and the engine holds a <see cref="FlowContext"/> and no type argument — the same
+/// wall that puts <c>DescribeCacheEntry</c> and <c>RestoreState</c> on the dispatcher rather
+/// than on the engine. Here the type <em>is</em> available at the one place it matters: the
+/// author writes the constant, so <see cref="Of{TValue}"/> captures it under its own type and
+/// the engine only ever calls <see cref="ApplyTo"/>. Nothing reflects, nothing boxes on the
+/// hot path, and the closure is built once into a <c>static readonly PolicySet</c>.
+/// </para>
+/// <para>
+/// <strong>Which is also why the type has to be checked at build time.</strong>
+/// <c>Set&lt;T&gt;</c> keys the bag by <c>typeof(T)</c>, so a constant declared as anything
+/// other than the step's own output contract would be filed under a type no later step binds —
+/// a degraded mode that answers the next <c>Get&lt;T&gt;</c> with an exception. <c>FLOWX1052</c>
+/// refuses that at build time rather than leaving it to a dependency's bad afternoon.
+/// </para>
+/// </remarks>
+public sealed class FallbackValue
+{
+    private readonly Action<FlowContext> _apply;
+
+    private FallbackValue(object? value, Type contract, Action<FlowContext> apply)
+    {
+        Value = value;
+        Contract = contract;
+        _apply = apply;
+    }
+
+    /// <summary>The declared constant, boxed. Carried for diagnostics and for the manifest.</summary>
+    public object? Value { get; }
+
+    /// <summary>The contract the constant is filed under — the step's output type.</summary>
+    public Type Contract { get; }
+
+    /// <summary>Captures <paramref name="value"/> under its own static type.</summary>
+    /// <typeparam name="TValue">The step's output contract, inferred from the argument.</typeparam>
+    /// <param name="value">The degraded answer. May be <c>null</c> only where the contract allows it.</param>
+    public static FallbackValue Of<TValue>(TValue value) =>
+        new(value, typeof(TValue), context => context.Set(value));
+
+    /// <summary>Files the degraded value in the flow's state bag, under its contract.</summary>
+    /// <param name="context">The scope the failed step ran under — an iteration's, inside a loop.</param>
+    public void ApplyTo(FlowContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        _apply(context);
+    }
+}
+
 /// <summary>A single declared policy and its parameters.</summary>
 /// <param name="Kind">Policy name, e.g. <c>Retry</c>.</param>
 /// <param name="Stage">Fixed stage the policy runs in.</param>
@@ -255,6 +310,77 @@ public sealed class PolicySet
     /// <summary>Bounds concurrency so one slow dependency cannot consume every thread.</summary>
     public PolicySet Bulkhead(int maxConcurrency, int queueDepth = 0)
         => Add(nameof(Bulkhead), PolicyStage.Resilience, ("maxConcurrency", maxConcurrency), ("queueDepth", queueDepth));
+
+    /// <summary>
+    /// Cuts the tail by issuing a second call while the first is still outstanding.
+    /// <strong>Requires the capability to declare <c>Idempotent = true</c></strong> — otherwise
+    /// the build fails with FLOWX1051.
+    /// </summary>
+    /// <param name="afterDelay">
+    /// How long to wait for the outstanding call before issuing the next one. Set it near the
+    /// dependency's p95: below it the hedge doubles the load to save nothing, above it the
+    /// timeout arrives first and the hedge never fires.
+    /// </param>
+    /// <param name="maxAttempts">
+    /// How many calls may be in flight for one attempt at the step, including the first. Two is
+    /// the number that buys nearly all of the latency; a third mostly buys load.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Not a retry, and the difference is what it reacts to.</strong> A retry answers a
+    /// failure and waits before asking again; a hedge answers <em>silence</em> and asks again
+    /// while the first call is still running. The first success wins, the calls that lost are
+    /// cancelled, and a cancelled loser is not a failure of the step. The two compose —
+    /// <c>Retry</c> is the outer loop and each of its attempts is a hedged race
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a>).
+    /// </para>
+    /// <para>
+    /// <strong>Two racing calls are two calls.</strong> The effect can happen twice and the
+    /// answer that reaches the state bag can be either call's, which is why the capability has
+    /// to declare itself idempotent: both calls present the same <c>ctx.IdempotencyKey</c>, so
+    /// what <c>Idempotent = true</c> promises is exactly that the two are one request.
+    /// </para>
+    /// </remarks>
+    public PolicySet Hedge(TimeSpan afterDelay, int maxAttempts = 2)
+        => Add(
+            nameof(Hedge),
+            PolicyStage.Resilience,
+            ("afterDelay", afterDelay),
+            ("maxAttempts", maxAttempts));
+
+    /// <summary>
+    /// Answers with a declared constant when the step has failed for the last time — an
+    /// explicit degraded mode rather than a failed flow.
+    /// </summary>
+    /// <typeparam name="TValue">
+    /// The step's output contract, inferred from <paramref name="value"/>. Anything else is
+    /// refused by FLOWX1052: the value is filed in the state bag under its own type, so a
+    /// mismatch would be a degraded mode no later step can read.
+    /// </typeparam>
+    /// <param name="value">The degraded answer.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Outermost of the six stage-4 kinds, and outside the retry.</strong> A fallback
+    /// that fired on the first failure would spend the retry the author also declared; it is
+    /// consulted once, after every attempt has been made and refused
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a>).
+    /// </para>
+    /// <para>
+    /// <strong>Requires the capability to declare no side effects</strong> — FLOWX1053, and
+    /// FLOWX1018's argument word for word: a fallback returns a success without performing the
+    /// effect. A step that was supposed to change the world and did not cannot be papered over
+    /// with a constant, and a degraded step registers no compensation, because there is nothing
+    /// to undo.
+    /// </para>
+    /// <para>
+    /// <strong>A constant, and not yet a second capability.</strong> <c>docs/10 §3</c> catalogues
+    /// "capability or constant"; the capability half needs a dispatch seam, a step index, a
+    /// journal row and a compensation registration that a step's fallback has none of, and
+    /// ADR-0078 §3 records precisely what is missing rather than shipping half of it.
+    /// </para>
+    /// </remarks>
+    public PolicySet Fallback<TValue>(TValue value)
+        => Add(nameof(Fallback), PolicyStage.Resilience, ("value", FallbackValue.Of(value)));
 
     /// <summary>
     /// Caches the result. Tenant-scoped by default; declaring it on a capability with

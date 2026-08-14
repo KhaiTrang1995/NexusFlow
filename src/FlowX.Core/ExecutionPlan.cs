@@ -76,8 +76,9 @@ public sealed class ExecutionPlan
 
     /// <summary>
     /// True when more than one thread can touch this flow's context at once: the flow
-    /// contains a <see cref="StepKind.Parallel"/> fork, or a <see cref="StepKind.ForEach"/>
-    /// that may run several iterations concurrently.
+    /// contains a <see cref="StepKind.Parallel"/> fork, a <see cref="StepKind.ForEach"/>
+    /// that may run several iterations concurrently, or a step whose policy declares a
+    /// <c>Hedge</c>.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -92,6 +93,15 @@ public sealed class ExecutionPlan
     /// The question this property answers is not "does the flow loop" but "can two threads
     /// reach the context", and a loop that runs one element at a time cannot — so a
     /// sequential iteration keeps the unguarded fast path, exactly as a conditional does.
+    /// </para>
+    /// <para>
+    /// <strong>A hedged step counts for the same reason a fork does.</strong> A
+    /// <c>Hedge</c> issues a second call while the first is still outstanding, over the one
+    /// context the step runs under, so two dispatches can write the state bag at once — the
+    /// question this property asks, arriving from a policy rather than from the graph. The
+    /// lock makes that race safe; what makes it <em>meaningful</em> is that both calls are the
+    /// same idempotent capability under one idempotency key, which is what FLOWX1051 requires
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a> §2.4).
     /// </para>
     /// </remarks>
     public bool HasParallel { get; }
@@ -296,7 +306,8 @@ public sealed class ExecutionPlan
             audited |= step.StepAudit.IsAudited;
 
             parallel |= step.Kind == StepKind.Parallel ||
-                        (step.Kind == StepKind.ForEach && step.MaxDegreeOfParallelism > 1);
+                        (step.Kind == StepKind.ForEach && step.MaxDegreeOfParallelism > 1) ||
+                        step.StepPolicy.HasHedge;
 
             // A detached sub-flow counts too. It never touches this flow's context — it
             // gets its own — so it deliberately does *not* set `parallel`; but it is still

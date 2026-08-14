@@ -1699,6 +1699,90 @@ public static class FlowXDiagnostics
         "capability's own output — or supply the input explicitly with " +
         ".Step<TCapability, TStepIn>(ctx => ...).");
 
+    /// <summary>FLOWX1051 — a hedge is declared over a non-idempotent capability.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><c>FLOWX1014</c>'s rule, arriving at the same capability from the concurrent
+    /// side.</strong> A retry asks twice in sequence and this asks twice at once, so the
+    /// declaration that makes either safe is the same one — and a hedge needs it for a second
+    /// reason a retry does not have. A retry keeps the answer of the attempt that succeeded;
+    /// a hedge cancels the loser <em>after</em> it may already have written its result into the
+    /// state bag, so the two answers have to be interchangeable and not merely both harmless.
+    /// </para>
+    /// <para>
+    /// <strong>Its own id rather than a third <c>FLOWX1014</c> message.</strong> That rule
+    /// covers the two kinds that <em>re</em>-dispatch after a failure, and its page argues
+    /// duplicate charges; this one is about a duplicate that is deliberate, simultaneous and
+    /// running right now, and it is <c>FLOWX1044</c>'s precedent — a construct that repeats for
+    /// a different reason gets a page that says which reason.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor HedgeRequiresIdempotency = Create(
+        "FLOWX1051",
+        "Hedge requires an idempotent capability",
+        "Capability '{0}' declares Idempotent = false, so a Hedge policy cannot be attached",
+        "A hedge issues a second call while the first is still outstanding, under the same " +
+        "ctx.IdempotencyKey, and keeps whichever answers first — so the effect can happen " +
+        "twice at once and the answer the flow keeps may be either call's. That is what " +
+        "Idempotent = true declares to be safe, and the same promise FLOWX1014 requires of a " +
+        "retry. Declare it on the capability if a concurrent repeat is harmless, and otherwise " +
+        "bound the tail with a Timeout, which refuses a slow call rather than duplicating it.");
+
+    /// <summary>FLOWX1052 — a fallback constant is not the step's output contract.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The value is filed under its own type, so the type is the whole contract.</strong>
+    /// <c>PolicySet.Fallback&lt;TValue&gt;</c> captures the constant under
+    /// <c>FlowContext.Set&lt;TValue&gt;</c>, which keys the state bag by <c>typeof(TValue)</c>.
+    /// A constant of any other type lands under a key no later step binds, and the degraded
+    /// mode — the thing declared so that an outage is survivable — throws on the first step
+    /// that reads the step's output.
+    /// </para>
+    /// <para>
+    /// <strong>Reported here rather than left to the run time it would fail at.</strong> A
+    /// fallback fires exactly when a dependency is down, which is the worst moment to discover
+    /// that the repair does not compile in the sense that matters. The mismatch is visible in
+    /// the source: the step names its capability, the capability names its output contract, and
+    /// the set names a constant.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor FallbackMustMatchTheStepsOutput = Create(
+        "FLOWX1052",
+        "Fallback constant is not the step's output contract",
+        "Step '{0}' produces '{1}', and its Fallback declares a '{2}'",
+        "A fallback value is filed in the state bag under its own type, so a constant that is " +
+        "not the step's output contract is a degraded answer no later step can read: the flow " +
+        "survives the outage and then throws on the next ctx.Get<T>(). Declare the constant as " +
+        "the capability's output type, or move the fallback to a set applied to a step that " +
+        "produces it.");
+
+    /// <summary>FLOWX1053 — a fallback is declared over a capability with side effects.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><c>FLOWX1018</c>'s argument, word for word.</strong> A cache is refused on a
+    /// capability with side effects because a hit returns a success without performing the
+    /// effect; a fallback returns a success without performing the effect and without even
+    /// having a stored one to point at. The two rules are one sentence applied to the two ways
+    /// a step can be answered by something other than the capability.
+    /// </para>
+    /// <para>
+    /// <strong>And it is what makes the unwind honest.</strong> A degraded step registers no
+    /// compensation, because nothing happened for a compensation to undo — so a fallback over a
+    /// capability that <em>does</em> change the world would leave a half-made effect with
+    /// nothing pointing at it, which is <c>docs/10 §2</c>'s "compensating something that never
+    /// happened" row read backwards.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor FallbackRequiresNoSideEffects = Create(
+        "FLOWX1053",
+        "Fallback requires a capability with no side effects",
+        "Capability '{0}' declares side effects [{1}], so a Fallback policy cannot be attached",
+        "A fallback answers with a constant when the step has failed for the last time, which " +
+        "returns a success without performing the effect — FLOWX1018's objection to caching a " +
+        "write, reaching the same capability by the other door. A degraded step also registers " +
+        "no compensation, so a half-completed effect behind one would never be undone. Declare " +
+        "the fallback on the read that precedes the write, or handle the failure in the flow.");
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1745,7 +1829,10 @@ public static class FlowXDiagnostics
         StreamWindowArgumentCannotBeRead,
         PollIntervalOutlastsItsTimeout,
         PollRequiresIdempotency,
-        StepBindsOnlyThePollsSignal);
+        StepBindsOnlyThePollsSignal,
+        HedgeRequiresIdempotency,
+        FallbackMustMatchTheStepsOutput,
+        FallbackRequiresNoSideEffects);
 
     private static DiagnosticDescriptor Create(
         string id,
