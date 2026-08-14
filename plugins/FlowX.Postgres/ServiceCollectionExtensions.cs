@@ -291,8 +291,8 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers <see cref="PostgresSweepSignal"/>, so this node's change and timer sweeps are
-    /// woken by the database instead of waiting out their intervals.
+    /// Registers <see cref="PostgresSweepSignal"/>, so this node's change, timer and recovery
+    /// sweeps are woken by the database instead of waiting out their intervals.
     /// </summary>
     /// <param name="services">The container being built.</param>
     /// <param name="directConnectionString">
@@ -322,8 +322,9 @@ public static class ServiceCollectionExtensions
     /// would start, the listener would look connected, and the notifications would go nowhere.
     /// </para>
     /// <para>
-    /// <strong>Requires migration 13</strong>, which is what announces on the two channels
-    /// <see cref="PostgresSweepSignal"/> subscribes to. Registering it against an older schema is
+    /// <strong>Requires migrations 13 and 14</strong>, which are what announce on the three
+    /// channels <see cref="PostgresSweepSignal"/> subscribes to — 14 is the lease's, and a schema
+    /// that stops at 13 accelerates the other two sweeps and leaves takeover on its interval. Registering it against an older schema is
     /// not an error and cannot be one — a listener with nothing announcing to it is a listener
     /// that hears nothing, which is the same state a dropped connection puts it in, and the
     /// intervals carry the deployment either way.
@@ -333,7 +334,7 @@ public static class ServiceCollectionExtensions
     /// tenant schema gets its own copy of the triggers when it is migrated, and they announce
     /// under their own schema name; the listener accepts anything under
     /// <see cref="TenantSchemaOptions.Prefix"/> as well as the control schema, because at that
-    /// level both sweeps fan out over the tenants and a wake for any of them is a wake for the
+    /// level the sweeps fan out over the tenants and a wake for any of them is a wake for the
     /// pass.
     /// </para>
     /// </remarks>

@@ -4,7 +4,8 @@ using Npgsql;
 namespace FlowX.Postgres;
 
 /// <summary>
-/// Turns the two announcements migration <c>0013</c> makes into the wake a host's sweeps wait on.
+/// Turns the announcements migrations <c>0013</c> and <c>0014</c> make into the wake a host's
+/// sweeps wait on.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -23,9 +24,9 @@ namespace FlowX.Postgres;
 /// to make a pass wait longer than the interval it was given.
 /// </para>
 /// <para>
-/// <strong>The channels are part of the contract with the migration</strong>, which is why they
-/// are named here as constants rather than assembled: <c>0013</c>'s trigger functions call
-/// <c>pg_notify</c> with these exact two names, and an operator poking a stuck node by hand can
+/// <strong>The channels are part of the contract with the migrations</strong>, which is why they
+/// are named here as constants rather than assembled: the trigger functions call
+/// <c>pg_notify</c> with these exact three names, and an operator poking a stuck node by hand can
 /// use them — <c>NOTIFY flowx_sweep_change, 'flowx'</c> is a legitimate way to make a node sweep
 /// now, and can do no harm because the pass it causes reads the cursor like every other pass.
 /// </para>
@@ -38,17 +39,45 @@ public sealed class PostgresSweepSignal : ISweepSignal, IAsyncDisposable
     /// <summary>The channel a parked wake is announced on.</summary>
     public const string TimerChannel = "flowx_sweep_timer";
 
+    /// <summary>The channel the earliest live lease expiry is announced on.</summary>
+    public const string RecoveryChannel = "flowx_sweep_recovery";
+
     /// <summary>
-    /// Both channels, subscribed to in one round trip.
+    /// All three channels, subscribed to in one round trip.
     /// </summary>
     /// <remarks>
-    /// A literal rather than an interpolation over the two constants above, because
+    /// A literal rather than an interpolation over the three constants above, because
     /// <c>SqlFitnessTests</c> requires every statement to be fixed when the assembly is built and
-    /// "it is only const holes" is a claim a scan cannot check. What holds the two in step is
+    /// "it is only const holes" is a claim a scan cannot check. What holds them in step is
     /// behavioural: a listener that subscribed to a channel nothing announces on hears nothing,
     /// which is what <c>SweepSignalTests</c> asserts against a real server.
     /// </remarks>
-    private const string ListenToBoth = "LISTEN flowx_sweep_change; LISTEN flowx_sweep_timer";
+    private const string ListenToAll =
+        "LISTEN flowx_sweep_change; LISTEN flowx_sweep_timer; LISTEN flowx_sweep_recovery";
+
+    /// <summary>
+    /// How long after an announced lease expiry the recovery sweep is woken.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A lease is taken before the row it protects is written, and the sweep tests
+    /// both.</strong> <c>FlowRecoveryScan</c> asks for instances whose <c>updated_at</c> is a
+    /// lease TTL old and then acquires; the announcement is about the lease. On the ordinary path
+    /// the lease is acquired and the instance row is written a journal round trip later, so the
+    /// two thresholds are the same TTL measured from instants a few milliseconds apart — and a
+    /// wake armed at exactly the announced instant would land on the earlier of them, every time,
+    /// finding nothing and sleeping a full interval. That is the one way this hint can be
+    /// reliably useless, and this is the whole of the defence against it.
+    /// </para>
+    /// <para>
+    /// A second rather than a millisecond because it also absorbs the fast steps an instance may
+    /// have committed after its lease was taken, and it is small against every interval it
+    /// competes with — the sweep's own is ten seconds and the TTL it rides on is thirty. It
+    /// cannot absorb a step that outlives a renewal interval; that instance's wake is early, its
+    /// pass finds nothing, and the interval takes it, which is where this started.
+    /// </para>
+    /// </remarks>
+    private static readonly TimeSpan Settle = TimeSpan.FromSeconds(1);
 
     /// <summary>How long the first reconnection waits, and the ceiling it doubles towards.</summary>
     /// <remarks>
@@ -65,6 +94,7 @@ public sealed class PostgresSweepSignal : ISweepSignal, IAsyncDisposable
     private readonly string? _tenantPrefix;
     private readonly Gate _change = new();
     private readonly Gate _timer = new();
+    private readonly Gate _recovery = new();
     private readonly CancellationTokenSource _stopping = new();
     private readonly Lock _sync = new();
 
@@ -72,8 +102,12 @@ public sealed class PostgresSweepSignal : ISweepSignal, IAsyncDisposable
     private TaskCompletionSource _connected = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private long _connections;
     private long _horizonTicks;
+    private long _sweepsRecovery;
     private Timer? _due;
     private DateTimeOffset _dueAt;
+    private Timer? _lapse;
+    private DateTimeOffset _lapseAt;
+    private string? _lapseSchema;
 
     /// <summary>Creates a listener over a connection string of its own.</summary>
     /// <param name="directConnectionString">
@@ -126,9 +160,25 @@ public sealed class PostgresSweepSignal : ISweepSignal, IAsyncDisposable
             Volatile.Write(ref _horizonTicks, interval.Ticks);
         }
 
+        // The same question the horizon answers for timers — is there anybody in this process to
+        // wake? — with no horizon to go with it. A lease announcement's instant is a TTL out and
+        // a TTL is longer than the sweep interval by construction, so the rule that ignores a
+        // parked wake beyond the interval would ignore every lease there has ever been. What that
+        // rule is really protecting against is a process-resident object per row, and there is
+        // one armed instant for the node here whatever the instant is.
+        if (sweep is SweepKind.Recovery)
+        {
+            Volatile.Write(ref _sweepsRecovery, 1);
+        }
+
         EnsureListening();
 
-        var gate = sweep is SweepKind.Timer ? _timer : _change;
+        var gate = sweep switch
+        {
+            SweepKind.Timer => _timer,
+            SweepKind.Recovery => _recovery,
+            _ => _change,
+        };
         var raised = gate.Pending;
 
         using var elapsing = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -163,16 +213,24 @@ public sealed class PostgresSweepSignal : ISweepSignal, IAsyncDisposable
         }
 
         Timer? due;
+        Timer? lapse;
 
         lock (_sync)
         {
             due = _due;
+            lapse = _lapse;
             _due = null;
+            _lapse = null;
         }
 
         if (due is not null)
         {
             await due.DisposeAsync().ConfigureAwait(false);
+        }
+
+        if (lapse is not null)
+        {
+            await lapse.DisposeAsync().ConfigureAwait(false);
         }
 
         await _dataSource.DisposeAsync().ConfigureAwait(false);
@@ -279,7 +337,7 @@ public sealed class PostgresSweepSignal : ISweepSignal, IAsyncDisposable
 
         using (var listen = connection.CreateCommand())
         {
-            listen.CommandText = ListenToBoth;
+            listen.CommandText = ListenToAll;
 
             await listen.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
@@ -289,11 +347,12 @@ public sealed class PostgresSweepSignal : ISweepSignal, IAsyncDisposable
             // A reconnection, so this node was not listening for some window and cannot know what
             // was announced in it. The only safe reading of "cannot know" is that there is work:
             // one pass of each sweep, which finds whatever is there and finds nothing when there
-            // is nothing. The first connection deliberately does not do this -- both services
+            // is nothing. The first connection deliberately does not do this -- the services
             // sleep before their first pass on purpose, and a node that swept the instant it
             // started would be sweeping while its own subscriptions are still registering.
             _change.Raise();
             _timer.Raise();
+            _recovery.Raise();
         }
 
         Connected();
@@ -320,13 +379,20 @@ public sealed class PostgresSweepSignal : ISweepSignal, IAsyncDisposable
             return;
         }
 
+        if (string.Equals(args.Channel, RecoveryChannel, StringComparison.Ordinal))
+        {
+            ArmLapse(args.Payload);
+
+            return;
+        }
+
         _change.Raise();
     }
 
     /// <summary>Whether an announcement came from a schema this node's sweeps read.</summary>
     /// <remarks>
     /// A channel name is database-wide, so a second deployment sharing the database announces on
-    /// the same two channels. Ignoring the ones that are not ours costs nothing and saves a pass
+    /// the same three channels. Ignoring the ones that are not ours costs nothing and saves a pass
     /// that could only ever find nothing; being wrong about it in either direction costs one pass
     /// or one interval, which is why the payload is allowed to decide this and nothing else.
     /// </remarks>
@@ -422,6 +488,101 @@ public sealed class PostgresSweepSignal : ISweepSignal, IAsyncDisposable
         }
 
         _timer.Raise();
+    }
+
+    /// <summary>
+    /// Wakes the recovery sweep when the next lease lapses, rather than on the interval after it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The announcement is already the earliest live expiry, so this arms what it was
+    /// told.</strong> <c>0014</c> computes the minimum over the schema rather than reporting the
+    /// row it fired on, which is what makes an armed instant replaceable in both directions: a
+    /// renewal extends an expiry and the announcement that carries it moves the armed instant
+    /// <em>later</em>, so the superseded instant does not fire a pass that could only find a
+    /// healthy lease. A listener that kept the earliest instant it had heard could not do that,
+    /// and one that simply replaced on every announcement would follow whichever lease was
+    /// written last — never the dead node's, which is the only one that is not being written.
+    /// The migration's own remarks are the long form of this paragraph.
+    /// </para>
+    /// <para>
+    /// <strong>Which leaves this with one armed instant for the node and no per-lease
+    /// state.</strong> The same object <see cref="ArmDue"/> holds, for the same reasons: it is
+    /// lost on a restart and costs nothing when it is, because the row is still the truth and the
+    /// interval still fires.
+    /// </para>
+    /// <para>
+    /// <strong>Across tenant schemas the earliest wins and the schema that armed it can move
+    /// it.</strong> Each tenant schema announces its own minimum, and they are separate facts —
+    /// replacing on an announcement from another schema would let a quiet tenant's distant expiry
+    /// bury an imminent one. Keeping the earliest of them is the same trade the rest of this
+    /// class makes: what is dropped costs an interval and never an instance.
+    /// </para>
+    /// </remarks>
+    private void ArmLapse(string payload)
+    {
+        if (Volatile.Read(ref _sweepsRecovery) == 0)
+        {
+            // Nothing in this process sweeps for abandoned instances, so there is nobody to wake.
+            return;
+        }
+
+        if (!TryReadDue(payload, out var at))
+        {
+            // An announcement whose instant cannot be read still says a lease was written. Waking
+            // now costs one pass that may find nothing; ignoring it would cost the latency this
+            // migration exists to remove, on the release where the payload's shape moves.
+            _recovery.Raise();
+
+            return;
+        }
+
+        var delay = at - DateTimeOffset.UtcNow + Settle;
+
+        if (delay <= TimeSpan.Zero)
+        {
+            _recovery.Raise();
+
+            return;
+        }
+
+        var schema = SchemaOf(payload);
+
+        lock (_sync)
+        {
+            // The common announcement under load is a renewal that leaves the earliest expiry
+            // exactly where it was — every lease but one reports its neighbour's instant — so the
+            // first thing this does is notice that there is nothing to change. A node renewing a
+            // thousand leases a second allocates nothing here.
+            var armed = _lapse is not null && _lapseSchema is not null;
+            var ours = armed && schema.Equals(_lapseSchema, StringComparison.Ordinal);
+
+            if (armed && (ours ? _lapseAt == at : _lapseAt <= at))
+            {
+                return;
+            }
+
+            _lapse?.Dispose();
+            _lapseAt = at;
+            _lapseSchema = ours ? _lapseSchema : new string(schema);
+            _lapse = new Timer(
+                static state => ((PostgresSweepSignal)state!).Lapsed(),
+                this,
+                delay,
+                Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private void Lapsed()
+    {
+        lock (_sync)
+        {
+            _lapse?.Dispose();
+            _lapse = null;
+            _lapseSchema = null;
+        }
+
+        _recovery.Raise();
     }
 
     private void Connected()

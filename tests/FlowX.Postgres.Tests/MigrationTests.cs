@@ -304,6 +304,69 @@ public sealed class MigrationTests
                 "under a rolling update.");
     }
 
+    /// <summary>
+    /// A previous release's writer keeps taking leases after <c>0014</c>, and now announces.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>0013</c>'s risk one release on, with one difference that is worth the second test: this
+    /// trigger's function <em>reads a table</em>. A previous release's writer runs it on every
+    /// acquisition, renewal and release of every instance in the deployment, so an error in that
+    /// lookup — an unqualified name resolving somewhere else, a lock it did not expect — would
+    /// stop leases being taken at all, which is worse than the latency it exists to remove.
+    /// </para>
+    /// <para>
+    /// The schema is stood at 13, written to by SQL naming exactly the columns
+    /// <c>PostgresLeaseStore</c> named at that release, brought forward, and written to again.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task TheLeaseNotificationMigrationDoesNotBreakTheReleaseBeforeIt()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation, throughVersion: 13);
+
+        var instance = Guid.NewGuid();
+
+        await schema.ExecuteAsync(
+            $"""
+             INSERT INTO flow_lease (instance_id, owner_node, fencing_token, expires_at)
+             VALUES ('{instance}', 'node-1', 1, now() + interval '30 seconds')
+             """,
+            Cancellation);
+
+        (await schema.Migrator.MigrateAsync(14, Cancellation)).ShouldBe(
+            14, "the migrator brought a schema at the previous release forward.");
+
+        (await schema.ScalarAsync(
+            """
+            SELECT count(*)
+              FROM pg_trigger t
+              JOIN pg_class c ON c.oid = t.tgrelid
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = current_schema()
+               AND t.tgname = 'flow_lease_expiry_notify'
+            """,
+            Cancellation))
+            .ShouldBe(1L, "the announcement is installed in the schema that was migrated.");
+
+        // And the previous release keeps writing, into a table that now announces what it writes.
+        await schema.ExecuteAsync(
+            $"""
+             UPDATE flow_lease
+                SET expires_at = now() + interval '30 seconds'
+              WHERE instance_id = '{instance}'
+             """,
+            Cancellation);
+
+        (await schema.ScalarAsync(
+            $"SELECT count(*) FROM flow_lease WHERE instance_id = '{instance}' AND expires_at > now()",
+            Cancellation))
+            .ShouldBe(
+                1L,
+                "a writer that has never heard of the trigger renews a lease exactly as it did, " +
+                "which is what makes this migration deployable under a rolling update.");
+    }
+
     /// <summary>The current adapter works against the schema the migrator produces.</summary>
     /// <remarks>
     /// The other direction of the same rollout, and the one that catches a migration that

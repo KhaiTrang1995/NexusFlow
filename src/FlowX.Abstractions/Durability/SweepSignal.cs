@@ -1,11 +1,11 @@
 namespace FlowX;
 
-/// <summary>Which of the host's two row-driven sweeps a wake belongs to.</summary>
+/// <summary>Which of the host's row-driven sweeps a wake belongs to.</summary>
 /// <remarks>
-/// One enum rather than one signal per sweep, because a store that can wake either can usually
-/// wake both from the same place — the PostgreSQL listener holds one session and two channels —
-/// and a contract that had to be registered twice would make waking only one of them the
-/// accident rather than the decision.
+/// One enum rather than one signal per sweep, because a store that can wake any of them can
+/// usually wake all of them from the same place — the PostgreSQL listener holds one session and
+/// three channels — and a contract that had to be registered once per sweep would make waking
+/// only one of them the accident rather than the decision.
 /// </remarks>
 public enum SweepKind
 {
@@ -14,6 +14,17 @@ public enum SweepKind
 
     /// <summary>The pass the timer sweep makes over parked instances.</summary>
     Timer,
+
+    /// <summary>
+    /// The pass the recovery sweep makes over instances a dead node left running.
+    /// </summary>
+    /// <remarks>
+    /// What this one waits for is not a row appearing but a lease <em>lapsing</em>, which is an
+    /// instant a store knows the moment it writes the lease. It is the same wake as the other
+    /// two and carries no more than they do: the sweep re-reads its own candidates, and what a
+    /// wake means is "run the pass now".
+    /// </remarks>
+    Recovery,
 }
 
 /// <summary>

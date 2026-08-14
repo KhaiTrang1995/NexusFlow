@@ -21,6 +21,14 @@ namespace FlowX.Hosting;
 /// doing the same, which is the worst moment available.
 /// </para>
 /// <para>
+/// <strong>A registered <see cref="ISweepSignal"/> shortens the wait and changes nothing
+/// else.</strong> A store that can say when a lease lapses ends the wait at that instant, so
+/// the interval stops being how long a dead node's instances wait <em>on top of</em>
+/// <see cref="FlowXOptions.LeaseTtl"/> and becomes the ceiling on it. The sweep is the same
+/// sweep over the same rows — a wake this node never hears is a takeover that happens on the
+/// interval, which is what every release before this one did.
+/// </para>
+/// <para>
 /// A no-op when the journal cannot be scanned, rather than a registration the composition
 /// root has to remember to omit: whether recovery is possible is a property of the store
 /// that was registered, and asking an application to keep a service list in step with that
@@ -30,18 +38,21 @@ namespace FlowX.Hosting;
 internal sealed class FlowRecoveryService : BackgroundService
 {
     private readonly FlowRecoveryScan? _scan;
+    private readonly ISweepSignal? _wake;
     private readonly TimeSpan _interval;
 
     /// <summary>Whether this host was deployed to run this sweep at all.</summary>
     private readonly bool _deployed;
 
-    public FlowRecoveryService(FlowRecoveryScan? scan, FlowXOptions options)
+    public FlowRecoveryService(
+        FlowRecoveryScan? scan, FlowXOptions options, ISweepSignal? wake = null)
     {
         ArgumentNullException.ThrowIfNull(options);
 
         _deployed = options.Sweeps.HasFlag(HostSweeps.Recovery);
 
         _scan = scan?.IsEnabled == true ? scan : null;
+        _wake = wake;
         _interval = options.RecoveryScanInterval;
     }
 
@@ -64,7 +75,7 @@ internal sealed class FlowRecoveryService : BackgroundService
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                await Task.Delay(NextInterval(), stoppingToken).ConfigureAwait(false);
+                await WaitAsync(stoppingToken).ConfigureAwait(false);
 
                 await SweepAsync(stoppingToken).ConfigureAwait(false);
             }
@@ -98,6 +109,17 @@ internal sealed class FlowRecoveryService : BackgroundService
         }
 #pragma warning restore CA1031
     }
+
+    /// <summary>The pause before the next sweep: the interval, or a wake that arrives first.</summary>
+    /// <remarks>
+    /// <see cref="FlowTimerService"/>'s shape and its reason — the
+    /// <see cref="Task.Delay(TimeSpan, CancellationToken)"/> this replaces is still what runs when
+    /// no signal was registered.
+    /// </remarks>
+    private Task WaitAsync(CancellationToken stoppingToken) =>
+        _wake is null
+            ? Task.Delay(NextInterval(), stoppingToken)
+            : _wake.WaitAsync(SweepKind.Recovery, NextInterval(), stoppingToken);
 
     /// <summary>The configured interval, spread over ±25 % so nodes drift apart.</summary>
     private TimeSpan NextInterval() =>
