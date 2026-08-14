@@ -177,6 +177,29 @@ What changed is that it is no longer tracked as a blocker.*
       *Still owed, and tracked at [PLAN item 21](PLAN.md#9-open-items-blocking-the-plan): a
       regression test that runs the tenant isolation suite against a pooled endpoint. The
       property is proved by hand today, and by hand is how it rots.*
+- [ ] **B-6 · FlowX cannot reach its schema through a transaction-pooling proxy.**
+      **Reproduced 2026-08-14 against PgBouncer 1.22 and PostgreSQL 16**, while writing the
+      regression test B-5 owed. The adapter selects its schema with Npgsql's `SearchPath`,
+      which travels as a PostgreSQL **startup parameter**, and there are only two outcomes:
+      PgBouncer refuses the connection with `08P01: unsupported startup parameter:
+      search_path`, or — with the documented remedy `ignore_startup_parameters = search_path`
+      — it accepts the connection and **discards the schema**, after which every statement
+      answers `42P01: relation "flow_instance" does not exist`.
+      **The second is the dangerous one, because the application starts.**
+      *Why it is a blocker and not a §9 row:* [28 §4.1](docs/28-Azure-Hosting.md#41-the-connection-ceiling--the-one-that-bites)
+      made PgBouncer mandatory above a few replicas, so the deployment guidance and the
+      adapter contradicted each other. 28 §4.1 now says so and no longer requires it.
+      **Sized, not started.** This is not the journal's to fix: `SearchPath` is set in exactly
+      one place, `BuildDataSource`, and **sixteen** store classes rely on it — none qualifies
+      its SQL with a schema. So the fix is plugin-wide and is one of two shapes: qualify every
+      statement with a validated schema identifier, or set `search_path` per transaction,
+      which needs a transaction on paths that have none today. Either is a work package with
+      the journal, lease, timer and tenant conformance suites as its acceptance.
+      Until then: a direct connection with replicas bounded by `max_connections`, a larger
+      tier, or session pooling. A single-schema deployment can also carry the schema on the
+      pooler's own database line — that does **not** work for `TenantIsolation.Schema`, where
+      the schema is chosen per tenant as the connection opens.
+      See [PLAN open item 21](PLAN.md#9-open-items-blocking-the-plan)
 - [x] **B-3 · ~~Delete a stray tooling-prefixed branch from the remote.~~ RESOLVED.**
       Gone from the remote. History scan is clean: no commit in any branch has
       bot authorship, a generated-by footer, or a signature. *The branch name itself
