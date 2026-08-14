@@ -44,6 +44,7 @@
     <Project Path="tests/FlowX.Architecture.Tests/FlowX.Architecture.Tests.csproj" />
     <Project Path="tests/FlowX.Benchmarks/FlowX.Benchmarks.csproj" />
     <Project Path="tests/FlowX.Chaos/FlowX.Chaos.csproj" />
+    <Project Path="tests/FlowX.ColdStart.Bench/FlowX.ColdStart.Bench.csproj" />
     <Project Path="tests/FlowX.Durability.Bench/FlowX.Durability.Bench.csproj" />
     <Project Path="tests/FlowX.Cli.Tests/FlowX.Cli.Tests.csproj" />
     <Project Path="tests/FlowX.Compiler.CodeFixes.Tests/FlowX.Compiler.CodeFixes.Tests.csproj" />
