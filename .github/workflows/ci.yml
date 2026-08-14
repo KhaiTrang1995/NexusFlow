@@ -782,7 +782,13 @@ jobs:
           }
           bad = []
           for root, _, files in os.walk('.'):
-              if '.git' in root:
+              # node_modules is excluded for the reason the anchor step below excludes it:
+              # a dependency's own README is not this repository's documentation, and its
+              # broken links are not this repository's to fix. CI never installs them in
+              # this job, so the exclusion only matters to somebody running it locally --
+              # where, without it, this step reports a hundred failures from `undici` and
+              # `css-tree` and nobody reads the two that are real.
+              if '.git' in root or 'node_modules' in root:
                   continue
               for f in files:
                   if not f.endswith('.md'):
@@ -805,6 +811,102 @@ jobs:
                   bad.append(f'{a} exists — remove it from the exemption list in this job')
           for b in bad:
               print(f'::error::broken link {b}')
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Internal anchors resolve
+        # A link's PATH was checked above and its #fragment was thrown away, so a renamed
+        # heading broke navigation in silence. It had: nineteen links pointed at headings
+        # that no longer existed, several of them at section titles carrying a count that
+        # had since changed -- "four of seven metrics emit" against a heading that now
+        # says seven of seven. Same failure mode as a budget column nobody checks.
+        #
+        # Slug rules match GitHub's: lower-case, link labels replaced by their text,
+        # backticks dropped, anything that is not a letter, digit, space or hyphen removed,
+        # spaces to hyphens.
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+
+          # ADR-0020 references a section "Owed work, named so it is not lost" that the
+          # record does not contain. That is a content gap inside an Accepted ADR, not a
+          # renamed heading, and this repository does not edit accepted records -- see
+          # PLAN open item 18 for the decision that is owed. Exempted by exact link so a
+          # different broken anchor in the same file still fails.
+          # Every entry here is a broken anchor INSIDE AN ACCEPTED ADR. This repository
+          # does not edit accepted records -- superseding is the only amendment -- and
+          # repointing a fragment is a judgement the repository owner has not made yet.
+          # PLAN open item 18 carries that decision; five of the six are one-word renames
+          # in another document ("four of seven metrics emit" is now "seven of seven"),
+          # and the sixth is a section ADR-0020 references and does not contain.
+          #
+          # Exempted by exact (file, fragment) pair, so a DIFFERENT broken anchor in the
+          # same record still fails this job.
+          absent = {
+              ('docs/adr/ADR-0020-cli-reads-the-journal-as-rows.md',
+               '#owed-work-named-so-it-is-not-lost'),
+              ('docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md',
+               '#9-observing-policies--four-of-seven-metrics-emit'),
+              ('docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md',
+               '#3-golden-signals-automatically-per-graph-node'),
+              ('docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md',
+               '#9-observing-policies--four-of-seven-metrics-emit'),
+              ('docs/adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md',
+               '#7-idempotency-policy--specification'),
+              ('docs/adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md',
+               '#8-cache-safety--specification'),
+              ('docs/adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md',
+               '#9-observing-policies--four-of-seven-metrics-emit'),
+          }
+
+          def slug(text):
+              text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)
+              return re.sub(r'[^a-z0-9 -]', '', text.replace('`', '').lower()).replace(' ', '-')
+
+          def headings(path):
+              out = set()
+              for line in open(path, encoding='utf-8', errors='replace'):
+                  m = re.match(r'^#{1,6}\s+(.*?)\s*$', line)
+                  if m:
+                      out.add(slug(m.group(1)))
+              return out
+
+          cache, bad, hit = {}, [], set()
+          for root, _, files in os.walk('.'):
+              if '.git' in root or 'node_modules' in root:
+                  continue
+              for f in files:
+                  if not f.endswith('.md'):
+                      continue
+                  p = os.path.join(root, f)
+                  rel = os.path.relpath(p)
+                  for m in re.finditer(r'\[[^\]]*\]\(([^)\s]+)\)',
+                                       open(p, encoding='utf-8', errors='replace').read()):
+                      link = m.group(1)
+                      if link.startswith(('http', 'mailto')) or '#' not in link:
+                          continue
+                      target, _, fragment = link.partition('#')
+                      if not fragment:
+                          continue
+                      path = p if not target else os.path.normpath(os.path.join(root, target))
+                      if not path.endswith('.md') or not os.path.exists(path):
+                          continue
+                      if path not in cache:
+                          cache[path] = headings(path)
+                      if fragment in cache[path]:
+                          continue
+                      if (rel, '#' + fragment) in absent:
+                          hit.add((rel, '#' + fragment))
+                          continue
+                      bad.append(f'{rel} -> {link}')
+
+          # An exemption outlives its reason silently. This one cannot.
+          for entry in sorted(absent - hit):
+              bad.append(f'{entry[0]} no longer contains {entry[1]} as a broken anchor '
+                         '- remove it from the exemption list in this job')
+
+          for b in bad:
+              print(f'::error::broken anchor {b}')
           sys.exit(1 if bad else 0)
           PY
 

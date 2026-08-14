@@ -215,7 +215,7 @@ public sealed class ValidateTicket : ICapability<OpenTicket, ValidatedTicket>
 Four declarations on that attribute are contract, not documentation: the **id**, the
 **version** of the contract, **who may call it**, and **whether calling it twice is safe**.
 All four reach `flowx.manifest.json`. Two of them change what the compiler will let you
-write — see [§11](#11-the-five-diagnostics-you-will-meet-first).
+write — see [§11](#11-the-six-diagnostics-you-will-meet-first).
 
 ### A write
 
@@ -435,7 +435,7 @@ turns on from the first build so the trim and AOT analyzers report a reflection 
 it is still one line.
 
 And because the compiler has read your flow, it can refuse things. That is the subject of
-[§11](#11-the-five-diagnostics-you-will-meet-first).
+[§11](#11-the-six-diagnostics-you-will-meet-first).
 
 ---
 

@@ -151,7 +151,7 @@ flowchart TB
 | Contract | Extends | First-party implementations |
 |---|---|---|
 | `ITriggerSource` | how flows are activated | Http, Grpc, GraphQL, Kafka, RabbitMq, AzureServiceBus, Mqtt, Sqs, Cron, FileWatcher, SignalR, Agent |
-| `IEventPublisher` | where events go | **Redis Streams (WP-56b) and RabbitMQ both ship**; none of Kafka, ServiceBus, EventHubs, Sns exists |
+| `IEventPublisher` | where events go | **Four ship: Redis Streams (WP-56b), RabbitMQ, Kafka and Azure Service Bus**, plus the PostgreSQL outbox publisher. Neither EventHubs nor Sns exists — Event Hubs is reachable through the Kafka plugin's protocol endpoint rather than by its own. *This row said "none of Kafka, ServiceBus, EventHubs, Sns exists" after two of the four had shipped. **Read the two new ones as unproven rather than as done:** the Service Bus suite runs 7 tests and skips 22, the Kafka suite runs 1 and skips 21, because no workflow stands a broker up — [PLAN open item 19](../PLAN.md#9-open-items-blocking-the-plan)* |
 | `IFlowJournal` | durable state | PostgreSql, SqlServer, Redis, Cosmos |
 | `ILeaseStore` | ownership | **PostgreSql (WP-53) and Redis (WP-54) both ship**; etcd does not |
 | `IIdempotencyStore` | dedup | Redis, PostgreSql, in-memory |

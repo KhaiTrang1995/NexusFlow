@@ -117,8 +117,12 @@ deploy".
 # api — latency-aware, not just CPU
 - type: Pods
   pods: { metric: { name: flowx_flow_duration_seconds_p99 }, target: { averageValue: "300m" } }
-- type: Pods
-  pods: { metric: { name: flowx_trigger_admitted_rate }, target: { averageValue: "200" } }
+# Request rate comes from the ingress, not from FlowX — see the note below.
+- type: Object
+  object:
+    describedObject: { kind: Ingress, name: flowx-api }
+    metric: { name: requests_per_second }
+    target: { type: Value, value: "200" }
 
 # worker — KEDA on real backlog
 triggers:
@@ -134,6 +138,21 @@ triggers:
 | Consumer lag | bus workers | lag spikes during rebalance — use stabilisation windows |
 | Pending instances | durable backlog | needs an index on `(state, created_at)` |
 | p99 latency | user-facing APIs | noisy at low traffic — require a minimum request rate |
+
+> [!CAUTION]
+> **The second `api` rule used to read `flowx_trigger_admitted_rate`, and that rule could
+> never have fired.** `flowx_trigger_admitted_total` is declared in `TelemetryNames` and
+> **nothing produces it** — [12 §3](12-Observability.md#3-metrics) says so at the row, and
+> the reason is that a `kind` label needs one admission point serving every transport while
+> there is one transport. Copying the old snippet gave you an autoscaler that silently never
+> scaled. It is replaced above by request rate from the ingress, which the ingress controller
+> does emit.
+>
+> The other seven instruments all have producers, verified against their call sites:
+> `flowx_flow_duration_seconds`, `flowx_flow_total`, `flowx_step_duration_seconds`,
+> `flowx_capability_duration_seconds`, `flowx_capability_unhandled_total`,
+> `flowx_journal_commit_seconds` and `flowx_lease_lost_total`. Scale on those, on the
+> ingress, or on the `flow_instance` query above.
 
 Scale **down** slowly (300 s stabilisation) and **up** quickly (30 s). Aggressive
 scale-down on a durable worker causes lease churn: instances are repeatedly
