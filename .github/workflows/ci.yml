@@ -171,6 +171,59 @@ jobs:
         # WP-70 lands.
         run: dotnet restore scripts/generator-cost-probe/GeneratorCostProbe.csproj
 
+      - name: A transaction-pooling endpoint in front of the same database
+        # PooledTenantIsolationTests is the only test that can see a cross-tenant read, and
+        # it can only see one through a proxy that shares a server session between clients.
+        # Without this step it skips, and a skip here reads exactly like a pass.
+        #
+        # Installed on the runner rather than added as a service container, deliberately:
+        # a service needs to resolve `postgres` by name from its own container, and a
+        # pooler that cannot reach its database refuses connections -- which the test
+        # reports as a skip, because an endpoint being absent is a fact about the
+        # deployment. That failure mode would be invisible. Here the endpoint is verified
+        # below, so a broken pooler is red.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y pgbouncer
+          # Everything under the runner's own user in a writable directory. Not a style
+          # choice: `pgbouncer` exits with "PgBouncer should not run as root", so the
+          # obvious `sudo pgbouncer -d /etc/pgbouncer/pgbouncer.ini` fails, and running it
+          # as `postgres` assumes an account no service-container job creates.
+          cat > "$RUNNER_TEMP/pgbouncer.ini" <<'INI'
+          [databases]
+          postgres = host=127.0.0.1 port=5432 dbname=postgres
+
+          [pgbouncer]
+          listen_addr = 127.0.0.1
+          listen_port = 6432
+          auth_type = scram-sha-256
+          auth_file = AUTH_FILE
+          pool_mode = transaction
+          default_pool_size = 1
+          max_client_conn = 100
+          logfile = LOG_FILE
+          pidfile = PID_FILE
+          unix_socket_dir = SOCKET_DIR
+          INI
+          sed -i "s|AUTH_FILE|$RUNNER_TEMP/userlist.txt|;s|LOG_FILE|$RUNNER_TEMP/pgbouncer.log|;s|PID_FILE|$RUNNER_TEMP/pgbouncer.pid|;s|SOCKET_DIR|$RUNNER_TEMP|" "$RUNNER_TEMP/pgbouncer.ini"
+          # The stored verifier, copied rather than a password rewritten: pgbouncer proxies
+          # SCRAM, so what it needs is exactly what pg_authid holds.
+          PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -tAc \
+            "SELECT '\"'||rolname||'\" \"'||rolpassword||'\"' FROM pg_authid WHERE rolname='postgres'" \
+            > "$RUNNER_TEMP/userlist.txt"
+          pgbouncer -d "$RUNNER_TEMP/pgbouncer.ini"
+          # One round trip through the pooler, so that a pooler which did not come up fails
+          # this step instead of turning the test it exists for into a skip.
+          for attempt in 1 2 3 4 5; do
+            if PGPASSWORD=postgres psql -h 127.0.0.1 -p 6432 -U postgres -d postgres -tAc 'SELECT 1'; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::the pooled endpoint never answered, so tenant isolation through a pooler would have been skipped"
+          exit 1
+
       - name: Architecture fitness functions
         # docs/05-Architecture.md §12. A red fitness function is a build failure,
         # not a discussion — so this step runs before the rest of the suite.
@@ -185,6 +238,7 @@ jobs:
         # quietly returning it to the 166-skip state it was in before.
         env:
           FLOWX_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres"
+          FLOWX_POSTGRES_POOLED_CONNECTION: "Host=127.0.0.1;Port=6432;Database=postgres;Username=postgres;Password=postgres"
           FLOWX_REDIS_CONNECTION: "localhost:6379"
           FLOWX_RABBITMQ_CONNECTION: "amqp://guest:guest@localhost:5672/"
           FLOWX_SERVICEBUS_CONNECTION: "Endpoint=sb://localhost:5673;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"

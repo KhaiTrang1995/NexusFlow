@@ -174,9 +174,17 @@ What changed is that it is no longer tracked as a blocker.*
       transaction the work still sees `tenant-A`, so the binding was not merely broken.
       **246/246** `FlowX.Postgres.Tests` pass against a direct connection, including the
       journal, lease and tenant conformance suites.
-      *Still owed, and tracked at [PLAN item 21](PLAN.md#9-open-items-blocking-the-plan): a
-      regression test that runs the tenant isolation suite against a pooled endpoint. The
-      property is proved by hand today, and by hand is how it rots.*
+      **The regression test this owed now runs, and it caught a defect in itself first.**
+      `PooledTenantIsolationTests` migrates a fixed schema, puts it on the endpoint's role
+      because a role default is the only route to a schema a shared server session carries,
+      and runs both tenants **concurrently** against `FLOWX_POSTGRES_POOLED_CONNECTION`.
+      The concurrency is the point: the first draft asked the two tenants' questions one
+      after another and **passed against the defective binding**, because a binding that
+      outlives its transaction can only be read by somebody else if somebody else runs in
+      between. Falsified properly on the second draft — the pre-fix shape restored as a
+      *compiling* mutation fails it on round 0 with the cross-tenant read; restored, it
+      passes three consecutive runs. **249/249 Postgres tests, 0 skipped**, against
+      PgBouncer 1.22 in `pool_mode = transaction` at `default_pool_size = 1`.
 - [ ] **B-6 · FlowX cannot reach its schema through a transaction-pooling proxy.**
       **Reproduced 2026-08-14 against PgBouncer 1.22 and PostgreSQL 16**, while writing the
       regression test B-5 owed. The adapter selects its schema with Npgsql's `SearchPath`,
@@ -207,7 +215,9 @@ What changed is that it is no longer tracked as a blocker.*
       as the connection opens, and no server-side default expresses a value that varies per
       client. Schema-per-tenant behind a transaction pooler stays unsupported, and this row
       stays open to say so.
-      248/248 Postgres tests pass; two new unit tests pin both sides of the switch.
+      249/249 Postgres tests pass; two new unit tests pin both sides of the switch, and
+      `PooledTenantIsolationTests` now exercises the `false` side against a real pooler
+      rather than only asserting the option's value.
       See [PLAN open item 21](PLAN.md#9-open-items-blocking-the-plan)
 - [x] **B-7 · ~~The three-role topology was drawn and could not be configured.~~ FIXED 2026-08-14.**
       `docs/18-Cloud-Native.md §1` and `docs/28-Azure-Hosting.md §3.1` both split a deployment
