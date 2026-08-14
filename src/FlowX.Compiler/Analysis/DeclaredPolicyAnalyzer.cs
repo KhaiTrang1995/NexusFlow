@@ -103,7 +103,11 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     /// <c>Cache</c> and <c>Audit</c> when stage 5 and stage 7's audit landed —
     /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0044-a-cache-is-a-plugin-store-keyed-by-the-redacted-input.md">ADR-0044</a>
     /// and
-    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0043-an-audit-record-is-the-journals-payload-redacted-twice.md">ADR-0043</a>.
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0043-an-audit-record-is-the-journals-payload-redacted-twice.md">ADR-0043</a>;
+    /// <c>Hedge</c> and <c>Fallback</c> when stage 4 grew from four kinds to six
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a>),
+    /// which is the first time this list has grown over a kind that was catalogued and
+    /// undeclarable rather than declarable and unread.
     /// </para>
     /// <para>
     /// <strong>It stays a list rather than becoming a stage range, even now that it is
@@ -122,6 +126,8 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
             "Retry",
             "CircuitBreaker",
             "Bulkhead",
+            "Hedge",
+            "Fallback",
             "Cache",
             "Audit",
             CompensationRetryKind);

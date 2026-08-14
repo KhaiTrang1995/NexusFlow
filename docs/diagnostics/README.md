@@ -349,8 +349,11 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1043](FLOWX1043.md) | Poll interval outlasts the poll's own timeout | A `PollUntil` whose first gap is longer than its budget: the instance wakes past it, so the loop is one call followed by the `OnTimeout` block — and one attempt then an escalation reads in a journal exactly like a dependency that never answered |
 | [FLOWX1044](FLOWX1044.md) | `PollUntil` requires an idempotent capability | **A second OCR job, a second charge or a second reservation on every attempt of a loop built to make tens of them** — the repetition `Idempotent = true` declares to be safe, asked of a construct that repeats after every success rather than only after a failure |
 | [FLOWX1050](FLOWX1050.md) | Step binds a contract only one of a poll's two endings produces | **A flow that works when the webhook fires and throws when the polling does its job** — `.OrSignal<TSignal>()` seeds the bag only on the ending a delivery caused, and both endings continue at the same step |
+| [FLOWX1051](FLOWX1051.md) | `Hedge` requires an idempotent capability | **Two charges in flight at once, and the flow keeping whichever answers first** — a hedge is a deliberate concurrent duplicate under one idempotency key, so `FLOWX1014`'s requirement is asked of the loser as well as the winner |
+| [FLOWX1052](FLOWX1052.md) | `Fallback` constant is not the step's output contract | **A degraded mode that survives the outage and then throws** — the value is filed in the state bag under its own type, so a constant of any other type is an answer no later step can bind |
+| [FLOWX1053](FLOWX1053.md) | `Fallback` requires a capability with no side effects | **A reservation reported as made when it was not, with no compensation registered for the half of it that was** — `FLOWX1018`'s objection to caching a write, reaching the same capability by the other door |
 
-The next is `FLOWX1051`. The range is `FLOWX1001`–`FLOWX1099`.
+The next is `FLOWX1054`. The range is `FLOWX1001`–`FLOWX1099`.
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -671,7 +674,34 @@ two rules would otherwise give opposite advice. An **error**, for `FLOWX1020`'s 
 nothing probabilistic about which paths exist.
 [ADR-0066](../adr/ADR-0066-a-polls-second-ending-is-a-row.md) is the decision it belongs to.
 
-The next is `FLOWX1051`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1051` is claimed** — *`Hedge` requires an idempotent capability*: a hedge issues a second
+call while the first is still outstanding, under the same `ctx.IdempotencyKey`, and keeps whichever
+answers first. It is **not** `FLOWX1014`, and the difference is what the page has to say. That rule
+covers the two kinds that *re*-dispatch after a failure and argues duplicate charges; this one is
+about a duplicate that is deliberate, simultaneous, and running right now — and it needs the
+declaration for a second reason a retry does not have, because the loser is cancelled after it may
+already have written its answer into the state bag, so the two answers must be interchangeable and
+not merely both harmless. `FLOWX1044` is the precedent for the id: a construct that repeats for a
+different reason gets a page that says which reason.
+[ADR-0078](../adr/ADR-0078-stage-four-nests-six-kinds.md) §2.4 is the decision it belongs to.
+
+**`FLOWX1052` is claimed** — *`Fallback` constant is not the step's output contract*:
+`.Fallback(value)` captures the constant under `FlowContext.Set<TValue>`, which keys the state bag
+by `typeof(TValue)`, so a constant of any other type is filed where no later step binds. It is not
+`FLOWX1020`, which asks whether *any* step produces a contract a later step consumes: here the step
+does produce it, and the policy declared to stand in for it does not. Reported at build time because
+a fallback fires exactly when a dependency is down, which is the worst moment to discover the
+degraded mode does not fit.
+
+**`FLOWX1053` is claimed** — *`Fallback` requires a capability with no side effects*: a fallback
+returns a success without performing the effect, which is `FLOWX1018`'s sentence with the store
+taken out of it. A separate id rather than a second `FLOWX1018` message for the reason
+`FLOWX1044` is separate from `FLOWX1014`: the two rules share an argument and not a subject, and a
+team suppressing "caching a write" must not thereby suppress "answering for a write". It also
+carries half a rule `FLOWX1018` does not have — a degraded step registers no compensation — which
+is what makes it an error rather than a warning.
+
+The next is `FLOWX1054`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

@@ -14,9 +14,10 @@ namespace FlowX;
 /// convenience — it is the safety property.
 /// </para>
 /// <para>
-/// The two rejections below duplicate analyzer diagnostics FLOWX1014 and FLOWX1018
-/// on purpose. The analyzer catches the mistake in user code; this catches it in a
-/// plan built any other way, so the engine's assumption holds unconditionally.
+/// The four rejections below duplicate analyzer diagnostics FLOWX1014, FLOWX1018,
+/// FLOWX1051 and FLOWX1053 on purpose. The analyzer catches the mistake in user code;
+/// this catches it in a plan built any other way, so the engine's assumption holds
+/// unconditionally.
 /// </para>
 /// </remarks>
 public sealed class PolicyChain
@@ -167,6 +168,28 @@ public sealed class PolicyChain
                 $"Capability '{capability.Id}' declares side effects " +
                 $"[{string.Join(", ", capability.SideEffects)}], so a Cache policy cannot be " +
                 "attached to it. A cache hit returns a success without performing the effect.");
+        }
+
+        if (policy.Kind == StepPolicy.HedgeKind && !capability.IsIdempotent)
+        {
+            throw new InvalidFlowPlanException(
+                $"Capability '{capability.Id}' declares Idempotent = false, so a Hedge policy " +
+                "cannot be attached to it. A hedge issues a second call while the first is " +
+                "still running, under the same idempotency key — so the effect can happen " +
+                "twice at once, and the answer the flow keeps may be either call's. That is " +
+                "the promise Idempotent = true makes, and FLOWX1014 requires of a retry for " +
+                "the sequential version of the same reason.");
+        }
+
+        if (policy.Kind == StepPolicy.FallbackKind && capability.HasSideEffects)
+        {
+            throw new InvalidFlowPlanException(
+                $"Capability '{capability.Id}' declares side effects " +
+                $"[{string.Join(", ", capability.SideEffects)}], so a Fallback policy cannot " +
+                "be attached to it. A fallback returns a success without performing the " +
+                "effect — Cache's objection exactly — and the degraded step registers no " +
+                "compensation, so an effect that half happened would be left with nothing " +
+                "pointing at it.");
         }
     }
 }

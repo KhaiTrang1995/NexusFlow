@@ -1279,9 +1279,12 @@ public sealed class FlowEngine
             var attempt = 0;
             Error? stepFailure = null;
             var abandoned = false;
+            var degraded = false;
 
-            // The retry is the outermost of the four stage-4 kinds (ADR-0024), so it is a loop
-            // around the dispatch and the commit rather than something inside either. That is
+            // The retry is the outermost stage-4 kind that wraps a call (ADR-0024, and ADR-0078
+            // for the two that arrived after it — only the Fallback below is further out, and
+            // it answers for the step rather than wrapping anything), so it is a loop around
+            // the dispatch and the commit rather than something inside either. That is
             // also what makes the journal's key honest: run.NextAttempt derives the attempt
             // number from the committed history, so a retried step writes one row per attempt
             // without this node having to remember a number that dies with it.
@@ -1401,6 +1404,30 @@ public sealed class FlowEngine
                 await _clock.DelayAsync(backoff, ct).ConfigureAwait(false);
             }
 
+            // Stage 4 · Fallback, the outermost of the six and therefore the only one that
+            // lives out here rather than in the policed dispatch: every other kind wraps a
+            // call, and this one answers for the step after the last call has been made and
+            // refused (ADR-0078 §2.1). Consulted after the retry, so a declared fallback does
+            // not spend the attempts the author also declared.
+            if (policy.HasFallback)
+            {
+                var fallback = await DegradeAsync(
+                    plan, dispatcher, context, scope, cursor, step, policy,
+                    capabilityId, stepFailure, abandoned, attempt, ct).ConfigureAwait(false);
+
+                if (fallback.Degraded)
+                {
+                    stepFailure = null;
+                    degraded = true;
+                }
+
+                if (fallback.Refusal is { } refused)
+                {
+                    failure = refused;
+                    abandoned = true;
+                }
+            }
+
             // Stage 3 · Integrity, closing. After the retry rather than after each attempt, so
             // the record describes the step's outcome rather than one attempt's, and so a step
             // that failed twice and succeeded on the third records once.
@@ -1438,8 +1465,14 @@ public sealed class FlowEngine
 
             completed++;
 
-            if (compensations is not null)
+            if (compensations is not null && !degraded)
             {
+                // Nothing is pushed for a step the fallback answered for, and that is the other
+                // half of FLOWX1053. The capability never produced its effect — it is refused a
+                // fallback unless it has none to produce — so registering an undo would put
+                // docs/10 §2's "compensating something that never happened" row back on the
+                // table, in the one shape the fixed stage order does not already forbid.
+                //
                 // Through the context, not the stack directly: two branches can complete a
                 // compensable step at the same instant, and the context is what serialises
                 // the push. A lost push is an undo that never runs.
@@ -1704,6 +1737,90 @@ public sealed class FlowEngine
     /// </remarks>
     private static readonly TimeSpan MinimumIdempotencyLease = TimeSpan.FromSeconds(5);
 
+    /// <summary>What the fallback did, and what the journal said about it.</summary>
+    /// <param name="Degraded">
+    /// Whether the constant answered for the step, which is what leaves it off the unwind
+    /// stack.
+    /// </param>
+    /// <param name="Refusal">
+    /// The journal's refusal of the degraded row, which ends the flow for the reason every
+    /// refusal does: this node is no longer the writer of this instance.
+    /// </param>
+    private readonly record struct Degradation(bool Degraded, Error? Refusal);
+
+    /// <summary>
+    /// Answers for a step that has failed for the last time, and records that it did.
+    /// </summary>
+    /// <param name="plan">The flow being run, for the journal's identity.</param>
+    /// <param name="dispatcher">Asked to describe the step, because it is what knows types.</param>
+    /// <param name="context">The execution, for the non-determinism capture the row carries.</param>
+    /// <param name="scope">The view the step ran under, and the bag the constant is filed in.</param>
+    /// <param name="cursor">Which instance, and whether there is a journal at all.</param>
+    /// <param name="step">The node that has finished failing.</param>
+    /// <param name="policy">The resolved policy. <see cref="StepPolicy.HasFallback"/> is true.</param>
+    /// <param name="capabilityId">What was invoked, for the metric.</param>
+    /// <param name="failure">The step's last error, or <c>null</c> when it succeeded.</param>
+    /// <param name="abandoned">Whether this node stopped being the writer mid-step.</param>
+    /// <param name="attempt">How many attempts were made, so the row lands on the next one.</param>
+    /// <param name="ct">Cancels the store call.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Nothing is degraded after an <paramref name="abandoned"/> step.</strong> A node
+    /// that lost its lease, or a caller that went away, did not learn that the dependency
+    /// cannot answer — it learned that this node is no longer the one asking. A degraded value
+    /// written there would be a recovery scan's instance quietly continuing on two nodes.
+    /// </para>
+    /// <para>
+    /// <strong>The degraded value is committed, and it is a row of its own</strong>
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a> §2.7).
+    /// The failed attempts already have theirs; without this one the step's frontier would be a
+    /// failure while the flow ran past it, and a resumed instance would restore a state bag with
+    /// no degraded value in it and bind the next step to something no step produced. The
+    /// attempt history keeps both facts: what the dependency said, and what the flow answered.
+    /// </para>
+    /// <para>
+    /// <strong>Counted on both paths.</strong> <c>docs/10 §9</c> labels the counter by outcome,
+    /// and "the fallback fired forty times" is a different fact depending on whether the step
+    /// ran forty times or forty thousand.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<Degradation> DegradeAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        FlowContext scope,
+        JournalCursor cursor,
+        StepNode step,
+        StepPolicy policy,
+        string capabilityId,
+        Error? failure,
+        bool abandoned,
+        int attempt,
+        CancellationToken ct)
+    {
+        if (failure is null || abandoned)
+        {
+            PolicyApplied(StepPolicy.FallbackKind, capabilityId, PolicyMetrics.OkOutcome);
+
+            return default;
+        }
+
+        // The one place a value enters the state bag without a capability having produced it.
+        // It is typed at the declaration site (FallbackValue.Of) and its shape is refused at
+        // build time by FLOWX1052, so what lands here is the contract the next step binds.
+        policy.Fallback!.ApplyTo(scope);
+
+        PolicyApplied(StepPolicy.FallbackKind, capabilityId, PolicyMetrics.DegradedOutcome);
+
+        var refusal = cursor.IsJournaled
+            ? await CommitStepAsync(
+                plan, dispatcher, context, scope, cursor, step, failure: null,
+                _clock.UtcNow, capabilityVersion: null, attempt + 1, ct).ConfigureAwait(false)
+            : null;
+
+        return new Degradation(true, refusal);
+    }
+
     /// <summary>
     /// Dispatches one attempt at a step through its declared stage-4 policies.
     /// </summary>
@@ -1716,9 +1833,259 @@ public sealed class FlowEngine
     /// <param name="ct">The caller's token, kept distinguishable from the timeout's.</param>
     /// <remarks>
     /// <para>
+    /// <strong>One attempt at the step, which is not the same as one call.</strong> A declared
+    /// <c>Hedge</c> makes an attempt a race between up to <c>maxAttempts</c> calls, each of
+    /// which goes through the breaker, the bulkhead and the timeout on its own — so this method
+    /// is the fork in <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a>'s
+    /// nesting and <see cref="DispatchGuardedAsync"/> is one branch of it. A step with no hedge
+    /// reaches the guarded path directly and runs exactly the code it always did.
+    /// </para>
+    /// </remarks>
+    private ValueTask<StepOutcome> DispatchPolicedAsync(
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        StepNode step,
+        StepPolicy policy,
+        int index,
+        FlowContext scope,
+        CancellationToken ct) =>
+        policy.HasHedge
+            ? DispatchHedgedAsync(dispatcher, context, step, policy, index, scope, ct)
+            : DispatchGuardedAsync(dispatcher, context, step, policy, index, scope, ct);
+
+    /// <summary>
+    /// Races up to <see cref="StepPolicy.HedgeAttempts"/> calls at the step, and answers with
+    /// the first that succeeded.
+    /// </summary>
+    /// <param name="dispatcher">Invokes the capability.</param>
+    /// <param name="context">The flow's context, for the deadline each call's timeout is clamped to.</param>
+    /// <param name="step">The node being run.</param>
+    /// <param name="policy">The resolved policy. <see cref="StepPolicy.HasHedge"/> is true.</param>
+    /// <param name="index">Position in the plan's step graph.</param>
+    /// <param name="scope">The context the capability sees — an iteration's, inside a loop.</param>
+    /// <param name="ct">The caller's token, kept distinguishable from the race's.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>A hedge reacts to silence, and a retry reacts to a failure.</strong> The next
+    /// call is issued when the outstanding ones have said nothing for
+    /// <see cref="StepPolicy.HedgeAfter"/> — and immediately when one of them has failed, because
+    /// then there is nothing left to wait for. The first success wins and the losers are
+    /// cancelled; a loser's cancellation is not an outcome and is not counted, which is what
+    /// keeps a hedge that worked from reading as a step that was cancelled.
+    /// </para>
+    /// <para>
+    /// <strong>Every call is a whole guarded call.</strong> Each takes its own bulkhead permit,
+    /// arms its own timeout and is counted by the breaker on its own, because a hedge genuinely
+    /// puts two calls on the dependency and a policy that pretended otherwise would bound the
+    /// wrong number. That is why the hedge sits outside the other three
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a> §2.2).
+    /// </para>
+    /// <para>
+    /// <strong>This method allocates, on <see cref="RunParallelAsync"/>'s terms.</strong> A
+    /// linked source, a task per call and the awaiters behind them are what concurrency costs.
+    /// Budget B2 is untouched because nothing here is reachable without a declared hedge.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<StepOutcome> DispatchHedgedAsync(
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        StepNode step,
+        StepPolicy policy,
+        int index,
+        FlowContext scope,
+        CancellationToken ct)
+    {
+        var capabilityId = step.Identity;
+        var race = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var running = new List<Task<StepOutcome?>>(policy.HedgeAttempts);
+        var issued = 0;
+
+        // Every call failed and none was the last word until the attempts ran out. Seeded with
+        // a refusal that cannot be returned: the loop below issues at least one call, and a
+        // call either succeeds, fails, or is cancelled by a success.
+        var last = StepOutcome.Failed(FlowErrors.StepTimedOut(capabilityId, policy.HedgeAfter));
+
+        try
+        {
+            while (true)
+            {
+                running.Add(HedgedCallAsync(dispatcher, context, step, policy, index, scope, race.Token, ct));
+                issued++;
+
+                // The wait that makes this a hedge rather than a fan-out. Armed only while
+                // there is another call to issue — on the last one there is nothing to wait for
+                // but the calls themselves — and only while every call is still outstanding: a
+                // capability that answered synchronously has already said whatever it is going
+                // to, and arming a timer to notice its silence would cost every fast step a
+                // timer registration to measure a delay that has already elapsed.
+                var hedge = issued < policy.HedgeAttempts && !running.Exists(static call => call.IsCompleted)
+                    ? _clock.DelayAsync(policy.HedgeAfter, race.Token).AsTask()
+                    : null;
+
+                while (running.Count > 0)
+                {
+                    var finished = hedge is null
+                        ? await Task.WhenAny(running).ConfigureAwait(false)
+                        : await Task.WhenAny([.. running, hedge]).ConfigureAwait(false);
+
+                    if (ReferenceEquals(finished, hedge))
+                    {
+                        // Silence for long enough. Issue the next call beside the ones still
+                        // running rather than in place of them: the outstanding call may still
+                        // be the one that answers, and cancelling it would turn a hedge into a
+                        // retry that gives up on work already half done.
+                        break;
+                    }
+
+                    var completed = (Task<StepOutcome?>)finished;
+
+                    running.Remove(completed);
+
+                    // Awaited rather than read off .Result, so the cancellation a loser threw
+                    // arrives here as the null the helper turned it into.
+                    if (await completed.ConfigureAwait(false) is not { } outcome)
+                    {
+                        continue;
+                    }
+
+                    if (outcome.Error is null)
+                    {
+                        PolicyApplied(StepPolicy.HedgeKind, capabilityId, PolicyMetrics.OkOutcome);
+
+                        return outcome;
+                    }
+
+                    last = outcome;
+
+                    // A call that has already failed is not silence, so the next one — if the
+                    // author allowed one — is issued now instead of after the delay.
+                    if (issued < policy.HedgeAttempts)
+                    {
+                        break;
+                    }
+                }
+
+                if (issued >= policy.HedgeAttempts && running.Count == 0)
+                {
+                    PolicyApplied(StepPolicy.HedgeKind, capabilityId, PolicyMetrics.ExhaustedOutcome);
+
+                    return last;
+                }
+            }
+        }
+        finally
+        {
+            // Whatever ended the race — a success, an exhausted set of attempts, or the caller
+            // going away — the calls still running have lost and are told so. The source is
+            // disposed behind them rather than here: a loser is inside
+            // CreateLinkedTokenSource(race.Token) at this instant, and disposing under it is
+            // how a cancelled call becomes an ObjectDisposedException in somebody's log.
+            await race.CancelAsync().ConfigureAwait(false);
+            Abandon(running, race);
+        }
+    }
+
+    /// <summary>
+    /// One call inside a hedged race: the guarded dispatch, with a loser's cancellation turned
+    /// into "said nothing" rather than into a failure.
+    /// </summary>
+    /// <param name="dispatcher">Invokes the capability.</param>
+    /// <param name="context">The flow's context, for the deadline the timeout is clamped to.</param>
+    /// <param name="step">The node being run.</param>
+    /// <param name="policy">The resolved policy. <see cref="StepPolicy.HasHedge"/> is true.</param>
+    /// <param name="index">Position in the plan's step graph.</param>
+    /// <param name="scope">The context the capability sees — an iteration's, inside a loop.</param>
+    /// <param name="raceToken">Cancelled when another call has already answered.</param>
+    /// <param name="ct">The caller's own token, which still ends the step.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Nothing but the caller's cancellation escapes as an exception.</strong> A losing
+    /// call's task is left to finish after this method has returned its winner, so a task that
+    /// faulted would be an unobserved exception on the finalizer thread. A capability that
+    /// throws becomes the same <c>capability.unhandled</c> the step loop's own catch produces,
+    /// so the winning call reports a defect exactly as an unhedged one does.
+    /// </para>
+    /// </remarks>
+    private async Task<StepOutcome?> HedgedCallAsync(
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        StepNode step,
+        StepPolicy policy,
+        int index,
+        FlowContext scope,
+        CancellationToken raceToken,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await DispatchGuardedAsync(dispatcher, context, step, policy, index, scope, raceToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // This call lost. Silence, not a failure: counting it would make a hedge that saved
+            // the step look like a step that was cancelled, and returning it could hand the
+            // flow a cancellation the winner had already answered.
+            return null;
+        }
+#pragma warning disable CA1031 // The step loop's own catch, moved inside the race for the
+        catch (Exception exception) //   reason given above: a losing call's task must never
+        {                           //   fault, and the winner's defect must read the same as
+            return StepOutcome.Failed( //   it does on the unhedged path.
+                FlowErrors.Unhandled(step.Identity, exception));
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Lets the losing calls finish unwatched, and disposes the race once they have.
+    /// </summary>
+    /// <param name="running">The calls still outstanding when the race ended.</param>
+    /// <param name="race">The source they hold a token from.</param>
+    /// <remarks>
+    /// The alternative is to await them, which is the one thing a hedge exists not to do: the
+    /// tail this policy cuts is exactly the call that has not come back. Their exceptions are
+    /// observed here so that a loser cannot bring the process down, and the source outlives
+    /// them so that a cancelled call never registers against a disposed one.
+    /// </remarks>
+    private static void Abandon(List<Task<StepOutcome?>> running, CancellationTokenSource race)
+    {
+        if (running.Count == 0)
+        {
+            race.Dispose();
+            return;
+        }
+
+        _ = Task.WhenAll(running).ContinueWith(
+            static (finished, source) =>
+            {
+                _ = finished.Exception;
+                ((CancellationTokenSource)source!).Dispose();
+            },
+            race,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Runs one call at a step through the three stage-4 kinds that wrap a single invocation.
+    /// </summary>
+    /// <param name="dispatcher">Invokes the capability.</param>
+    /// <param name="context">The flow's context, for the deadline the timeout is clamped to.</param>
+    /// <param name="step">The node being run, for the capability its gates are keyed by.</param>
+    /// <param name="policy">The resolved policy. Never <see cref="StepPolicy.None"/>.</param>
+    /// <param name="index">Position in the plan's step graph.</param>
+    /// <param name="scope">The context the capability sees — an iteration's, inside a loop.</param>
+    /// <param name="ct">
+    /// The caller's token, or a hedged race's, kept distinguishable from the timeout's.
+    /// </param>
+    /// <remarks>
+    /// <para>
     /// <strong>The nesting is
     /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0024-stage-four-is-a-fixed-nesting.md">ADR-0024</a>'s,
-    /// read from the inside out.</strong> The retry is the caller's loop; what is left here is
+    /// read from the inside out.</strong> The retry is the caller's loop and the hedge is the
+    /// caller's race; what is left here is
     /// <c>CircuitBreaker { Bulkhead { Timeout { capability } } }</c>. The breaker is asked
     /// first so that an open one refuses without taking a permit — the other way round, a
     /// dependency that is down would hold every permit in the pool for as long as it takes each
@@ -1741,7 +2108,7 @@ public sealed class FlowEngine
     /// an open breaker self-sustaining, which is a breaker that never closes.
     /// </para>
     /// </remarks>
-    private async ValueTask<StepOutcome> DispatchPolicedAsync(
+    private async ValueTask<StepOutcome> DispatchGuardedAsync(
         IStepDispatcher dispatcher,
         FlowExecutionContext context,
         StepNode step,

@@ -638,6 +638,258 @@ public sealed class PolicyExecutionTests
             "The same chain plus stage 4 does take it.");
     }
 
+    // ------------------------------------------------------- stage 4's fifth and sixth kinds
+
+    /// <summary>What a degraded step answers with. Nothing else in this file produces one.</summary>
+    /// <remarks>
+    /// A contract of its own rather than a reuse, so that a value in the state bag can only
+    /// have come from the fallback: no step here produces a <c>Rating</c>, which is what makes
+    /// "the next step saw one" mean "the constant was filed under its own type".
+    /// </remarks>
+    private sealed record Rating(string Score);
+
+    private static readonly Rating Unknown = new("unknown");
+
+    /// <summary>A fallback answers for a step that has failed for the last time.</summary>
+    /// <remarks>
+    /// The whole of the degraded mode in one assertion: the step fails, the flow does not, and
+    /// the value the next step binds is the declared constant filed under its own contract.
+    /// </remarks>
+    [Fact]
+    public async Task AFallbackAnswersWithItsConstantWhenTheStepHasFailedForTheLastTime()
+    {
+        var dispatcher = new RecordingDispatcher().FailAt(0, Unavailable);
+        dispatcher.Observe = ctx => ctx.TryGet<Rating>(out var rating) ? rating : null;
+
+        var result = await new FlowEngine(new FakeClock(T0))
+            .ExecuteAsync(
+                Plan(Forward(PolicySet.Named("f").Fallback(Unknown))),
+                dispatcher,
+                Plans.Invocation,
+                Ct);
+
+        result.IsSuccess.ShouldBeTrue(
+            "The step failed and the fallback answered for it, which is what a declared " +
+            "degraded mode is: the flow runs on rather than unwinding behind a rating service.");
+
+        dispatcher.Executed.ShouldBe([0, 1, 2], "One dispatch, then the rest of the flow.");
+
+        dispatcher.Observed[1].ShouldBe(
+            Unknown,
+            "Step 1 binds the constant, which means it was filed under its own contract. " +
+            "Anything else is a degraded mode the next ctx.Get<T>() would throw on.");
+    }
+
+    /// <summary>A fallback never fires for a step that worked.</summary>
+    /// <remarks>
+    /// The "did not happen" beside the "did". A fallback that fired on success would replace
+    /// every step's own answer with a constant, which is the loudest possible way for a
+    /// degraded mode to be worse than no degraded mode.
+    /// </remarks>
+    [Fact]
+    public async Task AFallbackDoesNotFireWhenTheStepSucceeds()
+    {
+        var dispatcher = new RecordingDispatcher();
+        dispatcher.Observe = ctx => ctx.TryGet<Rating>(out var rating) ? rating : null;
+
+        var result = await new FlowEngine(new FakeClock(T0))
+            .ExecuteAsync(
+                Plan(Forward(PolicySet.Named("f").Fallback(Unknown))),
+                dispatcher,
+                Plans.Invocation,
+                Ct);
+
+        result.IsSuccess.ShouldBeTrue();
+
+        dispatcher.Observed.ShouldAllBe(
+            static seen => seen == null,
+            "No step saw the constant, because no step failed. A fallback is consulted on the " +
+            "failure path and nowhere else.");
+    }
+
+    /// <summary>
+    /// A fallback is consulted after the retry, not instead of it.
+    /// </summary>
+    /// <remarks>
+    /// <a href="../../docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a> §2.1: the
+    /// fallback is outermost, so the attempts the author declared beside it are all made
+    /// first. Inside the retry it would answer the first failure and the other two attempts
+    /// would never happen — one policy silently disabling the policy next to it.
+    /// </remarks>
+    [Fact]
+    public async Task AFallbackIsConsultedAfterTheRetryRatherThanInsteadOfIt()
+    {
+        var dispatcher = new RecordingDispatcher().FailAt(0, Unavailable);
+
+        var result = await new FlowEngine(new FakeClock(T0))
+            .ExecuteAsync(
+                Plan(Forward(PolicySet.Named("rf").Retry(attempts: 3).Fallback(Unknown))),
+                dispatcher,
+                Plans.Invocation,
+                Ct);
+
+        result.IsSuccess.ShouldBeTrue();
+
+        dispatcher.Executed.ShouldBe(
+            [0, 0, 0, 1, 2],
+            "Three attempts were declared and three were made before the constant answered. " +
+            "A fallback inside the retry would have answered after the first.");
+    }
+
+    /// <summary>A degraded step is not put on the unwind stack.</summary>
+    /// <remarks>
+    /// <a href="../../docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a> §2.7, and
+    /// the other half of FLOWX1053: the capability produced no effect — it is refused a
+    /// fallback unless it can produce none — so an undo registered for it would be
+    /// <c>docs/10 §2</c>'s "compensating something that never happened".
+    /// </remarks>
+    [Fact]
+    public async Task ADegradedStepRegistersNoCompensation()
+    {
+        var plan = ExecutionPlan.Create(
+            FlowDescriptor.Create("order.degraded", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+            StepGraph.Create([
+                StepNode.ForCapability(
+                    0, Plans.Validate, Plans.Release,
+                    policies: Forward(PolicySet.Named("f").Fallback(Unknown))),
+                StepNode.ForCapability(1, Plans.Capture),
+            ]));
+
+        var dispatcher = new RecordingDispatcher().FailAt(0, Unavailable).FailAt(1, Invalid);
+
+        var result = await new FlowEngine(new FakeClock(T0))
+            .ExecuteAsync(plan, dispatcher, Plans.Invocation, Ct);
+
+        result.IsSuccess.ShouldBeFalse("Step 1 failed with a terminal category.");
+
+        dispatcher.Compensated.ShouldBeEmpty(
+            "Step 0 was answered by its constant, so its capability never reserved anything " +
+            "and there is nothing for the undo to release.");
+    }
+
+    /// <summary>A hedge issues a second call after its delay, and the first success wins.</summary>
+    /// <remarks>
+    /// <para>
+    /// The first call is held inside the capability and never answers; the second is the one
+    /// that does. Both are visits to step 0, which is what a hedge is — one attempt, two calls
+    /// — and <c>PeakConcurrency</c> is what says they really overlapped rather than ran in
+    /// sequence.
+    /// </para>
+    /// <para>
+    /// The loser is then cancelled, and the assertion that it is not an error is
+    /// <c>result.IsSuccess</c>: the held call ends with an <c>OperationCanceledException</c>
+    /// thrown from inside the dispatcher, which on any other path would abandon the flow.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AHedgeIssuesASecondCallAndTheFirstSuccessWins()
+    {
+        var never = new TaskCompletionSource();
+        var entered = new TaskCompletionSource();
+        var dispatcher = new RecordingDispatcher().HoldAtVisit(0, visit: 1, never.Task, entered);
+        var clock = new FakeClock(T0);
+
+        var result = await new FlowEngine(clock)
+            .ExecuteAsync(
+                Plan(Forward(PolicySet.Named("h").Hedge(afterDelay: TimeSpan.FromMilliseconds(50)))),
+                dispatcher,
+                Plans.Invocation,
+                Ct);
+
+        result.IsSuccess.ShouldBeTrue(
+            "The second call answered and the first was cancelled. A loser's cancellation is " +
+            "silence, not the step's failure — the flow ran to its end.");
+
+        dispatcher.Executed.ShouldBe(
+            [0, 0, 1, 2],
+            "Two calls at step 0 for one attempt at it, and then the rest of the flow once.");
+
+        dispatcher.PeakConcurrency.ShouldBe(
+            2,
+            "The second call was issued beside the first rather than after it. A hedge that " +
+            "cancelled before re-issuing would be a retry with a fixed delay.");
+
+        clock.Delays.ShouldContain(
+            TimeSpan.FromMilliseconds(50),
+            "The declared afterDelay is the wait that decided the first call had gone quiet.");
+    }
+
+    /// <summary>A hedge does not fire when the first call answers in time.</summary>
+    /// <remarks>
+    /// The "did not happen". A hedge reacts to silence, and a capability that answers
+    /// immediately is never silent — so the dependency gets one call, which is what keeps the
+    /// policy a tail-cutter rather than a doubling of every request.
+    /// </remarks>
+    [Fact]
+    public async Task AHedgeDoesNotFireWhenTheFirstCallAnswersInTime()
+    {
+        var dispatcher = new RecordingDispatcher();
+        var clock = new FakeClock(T0);
+
+        var result = await new FlowEngine(clock)
+            .ExecuteAsync(
+                Plan(Forward(PolicySet.Named("h").Hedge(afterDelay: TimeSpan.FromMilliseconds(50)))),
+                dispatcher,
+                Plans.Invocation,
+                Ct);
+
+        result.IsSuccess.ShouldBeTrue();
+
+        dispatcher.Executed.ShouldBe(
+            [0, 1, 2],
+            "One call per step. The first answered before there was any silence to react to.");
+
+        clock.Delays.ShouldBeEmpty("Nothing waited, because nothing was slow.");
+    }
+
+    /// <summary>Every call in a hedged race presents the same idempotency key.</summary>
+    /// <remarks>
+    /// <c>docs/10 §5</c>'s first guarantee, which a hedge needs more than a retry does: the two
+    /// calls are one request, and that is the claim FLOWX1051 requires the capability to have
+    /// made. If they presented different keys the "duplicate" would be two requests, and the
+    /// answer the flow keeps could legitimately be the wrong one.
+    /// </remarks>
+    [Fact]
+    public async Task EveryCallInAHedgedRacePresentsTheSameIdempotencyKey()
+    {
+        var never = new TaskCompletionSource();
+        var entered = new TaskCompletionSource();
+        var dispatcher = new RecordingDispatcher().HoldAtVisit(0, visit: 1, never.Task, entered);
+        dispatcher.Observe = ctx => ctx.IdempotencyKey;
+
+        var result = await new FlowEngine(new FakeClock(T0))
+            .ExecuteAsync(
+                Plan(Forward(PolicySet.Named("h").Hedge(afterDelay: TimeSpan.FromMilliseconds(50)))),
+                dispatcher,
+                Plans.Invocation,
+                Ct);
+
+        result.IsSuccess.ShouldBeTrue();
+
+        dispatcher.Observed.Cast<string>().Distinct(StringComparer.Ordinal).Count().ShouldBe(
+            1,
+            "One key across both racing calls and the steps after them.");
+    }
+
+    /// <summary>A hedged step makes the state bag a guarded one.</summary>
+    /// <remarks>
+    /// <a href="../../docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a> §2.4. The
+    /// flag asks "can two threads reach this context", and for a hedged step the answer is yes
+    /// — arriving from a policy rather than from the graph. A hedge that left it false would
+    /// race two writers against an unguarded <c>Dictionary</c>.
+    /// </remarks>
+    [Fact]
+    public void AHedgedStepCountsAsParallel()
+    {
+        Plan(Forward(PolicySet.Named("h").Hedge(afterDelay: TimeSpan.FromMilliseconds(50))))
+            .HasParallel.ShouldBeTrue();
+
+        Plan(Forward(PolicySet.Named("t").Timeout(TimeSpan.FromSeconds(1))))
+            .HasParallel.ShouldBeFalse(
+                "And a step-policy path that cannot fork keeps the unguarded bag, which is " +
+                "what makes the flag worth reading.");
+    }
+
     // -------------------------------------------------------------- the positive control
 
     /// <summary>

@@ -2148,7 +2148,8 @@ public static class FlowAnalyzer
         }
 
         var argument = link.Invocation.ArgumentList.Arguments[0];
-        var kinds = PolicySetReader.Read(argument.Expression, semanticModel);
+        var contents = PolicySetReader.Resolve(argument.Expression, semanticModel);
+        var kinds = contents.Kinds;
 
         // The expression, not the whole argument, as everywhere else in this file. The
         // difference used to be invisible because nothing read the text back; the emitter now
@@ -2158,8 +2159,94 @@ public static class FlowAnalyzer
         var step = steps[last].WithPolicy(argument.Expression.ToString(), kinds.ToArray());
 
         ReportPolicyConflicts(step, link, diagnostics);
+        ReportFallbackShape(step, contents, link, semanticModel, diagnostics);
 
         steps[last] = step;
+    }
+
+    /// <summary>
+    /// FLOWX1052 — the fallback constant's type against the step's output contract.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one policy rule that reads an argument's <em>type</em>, so it is the one
+    /// that has to bind another tree.</strong> A set is nearly always declared in a
+    /// <c>Policies</c> class of its own, and a <see cref="SemanticModel"/> belongs to one tree.
+    /// FLOWX1035 works around exactly this by reading a literal out of syntax and accepting a
+    /// false negative for anything else — which is the right trade for an attempt count and the
+    /// wrong one here, because the whole finding is what type the expression has and no
+    /// spelling of it is a literal.
+    /// </para>
+    /// <para>
+    /// It is affordable here and not there: this runs in the generator, which holds the
+    /// compilation, while FLOWX1035 lives in a <c>DiagnosticAnalyzer</c>, which RS1030 forbids
+    /// from asking for a second model. <c>ErrorCatalogueReader</c> already binds other trees on
+    /// the same path and for the same reason.
+    /// </para>
+    /// <para>
+    /// Silent wherever the compiler cannot see the constant: a set from a referenced assembly
+    /// has no initialiser (FLOWX1036 reports the set itself), an expression that does not bind
+    /// is the C# compiler's own error, and a step whose capability the reader could not resolve
+    /// has no output contract to compare against. A diagnostic raised on a guess names a type
+    /// the author cannot find.
+    /// </para>
+    /// </remarks>
+    private static void ReportFallbackShape(
+        StepModel step,
+        PolicySetContents contents,
+        ChainLink link,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics)
+    {
+        if (step.CapabilityId is null ||
+            step.CapabilityOutput is not { Length: > 0 } output ||
+            contents.Initialiser is not { } initialiser ||
+            !step.PolicyKinds.Contains(FallbackKind))
+        {
+            return;
+        }
+
+        foreach (var policy in FlowChainWalker.Walk(initialiser))
+        {
+            if (policy.MethodName != FallbackKind ||
+                policy.Invocation.ArgumentList.Arguments.Count == 0)
+            {
+                continue;
+            }
+
+            var tree = initialiser.SyntaxTree;
+            var model = tree == semanticModel.SyntaxTree
+                ? semanticModel
+                : semanticModel.Compilation.GetSemanticModel(tree);
+
+            // The converted type, not the declared one: `.Fallback(value)` infers TValue from
+            // the argument, so what the state bag is keyed by is what the expression converts
+            // to at the call — which is also what a target-typed `new()` resolves through.
+            var declared = model.GetTypeInfo(policy.Invocation.ArgumentList.Arguments[0].Expression)
+                .ConvertedType;
+
+            if (declared is null || declared.TypeKind == TypeKind.Error)
+            {
+                return;
+            }
+
+            var name = declared.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                .Replace("global::", string.Empty);
+
+            if (name == output)
+            {
+                return;
+            }
+
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.FallbackMustMatchTheStepsOutput,
+                link.CallLocation,
+                step.CapabilityId,
+                output,
+                name));
+
+            return;
+        }
     }
 
     /// <summary>
@@ -2193,6 +2280,18 @@ public static class FlowAnalyzer
 
         ReportCompensationPolicyConflicts(step, link, diagnostics);
 
+        // FLOWX1051 — hedging a non-idempotent operation duplicates its effect while the first
+        // copy is still running. FLOWX1014's question asked of a concurrent repeat rather than
+        // a sequential one, and judged by the step's own declaration for the same reason: the
+        // capability that would run twice is the one that has to be safe to run twice.
+        if (!step.IsIdempotent && step.PolicyKinds.Contains(HedgeKind))
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.HedgeRequiresIdempotency,
+                link.CallLocation,
+                step.CapabilityId));
+        }
+
         // FLOWX1018 — a cache hit returns a success without performing the effect.
         if (step.SideEffects.Length > 0 && step.PolicyKinds.Contains(CacheKind))
         {
@@ -2200,6 +2299,17 @@ public static class FlowAnalyzer
                 FlowXDiagnostics.CacheRequiresNoSideEffects,
                 link.CallLocation,
                 step.CapabilityId));
+        }
+
+        // FLOWX1053 — and a fallback returns a success without performing it either, which is
+        // the same sentence with the store taken out of it.
+        if (step.SideEffects.Length > 0 && step.PolicyKinds.Contains(FallbackKind))
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.FallbackRequiresNoSideEffects,
+                link.CallLocation,
+                step.CapabilityId,
+                string.Join(", ", step.SideEffects)));
         }
     }
 
@@ -2285,6 +2395,19 @@ public static class FlowAnalyzer
 
     /// <summary>The policy kind whose precondition is an absence of side effects — FLOWX1018.</summary>
     private const string CacheKind = "Cache";
+
+    /// <summary>The policy kind that dispatches twice at once — FLOWX1051.</summary>
+    private const string HedgeKind = "Hedge";
+
+    /// <summary>
+    /// The policy kind that answers for the step without it — FLOWX1052 and FLOWX1053.
+    /// </summary>
+    /// <remarks>
+    /// Two rules over one kind, asking different questions of different things: whether the
+    /// declared constant is the type the step produces, and whether the capability it stands in
+    /// for was supposed to change anything. Neither implies the other, and a set can fail both.
+    /// </remarks>
+    private const string FallbackKind = "Fallback";
 
     private static ArrowExpressionClauseSyntax? FindArrow(MethodDeclarationSyntax method) =>
         method.ExpressionBody;

@@ -11,7 +11,10 @@
 > backoff alone would outlive the deadline; a declared `CircuitBreaker` counts
 > outcomes per capability, opens on its failure ratio and half-opens after its
 > break duration; a declared `Bulkhead` bounds concurrency and refuses past its
-> queue depth. `FlowEngine` reads `ExecutionPlan.HasStepPolicies` and then
+> queue depth; a declared `Hedge` issues a second call beside a first that has
+> gone quiet and keeps whichever answers; a declared `Fallback` answers with its
+> constant once every attempt has been made and refused. `FlowEngine` reads
+> `ExecutionPlan.HasStepPolicies` and then
 > `StepNode.StepPolicy`, resolved when the plan was built.
 > `PolicyExecutionTests` asserts each of them against a real engine running a
 > real plan, and `samples/banking` settles a transfer whose screening provider
@@ -65,13 +68,19 @@
 > refuses a window to. All four of its subsections are now history and are marked as such
 > rather than deleted.
 >
-> **Eight catalogue rows in §3 cannot be declared at all.** `PolicySet` offers
-> nine builder methods, and there is no policy attribute anywhere in
+> **Six catalogue rows in §3 cannot be declared at all.** `PolicySet` offers
+> eleven builder methods, and there is no policy attribute anywhere in
 > `FlowX.Abstractions` — the `[Timeout]`, `[CircuitBreaker]`, `[Audit]`,
 > `[RateLimit]` and `[Idempotency]` attributes in §4 do not exist. So `Quota`,
-> `Authorize`, `Consent`, `Validate`, `Hedge`, `Fallback`, `Batch` and `Outbox`
-> are specification with no surface: no author can write one, and there is
+> `Authorize`, `Consent`, `Validate`, `Batch` and `Outbox` are
+> specification with no surface: no author can write one, and there is
 > nothing for an engine to execute. §3 marks each of them.
+> **It said eight until WP-78 and WP-79**, which is what `Hedge` and `Fallback` leaving this
+> list means: stage 4 is now a nesting of six kinds rather than four
+> ([ADR-0078](adr/ADR-0078-stage-four-nests-six-kinds.md)), a hedge races calls it cancels the
+> losers of, and a fallback answers with a declared constant once the retry has stopped asking.
+> The `Fallback` row is the one place a catalogue row is now half built: a constant is
+> declarable and a second capability is not, and ADR-0078 §3 says what that is blocked on.
 >
 > **The cut is a list of kinds, not a range of stages, and this document has now got that
 > wrong in both available directions.** It once implied the line was "stages 1–6", which
@@ -130,10 +139,12 @@ releases.** `PolicyDescriptor` carries `Kind`, `Stage` and `Parameters`, and no 
 method accepts a precedence. `PolicyChain` sorts by stage with a *stable* sort, so two
 policies in one stage keep their declared order — which decides what the manifest publishes
 and nothing else. What decides which of them wraps which is fixed by kind:
-`Retry { CircuitBreaker { Bulkhead { Timeout { capability } } } }`, settled by
-[ADR-0024](adr/ADR-0024-stage-four-is-a-fixed-nesting.md), which also says why an `order`
-value is not merely missing but unwanted — three of the four possible nestings are the
-incidents this section exists to make unexpressible.
+`Fallback { Retry { Hedge { CircuitBreaker { Bulkhead { Timeout { capability } } } } } }`,
+settled for four kinds by [ADR-0024](adr/ADR-0024-stage-four-is-a-fixed-nesting.md) — which also
+says why an `order` value is not merely missing but unwanted, three of the four possible nestings
+being the incidents this section exists to make unexpressible — and extended to six by
+[ADR-0078](adr/ADR-0078-stage-four-nests-six-kinds.md), which places each new kind by the same
+test: what its unit is.
 
 ### Why rigidity is the feature
 
@@ -156,11 +167,19 @@ ADR-0011 is scheduled for review after three documented counterexamples.
 
 ## 3. The policy catalogue
 
-Seventeen rows, and **only nine of them can be written down**: `PolicySet` has nine builder
-methods and there is no policy attribute in `FlowX.Abstractions`. All nine execute.
+Seventeen rows, and **eleven of them can be written down**: `PolicySet` has eleven builder
+methods and there is no policy attribute in `FlowX.Abstractions`. All eleven execute.
 The **Status** column says which is which — *executes*, or *undeclarable* (no
 builder method, no attribute, no descriptor kind: specification with no surface). There is no
 longer a *declared only* row, which is why `FLOWX1032` is deleted.
+
+> **"Only nine of them can be written down" expired at WP-78 and WP-79.** `Hedge` and
+> `Fallback` were the two stage-4 rows this sentence counted as specification; both are builder
+> methods now, both execute, and stage 4 is a nesting of six rather than four
+> ([ADR-0078](adr/ADR-0078-stage-four-nests-six-kinds.md)). The six rows still marked
+> *undeclarable* are `Quota`, `Authorize`, `Consent`, `Validate`, `Batch` and `Outbox`.
+> **Half of the `Fallback` row is still specification**: the constant is built and the
+> capability is not, and ADR-0078 §3 records what that half is blocked on.
 
 | Policy | Stage | Status | Key parameters | Notes |
 |---|---|---|---|---|
@@ -171,11 +190,11 @@ longer a *declared only* row, which is why `FLOWX1032` is deleted.
 | `Validate` | 3 | *undeclarable* | generated from contract annotations | field errors → RFC 7807 |
 | `Idempotency` | 3 | **executes** | `window`, `scope` | records the flow's state bag as of the end of the step and replays it for a repeated key; refuses a concurrent presentation. Keyed by `ctx.IdempotencyKey` + capability id + scope ([ADR-0041](adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md)). **Only a success is recorded** — a failed step frees its key. Needs an `IIdempotencyStore`, and is **refused at build time by [`FLOWX1040`](diagnostics/FLOWX1040.md)** on a flow declaring a `[Sensitive]` contract member |
 | `Timeout` | 4 | **executes** | `duration` | armed per attempt, and clamped to what is left of the flow deadline — so §11's "a timeout longer than the deadline is a lie" is prevented rather than discouraged |
-| `Retry` | 4 | **executes** | `attempts`, `backoff`, `jitter`, `retryOn` | **requires `Idempotent = true`** (`FLOWX1014`). `attempts` includes the first. Outermost of the four ([ADR-0024](adr/ADR-0024-stage-four-is-a-fixed-nesting.md)), which is what makes `FLOWX1019`'s `timeout × attempts` arithmetic true |
+| `Retry` | 4 | **executes** | `attempts`, `backoff`, `jitter`, `retryOn` | **requires `Idempotent = true`** (`FLOWX1014`). `attempts` includes the first. Outermost of the kinds that wrap a call ([ADR-0024](adr/ADR-0024-stage-four-is-a-fixed-nesting.md); only `Fallback` is further out, and it answers for the step rather than wrapping one — [ADR-0078](adr/ADR-0078-stage-four-nests-six-kinds.md)), which is what makes `FLOWX1019`'s `timeout × attempts` arithmetic true — for a step with no `Hedge`, whose `afterDelay` that product does not carry |
 | `CircuitBreaker` | 4 | **executes** | `failureRatio`, `samplingWindow`, `breakDuration` | keyed by capability id, per process. `minimumThroughput` is **not a parameter** — `PolicySet.CircuitBreaker` has none — and is the constant `StepPolicy.DefaultMinimumThroughput`. §6's composite `BreakerKey` is undeclarable |
 | `Bulkhead` | 4 | **executes** | `maxConcurrency`, `queueDepth` | isolates a slow dependency. One pool per capability, so two steps calling it share the bound. Past the queue depth a caller is refused rather than queued |
-| `Hedge` | 4 | *undeclarable* | `afterDelay`, `maxAttempts` | tail-latency cutting; idempotent only |
-| `Fallback` | 4 | *undeclarable* | capability or constant | explicit degraded mode |
+| `Hedge` | 4 | **executes** | `afterDelay`, `maxAttempts` | tail-latency cutting. Issues the next call when the outstanding ones have said nothing for `afterDelay`, and at once when one of them has failed; the first success wins and the losers are cancelled, which is not an error. **Requires `Idempotent = true`** ([`FLOWX1051`](diagnostics/FLOWX1051.md)) — the answer the flow keeps may be the losing call's, so the two have to be one request. Inside the retry and outside the breaker, bulkhead and timeout, so each hedged call takes its own permit and is counted on its own ([ADR-0078](adr/ADR-0078-stage-four-nests-six-kinds.md)) |
+| `Fallback` | 4 | **executes** | a constant of the step's output type | explicit degraded mode. Outermost of the six, so it is consulted once, after the retry has stopped asking. **Requires the capability to declare no side effects** ([`FLOWX1053`](diagnostics/FLOWX1053.md)), for `FLOWX1018`'s reason and because a degraded step registers no compensation; a constant that is not the step's output contract is [`FLOWX1052`](diagnostics/FLOWX1052.md). Under `Durable` the degraded value is a journal row of its own. **The capability half of "capability or constant" is not built** — ADR-0078 §3 |
 | `Cache` | 5 | **executes** | `ttl`, `scope` | tenant-scoped by default. Keyed on capability id + version + tenant + (under `Principal`) the caller's permission set + the input document, hashed. `FLOWX1018` refuses one on a capability with side effects, and the engine relies on that rather than re-checking. It meets [ADR-0042](adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md)'s question — a cache records a result too — and answers it the same way: a document the redaction pass touched is neither keyed on nor held. **Single-flight is not built** ([ADR-0044](adr/ADR-0044-a-cache-is-a-plugin-store-keyed-by-the-redacted-input.md)) |
 | `Batch` | 5 | *undeclarable* | `size`, `window` | coalesces N invocations into one |
 | `Audit` | 7 | **executes** | `category`, `redact` | immutable audit record, written to `IAuditSink` after the step's commit. Carries the journal's own payload — a composed `request`/`result` document — so `redact` is a longer list of member names handed to the one redaction pass, and can only remove ([ADR-0043](adr/ADR-0043-an-audit-record-is-the-journals-payload-redacted-twice.md)). A **missing sink fails the step**, unlike every other seam on this path. It is resolved onto `StepNode.StepAudit` rather than `StepPolicy`, because it runs outside the wrapping the other stages share |
@@ -229,7 +248,8 @@ public static class Policies
         .Timeout("PT1S")
         .Retry(attempts: 2, backoff: Backoff.ExponentialJitter())
         .Cache(ttl: "PT60S", scope: CacheScope.Tenant)
-        .Fallback(FallbackMode.LastKnownGood);
+        .Hedge(afterDelay: "PT300MS")
+        .Fallback(Rating.Unknown);
 }
 ```
 
@@ -493,7 +513,7 @@ has to be instrumented by hand:
 
 | Metric | Type | Labels | Emitted |
 |---|---|---|---|
-| `flowx_policy_invocations_total` | counter | `policy`, `stage`, `capability`, `outcome` | **yes** — on refusal *and* on clean application, so a refusal rate has a denominator. `stage` is no longer constant: `Cache` reports `Efficiency` and `Audit` reports `Consistency` |
+| `flowx_policy_invocations_total` | counter | `policy`, `stage`, `capability`, `outcome` | **yes** — on refusal *and* on clean application, so a refusal rate has a denominator. `stage` is no longer constant: `Cache` reports `Efficiency` and `Audit` reports `Consistency`. `Hedge` and `Fallback` report through this counter and gain no instrument of their own: a hedged race is `ok` or `exhausted`, and a fallback is `ok` when it was not needed and `degraded` when it answered — which is what makes the share of a step answered by a constant computable from one series |
 | `flowx_retry_attempts_total` | counter | `capability`, `attempt`, `error_code` | **yes** — attempts beyond the first only; the first dispatch is not a retry |
 | `flowx_circuit_state` | gauge (0/1/2) | `capability`, `key` | **yes** — recorded on transition, not per scrape. `key` equals `capability` until §6's composite key is expressible |
 | `flowx_ratelimit_rejected_total` | counter | `scope`, `tenant` | **yes** — refusals only, because `flowx_policy_invocations_total` already carries the admissions as their denominator. `scope` is the declared `RateLimitScope` by name, which is the decision that had not been made when this row was written |

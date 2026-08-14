@@ -316,7 +316,25 @@ internal sealed class RecordingDispatcher : IStepDispatcher
         return this;
     }
 
+    /// <summary>
+    /// Holds only the <paramref name="visit"/>th call at step <paramref name="index"/>, and
+    /// lets that call notice a cancellation.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="HoldAt"/> holds every visit, which is the right shape for a bulkhead — two
+    /// callers, one step — and the wrong one for a hedge, where the two calls are visits to the
+    /// same step and only one of them is supposed to be slow. The wait observes the token so
+    /// that the losing call ends the way a real one does: cancelled, from inside the capability.
+    /// </remarks>
+    public RecordingDispatcher HoldAtVisit(int index, int visit, Task release, TaskCompletionSource entered)
+    {
+        _heldVisit = (index, visit, release, entered);
+        return this;
+    }
+
     private (int Index, Task Release, TaskCompletionSource Entered)? _held;
+
+    private (int Index, int Visit, Task Release, TaskCompletionSource Entered)? _heldVisit;
 
     /// <summary>Highest number of steps observed running at once. 1 means nothing overlapped.</summary>
     public int PeakConcurrency { get; private set; }
@@ -377,6 +395,12 @@ internal sealed class RecordingDispatcher : IStepDispatcher
             {
                 held.Entered.TrySetResult();
                 await held.Release.ConfigureAwait(false);
+            }
+
+            if (_heldVisit is { } heldVisit && heldVisit.Index == stepIndex && heldVisit.Visit == visit)
+            {
+                heldVisit.Entered.TrySetResult();
+                await heldVisit.Release.WaitAsync(ct).ConfigureAwait(false);
             }
 
             if (_visitFailures.TryGetValue((stepIndex, visit), out var visitError))

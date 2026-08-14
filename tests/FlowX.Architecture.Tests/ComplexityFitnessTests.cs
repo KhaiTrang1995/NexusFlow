@@ -61,6 +61,18 @@ public sealed class ComplexityFitnessTests
     /// the loop.
     /// </para>
     /// <para>
+    /// <strong>It moved from 151 to 160 when stage 4 gained its sixth kind</strong>, which is
+    /// the ratchet doing the other half of its job: a policy that answers for a step rather
+    /// than wrapping a call has nowhere to live but the loop that owns the step's outcome. The
+    /// work itself is in <c>DegradeAsync</c> — the loop keeps the four lines that decide what
+    /// the step's outcome now is, because moving those out would hide the assignment that makes
+    /// a failed step succeed. <c>DispatchHedgedAsync</c> is recorded at 24 on the same terms as
+    /// <c>KafkaBusConsumer.ReceiveAsync</c>: it is one race, and its cost is the two loops that
+    /// express "wait for whichever of these happens first, and then decide whether to issue
+    /// another" — which is what a hedge is, and what any extraction would have to re-inline to
+    /// read.
+    /// </para>
+    /// <para>
     /// <strong>The one that left is what the ratchet is for.</strong> <c>SeedReader.Validate</c>
     /// was recorded at 205 — a straight-line sequence of per-collection checks that this record
     /// described as "would genuinely repay extraction" and then did not extract. It scores 2 now,
@@ -72,7 +84,7 @@ public sealed class ComplexityFitnessTests
     /// </remarks>
     private static readonly Dictionary<string, int> RecordedExceedances = new(StringComparer.Ordinal)
     {
-        ["FlowEngine.RunRangeAsync"] = 151,
+        ["FlowEngine.RunRangeAsync"] = 160,
         ["SeedReader.Declarations"] = 53,
         ["SeedApplier.ApplyAsync"] = 41,
         ["FlowXOptionsValidator.Validate"] = 29,
@@ -98,7 +110,8 @@ public sealed class ComplexityFitnessTests
         ["ProfileCostCheck.UsesDurabilityOrCannotSay"] = 17,
         ["AzureServiceBusConsumer.Partition"] = 16,
         ["FlowEmitter.EmitStepNodes"] = 16,
-        ["FlowEngine.DispatchPolicedAsync"] = 16,
+        ["FlowEngine.DispatchGuardedAsync"] = 16,
+        ["FlowEngine.DispatchHedgedAsync"] = 24,
         ["RabbitMqBusConsumer.Partition"] = 16,
     };
 
