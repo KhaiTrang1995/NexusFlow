@@ -124,9 +124,24 @@ public sealed class FlowHost
         _writes = options.TenantIsolation != TenantIsolation.None && options.Fairness.BoundsJournalWrites
             ? new TenantWriteBudget(options.Fairness, limiter, clock ?? SystemClock.Instance)
             : null;
+
+        // Built here, and not resolved from the container by each seam, so that every transport
+        // on this node shares one count — which is the whole of what "one bound" means. It hangs
+        // off the host because the host is the object every admission seam already holds, so
+        // reaching the ceiling costs no extra service lookup on the request path.
+        AdmissionGate = new FlowAdmissionGate(options.MaxInFlightAdmissions);
     }
 
-    /// <summary>How many flows are executing right now.</summary>
+    /// <summary>The ceiling every admission seam on this node shares. Unbounded by default.</summary>
+    public FlowAdmissionGate AdmissionGate { get; }
+
+    /// <summary>
+    /// How many flows are executing right now, admitted or resumed.
+    /// </summary>
+    /// <remarks>
+    /// Wider than <c>AdmissionGate.InFlight</c> on purpose: this is what a drain waits on, so it
+    /// counts a recovery resume and a delivered signal too, and neither of those is an admission.
+    /// </remarks>
     public int InFlight => Volatile.Read(ref _inFlight);
 
     /// <summary>How many durable instances this node currently owns a lease on.</summary>

@@ -75,7 +75,7 @@ public sealed class ComplexityFitnessTests
         ["FlowEngine.RunRangeAsync"] = 151,
         ["SeedReader.Declarations"] = 53,
         ["SeedApplier.ApplyAsync"] = 41,
-        ["FlowXOptionsValidator.Validate"] = 28,
+        ["FlowXOptionsValidator.Validate"] = 29,
         ["OpenApi.WritePaths"] = 27,
         ["KafkaBusConsumer.ReceiveAsync"] = 24,
         ["StepModel.SelfAndNested.get"] = 24,

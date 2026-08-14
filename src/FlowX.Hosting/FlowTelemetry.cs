@@ -252,8 +252,9 @@ public sealed class CompensationFailureCounter : ICompensationAlertSink
 }
 
 /// <summary>
-/// Counts what an admission seam let into the runtime, against
-/// <see cref="TelemetryNames.TriggerAdmittedTotal"/>.
+/// Counts what an admission seam let into the runtime and what it shed, against
+/// <see cref="TelemetryNames.TriggerAdmittedTotal"/> and
+/// <see cref="TelemetryNames.TriggerRejectedTotal"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -266,6 +267,14 @@ public sealed class CompensationFailureCounter : ICompensationAlertSink
 /// <strong>Only what was admitted.</strong> A requeued delivery and a dead-lettered one are the
 /// seam declining to let an item in, and putting either under a counter named <c>admitted</c> is
 /// the kind of mislabelling that outlives everyone who could correct it.
+/// </para>
+/// <para>
+/// <strong>And the two never both fire for one item.</strong> <see cref="Rejected"/> is reached
+/// only where the ceiling refused a slot, which is <em>before</em> the run that
+/// <see cref="Admitted"/> reports on — so a shed increments one series and not the other, and
+/// the sum over both is the load the node was offered. A seam that counted a shed as an
+/// admission "with reason shed" would make throughput unreadable at exactly the moment somebody
+/// is reading it.
 /// </para>
 /// </remarks>
 internal static class TriggerAdmissionCounter
@@ -284,6 +293,35 @@ internal static class TriggerAdmissionCounter
         }
 
         FlowXMetrics.TriggerAdmitted.Add(
+            1,
+            new KeyValuePair<string, object?>(TelemetryNames.KindLabel, kind.ToString()),
+            new KeyValuePair<string, object?>(TelemetryNames.ReasonLabel, reason),
+            new KeyValuePair<string, object?>(
+                TelemetryNames.TenantLabel, FlowXTelemetry.TenantLabel(tenantId)));
+    }
+
+    /// <summary>The reason label a rejection at the in-flight ceiling carries.</summary>
+    /// <remarks>
+    /// A constant rather than a literal at four call sites, because it is a label value an alert
+    /// is written against and four spellings of it is four series.
+    /// </remarks>
+    internal const string ShedReason = "shed";
+
+    /// <summary>Counts one item an admission seam refused rather than running.</summary>
+    /// <param name="kind">Which transport family it arrived through.</param>
+    /// <param name="reason">Why it was refused: <see cref="ShedReason"/>.</param>
+    /// <param name="tenantId">The item's tenant, bucketed before it becomes a label.</param>
+    internal static void Rejected(TriggerKind kind, string reason, string? tenantId)
+    {
+        // Budget B6, for Admitted's reason and with one more that matters here: a shed is what
+        // happens under load, so this is the call site most likely to be reached at rate, and
+        // building tags nobody reads is exactly the cost a saturated node cannot afford.
+        if (!FlowXMetrics.TriggerRejected.Enabled)
+        {
+            return;
+        }
+
+        FlowXMetrics.TriggerRejected.Add(
             1,
             new KeyValuePair<string, object?>(TelemetryNames.KindLabel, kind.ToString()),
             new KeyValuePair<string, object?>(TelemetryNames.ReasonLabel, reason),

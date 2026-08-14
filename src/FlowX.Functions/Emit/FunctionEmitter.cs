@@ -242,6 +242,17 @@ public static class FunctionEmitter
         writer.Line();
         writer.Line("response.Headers.Add(\"Content-Type\", outcome.ContentType);");
         writer.Line();
+        // Emitted unconditionally because whether there is one is a run-time fact, not a
+        // compile-time one: only a shed sets it, and the seam decides that per request. Still no
+        // decision in generated text — the header's presence and its value are both the seam's.
+        writer.Line("if (outcome.RetryAfterSeconds is { } retryAfterSeconds)");
+        writer.OpenBrace();
+        writer.Line("response.Headers.Add(");
+        writer.Line("    \"Retry-After\",");
+        writer.Line("    retryAfterSeconds.ToString(");
+        writer.Line("        global::System.Globalization.CultureInfo.InvariantCulture));");
+        writer.CloseBrace();
+        writer.Line();
         writer.Line("await " + Worker + ".Http.HttpResponseDataExtensions");
         writer.Line("    .WriteStringAsync(response, outcome.Body, cancellationToken)");
         writer.Line("    .ConfigureAwait(false);");

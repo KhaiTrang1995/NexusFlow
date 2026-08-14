@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -503,6 +504,23 @@ public static class FlowEndpointExtensions
             return;
         }
 
+        var host = context.RequestServices.GetRequiredService<FlowHost>();
+
+        // Before the body is read, for docs/16 §4's reason — "rejecting expensively is how rate
+        // limiting becomes the DoS". A shed request has cost this deployment one service lookup
+        // and one interlocked read, and nothing is journalled because nothing ran. The slot is
+        // held to the end of the request, which is what makes it an in-flight count rather than
+        // an arrival-rate one.
+        using var slot = host.AdmissionGate.TryAcquire();
+
+        if (!slot.Admitted)
+        {
+            await WriteShedAsync(context, host.AdmissionGate.Ceiling!.Value, invocation.Value.CorrelationId)
+                .ConfigureAwait(false);
+
+            return;
+        }
+
         TRequest? input;
 
         try
@@ -535,7 +553,6 @@ public static class FlowEndpointExtensions
             return;
         }
 
-        var host = context.RequestServices.GetRequiredService<FlowHost>();
         var dispatcher = dispatcherFactory(context.RequestServices);
 
         var result = await host
@@ -629,6 +646,19 @@ public static class FlowEndpointExtensions
         }
 
         var host = context.RequestServices.GetRequiredService<FlowHost>();
+
+        // The ceiling, as on the overload that takes a body and for the same reason. This one has
+        // no body to save reading, so the saving is the flow itself.
+        using var slot = host.AdmissionGate.TryAcquire();
+
+        if (!slot.Admitted)
+        {
+            await WriteShedAsync(context, host.AdmissionGate.Ceiling!.Value, invocation.Value.CorrelationId)
+                .ConfigureAwait(false);
+
+            return;
+        }
+
         var dispatcher = dispatcherFactory(context.RequestServices);
 
         var result = await host
@@ -648,6 +678,49 @@ public static class FlowEndpointExtensions
 
         await JsonSerializer
             .SerializeAsync(context.Response.Body, project(result), responseTypeInfo, context.RequestAborted)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Answers a request this node is at its in-flight ceiling for: <c>429</c>, a
+    /// <c>Retry-After</c>, and the same problem document every other refusal here is shaped like.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Not <see cref="WriteProblemAsync"/> with an argument, because the status is the
+    /// one thing that must not come from the category.</strong> <c>FlowAdmissionGate.Shed</c> is
+    /// <see cref="ErrorCategory.Unavailable"/> — correctly, it is the category a caller retries
+    /// on — and <c>ToHttpStatusCode</c> maps that to <c>503</c>. A shed is the one place
+    /// <c>429</c> is the more useful of the two true answers: the deployment is healthy, and it
+    /// is the request rate that is over. The mapper is otherwise untouched, so no existing
+    /// refusal changes status.
+    /// </para>
+    /// <para>
+    /// <strong>The body is <see cref="ProblemDetailsMapper"/>'s, unmodified.</strong> The type
+    /// URI, the title and the <c>retryAfter</c> extension all come out of the one mapper every
+    /// endpoint uses, so a shed is not a second problem-document dialect — only its status line
+    /// and its header are this method's.
+    /// </para>
+    /// </remarks>
+    private static async Task WriteShedAsync(HttpContext context, int ceiling, string correlationId)
+    {
+        var problem = ProblemDetailsMapper.ToProblemDetails(
+            FlowAdmissionGate.Shed(ceiling), context.Request.Path, correlationId);
+
+        problem.Status = FlowAdmissionGate.TooManyRequests;
+
+        context.Response.StatusCode = FlowAdmissionGate.TooManyRequests;
+        context.Response.ContentType = ProblemDetailsJson.ContentType;
+        context.Response.Headers[FlowXHeaders.CorrelationId] = correlationId;
+
+        // Seconds rather than an HTTP-date, which RFC 9110 allows either of: a delta is immune to
+        // clock skew between this node and the caller, and the delay being advised here is short
+        // enough that skew would be most of it.
+        context.Response.Headers.RetryAfter = ((int)Math.Ceiling(
+            FlowAdmissionGate.RetryAfter.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
+
+        await context.Response.Body
+            .WriteAsync(ProblemDetailsJson.ToUtf8(problem), context.RequestAborted)
             .ConfigureAwait(false);
     }
 
