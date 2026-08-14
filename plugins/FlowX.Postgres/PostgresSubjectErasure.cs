@@ -103,11 +103,13 @@ public sealed class PostgresSubjectErasure : ISubjectErasure
                 nameof(request));
         }
 
-        var connection = await OpenAsync(request.TenantId, cancellationToken).ConfigureAwait(false);
-        await using var closing = connection.ConfigureAwait(false);
+        var session = await OpenAsync(request.TenantId, cancellationToken).ConfigureAwait(false);
+        await using var closing = session.ConfigureAwait(false);
+        var connection = session.Connection;
 
-        var transaction = await connection.BeginTransactionAsync(cancellationToken)
-            .ConfigureAwait(false);
+        // Opened by the acquire above so the tenant binding had something to be local to.
+        var transaction = session.Transaction
+            ?? await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
         await using var closingTransaction = transaction.ConfigureAwait(false);
 
@@ -267,7 +269,7 @@ public sealed class PostgresSubjectErasure : ISubjectErasure
         return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask<NpgsqlConnection> OpenAsync(
+    private async ValueTask<ScopedConnection> OpenAsync(
         string? tenantId,
         CancellationToken cancellationToken)
     {
@@ -277,9 +279,18 @@ public sealed class PostgresSubjectErasure : ISubjectErasure
 
         var connection = await source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
+        NpgsqlTransaction? transaction = null;
+
         try
         {
-            await TenantScope.For(tenantId).ApplyAsync(connection, cancellationToken)
+            // The transaction is opened here rather than by the caller because the binding is
+            // transaction-local and has to be inside one to survive to the next statement --
+            // TenantScope records the cross-tenant read that made it so. The caller's own
+            // atomic boundary then reuses this transaction rather than nesting a second.
+            transaction = await connection.BeginTransactionAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            await TenantScope.For(tenantId).ApplyAsync(transaction, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch
@@ -287,11 +298,16 @@ public sealed class PostgresSubjectErasure : ISubjectErasure
             // An unbound connection must not escape a method whose next four statements are
             // destructive: it would run them as the privileged role with no tenant set, which
             // is the one state in which migration 0008's policies are inert.
+            if (transaction is not null)
+            {
+                await transaction.DisposeAsync().ConfigureAwait(false);
+            }
+
             await connection.DisposeAsync().ConfigureAwait(false);
             throw;
         }
 
-        return connection;
+        return new ScopedConnection(connection, transaction);
     }
 
     private readonly record struct Candidate(Guid InstanceId, string? Reason);

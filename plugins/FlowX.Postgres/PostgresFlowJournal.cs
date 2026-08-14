@@ -110,8 +110,9 @@ public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
     {
         ArgumentNullException.ThrowIfNull(start);
 
-        var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var closing = connection.ConfigureAwait(false);
+        var session = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var closing = session.ConfigureAwait(false);
+        var connection = session.Connection;
 
         using var command = connection.CreateCommand();
 
@@ -161,6 +162,12 @@ public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
             return TenantErrors.CrossTenantDenied(start.TenantId ?? "(none)");
         }
 
+        // Before the read, and that order is load-bearing: ReadInstanceAsync opens its own
+        // connection, so an insert still sitting in this session's transaction would be
+        // invisible to it and the caller would be told the instance it just created does not
+        // exist.
+        await session.CommitAsync(cancellationToken).ConfigureAwait(false);
+
         return await ReadInstanceAsync(start.InstanceId, cancellationToken).ConfigureAwait(false);
     }
 
@@ -170,8 +177,9 @@ public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
         FencingToken token,
         CancellationToken cancellationToken)
     {
-        var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var closing = connection.ConfigureAwait(false);
+        var session = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var closing = session.ConfigureAwait(false);
+        var connection = session.Connection;
 
         using var command = connection.CreateCommand();
 
@@ -179,6 +187,30 @@ public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
         command.Parameters.Add(Db.Uuid("instance", instanceId));
         command.Parameters.Add(Db.Long("token", token.Value));
 
+        // Separate so the reader is closed before the commit: committing under an open reader
+        // throws, and the answer has already been read by the time this returns.
+        var fenced = await RaiseAsync(command, instanceId, token, cancellationToken)
+            .ConfigureAwait(false);
+
+        // A scoped session raised the fence inside its own transaction, so the raise is not
+        // durable until this runs. An unscoped one has nothing to commit and this is a no-op.
+        await session.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+        return fenced;
+    }
+
+    /// <summary>Runs the fence statement and reads its answer.</summary>
+    /// <param name="command">The prepared fence statement.</param>
+    /// <param name="instanceId">The instance being fenced, for the refusal it may return.</param>
+    /// <param name="token">The token the caller is raising to.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The fence after the call, or the journal's refusal.</returns>
+    private static async ValueTask<Result<FencingToken>> RaiseAsync(
+        NpgsqlCommand command,
+        Guid instanceId,
+        FencingToken token,
+        CancellationToken cancellationToken)
+    {
         var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         await using var closingReader = reader.ConfigureAwait(false);
 
@@ -194,11 +226,16 @@ public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
     {
         ArgumentNullException.ThrowIfNull(commit);
 
-        var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var closing = connection.ConfigureAwait(false);
+        var session = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var closing = session.ConfigureAwait(false);
+        var connection = session.Connection;
 
-        var transaction = await connection.BeginTransactionAsync(cancellationToken)
-            .ConfigureAwait(false);
+        // A scoped session has already opened one, for the tenant binding to be local to,
+        // and Npgsql does not nest: take that one, or open the atomic boundary here when
+        // unscoped. Either way the step row, the instance update and the outbox rows land
+        // together or not at all, which is what ADR-0015 commits to.
+        var transaction = session.Transaction
+            ?? await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
         await using var closingTransaction = transaction.ConfigureAwait(false);
 
@@ -273,11 +310,16 @@ public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
     {
         ArgumentNullException.ThrowIfNull(stateBag);
 
-        var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var closing = connection.ConfigureAwait(false);
+        var session = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var closing = session.ConfigureAwait(false);
+        var connection = session.Connection;
 
-        var transaction = await connection.BeginTransactionAsync(cancellationToken)
-            .ConfigureAwait(false);
+        // A scoped session has already opened one, for the tenant binding to be local to,
+        // and Npgsql does not nest: take that one, or open the atomic boundary here when
+        // unscoped. Either way the step row, the instance update and the outbox rows land
+        // together or not at all, which is what ADR-0015 commits to.
+        var transaction = session.Transaction
+            ?? await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
         await using var closingTransaction = transaction.ConfigureAwait(false);
 
@@ -328,8 +370,9 @@ public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
         Guid instanceId,
         CancellationToken cancellationToken)
     {
-        var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var closing = connection.ConfigureAwait(false);
+        var session = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var closing = session.ConfigureAwait(false);
+        var connection = session.Connection;
 
         using var command = connection.CreateCommand();
 
@@ -359,8 +402,9 @@ public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
             return Result.Fail<ResumeFrontier>(instance.Error);
         }
 
-        var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var closing = connection.ConfigureAwait(false);
+        var session = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var closing = session.ConfigureAwait(false);
+        var connection = session.Connection;
 
         using var command = connection.CreateCommand();
 
@@ -385,8 +429,9 @@ public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
         Guid instanceId,
         CancellationToken cancellationToken)
     {
-        var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var closing = connection.ConfigureAwait(false);
+        var session = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var closing = session.ConfigureAwait(false);
+        var connection = session.Connection;
 
         using var command = connection.CreateCommand();
 
@@ -436,7 +481,7 @@ public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
     /// arrangement <see cref="PostgresTenantStores"/> exists to avoid.
     /// </para>
     /// </remarks>
-    private async ValueTask<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken)
+    private async ValueTask<ScopedConnection> OpenAsync(CancellationToken cancellationToken)
     {
         var source = _stores is not null && _scope.TenantId is { Length: > 0 } tenant
             ? await _stores.ForAsync(tenant, cancellationToken).ConfigureAwait(false)
@@ -447,23 +492,37 @@ public sealed class PostgresFlowJournal : IFlowJournal, ITenantScopedJournal
 
         if (!_scope.IsScoped)
         {
-            return connection;
+            return new ScopedConnection(connection, transaction: null);
         }
+
+        NpgsqlTransaction? transaction = null;
 
         try
         {
-            await _scope.ApplyAsync(connection, cancellationToken).ConfigureAwait(false);
+            // The transaction exists so the binding has something to be local to. Opening it
+            // here rather than at each call site is what keeps the guarantee impossible to
+            // forget: there is one place a scoped connection is made, and it is bound before
+            // it is handed out.
+            transaction = await connection.BeginTransactionAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            await _scope.ApplyAsync(transaction, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
             // An unbound connection must not escape: it would run the caller's next statement
             // as the privileged role with no tenant set, which is the one state where every
             // policy in migration 0006 is inert.
+            if (transaction is not null)
+            {
+                await transaction.DisposeAsync().ConfigureAwait(false);
+            }
+
             await connection.DisposeAsync().ConfigureAwait(false);
             throw;
         }
 
-        return connection;
+        return new ScopedConnection(connection, transaction);
     }
 
     /// <summary>Reads what the fence statement reported, without deciding any I/O.</summary>
