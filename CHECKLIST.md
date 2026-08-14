@@ -24,9 +24,12 @@
 > effect has happened and its commit has not, against a shared PostgreSQL. At **10 000
 > flows per arm and 97 kills per arm** it recorded **0 duplicate effects against the
 > guarantee, 0 lost instances, 0 orphan effects and 0 instances run by two live nodes** —
-> QR2's two correctness clauses, at QR2's own scale. **It runs on demand and nothing runs it
-> in CI**, so those clauses are *measured*, not *enforced by a check that can fail*; putting
-> the run on a nightly schedule is WP-62 and is not started. Record:
+> QR2's two correctness clauses, at QR2's own scale. *This paragraph said "it runs on demand
+> and nothing runs it in CI … WP-62 … is not started" — stale twice over when re-read on
+> 2026-08-14: `chaos.yml` had been running the rig nightly and gating on the counters for
+> some time, and the one counter its checker never read (`instancesResumedByMoreThanOneNode`
+> — a double takeover was a PASS) plus the rig's swallowed exit code were closed that day.
+> All four correctness counters now fail the job; timing is reported and never gated.* Record:
 > [docs/benchmarks/QR2-chaos.md](docs/benchmarks/QR2-chaos.md).
 >
 > **A durable flow now writes what it did, and a durable build proves it can.** WP-59 shipped
@@ -1820,12 +1823,12 @@ everything else.*
 | **V2** | HTTP → Kafka, zero logic edits | **partly** — four transports over one capability chain in `samples/event-driven`, each costing one adapter step; **not Kafka**, which needs a broker | **yes, over the transports that exist** — `TransportEquivalenceTests` runs one reference through HTTP, bus, change and cron and asserts on journal rows |
 | **V3** | p99 ≤ 5 µs, ≤ 1 alloc/step | **yes** — 172.3 ns / 0 B | **yes.** The only one of the eight |
 | **V4** | durable checkpoint p99 ≤ 15 ms @ 5 000 flows/s | **unknown** — a journal exists since WP-53; nothing times it. **WP-50 shipping did not move this row:** its rig times *resume* after a `SIGKILL`, not the *checkpoint commit* this criterion names | no — WP-50's unbuilt half |
-| **V5** | cold start ≤ 200 ms, NativeAOT | **yes on advisory hardware** — p50 63.0 ms / p99 102.2 ms to first flow response, AOT, 30 starts ([V5-cold-start.md](docs/benchmarks/V5-cold-start.md)). *This cell said "unknown — nothing times it"* | no — measured, not gated |
+| **V5** | cold start ≤ 200 ms, NativeAOT | **yes on advisory hardware** — p50 63.0 ms / p99 102.2 ms to first flow response, AOT, 30 starts ([V5-cold-start.md](docs/benchmarks/V5-cold-start.md)). *This cell said "unknown — nothing times it"* | **yes, on p50** — the `aot` job re-measures the smoke-tested binary and `check-cold-start.py` fails the run over 200 ms; the tail is reported and not gated, since two same-day p99s spread 26 % |
 | **V6** | generator allocation ≤ 800,000 B/flow, ≤ 160,000 B/capability | **yes** — 148,562 per capability against a 160,000 ceiling | **yes** — `check-generator-cost.py` fails the run on a breach. *This row read "build overhead ≤ 8 % · no · +67.1 %" for four days after [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) replaced the ratio on 2026-08-10 and [01 §7](docs/01-Vision.md#7-measurable-success-criteria) moved with it. The +67.1 % measurement stays true of what it measured; it is no longer what V6 asks* |
 | **V7** | 100 % of flows, capabilities, **policies and events** in the manifest | **partly** — all four kinds are published, but a policy carries `kind` and `stage` and none of its parameters, and an event carries `type` and `schemaVersion` and no payload schema | partly — `ManifestIsComplete` covers what is published |
 | **V8** | mid-level engineer ships a flow in ≤ 2 h, n ≥ 10 | **not run** | no — P9 |
 
-**Three of eight are gated** — V3 and V6 outright, V2 over the transports that exist. *This
+**Four of eight are gated** — V3, V6 and V5 (on p50) outright, V2 over the transports that exist. *This
 line said one, and contradicted the V2 row three rows above it.* Two more are satisfied or
 partly satisfied and enforced by nothing, which is the state that decays silently — V1
 already moved without anything noticing.
@@ -1902,7 +1905,7 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | # | Quality goal | Enforced by |
 |---|---|---|
 | **Q1** | predictable low latency | `EngineAllocationTests` (hard zero) + B1/B2. **The only quality goal whose gate has ever failed a build** |
-| **Q2** | durable correctness | conformance suite vs real Postgres, lease, recovery scan. **The measure — p99 ≤ 15 ms — is still unmeasured.** *This cell added "and the scenario has never happened: nothing has killed a process". That expired on 2026-08-01:* WP-50's rig `SIGKILL`s worker processes and found **0 duplicates against the guarantee and 0 lost instances over 10 000 flows per arm**. **It is measured by a rig run on demand, not by a gate that can fail** |
+| **Q2** | durable correctness | conformance suite vs real Postgres, lease, recovery scan. **The measure — p99 ≤ 15 ms — is still unmeasured.** *This cell added "and the scenario has never happened: nothing has killed a process". That expired on 2026-08-01:* WP-50's rig `SIGKILL`s worker processes and found **0 duplicates against the guarantee and 0 lost instances over 10 000 flows per arm**. **Gated nightly since 2026-08-14's re-read**: `chaos.yml` fails on any of the four correctness counters — *this cell said "measured by a rig run on demand, not by a gate that can fail", which was stale about the schedule and right about the fourth counter, which the checker never read until that day* |
 | **Q3** | static knowability | `ManifestIsComplete`, `flowx diff`, the error catalogue. Same half-gap as V7 — policies and events are unchecked |
 | **Q4** | transport portability | `TransportEquivalenceTests` — one reference chain over four transports, asserted on journal rows. *This cell said "nothing. One transport"* |
 | **Q5** | operational uniformity | one `ActivitySource` and one `Meter`, both named `FlowX`; `TelemetryConformanceTests` pins the names, `TelemetryCostTests` pins B6's hard zero with no listener. An exporter is still the deployment's to wire. *This cell said "no `ActivitySource`, no `Meter`, no exporter"; two of those three expired* |
