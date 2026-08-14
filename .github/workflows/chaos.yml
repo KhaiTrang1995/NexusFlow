@@ -70,6 +70,15 @@ env:
   # is affordable — but it has never been run on one, and the first scheduled run is the
   # experiment. If it proves too big, lower FLOWX_CHAOS_FLOWS here rather than widening
   # anything: a smaller run that says so is worth more than a bigger one that times out.
+  #
+  # THE SCALE IS 10 000 BECAUSE THAT IS QR2'S FIGURE AND IT FITS. 328 s for both arms plus
+  # roughly a minute of restore and build is under six minutes against a budget of about
+  # fifteen, and the 328 s was measured on a box carrying nine times its core count in load.
+  # A smaller number would be cheaper and would also stop being the clause QR2 states, so it
+  # is only worth taking if a scheduled run shows the runner cannot hold this one. The job's
+  # timeout-minutes below is NOT that budget: it is the hang guard, and it is deliberately
+  # far above the expected wall clock so that a slow night reaches its verdict and its
+  # artifacts rather than being cancelled without either.
   FLOWX_CHAOS_FLOWS: '10000'
   FLOWX_CHAOS_KILL_EVERY: '100'
 
@@ -299,8 +308,9 @@ jobs:
           rm -f .artifacts/chaos-qr2.json
 
           # Not `set -o pipefail`, and deliberately: this step must reach its own guard
-          # below whatever the rig did, and the exit code that matters is the checker's,
-          # taken explicitly two steps down. A rig that crashed is caught by the guard.
+          # below whatever the rig did, and the verdict's exit code is the checker's, taken
+          # explicitly two steps down. What is kept is the rig's own code, from PIPESTATUS
+          # rather than `$?`, which without pipefail is tee's and is therefore always 0.
           set +e
           ./scripts/run-chaos-qr2.sh \
             --flows "${{ steps.parameters.outputs.flows }}" \
@@ -310,9 +320,11 @@ jobs:
             --recovery-nodes 2 --max-concurrent-recoveries 24 \
             --lease-ttl 30 --scan-interval 3 \
             --converge-timeout 1800 2>&1 | tee run.log
+          rig=${PIPESTATUS[0]}
           set -e
 
-          echo "Rig finished."
+          echo "rig=$rig" >> "$GITHUB_OUTPUT"
+          echo "Rig finished with exit code $rig."
 
       - name: A run that did not happen is a failure here, not a skip
         # `run-chaos-qr2.sh` exits 0 and writes nothing when FLOWX_CHAOS is unset. That is
@@ -321,6 +333,25 @@ jobs:
         # green QR2 on a run that never started. So the results document existing is asserted
         # rather than assumed — in CI a skip IS the failure.
         run: |
+          rig="${{ steps.run.outputs.rig }}"
+
+          # The rig breaking is also a failure, and it is a different one from a defect.
+          # Codes 0, 1 and 2 are ambiguous on purpose — the script ends by running
+          # check-chaos-qr2.py, so they may be that verdict, which the job takes properly
+          # two steps down and must not pre-empt here. Everything from 3 up can only be the
+          # rig process: 3 is a platform with no SIGKILL, 4 is a role that threw, 130 is a
+          # cancellation, and a shell killed by a signal reports 128+n. Those never reach a
+          # verdict, so they are named here rather than left to look like a missing file.
+          # Matched rather than compared: an empty or non-numeric code is the same failure
+          # and would make an arithmetic test a shell error instead of a verdict.
+          case "$rig" in
+            0|1|2) ;;
+            *)
+              echo "::error::The chaos rig exited '$rig', which is the rig failing rather than a QR2 verdict. Nothing about the guarantee was measured tonight."
+              tail -40 run.log 2>/dev/null || true
+              exit 1 ;;
+          esac
+
           if [ ! -s .artifacts/chaos-qr2.json ]; then
             echo "::error::The chaos rig wrote no results document. Nothing about QR2 was verified tonight, and this job is red for that reason rather than for a defect."
             tail -40 run.log 2>/dev/null || true

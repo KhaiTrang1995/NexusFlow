@@ -43,6 +43,11 @@ actually handed:
                                executing one instance. The lease exists to make this
                                impossible. **Gated at zero.**
 
+Gated at zero beside them: lostInstances, orphanEffects, and
+instancesResumedByMoreThanOneNode — two recovery nodes owning one instance, which is the
+condition a duplicate application is downstream of, and which the rig has recorded since it
+was written without anything reading it.
+
 
 Why a run can be refused rather than passed
 -------------------------------------------
@@ -81,6 +86,7 @@ def judge_arm(arm: dict, budget: float) -> dict:
     live = arm["duplicatesBetweenLiveWorkers"]
     lost = arm["lostInstances"]
     orphans = arm["orphanEffects"]
+    resumed_twice = arm["instancesResumedByMoreThanOneNode"]
 
     if against:
         failures.append(
@@ -115,6 +121,17 @@ def judge_arm(arm: dict, budget: float) -> dict:
     if orphans:
         failures.append(
             f"{orphans} effect(s) were applied for an instance with no journal row at all."
+        )
+
+    if resumed_twice:
+        # The rig has counted this since it was written and nothing read it, so the clause
+        # was reported and not gated — which is the state WP-62 exists to end. It is its own
+        # failure rather than a variant of the duplicate counts because it can hold with
+        # every one of them at zero: two owners that happen not to have raced yet.
+        failures.append(
+            f"{resumed_twice} instance(s) were taken over by more than one recovery node. "
+            f"The lease is what makes one owner at a time, and two owners of one instance "
+            f"is the condition the duplicate counts above are downstream of."
         )
 
     kills = arm["processKills"]
@@ -203,6 +220,9 @@ def render(report: dict, budget: float, markdown: bool) -> None:
         print(f"{bullet}  in ADR-0006's window : {arm['duplicatesInDocumentedWindow']}")
         print(f"{bullet}  between live workers : {arm['duplicatesBetweenLiveWorkers']}")
         print(f"{bullet}lost instances: {arm['lostInstances']}")
+        print(f"{bullet}orphan effects: {arm['orphanEffects']}")
+        print(f"{bullet}instances resumed by more than one node: "
+              f"{arm['instancesResumedByMoreThanOneNode']}")
         print(f"{bullet}claimed but never opened: {arm['claimedButNeverOpened']}")
         print(f"{bullet}recovered instances: {arm['recoveredInstances']}")
 

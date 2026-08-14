@@ -87,6 +87,17 @@ def two_live_workers(document: dict) -> None:
     first_arm(document)["duplicatesBetweenLiveWorkers"] = 1
 
 
+def resumed_by_two_nodes(document: dict) -> None:
+    """Two recovery nodes owning one instance, with every duplicate count still zero.
+
+    The rig has recorded this field since it was written and the checker did not read it,
+    so the clause was measured and not gated. It is its own case rather than a variant of
+    the duplicate ones precisely because this document has no duplicates in it: if the
+    gate were folded into them, this mutation would pass.
+    """
+    first_arm(document)["instancesResumedByMoreThanOneNode"] = 1
+
+
 def nothing_killed(document: dict) -> None:
     arm = first_arm(document)
     arm["processKills"] = 0
@@ -133,6 +144,8 @@ CASES = [
      ["VERDICT: FAIL", "no journal row at all"]),
     ("one step applied by two live workers", two_live_workers, [], FAIL,
      ["VERDICT: FAIL", "two live workers"]),
+    ("one instance taken over by two recovery nodes", resumed_by_two_nodes, [], FAIL,
+     ["VERDICT: FAIL", "more than one recovery node"]),
     ("no process was killed", nothing_killed, [], INCONCLUSIVE,
      ["VERDICT: INCONCLUSIVE", "no process was killed"]),
     ("kills that produced no exit 137", killed_but_not_by_sigkill, [], INCONCLUSIVE,
