@@ -106,24 +106,27 @@ below are satisfiable today and measured by nothing that can fail a build.
 | # | Criterion | State | Owed to |
 |---|---|---|---|
 | **V1** | ≤ 3 files, ≤ 60 lines for a 4-step flow | **met, not gated.** A review, never automated; endpoint generation cut the sample's registration from 12 lines to 2, which moved the number and no assertion noticed | a fitness test, unscheduled |
-| **V2** | HTTP → Kafka is an attribute change, zero logic edits | **not met.** One transport exists | WP-71 (the unchanged-file assertion), WP-72 |
+| **V2** | HTTP → Kafka is an attribute change, zero logic edits | **partly met, and gated over the transports that exist.** Four of them reach one capability chain in `samples/event-driven`, each costing one adapter step, and `TransportEquivalenceTests` runs one reference through HTTP, bus, change and cron and asserts on the journal rows. Not Kafka, which needs a broker — [open item 19](#9-open-items-blocking-the-plan). *This cell said "not met. One transport exists"* | a live broker; WP-72 |
 | **V3** | p99 ≤ 5 µs, ≤ 1 alloc/step | **met and gated.** 172.3 ns against 5 000 ns; B2 exactly 0 B, re-verified after the durable seam | — |
 | **V4** | durable checkpoint p99 ≤ 15 ms @ 5 000 flows/s/node, Postgres | **unreported, and WP-50 shipping did not move it.** *01 §7 says "there is no journal to checkpoint into"; since WP-53 there is.* What is missing is still only the harness: WP-50 built the QR2 chaos rig and not `JournalBenchmarks`, and the rig measures **resume** latency after a `SIGKILL` — how long until another node picks an instance up — which is a different quantity from the **checkpoint commit** latency this row names. Nothing timed a commit | **WP-50**'s unbuilt half |
 | **V5** | cold start ≤ 200 ms, NativeAOT | **unreported.** The AOT job proves the binary links and serves a request; nothing times it | P9 |
 | **V6** | generator allocation ≤ 800,000 B/flow and ≤ 160,000 B/capability | **met, and gated.** 772,522 / 148,562 at 25 flows and 769,272 / 146,808 at 50; `check-generator-cost.py` fails the run on a breached ceiling. [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) replaced the ≤ 8 % ratio on 2026-08-10 — a ratio whose denominator is the user's code cannot be passed or failed, only re-argued, which is why the same generator measured +0.4 % on one flow and +67.1 % on two hundred. The `scale-overhead` job still measures the superseded ratio and is still advisory | — |
-| **V7** | 100 % of flows, capabilities, **policies and events** in the manifest | **partly met.** `ManifestIsComplete` covers flows and capabilities; the policies-and-events half is checked by nothing, because neither executes yet | P4, WP-56 |
+| **V7** | 100 % of flows, capabilities, **policies and events** in the manifest | **partly met.** All four kinds are published now; what is thin is the *content* — a policy carries `kind` and `stage` and none of its parameters, an event carries `type` and `schemaVersion` and no payload schema. `ManifestIsComplete` covers what is published. *This cell said the half was "checked by nothing, because neither executes yet"; WP-56 and WP-57 shipped both* | P4, and [ADR-0017](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md)'s freeze |
 | **V8** | a mid-level engineer ships a correct flow in ≤ 2 h, n ≥ 10 | **not run** | P9 |
 
-**One met and gated. One failing, measured, and deliberately not blocking. Six unverified.**
-That ratio is the honest summary of where the platform stands against its own definition of
-success, and it belongs at the top of the plan rather than in a document nobody opens
-mid-phase.
+**Two met and gated (V3, V6). One partly met and gated over what exists (V2). Five
+unverified.** *This line read "one met and gated, one failing, six unverified" and did not
+move when ADR-0014 replaced V6's ratio with a ceiling the generator meets, nor when V2 gained
+`TransportEquivalenceTests`.* That ratio is the honest summary of where the platform stands
+against its own definition of success, and it belongs at the top of the plan rather than in a
+document nobody opens mid-phase.
 
 > **"Gated" is the word to be careful with, and this table got it wrong on its first
 > draft.** P9's Done-when is *"V1–V8 are all met **and gated in CI**"*, so a criterion that
 > is satisfied but unenforced does not close P9 — and one that is measured by an advisory
-> job is not gated either. Exactly one of the eight (V3) is enforced by a check that can
-> fail a build.
+> job is not gated either. Three of the eight are enforced by a check that can fail a build:
+> V3 and V6 outright, V2 over the transports that exist. *This sentence said "exactly one",
+> and stayed at one through ADR-0014 and through `TransportEquivalenceTests`.*
 
 ### The constraints — [05 §2](docs/05-Architecture.md#2-constraints)
 
@@ -135,13 +138,14 @@ wrong. Until 2026-07-31 only `C2` was named in this file, once, and only as an o
 | **C1** | .NET 10+, C# 14 | the SDK pin; `global.json` |
 | **C2** | NativeAOT | the AOT job + `IsAotCompatible` analyzers |
 | **C3** | hosts inside ASP.NET Core | nothing explicit. `FlowX.Hosting` is written to it; no test asserts the process lifecycle is not owned |
-| **C4** | no 2-phase commit | nothing. Held by design — one transaction per store — and the outbox that makes it correct is WP-56 |
-| **C5** | OpenTelemetry only | vacuous today: no telemetry of any kind is emitted (P5) |
+| **C4** | no 2-phase commit | nothing. Held by design — one transaction per store — and the outbox that makes it correct **shipped at WP-56**. *This cell said the outbox "is WP-56", which read as unbuilt long after it landed* |
+| **C5** | OpenTelemetry only | **held by construction, and checked.** `FlowXTelemetry` is one `ActivitySource` and one `Meter`, both named `FlowX`, both from the BCL — so the constraint is satisfied with **zero** OpenTelemetry package references, and `AbstractionsHasNoDependencies` is what keeps it that way. *This cell said "vacuous today: no telemetry of any kind is emitted"; fourteen instruments are declared and [open item 17](#9-open-items-blocking-the-plan) is about the one with no producer* |
 | **C6** | Apache-2.0, no copyleft | `DependencyLicencesAreCompatible` in `DependencyLicenceTests`, against the [dependency licence register](docs/DEPENDENCIES.md). Covers the *resolved* transitive graph, not only what is declared — NuGet writes it to `obj/project.assets.json` and every package's `.nuspec` is on disk beside it, so the scan needs no network. **Findings on the first run: `Npgsql` (WP-53, unvetted until now) is the PostgreSQL Licence and permissive; `SonarAnalyzer.CSharp` is *not* MIT but the SONAR Source-Available Licence, and `Microsoft.NETCore.Platforms` 1.1.0 is a proprietary Microsoft EULA — both tolerated only because the resolved graph proves they contribute no assembly.** [What the gate cannot see](docs/DEPENDENCIES.md#3-what-this-gate-cannot-see) is written down, including the three projects outside `FlowX.slnx` whose closure is unread |
 | **C7** | SemVer, 2-minor deprecation window | `flowx diff` detects breaking changes. **The deprecation *window* is enforced by nothing** — nothing tracks how long a member has been obsolete |
 | **C8** | documentation-first | convention only. Held well in practice; no gate |
 
-**Two of eight constraints have an enforcing gate.** For C1–C5 and C8 that is mostly
+**Three of eight constraints have an enforcing gate** — C2, C5 and C6. *This line said two,
+and stayed at two after the telemetry seam gave C5 one.* For the rest that is mostly
 appropriate — a constraint held by construction needs no test. `C6` and `C7` were the two
 where "nothing enforces it" was a real exposure rather than a formality; `C6` now has a
 gate, and `C7` is the one left.
@@ -156,16 +160,17 @@ choice trades one away.
 | **Q1** | predictable low latency | `EngineAllocationTests` (hard zero) + B1/B2 in CI. **The only goal with a gate that has ever failed a build** |
 | **Q2** | durable correctness | conformance suite against real Postgres; lease + recovery scan. **The measure — p99 ≤ 15 ms — is still unmeasured**, because WP-50 shipped its chaos rig and not `JournalBenchmarks`. *This cell also said the scenario — a node killed mid-flow — "has never been executed". That expired on 2026-08-01:* `tests/FlowX.Chaos` `SIGKILL`s worker processes at a step boundary and recorded **0 duplicate effects against the guarantee and 0 lost instances over 10 000 flows per arm** ([benchmarks/QR2-chaos.md](docs/benchmarks/QR2-chaos.md)). **It is measured, not gated** — the rig is opt-in on `FLOWX_CHAOS` and no CI job runs it, which is WP-62's deliverable and is not started |
 | **Q3** | static knowability | `ManifestIsComplete`, `flowx diff`, the error catalogue. Same half-gap as V7 |
-| **Q4** | transport portability | nothing. One transport (WP-72) |
-| **Q5** | operational uniformity | nothing. No `ActivitySource`, no `Meter`, no exporter (P5) |
+| **Q4** | transport portability | `TransportEquivalenceTests` — one reference chain reached over four transports, asserted on the journal rows rather than on the response. *This cell said "nothing. One transport"* |
+| **Q5** | operational uniformity | one `ActivitySource` and one `Meter`, both named `FlowX`, emitted through by three layers; `TelemetryConformanceTests` pins the names an exporter subscribes to and `TelemetryCostTests` pins B6's hard zero for a host with no listener. Wiring an exporter is still the deployment's. *This cell said "no `ActivitySource`, no `Meter`, no exporter"; two of those three clauses expired* |
 | **Q6** | extensibility | `RuntimeDoesNotReferenceAnyPlugin` + `PluginsPassConformance` (**blocked**). `plugins/FlowX.Postgres` is the first outside implementation to push back on a contract |
 | **Q7** | startup and footprint | nothing. Same gap as V5 |
-| **Q8** | multi-tenant isolation | nothing. `CrossTenantAccessIsDenied` is blocked on P4 and P3 |
+| **Q8** | multi-tenant isolation | `Healthcare.Tests.CrossTenantAccessTests` asserts the denial against a real database, where migration `0008`'s policies rather than the runtime are what refuse; `PooledTenantIsolationTests` holds it through a transaction pooler, which is where it once stopped holding. The **repository-wide** `CrossTenantAccessIsDenied` is still blocked on P4 and on P3's second transport, because it is written over every trigger kind. *This cell said "nothing"* |
 
-**Q1 is the only quality goal with an enforcing gate that has ever failed a build.** Every
-other row is either a test that cannot fail yet or an empty cell. That is expected this
-early and it is not the same thing as being met, which is why this table says which is
-which.
+**Q1 is the only quality goal with an enforcing gate that has ever failed a build.** *This
+paragraph went on to say every other row was "either a test that cannot fail yet or an empty
+cell", and Q4, Q5 and Q8 have since gained tests that can.* Q7 is still an empty cell, and a
+gate that has never failed is not the same thing as a goal that is met — which is why this
+table says which is which.
 
 ---
 

@@ -1816,13 +1816,14 @@ everything else.*
 | **V3** | p99 ≤ 5 µs, ≤ 1 alloc/step | **yes** — 172.3 ns / 0 B | **yes.** The only one of the eight |
 | **V4** | durable checkpoint p99 ≤ 15 ms @ 5 000 flows/s | **unknown** — a journal exists since WP-53; nothing times it. **WP-50 shipping did not move this row:** its rig times *resume* after a `SIGKILL`, not the *checkpoint commit* this criterion names | no — WP-50's unbuilt half |
 | **V5** | cold start ≤ 200 ms, NativeAOT | **unknown** — the binary links and serves; nothing times it | no — P9 |
-| **V6** | build overhead ≤ 8 % | **no** — +67.1 % | **no, and deliberately.** The job that measures it is advisory by an ADR-0014 commitment; the blocking gate is relative |
+| **V6** | generator allocation ≤ 800,000 B/flow, ≤ 160,000 B/capability | **yes** — 148,562 per capability against a 160,000 ceiling | **yes** — `check-generator-cost.py` fails the run on a breach. *This row read "build overhead ≤ 8 % · no · +67.1 %" for four days after [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) replaced the ratio on 2026-08-10 and [01 §7](docs/01-Vision.md#7-measurable-success-criteria) moved with it. The +67.1 % measurement stays true of what it measured; it is no longer what V6 asks* |
 | **V7** | 100 % of flows, capabilities, **policies and events** in the manifest | **partly** — all four kinds are published, but a policy carries `kind` and `stage` and none of its parameters, and an event carries `type` and `schemaVersion` and no payload schema | partly — `ManifestIsComplete` covers what is published |
 | **V8** | mid-level engineer ships a flow in ≤ 2 h, n ≥ 10 | **not run** | no — P9 |
 
-**One of eight is gated.** Three more are satisfied or partly satisfied and enforced by
-nothing, which is the state that decays silently — V1 already moved without anything
-noticing.
+**Three of eight are gated** — V3 and V6 outright, V2 over the transports that exist. *This
+line said one, and contradicted the V2 row three rows above it.* Two more are satisfied or
+partly satisfied and enforced by nothing, which is the state that decays silently — V1
+already moved without anything noticing.
 
 ---
 
@@ -1898,13 +1899,18 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | **Q1** | predictable low latency | `EngineAllocationTests` (hard zero) + B1/B2. **The only quality goal whose gate has ever failed a build** |
 | **Q2** | durable correctness | conformance suite vs real Postgres, lease, recovery scan. **The measure — p99 ≤ 15 ms — is still unmeasured.** *This cell added "and the scenario has never happened: nothing has killed a process". That expired on 2026-08-01:* WP-50's rig `SIGKILL`s worker processes and found **0 duplicates against the guarantee and 0 lost instances over 10 000 flows per arm**. **It is measured by a rig run on demand, not by a gate that can fail** |
 | **Q3** | static knowability | `ManifestIsComplete`, `flowx diff`, the error catalogue. Same half-gap as V7 — policies and events are unchecked |
-| **Q4** | transport portability | **nothing.** One transport |
-| **Q5** | operational uniformity | **nothing.** No `ActivitySource`, no `Meter`, no exporter (P5) |
+| **Q4** | transport portability | `TransportEquivalenceTests` — one reference chain over four transports, asserted on journal rows. *This cell said "nothing. One transport"* |
+| **Q5** | operational uniformity | one `ActivitySource` and one `Meter`, both named `FlowX`; `TelemetryConformanceTests` pins the names, `TelemetryCostTests` pins B6's hard zero with no listener. An exporter is still the deployment's to wire. *This cell said "no `ActivitySource`, no `Meter`, no exporter"; two of those three expired* |
 | **Q6** | extensibility | `RuntimeDoesNotReferenceAnyPlugin` ✅; `PluginsPassConformance` **blocked**. `plugins/FlowX.Postgres` is the first outside implementation to push back on a contract |
 | **Q7** | startup and footprint | **nothing.** Same gap as V5 |
-| **Q8** | multi-tenant isolation | **nothing.** `CrossTenantAccessIsDenied` blocked on P4 and P3 |
+| **Q8** | multi-tenant isolation | `Healthcare.Tests.CrossTenantAccessTests` (the database refuses, not the runtime) and `PooledTenantIsolationTests` (it still refuses through a transaction pooler). The repository-wide `CrossTenantAccessIsDenied` stays blocked on P4 and P3's second transport — it is written over *every* trigger kind. *This cell said "nothing"* |
 
-### ADR inventory — 20 records, and which carry undischarged obligations
+### ADR inventory — the first twenty records, and which carry undischarged obligations
+
+**Sixty-eight records exist**; this table stops at 0020 and has since it was written. *Its
+heading said "20 records", which read as a count of the repository rather than of the table.*
+The index is [docs/adr/README.md](docs/adr/README.md); an obligation in a record above 0020
+is tracked where that record is cited, not here.
 
 | ADR | Status | Revisit trigger | Obligation this file or the plan is missing |
 |---|---|---|---|
@@ -1931,8 +1937,8 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | **C1** .NET 10+/C# 14 | the SDK pin | ✅ |
 | **C2** NativeAOT | AOT job + `IsAotCompatible` analyzers | ✅ |
 | **C3** hosts in ASP.NET Core | nothing explicit — held by construction | — |
-| **C4** no 2-phase commit | nothing — held by design; the outbox that makes it correct is WP-56 | — |
-| **C5** OpenTelemetry only | vacuous: nothing emits telemetry (P5) | — |
+| **C4** no 2-phase commit | nothing — held by design; the outbox that makes it correct **shipped at WP-56** | — |
+| **C5** OpenTelemetry only | one BCL `ActivitySource` and one `Meter`, zero OpenTelemetry package references, `AbstractionsHasNoDependencies` keeping it so. *This cell said "vacuous: nothing emits telemetry"* | ✅ |
 | **C6** Apache-2.0, no copyleft | `DependencyLicencesAreCompatible` in `DependencyLicenceTests`, over the resolved transitive graph, against [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md). `Npgsql` vetted (PostgreSQL Licence, permissive); two build-time packages found not to be MIT | ✅ |
 | **C7** SemVer + 2-minor deprecation | `flowx diff` catches breaking changes; **nothing tracks the deprecation window** | partly |
 | **C8** documentation-first | convention. Held well; no gate | — |
