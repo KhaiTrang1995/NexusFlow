@@ -1819,7 +1819,7 @@ everything else.*
 
 | # | Criterion | Satisfied? | Gated by a check that can fail? |
 |---|---|---|---|
-| **V1** | ≤ 3 files, ≤ 60 lines for a 4-step flow | **yes** | **no** — a review. Endpoint generation cut the sample from 12 lines to 2 and no assertion noticed the number move |
+| **V1** | ≤ 3 files, ≤ 60 lines for a 4-step flow | **yes** — 3 files, 29 of 60 lines, root costs zero | **yes** — `UseCaseCostTests`, four facts incl. the anti-vacuity check. *This row's gate cell said "no — a review"* |
 | **V2** | HTTP → Kafka, zero logic edits | **partly** — four transports over one capability chain in `samples/event-driven`, each costing one adapter step; **not Kafka**, which needs a broker | **yes, over the transports that exist** — `TransportEquivalenceTests` runs one reference through HTTP, bus, change and cron and asserts on journal rows |
 | **V3** | p99 ≤ 5 µs, ≤ 1 alloc/step | **yes** — 172.3 ns / 0 B | **yes.** The only one of the eight |
 | **V4** | durable checkpoint p99 ≤ 15 ms @ 5 000 flows/s | **unknown** — a journal exists since WP-53; nothing times it. **WP-50 shipping did not move this row:** its rig times *resume* after a `SIGKILL`, not the *checkpoint commit* this criterion names | no — WP-50's unbuilt half |
@@ -1828,7 +1828,7 @@ everything else.*
 | **V7** | 100 % of flows, capabilities, **policies and events** in the manifest | **partly** — all four kinds are published, but a policy carries `kind` and `stage` and none of its parameters, and an event carries `type` and `schemaVersion` and no payload schema | partly — `ManifestIsComplete` covers what is published |
 | **V8** | mid-level engineer ships a flow in ≤ 2 h, n ≥ 10 | **not run** | no — P9 |
 
-**Four of eight are gated** — V3, V6 and V5 (on p50) outright, V2 over the transports that exist. *This
+**Five of eight are gated** — V1, V3, V5 (on p50) and V6 outright, V2 over the transports that exist. *This
 line said one, and contradicted the V2 row three rows above it.* Two more are satisfied or
 partly satisfied and enforced by nothing, which is the state that decays silently — V1
 already moved without anything noticing.

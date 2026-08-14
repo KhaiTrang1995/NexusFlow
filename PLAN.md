@@ -105,7 +105,7 @@ below are satisfiable today and measured by nothing that can fail a build.
 
 | # | Criterion | State | Owed to |
 |---|---|---|---|
-| **V1** | ≤ 3 files, ≤ 60 lines for a 4-step flow | **met, not gated.** A review, never automated; endpoint generation cut the sample's registration from 12 lines to 2, which moved the number and no assertion noticed | a fitness test, unscheduled |
+| **V1** | ≤ 3 files, ≤ 60 lines for a 4-step flow | **met and gated since 2026-08-14**: `UseCaseCostTests` reads `order.place`'s declaration chain — 3 files, 29 of 60 lines, and the composition root costs the use case **zero** lines, which is exactly the number that once drifted 12 → 2 with no assertion noticing. *This cell said "met, not gated. A review, never automated"* | — |
 | **V2** | HTTP → Kafka is an attribute change, zero logic edits | **partly met, and gated over the transports that exist.** Four of them reach one capability chain in `samples/event-driven`, each costing one adapter step, and `TransportEquivalenceTests` runs one reference through HTTP, bus, change and cron and asserts on the journal rows. Not Kafka, which needs a broker — [open item 19](#9-open-items-blocking-the-plan). *This cell said "not met. One transport exists"* | a live broker; WP-72 |
 | **V3** | p99 ≤ 5 µs, ≤ 1 alloc/step | **met and gated.** 172.3 ns against 5 000 ns; B2 exactly 0 B, re-verified after the durable seam | — |
 | **V4** | durable checkpoint p99 ≤ 15 ms @ 5 000 flows/s/node, Postgres | **unreported, and WP-50 shipping did not move it.** *01 §7 says "there is no journal to checkpoint into"; since WP-53 there is.* What is missing is still only the harness: WP-50 built the QR2 chaos rig and not `JournalBenchmarks`, and the rig measures **resume** latency after a `SIGKILL` — how long until another node picks an instance up — which is a different quantity from the **checkpoint commit** latency this row names. Nothing timed a commit | **WP-50**'s unbuilt half |
@@ -114,7 +114,7 @@ below are satisfiable today and measured by nothing that can fail a build.
 | **V7** | 100 % of flows, capabilities, **policies and events** in the manifest | **partly met.** All four kinds are published now; what is thin is the *content* — a policy carries `kind` and `stage` and none of its parameters, an event carries `type` and `schemaVersion` and no payload schema. `ManifestIsComplete` covers what is published. *This cell said the half was "checked by nothing, because neither executes yet"; WP-56 and WP-57 shipped both* | P4, and [ADR-0017](docs/adr/ADR-0017-manifest-v1-freeze-criteria.md)'s freeze |
 | **V8** | a mid-level engineer ships a correct flow in ≤ 2 h, n ≥ 10 | **not run** | P9 |
 
-**Two met and gated (V3, V6). One partly met and gated over what exists (V2). One met on advisory hardware and ungated (V5). Four
+**Four met and gated (V1, V3, V5 on p50, V6). One partly met and gated over what exists (V2). Three
 unverified.** *This line read "one met and gated, one failing, six unverified" and did not
 move when ADR-0014 replaced V6's ratio with a ceiling the generator meets, nor when V2 gained
 `TransportEquivalenceTests`.* That ratio is the honest summary of where the platform stands
@@ -124,9 +124,9 @@ document nobody opens mid-phase.
 > **"Gated" is the word to be careful with, and this table got it wrong on its first
 > draft.** P9's Done-when is *"V1–V8 are all met **and gated in CI**"*, so a criterion that
 > is satisfied but unenforced does not close P9 — and one that is measured by an advisory
-> job is not gated either. Three of the eight are enforced by a check that can fail a build:
-> V3 and V6 outright, V2 over the transports that exist. *This sentence said "exactly one",
-> and stayed at one through ADR-0014 and through `TransportEquivalenceTests`.*
+> job is not gated either. Five of the eight are enforced by a check that can fail a build:
+> V1, V3, V5 (on p50) and V6 outright, V2 over the transports that exist. *This sentence
+> said "exactly one", and kept undercounting through four gates landing.*
 
 ### The constraints — [05 §2](docs/05-Architecture.md#2-constraints)
 
@@ -2141,7 +2141,7 @@ with **zero** business-logic changes, proven by an unchanged-file assertion in C
 | Package | Goal | Mechanically checkable exit | Depends on |
 |---|---|---|---|
 | **WP-70** — the transport conformance suite, published | One suite every transport plugin passes, written **before** the second and third transports | `plugins/FlowX.Http` passes it; a deliberately non-conforming plugin fails it by name; `PluginsPassConformance` — blocked since P1 — turns green | WP-62 |
-| **WP-71** — the unchanged-file assertion | P3's Done-when is a *command*, not a judgement | The assertion runs against `samples/ecommerce` today, where it must pass trivially; it fails when a business file is touched | WP-70 |
+| **WP-71** — the unchanged-file assertion — **shipped 2026-08-14, against `samples/event-driven` rather than ecommerce**: the multi-transport sample is where the assertion has teeth — `TransportSubstitutionTests` holds the four arms to one chain below one adapter step, trigger-attribute-only differences, and no business logic in a per-transport file | P3's Done-when is a *command*, not a judgement | ~~The assertion runs against `samples/ecommerce` today~~ shipped as five facts over the four `invoice.issue.*` arms; falsified four ways | WP-70 |
 | **WP-72** — Kafka | The first non-HTTP transport | Conformance green; the sample serves the same flow over Kafka | WP-71 |
 | **WP-73** — RabbitMQ | The second | Same suite, unmodified | WP-71 · **concurrent with WP-72 and WP-74** |
 | **WP-74** — Azure Service Bus | The third | Same suite, unmodified | WP-71 · concurrent |
