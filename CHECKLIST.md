@@ -37,7 +37,7 @@
 > stops being NULL on every row. **No second exit from a payload was opened**: the writer
 > composes no document, so `JournalPayload.ToJson()` is still the one place redaction and the
 > new `schemaVersion` stamp happen. See
-> [§5d](#5d-p2--durable-execution--nearly-complete-qr2-measured-on-demand-b7-and-b8-not-at-all).
+> [§5d](#5d-p2--durable-execution--nearly-complete-qr2-and-b8-measured-on-demand-b7-measurable-but-not-judged).
 >
 > **What is still missing is not small:** `AwaitSignal` and durable suspension (WP-63),
 > QR2 in CI (WP-62), and — the one that matters most for a claim about
@@ -48,7 +48,7 @@
 > deliverable row: the rig, not `JournalBenchmarks`. *`FLOWX1006` (WP-59) was the fourth
 > entry on this list and expired on 2026-08-01.* A journal has been made correct without
 > being made fast. See
-> [§5d](#5d-p2--durable-execution--nearly-complete-qr2-measured-on-demand-b7-and-b8-not-at-all).
+> [§5d](#5d-p2--durable-execution--nearly-complete-qr2-and-b8-measured-on-demand-b7-measurable-but-not-judged).
 >
 > **Build:** 0 warnings, 0 errors · **Tests:** **2587/2587 passing across 19 assemblies**
 > (a large share against a live PostgreSQL 16.13 and Redis 7.0.15; **0 failed, 0 skipped**).
@@ -149,8 +149,22 @@ What changed is that it is no longer tracked as a blocker.*
 
 ## 1. Documentation
 
-- [x] 20 specification documents, `docs/01` – `docs/20`
-- [~] **20 ADRs** with trade-offs stated, `ADR-0001` – `ADR-0020`. *This line said "15 ADRs
+- [x] **29 specification documents**, `docs/01` – `docs/29`. *This line said "20 … `docs/01` –
+      `docs/20`" and stayed at twenty through nine further documents. The last four are
+      [26](docs/26-CRM-Sample.md) and [27](docs/27-CRM-Reference-Architecture.md) for the CRM,
+      [28 — Azure Hosting](docs/28-Azure-Hosting.md), and
+      [29 — From Zero to Production](docs/29-From-Zero-To-Production.md), which is the
+      adoption path: the learning ladder, DevSecOps on GitHub, and shipping.*
+- [~] **70 ADRs**, and **none is still `Proposed`** — ADR-0014 was decided on 2026-08-10.
+      *The count below said "20" and the sentence after it named ADR-0014 as the only
+      Proposed record; both were true when written and neither was maintained. The `[~]`
+      survives for the template defect named at the end of this entry, not for the count.*
+      The two most recent are [ADR-0076](docs/adr/ADR-0076-a-host-is-chosen-against-a-capability-contract.md),
+      which scores a host against a capability contract rather than naming a platform, and
+      [ADR-0077](docs/adr/ADR-0077-a-flow-is-dispatched-in-one-of-two-modes.md), which amends
+      it: externalised triggers make a FaaS core viable at ~20–50 ms per step, which is
+      ~4–5× on a Durable step and ~10⁴× on an Ephemeral one, so **`Hosted` and `Dispatched`
+      are both supported and `Dispatched` is Durable-only**. *Original line follows.* "15 ADRs
       … ADR-0014 and ADR-0015 are **Proposed**" and was wrong twice: ADR-0016 was uncounted,
       and ADR-0015 became **Accepted** at WP-53 — which this file records correctly 800 lines
       further down. A count and a status, both wrong, both ticked `[x]`. It then read "16"
@@ -588,7 +602,7 @@ and returns an RFC 7807 body for a rejected one. **What was missing was the gate
 `templates/README.md` called `verify.sh` "the acceptance test, and what CI should run", and
 CI never ran it — so the template could have rotted silently at any point. A `template` job
 now runs it. `docs/19-SDK.md` and `docs/03 §12` are corrected. See
-[§5d](#5d-p2--durable-execution--nearly-complete-qr2-measured-on-demand-b7-and-b8-not-at-all) and [PLAN §5](PLAN.md#5-p2--durable-execution).
+[§5d](#5d-p2--durable-execution--nearly-complete-qr2-and-b8-measured-on-demand-b7-measurable-but-not-judged) and [PLAN §5](PLAN.md#5-p2--durable-execution).
 
 - [x] **WP-15** The branching DSL — **`When` / `Otherwise` done** through builder, model,
       analysis, emission, graph and engine. A conditional compiles into the *same flat
@@ -1061,7 +1075,28 @@ Three more surfaced while getting the suite green:
 
 ---
 
-## 5d. P2 · Durable execution — **nearly complete; QR2 measured on demand, B7 and B8 not at all**
+## 5d. P2 · Durable execution — **nearly complete; QR2 and B8 measured on demand, B7 measurable but not judged**
+
+> **This heading said "B7 and B8 not at all" until 2026-08-14, and half of it stopped being
+> true that day.** `tests/FlowX.Durability.Bench` now prices both against a real PostgreSQL,
+> and `scripts/check-durability-latency.py` judges the run —
+> [B7-B8-durability.md](docs/benchmarks/B7-B8-durability.md) is the record.
+>
+> **B8 is MET**: p99 **3.634 ms** against a budget of 8 ms, over 2 000 rehydrations at
+> history depth 20, measuring `DurableExecution.ResumeAsync` — the fence *and* the frontier
+> read, which is the verb a recovering node actually calls.
+>
+> **B7 is not judged, and that is a third state rather than a failure.** The budget is
+> `15 ms @ 5 000 commits/s/node`, and a rate-qualified budget cannot be met by a machine that
+> cannot offer the rate: the recorded four-core run saturates at **4 103 commits/s**, so its
+> latency describes a queue. Store-side p99 at that rate was **14.146 ms** — inside the
+> ceiling, and not a pass. Judging B7 needs a run on hardware that can offer 5 000/s, and
+> [PLAN open item 23](PLAN.md#9-open-items-blocking-the-plan) carries it.
+>
+> The verdict logic is merge-gated even though the measurement is not: `durability-self-test`
+> in `performance.yml` runs nine fabricated verdicts on every pull request, two of them
+> green, so the one suppression in the checker — a B7 latency breach downgraded when the rate
+> was missed — cannot be widened without a job going red.
 
 Work packages in [PLAN.md §5](PLAN.md#5-p2--durable-execution); the design they are held
 to is [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md), **Accepted at
