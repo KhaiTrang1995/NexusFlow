@@ -66,7 +66,8 @@ public sealed class StepPolicy
         CacheScope cacheScope,
         TimeSpan hedgeAfter,
         int hedgeAttempts,
-        FallbackValue? fallback)
+        FallbackValue? fallback,
+        CapabilityDescriptor? fallbackCapability)
     {
         Timeout = timeout;
         Attempts = attempts;
@@ -87,6 +88,7 @@ public sealed class StepPolicy
         HedgeAfter = hedgeAfter;
         HedgeAttempts = hedgeAttempts;
         Fallback = fallback;
+        FallbackCapability = fallbackCapability;
     }
 
     /// <summary>
@@ -97,7 +99,7 @@ public sealed class StepPolicy
         null, 1, Backoff.ExponentialJitter(), ImmutableArray<ErrorCategory>.Empty,
         0d, TimeSpan.Zero, TimeSpan.Zero, 0, 0,
         0, TimeSpan.Zero, RateLimitScope.Tenant, null, IdempotencyScope.Tenant,
-        null, CacheScope.Tenant, TimeSpan.Zero, 1, null);
+        null, CacheScope.Tenant, TimeSpan.Zero, 1, null, null);
 
     /// <summary>
     /// How many calls a breaker's sampling window must hold before its ratio is evidence.
@@ -205,8 +207,33 @@ public sealed class StepPolicy
     /// <summary>How many calls may be in flight for one attempt at the step, including the first.</summary>
     public int HedgeAttempts { get; }
 
-    /// <summary>The degraded value to answer with, or <c>null</c> when no fallback was declared.</summary>
+    /// <summary>The degraded value to answer with, or <c>null</c> when none was declared.</summary>
+    /// <remarks>
+    /// Null does not mean "no fallback": <see cref="FallbackCapability"/> is the other half of
+    /// the catalogued row, and <see cref="HasFallback"/> is the question to ask.
+    /// </remarks>
     public FallbackValue? Fallback { get; }
+
+    /// <summary>
+    /// The capability to ask instead, or <c>null</c> when the fallback is a constant or absent.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Resolved by <c>PolicyChain.ForStep</c> from the declaration
+    /// <see cref="PolicySet.Fallback{TCapability}()"/> leaves in the descriptor — a
+    /// <see cref="FallbackCapability"/> holding a <see cref="Type"/> and nothing else. The
+    /// engine never sees that type: what it needs is an id and a version to write on the
+    /// journal row, which is what a descriptor is.
+    /// </para>
+    /// <para>
+    /// <strong>The id on that row is what makes a degraded execution legible.</strong> It is
+    /// the fallback's, not the step's, so the four-part key ADR-0015 fixed keeps its meaning
+    /// and the column beside it says which capability answered — the same arrangement
+    /// <c>docs/06 §7</c> rule 6 already relies on for a compensation row
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0079-a-fallback-capability-is-a-dispatch-of-its-own.md">ADR-0079</a> §2.2).
+    /// </para>
+    /// </remarks>
+    public CapabilityDescriptor? FallbackCapability { get; }
 
     /// <summary>True when this policy can ask for the step a second time.</summary>
     public bool IsRetrying => Attempts > 1;
@@ -241,8 +268,16 @@ public sealed class StepPolicy
     /// </remarks>
     public bool HasHedge => HedgeAttempts > 1 && HedgeAfter > TimeSpan.Zero;
 
-    /// <summary>True when a degraded value was declared.</summary>
-    public bool HasFallback => Fallback is not null;
+    /// <summary>True when a degraded answer of either kind was declared.</summary>
+    /// <remarks>
+    /// One question for both halves of <c>docs/10 §3</c>'s row, because the engine asks it in
+    /// one place: the step loop consults a fallback after the retry has stopped, and whether
+    /// the answer is a constant to file or a capability to dispatch is decided one level in.
+    /// </remarks>
+    public bool HasFallback => Fallback is not null || FallbackCapability is not null;
+
+    /// <summary>True when answering for the step takes a dispatch rather than a constant.</summary>
+    public bool FallbackDispatches => FallbackCapability is not null;
 
     /// <summary>
     /// True when this step has anything for the engine to apply.
@@ -307,6 +342,7 @@ public sealed class StepPolicy
         var hedgeAfter = TimeSpan.Zero;
         var hedgeAttempts = 1;
         FallbackValue? fallback = null;
+        CapabilityDescriptor? fallbackCapability = null;
 
         foreach (var policy in policies.Ordered)
         {
@@ -359,7 +395,14 @@ public sealed class StepPolicy
                     break;
 
                 case FallbackKind:
+                    // Exactly one of the two is present: the builder writes "value" for a
+                    // constant and "capability" for a dispatch, and there is no overload that
+                    // writes both. Read as two independent lookups anyway, so that a chain
+                    // assembled by hand carrying both is a policy with a capability and a
+                    // constant rather than a silent discard of one of them — HasFallback is
+                    // true either way, and DegradeAsync prefers the dispatch.
                     fallback = Parameter<FallbackValue?>(policy, "value", null);
+                    fallbackCapability = Parameter<CapabilityDescriptor?>(policy, "capability", null);
                     break;
 
                 default:
@@ -374,7 +417,7 @@ public sealed class StepPolicy
             timeout, attempts, backoff, retryOn,
             failureRatio, samplingWindow, breakDuration, maxConcurrency, queueDepth,
             permits, rateWindow, rateScope, idempotencyWindow, idempotencyScope,
-            cacheTtl, cacheScope, hedgeAfter, hedgeAttempts, fallback);
+            cacheTtl, cacheScope, hedgeAfter, hedgeAttempts, fallback, fallbackCapability);
 
         return resolved.IsActive ? resolved : None;
     }
@@ -419,7 +462,7 @@ public sealed class StepPolicy
     /// </remarks>
     public const string HedgeKind = "Hedge";
 
-    /// <summary>The descriptor kind <see cref="PolicySet.Fallback{TValue}"/> emits.</summary>
+    /// <summary>The descriptor kind both <c>PolicySet.Fallback</c> overloads emit.</summary>
     /// <remarks>
     /// Stage 4's sixth kind and the outermost of them, which is why the engine applies it in
     /// the step loop rather than in the policed dispatch: everything else in the stage happens

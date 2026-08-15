@@ -283,6 +283,10 @@
           "description": "The business inverse, run in strict reverse order on failure.",
           "type": "string"
         },
+        "fallback": {
+          "description": "The capability a declared Fallback<TCapability>() asks when this step has failed for the last time, as <id>@<version>. Structure, not a value: it names a second dependency this step may invoke, and the capability itself is described in full in the top-level capabilities inventory, exactly as a compensation is. Absent on a step with no fallback and on one whose fallback is a declared constant — a constant is an answer rather than a dependency, and there is nothing for a consumer to resolve.",
+          "type": "string"
+        },
         "event": {
           "type": "string"
         },

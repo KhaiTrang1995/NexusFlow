@@ -264,6 +264,38 @@ public sealed record StepModel
     /// </remarks>
     public StepModel? Compensation { get; private init; }
 
+    /// <summary>
+    /// The capability a declared <c>Fallback&lt;TCapability&gt;()</c> names, or <c>null</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A whole <see cref="StepModel"/>, for <see cref="Compensation"/>'s reason and with the
+    /// same consequence: the fallback reaches the manifest's capability inventory carrying its
+    /// own version, side effects, authorisation stance and error catalogue, rather than as a
+    /// name on the step that may call it. A dependency a build can invoke and the manifest does
+    /// not list is a dependency <c>flowx diff</c> and the impact analysis cannot see, which is
+    /// the fourth of the four things
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a>
+    /// §3 named as missing.
+    /// </para>
+    /// <para>
+    /// It is <em>not</em> a step: it has no index in the graph, no <c>case</c> in the step
+    /// switch and no place in the layout. The generated dispatcher reaches it through
+    /// <c>ExecuteFallbackAsync</c> under the index of the step it answers for, which is why the
+    /// index copied into this model is that step's.
+    /// </para>
+    /// </remarks>
+    public StepModel? FallbackCapability { get; private init; }
+
+    /// <summary>Business identity of the fallback capability.</summary>
+    public string? FallbackId => FallbackCapability?.CapabilityId;
+
+    /// <summary>Contract version of the fallback capability.</summary>
+    public string? FallbackVersion => FallbackCapability?.CapabilityVersion;
+
+    /// <summary>True when the step's degraded answer takes a dispatch rather than a constant.</summary>
+    public bool HasFallbackCapability => FallbackCapability != null;
+
     /// <summary>Fully-qualified compensation type, or <c>null</c>.</summary>
     public string? CompensationTypeName => Compensation?.CapabilityTypeName;
 
@@ -1424,6 +1456,16 @@ public sealed record StepModel
     public StepModel WithCompensation(StepModel compensation) => this with
     {
         Compensation = compensation,
+    };
+
+    /// <summary>Returns a copy carrying the capability its fallback would ask.</summary>
+    /// <param name="fallback">
+    /// The fallback capability, modelled exactly as a step is — build it with
+    /// <see cref="Capability"/> so it reaches the manifest with its full metadata.
+    /// </param>
+    public StepModel WithFallbackCapability(StepModel fallback) => this with
+    {
+        FallbackCapability = fallback,
     };
 
     /// <summary>Returns a copy carrying a named policy set.</summary>

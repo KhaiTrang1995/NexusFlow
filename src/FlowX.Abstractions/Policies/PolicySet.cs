@@ -174,8 +174,8 @@ public sealed record Backoff
 }
 
 /// <summary>
-/// The degraded value a <see cref="PolicySet.Fallback{TValue}"/> puts into the state bag when
-/// the step it wraps has failed for the last time.
+/// The degraded value a <see cref="PolicySet.Fallback{TValue}(TValue)"/> puts into the state
+/// bag when the step it wraps has failed for the last time.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -227,6 +227,33 @@ public sealed class FallbackValue
         _apply(context);
     }
 }
+
+/// <summary>
+/// The capability a <see cref="PolicySet.Fallback{TCapability}()"/> asks instead, when the
+/// step it wraps has failed for the last time.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>A declaration, and deliberately not yet a resolution.</strong> All this carries is
+/// the CLR type the author named, because that is all a <c>PolicySet</c> can know: a set is a
+/// <c>static readonly</c> field in a <c>Policies</c> class, built with no step in sight, and
+/// the id, version and side effects of the capability it names live on that capability's
+/// <c>[Capability]</c> attribute. Reading them from here would mean reflecting over
+/// <see cref="Type"/> at run time, which is what
+/// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0002-compile-time-orchestration.md">ADR-0002</a>
+/// and constraint C2 both refuse.
+/// </para>
+/// <para>
+/// <strong>So it is bound rather than read.</strong> <c>PolicyChain.ForStep</c> takes the
+/// resolved <c>CapabilityDescriptor</c> the generated plan already holds and replaces this
+/// declaration with it, exactly as the same method already resolves the step's own capability;
+/// what reaches <c>StepPolicy</c> is the descriptor, and what reaches the manifest comes from
+/// the compiler's own reading of the same type. Two levels of the one fact, never two readings
+/// of it.
+/// </para>
+/// </remarks>
+/// <param name="Capability">The capability type the author named.</param>
+public sealed record FallbackCapability(Type Capability);
 
 /// <summary>A single declared policy and its parameters.</summary>
 /// <param name="Kind">Policy name, e.g. <c>Retry</c>.</param>
@@ -373,14 +400,58 @@ public sealed class PolicySet
     /// to undo.
     /// </para>
     /// <para>
-    /// <strong>A constant, and not yet a second capability.</strong> <c>docs/10 §3</c> catalogues
-    /// "capability or constant"; the capability half needs a dispatch seam, a step index, a
-    /// journal row and a compensation registration that a step's fallback has none of, and
-    /// ADR-0078 §3 records precisely what is missing rather than shipping half of it.
+    /// <strong>The other half of <c>docs/10 §3</c>'s "capability or constant" is
+    /// <see cref="Fallback{TCapability}()"/>.</strong> Pick this one when the degraded answer
+    /// is a value the author can write down, and that one when it takes a call to produce.
     /// </para>
     /// </remarks>
     public PolicySet Fallback<TValue>(TValue value)
         => Add(nameof(Fallback), PolicyStage.Resilience, ("value", FallbackValue.Of(value)));
+
+    /// <summary>
+    /// Asks a second capability when the step has failed for the last time — a degraded mode
+    /// that answers with a call rather than with a constant.
+    /// </summary>
+    /// <typeparam name="TCapability">
+    /// The capability to ask instead. It must produce the step's own output contract, which
+    /// FLOWX1052 checks: the answer is filed in the state bag under its own type, so anything
+    /// else is a degraded mode no later step binds. It must also declare no side effects
+    /// (FLOWX1053), for the reason below.
+    /// </typeparam>
+    /// <remarks>
+    /// <para>
+    /// <strong>Outermost of the six stage-4 kinds, exactly as the constant is.</strong> It is
+    /// consulted once, after every attempt at the step has been made and refused, so the
+    /// attempts the author declared beside it are all spent first
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a> §2.1).
+    /// The fallback capability is asked once and is not itself retried, hedged or bulkheaded:
+    /// the declared chain wraps the step, and the fallback is the decision to stop asking it.
+    /// </para>
+    /// <para>
+    /// <strong>The type argument, and not a value, is what makes this checkable.</strong> A
+    /// <c>Func&lt;FlowContext, T&gt;</c> would be code the compiler cannot check the shape of,
+    /// cannot publish in the manifest and cannot keep deterministic under replay — ADR-0078
+    /// §2.6 rejects it. A named capability is all three: the compiler resolves its
+    /// <c>[Capability]</c> declaration, the manifest publishes it in the same inventory every
+    /// other capability appears in, and the generated dispatcher binds its typed output the
+    /// same way it binds a step's.
+    /// </para>
+    /// <para>
+    /// <strong>Requires the fallback capability to declare no side effects</strong>, which is
+    /// FLOWX1053 asked of the second capability as well as the first. A fallback fires
+    /// <em>because</em> a dependency has just failed, so it is the least-exercised path in the
+    /// system running at the worst moment; making it the path that writes is backwards, and it
+    /// would put an effect on the unwind stack under a step whose own capability produced
+    /// none. A degraded mode that has to write is a branch in the flow, where a compensable
+    /// effect belongs
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0079-a-fallback-capability-is-a-dispatch-of-its-own.md">ADR-0079</a> §2.3).
+    /// </para>
+    /// </remarks>
+    public PolicySet Fallback<TCapability>()
+        => Add(
+            nameof(Fallback),
+            PolicyStage.Resilience,
+            ("capability", new FallbackCapability(typeof(TCapability))));
 
     /// <summary>
     /// Caches the result. Tenant-scoped by default; declaring it on a capability with
