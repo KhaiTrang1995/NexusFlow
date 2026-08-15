@@ -44,3 +44,6 @@ dump.rdb
 # reportgenerator writes its report here; a 53k-line Cobertura.xml reached a
 # branch through `git add -A` before this line existed.
 coverage/
+
+# Azure Functions local-only configuration; carries connection strings by design
+local.settings.json
