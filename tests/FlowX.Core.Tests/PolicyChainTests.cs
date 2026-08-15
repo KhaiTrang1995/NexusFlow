@@ -66,6 +66,86 @@ public sealed class PolicyChainTests
         // FLOWX1018.
     }
 
+    /// <summary>The capability type a declared fallback names.</summary>
+    private sealed class CachedRating;
+
+    /// <summary>
+    /// A capability fallback's declaration is replaced by the descriptor the plan resolved.
+    /// </summary>
+    /// <remarks>
+    /// The binding that makes a capability-valued fallback executable at all.
+    /// <c>PolicySet.Fallback&lt;TCapability&gt;()</c> can hold a <c>Type</c> and nothing else,
+    /// and a <c>Type</c> is not something the engine can write on a journal row — so the
+    /// descriptor arrives here, from the generated plan, and what <c>StepPolicy</c> reads is an
+    /// id and a version
+    /// (<a href="../../docs/adr/ADR-0079-a-fallback-capability-is-a-dispatch-of-its-own.md">ADR-0079</a> §2.1).
+    /// </remarks>
+    [Fact]
+    public void AFallbackCapabilitysDeclarationIsBoundToTheResolvedDescriptor()
+    {
+        var chain = PolicyChain.ForStep(
+            PolicySet.Named("degradable").Fallback<CachedRating>(),
+            Fixtures.ValidateOrder,
+            Fixtures.CachedRating);
+
+        var resolved = StepPolicy.From(chain);
+
+        resolved.HasFallback.ShouldBeTrue();
+        resolved.FallbackDispatches.ShouldBeTrue("It takes a call rather than a constant.");
+        resolved.FallbackCapability!.Id.ShouldBe("rating.cached");
+        resolved.FallbackCapability.Version.ShouldBe("1.0.0");
+    }
+
+    /// <summary>
+    /// An unbound capability fallback is no fallback, rather than one nothing can record.
+    /// </summary>
+    /// <remarks>
+    /// Unreachable from a compiled plan — the emitter writes the declaration and the descriptor
+    /// together — and this is the honest reading for a chain built by hand. The alternative is
+    /// a degraded path the engine cannot name on a journal row, and a degraded path that leaves
+    /// no history is worse than no degraded path: it is the failure mode that runs exactly when
+    /// something is already wrong.
+    /// </remarks>
+    [Fact]
+    public void AFallbackCapabilityNobodyBoundIsNotTreatedAsAFallback()
+    {
+        var resolved = StepPolicy.From(
+            PolicyChain.ForStep(
+                PolicySet.Named("degradable").Fallback<CachedRating>(), Fixtures.ValidateOrder));
+
+        resolved.HasFallback.ShouldBeFalse();
+        resolved.FallbackDispatches.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A fallback over a capability that changes something is rejected — FLOWX1053's second half.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The step here is a read, so the rule as WP-78 shipped it is satisfied: the objection is
+    /// to the <em>answer</em>. A fallback runs because a dependency has just failed, so it is
+    /// the least-exercised path in the system running at the worst moment, and an effect made
+    /// there sits under a step whose own capability made none — with nothing on the unwind
+    /// stack pointing at it, because a degraded step is deliberately not pushed.
+    /// </para>
+    /// <para>
+    /// Enforced here as well as by the analyzer for the reason every other rule in this file
+    /// is: a plan built any other way must not be able to bypass the compiler's guarantee.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AFallbackOnACapabilityWithSideEffectsIsRejected()
+    {
+        var error = Should.Throw<InvalidFlowPlanException>(
+            () => PolicyChain.ForStep(
+                PolicySet.Named("wrong").Fallback<CachedRating>(),
+                Fixtures.ValidateOrder,
+                Fixtures.ReserveInventory));
+
+        error.Message.ShouldContain("inventory.reserve");
+        error.Message.ShouldContain("inventory-ledger");
+    }
+
     [Fact]
     public void EmptyChainIsValidForEveryCapability()
     {

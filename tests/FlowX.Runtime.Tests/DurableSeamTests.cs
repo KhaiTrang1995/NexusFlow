@@ -941,6 +941,222 @@ public sealed class DurableSeamTests
     }
 
     // ---------------------------------------------------------------------------------
+    // A degraded step, and who the journal says answered it
+    // ---------------------------------------------------------------------------------
+
+    /// <summary>The capability type a declared fallback names. See the marker in the ephemeral suite.</summary>
+    private sealed class SecondaryRating;
+
+    /// <summary>What a degraded step answers with here.</summary>
+    private sealed record Rating(string Score);
+
+    /// <summary>
+    /// A durable two-step flow whose first step degrades to <c>rating.secondary</c>.
+    /// </summary>
+    /// <param name="compensable">
+    /// Whether the degrading step declares an undo. It is the one thing that makes the resume
+    /// path's compensation rebuild observable at all: a step with no compensation is never
+    /// pushed onto the stack whatever the row says.
+    /// </param>
+    private static ExecutionPlan Degrading(bool compensable = false) => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.rated", "1.0.0", ExecutionProfile.Durable, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForCapability(
+                0,
+                Plans.Validate,
+                compensable ? Plans.Release : null,
+                policies: PolicyChain.ForStep(
+                    PolicySet.Named("cf").Fallback<SecondaryRating>(), Plans.Validate, Plans.Secondary)),
+            StepNode.ForCapability(1, Plans.Capture),
+        ]));
+
+    /// <summary>
+    /// A degraded row names the capability that answered, not the one that failed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <a href="../../docs/adr/ADR-0079-a-fallback-capability-is-a-dispatch-of-its-own.md">ADR-0079</a>
+    /// §2.2, and the whole of the identity decision. ADR-0078 §3.2 read the problem as needing
+    /// a fifth key component — "two capabilities under one step index would either share a key
+    /// or need a fifth component, which is a schema change and a migration" — and the fifth
+    /// component was already there. The key answers *which execution*; <c>capability_id</c>
+    /// answers *what ran*, and it is written on every row already. So the four-part key
+    /// ADR-0015 fixed is untouched and no store changes.
+    /// </para>
+    /// <para>
+    /// The precedent is not a new one either: <c>docs/06 §7</c> rule 6 has a compensation row
+    /// carry the compensating capability's id rather than the id of the step it reverses, for
+    /// exactly this reason — an operator reading the history has to be able to see which
+    /// capability the row is about.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ADegradedRowNamesTheCapabilityThatAnsweredRatherThanTheOneThatFailed()
+    {
+        var journal = new WatchedJournal();
+        var plan = Degrading();
+        var instanceId = Guid.NewGuid();
+        var run = await BeginAsync(journal, plan, instanceId);
+
+        var dispatcher = new RecordingDispatcher()
+            .FailAt(0, new Error("rating.unavailable", "gone", ErrorCategory.Unavailable))
+            .FallBackWith(0, new Rating("secondary"));
+
+        var result = await new FlowEngine(new FakeClock(T0)).ExecuteAsync(
+            plan, dispatcher, Plans.Invocation, run, TestContext.Current.CancellationToken);
+
+        result.IsSuccess.ShouldBeTrue("The fallback answered, so the flow ran on degraded.");
+
+        (await RowsAsync(journal, instanceId))
+            .Select(static row => (row.Key.StepId, row.Key.Attempt, row.CapabilityId, row.Outcome))
+            .ShouldBe([
+                (0, 1, "order.validate", JournalOutcome.Failure),
+                (0, 2, "rating.secondary", JournalOutcome.Success),
+                (1, 1, "payment.capture", JournalOutcome.Success),
+            ],
+            "Both facts survive on one step: what the dependency said, and what answered " +
+            "instead. A degraded row written under the step's own id would say order.validate " +
+            "succeeded on its second attempt, which is the one thing that did not happen.");
+    }
+
+    /// <summary>
+    /// An instance resumed mid-degradation resumes the fallback, and never re-asks the primary.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reason the row's identity has to be exact rather than merely legible. The frontier
+    /// holds only failures, so without it the derivation is "this step has not succeeded" and
+    /// the new node spends the author's retry all over again on a dependency an earlier node
+    /// already gave up on — and, worse, a step whose fallback is the only thing that can answer
+    /// it would be asked in the wrong order on every resume. A committed row under the
+    /// fallback's id says the degraded path already owns this step (ADR-0079 §2.2).
+    /// </para>
+    /// <para>
+    /// The primary's own error died with the node that saw it — a row records an outcome and
+    /// never an <c>Error</c> — so the loop carries <c>flow.step_already_degrading</c> into the
+    /// fallback instead. It names both capabilities and claims nothing the history does not
+    /// support.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AnInstanceResumedMidDegradationResumesTheFallbackRatherThanThePrimary()
+    {
+        // The first node's fallback fails too, and it dies while sealing the failed instance —
+        // which is the window in which a degraded step is half done: two rows, no answer.
+        var journal = new WatchedJournal { DiesWhileSealing = true };
+        var plan = Degrading();
+        var instanceId = Guid.NewGuid();
+        var first = await BeginAsync(journal, plan, instanceId);
+
+        var engine = new FlowEngine(new FakeClock(T0));
+
+        var crashed = new RecordingDispatcher()
+            .FailAt(0, new Error("rating.unavailable", "gone", ErrorCategory.Unavailable))
+            .FailFallbackAt(0, new Error("secondary.unavailable", "also gone", ErrorCategory.Unavailable));
+
+        await KilledAsync(engine, plan, crashed, first);
+
+        crashed.Executed.ShouldBe([0]);
+        crashed.FellBackAt.ShouldBe([0]);
+
+        journal.DiesWhileSealing = false;
+
+        var resumed = await DurableExecution.ResumeAsync(
+            journal, instanceId, Second, TestContext.Current.CancellationToken);
+
+        // The second node's secondary is healthy, and its primary would be too — which is what
+        // makes the assertion below about the rule rather than about the double.
+        var recovered = new RecordingDispatcher().FallBackWith(0, new Rating("secondary"));
+
+        var finished = await engine.ExecuteAsync(
+            plan, recovered, Plans.Invocation, resumed.Value, TestContext.Current.CancellationToken);
+
+        finished.IsSuccess.ShouldBeTrue();
+
+        recovered.FellBackAt.ShouldBe([0], "The degraded path was resumed where it was left.");
+
+        recovered.Executed.ShouldBe(
+            [1],
+            "Step 0's own capability is never asked again. It had finished failing before this " +
+            "node existed, and the fallback's committed row is what says so.");
+
+        (await RowsAsync(journal, instanceId))
+            .Select(static row => (row.Key.StepId, row.Key.Attempt, row.CapabilityId, row.Outcome))
+            .ShouldBe([
+                (0, 1, "order.validate", JournalOutcome.Failure),
+                (0, 2, "rating.secondary", JournalOutcome.Failure),
+                (0, 3, "rating.secondary", JournalOutcome.Success),
+                (1, 1, "payment.capture", JournalOutcome.Success),
+            ],
+            "The attempt sequence keeps counting across both capabilities, so the key stays " +
+            "unique and the history reads in the order it happened.");
+    }
+
+    /// <summary>
+    /// A resumed instance does not put a degraded step back on the unwind stack.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the defect the identity was needed to close, and it predates the
+    /// capability half.</strong> The forward path has excluded a degraded step from the
+    /// compensation stack since WP-78 — ADR-0078 §2.7 — and the resume path could not, because
+    /// it rebuilds the stack from committed rows and a success row said nothing about who wrote
+    /// it. So one instance had two behaviours: undo nothing if it ran straight through, undo
+    /// <c>inventory.release</c> for a reservation nobody made if it was resumed. Which of the
+    /// two a deployment got depended on whether a node died.
+    /// </para>
+    /// <para>
+    /// Fixed by the same column: a success row whose capability is not the step's own is a
+    /// degraded one, and is left off the stack exactly as the forward path leaves it off.
+    /// ADR-0079 §2.5 records that a *constant* fallback still has no second identity to write
+    /// and so is still indistinguishable here, with what that costs.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AResumedDegradedStepIsNotPutBackOnTheUnwindStack()
+    {
+        // The node dies on the third commit, so step 0's whole story is in the journal — the
+        // failure and the degraded answer — and step 1's row is not. That is the shape the
+        // resume path has to rebuild a compensation stack from, and the only shape in which
+        // this defect was ever reachable.
+        var journal = new WatchedJournal { DiesOnCommit = 3 };
+        var plan = Degrading(compensable: true);
+        var instanceId = Guid.NewGuid();
+        var first = await BeginAsync(journal, plan, instanceId);
+
+        var engine = new FlowEngine(new FakeClock(T0));
+
+        var crashed = new RecordingDispatcher()
+            .FailAt(0, new Error("rating.unavailable", "gone", ErrorCategory.Unavailable))
+            .FallBackWith(0, new Rating("secondary"));
+
+        await KilledAsync(engine, plan, crashed, first);
+
+        crashed.FellBackAt.ShouldBe([0], "The first node really did degrade step 0.");
+
+        var resumed = await DurableExecution.ResumeAsync(
+            journal, instanceId, Second, TestContext.Current.CancellationToken);
+
+        var recovered = new RecordingDispatcher()
+            .FailAt(1, new Error("payment.declined", "no", ErrorCategory.Validation));
+
+        var finished = await engine.ExecuteAsync(
+            plan, recovered, Plans.Invocation, resumed.Value, TestContext.Current.CancellationToken);
+
+        finished.IsSuccess.ShouldBeFalse("Step 1 failed with a terminal category.");
+
+        recovered.FellBackAt.ShouldBeEmpty(
+            "Step 0 was answered before this node picked the instance up, so it is stepped " +
+            "over rather than degraded again.");
+
+        recovered.Compensated.ShouldBeEmpty(
+            "And its undo does not run. inventory.release would reverse a reservation " +
+            "order.validate never made and rating.secondary was refused a fallback unless it " +
+            "could make none — which is docs/10 §2's 'compensating something that never " +
+            "happened' arriving through the resume path instead of the forward one.");
+    }
+
+    // ---------------------------------------------------------------------------------
     // Doubles and contracts
     // ---------------------------------------------------------------------------------
 

@@ -2184,10 +2184,80 @@ public static class FlowAnalyzer
         var last = steps.Count - 1;
         var step = steps[last].WithPolicy(argument.Expression.ToString(), kinds.ToArray());
 
+        // Before the two rules below, because both of them now ask about it: FLOWX1052
+        // compares the fallback's output contract against the step's, and FLOWX1053 asks
+        // whether the capability that would answer changes anything.
+        if (ResolveFallbackCapability(step, contents, semanticModel) is { } fallback)
+        {
+            step = step.WithFallbackCapability(fallback);
+        }
+
         ReportPolicyConflicts(step, link, diagnostics);
         ReportFallbackShape(step, contents, link, semanticModel, diagnostics);
 
         steps[last] = step;
+    }
+
+    /// <summary>
+    /// Resolves the capability a declared <c>Fallback&lt;TCapability&gt;()</c> names.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The same reading <c>.CompensateWith&lt;T&gt;()</c> gets, from a different
+    /// tree.</strong> A policy set is nearly always declared in a <c>Policies</c> class of its
+    /// own, so the type argument is bound against that file's model rather than the flow's —
+    /// the workaround <see cref="ReportFallbackShape"/> already makes, for the same reason and
+    /// with the same licence: this runs in the generator, which holds the compilation.
+    /// </para>
+    /// <para>
+    /// Silent wherever the compiler cannot see the declaration. A set from a referenced
+    /// assembly has no initialiser (FLOWX1036 reports the set itself) and a type that does not
+    /// bind is the C# compiler's own error; inventing a capability from either would put a
+    /// dependency in the manifest that no build can invoke.
+    /// </para>
+    /// </remarks>
+    private static StepModel? ResolveFallbackCapability(
+        StepModel step, PolicySetContents contents, SemanticModel semanticModel)
+    {
+        if (contents.Initialiser is not { } initialiser || !step.PolicyKinds.Contains(FallbackKind))
+        {
+            return null;
+        }
+
+        foreach (var policy in FlowChainWalker.Walk(initialiser))
+        {
+            if (policy.MethodName != FallbackKind || policy.TypeArguments.Count == 0)
+            {
+                continue;
+            }
+
+            var tree = initialiser.SyntaxTree;
+            var model = tree == semanticModel.SyntaxTree
+                ? semanticModel
+                : semanticModel.Compilation.GetSemanticModel(tree);
+
+            if (CapabilityReader.Read(ResolveType(policy.TypeArguments[0], model)) is not { } info)
+            {
+                return null;
+            }
+
+            // The *step's* index, because that is the only index the fallback has: it is
+            // reached through ExecuteFallbackAsync(stepIndex), never through the step switch.
+            return StepModel.Capability(
+                step.Index,
+                info.TypeName,
+                info.Id,
+                info.Version,
+                info.IsIdempotent,
+                info.SideEffects,
+                FormatLocation(policy.CallLocation),
+                info.AuthorizationMode,
+                info.AuthorizationValue,
+                info.InputTypeName,
+                info.OutputTypeName);
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -2232,6 +2302,15 @@ public static class FlowAnalyzer
             return;
         }
 
+        // The capability half is answered from a declaration rather than from an argument's
+        // type, so it needs none of the tree-binding below and returns before reaching it.
+        if (step.FallbackCapability is not null)
+        {
+            ReportFallbackCapabilityShape(step, output, link, diagnostics);
+
+            return;
+        }
+
         foreach (var policy in FlowChainWalker.Walk(initialiser))
         {
             if (policy.MethodName != FallbackKind ||
@@ -2273,6 +2352,41 @@ public static class FlowAnalyzer
 
             return;
         }
+    }
+
+    /// <summary>
+    /// FLOWX1052 over a fallback <em>capability</em>: what it produces against what the step does.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same rule and the same code as the constant's, because the finding, the message and
+    /// the author's repair are identical — a degraded answer is filed in the state bag under
+    /// its own type, so anything but the step's output is a mode no later step binds and the
+    /// first <c>ctx.Get&lt;T&gt;</c> after the outage throws. Only where the type is read from
+    /// differs: the constant's is the converted type of an expression, and this is a contract
+    /// the capability declared, which <c>CapabilityReader</c> has already resolved.
+    /// </para>
+    /// <para>
+    /// Silent for a fallback whose output could not be read, for the reason the constant rule
+    /// is silent on an unbound expression: a diagnostic raised on a guess names a type the
+    /// author cannot find.
+    /// </para>
+    /// </remarks>
+    private static void ReportFallbackCapabilityShape(
+        StepModel step, string output, ChainLink link, List<Diagnostic> diagnostics)
+    {
+        if (step.FallbackCapability?.CapabilityOutput is not { Length: > 0 } produced ||
+            produced == output)
+        {
+            return;
+        }
+
+        diagnostics.Add(Diagnostic.Create(
+            FlowXDiagnostics.FallbackMustMatchTheStepsOutput,
+            link.CallLocation,
+            step.CapabilityId,
+            output,
+            produced));
     }
 
     /// <summary>
@@ -2336,6 +2450,24 @@ public static class FlowAnalyzer
                 link.CallLocation,
                 step.CapabilityId,
                 string.Join(", ", step.SideEffects)));
+        }
+
+        // FLOWX1053 again, over the second capability. The rule above is about the step: a
+        // degraded success stands in for an effect the step was supposed to make and did not.
+        // This one is about the answer: a fallback runs *because* a dependency has just failed,
+        // so it is the least-exercised path in the system running at the worst moment, and an
+        // effect made there sits under a step whose own capability produced none — nothing on
+        // the unwind stack points at it, because ADR-0078 §2.7 keeps a degraded step off that
+        // stack and keeping it on would mean undoing the step's capability for work the
+        // fallback did. Two rules, one code: the author's repair is the same either way, and
+        // the message names which capability is at fault.
+        if (step.FallbackCapability is { SideEffects.Length: > 0 } fallback)
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.FallbackRequiresNoSideEffects,
+                link.CallLocation,
+                fallback.CapabilityId,
+                string.Join(", ", fallback.SideEffects)));
         }
     }
 

@@ -410,6 +410,17 @@ public static class ManifestWriter
             writer.Property("compensation", step.CompensationId + "@" + step.CompensationVersion);
         }
 
+        // Beside `compensation` because it is the same kind of fact: a second capability this
+        // step may invoke, named here and described in full in the top-level inventory. Without
+        // it the manifest would publish a build that can call a dependency it never mentions,
+        // which is the fourth of ADR-0078 §3's four missing pieces and the one every consumer
+        // of the manifest — `flowx diff`, the impact analysis, an OpenAPI generator — needs
+        // before the degraded path is a thing anyone downstream can reason about.
+        if (step.FallbackId != null)
+        {
+            writer.Property("fallback", step.FallbackId + "@" + step.FallbackVersion);
+        }
+
         if (step.EventType != null)
         {
             writer.Property("event", step.EventType);
@@ -949,7 +960,15 @@ public static class ManifestWriter
             System.StringComparer.Ordinal);
     }
 
-    /// <summary>The capabilities one step invokes: itself, and its compensation if any.</summary>
+    /// <summary>
+    /// The capabilities one step invokes: itself, its compensation and its fallback.
+    /// </summary>
+    /// <remarks>
+    /// All three are capabilities a build can call, so all three are entries. A compensation is
+    /// one that runs backwards and a fallback is one that runs instead; neither is less of a
+    /// dependency for running only on a path nobody wants to be on, and a consumer diffing two
+    /// manifests has to be able to see a breaking change to either.
+    /// </remarks>
     private static IEnumerable<StepModel> Invoked(StepModel step)
     {
         if (step.Kind == StepKindModel.Capability)
@@ -960,6 +979,11 @@ public static class ManifestWriter
         if (step.Compensation is not null)
         {
             yield return step.Compensation;
+        }
+
+        if (step.FallbackCapability is not null)
+        {
+            yield return step.FallbackCapability;
         }
     }
 

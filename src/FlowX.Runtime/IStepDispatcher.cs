@@ -68,6 +68,48 @@ public interface IStepDispatcher
     ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct);
 
     /// <summary>
+    /// Runs the capability a declared <c>Fallback&lt;TCapability&gt;()</c> names for the step
+    /// at <paramref name="stepIndex"/>, and files its answer under the step's output contract.
+    /// </summary>
+    /// <param name="stepIndex">
+    /// Position in the plan's step graph — the <em>step's</em> index, not an index of its own.
+    /// The engine calls this only after that step has failed for the last time and only when
+    /// its resolved policy carries a capability fallback, so an implementation is free to
+    /// treat any other index as a defect.
+    /// </param>
+    /// <param name="ctx">The scope the step ran under — an iteration's, inside a loop.</param>
+    /// <param name="ct">Cancellation linked to the caller's token.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>A member of its own rather than a second step index, and that is the whole of
+    /// what made a capability-valued fallback unbuildable.</strong>
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a>
+    /// §3.1 records the wall: a fallback capability is not a step — it has no index, no place
+    /// in the graph and no <c>case</c> — and only generated code can name a
+    /// <c>JsonTypeInfo&lt;T&gt;</c> or call <c>ctx.Set&lt;T&gt;</c>, so binding its typed
+    /// output is not something the engine could ever do for itself. Giving the fallback a step
+    /// index would have been the other answer and a worse one: it would put a node in the
+    /// graph that the plan's own layout says nothing runs, and every walker over
+    /// <c>AllSteps</c> — the manifest, the impact analysis, <c>flowx diff</c> — would have to
+    /// learn to skip it. A member is the same seam <c>DescribeCacheEntry</c>,
+    /// <c>DescribeAudit</c> and <c>RestoreState</c> already use, for the identical reason.
+    /// </para>
+    /// <para>
+    /// <strong>Defaulted to a throw</strong>, for the reason <see cref="BeginSubFlow"/> gives:
+    /// a flow that declares no capability fallback can never receive this call, and requiring
+    /// it would make every hand-written dispatcher copy unreachable code. The generator emits
+    /// it explicitly, so nothing that ships depends on the default.
+    /// </para>
+    /// </remarks>
+    ValueTask<StepOutcome> ExecuteFallbackAsync(int stepIndex, FlowContext ctx, CancellationToken ct) =>
+        throw new ArgumentOutOfRangeException(
+            nameof(stepIndex),
+            stepIndex,
+            "No step in this flow declares a capability fallback, so the engine never asks " +
+            "this dispatcher for one. Reaching this means the plan and this dispatcher came " +
+            "from different builds.");
+
+    /// <summary>
     /// Evaluates the predicate of the <see cref="StepKind.Branch"/> step at
     /// <paramref name="stepIndex"/>.
     /// </summary>

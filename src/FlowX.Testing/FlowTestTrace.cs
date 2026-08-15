@@ -23,6 +23,16 @@ public enum FlowTestEntryKind
 
     /// <summary>A <c>SubFlow</c> composition, naming the child and its mode.</summary>
     SubFlow = 5,
+
+    /// <summary>A capability fallback the engine asked after a step had finished failing.</summary>
+    /// <remarks>
+    /// Its own kind rather than a second <see cref="Step"/>, and for the reason the trace
+    /// exists: a test asserting control flow has to be able to tell "the step answered" from
+    /// "something else answered for it". Recorded under the *fallback's* capability id, so the
+    /// trace names what actually ran — the same rule <c>docs/06 §7</c> rule 6 sets for a
+    /// compensation.
+    /// </remarks>
+    Fallback = 6,
 }
 
 /// <summary>One thing the engine asked the flow under test to do.</summary>

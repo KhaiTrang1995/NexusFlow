@@ -1515,6 +1515,29 @@ public static class FlowEmitter
                         authorizationMode: null,
                         authorizationValue: null) + ";");
             }
+
+            if (step.FallbackCapability is { } fallback)
+            {
+                // The fallback's own declarations, for the reason the compensation's are: what
+                // PolicyChain checks the side-effect rule against, and what the engine writes
+                // on the degraded row, has to be the author's [Capability] rather than a
+                // literal this layer invented.
+                writer.Line(
+                    "public static readonly CapabilityDescriptor Step" + step.Index + "Fallback = " +
+                    DescriptorCall(
+                        fallback.CapabilityId!,
+                        fallback.CapabilityVersion!,
+                        fallback.IsIdempotent,
+                        fallback.SideEffects,
+
+                        // Deliberately no stance, on the compensation's precedent and for the
+                        // same reason: StepNode.ForCapability resolves the node's stance from
+                        // the forward capability alone, so a stance here would reach no
+                        // decision and would read as though it did. A fallback runs for the
+                        // principal the step already admitted.
+                        authorizationMode: null,
+                        authorizationValue: null) + ";");
+            }
         }
 
         writer.CloseBrace();
@@ -1908,7 +1931,15 @@ public static class FlowEmitter
         // exactly as it was.
         if (step.PolicyKinds.Any(static kind => kind != CompensationRetryKind))
         {
-            arguments += ", policies: PolicyChain.ForStep(" + set + ", " + node + ")";
+            // The third capability a set can describe, and the only one it can name without
+            // being able to resolve: PolicySet.Fallback<TCapability>() holds a Type and nothing
+            // more, because a set is built with no step in sight and reading a capability's
+            // declaration off its type at run time is what C2 refuses. Passing the descriptor
+            // here is what binds it, so StepPolicy gets an id and a version to write on a
+            // journal row (ADR-0079 §2.1).
+            var fallback = step.HasFallbackCapability ? ", " + node + "Fallback" : string.Empty;
+
+            arguments += ", policies: PolicyChain.ForStep(" + set + ", " + node + fallback + ")";
         }
 
         // A compensation chain with no compensation to wrap is refused by StepNode, and there
@@ -1968,6 +1999,8 @@ public static class FlowEmitter
         EmitDispatcherConstructor(writer, flow);
         writer.Line();
         EmitDispatcherExecute(writer, flow);
+        writer.Line();
+        EmitDispatcherFallback(writer, flow);
         writer.Line();
         EmitDispatcherCompensate(writer, flow);
         writer.Line();
@@ -2467,6 +2500,89 @@ public static class FlowEmitter
         }
 
         writer.Line("return StepOutcome.Success;");
+    }
+
+    /// <summary>
+    /// Emits <c>ExecuteFallbackAsync</c>: the dispatch a capability-valued fallback needs, and
+    /// the seam that made one buildable.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Keyed by the step's index, not by an index of its own.</strong> A fallback
+    /// capability is not a step — it has no place in the graph's layout, no <c>case</c> in the
+    /// step switch and nothing that jumps to it — so the engine names it the only way it can:
+    /// "step N's fallback". ADR-0078 §3.1 recorded the absence of exactly this method as the
+    /// first of four blockers, and nothing about it is an engine change: the wall was that only
+    /// generated code may name a contract type or call <c>ctx.Set&lt;T&gt;</c>, and this is
+    /// generated code doing both.
+    /// </para>
+    /// <para>
+    /// <strong>The input is bound the step's way, not the fallback's.</strong>
+    /// <see cref="InputExpression"/> is shared with the forward call and with the compensation,
+    /// so a mapped step re-runs its mapping and an unmapped one reads the bag by type — and the
+    /// fallback therefore sees what the primary saw. FLOWX1052 has already made the two
+    /// contracts agree on the way out; a fallback that wanted a different way in would be a
+    /// second capability pretending to be a substitute for the first.
+    /// </para>
+    /// <para>
+    /// Emitted only where a step declares one. A flow with no capability fallback inherits
+    /// <c>IStepDispatcher</c>'s default, which throws — the arrangement <c>BeginSubFlow</c>
+    /// already uses, and the reason nothing that ships depends on that default.
+    /// </para>
+    /// </remarks>
+    private static void EmitDispatcherFallback(SourceWriter writer, FlowModel flow)
+    {
+        var fallbacks = flow.AllSteps
+            .Where(static s => s.HasFallbackCapability)
+            .OrderBy(static s => s.Index)
+            .ToList();
+
+        if (fallbacks.Count == 0)
+        {
+            return;
+        }
+
+        writer.Line("/// <inheritdoc />");
+        writer.Line(
+            "public async ValueTask<StepOutcome> ExecuteFallbackAsync(int stepIndex, FlowContext ctx, CancellationToken ct)");
+        writer.OpenBrace();
+        writer.Line("switch (stepIndex)");
+        writer.OpenBrace();
+
+        foreach (var step in fallbacks)
+        {
+            var fallback = step.FallbackCapability!;
+
+            writer.Line("case " + step.Index + ":");
+            writer.OpenBrace();
+
+            EmitCapabilityInvocation(
+                writer,
+                FieldName(fallback.CapabilityTypeName!),
+                InputExpression(step),
+
+                // The step's output contract, and deliberately not the fallback's own. They are
+                // the same type — FLOWX1052 refuses the build otherwise — and naming the step's
+                // is what says which of the two the equality is *for*: the bag is keyed by what
+                // the next step binds.
+                step.CapabilityOutput,
+                fallback.Location);
+
+            writer.CloseBrace();
+        }
+
+        writer.Line("default:");
+        writer.OpenBrace();
+        writer.Line("throw new ArgumentOutOfRangeException(");
+        writer.Line("    nameof(stepIndex),");
+        writer.Line("    stepIndex,");
+        writer.Line("    \"Step index does not name a step with a capability fallback in the \" +");
+        writer.Line("    \"compiled plan. The plan and this dispatcher are generated together, \" +");
+        writer.Line("    \"so this means they came from different builds.\");");
+        writer.CloseBrace();
+
+        writer.CloseBrace();
+        writer.CloseBrace();
     }
 
     private static void EmitDispatcherCompensate(SourceWriter writer, FlowModel flow)

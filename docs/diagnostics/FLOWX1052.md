@@ -12,6 +12,14 @@ first `ctx.Get<T>()` after it.
 Reported at build time because a fallback fires exactly when a dependency is down, which is the
 worst moment to discover that the degraded mode does not fit.
 
+Since WP-80 the rule covers the other half of the row too. `.Fallback<TCapability>()` answers
+with a second capability, and what that capability produces is filed under its own type by the
+same `ctx.Set<T>` in the same generated dispatcher — so a fallback capability whose output
+contract is not the step's is the identical defect, reported under the identical code. Only
+where the type is read from differs: an argument's converted type for a constant, a declared
+`ICapability<,>` output for a capability. The title says *constant* for the constant's sake;
+the message names both contracts either way.
+
 ## Example that triggers it
 
 ```csharp
@@ -53,8 +61,10 @@ run time has no initialiser to walk, so the constant's type is not visible;
 [FLOWX1036](FLOWX1036.md) reports the set itself, and this rule stays silent rather than
 guessing.
 
-**A capability-valued fallback**, because there is no syntax for one.
-[ADR-0078](../adr/ADR-0078-stage-four-nests-six-kinds.md) §3 records what it is blocked on.
+**A fallback capability whose output the reader could not resolve**, for the same reason: a
+diagnostic raised on a guess names a type the author cannot find. *This paragraph read "a
+capability-valued fallback, because there is no syntax for one" until WP-80 gave it one
+([ADR-0079](../adr/ADR-0079-a-fallback-capability-is-a-dispatch-of-its-own.md)).*
 
 ---
 

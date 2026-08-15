@@ -19,6 +19,13 @@ internal static class Fixtures
         CapabilityDescriptor.Create("inventory.release", "1.0.0", isIdempotent: true, "inventory-ledger");
 
     /// <summary>
+    /// A second read, and the one a degraded step falls back to. No side effects, which is
+    /// what FLOWX1053 requires of a fallback capability as well as of the step it answers for.
+    /// </summary>
+    public static CapabilityDescriptor CachedRating { get; } =
+        CapabilityDescriptor.Create("rating.cached", "1.0.0", isIdempotent: true);
+
+    /// <summary>
     /// The dangerous one. Not idempotent, and money moves — retrying it twice is a
     /// duplicate charge, which is why several invariants below single it out.
     /// </summary>

@@ -989,7 +989,7 @@ public sealed class FlowEngine
             // The books the loop keeps are kept anyway: the step counts as work this instance
             // has done, and a compensable one goes back on the unwind stack, because a
             // resumed flow that later fails must undo what the node before it did.
-            if (cursor.IsJournaled && cursor.Run!.Completed(cursor.Scope, i) is not null)
+            if (cursor.IsJournaled && cursor.Run!.Completed(cursor.Scope, i) is { } answered)
             {
                 completed++;
 
@@ -1007,8 +1007,21 @@ public sealed class FlowEngine
                 // 06 §7 read from the other end: a crash during compensation resumes
                 // compensation, so a step the dead node finished undoing is not put back on
                 // the stack for the new one to undo again.
+                //
+                // And except a step its fallback capability answered for, which is the same
+                // exclusion the forward path makes at `!degraded` below and had no way to
+                // make here until the row said who wrote it. Without it the two paths
+                // disagree about one step: this node would undo a capability that never ran,
+                // on the strength of a success the fallback produced, which is docs/10 §2's
+                // "compensating something that never happened" reached by the one door the
+                // fixed stage order does not close. The row's capability id is what closes
+                // it — a success this step's own capability did not write is a degraded one
+                // (ADR-0079 §2.2). A *constant* fallback writes no second identity and is
+                // therefore still indistinguishable here; §2.5 records that limit and its
+                // cost rather than leaving it to be rediscovered.
                 if (compensations is not null &&
                     step.Kind != StepKind.SubFlow &&
+                    string.Equals(answered.CapabilityId, step.Identity, StringComparison.Ordinal) &&
                     !cursor.Run!.Compensated(cursor.Scope, i))
                 {
                     context.RecordCompleted(
@@ -1281,6 +1294,27 @@ public sealed class FlowEngine
             var abandoned = false;
             var degraded = false;
 
+            // Resumption for the one step whose answer may not be its own capability's. A
+            // committed row under the *fallback's* id says the primary finished failing before
+            // this node existed and the degraded path already owns this step — so the retry
+            // below is skipped entirely rather than spending the author's attempts a second
+            // time on a dependency some earlier node already gave up on. The step still ends
+            // through DegradeAsync, which is what makes the resumed execution the same
+            // execution rather than a second shape of it (ADR-0079 §2.2).
+            //
+            // A synthesised failure is what carries it there, because a journal row records an
+            // outcome and never an Error — CommitStepAsync's own remarks say why — so the
+            // original refusal died with the node that saw it. It names what is known and
+            // claims nothing else.
+            var degrading = policy.FallbackDispatches
+                && cursor.IsJournaled
+                && cursor.Run!.Attempted(cursor.Scope, i, policy.FallbackCapability!.Id);
+
+            if (degrading)
+            {
+                stepFailure = FlowErrors.StepAlreadyDegrading(capabilityId, policy.FallbackCapability!.Id);
+            }
+
             // The retry is the outermost stage-4 kind that wraps a call (ADR-0024, and ADR-0078
             // for the two that arrived after it — only the Fallback below is further out, and
             // it answers for the step rather than wrapping anything), so it is a loop around
@@ -1288,7 +1322,7 @@ public sealed class FlowEngine
             // also what makes the journal's key honest: run.NextAttempt derives the attempt
             // number from the committed history, so a retried step writes one row per attempt
             // without this node having to remember a number that dies with it.
-            while (true)
+            while (!degrading)
             {
                 attempt++;
 
@@ -1344,7 +1378,7 @@ public sealed class FlowEngine
                 {
                     var refusal = await CommitStepAsync(
                         plan, dispatcher, context, scope, cursor, step, stepFailure, startedAt,
-                        capabilityVersion: null, attempt, ct)
+                        capabilityId: null, capabilityVersion: null, attempt, ct)
                         .ConfigureAwait(false);
 
                     if (refusal is not null)
@@ -1783,6 +1817,22 @@ public sealed class FlowEngine
     /// and "the fallback fired forty times" is a different fact depending on whether the step
     /// ran forty times or forty thousand.
     /// </para>
+    /// <para>
+    /// <strong>Two kinds of answer, one shape of ending.</strong> A constant is filed; a
+    /// capability is dispatched through <c>ExecuteFallbackAsync</c> and files its own result.
+    /// Everything after that is identical — the same row, the same metric, the same exclusion
+    /// from the unwind stack — which is what makes <c>docs/10 §3</c>'s "capability or constant"
+    /// one policy rather than two that happen to share a name
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0079-a-fallback-capability-is-a-dispatch-of-its-own.md">ADR-0079</a>).
+    /// </para>
+    /// <para>
+    /// <strong>A fallback that fails leaves the step failed, and leaves it failed with the
+    /// step's own error.</strong> The degraded path not saving the step does not change what
+    /// went wrong: the dependency the author declared is what stopped answering, and that is
+    /// what belongs in the caller's error and in the trace. What the fallback did is recorded
+    /// where a second fact belongs — a journal row under its own id, and an <c>exhausted</c>
+    /// outcome on the counter that already carries "this policy was asked and could not help".
+    /// </para>
     /// </remarks>
     private async ValueTask<Degradation> DegradeAsync(
         ExecutionPlan plan,
@@ -1805,20 +1855,107 @@ public sealed class FlowEngine
             return default;
         }
 
-        // The one place a value enters the state bag without a capability having produced it.
-        // It is typed at the declaration site (FallbackValue.Of) and its shape is refused at
-        // build time by FLOWX1052, so what lands here is the contract the next step binds.
-        policy.Fallback!.ApplyTo(scope);
+        // Read before the dispatch, so a fallback capability's row carries how long the
+        // fallback took rather than how long nothing took. A constant costs the same clock
+        // read it always did, and only where there is a row to put it on.
+        var startedAt = cursor.IsJournaled ? _clock.UtcNow : default;
+
+        if (policy.FallbackDispatches)
+        {
+            var declined = await AskFallbackAsync(dispatcher, step, scope, ct).ConfigureAwait(false);
+
+            if (declined is not null)
+            {
+                // Counted as `exhausted` rather than given a label of its own: that is already
+                // "the policy was asked, used what it had, and the step still failed", which is
+                // exactly what has happened. A degraded mode that itself failed is the series
+                // an operator watches beside `degraded` to know whether the second dependency
+                // is any healthier than the first.
+                PolicyApplied(StepPolicy.FallbackKind, capabilityId, PolicyMetrics.ExhaustedOutcome);
+
+                // Under the fallback's own id, for the reason the success row is: the history
+                // has to show that the degraded path was tried here and did not work, or the
+                // next node resumes into a retry the author already spent.
+                var unrecorded = cursor.IsJournaled
+                    ? await CommitStepAsync(
+                        plan, dispatcher, context, scope, cursor, step, declined, startedAt,
+                        policy.FallbackCapability!.Id, policy.FallbackCapability.Version,
+                        attempt + 1, ct).ConfigureAwait(false)
+                    : null;
+
+                return new Degradation(false, unrecorded);
+            }
+        }
+        else
+        {
+            // The one place a value enters the state bag without a capability having produced
+            // it. It is typed at the declaration site (FallbackValue.Of) and its shape is
+            // refused at build time by FLOWX1052, so what lands here is the contract the next
+            // step binds. A fallback capability needs none of this: the generated dispatcher
+            // wrote its answer under the same contract, which is what the seam is for.
+            policy.Fallback!.ApplyTo(scope);
+        }
 
         PolicyApplied(StepPolicy.FallbackKind, capabilityId, PolicyMetrics.DegradedOutcome);
 
         var refusal = cursor.IsJournaled
             ? await CommitStepAsync(
-                plan, dispatcher, context, scope, cursor, step, failure: null,
-                _clock.UtcNow, capabilityVersion: null, attempt + 1, ct).ConfigureAwait(false)
+                plan, dispatcher, context, scope, cursor, step, failure: null, startedAt,
+                policy.FallbackCapability?.Id, policy.FallbackCapability?.Version,
+                attempt + 1, ct).ConfigureAwait(false)
             : null;
 
         return new Degradation(true, refusal);
+    }
+
+    /// <summary>
+    /// Asks the step's fallback capability, and converts anything it does wrong into an error.
+    /// </summary>
+    /// <param name="dispatcher">The generated code that knows the fallback's types.</param>
+    /// <param name="step">The node being answered for; its index is what names the fallback.</param>
+    /// <param name="scope">The view the step ran under, and the bag the answer is filed in.</param>
+    /// <param name="ct">The caller's token.</param>
+    /// <returns><c>null</c> when the fallback answered, otherwise why it did not.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>A cancellation is a refusal here, not a rethrow.</strong> Everywhere else in the
+    /// step loop an <see cref="OperationCanceledException"/> means the caller went away and the
+    /// completed work still has to unwind, so it takes the abandonment path. This call is
+    /// already on the failure path: the step has failed, the flow is deciding whether it can
+    /// carry on degraded, and the answer to "the deadline ran out while we asked the second
+    /// dependency" is that it cannot. Reported as an error keeps the step's own failure the one
+    /// the caller sees, which is what the fallback failing means.
+    /// </para>
+    /// <para>
+    /// The general catch is the same bargain the dispatch above strikes, for the same reason: a
+    /// capability that throws is a defect, and letting it escape from here would skip the
+    /// unwind that the steps before this one need.
+    /// </para>
+    /// </remarks>
+    private static async ValueTask<Error?> AskFallbackAsync(
+        IStepDispatcher dispatcher,
+        StepNode step,
+        FlowContext scope,
+        CancellationToken ct)
+    {
+        try
+        {
+            var outcome = await dispatcher
+                .ExecuteFallbackAsync(step.Index, scope, ct)
+                .ConfigureAwait(false);
+
+            return outcome.Error;
+        }
+        catch (OperationCanceledException)
+        {
+            return FlowErrors.Cancelled(step.Identity);
+        }
+#pragma warning disable CA1031 // A capability that throws is a defect; converted rather than
+        catch (Exception exception)  //   allowed to kill the trigger's consumer loop, exactly
+        {                            //   as the forward dispatch converts one.
+            return FlowErrors.Unhandled(step.Identity, exception);
+        }
+#pragma warning restore CA1031
     }
 
     /// <summary>
@@ -2917,9 +3054,17 @@ public sealed class FlowEngine
     /// <param name="step">The node that just finished.</param>
     /// <param name="failure">The step's error, or <c>null</c> when it succeeded.</param>
     /// <param name="startedAt">When the attempt began, for the recorded duration.</param>
+    /// <param name="capabilityId">
+    /// The capability to record as having run, or <c>null</c> for the step's own. Supplied only
+    /// by <see cref="DegradeAsync"/>, and it is the whole of a degraded execution's identity:
+    /// the key stays ADR-0015's four parts and the column beside it says which capability
+    /// answered, exactly as <c>docs/06 §7</c> rule 6 already has a compensation row name the
+    /// capability that reversed rather than the one it reversed (ADR-0079 §2.2).
+    /// </param>
     /// <param name="capabilityVersion">
-    /// The resolved version to record. Supplied by the caller only for a sub-flow, where the
-    /// meaningful version is the child flow's rather than a capability's.
+    /// The resolved version to record. Supplied by the caller for a sub-flow, where the
+    /// meaningful version is the child flow's rather than a capability's, and for a fallback,
+    /// where it is the answering capability's.
     /// </param>
     /// <param name="attempt">
     /// Which attempt at this step this node is committing, counting from one. Added to the
@@ -2973,6 +3118,7 @@ public sealed class FlowEngine
         StepNode step,
         Error? failure,
         DateTimeOffset startedAt,
+        string? capabilityId,
         string? capabilityVersion,
         int attempt,
         CancellationToken ct)
@@ -3009,7 +3155,7 @@ public sealed class FlowEngine
                 step.Index,
                 run.NextAttempt(cursor.Scope, step.Index) + attempt - 1),
             Token = run.Token,
-            CapabilityId = step.Identity,
+            CapabilityId = capabilityId ?? step.Identity,
             CapabilityVersion = capabilityVersion ?? step.Capability?.Version ?? plan.Flow.Version,
             Outcome = failure is null ? JournalOutcome.Success : JournalOutcome.Failure,
             Result = entry.Result,
@@ -3682,7 +3828,8 @@ public sealed class FlowEngine
             // same mechanism an AwaitSignal's own row uses.
             var refusal = await CommitStepAsync(
                 plan, dispatcher, context, scope, cursor, step,
-                failure: null, startedAt: _clock.UtcNow, capabilityVersion: null, attempt: 1, ct)
+                failure: null, startedAt: _clock.UtcNow, capabilityId: null,
+                capabilityVersion: null, attempt: 1, ct)
                 .ConfigureAwait(false);
 
             return refusal is not null
@@ -4223,7 +4370,7 @@ public sealed class FlowEngine
         return cursor.IsJournaled
             ? await CommitStepAsync(
                 plan, dispatcher, context, scope, cursor, step, failure, startedAt,
-                source.Plan.Flow.Version, attempt: 1, ct).ConfigureAwait(false)
+                capabilityId: null, source.Plan.Flow.Version, attempt: 1, ct).ConfigureAwait(false)
             : null;
     }
 

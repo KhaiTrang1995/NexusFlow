@@ -172,6 +172,55 @@ public sealed class StepTelemetry : IStepDispatcher
 
     /// <inheritdoc />
     /// <remarks>
+    /// <para>
+    /// A degraded answer is a step boundary too, and one an operator badly needs to see: it is
+    /// a call to a dependency the forward span never names, made at the moment another
+    /// dependency has just failed. Aggregated into the step's own histogram it would read as
+    /// that step getting slower during an outage, which is true and useless.
+    /// </para>
+    /// <para>
+    /// Spanned under its own name and its own capability id, for the reason a compensation is
+    /// (<c>docs/06 §7</c> rule 6): the identity a trace shows has to be the capability that
+    /// actually ran, or the trace and the journal row disagree about one execution.
+    /// </para>
+    /// </remarks>
+    public async ValueTask<StepOutcome> ExecuteFallbackAsync(
+        int stepIndex, FlowContext ctx, CancellationToken ct)
+    {
+        var step = _plan.Graph.Steps[stepIndex];
+        var identity = step.StepPolicy.FallbackCapability?.Id ?? step.Identity;
+
+        using var span = StartSpan("fallback", stepIndex, step, identity);
+
+        var startedAt = Stopwatch.GetTimestamp();
+
+        var outcome = await _inner.ExecuteFallbackAsync(stepIndex, ctx, ct).ConfigureAwait(false);
+
+        var outcomeLabel = outcome.IsSuccess ? "Success" : "Failure";
+
+        if (span is not null && outcome.Error is { } error)
+        {
+            span.SetTag(TelemetryNames.ErrorCode, error.Code);
+            span.SetTag(TelemetryNames.ErrorCategory, error.Category.ToString());
+            span.SetStatus(ActivityStatusCode.Error, error.Message);
+        }
+
+        Record(startedAt, stepIndex, step, identity, outcomeLabel);
+
+        Log(
+            stepIndex,
+            step,
+            identity,
+            outcomeLabel,
+            outcome.Error?.Code,
+            outcome.Error?.Category.ToString(),
+            ctx);
+
+        return outcome;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
     /// An undo is a step boundary too, and the one an operator is most likely to be reading a
     /// trace for. It is spanned under its own name so that a compensation is not silently
     /// aggregated into the forward step's histogram — <c>step 1 inventory.reserve</c> taking

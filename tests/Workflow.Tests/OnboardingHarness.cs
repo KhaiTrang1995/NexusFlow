@@ -422,6 +422,23 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Forwarded, and substitutable under the fallback's own id. A decorator that omitted this
+    /// would inherit the interface's default — a throw — and turn a declared degraded mode into
+    /// a crash in exactly the tests written to exercise it.
+    /// </remarks>
+    public ValueTask<StepOutcome> ExecuteFallbackAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+    {
+        var fallback = _plan.Graph[stepIndex].StepPolicy.FallbackCapability;
+
+        _trace.RecordStep(_plan.Flow.Id, stepIndex, fallback?.Id ?? "fallback");
+
+        return fallback is not null && _substitutions.TryGetValue(fallback.Id, out var standIn)
+            ? standIn(ctx, ct)
+            : _inner.ExecuteFallbackAsync(stepIndex, ctx, ct);
+    }
+
+    /// <inheritdoc />
     public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
     {
         var compensation = _plan.Graph[stepIndex].Compensation;

@@ -76,6 +76,18 @@ public sealed class FlowPlanGeneratorTests
             public ValueTask<Result<OrderResult>> ExecuteAsync(PlaceOrder input, CapabilityContext ctx, CancellationToken ct)
                 => ValueTask.FromResult(Result.Ok(new OrderResult(input.Sku)));
         }
+
+        // The clean second answer a capability-valued fallback needs: it produces what
+        // inventory.release produces and changes nothing, which is both halves of what
+        // FLOWX1052 and FLOWX1053 ask of a fallback. Referenced by no flow in the preamble,
+        // so it reaches a manifest only where a test declares a fallback over it.
+        [Capability("inventory.cached", Version = "1.0.0",
+            Authorization = Authorization.Internal, Idempotent = true)]
+        public sealed class CachedReservation : ICapability<PlaceOrder, Reservation>
+        {
+            public ValueTask<Result<Reservation>> ExecuteAsync(PlaceOrder input, CapabilityContext ctx, CancellationToken ct)
+                => ValueTask.FromResult(Result.Ok(new Reservation(input.Sku)));
+        }
         """;
 
     /// <summary>The shared preamble, plus one flow declaration.</summary>
@@ -814,6 +826,220 @@ public sealed class FlowPlanGeneratorTests
 
         run.Ids.ShouldNotContain("FLOWX1052", run.Describe());
         run.Ids.ShouldNotContain("FLOWX1053", run.Describe());
+    }
+
+    /// <summary>
+    /// A capability-valued fallback compiles, and emits the dispatch that makes it one.
+    /// </summary>
+    /// <remarks>
+    /// Four artefacts, and each is one of ADR-0078 §3's four blockers answered in the one place
+    /// that can answer it. The <c>ExecuteFallbackAsync</c> switch is the dispatch seam §3.1 said
+    /// did not exist; the descriptor and the third <c>ForStep</c> argument are what give the
+    /// engine an id to write on a degraded row (§3.2); the field is the injection that makes
+    /// the fallback an ordinary dependency; and the manifest entry is §3.4.
+    /// </remarks>
+    [Fact]
+    public void GeneratesAFallbackDispatchForACapabilityValuedFallback()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Degradable = PolicySet
+                    .Named("degradable")
+                    .Fallback<CachedReservation>();
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReleaseInventory>().WithPolicy(Policies.Degradable)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+
+        run.Plan.ShouldContainText(
+            "public async ValueTask<StepOutcome> ExecuteFallbackAsync(int stepIndex, FlowContext ctx, CancellationToken ct)",
+            run.Describe());
+
+        run.Plan.ShouldContainText(
+            "CapabilityDescriptor.Create(\"inventory.cached\", \"1.0.0\", true)",
+            run.Describe());
+
+        run.Plan.ShouldContainText(
+            "PolicyChain.ForStep(Policies.Degradable, Descriptors.Step0, Descriptors.Step0Fallback)",
+            run.Describe());
+
+        run.Plan.ShouldContainText(
+            "private readonly Sample.CachedReservation ",
+            run.Describe());
+
+        run.ManifestJson!.ShouldContain("\"fallback\": \"inventory.cached@1.0.0\"", Case.Sensitive, run.Describe());
+
+        run.ManifestJson!.ShouldContain(
+            "\"id\": \"inventory.cached\"",
+            Case.Sensitive,
+            "and it is in the capability inventory in its own right, not only as a name on " +
+            "the step. A dependency a build can call and the manifest does not list is one " +
+            "flowx diff and the impact analysis cannot see.");
+    }
+
+    /// <summary>
+    /// A flow that declares no capability fallback emits no fallback dispatch.
+    /// </summary>
+    /// <remarks>
+    /// The "did not happen" beside the "did", and the reason <c>IStepDispatcher</c> can default
+    /// the member to a throw: a dispatcher that cannot receive the call does not have to
+    /// implement it, which is what keeps every hand-written and third-party dispatcher from
+    /// copying unreachable code.
+    /// </remarks>
+    [Fact]
+    public void EmitsNoFallbackDispatchForAFlowThatDeclaresNoCapabilityFallback()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Degradable = PolicySet
+                    .Named("degradable")
+                    .Fallback(new Reservation("none"));
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReleaseInventory>().WithPolicy(Policies.Degradable)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldBeEmpty(run.Describe());
+        run.Plan.ShouldNotContainText("ExecuteFallbackAsync", run.Describe());
+
+        run.ManifestJson!.ShouldNotContain(
+            "\"fallback\"",
+            Case.Sensitive,
+            "A constant is an answer, not a dependency. There is nothing for a consumer of " +
+            "the manifest to resolve, and publishing the value would be the manifest carrying " +
+            "a business value rather than structure.");
+    }
+
+    /// <summary>
+    /// FLOWX1052 — a fallback capability that produces something no later step binds.
+    /// </summary>
+    /// <remarks>
+    /// The constant rule asked of a call. <c>inventory.release</c> produces a
+    /// <c>Reservation</c> and <c>payment.capture</c> produces an <c>OrderResult</c>; both
+    /// compile, and the mismatch is invisible until the first dependency is down and the
+    /// second files its answer under a type nothing binds. Same code as the constant's,
+    /// because the finding and the repair are the same and only the place the type is read
+    /// from differs.
+    /// </remarks>
+    [Fact]
+    public void ReportsFLOWX1052WhenTheFallbackCapabilityDoesNotProduceTheStepsOutput()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Degradable = PolicySet
+                    .Named("degradable")
+                    .Fallback<CapturePayment>();
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReleaseInventory>().WithPolicy(Policies.Degradable)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1052", run.Describe());
+
+        run.Describe().ShouldContain(
+            "Sample.Reservation",
+            Case.Sensitive,
+            "The message names the contract the step produces, because that is what the " +
+            "fallback has to produce.");
+    }
+
+    /// <summary>And it is silent when the fallback produces exactly what the step does.</summary>
+    [Fact]
+    public void AllowsAFallbackCapabilityThatProducesTheStepsOutput()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Degradable = PolicySet
+                    .Named("degradable")
+                    .Fallback<CachedReservation>();
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReleaseInventory>().WithPolicy(Policies.Degradable)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldNotContain("FLOWX1052", run.Describe());
+        run.Ids.ShouldNotContain("FLOWX1053", run.Describe());
+    }
+
+    /// <summary>
+    /// FLOWX1053 — the fallback capability itself changes something.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The rule's second half, and it is a different question from the first.</strong>
+    /// The step here is <c>inventory.release</c>, which has no side effects, so the rule as
+    /// WP-78 shipped it is satisfied and silent. What is refused is the answer:
+    /// <c>inventory.reserve</c> writes to the ledger, and a fallback runs precisely because a
+    /// dependency has just failed — so it is the least-exercised path in the system running at
+    /// the worst moment, and an effect made there sits under a step whose own capability made
+    /// none, with nothing on the unwind stack pointing at it.
+    /// </para>
+    /// <para>
+    /// This is where ADR-0078 §3.3's objection is answered rather than engineered around: it
+    /// argued a step answered by a fallback capability "really did produce an effect, so it
+    /// must be compensable". Refused at build time, it does not — so §2.7's rule that a
+    /// degraded step registers no compensation survives word for word
+    /// (<a href="../../docs/adr/ADR-0079-a-fallback-capability-is-a-dispatch-of-its-own.md">ADR-0079</a> §2.3).
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ReportsFLOWX1053WhenTheFallbackCapabilityHasSideEffects()
+    {
+        var run = GeneratorHarness.Run(WithFlow("""
+            public static class Policies
+            {
+                public static readonly PolicySet Degradable = PolicySet
+                    .Named("degradable")
+                    .Fallback<ReserveInventory>();
+            }
+
+            [Flow("order.place")]
+            public sealed partial class PlaceOrderFlow : Flow<PlaceOrder, OrderResult>
+            {
+                protected override void Define(IFlowBuilder<PlaceOrder, OrderResult> flow) => flow
+                    .Step<ReleaseInventory>().WithPolicy(Policies.Degradable)
+                    .Return(ctx => new OrderResult("id"));
+            }
+            """));
+
+        run.Ids.ShouldContain("FLOWX1053", run.Describe());
+
+        run.Describe().ShouldContain(
+            "inventory.reserve",
+            Case.Sensitive,
+            "and it names the fallback rather than the step, because the fallback is the " +
+            "declaration the author has to change. Naming inventory.release would send them " +
+            "to a capability that is not the problem.");
     }
 
     /// <summary>

@@ -895,6 +895,41 @@ public static class FlowErrors
             .With("subFlowId", subFlowId)
             .With("maxDepth", depth);
 
+    /// <summary>
+    /// A resumed instance found its step already answered for by the fallback capability, so
+    /// the primary is not asked again.
+    /// </summary>
+    /// <param name="capabilityId">The step's own capability, which finished failing elsewhere.</param>
+    /// <param name="fallbackId">The capability that owns the step now.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>A failure that exists to be replaced, and usually is.</strong> The step loop
+    /// needs a non-null error to carry into <c>DegradeAsync</c> — that is what "the step has
+    /// finished failing" is spelled as — and a resumed instance no longer has the one the dead
+    /// node saw, because a journal row records an outcome and never an <see cref="Error"/>.
+    /// This says exactly what the committed history supports and nothing more. When the
+    /// fallback then answers, it is discarded; it reaches a caller only when the fallback fails
+    /// too, which is the case where naming both capabilities is precisely what an operator
+    /// needs.
+    /// </para>
+    /// <para>
+    /// <see cref="ErrorCategory.Unavailable"/> rather than <see cref="ErrorCategory.Internal"/>:
+    /// what is known is that a dependency stopped answering, which is the category the primary's
+    /// own exhaustion would almost always have carried. Guessing <c>Internal</c> would turn a
+    /// dependency's outage into this platform's defect in every trace of a resumed degradation.
+    /// </para>
+    /// </remarks>
+    public static Error StepAlreadyDegrading(string capabilityId, string fallbackId) =>
+        new Error(
+            "flow.step_already_degrading",
+            $"Capability '{capabilityId}' had already failed for the last time when this " +
+            $"instance was resumed, and its declared fallback '{fallbackId}' has a committed " +
+            "row. The step is answered by the fallback rather than by asking the primary " +
+            "again, so the attempts the author declared are not spent a second time.",
+            ErrorCategory.Unavailable)
+            .With("capabilityId", capabilityId)
+            .With("fallbackCapabilityId", fallbackId);
+
     /// <summary>The code <see cref="SignalNotReceived"/> raises.</summary>
     /// <remarks>
     /// A constant because a caller has a reason to branch on it that no other engine error
