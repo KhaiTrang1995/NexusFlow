@@ -40,7 +40,7 @@
     "    dev      25 flows  18,393,360 B  +2.28 %   50 flows  36,740,280 B  +2.28 %",
     "    e4b650a  25 flows  18,394,328 B  +2.29 %   50 flows  36,670,448 B  +2.09 %",
     "",
-    "Emitted characters are identical on both \u2014 401,535 and 805,563 \u2014 because the probe",
+    "Emitted characters are identical on both — 401,535 and 805,563 — because the probe",
     "references only Abstractions, Core and Runtime, so the two emitters e4b650a added are",
     "gated off for it and cost it nothing. What this commit contributes is +0.01 % at 25",
     "flows and -0.19 % at 50.",
@@ -50,14 +50,14 @@
     "gate is relative and works from here; the drift behind it is unattributed."
   ],
   "recordedOn": {
-    "commit": "5efad74",
-    "recordedAt": "2026-08-10",
+    "commit": "f9025ec",
+    "recordedAt": "2026-08-15",
     "roslyn": "4.14.0-3.25262.10+8edf7bcd4f1594c3d68a6a567469f41dbd33dd1b",
     "roslynAssemblyVersion": "4.14.0.0",
     "framework": ".NET 10.0.10",
     "sdk": "10.0.110",
     "nproc": 4,
-    "load1DuringRun": 1.52,
+    "load1DuringRun": 1.48,
     "runsPerSize": 5,
     "warmupPerSize": 2
   },
@@ -132,22 +132,22 @@
   },
   "sizes": {
     "25": {
-      "allocatedBytes": 19313040,
-      "allocatedBytesPerFlow": 772521.6,
+      "allocatedBytes": 18232784,
+      "allocatedBytesPerFlow": 729311.4,
       "sourcesSha256": "c80fa5b5f3bc074258b2a7707f3eaedfb0e192ffc5599ee5c3397250737743f8",
       "generatedTrees": 26,
-      "generatedChars": 401535,
+      "generatedChars": 401560,
       "diagnostics": 24,
-      "observedSpreadPercent": 0.5191
+      "observedSpreadPercent": 0.1543
     },
     "50": {
-      "allocatedBytes": 38463616,
-      "allocatedBytesPerFlow": 769272.3,
+      "allocatedBytes": 36328176,
+      "allocatedBytesPerFlow": 726563.5,
       "sourcesSha256": "63dacc54694291ce27e7110ced5bd4f9061dbeac8554e0ad7eb1aa58b61c7a65",
       "generatedTrees": 51,
-      "generatedChars": 805563,
+      "generatedChars": 805613,
       "diagnostics": 49,
-      "observedSpreadPercent": 0.1523
+      "observedSpreadPercent": 0.2868
     }
   }
 }

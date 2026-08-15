@@ -75,8 +75,6 @@ public static class ErrorCatalogueReader
     private const string ErrorTypeName = "Error";
     private const string ResultTypeName = "Result";
     private const string FlowXNamespace = "FlowX";
-    private const string TasksNamespace = "System.Threading.Tasks";
-    private const string CompilerServicesNamespace = "System.Runtime.CompilerServices";
     private const string CapabilityInterface = "ICapability`2";
     private const string EntryPointName = "ExecuteAsync";
 
@@ -120,6 +118,30 @@ public static class ErrorCatalogueReader
     /// </remarks>
     private static readonly ConditionalWeakTable<Compilation, object> TreeCounts =
         new ConditionalWeakTable<Compilation, object>();
+
+    /// <summary>The semantic models every scan of one compilation shares.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Per compilation, not per scan.</strong> <see cref="Scan"/>'s own dictionary
+    /// already stops one capability from binding a file twice, and that is as far as it goes:
+    /// the next capability starts a new scan and builds its own model of the same tree. A
+    /// capability's error factories are shared by construction — <c>docs/07-Capability-Model.md
+    /// §7</c> requires one static factory class per domain — so every capability in a domain
+    /// followed its trail into the same file and bound those factory bodies again. On the
+    /// 50-flow synthetic subject that was 524 models over 51 distinct trees.
+    /// </para>
+    /// <para>
+    /// A model's answers are a function of the compilation and the tree, so sharing one changes
+    /// no answer; what it changes is how many times the bodies behind those answers are bound.
+    /// </para>
+    /// <para>
+    /// Keyed weakly on the compilation, so the models die with it and an edit — which produces
+    /// a new compilation — carries nothing across. What this holds is one model per tree the
+    /// pass asked about, which is a subset of the trees it was going to bind anyway.
+    /// </para>
+    /// </remarks>
+    private static readonly ConditionalWeakTable<Compilation, ConcurrentDictionary<SyntaxTree, SemanticModel>> Models =
+        new ConditionalWeakTable<Compilation, ConcurrentDictionary<SyntaxTree, SemanticModel>>();
 
     private sealed class Memo
     {
@@ -234,7 +256,7 @@ public static class ErrorCatalogueReader
         foreach (var contract in capability.AllInterfaces)
         {
             if (contract.MetadataName != CapabilityInterface
-                || contract.ContainingNamespace?.ToDisplayString() != FlowXNamespace)
+                || !IsFlowXNamespace(contract.ContainingNamespace))
             {
                 continue;
             }
@@ -286,6 +308,19 @@ public static class ErrorCatalogueReader
         private readonly Dictionary<SyntaxTree, SemanticModel> _models =
             new Dictionary<SyntaxTree, SemanticModel>();
 
+        /// <summary>The one semantic model this compilation uses for a tree.</summary>
+        private static SemanticModel SharedModel(Compilation compilation, SyntaxTree tree)
+        {
+            var models = Models.GetOrCreateValue(compilation);
+
+            // TryGetValue first so the common case does not build a model to throw away:
+            // GetOrAdd takes the value, not a factory, because the factory overload that
+            // avoids the closure allocation is not in netstandard2.0.
+            return models.TryGetValue(tree, out var model)
+                ? model
+                : models.GetOrAdd(tree, compilation.GetSemanticModel(tree));
+        }
+
         /// <summary>The semantic model for a tree, reused for the length of this scan.</summary>
         /// <param name="compilation">The compilation the model comes from.</param>
         /// <param name="tree">The tree to bind.</param>
@@ -293,7 +328,7 @@ public static class ErrorCatalogueReader
         {
             if (!_models.TryGetValue(tree, out var model))
             {
-                model = compilation.GetSemanticModel(tree);
+                model = SharedModel(compilation, tree);
                 _models.Add(tree, model);
             }
 
@@ -447,7 +482,35 @@ public static class ErrorCatalogueReader
     private static bool IsErrorType(ITypeSymbol? type) =>
         type is not null
         && type.Name == ErrorTypeName
-        && type.ContainingNamespace?.ToDisplayString() == FlowXNamespace;
+        && IsFlowXNamespace(type.ContainingNamespace);
+
+    /// <summary>Whether this is the top-level <c>FlowX</c> namespace.</summary>
+    /// <remarks>
+    /// Exactly what <c>ContainingNamespace?.ToDisplayString() == "FlowX"</c> asked, without the
+    /// string — <c>StepBindingAnalyzer</c> makes the same trade for the same reason: the display
+    /// is the dotted path from the global namespace, so equality with a one-segment name says
+    /// the segment is <c>FlowX</c> and its parent is global.
+    /// </remarks>
+    private static bool IsFlowXNamespace(INamespaceSymbol? candidate) =>
+        candidate is { Name: FlowXNamespace }
+        && candidate.ContainingNamespace is { IsGlobalNamespace: true };
+
+    /// <summary>Whether a namespace is exactly the three-segment path given.</summary>
+    /// <remarks>
+    /// Read from the inside out, because that is the direction the symbol links. Same trade as
+    /// <see cref="IsFlowXNamespace"/>, and it matters more here: <see cref="CarriesResult"/> is
+    /// asked about every arity-1 generic the walk meets, and building
+    /// <c>"System.Threading.Tasks"</c> to throw it away was the most repeated allocation in this
+    /// reader.
+    /// </remarks>
+    private static bool IsNamespace(INamespaceSymbol? candidate, string outer, string middle, string inner) =>
+        candidate is { } innermost
+        && innermost.Name == inner
+        && innermost.ContainingNamespace is { } parent
+        && parent.Name == middle
+        && parent.ContainingNamespace is { } grandparent
+        && grandparent.Name == outer
+        && grandparent.ContainingNamespace is { IsGlobalNamespace: true };
 
     /// <summary>Whether a type is <c>Result&lt;T&gt;</c>, or an awaitable wrapped round one.</summary>
     /// <remarks>
@@ -464,17 +527,22 @@ public static class ErrorCatalogueReader
             return false;
         }
 
-        var containing = named.ContainingNamespace?.ToDisplayString();
-
-        if (named.Name == ResultTypeName && containing == FlowXNamespace)
+        // The name first and the namespace only for a name that could match, because this is
+        // asked of every arity-1 generic in every body the walk enters and almost none of them
+        // are one of these five.
+        if (named.Name == ResultTypeName)
         {
-            return true;
+            return IsFlowXNamespace(named.ContainingNamespace);
         }
 
-        var isAwaitable =
-            (containing == TasksNamespace && (named.Name == "Task" || named.Name == "ValueTask"))
-            || (containing == CompilerServicesNamespace
-                && (named.Name == "ConfiguredValueTaskAwaitable" || named.Name == "ConfiguredTaskAwaitable"));
+        var isAwaitable = named.Name switch
+        {
+            "Task" or "ValueTask" =>
+                IsNamespace(named.ContainingNamespace, "System", "Threading", "Tasks"),
+            "ConfiguredValueTaskAwaitable" or "ConfiguredTaskAwaitable" =>
+                IsNamespace(named.ContainingNamespace, "System", "Runtime", "CompilerServices"),
+            _ => false,
+        };
 
         return isAwaitable && CarriesResult(named.TypeArguments[0]);
     }
@@ -483,13 +551,13 @@ public static class ErrorCatalogueReader
         type is INamedTypeSymbol named
         && named.Name == ResultTypeName
         && named.Arity == 1
-        && named.ContainingNamespace?.ToDisplayString() == FlowXNamespace;
+        && IsFlowXNamespace(named.ContainingNamespace);
 
     /// <summary>Either <c>Result</c> or <c>Result&lt;T&gt;</c> — where the factories live.</summary>
     private static bool IsResultContainer(ITypeSymbol? type) =>
         type is not null
         && type.Name == ResultTypeName
-        && type.ContainingNamespace?.ToDisplayString() == FlowXNamespace;
+        && IsFlowXNamespace(type.ContainingNamespace);
 
     /// <summary>Resolves an expression whose carrier kind is already known.</summary>
     private static void Resolve(
@@ -757,7 +825,7 @@ public static class ErrorCatalogueReader
         // same value on the other side, and every capability's signature has one of them.
         if (method.IsStatic
             && method.Name == "FromResult"
-            && method.ContainingType?.ContainingNamespace?.ToDisplayString() == TasksNamespace)
+            && IsNamespace(method.ContainingType?.ContainingNamespace, "System", "Threading", "Tasks"))
         {
             var arguments = invocation.ArgumentList.Arguments;
 
