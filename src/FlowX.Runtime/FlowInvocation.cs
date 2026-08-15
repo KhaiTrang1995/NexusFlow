@@ -31,6 +31,10 @@ namespace FlowX.Runtime;
 /// set — the schema a change was read from, a broker field a FlowX producer wrote, a
 /// schedule's declared tenant — rather than asserted by whoever is calling.
 /// </param>
+/// <param name="Purpose">
+/// What this invocation's processing is for, resolved from validated claims only, or
+/// <c>null</c> when the caller asserted none.
+/// </param>
 /// <remarks>
 /// <para>
 /// A readonly record struct, so starting a flow does not allocate an argument object. The
@@ -83,6 +87,29 @@ namespace FlowX.Runtime;
 /// Nothing a caller can reach sets it: <c>HttpTriggerReader</c> leaves it false, and
 /// <c>OnlyAPlatformTriggerAttestsATenant</c> is the gate that keeps it that way.
 /// </para>
+/// <para>
+/// <strong><see cref="Purpose"/> travels the path <see cref="TenantId"/> travelled, and is
+/// read from a claim for the same reason.</strong> It is what a declared
+/// <c>PolicySet.Consent(purpose)</c> is compared against — GDPR Article 5(1)(b)'s purpose
+/// limitation, decided at stage 2 beside the capability's stance. A purpose taken from a
+/// header, a query string or the payload would be a purpose the caller picks, and a
+/// purpose-limitation control whose input the limited party supplies limits nothing; so
+/// <c>HttpTriggerReader</c> reads a <c>purpose</c> claim and there is deliberately no
+/// configuration hook to add a second source, which is the stance <c>TenantClaimTypes</c> and
+/// <c>StepAuthorization.PermissionClaimTypes</c> both take.
+/// </para>
+/// <para>
+/// <strong>Absent means absent, and a consent-gated step refuses it.</strong> Defaulted so
+/// that every existing construction still compiles and still means what it did — a trigger
+/// that supplies no purpose produces an invocation that has asserted none, which is the
+/// truthful reading of one, and under deny-by-default that is a refusal rather than a permit.
+/// A step declaring no <c>Consent</c> never reads this field.
+/// </para>
+/// <para>
+/// Last in the parameter list, after <see cref="TenantAttested"/>, for the reason
+/// <see cref="Principal"/> was: a positional construction written before this existed still
+/// compiles and still means the same thing.
+/// </para>
 /// </remarks>
 public readonly record struct FlowInvocation(
     string CorrelationId,
@@ -91,7 +118,8 @@ public readonly record struct FlowInvocation(
     DateTimeOffset? Deadline = null,
     ClaimsPrincipal? Principal = null,
     bool IsContinuation = false,
-    bool TenantAttested = false);
+    bool TenantAttested = false,
+    string? Purpose = null);
 
 /// <summary>What happened to the compensations after a flow failed.</summary>
 public enum CompensationOutcome
@@ -615,6 +643,92 @@ public static class FlowErrors
                   "cannot reach its server does not know what this holder has already spent.",
             ErrorCategory.Unavailable)
             .With("capabilityId", capabilityId);
+
+    /// <summary>The code <see cref="ConsentPurposeAbsent"/> raises.</summary>
+    /// <remarks>
+    /// Spelled with the policy's prefix like every other policy failure, and kept distinct
+    /// from <see cref="ConsentPurposeNotCoveredCode"/> for the reason
+    /// <c>authorization.not_authenticated</c> is kept distinct from
+    /// <c>authorization.permission_denied</c> one line up the same stage: "you asserted no
+    /// purpose" and "you asserted one and it is not this one" lead to different repairs — the
+    /// first is a credential that has to start carrying a <c>purpose</c> claim, the second is
+    /// a caller doing something it was never granted. An operator reading a refusal must not
+    /// have to guess which.
+    /// </remarks>
+    public const string ConsentPurposeAbsentCode = "policy.consent_purpose_absent";
+
+    /// <summary>
+    /// A step declares a <c>Consent</c> purpose and the invocation asserted none.
+    /// </summary>
+    /// <param name="capabilityId">The capability whose purpose went unstated.</param>
+    /// <param name="declared">The purpose the step is declared to serve.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>A refusal, and this is the direction that makes the policy worth
+    /// declaring.</strong> Admitting an invocation that named no purpose would mean the gate
+    /// held for callers who had thought about it and opened for everybody else — the control
+    /// failing open on exactly the population it exists for, which is
+    /// <c>docs/15 §1</c>'s deny-by-default row and
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0030-policy-stance-is-refused-at-build-time.md">ADR-0030</a>'s
+    /// argument one stage earlier.
+    /// </para>
+    /// <para>
+    /// <see cref="ErrorCategory.Forbidden"/>, which is what every stage-2 refusal carries: a
+    /// transport renders it <c>403</c>, <c>IsTerminal</c> keeps it out of every retry set, and
+    /// asking again with the same credential gets the same answer.
+    /// </para>
+    /// <para>
+    /// It names the purpose the step wants and never the one the caller sent, for
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0029-a-refusal-is-a-result-failure.md">ADR-0029</a>
+    /// §2.2's reason: the declared purpose is already public — it is in
+    /// <c>flowx.manifest.json</c> — so naming it tells the caller what to ask for, and there
+    /// is nothing of the caller's to disclose.
+    /// </para>
+    /// </remarks>
+    public static Error ConsentPurposeAbsent(string capabilityId, string declared) =>
+        new Error(
+            ConsentPurposeAbsentCode,
+            $"Capability '{capabilityId}' may be invoked only for the purpose '{declared}' " +
+            "and this invocation asserted no purpose at all. A purpose is read from a " +
+            "validated claim, never from a header or a payload — a caller that supplied its " +
+            "own would be limiting itself.",
+            ErrorCategory.Forbidden)
+            .With("capabilityId", capabilityId)
+            .With("purpose", declared);
+
+    /// <summary>The code <see cref="ConsentPurposeNotCovered"/> raises.</summary>
+    public const string ConsentPurposeNotCoveredCode = "policy.consent_purpose_not_covered";
+
+    /// <summary>
+    /// The invocation asserted a purpose and it is not the one the step is declared to serve.
+    /// </summary>
+    /// <param name="capabilityId">The capability the purpose does not cover.</param>
+    /// <param name="declared">The purpose the step is declared to serve.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Purpose limitation, and the comparison is an equality on purpose.</strong> A
+    /// consent to be treated is not a consent to be studied, and whether one purpose subsumes
+    /// another is a legal judgement rather than a fact about string prefixes — so the engine
+    /// compares ordinally and a step serving two purposes is two steps.
+    /// </para>
+    /// <para>
+    /// <see cref="ErrorCategory.Forbidden"/>, and the asserted purpose is deliberately absent
+    /// from the message and from the detail. It came off the caller's credential, which makes
+    /// it the caller's claims in an RFC 7807 body — the information disclosure
+    /// <c>docs/15 §3</c>'s Boundary 1 row refuses, and what
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0029-a-refusal-is-a-result-failure.md">ADR-0029</a>
+    /// §2.2 already settled for the stance beside this one: name the grant, never the caller.
+    /// </para>
+    /// </remarks>
+    public static Error ConsentPurposeNotCovered(string capabilityId, string declared) =>
+        new Error(
+            ConsentPurposeNotCoveredCode,
+            $"Capability '{capabilityId}' may be invoked only for the purpose '{declared}' " +
+            "and this invocation was made for another one. A purpose is granted for what it " +
+            "names and does not extend to a second.",
+            ErrorCategory.Forbidden)
+            .With("capabilityId", capabilityId)
+            .With("purpose", declared);
 
     /// <summary>The code <see cref="ValidationFailed"/> raises.</summary>
     /// <remarks>

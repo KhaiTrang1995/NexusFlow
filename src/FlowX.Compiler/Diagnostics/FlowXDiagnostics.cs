@@ -1930,6 +1930,50 @@ public static class FlowXDiagnostics
         "comparison at build time, and a run-time parse is what constraint C2 refuses.",
         DiagnosticSeverity.Error);
 
+    /// <summary>FLOWX1057 — a <c>Consent</c> declared with no purpose to compare against.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><c>FLOWX1056</c>'s objection, one stage earlier and one argument stronger.</strong>
+    /// A <c>Validate</c> over a contract with no rules examines every input and refuses none;
+    /// a <c>Consent("")</c> compares every invocation's purpose against the empty string and
+    /// admits none — which sounds like the safe direction and is not, because
+    /// <c>StepPolicy.HasConsent</c> reads a blank purpose as <em>undeclared</em> rather than as
+    /// refusing. A purpose nobody wrote is not a purpose nobody may satisfy, so the run-time
+    /// floor lets the step through, and what ships is a stage-2 gate the manifest publishes
+    /// and the engine skips.
+    /// </para>
+    /// <para>
+    /// <strong>An error, for the reason every rule in the security family is one.</strong>
+    /// <c>SafetyDiagnosticsAreErrorsRatherThanWarnings</c> holds the line that
+    /// <c>FLOWX1010</c>, <c>FLOWX1030</c> and <c>FLOWX1037</c> already sit on: a control that
+    /// silently does not run is the failure mode
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0030-policy-stance-is-refused-at-build-time.md">ADR-0030</a>
+    /// exists over, and a warning here would make the newest member of the family the only one
+    /// a team may leave switched on.
+    /// </para>
+    /// <para>
+    /// <strong>It reads a literal and is silent on anything else</strong>, exactly as
+    /// <c>FLOWX1035</c> is about an attempt count. A purpose composed at run time is not
+    /// something this rule can evaluate, and guessing would report a set that is fine; the
+    /// run-time floor is what covers that case, by treating whatever arrives as undeclared if
+    /// it is blank rather than as a gate nobody can pass.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor ConsentHasNoPurpose = Create(
+        "FLOWX1057",
+        "Consent is declared with no purpose",
+        "'{0}' declares a Consent with a blank purpose in policy set '{1}' — the gate is " +
+        "published in the manifest and skipped by the engine",
+        "A Consent names the processing purpose the step may be invoked for, and the engine " +
+        "compares it with the purpose the invocation carried on a validated claim. A blank " +
+        "purpose is read as no purpose declared, so the step is dispatched to every caller " +
+        "while the manifest publishes an Identity-stage policy on it — a control that reads " +
+        "as present and is not. Fix it by naming the purpose the step serves, or by removing " +
+        "the .Consent(...) from the policy set. A purpose is compared ordinally and in whole, " +
+        "so it is an identifier rather than a sentence, and a step that serves two purposes " +
+        "is two steps.",
+        DiagnosticSeverity.Error);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1982,7 +2026,8 @@ public static class FlowXDiagnostics
         FallbackRequiresNoSideEffects,
         DeclaredWaitCannotBeFolded,
         EventSchemaVersionCannotBeRead,
-        ValidateHasNothingToCheck);
+        ValidateHasNothingToCheck,
+        ConsentHasNoPurpose);
 
     private static DiagnosticDescriptor Create(
         string id,

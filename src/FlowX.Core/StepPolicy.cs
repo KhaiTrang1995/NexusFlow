@@ -63,6 +63,7 @@ public sealed class StepPolicy
         int budget,
         TimeSpan quotaPeriod,
         QuotaScope quotaScope,
+        string? consentPurpose,
         bool validates,
         TimeSpan? idempotencyWindow,
         IdempotencyScope idempotencyScope,
@@ -88,6 +89,7 @@ public sealed class StepPolicy
         Budget = budget;
         QuotaPeriod = quotaPeriod;
         QuotaScope = quotaScope;
+        ConsentPurpose = consentPurpose;
         Validates = validates;
         IdempotencyWindow = idempotencyWindow;
         IdempotencyScope = idempotencyScope;
@@ -107,7 +109,7 @@ public sealed class StepPolicy
         null, 1, Backoff.ExponentialJitter(), ImmutableArray<ErrorCategory>.Empty,
         0d, TimeSpan.Zero, TimeSpan.Zero, 0, 0,
         0, TimeSpan.Zero, RateLimitScope.Tenant,
-        0, TimeSpan.Zero, QuotaScope.Tenant, false, null, IdempotencyScope.Tenant,
+        0, TimeSpan.Zero, QuotaScope.Tenant, null, false, null, IdempotencyScope.Tenant,
         null, CacheScope.Tenant, TimeSpan.Zero, 1, null, null);
 
     /// <summary>
@@ -184,6 +186,35 @@ public sealed class StepPolicy
 
     /// <summary>Whose plan the quota's budget belongs to.</summary>
     public QuotaScope QuotaScope { get; }
+
+    /// <summary>
+    /// The purpose this step may be invoked for, or <c>null</c> when no consent was declared.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Stage 2's only declarable parameter, and the only one on this type that is compared
+    /// against something the <em>invocation</em> carries rather than against a store, a clock
+    /// or a count. The capability's authorisation stance is decided beside it and is resolved
+    /// somewhere else entirely — <see cref="StepAuthorization"/>, off the descriptor — because
+    /// a stance is derived from the capability and a purpose is declared on the step.
+    /// </para>
+    /// <para>
+    /// A string rather than an enum, for the reason <c>Permission</c> is: the vocabulary
+    /// belongs to the deployment, arrives in a claim, and is published in the manifest for
+    /// somebody outside this repository to read.
+    /// </para>
+    /// </remarks>
+    public string? ConsentPurpose { get; }
+
+    /// <summary>True when a consent purpose that can actually be compared was declared.</summary>
+    /// <remarks>
+    /// A blank purpose leaves this false rather than making a gate that compares against the
+    /// empty string and admits every caller that asserts nothing. <c>FLOWX1057</c> refuses one
+    /// at build time; this is the run-time floor under it, for the hand-built chain the rule
+    /// cannot see — and it reads as undeclared rather than as refusing, because a purpose
+    /// nobody wrote is not a purpose nobody may satisfy.
+    /// </remarks>
+    public bool HasConsent => !string.IsNullOrWhiteSpace(ConsentPurpose);
 
     /// <summary>
     /// Whether the step's input is checked against the rules its contract declares.
@@ -346,7 +377,7 @@ public sealed class StepPolicy
     /// </remarks>
     public bool IsActive =>
         Timeout is not null || IsRetrying || HasBreaker || HasBulkhead
-        || HasRateLimit || HasQuota || Validates || HasIdempotency || HasCache
+        || HasRateLimit || HasQuota || HasConsent || Validates || HasIdempotency || HasCache
         || HasHedge || HasFallback;
 
     /// <summary>
@@ -378,6 +409,7 @@ public sealed class StepPolicy
         var budget = 0;
         var quotaPeriod = TimeSpan.Zero;
         var quotaScope = QuotaScope.Tenant;
+        string? consentPurpose = null;
         var validates = false;
         TimeSpan? idempotencyWindow = null;
         var idempotencyScope = IdempotencyScope.Tenant;
@@ -402,6 +434,15 @@ public sealed class StepPolicy
                     budget = Math.Max(0, Parameter(policy, "budget", 0));
                     quotaPeriod = Parameter(policy, "period", TimeSpan.Zero);
                     quotaScope = Parameter(policy, "scope", QuotaScope.Tenant);
+                    break;
+
+                case ConsentKind:
+                    // Kept exactly as written, including the case. A purpose is compared
+                    // ordinally against a claim value, so folding the case here would make
+                    // the engine's answer depend on a normalisation the manifest does not
+                    // publish — and "Treatment" and "treatment" being one purpose is a
+                    // deployment's decision about its own vocabulary, not this type's.
+                    consentPurpose = Parameter<string?>(policy, "purpose", null);
                     break;
 
                 case ValidateKind:
@@ -473,7 +514,8 @@ public sealed class StepPolicy
         var resolved = new StepPolicy(
             timeout, attempts, backoff, retryOn,
             failureRatio, samplingWindow, breakDuration, maxConcurrency, queueDepth,
-            permits, rateWindow, rateScope, budget, quotaPeriod, quotaScope, validates,
+            permits, rateWindow, rateScope, budget, quotaPeriod, quotaScope,
+            consentPurpose, validates,
             idempotencyWindow, idempotencyScope,
             cacheTtl, cacheScope, hedgeAfter, hedgeAttempts, fallback, fallbackCapability);
 
@@ -491,6 +533,26 @@ public sealed class StepPolicy
     /// a longer window — see that interface for the argument.
     /// </remarks>
     public const string QuotaKind = "Quota";
+
+    /// <summary>The descriptor kind <see cref="PolicySet.Consent"/> emits.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Stage 2's first and only declarable kind</strong>, and the first policy on this
+    /// type that opens a stage rather than joining one — every widening since
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0023-policy-stages-hook-through-the-plan.md">ADR-0023</a>
+    /// has been a second kind in a stage that already ran.
+    /// </para>
+    /// <para>
+    /// <strong>It shares its stage with the authorisation stance and does not share its
+    /// resolution, deliberately.</strong> A stance is <em>derived</em> from the capability —
+    /// <see cref="StepAuthorization.From"/> reads it off the descriptor — and a purpose is
+    /// <em>declared</em> on the step, so the two arrive by different routes and are asked as
+    /// two questions. What they are not is two answers to one question: the stance decides
+    /// <em>who</em> and this decides <em>what for</em>, and neither can permit what the other
+    /// refuses.
+    /// </para>
+    /// </remarks>
+    public const string ConsentKind = "Consent";
 
     /// <summary>The descriptor kind <see cref="PolicySet.Validate"/> emits.</summary>
     /// <remarks>

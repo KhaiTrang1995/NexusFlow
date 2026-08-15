@@ -792,6 +792,13 @@ public static class ManifestWriter
             // new rule — the same property that made Hedge and Fallback free below.
             ["Quota"] = "Admission",
             ["Validate"] = "Integrity",
+
+            // WP-83, and the one entry in this table that is a new stage rather than a second
+            // kind in an old one. `Identity` has always been in the stage enum and has never
+            // had a declarable member: the authorisation stance runs there and is derived from
+            // the capability, so it appears on `capability.authorization` and not in a step's
+            // `policies`. A consent is declared, so it does.
+            ["Consent"] = "Identity",
             ["Timeout"] = "Resilience",
             ["Retry"] = "Resilience",
             ["CircuitBreaker"] = "Resilience",

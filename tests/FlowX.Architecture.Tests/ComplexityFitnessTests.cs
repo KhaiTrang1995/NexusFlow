@@ -69,7 +69,12 @@ public sealed class ComplexityFitnessTests
     /// now is, because moving those out would hide the assignment that makes a failed step
     /// succeed. The three the capability half added are the resume rule: a step whose fallback
     /// already has a committed row skips the retry entirely, and that decision has to be taken
-    /// where the retry is. <c>DispatchHedgedAsync</c> is recorded at 24 on the same terms as
+    /// where the retry is. It moved again, to 170, when stage 2 gained its declarable kind:
+    /// three lines, and they are a guard beside the stance's — the comparison itself is
+    /// <c>ConsentNotGiven</c>, which is where a policy that can only refuse belongs, and what
+    /// stays in the loop is the branch that ends the step. That is the same split the two
+    /// stage-1 kinds already take.
+    /// <c>DispatchHedgedAsync</c> is recorded at 24 on the same terms as
     /// <c>KafkaBusConsumer.ReceiveAsync</c>: it is one race, and its cost is the two loops that
     /// express "wait for whichever of these happens first, and then decide whether to issue
     /// another" — which is what a hedge is, and what any extraction would have to re-inline to
@@ -87,7 +92,7 @@ public sealed class ComplexityFitnessTests
     /// </remarks>
     private static readonly Dictionary<string, int> RecordedExceedances = new(StringComparer.Ordinal)
     {
-        ["FlowEngine.RunRangeAsync"] = 167,
+        ["FlowEngine.RunRangeAsync"] = 170,
         ["SeedReader.Declarations"] = 53,
         ["SeedApplier.ApplyAsync"] = 41,
         ["FlowXOptionsValidator.Validate"] = 29,

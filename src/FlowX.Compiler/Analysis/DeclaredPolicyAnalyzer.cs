@@ -110,7 +110,10 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     /// which is the first time this list has grown over a kind that was catalogued and
     /// undeclarable rather than declarable and unread; and <c>Quota</c> and <c>Validate</c> when
     /// stages 1 and 3 each grew a second kind, which is the second time and the first over a
-    /// stage that already executed.
+    /// stage that already executed. <c>Consent</c> is the exception to that pattern and the
+    /// first since the engine was written: it opens <c>Identity</c>, a stage that until now
+    /// ran only the authorisation stance — which is derived from a capability rather than
+    /// declared in a set, and so has never been a member of this list and never can be.
     /// </para>
     /// <para>
     /// <strong>It stays a list rather than becoming a stage range, even now that it is
@@ -125,6 +128,7 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
             System.StringComparer.Ordinal,
             "RateLimit",
             "Quota",
+            "Consent",
             "Validate",
             "Idempotency",
             "Timeout",
@@ -181,7 +185,8 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
             FlowXDiagnostics.StepDeclaresMoreThanOnePolicySet,
             FlowXDiagnostics.CompensationRetryRetriesNothing,
             FlowXDiagnostics.PolicySetCannotBeRead,
-            FlowXDiagnostics.IdempotencyCannotRecordARedactedResult);
+            FlowXDiagnostics.IdempotencyCannotRecordARedactedResult,
+            FlowXDiagnostics.ConsentHasNoPurpose);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -245,6 +250,7 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
         }
 
         ReportUnrecordableIdempotency(context, kinds, invocation, set, location);
+        ReportConsentWithNoPurpose(context, kinds, contents, set, location);
 
         if (ReportDroppedCompensationRetry(context, kinds, invocation, set, location))
         {
@@ -351,6 +357,83 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
             return;
         }
     }
+
+    /// <summary><c>PolicySet.Consent</c>'s method name, which FLOWX1057 is about.</summary>
+    /// <remarks>
+    /// <see cref="CompensationRetryKind"/>'s reason: this assembly targets netstandard2.0 and
+    /// cannot see <c>StepPolicy.ConsentKind</c>, and <c>PolicyStageFitnessTests</c> is what
+    /// keeps the copy honest.
+    /// </remarks>
+    private const string ConsentKind = "Consent";
+
+    /// <summary>The parameter <see cref="ConsentKind"/>'s purpose is written as.</summary>
+    private const string PurposeParameter = "purpose";
+
+    /// <summary>
+    /// FLOWX1057 — a <c>Consent</c> whose declared purpose is blank.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The direction that surprises, and the reason the rule exists.</strong> An empty
+    /// purpose looks like the fail-closed mistake — a gate nobody can pass — and it is the
+    /// opposite: <c>StepPolicy.HasConsent</c> reads a blank purpose as no consent declared, so
+    /// the step is dispatched to everybody while the manifest publishes an Identity-stage
+    /// policy on it. Reading it as refusing instead was rejected for the reason given there: a
+    /// purpose nobody wrote is not a purpose nobody may satisfy, and a step taken permanently
+    /// out of service by a typo is a worse failure than a build error over it.
+    /// </para>
+    /// <para>
+    /// <strong>Read from syntax, exactly as FLOWX1035 is</strong>, and silent on anything that
+    /// is not a string literal: RS1030 forbids asking the compilation for another tree's
+    /// semantic model, so a purpose composed from a constant elsewhere costs a false negative
+    /// rather than a wrong answer. Silent for a well-known set too, which has no initialiser
+    /// and whose arguments FlowX fixed itself.
+    /// </para>
+    /// </remarks>
+    private static void ReportConsentWithNoPurpose(
+        SyntaxNodeAnalysisContext context,
+        IReadOnlyList<string> kinds,
+        PolicySetContents contents,
+        string set,
+        Location location)
+    {
+        if (contents.Initialiser is not { } initialiser || !kinds.Contains(ConsentKind))
+        {
+            return;
+        }
+
+        foreach (var policy in FlowChainWalker.Walk(initialiser))
+        {
+            if (policy.MethodName != ConsentKind ||
+                LiteralText(Argument(policy, PurposeParameter, 0)) is not { } purpose ||
+                purpose.Trim().Length > 0)
+            {
+                continue;
+            }
+
+            context.ReportDiagnostic(Diagnostic.Create(
+                FlowXDiagnostics.ConsentHasNoPurpose, location, set, set));
+
+            return;
+        }
+    }
+
+    /// <summary>
+    /// A string written down, or <see langword="null"/> for anything the compiler would have
+    /// to fold.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="LiteralCount"/>'s bargain in the other type. A <c>null</c> literal is read as
+    /// the empty text rather than as unknown, because <c>Consent(null!)</c> is the same defect
+    /// spelled differently and reaches the same blank purpose at run time.
+    /// </remarks>
+    private static string? LiteralText(ExpressionSyntax? expression) => expression switch
+    {
+        LiteralExpressionSyntax literal when literal.Token.Value is string text => text,
+        LiteralExpressionSyntax literal when literal.IsKind(SyntaxKind.NullLiteralExpression) =>
+            string.Empty,
+        _ => null,
+    };
 
     /// <summary>The parameter <see cref="CompensationRetryKind"/>'s attempt count is written as.</summary>
     private const string AttemptsParameter = "attempts";

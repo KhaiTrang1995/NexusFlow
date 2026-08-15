@@ -506,6 +506,55 @@ public sealed class PolicySet
         => Add(nameof(Quota), PolicyStage.Admission, ("budget", budget), ("period", period), ("scope", scope));
 
     /// <summary>
+    /// Refuses the step unless the invocation was made for the purpose named here. Runs at
+    /// <see cref="PolicyStage.Identity"/>, beside the capability's authorisation stance.
+    /// </summary>
+    /// <param name="purpose">
+    /// What this step's processing is for — GDPR Article 5(1)(b)'s purpose. An identifier
+    /// rather than a sentence: it is compared, published in the manifest and read by whoever
+    /// answers "what may this credential be used for", and all three want a token.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Purpose limitation, and deliberately not consent itself.</strong> A consent is
+    /// granted by a person, to an organisation, for a purpose, with an expiry and a
+    /// withdrawal — none of which a runtime can know, which is why
+    /// <c>samples/healthcare</c> verifies one in a capability against a register and will go
+    /// on doing so. What a platform *can* decide, without asking anybody, is the half that is
+    /// a comparison: this invocation was made for a stated purpose, and this step is declared
+    /// to serve one. Where those disagree the step does not run.
+    /// </para>
+    /// <para>
+    /// <strong>The invocation's purpose comes from validated claims, exactly as its tenant
+    /// and its principal do</strong> — <c>FlowInvocation.Purpose</c>, resolved once by the
+    /// transport from a <c>purpose</c> claim and from nothing else. A purpose read from a
+    /// header or a query string would be a purpose the caller chooses, which is a
+    /// purpose-limitation control that limits nothing.
+    /// </para>
+    /// <para>
+    /// <strong>Deny by default, and that is the whole of the policy's value.</strong> An
+    /// invocation that asserts no purpose does not satisfy a declared one: it is refused with
+    /// <c>policy.consent_purpose_absent</c>. The alternative — admitting an unstated purpose —
+    /// is the control failing open on precisely the callers who never thought about it, which
+    /// is <c>docs/15 §1</c>'s first row and the defect <c>FLOWX1037</c> exists over one stage
+    /// earlier.
+    /// </para>
+    /// <para>
+    /// <strong>Equality, never a hierarchy.</strong> "A treatment consent also covers
+    /// research" is a legal and clinical judgement, not a fact about string prefixes, and a
+    /// platform that quietly widened one would be wrong in the one place it matters most.
+    /// A step that serves two purposes is two steps, or one purpose named for both.
+    /// </para>
+    /// <para>
+    /// <strong>A blank purpose is refused at build time</strong> — <c>FLOWX1057</c>. A
+    /// comparison against the empty string is a gate that reads as declared and admits
+    /// whatever the caller sends, which is <c>FLOWX1056</c>'s objection one stage up.
+    /// </para>
+    /// </remarks>
+    public PolicySet Consent(string purpose)
+        => Add(nameof(Consent), PolicyStage.Identity, ("purpose", purpose));
+
+    /// <summary>
     /// Refuses the step's input when it breaks a rule the contract declares. Runs at
     /// <see cref="PolicyStage.Integrity"/>, before the idempotency window and before the
     /// dispatch.
