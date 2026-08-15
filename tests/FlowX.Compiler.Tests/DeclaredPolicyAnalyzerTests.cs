@@ -953,6 +953,97 @@ public sealed class DeclaredPolicyAnalyzerTests
         [.. GeneratorHarness.Report(ConsumerCompilation(step), new DeclaredPolicyAnalyzer())
             .Select(static d => d.Id + ": " + d.GetMessage(System.Globalization.CultureInfo.InvariantCulture))];
 
+    // -------------------------------------------------------- FLOWX1057 must fire
+
+    /// <summary>A <c>Consent</c> with no purpose to compare against is reported.</summary>
+    /// <remarks>
+    /// <strong>The rule fires in the direction the mistake fails in, which is not the obvious
+    /// one.</strong> An empty purpose reads like a gate nobody can pass; it is the opposite.
+    /// <c>StepPolicy.HasConsent</c> treats a blank purpose as no consent declared, so the step
+    /// is dispatched to every caller while <c>ManifestWriter</c> goes on publishing an
+    /// <c>Identity</c> policy on it — a control that reads as present and is not.
+    /// <c>ABlankDeclaredPurposeLeavesTheStepUngated</c> is the run-time half of the same fact.
+    /// </remarks>
+    [Theory]
+    [InlineData("\"\"")]
+    [InlineData("\"   \"")]
+    [InlineData("purpose: \"\"")]
+    [InlineData("null!")]
+    public void AConsentWithNoPurposeIsReported(string argument) =>
+        Analyze(FlowWith(
+            ".WithPolicy(Policies.Clinical)",
+            $"""
+            public static readonly PolicySet Clinical = PolicySet.Named("clinical")
+                .Consent({argument});
+            """))
+            .ShouldBe(["FLOWX1057"]);
+
+    /// <summary>The message names the set the author would go and edit.</summary>
+    [Fact]
+    public void TheBlankPurposeMessageNamesTheSet()
+    {
+        var message = Messages(FlowWith(
+            ".WithPolicy(Policies.Clinical)",
+            """
+            public static readonly PolicySet Clinical = PolicySet.Named("clinical")
+                .Consent("");
+            """))
+            .Single(m => m.StartsWith("FLOWX1057", StringComparison.Ordinal));
+
+        message.ShouldContain("Policies.Clinical");
+    }
+
+    // ------------------------------------------------------ FLOWX1057 must not fire
+
+    /// <summary>A named purpose is the ordinary declaration and is silent.</summary>
+    /// <remarks>
+    /// The control this rule is worth having only because of. A rule that fired on every
+    /// <c>.Consent(...)</c> would be as easy to write as it is worthless.
+    /// </remarks>
+    [Theory]
+    [InlineData("\"treatment\"")]
+    [InlineData("purpose: \"research\"")]
+    [InlineData("\" treatment \"")]
+    public void ANamedPurposeIsSilent(string argument) =>
+        Analyze(FlowWith(
+            ".WithPolicy(Policies.Clinical)",
+            $"""
+            public static readonly PolicySet Clinical = PolicySet.Named("clinical")
+                .Consent({argument});
+            """))
+            .ShouldBeEmpty();
+
+    /// <summary>A purpose that is not a literal is silent.</summary>
+    /// <remarks>
+    /// FLOWX1035's restriction, and the same bargain: RS1030 forbids an analyzer from asking
+    /// the compilation for another tree's semantic model, so each spelling this does not
+    /// recognise costs a false negative rather than a wrong report on a set that is fine.
+    /// The run-time floor is what covers it.
+    /// </remarks>
+    [Fact]
+    public void ANonLiteralPurposeIsSilent() =>
+        Analyze(FlowWith(
+            ".WithPolicy(Policies.Clinical)",
+            """
+            public static string Configured => "";
+
+            public static readonly PolicySet Clinical = PolicySet.Named("clinical")
+                .Consent(Configured);
+            """))
+            .ShouldBeEmpty();
+
+    /// <summary>A set declaring no consent at all is silent.</summary>
+    [Fact]
+    public void ASetWithNoConsentIsSilent() =>
+        Analyze(FlowWith(
+            ".WithPolicy(Policies.Gateway)",
+            """
+            public static readonly PolicySet Gateway = PolicySet.Named("gateway")
+                .Timeout(TimeSpan.FromSeconds(2))
+                .Retry(attempts: 3);
+            """))
+            .ShouldBeEmpty();
+
     /// <summary>Both reports land on the <c>WithPolicy</c> identifier, not on the chain.</summary>
     /// <remarks>
     /// A fluent chain nests its receiver inside every later call, so an invocation's span

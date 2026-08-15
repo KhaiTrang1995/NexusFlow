@@ -199,6 +199,74 @@ public sealed class HttpTriggerReaderTests
         invocation.IdempotencyKey.ShouldBe("key-1");
     }
 
+    // ── Purpose limitation (GDPR 5(1)(b)) ──────────────────────────────────────
+
+    /// <summary>The processing purpose crosses the boundary on a validated claim.</summary>
+    /// <remarks>
+    /// This is the whole of where a purpose enters, and past this line the engine compares it
+    /// with whatever a step's <c>PolicySet.Consent(...)</c> declared without being able to tell
+    /// which transport produced it.
+    /// </remarks>
+    [Theory]
+    [InlineData("purpose")]
+    [InlineData("http://schemas.flowx.dev/claims/purpose")]
+    public void ReadsThePurposeFromAValidatedClaim(string claimType)
+    {
+        var context = Request(claims: new Claim(claimType, "treatment"));
+
+        HttpTriggerReader.ReadPurpose(context.User).ShouldBe("treatment");
+
+        HttpTriggerReader.Read(context, requireIdempotencyKey: false).Value.Purpose
+            .ShouldBe("treatment", "and it reaches the invocation, not only the reader.");
+    }
+
+    /// <summary>A purpose is never taken from a header, whatever the header is called.</summary>
+    /// <remarks>
+    /// <strong>The assertion the policy rests on.</strong> A purpose limitation whose input is
+    /// chosen by the party being limited is not a limitation — it is a field the caller fills
+    /// in to unlock the step. Same objection as the tenant's, one row down
+    /// <c>docs/15 §3</c>'s Boundary 1.
+    /// </remarks>
+    [Fact]
+    public void NeverReadsThePurposeFromAHeader()
+    {
+        var context = Request(c =>
+        {
+            c.Request.Headers["X-Purpose"] = "treatment";
+            c.Request.Headers["purpose"] = "treatment";
+        });
+
+        HttpTriggerReader.Read(context, requireIdempotencyKey: false).Value.Purpose.ShouldBeNull(
+            "a caller that could name its own purpose would be granting itself the consent " +
+            "the policy exists to check.");
+    }
+
+    /// <summary>A purpose claim on an unauthenticated principal is not a purpose.</summary>
+    /// <remarks>
+    /// ASP.NET Core hands every anonymous request a <see cref="ClaimsPrincipal"/> that can
+    /// carry any claim at all, so a reader that only checked for the claim's presence would
+    /// read a header with extra steps.
+    /// </remarks>
+    [Fact]
+    public void IgnoresAPurposeClaimOnAnUnauthenticatedPrincipal()
+    {
+        var principal = new ClaimsPrincipal(
+            new ClaimsIdentity([new Claim("purpose", "treatment")]));
+
+        HttpTriggerReader.ReadPurpose(principal).ShouldBeNull();
+    }
+
+    /// <summary>No claim means no purpose, and a consent-gated step then refuses.</summary>
+    [Fact]
+    public void ReturnsNoPurposeRatherThanADefaultWhenThereIsNoClaim()
+    {
+        HttpTriggerReader.ReadPurpose(Request(claims: new Claim("sub", "user-1")).User)
+            .ShouldBeNull("a default purpose is a gate that opens for everyone who never " +
+                          "heard of it, which is the failure the policy exists to close.");
+
+        HttpTriggerReader.ReadPurpose(null).ShouldBeNull();
+    }
+
     [Fact]
     public void RejectsANullContext()
     {

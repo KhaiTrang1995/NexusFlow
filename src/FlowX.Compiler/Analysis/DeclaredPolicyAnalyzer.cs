@@ -423,15 +423,21 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     /// to fold.
     /// </summary>
     /// <remarks>
-    /// <see cref="LiteralCount"/>'s bargain in the other type. A <c>null</c> literal is read as
-    /// the empty text rather than as unknown, because <c>Consent(null!)</c> is the same defect
-    /// spelled differently and reaches the same blank purpose at run time.
+    /// <see cref="LiteralCount"/>'s bargain in the other type, including its handling of the
+    /// spelling that is furthest from the intent. A <c>null</c> literal is read as the empty
+    /// text rather than as unknown, because it reaches the same blank purpose at run time —
+    /// and the <c>!</c> is unwrapped for <see cref="LiteralCount"/>'s unary-minus reason:
+    /// <c>Consent(null!)</c> is what an author writes to get past the nullable warning, so a
+    /// rule blind to the suppression would be silent on the one spelling most likely to appear.
     /// </remarks>
     private static string? LiteralText(ExpressionSyntax? expression) => expression switch
     {
         LiteralExpressionSyntax literal when literal.Token.Value is string text => text,
         LiteralExpressionSyntax literal when literal.IsKind(SyntaxKind.NullLiteralExpression) =>
             string.Empty,
+        PostfixUnaryExpressionSyntax suppressed
+            when suppressed.IsKind(SyntaxKind.SuppressNullableWarningExpression) =>
+            LiteralText(suppressed.Operand),
         _ => null,
     };
 
