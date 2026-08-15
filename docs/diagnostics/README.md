@@ -353,8 +353,9 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1052](FLOWX1052.md) | `Fallback` constant is not the step's output contract | **A degraded mode that survives the outage and then throws** — the value is filed in the state bag under its own type, so a constant of any other type is an answer no later step can bind |
 | [FLOWX1053](FLOWX1053.md) | `Fallback` requires a capability with no side effects | **A reservation reported as made when it was not, with no compensation registered for the half of it that was** — `FLOWX1018`'s objection to caching a write, reaching the same capability by the other door |
 | [FLOWX1054](FLOWX1054.md) | Declared wait is not a compile-time constant | **A flow that silently stops publishing how long it waits** — the manifest's `timeout` is folded at build time, so a wait read from configuration is omitted, `flowx diff` has no window to compare, and the build stays green. It happened to the repository's only producer of the field |
+| [FLOWX1055](FLOWX1055.md) | Event schema version is not a semantic version | **A declared version that is silently not the published one** — `[EventSchema]`'s value is stamped on the manifest entry and on every outbox row, and `flowx diff` keys an event on the major it parses out of it. A value that is not SemVer leaves the contract publishing `1.0.0` while its author believes it publishes something else, and a subscriber pinned to the wrong major is told nothing |
 
-The next is `FLOWX1055`. The range is `FLOWX1001`–`FLOWX1099`.
+The next is `FLOWX1056`. The range is `FLOWX1001`–`FLOWX1099`.
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -716,7 +717,20 @@ unfoldable wait executes correctly under every profile, because the plan carries
 verbatim and generated C# evaluates it. What it loses is contract visibility, which is
 `FLOWX1043`'s severity for `FLOWX1043`'s reason.
 
-The next is `FLOWX1055`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1055` is claimed** — *event schema version is not a semantic version*: an
+`[EventSchema("…")]` whose value `EventSchemaReader` cannot read. The attribute is the only
+thing that makes `event.schemaVersion` vary — before it, every event in every manifest FlowX
+produced carried the constant `1.0.0`, which is
+[ADR-0017 F2](../adr/ADR-0017-manifest-v1-freeze-criteria.md#f2--no-field-is-emitted-as-a-constant-standing-in-for-a-fact)'s
+whole subject — so an unreadable value is not an unset one: the contract goes on publishing
+`1.0.0`, in the manifest and on every outbox row, while its author reads the attribute and
+believes otherwise. It is `FLOWX1045`'s shape one artifact over — a property of the
+*declaration*, checked where it is written, because the value is a compile-time constant the
+whole way — and differs in where the damage lands: an unreadable jitter stops a deployment
+becoming ready, and this ships. An **error** for that reason, and because the fix is to write
+three numbers. It is none of the reservations.
+
+The next is `FLOWX1056`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

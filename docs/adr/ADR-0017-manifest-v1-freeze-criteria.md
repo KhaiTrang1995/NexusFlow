@@ -152,23 +152,26 @@ Each names what must be true, what checks it, and where it stands today. Where a
 no check today, closing it includes writing one — a criterion verified by reading is a
 criterion that will be read optimistically at a phase gate.
 
-> **State on 2026-08-15: six of the eight hold.** F1, F3, F4, F5, F6 and F8. Each criterion's
-> **Today** below carries the date it closed and what closed it, per
-> [§5](#5-how-the-freeze-itself-is-recorded); the two that remain are:
+> ~~**State on 2026-08-15: six of the eight hold.** F1, F3, F4, F5, F6 and F8. … the two that
+> remain are F2 and F7.~~
 >
-> * **[F2](#f2--no-field-is-emitted-as-a-constant-standing-in-for-a-fact)** — `event.schemaVersion`
->   is still one constant for every event. Closing it needs a way to *declare* an event's
->   version, which is a DSL addition and
->   [ADR-0018](ADR-0018-outbox-publication-and-ordering.md)'s revisit. **This is the only
->   criterion blocking the bump on something nobody has decided**, and it takes
->   `FLOWX-DIFF-020`'s second half down with it.
+> **State on 2026-08-15, later the same day: seven of the eight hold.** F1, F2, F3, F4, F5,
+> F6 and F8. Each criterion's **Today** below carries the date it closed and what closed it,
+> per [§5](#5-how-the-freeze-itself-is-recorded). **[F2](#f2--no-field-is-emitted-as-a-constant-standing-in-for-a-fact)
+> closed with an attribute** — the third of the three resolutions this box offered, taken
+> rather than the waiver or the strike — so `event.schemaVersion` is read from the
+> compilation and `FLOWX-DIFF-020`'s second half fires.
+>
+> **One remains, and it owes no work:**
+>
 > * **[F7](#f7--the-bump-is-one-atomic-change-and-a-partial-one-fails-the-build)** — unmet by
->   definition until the bump lands. Its checks all exist; there is no work owing.
+>   definition until the bump lands. Its checks all exist.
 >
-> Read this as: *the schema is ready to be frozen except for one field whose fate is a
-> decision, not a task.* Whether to take F2 as a waiver under §5, close it with an attribute,
-> or strike `event.schemaVersion` and narrow `FLOWX-DIFF-020` is the repository owner's call,
-> and F8 exists to stop the bump making it by arriving.
+> Read this as: *nothing in the repository blocks the freeze; what remains is the decision to
+> take it.* [F8](#f8--no-field-whose-record-is-still-proposed-is-frozen) is met and stays a
+> precondition rather than a task — its instrument is a person reading `docs/adr/README.md`'s
+> Status column **on the day of the bump**, because a record can be reopened between now and
+> then, and that reading is the last thing F8 owes.
 
 ### F1 — Every field the schema declares has a producer, or the schema loses it
 
@@ -221,26 +224,53 @@ existing rather than being folded in.
 **Checked by:** a test in which two events declared at different versions produce different
 `schemaVersion` values — one that cannot pass while the value is a literal.
 
-**Today:** **still unmet, and the reason is now exact.** Nothing declares an event's version:
-an event contract is a plain record, its identity comes from the type name by convention, and
-there is no attribute to read a version off. So the check this criterion asks for — two events
-at different versions producing different values — **cannot be written**, because two events
-cannot be declared at different versions. That is a DSL addition and it is
-[ADR-0018](ADR-0018-outbox-publication-and-ordering.md)'s revisit, not this record's to take.
+~~**Today:** **still unmet, and the reason is now exact.** Nothing declares an event's version…
+So the check this criterion asks for — two events at different versions producing different
+values — **cannot be written**, because two events cannot be declared at different versions.~~
 
-*Two things learned on 2026-08-15 that narrow it further.* The value is **not invented**, which
-is softer than this criterion assumed: `ManifestWriter.EventSchemaVersion` is the same constant
-`OutboxWrite.SchemaVersion` stamps on the wire, so a consumer pinning an event major reads the
-number that will actually arrive. What it cannot do is *vary*. And the harm has a second face
-this record did not name: **`FLOWX-DIFF-020`'s "schema major bumped" half cannot fire either**,
-because every event in every manifest FlowX produces carries `1.0.0`. That is the
-`FLOWX-DIFF-015` shape a third time — a Breaking rule with a dead half — and it is worth noting
-that neither [F1](#f1--every-field-the-schema-declares-has-a-producer-or-the-schema-loses-it)'s
-corpus test nor [F5](#f5--flowx-diff-can-see-every-field-the-freeze-makes-permanent)'s
-field↔rule map would find it: the field is written and it is mapped. **F2 is the only criterion
-that catches a constant, which is the argument its own "why it is separate from F1" was
-making.** *F2 is therefore the one criterion whose closure the freeze is still waiting on, and
-it is waiting on a decision rather than on work.*
+*The paragraph that stood here also said the addition was
+[ADR-0018](ADR-0018-outbox-publication-and-ordering.md)'s revisit. **It is not, and that was
+wrong when it was written.** That record's four revisit conditions are the prefix contract
+against a real client, a dead-letter path, a consumer for what it publishes, and the polling
+publisher's latency; none of them is about a version, and none of them fired here. The
+declaration is a DSL addition owned by nothing but this criterion.*
+
+**Met, 2026-08-15.** `[EventSchema("2.0.0")]` on the event contract type declares the version;
+absence means `1.0.0`, which is what every event published while the value was a constant, so
+every manifest in this repository is byte-identical across the change except the one whose
+sample declared something. `EventSchemaTests.TwoEventsDeclaredAtDifferentVersionsPublishDifferentVersions`
+is the check this criterion asked for — two contracts at `2.0.0` and `1.4.2` in one
+compilation, producing two values in one manifest — and it cannot pass while the value is a
+literal.
+
+**On the contract type, and read once.** The schema evolves with the record, not with a call
+site, so two flows emitting one contract publish one catalogue entry. `EventSchemaReader` is
+the single reading: `ManifestWriter` takes it for `event.schemaVersion` and `FlowEmitter`
+takes the same field for the outbox row's `schema_version`, so *"a manifest saying 2.0.0 while
+rows say 1.0.0"* is not a state this compiler can reach —
+`EventSchemaTests.TheManifestAndTheOutboxRowCarryTheSameNumber` asserts both sides of one
+generator run, and `Ecommerce.Tests.EmitStartsAFlowTests.TheStagedRowCarriesTheVersionTheContractDeclares`
+reads the column out of a real PostgreSQL. **Falsified** by stamping the constant in
+`FlowEmitter` again: the row comes back `1.0.0` and the database test fails.
+
+**The value is validated where it is written.** `FLOWX1055` refuses an `[EventSchema]` that is
+not SemVer 2.0, on the type rather than at the `.Emit`, because a contract nothing emits today
+is one somebody emits tomorrow. An unreadable value is dropped rather than published — the
+alternative is a `schemaVersion` `flowx diff`'s `id@major` key cannot read, which is this
+criterion's own objection arriving from the other direction. **Falsified** by inverting the
+analyzer's guard: 27 of its 28 assertions fail.
+
+*The second harm this criterion named is also closed.* **`FLOWX-DIFF-020`'s "schema major
+bumped" half now fires**, and the first thing it did was fire on the sample: regenerating
+`samples/ecommerce/flowx.manifest.baseline.json` after `OrderPlaced` gained its declaration
+reported `FLOWX-DIFF-020 event order.placed@1 — removed`, **Breaking**, beside
+`FLOWX-DIFF-102 event order.placed@2 — added`. That was the `FLOWX-DIFF-015` shape a third
+time and it is now `EventVersionDiffTests`, over the committed baseline rather than over a
+hand-written document. Neither
+[F1](#f1--every-field-the-schema-declares-has-a-producer-or-the-schema-loses-it)'s corpus test
+nor [F5](#f5--flowx-diff-can-see-every-field-the-freeze-makes-permanent)'s field↔rule map
+would have found it — the field was written and it was mapped. **F2 is the only criterion that
+catches a constant, which is the argument its own "why it is separate from F1" was making.**
 
 ### F3 — `ManifestIsComplete` covers all four of Q3's nouns
 
@@ -547,9 +577,13 @@ criterion. The list is only useful if the next freeze — the schema will have a
 - ~~**Four of the eight have no instrument yet.** F1, F2, F5 and F6 each need a check written~~
   **Three of the four were written on 2026-08-15** — F1 as a schema-versus-corpus test, F5 as
   a field↔rule map asserted four ways, F6 as an extensions block put through every verb — and
-  F3's extension to `ManifestIsComplete` was falsified twice rather than assumed. **F2 is the
+  F3's extension to `ManifestIsComplete` was falsified twice rather than assumed. ~~**F2 is the
   one still without an instrument, and cannot have one**: its check is two events at different
-  versions differing, and nothing lets an author declare an event's version. F7's checks all
+  versions differing, and nothing lets an author declare an event's version.~~ **F2's instrument
+  was written later the same day**, once `[EventSchema]` made two events at two versions
+  something an author can declare — which is the honest reading of "cannot have one": not that
+  the check was impossible, but that the *declaration it reads* did not exist, and a criterion
+  can be blocked on a feature without being unfalsifiable. All four have one now. F7's checks all
   exist already; F8's instrument is a person reading the ADR index, and on that reading it now
   holds.
 - ~~**F8 names a coupling it cannot resolve.** ADR-0014 is Proposed by choice.~~ **It

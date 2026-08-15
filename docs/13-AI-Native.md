@@ -39,7 +39,7 @@
 > *This paragraph used the freeze as a date and never said when it falls, and so did every
 > other document that named it.*
 > [**ADR-0017**](adr/ADR-0017-manifest-v1-freeze-criteria.md) *now states the eight
-> conditions.* ***Six of the eight hold as of 2026-08-15**, and the settlement changed §3
+> conditions.* ***Seven of the eight hold as of 2026-08-15**, and the settlement changed §3
 > below in a way a reader has to know about: of the thirteen fields the committed schema
 > declared and nothing wrote, four gained a producer and nine — including the top-level
 > `schemas` map that every contract-shaped consumer in §4 would be generated from — **left
@@ -48,9 +48,9 @@
 > the manifest is meant to become rather than what it emits, and a worked example that
 > shrank to today's output would stop being the constraint on the consumers it exists to
 > state. Read the JSON in §3 as the target; `schemas/flowx.manifest.schema.json` is the
-> contract. What still does not hold is* `event.schemaVersion`, *emitted as the literal*
-> `"1.0.0"` *for every event — ADR-0017's F2, and the one criterion the freeze is still
-> waiting on.*
+> contract.* `event.schemaVersion` *stopped being the literal* `"1.0.0"` *later the same day:*
+> `[EventSchema("2.0.0")]` *on the contract type declares it, absence still means* `1.0.0`,
+> *and F2 is met. The one criterion left is F7 — the bump itself, which owes no work.*
 
 ---
 

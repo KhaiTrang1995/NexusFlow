@@ -38,20 +38,22 @@ public static class ManifestWriter
     public const string SchemaVersion = "0.1.0";
 
     /// <summary>
-    /// The version stamped on every published event, in the manifest and on the outbox row.
+    /// The version stamped on a published event whose contract declares none.
     /// </summary>
     /// <remarks>
-    /// A constant, and named rather than repeated because it is now written in two places
-    /// that must agree: the manifest's <c>events</c> array, which is what a consumer team
-    /// reads, and <c>OutboxWrite.SchemaVersion</c>, which is what arrives beside the body. Two
-    /// literals would be a drift nobody notices until a consumer versions off the wrong one.
+    /// It stopped being the version of <em>every</em> event on 2026-08-15:
+    /// <c>[EventSchema("…")]</c> declares one on the contract type,
+    /// <see cref="Analysis.EventSchemaReader"/> reads it, and both writers that stamp a
+    /// version — this one and <c>FlowEmitter</c>'s <c>OutboxWrite</c> — take the step's
+    /// declaration and fall back here. Two literals would be the drift nobody notices until
+    /// a consumer versions off the wrong one, which is why the fallback is still one name.
     /// <para>
-    /// It is a constant rather than a declaration because nothing declares one yet — there is
-    /// no attribute on an event contract to read it from. That is ADR-0018's revisit, and
-    /// when it lands both writers change together because they read this.
+    /// An alias of <see cref="Analysis.EventSchemaReader.Default"/> rather than a second
+    /// constant: this is the name the emitter and the tests reach for, and the reader is
+    /// where the absence is decided.
     /// </para>
     /// </remarks>
-    public const string EventSchemaVersion = "1.0.0";
+    public const string EventSchemaVersion = Analysis.EventSchemaReader.Default;
 
     /// <summary>Writes the manifest for a whole application.</summary>
     /// <param name="applicationName">Usually the root assembly name.</param>
@@ -121,7 +123,7 @@ public static class ManifestWriter
         {
             writer.OpenObject();
             writer.Property("type", evt);
-            writer.Property("schemaVersion", EventSchemaVersion);
+            writer.Property("schemaVersion", VersionOf(ordered, evt));
             WriteIdentities(writer, "producedBy", Producers(ordered, evt));
             WriteIdentities(writer, "consumedBy", Consumers(triggers, evt));
             writer.CloseObject();
@@ -1085,6 +1087,35 @@ public static class ManifestWriter
 
         writer.CloseArray();
     }
+
+    /// <summary>
+    /// The version this event's contract declares, or <see cref="EventSchemaVersion"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The catalogue entry is the contract's, not the call site's.</strong> Every
+    /// <c>.Emit&lt;T&gt;()</c> of one contract reads the same attribute off the same type, so
+    /// the versions agree by construction; the ordinal sort is what makes the pick
+    /// deterministic in the one shape that could disagree — two contracts whose type names
+    /// yield the same identity — rather than depending on which flow the compilation walked
+    /// first. The manifest is compared byte for byte across builds, so "whichever came out of
+    /// the enumerator" is not an option here.
+    /// </para>
+    /// <para>
+    /// ADR-0017 F2's requirement is that this value be read from the compilation, and this is
+    /// where that is true of the manifest. <c>FlowEmitter</c> resolves the same field for the
+    /// outbox row, so the document and the wire carry one number.
+    /// </para>
+    /// </remarks>
+    private static string VersionOf(IEnumerable<FlowModel> flows, string evt) => flows
+        .SelectMany(f => f.AllSteps)
+        .Where(s =>
+            s.Kind == StepKindModel.Emit &&
+            string.Equals(s.EventType, evt, System.StringComparison.Ordinal) &&
+            s.EventSchemaVersion != null)
+        .Select(s => s.EventSchemaVersion!)
+        .OrderBy(v => v, System.StringComparer.Ordinal)
+        .FirstOrDefault() ?? EventSchemaVersion;
 
     private static IEnumerable<string> CollectEvents(IEnumerable<FlowModel> flows) => flows
         .SelectMany(f => f.AllSteps)

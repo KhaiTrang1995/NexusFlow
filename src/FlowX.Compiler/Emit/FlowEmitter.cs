@@ -548,7 +548,12 @@ public static class FlowEmitter
             writer.Line("return StepJournalEntry.OfEvent(new OutboxWrite");
             writer.OpenBrace();
             writer.Line("Type = " + Quote(staging.Step.EventType!) + ",");
-            writer.Line("SchemaVersion = " + Quote(ManifestWriter.EventSchemaVersion) + ",");
+            // The contract's own [EventSchema], or 1.0.0 where it declares none — the same
+            // resolution ManifestWriter makes for the events array, off the same field. A
+            // manifest saying 2.0.0 over rows saying 1.0.0 is ADR-0017 F2's defect.
+            writer.Line(
+                "SchemaVersion = " +
+                Quote(staging.Step.EventSchemaVersion ?? ManifestWriter.EventSchemaVersion) + ",");
             writer.Line();
             writer.Line("// Per-key ordering, and the key is the instance: ADR-0018 offers no");
             writer.Line("// global order, so this is the ordering a consumer actually gets.");
