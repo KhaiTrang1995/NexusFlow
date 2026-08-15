@@ -51,7 +51,7 @@ export FLOWX_POSTGRES_CONNECTION="Host=localhost;Port=5432;Database=postgres;Use
 dotnet build samples/functions
 ```
 
-**The Functions local runtime has not been run against here, and it is owed.**
+**The Functions local runtime run happened on 2026-08-15** — Core Tools 4.6.0 (from its GitHub release; the npm route's CDN is proxy-blocked in some environments), the Service Bus emulator and Azurite: all three trigger arms executed end to end, journal rows verified. *This sentence previously recorded the run as owed.*
 `azure-functions-core-tools` installs by downloading a binary from
 `cdn.functions.azure.com`, which this repository's build environment refuses (HTTP 403 at
 the egress proxy), and a Service Bus end-to-end additionally needs a broker. What stands
