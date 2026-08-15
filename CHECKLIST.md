@@ -4,11 +4,17 @@
 > "where is this project actually at?" — the [plan](PLAN.md) says what to build,
 > this says what is built.
 >
-> **Last updated:** 2026-08-01 · **Phase:** **P0 complete · P1 closed with one accepted
-> exception → P2 in progress: WP-62 is the only package with nothing built. WP-59 and
-> WP-64 landed whole; WP-50 landed its chaos rig without B7 or B8; WP-63 landed its
-> suspension half without its timer half; and WP-56 gained the broker plugin its own
-> ADR names as the condition for reopening** · **Commit:** see `git log`
+> **Last updated:** 2026-08-15 · **Phase:** **P0 complete · P1 closed with one accepted
+> exception · P2 complete — WP-62 closed 2026-08-15 by making its gate read the fourth
+> counter · the 2026-08-14/15 campaign shipped the cross-phase serverless-and-latency
+> range (WP-140…144), P4's policy catalogue to fourteen executing kinds (WP-77…83; WP-84
+> refused on ADR-0081's record), the V5 harness and its CI gate (WP-130), and seven of
+> eight manifest freeze criteria — F7, the bump itself, is the repository owner's call**
+> · **Commit:** see `git log`
+>
+> *The previous reading of this line — "P2 in progress: WP-62 is the only package with
+> nothing built" — was written 2026-08-01 and had been false in five directions by the
+> time it was replaced.*
 >
 > **Durable execution runs against a real database, and is not yet end to end.** WP-52 made
 > `FlowX.Runtime` read `ExecutionProfile`: a `Durable` flow journals one row per
@@ -53,7 +59,11 @@
 > being made fast. See
 > [§5d](#5d-p2--durable-execution--nearly-complete-qr2-and-b8-measured-on-demand-b7-measurable-but-not-judged).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** **2587/2587 passing across 19 assemblies**
+> **Build:** 0 warnings, 0 errors · **Tests:** **3854 passing, 0 failed, 70 skipped across
+> 30 assemblies** (re-measured 2026-08-15 on the merged tree, live PostgreSQL + PgBouncer +
+> Redis; the 70 skips are the three broker suites whose brokers were not standing on that
+> machine — CI stands all of them up. *This line read 2587/2587 across 19 assemblies,
+> measured 2026-08-01*)
 > (a large share against a live PostgreSQL 16.13 and Redis 7.0.15; **0 failed, 0 skipped**).
 > *This read **2004**, the count before the timer half, the manifest's wait, the 202 shape, three policy rules, the QR2 nightly and the telemetry seam merged. The figure here is
 > re-measured on the merged tree — `dotnet test FlowX.slnx -c Release` with both stores

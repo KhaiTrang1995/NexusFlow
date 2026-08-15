@@ -12,7 +12,14 @@
 > is closed with one exit criterion unmet and accepted** — the build-overhead
 > budget, at **+67.1 %** against ≤ 8 %; see [§4](#4-p1--compiler-hardening), which
 > states the exception before it states anything else. **P2 — Durable execution is
-> in progress**: **WP-59 has shipped**, the last package in P2's Must with nothing written
+> complete** — its last open package, WP-62, closed 2026-08-15 when its nightly gate
+> learned to read the fourth correctness counter. **The 2026-08-14/15 campaign** then
+> shipped serverless-everywhere (WP-140…144: push admission, the Functions generator,
+> notify-not-poll, takeover-at-expiry, admission bounds), fourteen of seventeen policy
+> kinds executing (WP-77…83; WP-84 refused on ADR-0081's record), the V5 cold-start
+> harness and its CI gate (WP-130), and seven of eight manifest freeze criteria — F7,
+> the bump, is the repository owner's. *What follows is the 2026-08-01 reading, kept
+> because each clause was true when written:* **WP-59 has shipped**, the last package in P2's Must with nothing written
 > for it — the generated payload writer, `FLOWX1006`, the `schemaVersion` stamp,
 > `IPayloadSerializer`, and an input the instance row keeps
 > ([§5 WP-59](#wp-59--flowx1006-and-the-journal-payload-contract--shipped)); **WP-64 has
