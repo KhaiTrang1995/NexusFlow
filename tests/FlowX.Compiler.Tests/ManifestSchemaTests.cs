@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -78,6 +80,226 @@ public sealed class ManifestSchemaTests
 
         throw new ShouldAssertException(
             $"The emitted manifest does not validate against the committed schema:\n{failures}\n\n{manifest}");
+    }
+
+    /// <summary>
+    /// Fields the committed schema declares that no manifest in the corpus carries, with the
+    /// reason each is exempt.
+    /// </summary>
+    /// <remarks>
+    /// <strong>One entry, and the reason is the whole of ADR-0017 F6.</strong> Nothing in
+    /// FlowX writes <c>extensions</c> and nothing should: the block exists so a downstream
+    /// consumer can attach metadata FlowX has no opinion about, which is what ADR-0005 traded
+    /// for accepting a contract it must support forever. A compiler-produced corpus is
+    /// therefore the wrong place to look for it, and
+    /// <c>ExtensionsEscapeHatchTests</c> in FlowX.Cli.Tests is the right one — it feeds the
+    /// tool a manifest carrying one and asserts every verb tolerates it and no rule reports a
+    /// change inside it.
+    /// <para>
+    /// This list is the pressure valve on the criterion, so it is kept to fields whose
+    /// producer is deliberately outside this repository. "No fixture uses it yet" is not a
+    /// reason — that is the state F1 exists to refuse, and the answer to it is a fixture.
+    /// </para>
+    /// </remarks>
+    private static readonly Dictionary<string, string> NotWrittenByTheCompiler = new(StringComparer.Ordinal)
+    {
+        ["extensions"] =
+            "the consumer's block, by design (ADR-0005). Exercised by " +
+            "FlowX.Cli.Tests.ExtensionsEscapeHatchTests, which is where a field nothing in " +
+            "this repository produces can honestly be tested.",
+    };
+
+    /// <summary>
+    /// Every field the committed schema declares is written by <c>ManifestWriter</c> into at
+    /// least one manifest of a corpus, or is exempt with a reason recorded here.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>ADR-0017 F1's instrument.</strong> The criterion is that each declared field
+    /// "is either emitted by the compiler, or deleted from the committed schema before the
+    /// bump", and the argument for checking it is that a consumer reading the schema cannot
+    /// tell "this application has no owner recorded" from "the compiler never looked".
+    /// Thirteen fields were in the second state when the record was written.
+    /// </para>
+    /// <para>
+    /// <strong>Both directions, on <c>DiffCodeDocumentationTests</c>'s pattern.</strong>
+    /// <see cref="EveryExemptionNamesAFieldTheSchemaStillDeclares"/> is the other half: an
+    /// exemption for a field that has since left the schema is a reason nobody needs, and
+    /// keeping it would let the list rot into a place where a real gap could hide.
+    /// </para>
+    /// <para>
+    /// The corpus is every fixture in <c>Models</c> plus the emitted shapes the other tests
+    /// in this class already build, written through the real writer. It is deliberately not
+    /// the ecommerce baseline alone: one application exercises the fields it happens to use,
+    /// and the fixture is where a field can be made to appear on purpose.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryFieldTheSchemaDeclaresIsWritten()
+    {
+        var written = Corpus()
+            .SelectMany(manifest => PathsIn(JsonDocument.Parse(manifest).RootElement, string.Empty))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var missing = DeclaredPaths()
+            .Where(path => !written.Contains(path))
+            .Where(path => !NotWrittenByTheCompiler.ContainsKey(path))
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToList();
+
+        missing.ShouldBeEmpty(
+            "The committed schema declares a field no manifest in the corpus carries. A field " +
+            "with no producer is indistinguishable, to a consumer, from a fact this " +
+            "application does not have — and freezing it at v1.0 makes the ambiguity " +
+            "permanent (ADR-0017 F1). Emit it, delete it from the schema, or exempt it in " +
+            "NotWrittenByTheCompiler with a reason:" +
+            Environment.NewLine + string.Join(Environment.NewLine, missing));
+    }
+
+    [Fact]
+    public void EveryExemptionNamesAFieldTheSchemaStillDeclares()
+    {
+        var declared = DeclaredPaths();
+
+        var stale = NotWrittenByTheCompiler.Keys
+            .Where(path => !declared.Contains(path))
+            .OrderBy(path => path, StringComparer.Ordinal);
+
+        stale.ShouldBeEmpty(
+            "An exemption names a field the schema no longer declares. Delete it: a list of " +
+            "reasons for fields that do not exist is where a real gap goes to hide.");
+    }
+
+    /// <summary>
+    /// Manifests written by the real writer, covering every shape the fixtures can build.
+    /// </summary>
+    private static IEnumerable<string> Corpus()
+    {
+        yield return ManifestWriter.Write(
+            "Sample.App",
+            "1.0.0",
+            [Models.PlaceOrder(), Models.Conditional(), Models.Switching(), Models.Parallel()],
+            projectDirectory: null,
+            [Models.Triggers()],
+            Models.ErrorCatalogues());
+
+        yield return ManifestWriter.Write(
+            "Sample.App",
+            "1.0.0",
+            [Models.Iterating(), Models.Composing(), Models.Waiting(), Models.LinearQuery(), Models.Minimal()]);
+
+        yield return ManifestWriter.Write(
+            "Sample.App",
+            "2.0.0",
+            [Models.FullyDescribed()],
+            projectDirectory: null,
+            [Models.FullyDescribedTriggers()]);
+    }
+
+    /// <summary>
+    /// Every leaf path an instance can carry, as a dotted path with array indices dropped.
+    /// </summary>
+    private static IEnumerable<string> PathsIn(JsonElement element, string prefix)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    var path = prefix.Length == 0 ? property.Name : prefix + "." + property.Name;
+
+                    yield return path;
+
+                    foreach (var nested in PathsIn(property.Value, path))
+                    {
+                        yield return nested;
+                    }
+                }
+
+                break;
+
+            case JsonValueKind.Array:
+                foreach (var nested in element.EnumerateArray().SelectMany(item => PathsIn(item, prefix)))
+                {
+                    yield return nested;
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Every field the committed schema declares, as the dotted path an instance would use.
+    /// </summary>
+    /// <remarks>
+    /// Read from the schema rather than listed, so a field added to the contract is in scope
+    /// for this criterion the moment it is declared — which is what ADR-0017's Revisit-when
+    /// asks of an addition, stated as a failing test rather than as a habit.
+    /// </remarks>
+    private static HashSet<string> DeclaredPaths()
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(SchemaPath()));
+
+        var defs = document.RootElement.GetProperty("$defs");
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+
+        Walk(document.RootElement, string.Empty, []);
+
+        return paths;
+
+        void Walk(JsonElement node, string prefix, ImmutableHashSet<string> seen)
+        {
+            if (node.TryGetProperty("$ref", out var reference))
+            {
+                var name = reference.GetString()!.Split('/')[^1];
+
+                // A step's `branches` hold steps, so the definition is cyclic. One visit per
+                // path is enough: an instance nested deeper carries no field a shallower one
+                // does not, and the paths this produces are index-free anyway.
+                if (!seen.Contains(name))
+                {
+                    Walk(defs.GetProperty(name), prefix, seen.Add(name));
+                }
+
+                return;
+            }
+
+            if (node.TryGetProperty("items", out var items))
+            {
+                Walk(items, prefix, seen);
+            }
+
+            if (!node.TryGetProperty("properties", out var properties))
+            {
+                return;
+            }
+
+            foreach (var property in properties.EnumerateObject())
+            {
+                var path = prefix.Length == 0 ? property.Name : prefix + "." + property.Name;
+                paths.Add(path);
+                Walk(property.Value, path, seen);
+            }
+        }
+    }
+
+    private static string SchemaPath()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(directory.FullName, "schemas", "flowx.manifest.schema.json");
+
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new FileNotFoundException("Could not locate schemas/flowx.manifest.schema.json.");
     }
 
     [Fact]
