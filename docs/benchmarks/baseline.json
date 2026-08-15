@@ -2,7 +2,9 @@
   "$comment": [
     "Committed performance baseline. Regenerate with scripts/run-benchmarks.sh.",
     "",
-    "allocatedBytes is EXACT and BLOCKING. budgetNs is a hard ceiling and BLOCKING.",
+    "allocatedBytes is EXACT and BLOCKING, unless the entry declares allocationTolerancePercent,",
+    "in which case it is a ceiling and the entry says why it cannot be exact.",
+    "budgetNs is a hard ceiling and BLOCKING.",
     "absoluteNs and ratioToBaseline are ADVISORY: two runs of the same commit on the",
     "same container disagreed by up to 159% on absolute time and 63% on ratio, because",
     "the fastest benchmark sits at ~10-20 ns, on the measurement noise floor. WP-3",
@@ -44,7 +46,7 @@
     "iterationCount": 30,
     "warmupCount": 10,
     "recordedAt": "WP-14",
-    "note": "Shared container hardware. Timing figures are indicative only; allocations are the contract -- except CompilerBenchmarks, which measures Roslyn's allocations and is banded. B1 measured 172.3 ns when P0.md was written and 129.5 ns here, on the same commit: a 25% swing that is exactly the noise P0.md documents, and that leaves its verdict untouched at a ~30x margin either way."
+    "note": "Shared container hardware. Timing figures are indicative only; allocations are the contract -- except the four banded entries: the three CompilerBenchmarks, which measure Roslyn's allocations rather than ours, and StepLoopBenchmarks.BuildPlan, whose last 64 B the JIT elides on some machines and not others. Each says which at its own entry. B1 measured 172.3 ns when P0.md was written and 129.5 ns here, on the same commit: a 25% swing that is exactly the noise P0.md documents, and that leaves its verdict untouched at a ~30x margin either way."
   },
   "benchmarks": {
     "DispatchBenchmarks.Direct": {
@@ -126,10 +128,11 @@
     "StepLoopBenchmarks.BuildPlan": {
       "absoluteNs": 164.07,
       "ratioToBaseline": 54.149,
-      "allocatedBytes": 528,
+      "allocatedBytes": 464,
       "budget": "build-time",
       "budgetNs": 100000,
-      "note": "Runs once per flow at startup, not per execution. 520 -> 528 B: eight bytes added by the generator work of 2026-08-02..04, and exact in both CI samples taken on 2026-08-09."
+      "note": "Runs once per flow at startup, not per execution. BANDED RATHER THAN EXACT, and the only entry outside CompilerBenchmarks that is -- for a different reason, which is the point. Four figures are on record for the same benchmark: 456 B on a container at e6fcd37, 464 B on a container at dev, 528 B on the hosted runner at dev, 520 B in the file. The 64 B between the two clusters is not allocated by FlowX on every run: ExecutionPlan.Create builds a temporary the JIT can prove does not escape, and when escape analysis reaches it the object never touches the heap. Reproduced at 4871849 by toggling the JIT and nothing else -- default 464 B; DOTNET_JitObjectStackAllocation=0 528 B; DOTNET_TieredPGO=0 528 B, because dynamic PGO is what supplies the inlining escape analysis needs. Whether the JIT gets there is decided by profile-guided inlining, which follows tier-up timing and the machine, not this repository, so a byte-exact gate here asserts something about the runtime rather than about the code. Its neighbours do not have that property and stay exact: CompensateAll's Stack<CompensationEntry> genuinely escapes, no JIT decision can remove it, and it read exactly 440 B under every configuration above. 464 B is recorded because it is what the shipping JIT costs; the 15% band is CompilerBenchmarks' figure, puts the ceiling at 533 B, admits the un-elided 528 B, and still fails anything that adds an allocation. Two things were checked and refused. PLAN §9 item 15 names Roslyn pool sizing as the suspect -- ruled out: BuildPlan calls ExecutionPlan.Create and reaches no Roslyn at all. And pinning DOTNET_TieredPGO=0 in the benchmark job would make the figure byte-exact at 528 B -- refused, because it buys exactness for one allocation by measuring every timing budget in this harness under a JIT nobody deploys, and records a number production never pays.",
+      "allocationTolerancePercent": 15
     },
     "CompilerBenchmarks.WithoutGenerator": {
       "absoluteNs": 4044320.78,
