@@ -767,6 +767,207 @@ public sealed class PolicyExecutionTests
             "and there is nothing for the undo to release.");
     }
 
+    // -------------------------------------------- stage 4's sixth kind, answered by a call
+
+    /// <summary>The capability type a declared fallback names.</summary>
+    /// <remarks>
+    /// A marker here and a real <c>[Capability]</c> in a compiled flow. These tests build
+    /// plans out of descriptors by hand, so what the type argument carries is the fact that
+    /// the author named <em>a type</em> rather than wrote a value — which is the whole
+    /// difference the builder overload expresses. What the engine acts on is the descriptor
+    /// <see cref="Degrading"/> binds, exactly as it is in a generated plan.
+    /// </remarks>
+    private sealed class SecondaryRating;
+
+    /// <summary>
+    /// The chain a step with a capability-valued fallback resolves to.
+    /// </summary>
+    /// <remarks>
+    /// <c>PolicyChain.ForStep</c>'s third argument is what binds
+    /// <c>PolicySet.Fallback&lt;TCapability&gt;()</c>'s declaration — a bare <c>Type</c>, which
+    /// is all a set built with no step in sight can hold — to the descriptor the generated plan
+    /// resolved. Without it the policy carries a declaration the engine cannot name on a
+    /// journal row, and <c>StepPolicy</c> deliberately reads it as no fallback at all.
+    /// </remarks>
+    private static PolicyChain Degrading(PolicySet set) =>
+        PolicyChain.ForStep(set, Plans.Validate, Plans.Secondary);
+
+    /// <summary>A set whose fallback is the second rating service rather than a constant.</summary>
+    private static PolicySet AskSecondary { get; } =
+        PolicySet.Named("cf").Fallback<SecondaryRating>();
+
+    /// <summary>A fallback capability answers for a step that has failed for the last time.</summary>
+    /// <remarks>
+    /// The whole of the capability half in one assertion, and the three facts that make it a
+    /// dispatch rather than a constant with extra steps: the fallback is asked
+    /// (<c>FellBackAt</c>), it is asked <em>once</em> and not as another visit to the step
+    /// (<c>Executed</c> is unchanged), and the value the next step binds is the one it produced
+    /// through the seam ADR-0078 §3.1 said did not exist.
+    /// </remarks>
+    [Fact]
+    public async Task AFallbackCapabilityAnswersForAStepThatHasFailedForTheLastTime()
+    {
+        var answered = new Rating("secondary");
+        var dispatcher = new RecordingDispatcher().FailAt(0, Unavailable).FallBackWith(0, answered);
+        dispatcher.Observe = ctx => ctx.TryGet<Rating>(out var rating) ? rating : null;
+
+        var result = await new FlowEngine(new FakeClock(T0))
+            .ExecuteAsync(Plan(Degrading(AskSecondary)), dispatcher, Plans.Invocation, Ct);
+
+        result.IsSuccess.ShouldBeTrue(
+            "The step failed and the second capability answered for it, which is what the " +
+            "other half of docs/10 §3's Fallback row is: a degraded mode that takes a call.");
+
+        dispatcher.FellBackAt.ShouldBe([0], "Asked once, after the step had finished failing.");
+
+        dispatcher.Executed.ShouldBe(
+            [0, 1, 2],
+            "One dispatch of the step itself, then the rest of the flow. A fallback that " +
+            "arrived as a second visit to step 0 would be a retry wearing another name.");
+
+        dispatcher.Observed[1].ShouldBe(
+            answered,
+            "Step 1 binds what the fallback produced, which means the generated dispatcher " +
+            "filed it under the step's own contract. Anything else is a degraded mode the " +
+            "next ctx.Get<T>() throws on, which is what FLOWX1052 refuses at build time.");
+    }
+
+    /// <summary>A fallback capability is not asked for a step that worked.</summary>
+    /// <remarks>
+    /// The "did not happen" beside the "did". A second dependency called on every success
+    /// would double the load on the system the fallback exists to protect it from.
+    /// </remarks>
+    [Fact]
+    public async Task AFallbackCapabilityIsNotAskedWhenTheStepSucceeds()
+    {
+        var dispatcher = new RecordingDispatcher().FallBackWith(0, new Rating("secondary"));
+
+        var result = await new FlowEngine(new FakeClock(T0))
+            .ExecuteAsync(Plan(Degrading(AskSecondary)), dispatcher, Plans.Invocation, Ct);
+
+        result.IsSuccess.ShouldBeTrue();
+
+        dispatcher.FellBackAt.ShouldBeEmpty(
+            "Nothing failed, so there was nothing to answer for. A fallback is consulted on " +
+            "the failure path and nowhere else.");
+    }
+
+    /// <summary>
+    /// A fallback capability is consulted after the retry, exactly as a constant is.
+    /// </summary>
+    /// <remarks>
+    /// ADR-0078 §2.1 places the fallback outermost, and the placement is a property of the
+    /// kind rather than of what it answers with. Inside the retry it would answer the first
+    /// failure and the attempts the author declared beside it would never be made — one policy
+    /// silently disabling the policy next to it.
+    /// </remarks>
+    [Fact]
+    public async Task AFallbackCapabilityIsConsultedAfterTheRetry()
+    {
+        var dispatcher = new RecordingDispatcher()
+            .FailAt(0, Unavailable)
+            .FallBackWith(0, new Rating("secondary"));
+
+        var result = await new FlowEngine(new FakeClock(T0))
+            .ExecuteAsync(
+                Plan(Degrading(PolicySet.Named("rcf").Retry(attempts: 3).Fallback<SecondaryRating>())),
+                dispatcher,
+                Plans.Invocation,
+                Ct);
+
+        result.IsSuccess.ShouldBeTrue();
+
+        dispatcher.Executed.ShouldBe(
+            [0, 0, 0, 1, 2],
+            "Three attempts were declared and three were made before the second capability " +
+            "was asked at all.");
+
+        dispatcher.FellBackAt.ShouldBe([0], "And it was asked once, not once per attempt.");
+    }
+
+    /// <summary>
+    /// A fallback capability that fails too leaves the step failed, with the step's own error.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The degraded path not saving the step does not change what went wrong: the dependency
+    /// the author declared is what stopped answering, and that is what belongs in the caller's
+    /// error. The fallback's own failure is a second fact and is recorded where a second fact
+    /// goes — a journal row of its own under its own id, and an <c>exhausted</c> outcome on the
+    /// counter (ADR-0079 §2.4).
+    /// </para>
+    /// <para>
+    /// The unwind is the assertion that matters beside it: step 0 was never answered, so it is
+    /// an ordinary failed step and everything compensable behind it is undone. Nothing about a
+    /// fallback having been tried changes that.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AFallbackCapabilityThatFailsLeavesTheStepFailedWithItsOwnError()
+    {
+        var dispatcher = new RecordingDispatcher()
+            .FailAt(0, Unavailable)
+            .FailFallbackAt(0, Invalid);
+
+        var result = await new FlowEngine(new FakeClock(T0))
+            .ExecuteAsync(Plan(Degrading(AskSecondary)), dispatcher, Plans.Invocation, Ct);
+
+        result.IsSuccess.ShouldBeFalse("The degraded mode could not answer either.");
+
+        result.Error!.Code.ShouldBe(
+            Unavailable.Code,
+            "The step's own failure reaches the caller. The fallback failing is a fact about " +
+            "the degraded path, not a replacement for what the dependency said.");
+
+        dispatcher.FellBackAt.ShouldBe([0], "It was asked, which is why the step is not simply a retry that ran out.");
+
+        dispatcher.Executed.ShouldBe([0], "The flow stopped at the step nothing could answer for.");
+    }
+
+    /// <summary>A step a fallback capability answered for is not put on the unwind stack.</summary>
+    /// <remarks>
+    /// <para>
+    /// ADR-0078 §2.7 kept a degraded step off the stack because a constant produces nothing,
+    /// and §3.3 predicted the rule would break the moment the degraded answer came from a call.
+    /// It does not, and the reason is that FLOWX1053 now asks its question of the fallback
+    /// capability as well as of the step: a fallback that could produce an effect is refused at
+    /// build time, so a step answered by one still has nothing anybody could undo
+    /// (ADR-0079 §2.3).
+    /// </para>
+    /// <para>
+    /// The step's own compensation is what would run if it were pushed, and it is the wrong
+    /// undo by construction: <c>inventory.release</c> reverses a reservation
+    /// <c>order.validate</c> never made and <c>rating.secondary</c> was never asked to make.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AStepAnsweredByItsFallbackCapabilityRegistersNoCompensation()
+    {
+        var plan = ExecutionPlan.Create(
+            FlowDescriptor.Create("order.degraded", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+            StepGraph.Create([
+                StepNode.ForCapability(0, Plans.Validate, Plans.Release, policies: Degrading(AskSecondary)),
+                StepNode.ForCapability(1, Plans.Capture),
+            ]));
+
+        var dispatcher = new RecordingDispatcher()
+            .FailAt(0, Unavailable)
+            .FallBackWith(0, new Rating("secondary"))
+            .FailAt(1, Invalid);
+
+        var result = await new FlowEngine(new FakeClock(T0))
+            .ExecuteAsync(plan, dispatcher, Plans.Invocation, Ct);
+
+        result.IsSuccess.ShouldBeFalse("Step 1 failed with a terminal category.");
+
+        dispatcher.FellBackAt.ShouldBe([0], "Step 0 really was answered by its fallback.");
+
+        dispatcher.Compensated.ShouldBeEmpty(
+            "And it is still not on the unwind stack. Neither capability made an effect — " +
+            "FLOWX1053 refuses a fallback over one that could and a fallback that could — so " +
+            "an undo here would be docs/10 §2's 'compensating something that never happened'.");
+    }
+
     /// <summary>A hedge issues a second call after its delay, and the first success wins.</summary>
     /// <remarks>
     /// <para>

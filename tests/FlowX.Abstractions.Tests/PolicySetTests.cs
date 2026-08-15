@@ -96,6 +96,42 @@ public sealed class PolicySetTests
         Should.Throw<ArgumentNullException>(() => value.ApplyTo(null!));
     }
 
+    /// <summary>
+    /// The capability-valued half of the same row declares a type and resolves nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A <c>Type</c> and not an id, and that is the design rather than a shortfall.</strong>
+    /// A <c>PolicySet</c> is a <c>static readonly</c> field built with no step in sight, and a
+    /// capability's id, version and side effects live on its <c>[Capability]</c> attribute —
+    /// so reading them from here would mean reflecting at run time, which is what constraint
+    /// C2 refuses. <c>PolicyChain.ForStep</c> binds the declaration to the descriptor the
+    /// generated plan resolved, and <c>PolicyChainTests</c> is where that is asserted.
+    /// </para>
+    /// <para>
+    /// Both overloads emit the one kind at the one stage, which is what makes
+    /// <c>docs/10 §3</c>'s "capability or constant" one policy rather than two sharing a name.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AFallbackCapabilityDeclaresATypeAndLeavesItToBeBound()
+    {
+        var policy = PolicySet.Named("f").Fallback<Reservation>().Policies.Single();
+
+        policy.Kind.ShouldBe("Fallback", "The same kind the constant overload emits.");
+        policy.Stage.ShouldBe(PolicyStage.Resilience);
+
+        policy.Parameters["capability"]
+            .ShouldBeOfType<FallbackCapability>()
+            .Capability
+            .ShouldBe(typeof(Reservation));
+
+        policy.Parameters.ContainsKey("value").ShouldBeFalse(
+            "There is no constant. A degraded answer is one thing or the other, and a " +
+            "descriptor carrying both would be a policy with two answers and no rule for " +
+            "choosing.");
+    }
+
     private sealed record Reservation(string Sku);
 
     [Fact]

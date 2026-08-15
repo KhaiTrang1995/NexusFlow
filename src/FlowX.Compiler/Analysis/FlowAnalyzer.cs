@@ -2302,23 +2302,11 @@ public static class FlowAnalyzer
             return;
         }
 
-        // A capability fallback is answered by its declared output contract rather than by an
-        // argument's type, and it is the same rule: what the fallback produces is filed in the
-        // state bag under its own type, so a fallback that returns anything but the step's
-        // output is a degraded mode the next ctx.Get<T>() throws on. Checked here rather than
-        // in a rule of its own because the finding, the fix and the message are identical —
-        // only where the type is read from differs.
-        if (step.FallbackCapability is { } fallback)
+        // The capability half is answered from a declaration rather than from an argument's
+        // type, so it needs none of the tree-binding below and returns before reaching it.
+        if (step.FallbackCapability is not null)
         {
-            if (fallback.CapabilityOutput is { Length: > 0 } produced && produced != output)
-            {
-                diagnostics.Add(Diagnostic.Create(
-                    FlowXDiagnostics.FallbackMustMatchTheStepsOutput,
-                    link.CallLocation,
-                    step.CapabilityId,
-                    output,
-                    produced));
-            }
+            ReportFallbackCapabilityShape(step, output, link, diagnostics);
 
             return;
         }
@@ -2364,6 +2352,41 @@ public static class FlowAnalyzer
 
             return;
         }
+    }
+
+    /// <summary>
+    /// FLOWX1052 over a fallback <em>capability</em>: what it produces against what the step does.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same rule and the same code as the constant's, because the finding, the message and
+    /// the author's repair are identical — a degraded answer is filed in the state bag under
+    /// its own type, so anything but the step's output is a mode no later step binds and the
+    /// first <c>ctx.Get&lt;T&gt;</c> after the outage throws. Only where the type is read from
+    /// differs: the constant's is the converted type of an expression, and this is a contract
+    /// the capability declared, which <c>CapabilityReader</c> has already resolved.
+    /// </para>
+    /// <para>
+    /// Silent for a fallback whose output could not be read, for the reason the constant rule
+    /// is silent on an unbound expression: a diagnostic raised on a guess names a type the
+    /// author cannot find.
+    /// </para>
+    /// </remarks>
+    private static void ReportFallbackCapabilityShape(
+        StepModel step, string output, ChainLink link, List<Diagnostic> diagnostics)
+    {
+        if (step.FallbackCapability?.CapabilityOutput is not { Length: > 0 } produced ||
+            produced == output)
+        {
+            return;
+        }
+
+        diagnostics.Add(Diagnostic.Create(
+            FlowXDiagnostics.FallbackMustMatchTheStepsOutput,
+            link.CallLocation,
+            step.CapabilityId,
+            output,
+            produced));
     }
 
     /// <summary>

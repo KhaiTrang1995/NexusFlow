@@ -421,6 +421,65 @@ internal sealed class RecordingDispatcher : IStepDispatcher
         }
     }
 
+    /// <summary>Step indices whose fallback capability the engine asked, in order.</summary>
+    /// <remarks>
+    /// Separate from <see cref="Executed"/> on purpose, and it is the assertion that a
+    /// capability fallback is a dispatch of its own rather than a second visit to the step: a
+    /// double that recorded both in one list could not tell "the fallback answered" from "the
+    /// retry ran once more".
+    /// </remarks>
+    public List<int> FellBackAt { get; } = [];
+
+    private readonly Dictionary<int, Error> _fallbackFailures = [];
+    private readonly Dictionary<int, Action<FlowContext>> _fallbackAnswers = [];
+
+    /// <summary>
+    /// Makes step <paramref name="index"/>'s fallback capability answer with
+    /// <paramref name="answer"/>.
+    /// </summary>
+    /// <remarks>
+    /// The typed <c>ctx.Set</c> is the whole point: it stands in for the line the generated
+    /// <c>ExecuteFallbackAsync</c> emits, which is the only code that may name the contract.
+    /// Writing it by hand here is what proves the seam is implementable, exactly as this
+    /// double's forward switch proved <c>ExecuteAsync</c>'s.
+    /// </remarks>
+    public RecordingDispatcher FallBackWith<TValue>(int index, TValue answer)
+        where TValue : notnull
+    {
+        _fallbackAnswers[index] = ctx => ctx.Set(answer);
+        return this;
+    }
+
+    /// <summary>Makes step <paramref name="index"/>'s fallback capability fail too.</summary>
+    public RecordingDispatcher FailFallbackAt(int index, Error error)
+    {
+        _fallbackFailures[index] = error;
+        return this;
+    }
+
+    /// <inheritdoc />
+    public ValueTask<StepOutcome> ExecuteFallbackAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+    {
+        lock (_recording)
+        {
+            FellBackAt.Add(stepIndex);
+            Trace.Add(
+                Name + ".fallback." + stepIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        if (_fallbackFailures.TryGetValue(stepIndex, out var error))
+        {
+            return ValueTask.FromResult(StepOutcome.Failed(error));
+        }
+
+        if (_fallbackAnswers.TryGetValue(stepIndex, out var answer))
+        {
+            answer(ctx);
+        }
+
+        return ValueTask.FromResult(StepOutcome.Success);
+    }
+
     /// <inheritdoc />
     public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
     {
@@ -795,6 +854,16 @@ internal static class Plans
 
     public static CapabilityDescriptor Refund { get; } =
         CapabilityDescriptor.Create("payment.refund", "2.1.0", isIdempotent: true, "payment-gateway");
+
+    /// <summary>The second rating service a degraded step asks. No side effects, by FLOWX1053.</summary>
+    /// <remarks>
+    /// A distinct id, which is the whole of what makes a degraded row legible: the journal keys
+    /// on <c>(instance, scope, step, attempt)</c> and the column beside the key says which
+    /// capability answered, so a row carrying this rather than the step's own is a degraded one
+    /// (ADR-0079 §2.2).
+    /// </remarks>
+    public static CapabilityDescriptor Secondary { get; } =
+        CapabilityDescriptor.Create("rating.secondary", "1.0.0", isIdempotent: true);
 
     /// <summary>Four steps; steps 1 and 2 are compensable; step 3 emits.</summary>
     public static ExecutionPlan FourStepSaga(TimeSpan? deadline = null) => ExecutionPlan.Create(
