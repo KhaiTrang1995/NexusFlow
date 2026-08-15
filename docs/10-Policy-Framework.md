@@ -60,7 +60,7 @@
 > the caller; a missing `IResultCache` merely dispatches, because an unconsulted cache costs
 > latency and never correctness.
 >
-> **No declarable kind is inert.** All thirteen `PolicySet` builders reach code that applies what
+> **No declarable kind is inert.** All fourteen `PolicySet` builders reach code that applies what
 > they declared. [`FLOWX1032`](diagnostics/README.md#flowx1032-is-deleted-with-what-it-described)
 > — the rule that reported a declared policy nothing executed — is **deleted**, having been
 > narrowed from the eight kinds it was written over, to four when the policy engine landed,
@@ -74,13 +74,27 @@
 > refuses a window to. All four of its subsections are now history and are marked as such
 > rather than deleted.
 >
-> **Four catalogue rows in §3 cannot be declared at all.** `PolicySet` offers
-> thirteen builder methods, and there is no policy attribute anywhere in
-> `FlowX.Abstractions` — the `[Timeout]`, `[CircuitBreaker]`, `[Audit]`,
-> `[RateLimit]` and `[Idempotency]` attributes in §4 do not exist. So `Authorize`,
-> `Consent`, `Batch` and `Outbox` are
+> **Two catalogue rows in §3 cannot be declared at all**, and a third is enforced without being
+> declarable. `PolicySet` offers fourteen builder methods, and there is no policy attribute
+> anywhere in `FlowX.Abstractions` — the `[Timeout]`, `[CircuitBreaker]`, `[Audit]`,
+> `[RateLimit]` and `[Idempotency]` attributes in §4 do not exist. So `Batch` and `Outbox` are
 > specification with no surface: no author can write one, and there is
-> nothing for an engine to execute. §3 marks each of them.
+> nothing for an engine to execute. §3 marks each of them, and
+> [ADR-0081](adr/ADR-0081-a-batch-has-no-unit-the-engine-can-name.md) is what `Batch` is blocked
+> on.
+>
+> **It said four until WP-83, and two of those four left the list in opposite directions.**
+> `Consent` is stage 2's first builder method: `PolicySet.Consent(purpose)` compares the purpose
+> a step declares with the purpose the invocation carried on a validated claim, refuses an
+> absent one as readily as a wrong one, and needs no store, because the comparison is two
+> strings the process already holds. `Authorize` **was never a gap** — the row's own parameters
+> column says *derived from the capability's stance*, and the stance has been decided in the
+> step loop since WP-77
+> ([ADR-0027](adr/ADR-0027-authorisation-runs-in-the-step-loop.md)); what expired is the row's
+> claim that "no boundary checks it", which had been false for six work packages. It is
+> reclassified as *derived* rather than given a builder, because a declarable `Authorize` would
+> be a second reading of a question the descriptor already answers. **One clause of it is still
+> unmet: a refusal is not audited**, and §3's row says so.
 >
 > **It said six until WP-81 and WP-82.** `Validate` and `Quota` are builder methods now, and
 > the two stages that already executed each grew a second kind rather than a new stage:
@@ -185,16 +199,38 @@ ADR-0011 is scheduled for review after three documented counterexamples.
 
 ## 3. The policy catalogue
 
-Seventeen rows, and **thirteen of them can be written down**: `PolicySet` has thirteen builder
-methods and there is no policy attribute in `FlowX.Abstractions`. All thirteen execute.
-The **Status** column says which is which — *executes*, or *undeclarable* (no
-builder method, no attribute, no descriptor kind: specification with no surface). There is no
-longer a *declared only* row, which is why `FLOWX1032` is deleted.
+Seventeen rows. **Fourteen can be written down**: `PolicySet` has fourteen builder methods and
+there is no policy attribute in `FlowX.Abstractions`. All fourteen execute. Of the three that
+remain, **one is enforced without being declarable and two are not built** — which is why the
+**Status** column now has three values rather than two: *executes*, ***derived*** (no builder
+method, and none wanted — the engine enforces it from the capability's own declaration), and
+*undeclarable* (no builder method, no attribute, no descriptor kind: specification with no
+surface). There is no longer a *declared only* row, which is why `FLOWX1032` is deleted.
 
-> **"Eleven of them can be written down" expired at WP-81 and WP-82**, which had said "nine"
-> until WP-78 and WP-79 and "eight" before that. `Validate` and `Quota` are builder methods now
-> and both execute, so the rows still marked *undeclarable* are `Authorize`, `Consent`, `Batch`
-> and `Outbox` — four, and none of them is at stage 1 or stage 3.
+> **"Thirteen of them can be written down" expired at WP-83**, which had said "eleven" until
+> WP-81 and WP-82, "nine" until WP-78 and WP-79, and "eight" before that. `Consent` is a builder
+> method now and executes, and **stage 2 is the first stage a widening has opened rather than
+> joined** — every kind added since the policy engine landed had gone into a stage that already
+> ran. It needed no new plan flag either: a policy arrives on a `PolicyChain` that
+> `StepPolicy.From` already walks, so this is one field, one term in `IsActive` and one guard
+> beside the stance's, which is [ADR-0023](adr/ADR-0023-policy-stages-hook-through-the-plan.md)'s
+> "widening is mechanical" taken up a fourth time.
+>
+> **And "four rows are undeclarable" expired in two different directions at once.** `Authorize`
+> was never a gap: its own key-parameters column says *derived from the capability's stance*, and
+> that stance has been enforced in the step loop since WP-77 — the row went on saying "no
+> boundary checks it" for six work packages after the boundary started checking it. It is
+> reclassified rather than built, because building a declarable `Authorize` would put a second
+> reading beside the descriptor's. What is genuinely unbuilt is **two** rows: `Batch`, refused
+> and recorded at
+> [ADR-0081](adr/ADR-0081-a-batch-has-no-unit-the-engine-can-name.md) with five named blockers,
+> and `Outbox`, which that row has always said is the emit step's own commit rather than a
+> policy anybody declares. **One clause of the `Authorize` row is still unmet and is not
+> stale** — *audited*. A refused step writes no audit record, because `Audit` runs at stage 7
+> after the commit and a step refused at stage 2 breaks out of the loop long before it. So
+> [15 §4](15-Security.md#4-authorisation-model)'s `403 + audit event` is half built, and the
+> reason that document gives for it — that `Audit` does not execute — stopped being the reason
+> when `Audit` shipped.
 > **The two stages that already executed each grew a second kind, and neither needed a new
 > hook.** Stage 1's `AdmitAsync` asks both admission kinds and returns the first refusal; stage
 > 3 runs the generated checks before the window is claimed, so a refused input never spends the
@@ -211,8 +247,8 @@ longer a *declared only* row, which is why `FLOWX1032` is deleted.
 |---|---|---|---|---|
 | `RateLimit` | 1 | **executes** | `permits`, `window`, `scope` (global/tenant/principal) | token bucket in a shared store, refilling continuously; refuses with `policy.rate_limited` carrying a `Retry-After`. Keyed by capability id and the declared scope, so two flows calling one dependency share the bound. A `key` scope is not expressible. Needs an `IRateLimiterStore`; a step declaring one without it is **refused**, never admitted ([ADR-0040](adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md)) |
 | `Quota` | 1 | **executes** | `budget`, `period`, `scope` (global/tenant/principal) | long-window fairness across tenants: a **fixed window** with a stored counter, so the whole budget is granted again at the period's boundary and nothing before it — which is what a plan limit means and what a token bucket cannot express (`TenantFairness.QuotaPerWindow` says so in as many words). Refuses with `policy.quota_exhausted`, category `Forbidden`, carrying the remainder of the period as a `Retry-After`. Keyed by capability id and the declared scope, so one tenant exhausting its plan refuses only itself. Needs an `IQuotaStore`; a step declaring one without it is **refused** at run time, and a node whose registered plans declare one refuses to become ready ([ADR-0040](adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md)'s stance, which that record's revisit condition asked for by name) |
-| `Authorize` | 2 | *undeclarable* | derived from the capability's stance | deny-by-default; audited. The stance reaches the manifest and no boundary checks it |
-| `Consent` | 2 | *undeclarable* | `purpose` | GDPR purpose-limitation checks |
+| `Authorize` | 2 | ***derived* — enforced by the stance machinery** | derived from the capability's stance | deny-by-default, and enforced: `StepAuthorization.From` reads the stance off the step's `CapabilityDescriptor` when the plan is built and `FlowEngine`'s step loop decides it before the dispatch and outside the retry ([ADR-0027](adr/ADR-0027-authorisation-runs-in-the-step-loop.md)), against the `ClaimsPrincipal` the invocation carries ([ADR-0028](adr/ADR-0028-identity-arrives-on-the-invocation.md)), as a `Result` failure carrying `Forbidden` ([ADR-0029](adr/ADR-0029-a-refusal-is-a-result-failure.md)). **There is no builder method and there must not be one**: this row's own key-parameters column says *derived*, and a declarable `Authorize` would be a second reading of a question the descriptor already answers — the two-copies defect ADR-0027 §3 names avoiding by having no second reading to disagree with. ~~*undeclarable*~~ and ~~"the stance reaches the manifest and no boundary checks it"~~ **both expired at WP-77**, which is the release that made the second sentence false; the row went on saying it for six work packages. **One clause is still unmet: *audited*.** A refused step writes no audit record — `Audit` runs at stage 7, after the commit, and a step refused at stage 2 never reaches it — so [15 §4](15-Security.md#4-authorisation-model)'s `403 + audit event` is half met. That is a live gap and not a stale row |
+| `Consent` | 2 | **executes** | `purpose` | GDPR Article 5(1)(b) purpose limitation, and the only *declarable* kind at stage 2. The step names the purpose it may be invoked for; the invocation carries the purpose its caller asserted, read from a `purpose` claim by `InvocationPurpose.FromClaims` and from nothing else — a limitation whose input the limited party supplies is not one, which is `TenantClaimTypes`' stance and `PermissionClaimTypes`'. Compared ordinally and in whole: not a prefix, not a hierarchy, not a case fold, because whether one purpose subsumes another is a legal judgement rather than a fact about strings. **Deny by default** — an invocation asserting no purpose is refused with `policy.consent_purpose_absent`, and one asserting another with `policy.consent_purpose_not_covered`; both `Forbidden`, two codes for [ADR-0029](adr/ADR-0029-a-refusal-is-a-result-failure.md) §2.1's reason, and the refusal names the declared purpose and never the caller's. Needs no store — the comparison is two strings the process holds, which is what keeps an Identity-stage decision synchronous and [ADR-0030](adr/ADR-0030-policy-stance-is-refused-at-build-time.md) shut. Suppressed on a continuation, exactly as the stance is: a journal row keeps no claims, so a sweep carries no purpose ([ADR-0028](adr/ADR-0028-identity-arrives-on-the-invocation.md) §2.2). A blank purpose is **refused at build time by** [`FLOWX1057`](diagnostics/FLOWX1057.md) — the run-time floor reads one as *undeclared*, so it ships a gate the manifest publishes and the engine skips. **It does not verify a consent**, which is granted by a person with an expiry and a withdrawal: that stays a capability against a register, as `samples/healthcare` does |
 | `Validate` | 3 | **executes** | none — generated from contract annotations | the compiler reads `[Required]`, `[Range]`, `[StringLength]`, `[MinLength]` and `[MaxLength]` off the step's input contract in the pass that builds the manifest and emits the comparisons into the generated dispatcher, so nothing reflects at run time (**C2**). The vocabulary is `System.ComponentModel.DataAnnotations`', which ships in the shared framework, so a contract pays no package reference (**C6**); `Validator.TryValidateObject` is deliberately not used. Refuses with `policy.validation_failed`, category `Validation`, carrying an `errors` detail that `ProblemDetailsMapper` renders as a validation problem's field errors. **No message carries a value** — each is built from the rule's declared bounds — so a `[Sensitive]` member cannot leak through a refusal. Runs before the idempotency window, so a refused input spends no key. A contract with no rule to check is **refused at build time by** [`FLOWX1055`](diagnostics/FLOWX1055.md) |
 | `Idempotency` | 3 | **executes** | `window`, `scope` | records the flow's state bag as of the end of the step and replays it for a repeated key; refuses a concurrent presentation. Keyed by `ctx.IdempotencyKey` + capability id + scope ([ADR-0041](adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md)). **Only a success is recorded** — a failed step frees its key. Needs an `IIdempotencyStore`, and is **refused at build time by [`FLOWX1040`](diagnostics/FLOWX1040.md)** on a flow declaring a `[Sensitive]` contract member |
 | `Timeout` | 4 | **executes** | `duration` | armed per attempt, and clamped to what is left of the flow deadline — so §11's "a timeout longer than the deadline is a lie" is prevented rather than discouraged |
@@ -222,7 +258,7 @@ longer a *declared only* row, which is why `FLOWX1032` is deleted.
 | `Hedge` | 4 | **executes** | `afterDelay`, `maxAttempts` | tail-latency cutting. Issues the next call when the outstanding ones have said nothing for `afterDelay`, and at once when one of them has failed; the first success wins and the losers are cancelled, which is not an error. **Requires `Idempotent = true`** ([`FLOWX1051`](diagnostics/FLOWX1051.md)) — the answer the flow keeps may be the losing call's, so the two have to be one request. Inside the retry and outside the breaker, bulkhead and timeout, so each hedged call takes its own permit and is counted on its own ([ADR-0078](adr/ADR-0078-stage-four-nests-six-kinds.md)) |
 | `Fallback` | 4 | **executes** | a constant of the step's output type, **or a capability that produces it** | explicit degraded mode. Outermost of the six, so it is consulted once, after the retry has stopped asking; a fallback capability is asked once and is not itself retried or hedged. **Requires no side effects** ([`FLOWX1053`](diagnostics/FLOWX1053.md)) — of the step, for `FLOWX1018`'s reason, and of the fallback capability, because a degraded step registers no compensation and an effect made on the failure path would have nothing pointing at it. An answer that is not the step's output contract is [`FLOWX1052`](diagnostics/FLOWX1052.md), whichever half declared it. Under `Durable` the degraded answer is a journal row of its own, carrying the *answering* capability's id — which is what lets a resumed instance resume the fallback rather than re-ask the primary ([ADR-0079](adr/ADR-0079-a-fallback-capability-is-a-dispatch-of-its-own.md)). The fallback capability is published in the manifest's capability inventory and named on the step |
 | `Cache` | 5 | **executes** | `ttl`, `scope` | tenant-scoped by default. Keyed on capability id + version + tenant + (under `Principal`) the caller's permission set + the input document, hashed. `FLOWX1018` refuses one on a capability with side effects, and the engine relies on that rather than re-checking. It meets [ADR-0042](adr/ADR-0042-a-recorded-result-is-replayed-only-when-recording-lost-nothing.md)'s question — a cache records a result too — and answers it the same way: a document the redaction pass touched is neither keyed on nor held. **Single-flight is not built** ([ADR-0044](adr/ADR-0044-a-cache-is-a-plugin-store-keyed-by-the-redacted-input.md)) |
-| `Batch` | 5 | *undeclarable* | `size`, `window` | coalesces N invocations into one |
+| `Batch` | 5 | *undeclarable — blocked on [ADR-0081](adr/ADR-0081-a-batch-has-no-unit-the-engine-can-name.md)'s pieces* | `size`, `window` | coalesces N invocations into one — and `window` is what says whose: a duration spent waiting for *more work to arrive* means arrivals from other flow instances, because one instance's iteration count is known before the step runs. [ADR-0081](adr/ADR-0081-a-batch-has-no-unit-the-engine-can-name.md) names the five missing pieces. There is no batched capability contract and no dispatch seam for one — `ExecuteAsync(stepIndex, ctx, ct)` invokes one capability against one context. A policy cannot suspend an instance: every wait here is a plan node with an identity the journal keys a row by, and a stage-5 policy has no index, no `wake_at` and no frontier entry, so a parked instance is one a lease sweep fences and restarts. Stage 4 nests over *one call*, so a `Timeout` clamped to the flow's deadline has N budgets and no honest choice between them, and a breaker counting calls starts measuring batches. Coalescing across instances is coalescing across tenants, which is §2's first row without the key that makes a cache safe. **B2 survives it easily**, and that is the one piece which is not a blocker |
 | `Audit` | 7 | **executes** | `category`, `redact` | immutable audit record, written to `IAuditSink` after the step's commit. Carries the journal's own payload — a composed `request`/`result` document — so `redact` is a longer list of member names handed to the one redaction pass, and can only remove ([ADR-0043](adr/ADR-0043-an-audit-record-is-the-journals-payload-redacted-twice.md)). A **missing sink fails the step**, unlike every other seam on this path. It is resolved onto `StepNode.StepAudit` rather than `StepPolicy`, because it runs outside the wrapping the other stages share |
 | `Outbox` | 7 | *undeclarable* | — | implicit on `.Emit` in durable flows, and real — but it is the emit step's own commit rather than a policy anybody declares |
 | `CompensationRetry` | 7 | **executes** | `attempts`, `backoff`, `retryOn` | wraps the step's *compensation*, so it requires the **compensating** capability to declare `Idempotent = true`. Defaults: 5 attempts (more aggressive than forward retry, [06 §7](06-Execution-Engine.md#7-compensation-semantics) rule 2), full jitter, `Conflict`/`Unavailable`/`Internal` |
