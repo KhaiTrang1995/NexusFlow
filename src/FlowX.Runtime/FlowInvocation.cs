@@ -546,6 +546,160 @@ public static class FlowErrors
             ErrorCategory.Unavailable)
             .With("capabilityId", capabilityId);
 
+    /// <summary>The code <see cref="QuotaExhausted"/> raises.</summary>
+    /// <remarks>
+    /// A sibling of <see cref="RateLimitedCode"/> and deliberately not the same code, because
+    /// the two lead to opposite responses. A rate limit says "slow down" and a caller obeys it
+    /// by waiting; a quota says "the plan you bought is spent for this period", and a caller
+    /// that treated it as backpressure would spend the remainder of a month retrying. The
+    /// <c>retryAfter</c> both carry is what the two have in common, and it means different
+    /// things: milliseconds there, whatever is left of the period here.
+    /// </remarks>
+    public const string QuotaExhaustedCode = "policy.quota_exhausted";
+
+    /// <summary>
+    /// A step's <c>Quota</c> has no budget left for this holder in the current period.
+    /// </summary>
+    /// <param name="capabilityId">The capability whose budget is spent.</param>
+    /// <param name="retryAfter">What is left of the period, as the store reported it.</param>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ErrorCategory.Forbidden"/> rather than <see cref="ErrorCategory.Unavailable"/>,
+    /// which is where this parts company with <see cref="RateLimited"/>. Nothing is down and
+    /// nothing is temporarily busy: the caller has spent what it is entitled to, and no amount
+    /// of waiting inside this period changes the answer. The category is also what keeps the
+    /// error out of <c>Retry</c>'s default retryable set — a forward retry of an exhausted plan
+    /// limit would spend the flow's deadline re-asking a question whose answer is fixed until
+    /// the window turns over — and what makes a transport render it as a <c>403</c> rather than
+    /// a <c>429</c>, which is the honest status for "you may not", as opposed to "not now".
+    /// </para>
+    /// <para>
+    /// <c>retryAfter</c> is carried anyway, because the one thing a refused caller can act on is
+    /// when the budget comes back, and that is a fact only the store's clock knows.
+    /// </para>
+    /// </remarks>
+    public static Error QuotaExhausted(string capabilityId, TimeSpan retryAfter) =>
+        new Error(
+            QuotaExhaustedCode,
+            $"The quota for capability '{capabilityId}' is spent for this period. It is granted " +
+            $"again in {retryAfter}. The call was refused without being made.",
+            ErrorCategory.Forbidden)
+            .With("capabilityId", capabilityId)
+            .With("retryAfter", retryAfter);
+
+    /// <summary>The code <see cref="QuotaStoreUnavailable"/> raises.</summary>
+    public const string QuotaUnavailableCode = "policy.quota_unavailable";
+
+    /// <summary>
+    /// A step declares a <c>Quota</c> and the budget could not be consulted — no store was
+    /// registered, or the one that was did not answer.
+    /// </summary>
+    /// <param name="capabilityId">The capability whose budget could not be consulted.</param>
+    /// <param name="cause">What the store reported, when there was a store.</param>
+    /// <remarks>
+    /// A refusal, for <see cref="RateLimiterUnavailable"/>'s reason word for word: admitting
+    /// when the store is absent puts the declaration's meaning in a registration nobody can see
+    /// from the flow, and admitting when it is unreachable turns an outage of the counter into
+    /// an unmetered month.
+    /// </remarks>
+    public static Error QuotaStoreUnavailable(string capabilityId, Error? cause = null) =>
+        new Error(
+            QuotaUnavailableCode,
+            cause is null
+                ? $"Capability '{capabilityId}' declares a Quota and no IQuotaStore is " +
+                  "registered, so no budget could be consulted. The call was refused rather " +
+                  "than admitted: a budget that is not wired up must not read as a budget that " +
+                  "had room."
+                : $"Capability '{capabilityId}' declares a Quota and its store did not answer: " +
+                  $"{cause.Message} The call was refused rather than admitted — a counter that " +
+                  "cannot reach its server does not know what this holder has already spent.",
+            ErrorCategory.Unavailable)
+            .With("capabilityId", capabilityId);
+
+    /// <summary>The code <see cref="ValidationFailed"/> raises.</summary>
+    /// <remarks>
+    /// <c>docs/10-Policy-Framework.md</c> §3's "field errors → RFC 7807". The code is spelled
+    /// with the policy's prefix like every other policy failure, and the field errors ride in
+    /// the error's structured detail under <see cref="FieldErrorsDetail"/> — which
+    /// <c>ProblemDetailsMapper</c> already copies into the problem document's extensions, so
+    /// there is one mapping from an <see cref="Error"/> to a 7807 body and this extends it
+    /// rather than adding a second.
+    /// </remarks>
+    public const string ValidationFailedCode = "policy.validation_failed";
+
+    /// <summary>
+    /// The detail key the field errors travel under, and the member RFC 7807 renders them as.
+    /// </summary>
+    /// <remarks>
+    /// <c>errors</c>, which is the name a validation problem document carries by convention —
+    /// an object of field name to messages. Naming it anything else would mean every client
+    /// library that already understands a validation problem would have to learn a FlowX
+    /// spelling of it.
+    /// </remarks>
+    public const string FieldErrorsDetail = "errors";
+
+    /// <summary>
+    /// A step's <c>Validate</c> found the input broke rules its contract declares.
+    /// </summary>
+    /// <param name="capabilityId">The capability the input was destined for.</param>
+    /// <param name="failures">Which members broke which rules. Never empty.</param>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ErrorCategory.Validation"/>, which is what makes this a <c>400</c> and keeps
+    /// it out of every retry set: <c>docs/10 §11</c>'s first anti-pattern is retrying a
+    /// validation error, because "the input will never become valid".
+    /// </para>
+    /// <para>
+    /// <strong>The message counts the failures and does not quote them.</strong> The detail is
+    /// the structured list, which is the half a caller can act on; a message that concatenated
+    /// the field messages would be a second, lossier rendering of the same facts, and the
+    /// summary is what belongs in a log line.
+    /// </para>
+    /// </remarks>
+    public static Error ValidationFailed(string capabilityId, IReadOnlyList<FieldError> failures)
+    {
+        ArgumentNullException.ThrowIfNull(failures);
+
+        return new Error(
+            ValidationFailedCode,
+            $"The input to '{capabilityId}' broke {failures.Count} rule(s) its contract " +
+            "declares. The step was refused without being dispatched — docs/10 §2: validation " +
+            "after the side effect is corrupt data written and then rejected.",
+            ErrorCategory.Validation)
+            .With("capabilityId", capabilityId)
+            .With(FieldErrorsDetail, failures);
+    }
+
+    /// <summary>The code <see cref="ValidationUnavailable"/> raises.</summary>
+    public const string ValidationUnavailableCode = "policy.validation_unavailable";
+
+    /// <summary>
+    /// A step declares a <c>Validate</c> and its dispatcher has no generated checks to run.
+    /// </summary>
+    /// <param name="capabilityId">The capability whose input went unchecked.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>A refusal, and the reason is the one every stage-1 and stage-3 seam gives.</strong>
+    /// The checks are generated from the contract's annotations, so a dispatcher that answers
+    /// <see cref="ValidationOutcome.Unavailable"/> is one that was written by hand or compiled
+    /// from a source the generator did not see. Admitting there would make a declared
+    /// <c>Validate</c> mean nothing on exactly the builds where nobody would notice.
+    /// </para>
+    /// <para>
+    /// A compiled flow cannot reach it: <c>FLOWX1056</c> refuses a <c>Validate</c> on a contract
+    /// with no rule to check at build time, and the generator emits a case for every step that
+    /// passes.
+    /// </para>
+    /// </remarks>
+    public static Error ValidationUnavailable(string capabilityId) =>
+        new Error(
+            ValidationUnavailableCode,
+            $"Capability '{capabilityId}' declares a Validate and its dispatcher generated no " +
+            "checks for it, so the input was never examined. The step was refused rather than " +
+            "dispatched: a validation nothing ran must not read as a validation that passed.",
+            ErrorCategory.Internal)
+            .With("capabilityId", capabilityId);
+
     /// <summary>The code <see cref="IdempotencyStoreUnavailable"/> raises.</summary>
     public const string IdempotencyUnavailableCode = "policy.idempotency_unavailable";
 

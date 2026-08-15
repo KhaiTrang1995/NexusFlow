@@ -100,3 +100,37 @@ public sealed class RecordingPublisherConformanceTests : PublisherConformance, I
         _brokers.Clear();
     }
 }
+
+/// <summary>
+/// Runs the whole quota suite against the reference store.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>The reference for stage 1's second store, and the only derivation that runs
+/// everywhere.</strong> <c>PostgresQuotaStoreConformanceTests</c> is the other, and it needs a
+/// database; this one needs nothing, so a change to <see cref="QuotaStoreConformance"/> is
+/// judged on every machine rather than only on the ones with a container running.
+/// </para>
+/// <para>
+/// The two clients are two objects over one <see cref="InMemoryQuotaServer"/> — the
+/// relationship two nodes have, and the only one a single test process can construct.
+/// </para>
+/// </remarks>
+public sealed class InMemoryQuotaStoreConformanceTests : QuotaStoreConformance
+{
+    /// <inheritdoc />
+    protected override ValueTask<QuotaStoreUnderTest> CreateAsync() =>
+        new(new InMemoryQuotaStoreUnderTest());
+
+    private sealed class InMemoryQuotaStoreUnderTest : QuotaStoreUnderTest
+    {
+        private readonly InMemoryQuotaServer _server = new();
+
+        public override IQuotaStore Quota => field ??= new InMemoryQuotaStore(_server);
+
+        public override IQuotaStore SecondClient => field ??= new InMemoryQuotaStore(_server);
+
+        public override ValueTask<IQuotaStore> UnreachableAsync(CancellationToken cancellationToken) =>
+            new(new InMemoryQuotaStore(new InMemoryQuotaServer(), reachable: false));
+    }
+}

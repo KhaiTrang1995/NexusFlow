@@ -8,10 +8,10 @@ namespace FlowX;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Nine kinds across four stages.</strong> <c>RateLimit</c> (stage 1),
-/// <c>Idempotency</c> (stage 3), <c>Timeout</c>, <c>Retry</c>, <c>CircuitBreaker</c>,
-/// <c>Bulkhead</c>, <c>Hedge</c> and <c>Fallback</c> (stage 4), and <c>Cache</c> (stage 5) are
-/// the kinds this reads. <c>Audit</c> (stage 7) is read past, exactly as
+/// <strong>Eleven kinds across four stages.</strong> <c>RateLimit</c> and <c>Quota</c>
+/// (stage 1), <c>Validate</c> and <c>Idempotency</c> (stage 3), <c>Timeout</c>, <c>Retry</c>,
+/// <c>CircuitBreaker</c>, <c>Bulkhead</c>, <c>Hedge</c> and <c>Fallback</c> (stage 4), and
+/// <c>Cache</c> (stage 5) are the kinds this reads. <c>Audit</c> (stage 7) is read past, exactly as
 /// <see cref="CompensationPolicy.From"/> reads past everything that is not a compensation retry — it runs after the step's commit and is
 /// resolved onto <see cref="StepAudit"/> instead. Which stages a partial engine may skip is
 /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>.
@@ -60,6 +60,10 @@ public sealed class StepPolicy
         int permits,
         TimeSpan rateWindow,
         RateLimitScope rateScope,
+        int budget,
+        TimeSpan quotaPeriod,
+        QuotaScope quotaScope,
+        bool validates,
         TimeSpan? idempotencyWindow,
         IdempotencyScope idempotencyScope,
         TimeSpan? cacheTtl,
@@ -81,6 +85,10 @@ public sealed class StepPolicy
         Permits = permits;
         RateWindow = rateWindow;
         RateScope = rateScope;
+        Budget = budget;
+        QuotaPeriod = quotaPeriod;
+        QuotaScope = quotaScope;
+        Validates = validates;
         IdempotencyWindow = idempotencyWindow;
         IdempotencyScope = idempotencyScope;
         CacheTtl = cacheTtl;
@@ -98,7 +106,8 @@ public sealed class StepPolicy
     public static StepPolicy None { get; } = new(
         null, 1, Backoff.ExponentialJitter(), ImmutableArray<ErrorCategory>.Empty,
         0d, TimeSpan.Zero, TimeSpan.Zero, 0, 0,
-        0, TimeSpan.Zero, RateLimitScope.Tenant, null, IdempotencyScope.Tenant,
+        0, TimeSpan.Zero, RateLimitScope.Tenant,
+        0, TimeSpan.Zero, QuotaScope.Tenant, false, null, IdempotencyScope.Tenant,
         null, CacheScope.Tenant, TimeSpan.Zero, 1, null, null);
 
     /// <summary>
@@ -164,6 +173,28 @@ public sealed class StepPolicy
 
     /// <summary>What the rate limit's budget is shared by.</summary>
     public RateLimitScope RateScope { get; }
+
+    /// <summary>
+    /// How many calls one <see cref="QuotaPeriod"/> grants, or zero when no quota was declared.
+    /// </summary>
+    public int Budget { get; }
+
+    /// <summary>The fixed window <see cref="Budget"/> is granted over, and reset at.</summary>
+    public TimeSpan QuotaPeriod { get; }
+
+    /// <summary>Whose plan the quota's budget belongs to.</summary>
+    public QuotaScope QuotaScope { get; }
+
+    /// <summary>
+    /// Whether the step's input is checked against the rules its contract declares.
+    /// </summary>
+    /// <remarks>
+    /// A flag and no parameters, because the rules are not a parameter of the policy: they are
+    /// annotations on the contract, read by the compiler and emitted into the generated
+    /// dispatcher's <c>Validate</c>. What reaches the engine is only the question of whether to
+    /// ask.
+    /// </remarks>
+    public bool Validates { get; }
 
     /// <summary>How long a recorded result is replayed for, or <c>null</c> when none was declared.</summary>
     /// <remarks>
@@ -253,6 +284,14 @@ public sealed class StepPolicy
     /// </remarks>
     public bool HasRateLimit => Permits > 0 && RateWindow > TimeSpan.Zero;
 
+    /// <summary>True when a long-window quota was declared.</summary>
+    /// <remarks>
+    /// Both terms, for <see cref="HasRateLimit"/>'s reason. A declared <c>budget: 0</c> is a
+    /// step no caller could ever run, which is a flow that should not have the step rather than
+    /// a quota; a period of zero is a window with no inside.
+    /// </remarks>
+    public bool HasQuota => Budget > 0 && QuotaPeriod > TimeSpan.Zero;
+
     /// <summary>True when an idempotency window was declared.</summary>
     public bool HasIdempotency => IdempotencyWindow is { Ticks: > 0 };
 
@@ -307,7 +346,8 @@ public sealed class StepPolicy
     /// </remarks>
     public bool IsActive =>
         Timeout is not null || IsRetrying || HasBreaker || HasBulkhead
-        || HasRateLimit || HasIdempotency || HasCache || HasHedge || HasFallback;
+        || HasRateLimit || HasQuota || Validates || HasIdempotency || HasCache
+        || HasHedge || HasFallback;
 
     /// <summary>
     /// Reads the in-line kinds out of a chain, or <see cref="None"/> when it declares none.
@@ -335,6 +375,10 @@ public sealed class StepPolicy
         var permits = 0;
         var rateWindow = TimeSpan.Zero;
         var rateScope = RateLimitScope.Tenant;
+        var budget = 0;
+        var quotaPeriod = TimeSpan.Zero;
+        var quotaScope = QuotaScope.Tenant;
+        var validates = false;
         TimeSpan? idempotencyWindow = null;
         var idempotencyScope = IdempotencyScope.Tenant;
         TimeSpan? cacheTtl = null;
@@ -352,6 +396,19 @@ public sealed class StepPolicy
                     permits = Math.Max(0, Parameter(policy, "permits", 0));
                     rateWindow = Parameter(policy, "window", TimeSpan.Zero);
                     rateScope = Parameter(policy, "scope", RateLimitScope.Tenant);
+                    break;
+
+                case QuotaKind:
+                    budget = Math.Max(0, Parameter(policy, "budget", 0));
+                    quotaPeriod = Parameter(policy, "period", TimeSpan.Zero);
+                    quotaScope = Parameter(policy, "scope", QuotaScope.Tenant);
+                    break;
+
+                case ValidateKind:
+                    // No parameters to read. The rules live on the contract and were read by
+                    // the compiler; all this stage needs from the declaration is whether the
+                    // author asked for it.
+                    validates = true;
                     break;
 
                 case IdempotencyKind:
@@ -416,7 +473,8 @@ public sealed class StepPolicy
         var resolved = new StepPolicy(
             timeout, attempts, backoff, retryOn,
             failureRatio, samplingWindow, breakDuration, maxConcurrency, queueDepth,
-            permits, rateWindow, rateScope, idempotencyWindow, idempotencyScope,
+            permits, rateWindow, rateScope, budget, quotaPeriod, quotaScope, validates,
+            idempotencyWindow, idempotencyScope,
             cacheTtl, cacheScope, hedgeAfter, hedgeAttempts, fallback, fallbackCapability);
 
         return resolved.IsActive ? resolved : None;
@@ -424,6 +482,23 @@ public sealed class StepPolicy
 
     /// <summary>The descriptor kind <see cref="PolicySet.RateLimit"/> emits.</summary>
     public const string RateLimitKind = "RateLimit";
+
+    /// <summary>The descriptor kind <see cref="PolicySet.Quota"/> emits.</summary>
+    /// <remarks>
+    /// Stage 1's second kind. It shares the stage with <see cref="RateLimitKind"/> and not the
+    /// store: a token bucket refills continuously and a quota's window turns over, so
+    /// <c>IQuotaStore</c> is a contract of its own rather than an <c>IRateLimiterStore</c> with
+    /// a longer window — see that interface for the argument.
+    /// </remarks>
+    public const string QuotaKind = "Quota";
+
+    /// <summary>The descriptor kind <see cref="PolicySet.Validate"/> emits.</summary>
+    /// <remarks>
+    /// Stage 3's second kind, and the first one whose behaviour is not in this assembly at all:
+    /// the checks are generated into the flow's dispatcher from the contract's annotations, so
+    /// what this type carries is the question and not the answer.
+    /// </remarks>
+    public const string ValidateKind = "Validate";
 
     /// <summary>The descriptor kind <see cref="PolicySet.Idempotency"/> emits.</summary>
     public const string IdempotencyKind = "Idempotency";

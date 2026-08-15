@@ -1520,6 +1520,13 @@ public static class FlowAnalyzer
             info.AuthorizationValue,
             info.InputTypeName,
             info.OutputTypeName,
+
+            // Read off the capability's declared input rather than off the mapping's result
+            // type, and the two are the same question: FLOWX1029 already requires the mapping
+            // to produce something assignable to this, so the annotations on this contract are
+            // the ones the capability will be handed. Reading the mapping's type instead would
+            // make a step's rules depend on which .Step overload the author picked.
+            ValidationRuleReader.Read(CapabilityReader.InputContract(symbol)),
             mapping?.Text,
             mapping?.TypeName,
             mapping?.Location,
@@ -2463,6 +2470,21 @@ public static class FlowAnalyzer
                 step.CapabilityId));
         }
 
+        // FLOWX1056 — a Validate whose contract declares nothing to check. Judged from the
+        // rules this compiler read off the input contract rather than from the presence of an
+        // attribute, so what is reported is exactly what would have been emitted: nothing. The
+        // step's own model carries them, read in the pass that built the manifest, so there is
+        // one reading of the contract and not two.
+        if (step.ValidationRules.Length == 0 && step.PolicyKinds.Contains(ValidateKind))
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.ValidateHasNothingToCheck,
+                link.CallLocation,
+                step.PolicySetName ?? ValidateKind,
+                step.CapabilityId,
+                step.CapabilityInput ?? "object"));
+        }
+
         // FLOWX1018 — a cache hit returns a success without performing the effect.
         if (step.SideEffects.Length > 0 && step.PolicyKinds.Contains(CacheKind))
         {
@@ -2597,6 +2619,9 @@ public static class FlowAnalyzer
     /// for was supposed to change anything. Neither implies the other, and a set can fail both.
     /// </remarks>
     private const string FallbackKind = "Fallback";
+
+    /// <summary>The policy kind whose rules live on the contract rather than in the call — FLOWX1056.</summary>
+    private const string ValidateKind = "Validate";
 
     private static ArrowExpressionClauseSyntax? FindArrow(MethodDeclarationSyntax method) =>
         method.ExpressionBody;

@@ -289,6 +289,9 @@ internal sealed class SubstitutingDispatcher : IStepDispatcher
     public JournalPayload DescribeInput(object? input) => _inner.DescribeInput(input);
 
     /// <inheritdoc />
+    public ValidationOutcome Validate(int stepIndex, FlowContext ctx) => _inner.Validate(stepIndex, ctx);
+
+    /// <inheritdoc />
     public JournalPayload DescribeCacheKey(int stepIndex, FlowContext ctx) =>
         _inner.DescribeCacheKey(stepIndex, ctx);
 

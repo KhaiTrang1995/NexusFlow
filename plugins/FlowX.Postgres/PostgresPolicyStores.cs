@@ -422,6 +422,155 @@ public sealed class PostgresIdempotencyStore : IIdempotencyStore
     }
 }
 
+/// <summary>
+/// A long-window budget shared by every node that consults it, in PostgreSQL.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>A fixed window with a stored counter, which is the difference from the token bucket
+/// above.</strong> The window a call falls in is <c>now()</c> floored to a multiple of the
+/// declared period, so two nodes agree about where the boundary is without agreeing about
+/// anything else — the same reason every statement in this file reads the server's clock and
+/// never the caller's. A caller arriving in a later window writes the new boundary and resets
+/// the count in the same statement, so the reset costs nothing and there is no sweep to run.
+/// </para>
+/// <para>
+/// <strong>One statement, for <see cref="PostgresRateLimiterStore"/>'s reason.</strong> The
+/// read, the roll and the increment are three things about one count, and a second connection
+/// between any two of them would decide against a count the first had already spent. The
+/// upsert's row lock is the exclusion, and <c>RETURNING</c> carries the decision out.
+/// </para>
+/// <para>
+/// <strong>The refused branch does not increment.</strong> A month of refusals that each
+/// counted would drive <c>spent</c> arbitrarily far past the budget, which changes nothing
+/// about the answer and makes the column stop meaning "calls admitted this period" — the one
+/// thing an operator or a billing export would read it for.
+/// </para>
+/// </remarks>
+public sealed class PostgresQuotaStore : IQuotaStore
+{
+    /// <summary>
+    /// Rolls the window to <c>now()</c>, spends a unit if the budget has one, and reports.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The window boundary is computed with <c>to_timestamp(floor(extract(epoch from now()) /
+    /// s) * s)</c> — the epoch second floored to a multiple of the period. It is an absolute
+    /// grid rather than "the period since this key was first seen", which is what makes the
+    /// boundary the same for every key and for every node, and what lets an operator say when
+    /// a budget comes back without reading the row.
+    /// </para>
+    /// <para>
+    /// <c>spent</c> is compared before it is written, so the admitted branch is "fewer than
+    /// budget calls have been made in this window". The refused branch leaves the count where
+    /// it was; see this class's remarks.
+    /// </para>
+    /// </remarks>
+    private const string TryConsume =
+        """
+        INSERT INTO quota_counter AS q (quota_key, window_start, spent, admitted)
+        VALUES (
+            @key,
+            to_timestamp(floor(extract(epoch from now()) / @period_seconds::double precision)
+                         * @period_seconds::double precision),
+            1,
+            true)
+        ON CONFLICT (quota_key) DO UPDATE
+           SET window_start = to_timestamp(
+                   floor(extract(epoch from now()) / @period_seconds::double precision)
+                   * @period_seconds::double precision),
+               spent = CASE
+                   WHEN q.window_start < to_timestamp(
+                            floor(extract(epoch from now()) / @period_seconds::double precision)
+                            * @period_seconds::double precision)
+                   THEN 1
+                   WHEN q.spent < @budget::bigint
+                   THEN q.spent + 1
+                   ELSE q.spent
+                   END,
+               admitted = q.window_start < to_timestamp(
+                              floor(extract(epoch from now()) / @period_seconds::double precision)
+                              * @period_seconds::double precision)
+                          OR q.spent < @budget::bigint
+        RETURNING admitted, spent, window_start, now() AS server_now
+        """;
+
+    private readonly NpgsqlDataSource _dataSource;
+
+    /// <summary>Creates a quota store over a data source.</summary>
+    /// <param name="dataSource">The data source; its connection string selects the schema.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is null.</exception>
+    public PostgresQuotaStore(NpgsqlDataSource dataSource)
+    {
+        ArgumentNullException.ThrowIfNull(dataSource);
+
+        _dataSource = dataSource;
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<Result<QuotaVerdict>> TryConsumeAsync(
+        string key,
+        int budget,
+        TimeSpan period,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(key);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(budget);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(period, TimeSpan.Zero);
+
+        try
+        {
+            var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+
+            await using var closing = connection.ConfigureAwait(false);
+
+            using var command = connection.CreateCommand();
+
+            command.CommandText = TryConsume;
+            command.Parameters.Add(Db.Text("key", key));
+            command.Parameters.Add(Db.Long("budget", budget));
+            command.Parameters.Add(Db.Double("period_seconds", period.TotalSeconds));
+
+            var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+
+            await using var closingReader = reader.ConfigureAwait(false);
+
+            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return PostgresPolicyErrors.QuotaAnsweredNothing();
+            }
+
+            var admitted = await reader.GetFieldValueAsync<bool>(0, cancellationToken).ConfigureAwait(false);
+            var spent = await reader.GetFieldValueAsync<long>(1, cancellationToken).ConfigureAwait(false);
+            var start = await reader.GetFieldValueAsync<DateTime>(2, cancellationToken).ConfigureAwait(false);
+            var now = await reader.GetFieldValueAsync<DateTime>(3, cancellationToken).ConfigureAwait(false);
+
+            // What is left of the window the refusal happened in, from the server's own clock
+            // on both sides — never the caller's, which would make the wait depend on NTP.
+            var retryAfter = admitted ? TimeSpan.Zero : Remaining(start, now, period);
+
+            return Result.Ok(new QuotaVerdict(admitted, Math.Max(0L, budget - spent), retryAfter));
+        }
+        catch (NpgsqlException failure)
+        {
+            return PostgresPolicyErrors.QuotaUnreachable(failure);
+        }
+    }
+
+    /// <summary>How long until the window turns over and the budget is granted again.</summary>
+    /// <remarks>
+    /// Floored at one millisecond so a refusal never says "come back now", which is a refusal
+    /// that produces a hot loop against the store that just refused — the same floor
+    /// <see cref="PostgresRateLimiterStore"/> applies, for the same reason.
+    /// </remarks>
+    private static TimeSpan Remaining(DateTime windowStart, DateTime now, TimeSpan period)
+    {
+        var left = windowStart + period - now;
+
+        return left <= TimeSpan.Zero ? TimeSpan.FromMilliseconds(1) : left;
+    }
+}
+
 /// <summary>What the PostgreSQL policy stores report when the database does not answer.</summary>
 /// <remarks>
 /// An <see cref="Error"/> rather than an exception, for <c>RedisRateLimiterStore</c>'s reason:
@@ -451,6 +600,17 @@ internal static class PostgresPolicyErrors
         "postgres.ratelimit_unavailable",
         "The rate-limit statement returned no row. The bucket table is missing or has a shape " +
         "this build does not write — run the migrations.",
+        ErrorCategory.Unavailable);
+
+    public static Error QuotaUnreachable(Exception failure) => new(
+        "postgres.quota_unavailable",
+        $"The PostgreSQL quota store did not answer: {failure.Message}",
+        ErrorCategory.Unavailable);
+
+    public static Error QuotaAnsweredNothing() => new(
+        "postgres.quota_unavailable",
+        "The quota statement returned no row. The counter table is missing or has a shape this " +
+        "build does not write — run the migrations.",
         ErrorCategory.Unavailable);
 
     public static Error IdempotencyAnsweredNothing() => new(

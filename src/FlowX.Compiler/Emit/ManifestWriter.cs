@@ -785,6 +785,13 @@ public static class ManifestWriter
         {
             ["RateLimit"] = "Admission",
             ["Idempotency"] = "Integrity",
+
+            // WP-81 and WP-82, and neither is a new stage. A Quota shares Admission with the
+            // rate limit and a Validate shares Integrity with the idempotency window, so the
+            // manifest publishes a stage name it already published and `flowx diff` needs no
+            // new rule — the same property that made Hedge and Fallback free below.
+            ["Quota"] = "Admission",
+            ["Validate"] = "Integrity",
             ["Timeout"] = "Resilience",
             ["Retry"] = "Resilience",
             ["CircuitBreaker"] = "Resilience",

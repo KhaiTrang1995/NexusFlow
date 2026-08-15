@@ -96,7 +96,12 @@ public static class FlowXServiceCollectionExtensions
                 // A breaker per tenant only where the deployment already bounds tenants against
                 // each other. A shared breaker protects a shared downstream faster; this is the
                 // deployment that said its downstreams are not shared.
-                options.TenantIsolation != TenantIsolation.None && options.Fairness.IsEnabled);
+                options.TenantIsolation != TenantIsolation.None && options.Fairness.IsEnabled,
+
+                // Stage 1's second store. Separate from the limiter above because a token
+                // bucket and a fixed window are two arithmetics over one server, and a step
+                // declaring a Quota with none registered is refused rather than admitted.
+                provider.GetService<IQuotaStore>());
         });
 
         // The catalogue is registered whether or not anything is put in it. It is only read
@@ -773,8 +778,15 @@ internal sealed class FlowXLifecycleService : IHostedService
     private readonly FlowHost _host;
     private readonly FlowXOptions _options;
     private readonly IRateLimiterStore? _limiter;
+    private readonly FlowCatalog? _catalog;
+    private readonly IQuotaStore? _quota;
 
-    public FlowXLifecycleService(FlowHost host, IOptions<FlowXOptions> options, IRateLimiterStore? limiter = null)
+    public FlowXLifecycleService(
+        FlowHost host,
+        IOptions<FlowXOptions> options,
+        IRateLimiterStore? limiter = null,
+        FlowCatalog? catalog = null,
+        IQuotaStore? quota = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(options);
@@ -782,6 +794,8 @@ internal sealed class FlowXLifecycleService : IHostedService
         _host = host;
         _options = options.Value;
         _limiter = limiter;
+        _catalog = catalog;
+        _quota = quota;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -806,8 +820,54 @@ internal sealed class FlowXLifecycleService : IHostedService
                 "limiter, or remove the bound.");
         }
 
+        // The same check for the step-level policy, and the earliest moment anything can make
+        // it. A DI registration is invisible to the compiler, so FLOWX1056's build-time shape is
+        // not available here: what is available is the plans this node actually carries, read
+        // once, after the composition root has finished registering them. A quota with no store
+        // refuses every call it is declared on (ADR-0040 §2.2 applied to the second stage-1
+        // kind), and a pod that never becomes ready is the cheaper failure.
+        if (_quota is null && _catalog is not null && FirstQuotaWithoutAStore() is { } unbacked)
+        {
+            throw new InvalidOperationException(
+                $"Flow '{unbacked}' declares a Quota on one of its steps and no IQuotaStore is " +
+                "registered, so no budget could be consulted and every call to that step would " +
+                "be refused. A long-window budget each node kept for itself would be the " +
+                "declared figure times the replica count (ADR-0040): register a shared store — " +
+                "AddFlowXPostgresPolicyStores() is one — or remove the policy.");
+        }
+
         _host.MarkReady();
         return Task.CompletedTask;
+    }
+
+    /// <summary>The first registered flow declaring a quota, or null when none does.</summary>
+    /// <remarks>
+    /// The first rather than all of them, for the reason FLOWX1040 names one marked member:
+    /// one is enough to refuse the node, and the author's next question is which flow, not how
+    /// many. Gated on <c>HasStepPolicies</c> first, so a node whose flows declare no policy at
+    /// all walks no graph.
+    /// </remarks>
+    private string? FirstQuotaWithoutAStore()
+    {
+        foreach (var registration in _catalog!.All)
+        {
+            var plan = registration.Plan;
+
+            if (!plan.HasStepPolicies)
+            {
+                continue;
+            }
+
+            foreach (var step in plan.Graph.Steps)
+            {
+                if (step.StepPolicy.HasQuota)
+                {
+                    return plan.Flow.Id;
+                }
+            }
+        }
+
+        return null;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)

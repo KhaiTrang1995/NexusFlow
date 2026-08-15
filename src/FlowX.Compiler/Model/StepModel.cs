@@ -240,6 +240,25 @@ public sealed record StepModel
     public string? CapabilityOutput { get; private init; }
 
     /// <summary>
+    /// The rules the capability's input contract declares, in declaration order.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Read whether or not the step declares a <c>Validate</c>, because two readers need it and
+    /// only one of them knows about the policy: <c>FlowEmitter</c> emits the checks for a step
+    /// that declared one, and <c>FLOWX1056</c> reports a step that declared one over a contract
+    /// with nothing to check. Reading it conditionally would make the rule depend on the order
+    /// the model was assembled in.
+    /// </para>
+    /// <para>
+    /// Empty is the ordinary case and costs nothing: it is the same shared empty array every
+    /// other unset collection on this model carries.
+    /// </para>
+    /// </remarks>
+    public ValidationRuleModel[] ValidationRules { get; private init; } =
+        System.Array.Empty<ValidationRuleModel>();
+
+    /// <summary>
     /// Source text of the <c>.Step&lt;TCapability, TStepIn&gt;(map)</c> mapping, copied
     /// verbatim, or <c>null</c> when the step binds its input from the state bag.
     /// </summary>
@@ -860,6 +879,9 @@ public sealed record StepModel
     /// </param>
     /// <param name="capabilityInput">The capability's input contract, fully qualified.</param>
     /// <param name="capabilityOutput">The capability's output contract, fully qualified.</param>
+    /// <param name="validationRules">
+    /// What the input contract's annotations declare, or <c>null</c> when it declares nothing.
+    /// </param>
     /// <param name="stepInputMap">
     /// The mapping's source text for <c>.Step&lt;TCapability, TStepIn&gt;(map)</c>, copied
     /// verbatim, or <c>null</c> for the one-type-argument overload that binds from the bag.
@@ -888,6 +910,7 @@ public sealed record StepModel
         string? authorizationValue = null,
         string? capabilityInput = null,
         string? capabilityOutput = null,
+        ValidationRuleModel[]? validationRules = null,
         string? stepInputMap = null,
         string? stepInputTypeName = null,
         string? stepInputMapLocation = null,
@@ -910,6 +933,7 @@ public sealed record StepModel
             AuthorizationValue = authorizationValue,
             CapabilityInput = capabilityInput,
             CapabilityOutput = capabilityOutput,
+            ValidationRules = validationRules ?? System.Array.Empty<ValidationRuleModel>(),
             StepInputMap = stepInputMap,
             StepInputTypeName = stepInputTypeName,
             StepInputMapLocation = stepInputMapLocation,

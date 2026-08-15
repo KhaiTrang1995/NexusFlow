@@ -80,6 +80,64 @@ public sealed class PostgresIdempotencyConformanceTests : IdempotencyStoreConfor
     }
 }
 
+/// <summary>Runs the whole quota suite against PostgreSQL.</summary>
+/// <remarks>
+/// The second implementation of <c>IQuotaStore</c>, beside the in-memory reference in
+/// <c>tests/FlowX.Conformance.Tests</c>. The two agree on nothing but the contract: one floors
+/// the epoch in SQL against <c>now()</c> and the other in C# against
+/// <see cref="DateTimeOffset.UtcNow"/>, and neither derivation changes a line of the suite.
+/// </remarks>
+public sealed class PostgresQuotaConformanceTests : QuotaStoreConformance, IAsyncLifetime
+{
+    private readonly List<QuotaStoreUnderTest> _harnesses = [];
+
+    /// <inheritdoc />
+    protected override async ValueTask<QuotaStoreUnderTest> CreateAsync()
+    {
+        var harness = new PostgresQuotaHarness(await PostgresPolicySchema.CreateAsync(Cancellation));
+
+        _harnesses.Add(harness);
+
+        return harness;
+    }
+
+    /// <inheritdoc />
+    public ValueTask InitializeAsync() => ValueTask.CompletedTask;
+
+    /// <inheritdoc />
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var harness in _harnesses)
+        {
+            await harness.DisposeAsync();
+        }
+
+        _harnesses.Clear();
+    }
+}
+
+/// <summary>The quota store's two clients over one schema.</summary>
+internal sealed class PostgresQuotaHarness(PostgresPolicySchema schema) : QuotaStoreUnderTest
+{
+    /// <inheritdoc />
+    public override IQuotaStore Quota { get; } = new PostgresQuotaStore(schema.First);
+
+    /// <inheritdoc />
+    public override IQuotaStore SecondClient { get; } = new PostgresQuotaStore(schema.Second);
+
+    /// <inheritdoc />
+    public override ValueTask<IQuotaStore> UnreachableAsync(CancellationToken cancellationToken) =>
+        new(new PostgresQuotaStore(schema.Unreachable));
+
+    /// <inheritdoc />
+    public override async ValueTask DisposeAsync()
+    {
+        await schema.DisposeAsync();
+
+        await base.DisposeAsync();
+    }
+}
+
 /// <summary>The rate limiter's two clients over one schema.</summary>
 internal sealed class PostgresRateLimiterHarness(PostgresPolicySchema schema) : RateLimiterUnderTest
 {

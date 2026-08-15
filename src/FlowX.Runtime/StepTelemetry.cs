@@ -312,6 +312,9 @@ public sealed class StepTelemetry : IStepDispatcher
     // here; EveryDispatcherDecoratorForwardsEveryMember is the gate that says so.
 
     /// <inheritdoc />
+    public ValidationOutcome Validate(int stepIndex, FlowContext ctx) => _inner.Validate(stepIndex, ctx);
+
+    /// <inheritdoc />
     public JournalPayload DescribeCacheKey(int stepIndex, FlowContext ctx) =>
         _inner.DescribeCacheKey(stepIndex, ctx);
 

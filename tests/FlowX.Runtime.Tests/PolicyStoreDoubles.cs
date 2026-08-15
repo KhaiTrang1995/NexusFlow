@@ -167,3 +167,74 @@ internal sealed class RecordingIdempotencyStore : IIdempotencyStore
         return new ValueTask<Result<bool>>(Result.Ok(_entries.TryRemove(key, out _)));
     }
 }
+
+/// <summary>
+/// A quota with a fixed budget per key per window, and a window that only turns over when a
+/// test says so.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>The window is advanced by hand rather than by the clock, which is the whole
+/// difference from <see cref="CountingRateLimiter"/>'s "no refill at all".</strong> A quota's
+/// defining behaviour is that the budget comes back at a boundary and not before, so an engine
+/// test has to be able to cross that boundary — and one that crossed it by sleeping would be a
+/// test about how long the suite takes to run. What holds a real store to a real boundary is
+/// <c>QuotaStoreConformance</c>, whose reset assertion runs in real time against a server's own
+/// clock.
+/// </para>
+/// <para>
+/// It counts its calls, so a test can assert that the engine asked <em>once</em> per execution
+/// of the policed step — which is what puts stage 1 outside the retry loop.
+/// </para>
+/// </remarks>
+internal sealed class CountingQuotaStore(int allowed) : IQuotaStore
+{
+    private readonly ConcurrentDictionary<string, int> _spent = new(StringComparer.Ordinal);
+    private int _calls;
+
+    /// <summary>How many decisions were asked for, over every key.</summary>
+    public int Calls => Volatile.Read(ref _calls);
+
+    /// <summary>Every key the engine built, in the order it built them.</summary>
+    public ConcurrentQueue<string> Keys { get; } = new();
+
+    /// <summary>The budget and period the engine passed on the last call.</summary>
+    public (int Budget, TimeSpan Period) Declared { get; private set; }
+
+    /// <summary>When set, every call fails with this rather than deciding.</summary>
+    public Error? Unreachable { get; set; }
+
+    /// <summary>Turns the window over: every key's budget is granted again.</summary>
+    /// <remarks>
+    /// Clears the counters rather than moving a stored boundary, because that is what a fixed
+    /// window does to a counter and it is the only part of the behaviour an engine test is
+    /// about. The arithmetic that decides <em>when</em> is the store's, and is asserted where a
+    /// store's clock is real.
+    /// </remarks>
+    public void TurnTheWindowOver() => _spent.Clear();
+
+    /// <inheritdoc />
+    public ValueTask<Result<QuotaVerdict>> TryConsumeAsync(
+        string key,
+        int budget,
+        TimeSpan period,
+        CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _calls);
+        Keys.Enqueue(key);
+        Declared = (budget, period);
+
+        if (Unreachable is { } failure)
+        {
+            return new ValueTask<Result<QuotaVerdict>>(Result.Fail<QuotaVerdict>(failure));
+        }
+
+        var used = _spent.AddOrUpdate(key, 1, static (_, count) => count + 1);
+
+        var verdict = used <= allowed
+            ? new QuotaVerdict(true, allowed - used, TimeSpan.Zero)
+            : new QuotaVerdict(false, 0, period);
+
+        return new ValueTask<Result<QuotaVerdict>>(Result.Ok(verdict));
+    }
+}

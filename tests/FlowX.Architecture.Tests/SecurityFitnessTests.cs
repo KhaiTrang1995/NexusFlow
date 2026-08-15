@@ -46,6 +46,7 @@ public sealed class SecurityFitnessTests
         (typeof(ConfirmationMode), ConfirmationMode.Never),
         (typeof(CacheScope), CacheScope.Global),
         (typeof(RateLimitScope), RateLimitScope.Global),
+        (typeof(QuotaScope), QuotaScope.Global),
         (typeof(IdempotencyScope), IdempotencyScope.Global),
     ];
 
