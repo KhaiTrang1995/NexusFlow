@@ -1043,6 +1043,57 @@ public sealed class PolicyExecutionTests
         clock.Delays.ShouldBeEmpty("Nothing waited, because nothing was slow.");
     }
 
+    /// <summary>
+    /// A hedge composes with a capability fallback exactly as it does with a constant.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The nesting is ADR-0078's and this record does not touch it: the fallback is outermost
+    /// and the hedge is inside the retry, so the race is run and lost in full before anything
+    /// is asked to answer for the step. Both hedged calls fail, and only then is the second
+    /// capability consulted — once, not once per call.
+    /// </para>
+    /// <para>
+    /// Worth asserting rather than assuming, because the fallback is the one stage-4 kind that
+    /// does not wrap the dispatch: it lives in the step loop, reading the outcome the race
+    /// produced. A composition that broke would break there, silently, and only for a step that
+    /// declared both.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AHedgeComposesWithACapabilityFallbackAsItDoesWithAConstant()
+    {
+        var answered = new Rating("secondary");
+
+        var dispatcher = new RecordingDispatcher()
+            .FailAt(0, Unavailable)
+            .FallBackWith(0, answered);
+
+        dispatcher.Observe = ctx => ctx.TryGet<Rating>(out var rating) ? rating : null;
+
+        var hedged = PolicySet.Named("hcf")
+            .Hedge(afterDelay: TimeSpan.FromMilliseconds(50))
+            .Fallback<SecondaryRating>();
+
+        var result = await new FlowEngine(new FakeClock(T0))
+            .ExecuteAsync(Plan(Degrading(hedged)), dispatcher, Plans.Invocation, Ct);
+
+        result.IsSuccess.ShouldBeTrue("The race was lost and the second capability answered.");
+
+        dispatcher.FellBackAt.ShouldBe(
+            [0],
+            "Once for the step, not once per call in the race. A fallback answers for the step, " +
+            "which is why it is outside everything that wraps a call.");
+
+        // The last observation rather than a fixed index: how many entries the race put in
+        // front of it is the hedge's business, and pinning that here would make this test fail
+        // for a reason it is not about.
+        dispatcher.Observed[^1].ShouldBe(
+            answered,
+            "And what the steps after it bind is the fallback's answer, filed under the step's " +
+            "own contract exactly as it is with no hedge in the set.");
+    }
+
     /// <summary>Every call in a hedged race presents the same idempotency key.</summary>
     /// <remarks>
     /// <c>docs/10 §5</c>'s first guarantee, which a hedge needs more than a retry does: the two
