@@ -205,6 +205,34 @@ public sealed record StepModel
     /// </remarks>
     public string? AuthorizationValue { get; private init; }
 
+    /// <summary>
+    /// The reviewer named by <c>[ApprovedBy]</c>. Reaches the manifest as
+    /// <c>authorization.approvedBy</c>.
+    /// </summary>
+    /// <remarks>
+    /// Beside <see cref="AuthorizationMode"/> for the reason the value is: the schema
+    /// requires it when the mode is <c>Public</c>, so the two are read together or the
+    /// document says a capability is open to everyone and does not say who agreed to that.
+    /// </remarks>
+    public string? ApprovedBy { get; private init; }
+
+    /// <summary>
+    /// The obsoletion notice from <c>[Obsolete("...")]</c>. Reaches the manifest as
+    /// <c>capability.deprecated</c> and is what <c>FLOWX-DIFF-204</c> compares.
+    /// </summary>
+    public string? Deprecated { get; private init; }
+
+    /// <summary>
+    /// <c>file:line</c> of the capability type's declaration. Reaches the manifest as
+    /// <c>capability.source</c>.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="Location"/>, which is where this step invokes it. One
+    /// capability entry is reached from every step that calls it and names one declaration,
+    /// so the two cannot be the same field.
+    /// </remarks>
+    public string? CapabilitySource { get; private init; }
+
     /// <summary>The capability's input contract, fully qualified. Required by the manifest schema.</summary>
     public string? CapabilityInput { get; private init; }
 
@@ -825,6 +853,9 @@ public sealed record StepModel
     /// </param>
     /// <param name="stepInputTypeName">Fully-qualified type the mapping produces.</param>
     /// <param name="stepInputMapLocation"><c>file:line</c> of the mapping expression.</param>
+    /// <param name="approvedBy">The reviewer named by <c>[ApprovedBy]</c>, or <c>null</c>.</param>
+    /// <param name="deprecated">The notice on <c>[Obsolete("...")]</c>, or <c>null</c>.</param>
+    /// <param name="capabilitySource"><c>file:line</c> of the capability's declaration.</param>
     /// <remarks>
     /// One factory for both overloads rather than two, because they produce the same
     /// <em>kind</em> of step: the capability, the descriptor, the compensation and the
@@ -846,10 +877,16 @@ public sealed record StepModel
         string? capabilityOutput = null,
         string? stepInputMap = null,
         string? stepInputTypeName = null,
-        string? stepInputMapLocation = null)
+        string? stepInputMapLocation = null,
+        string? approvedBy = null,
+        string? deprecated = null,
+        string? capabilitySource = null)
     {
         return new StepModel(index, StepKindModel.Capability)
         {
+            ApprovedBy = approvedBy,
+            Deprecated = deprecated,
+            CapabilitySource = capabilitySource,
             CapabilityTypeName = capabilityTypeName,
             CapabilityId = capabilityId,
             CapabilityVersion = capabilityVersion,
