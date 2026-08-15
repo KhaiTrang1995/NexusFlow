@@ -1715,7 +1715,12 @@ public static class FlowAnalyzer
             // argument does not compile, so the null branch is reachable only from a
             // half-typed buffer where C# is already saying something more useful.
             arguments.Count == 0 ? null : arguments[0].Expression.ToString(),
-            arguments.Count == 0 ? null : FormatLocation(arguments[0].Expression.GetLocation())));
+            arguments.Count == 0 ? null : FormatLocation(arguments[0].Expression.GetLocation()),
+
+            // The contract's own declaration, read once. It reaches the manifest's
+            // event.schemaVersion and the outbox row's schema_version from this single
+            // value, so the document and the wire cannot disagree (ADR-0017 F2).
+            EventSchemaReader.DeclaredOn(symbol)));
     }
 
     /// <summary>

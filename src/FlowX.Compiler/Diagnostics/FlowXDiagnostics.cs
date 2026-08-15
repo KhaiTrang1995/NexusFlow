@@ -1835,6 +1835,52 @@ public static class FlowXDiagnostics
         "chosen at run time and the missing timeout field is accepted.",
         DiagnosticSeverity.Warning);
 
+    /// <summary>
+    /// FLOWX1055: an <c>[EventSchema("…")]</c> whose value is not a semantic version.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A property of the declaration, reported where it is written.</strong> The
+    /// attribute sits on the event contract, not on a flow, so the rule is raised on the type
+    /// — a contract nothing emits yet is still a declaration whose value is wrong, and finding
+    /// out when the first <c>.Emit</c> of it lands would be finding out late.
+    /// </para>
+    /// <para>
+    /// <strong>What an unreadable value costs is not an unset version.</strong> The reader
+    /// drops it and the contract publishes <c>1.0.0</c> — in the manifest's <c>events</c>
+    /// array and in the <c>schema_version</c> column of every outbox row it stages — so the
+    /// author reads <c>[EventSchema("v2")]</c> in the source and a subscriber reads
+    /// <c>1.0.0</c> on the wire. <c>flowx diff</c> keys an event on the major it parses out of
+    /// that value (<c>FLOWX-DIFF-020</c>), so the disagreement is also invisible to the gate
+    /// that exists to catch it. Publishing the rubble instead would be worse in the other
+    /// direction: a version no consumer can order against.
+    /// </para>
+    /// <para>
+    /// <strong>An error, where <see cref="ScheduleJitterCannotBeRead"/>'s argument reaches a
+    /// different conclusion for the same shape.</strong> That rule refuses a compile-time
+    /// constant a host would throw on, so the alternative to reporting it is a pod that never
+    /// becomes ready. This one ships perfectly and is wrong in a document, which is the
+    /// quieter failure and the one nothing downstream can detect — and the fix is to write
+    /// three numbers separated by dots.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor EventSchemaVersionCannotBeRead = Create(
+        "FLOWX1055",
+        "Event schema version is not a semantic version",
+        "Event contract '{0}' declares [EventSchema(\"{1}\")] and that is not a semantic " +
+        "version, so it publishes 1.0.0 in the manifest and on every outbox row",
+        "An event's schema version is SemVer 2.0 — MAJOR.MINOR.PATCH, with optional " +
+        "pre-release and build metadata — because that is what a subscriber pins against and " +
+        "what flowx diff keys an event on when it decides whether a major was bumped. A value " +
+        "the compiler cannot read is dropped rather than published, so the contract keeps " +
+        "emitting the default 1.0.0 while the source says otherwise, and every consumer of " +
+        "the manifest and of the outbox row is told the wrong number with nothing anywhere " +
+        "reporting it. Write the version as three numeric identifiers, for example \"2.0.0\", " +
+        "or omit the attribute — a contract that declares nothing publishes 1.0.0, which is " +
+        "the ordinary declaration and is not reported. A suppression buys nothing: the value " +
+        "still does not reach the document.",
+        DiagnosticSeverity.Error);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1885,7 +1931,8 @@ public static class FlowXDiagnostics
         HedgeRequiresIdempotency,
         FallbackMustMatchTheStepsOutput,
         FallbackRequiresNoSideEffects,
-        DeclaredWaitCannotBeFolded);
+        DeclaredWaitCannotBeFolded,
+        EventSchemaVersionCannotBeRead);
 
     private static DiagnosticDescriptor Create(
         string id,

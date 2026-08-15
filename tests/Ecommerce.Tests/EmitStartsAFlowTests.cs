@@ -82,6 +82,41 @@ public sealed class EmitStartsAFlowTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// The outbox row carries the version the contract declares, not a compiler constant.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>ADR-0017 F2's other half, in the one place it can actually be read.</strong>
+    /// <c>OrderPlaced</c> declares <c>[EventSchema("2.0.0")]</c>; the manifest's
+    /// <c>event.schemaVersion</c> says so and <c>flowx diff</c> keys the event on it. If the
+    /// <c>schema_version</c> column said <c>1.0.0</c>, the published contract and the wire
+    /// would disagree — a subscriber would be pinning against a promise nothing keeps, and
+    /// every gate in the repository would be green. That state existed by construction while
+    /// <c>ManifestWriter</c> and <c>FlowEmitter</c> shared a constant instead of a reading.
+    /// </para>
+    /// <para>
+    /// The value is read out of the table rather than off the <c>OutboxWrite</c>, and it
+    /// survives one more hop: the same string reaches the broker and comes back on the
+    /// delivery, which is what a consumer in another repository sees.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task TheStagedRowCarriesTheVersionTheContractDeclares()
+    {
+        var fixture = await CreateAsync();
+
+        (await fixture.ConfirmAsync("SKU-3", 1)).IsSuccess.ShouldBeTrue();
+
+        var staged = await fixture.StagedEventAsync();
+
+        staged.Type.ShouldBe("order.placed");
+        staged.SchemaVersion.ShouldBe(
+            "2.0.0",
+            "OrderPlaced declares [EventSchema(\"2.0.0\")], and the manifest publishes that " +
+            "number — a row stamped 1.0.0 would be the two-copies defect ADR-0017 F2 names.");
+    }
+
+    /// <summary>
     /// The same event delivered twice starts one flow, and the second delivery is finished with.
     /// </summary>
     /// <remarks>

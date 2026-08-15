@@ -372,6 +372,19 @@ public sealed record StepModel
     public string? EventContractTypeName { get; private init; }
 
     /// <summary>
+    /// The version <c>[EventSchema("…")]</c> declares on the contract, or <c>null</c> when it
+    /// declares none.
+    /// </summary>
+    /// <remarks>
+    /// Null rather than <c>1.0.0</c>, so the two writers can tell "the author chose this
+    /// version" from "the author chose nothing" — and so the default lives at
+    /// <c>EventSchemaReader.Default</c> rather than in each of them. Both the manifest's
+    /// <c>event.schemaVersion</c> and the outbox row's <c>schema_version</c> resolve it the
+    /// same way, which is the whole of ADR-0017 F2's one-reading requirement.
+    /// </remarks>
+    public string? EventSchemaVersion { get; private init; }
+
+    /// <summary>
     /// Source text of the <c>.Emit(...)</c> factory, copied verbatim, or <c>null</c> for
     /// every other kind.
     /// </summary>
@@ -910,18 +923,24 @@ public sealed record StepModel
     /// <param name="contractTypeName">Fully-qualified <c>TEvent</c>, or <c>null</c> when unresolved.</param>
     /// <param name="factory">The factory expression's source text, copied verbatim.</param>
     /// <param name="factoryLocation"><c>file:line</c> of the factory expression.</param>
+    /// <param name="schemaVersion">
+    /// The version <c>[EventSchema("…")]</c> declares on the contract, or <c>null</c> for the
+    /// undeclared case — which both writers resolve to <c>EventSchemaReader.Default</c>.
+    /// </param>
     public static StepModel Emit(
         int index,
         string eventType,
         string? location = null,
         string? contractTypeName = null,
         string? factory = null,
-        string? factoryLocation = null)
+        string? factoryLocation = null,
+        string? schemaVersion = null)
     {
         return new StepModel(index, StepKindModel.Emit)
         {
             EventType = eventType,
             EventContractTypeName = contractTypeName,
+            EventSchemaVersion = schemaVersion,
             EventFactory = factory,
             EventFactoryLocation = factoryLocation,
             Location = location,
