@@ -178,10 +178,18 @@ validated claims — [ADR-0028](adr/ADR-0028-identity-arrives-on-the-invocation.
   fails the build the day something makes a capability directly addressable, which is the
   day `Internal` would have to start refusing.
   [ADR-0047](adr/ADR-0047-internal-is-a-composition-stance.md).
-- **There is no audit event.** `Audit` is a stage-7 policy that
-  [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) leaves
-  unexecuted, and no store persists one. A refusal is a returned `Error` and appears in
-  whatever the host logs.
+- **There is still no audit event, and the reason this document gave for it has expired.**
+  It said `Audit` was a stage-7 policy
+  [ADR-0025](adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md) left unexecuted
+  with no store behind it. `Audit` executes now, `IAuditSink` persists a record, and that
+  record already carries `Stance` and `Permission` — so an *authorised* step says who authorised
+  it and against what. **A refused one still says nothing**: `RecordAuditAsync` runs at stage 7,
+  after the step's commit, and a step refused at stage 2 breaks out of the loop long before it.
+  So the `403` half of the row holds and the `+ audit event` half does not, for a different
+  reason than the one written here — which matters, because the old reason would let a reader
+  conclude the gap closed when the policy shipped.
+  [ADR-0029](adr/ADR-0029-a-refusal-is-a-result-failure.md)'s last negative names this, and its
+  revisit condition — *"or stage 7's `Audit` executes"* — has fired.
 
 **A compensation is not authorised**, and a resumed instance is authorised by whoever resumes
 it rather than by whoever started it — the journal row carries no claims, deliberately, so a
@@ -278,7 +286,7 @@ mechanisms that compliance work needs:
 | Audit trail (SOX, PCI-DSS 10) | journal + `Audit` policy: who, what, when, outcome, immutable |
 | Data minimisation (GDPR 5) | `[Sensitive]` redaction; per-flow journal retention |
 | Right to erasure (GDPR 17) | tenant/subject-partitioned journal + `flowx purge --subject <id>` |
-| Purpose limitation (GDPR 6) | `Consent` policy at stage 2 |
+| Purpose limitation (GDPR 5(1)(b)) | `Consent` policy at stage 2 — **built at WP-83**. `PolicySet.Consent(purpose)` on the step, `FlowInvocation.Purpose` from a validated `purpose` claim, refused with `policy.consent_purpose_absent` or `policy.consent_purpose_not_covered` when the two do not match. It limits what a credential may be used *for*; it does not establish that a person agreed, which stays a capability against a consent register (`samples/healthcare`) |
 | Data residency | tenant → region binding; region-local journals |
 | Access review | manifest query: every capability with its permission and owner |
 | Change control | `flowx diff` + ADR requirement on breaking changes |

@@ -158,8 +158,9 @@ public sealed class PolicyStageFitnessTests
     /// </para>
     /// <para>
     /// The real list is read off the three resolvers rather than typed out again:
-    /// <c>StepPolicy</c> publishes the nine descriptor kinds it reads as constants — the six
-    /// stage-4 ones, the stage-1 <c>RateLimit</c>, the stage-3 <c>Idempotency</c> and the
+    /// <c>StepPolicy</c> publishes the descriptor kinds it reads as constants — the six
+    /// stage-4 ones, stage 1's <c>RateLimit</c> and <c>Quota</c>, stage 2's <c>Consent</c>,
+    /// stage 3's <c>Validate</c> and <c>Idempotency</c>, and the
     /// stage-5 <c>Cache</c> — <c>CompensationPolicy</c> publishes the one it reads, and
     /// <c>StepAudit</c> publishes the stage-7 one. A kind implemented without a constant would
     /// slip past this — which is why they are constants, and why each new resolver publishes
@@ -179,6 +180,7 @@ public sealed class PolicyStageFitnessTests
         [
             StepPolicy.RateLimitKind,
             StepPolicy.QuotaKind,
+            StepPolicy.ConsentKind,
             StepPolicy.ValidateKind,
             StepPolicy.IdempotencyKind,
             StepPolicy.TimeoutKind,

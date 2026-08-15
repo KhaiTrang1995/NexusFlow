@@ -205,6 +205,14 @@ dotnet_diagnostic.S3878.severity = none   # explicit array in a params call, for
 dotnet_diagnostic.S5332.severity = none   # http:// is insecure
 dotnet_diagnostic.S1075.severity = none   # hardcoded URI
 
+[src/FlowX.Runtime/InvocationPurpose.cs]
+# "http://schemas.flowx.dev/claims/purpose" is the same thing one claim over: a
+# claim type whose scheme is part of the string an issuer emits, never a URL this
+# code fetches. The exemption follows the literal, exactly as the tenant list's
+# does, and for the identical reason.
+dotnet_diagnostic.S5332.severity = none   # http:// is insecure
+dotnet_diagnostic.S1075.severity = none   # hardcoded URI
+
 [plugins/FlowX.Http/ProblemDetailsMapper.cs]
 # "https://flowx.dev/errors/" is the RFC 9457 Problem Details `type` prefix. The
 # spec requires a stable URI, so it has to be written down somewhere, and it is

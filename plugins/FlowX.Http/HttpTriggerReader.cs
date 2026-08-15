@@ -46,6 +46,14 @@ public static class HttpTriggerReader
     /// </remarks>
     public static string[] TenantClaimTypes => ClaimTenantResolver.TenantClaimTypes;
 
+    /// <summary>Claim types that may carry a processing purpose, in the order consulted.</summary>
+    /// <remarks>
+    /// A projection of <see cref="InvocationPurpose.PurposeClaimTypes"/>, for the reason
+    /// <see cref="TenantClaimTypes"/> is a projection of the resolver's list: one rule, one
+    /// place, read by the transport and by whatever else needs it.
+    /// </remarks>
+    public static string[] PurposeClaimTypes => InvocationPurpose.PurposeClaimTypes;
+
     /// <summary>Reads the invocation, or explains why the request cannot produce one.</summary>
     /// <param name="context">The request.</param>
     /// <param name="requireIdempotencyKey">
@@ -93,8 +101,26 @@ public static class HttpTriggerReader
             // passed as it stands and StepAuthorization asks the question that matters,
             // which is whether the identity is authenticated rather than whether the object
             // exists.
-            Principal: context.User));
+            Principal: context.User,
+
+            // Read from the same validated principal and from no header, which is what makes
+            // a declared PolicySet.Consent(purpose) a limitation rather than a form field:
+            // a caller that could name its own purpose would be granting itself the consent
+            // the policy exists to check. Absent when the credential asserts none, and a
+            // consent-gated step then refuses — deny by default.
+            Purpose: ReadPurpose(context.User)));
     }
+
+    /// <summary>
+    /// Resolves the processing purpose from validated claims, and from nothing else.
+    /// </summary>
+    /// <remarks>
+    /// Delegates to <see cref="InvocationPurpose.FromClaims"/> for
+    /// <see cref="ReadTenant(ClaimsPrincipal?)"/>'s reason: the derivation is the runtime's, so
+    /// a transport cannot come to disagree with the engine about what a credential asserted.
+    /// </remarks>
+    public static string? ReadPurpose(ClaimsPrincipal? principal) =>
+        InvocationPurpose.FromClaims(principal);
 
     /// <summary>
     /// Resolves the tenant from validated claims, and from nothing else.

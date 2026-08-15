@@ -1255,6 +1255,35 @@ public sealed class FlowEngine
                 break;
             }
 
+            // Stage 2's other half, and the one an author declares. The stance above asks who
+            // the caller is; this asks what the call is for — GDPR Article 5(1)(b), which
+            // docs/10 §2 lists as the third term of the Identity stage and which had no
+            // surface until now.
+            //
+            // Two questions rather than one, because they are resolved from different places:
+            // a stance is derived from the capability's own declaration and a purpose is
+            // declared on the step, so there is no arrangement in which one of them could be
+            // read off the other. Neither can permit what the other refuses — a caller has to
+            // satisfy both, exactly as stage 1's two kinds are both asked.
+            //
+            // Under the same `!context.IsContinuation` guard, and for ADR-0028 §2.3's reason
+            // word for word: a timer sweep and a recovery scan carry no purpose because they
+            // carry no caller, and deciding against that absence would make `.Delay(...)` a
+            // construct no author could place before a consent-gated step and would turn a
+            // node restart into a `403`.
+            //
+            // Gated by plan.HasStepPolicies rather than by a flag of its own, which is the
+            // difference between a policy and a stance: a policy arrives on a PolicyChain that
+            // StepPolicy.From already walks, so this is ADR-0023's "widening is mechanical"
+            // once more — one field, one term in IsActive, no new plan flag.
+            if (policy.HasConsent
+                && !context.IsContinuation
+                && ConsentNotGiven(policy, context, capabilityId) is { } unconsented)
+            {
+                failure = unconsented;
+                break;
+            }
+
             // Stage 3 · Integrity. After admission and identity, before the retry loop — which is
             // ADR-0011's order and, for the retry, a correctness requirement rather than a
             // preference: a claim taken per attempt would find its own in-flight marker on
@@ -1736,6 +1765,67 @@ public sealed class FlowEngine
         PolicyApplied(StepPolicy.QuotaKind, AdmissionStage, capabilityId, PolicyMetrics.RejectedOutcome);
 
         return FlowErrors.QuotaExhausted(capabilityId, verdict.Value.RetryAfter);
+    }
+
+    /// <summary>
+    /// Stage 2's declared kind: compares the invocation's purpose with the step's, or produces
+    /// the refusal.
+    /// </summary>
+    /// <param name="policy">The resolved chain, for the purpose the step is declared to serve.</param>
+    /// <param name="context">The execution, for the purpose the invocation asserted.</param>
+    /// <param name="capabilityId">What is being gated, so a refusal names it.</param>
+    /// <returns><c>null</c> when the purpose covers the step, otherwise the refusal.</returns>
+    /// <remarks>
+    /// <para>
+    /// Synchronous, for <see cref="ValidateStep"/>'s reason and a stronger one: an
+    /// authorisation-stage decision that needed I/O is exactly what
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0030-policy-stance-is-refused-at-build-time.md">ADR-0030</a>
+    /// refused to build for the stance beside it, and a consent policy that could wait would
+    /// re-open that record rather than sit next to it. What this compares is two strings the
+    /// process already holds.
+    /// </para>
+    /// <para>
+    /// <strong>Ordinal, whole-value equality.</strong> Not a prefix, not a hierarchy, not a
+    /// case fold — <c>StepAuthorization.Grants</c> takes the same three positions about a
+    /// permission and for the same reasons: a purpose is an identifier, a contains-check turns
+    /// a limitation into a prefix model nobody chose, and a culture-aware comparison makes the
+    /// answer depend on the server's locale.
+    /// </para>
+    /// <para>
+    /// <strong>Two codes, one category.</strong> An absent purpose and a wrong one are both
+    /// <see cref="ErrorCategory.Forbidden"/> and lead to different repairs, which is exactly
+    /// the split
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0029-a-refusal-is-a-result-failure.md">ADR-0029</a>
+    /// §2.1 drew between <c>authorization.not_authenticated</c> and
+    /// <c>authorization.permission_denied</c> at this same stage.
+    /// </para>
+    /// </remarks>
+    private static Error? ConsentNotGiven(
+        StepPolicy policy,
+        FlowExecutionContext context,
+        string capabilityId)
+    {
+        var declared = policy.ConsentPurpose!;
+
+        if (string.IsNullOrWhiteSpace(context.Purpose))
+        {
+            PolicyApplied(
+                StepPolicy.ConsentKind, IdentityStage, capabilityId, PolicyMetrics.RejectedOutcome);
+
+            return FlowErrors.ConsentPurposeAbsent(capabilityId, declared);
+        }
+
+        if (!string.Equals(context.Purpose, declared, StringComparison.Ordinal))
+        {
+            PolicyApplied(
+                StepPolicy.ConsentKind, IdentityStage, capabilityId, PolicyMetrics.RejectedOutcome);
+
+            return FlowErrors.ConsentPurposeNotCovered(capabilityId, declared);
+        }
+
+        PolicyApplied(StepPolicy.ConsentKind, IdentityStage, capabilityId, PolicyMetrics.OkOutcome);
+
+        return null;
     }
 
     /// <summary>
@@ -2989,6 +3079,18 @@ public sealed class FlowEngine
 
     /// <summary>Stage 1, as a metric label.</summary>
     private static readonly string AdmissionStage = nameof(PolicyStage.Admission);
+
+    /// <summary>Stage 2, as a metric label.</summary>
+    /// <remarks>
+    /// The stage the authorisation stance is also decided in, and the stance is deliberately
+    /// not counted here. <c>flowx_policy_invocations_total</c> counts <em>declared policies
+    /// the engine applied</em>, and a stance is derived rather than declared —
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md">ADR-0026</a>'s
+    /// rule that a metric names only what executes, read the other way round: emitting a
+    /// `kind="Authorize"` series would publish a policy no author can find in a
+    /// <c>PolicySet</c> and no manifest lists among a step's policies.
+    /// </remarks>
+    private static readonly string IdentityStage = nameof(PolicyStage.Identity);
 
     /// <summary>Stage 3, as a metric label.</summary>
     private static readonly string IntegrityStage = nameof(PolicyStage.Integrity);
@@ -4314,7 +4416,15 @@ public sealed class FlowEngine
                     context.CorrelationId,
                     context.IdempotencyKey,
                     context.TenantId,
-                    step.Mode == SubFlowMode.Detached ? null : context.Deadline),
+                    step.Mode == SubFlowMode.Detached ? null : context.Deadline,
+
+                    // The purpose is carried for the same reason the correlation, the tenant
+                    // and the idempotency key are: it describes the operation, and composing
+                    // a flow out of two does not make it two operations. A child that lost it
+                    // would refuse every consent-gated step the moment somebody extracted a
+                    // sub-flow, which would make the policy a fact about how the graph was
+                    // factored rather than about what the call is for.
+                    Purpose: context.Purpose),
                 _clock,
                 source.Dispatcher,
                 context.Depth + 1);

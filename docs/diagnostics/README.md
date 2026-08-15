@@ -355,8 +355,9 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1054](FLOWX1054.md) | Declared wait is not a compile-time constant | **A flow that silently stops publishing how long it waits** — the manifest's `timeout` is folded at build time, so a wait read from configuration is omitted, `flowx diff` has no window to compare, and the build stays green. It happened to the repository's only producer of the field |
 | [FLOWX1055](FLOWX1055.md) | Event schema version is not a semantic version | **A declared version that is silently not the published one** — `[EventSchema]`'s value is stamped on the manifest entry and on every outbox row, and `flowx diff` keys an event on the major it parses out of it. A value that is not SemVer leaves the contract publishing `1.0.0` while its author believes it publishes something else, and a subscriber pinned to the wrong major is told nothing |
 | [FLOWX1056](FLOWX1056.md) | `Validate` is declared over a contract with no validation rules | **A stage-3 policy that examines every input and refuses none** — the rules are the annotations on the step's input contract, read at build time and emitted into the dispatcher, so a contract that declares none leaves a policy the manifest publishes, the engine calls and nothing enforces |
+| [FLOWX1057](FLOWX1057.md) | `Consent` is declared with no purpose | **A stage-2 gate the manifest publishes and the engine skips** — a blank purpose is read as *no consent declared*, not as a comparison nobody can satisfy, so the step is dispatched to every caller while `flowx.manifest.json` goes on listing an `Identity` policy on it |
 
-The next is `FLOWX1057`. The range is `FLOWX1001`–`FLOWX1099`.
+The next is `FLOWX1058`. The range is `FLOWX1001`–`FLOWX1099`.
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -739,8 +740,17 @@ kind the runtime had no code for, and this one reports a set the runtime has cod
 contract gave nothing to run. An **error**, unlike `FLOWX1035`'s comparable "this policy does
 nothing": a one-attempt compensation retry still dispatches the undo, and an unenforced validation
 is the reason a step is allowed to trust its input.
+**`FLOWX1057` is claimed** — *`Consent` is declared with no purpose*: `FLOWX1056`'s objection one
+stage up, and it fails in the surprising direction. An empty purpose reads like a gate nobody can
+pass and is the opposite — `StepPolicy.HasConsent` treats a blank purpose as no consent declared,
+so the step is dispatched to everybody while the manifest goes on publishing an `Identity`-stage
+policy on it. Reading it as refusing instead was rejected: a purpose nobody wrote is not a purpose
+nobody may satisfy, and a step taken out of service by a typo is worse than a build error. An
+**error**, which is what every rule in the stage-2 family is —
+`SafetyDiagnosticsAreErrorsRatherThanWarnings` holds `FLOWX1010`, `FLOWX1030` and `FLOWX1037` to
+the same line. It is none of the reservations.
 
-The next is `FLOWX1057`. The range is `FLOWX1001`–`FLOWX1099`.
+The next is `FLOWX1058`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

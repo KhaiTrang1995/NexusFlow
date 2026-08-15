@@ -83,6 +83,7 @@ public sealed class FlowExecutionContext : FlowContext
     private string? _tenantId;
     private ClaimsPrincipal? _principal;
     private bool _isContinuation;
+    private string? _purpose;
 
     /// <summary>
     /// <see cref="Run"/>'s instance id as text, computed the first time it is asked for.
@@ -410,6 +411,26 @@ public sealed class FlowExecutionContext : FlowContext
     /// </remarks>
     internal bool IsContinuation => _isContinuation;
 
+    /// <summary>
+    /// What this invocation's processing is for, or <c>null</c> when it asserted nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Internal for <see cref="IsContinuation"/>'s reason and one more. It is the engine's
+    /// input to a declared <c>Consent</c> and not a value a capability should branch on: a
+    /// capability that behaved differently by purpose would be a second purpose-limitation
+    /// implementation, unpublished, unreviewable and free to disagree with the one the
+    /// manifest describes. Where a purpose belongs to the <em>business</em> record rather than
+    /// to the credential, it goes on the contract — which is what <c>samples/healthcare</c>
+    /// does with <c>CarePurpose</c>, and the two are deliberately different things.
+    /// </para>
+    /// <para>
+    /// Reset with the rest of the pooled state, so a purpose cannot outlive the invocation
+    /// that supplied it and gate a step for the next flow to rent this context.
+    /// </para>
+    /// </remarks>
+    internal string? Purpose => _purpose;
+
     /// <inheritdoc />
     /// <remarks>
     /// Empty until a transport plugin supplies one (WP-8). The engine never reads it:
@@ -596,6 +617,7 @@ public sealed class FlowExecutionContext : FlowContext
         _tenantId = invocation.TenantId;
         _principal = invocation.Principal;
         _isContinuation = invocation.IsContinuation;
+        _purpose = invocation.Purpose;
         _flowInstanceId = null;
         _clock = clock;
 
@@ -926,6 +948,7 @@ public sealed class FlowExecutionContext : FlowContext
         _tenantId = null;
         _principal = null;
         _isContinuation = false;
+        _purpose = null;
         _flowInstanceId = null;
         _deadline = default;
         _clock = SystemClock.Instance;
